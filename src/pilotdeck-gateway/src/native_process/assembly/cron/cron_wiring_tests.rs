@@ -3,6 +3,11 @@
 //! frames through the live WS dispatch; an absent section keeps them gated;
 //! cleanup stops cron before the channels; a `start()` failure fails the
 //! whole assembly.
+//!
+//! #2294 A7.8 extends the same assembly: both families now sit behind the
+//! automation bundle, so the always-on wiring rows here boot the identical
+//! host with an `alwaysOn:` section and check the three names, the control
+//! envelopes, and the `createAlwaysOn` conditions the same way.
 
 use crate::runtime::turn::gateway::TurnGateway;
 use crate::{negative_assert, negative_assert_eq};
@@ -18,6 +23,11 @@ const CRON_CONFIG: &str = "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\
 /// host carries across the switch into native mode.
 const RESTART_UNRECORDED: &str =
     include_str!("../../../../tests/fixtures/native-cron/restart-unrecorded.json");
+
+/// The #2294 wiring rows' config prefix: the #1231 fixture's model half plus
+/// the `cron:` section, so those rows exercise exactly the assembly the
+/// always-on rows add an `alwaysOn:` section to.
+const ALWAYS_ON_BASE: &str = "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\ncron:\n  enabled: true\n";
 
 #[derive(Default)]
 struct Text(Mutex<Vec<Value>>);
@@ -358,10 +368,12 @@ async fn a_stopped_manager_rejects_the_six_management_methods() {
 }
 
 /// The cleanup order PilotDeckServerShutdownBundle.ts:33-37 fixes: automation
-/// (cron) stops before closeServer (channels), and both precede the session
-/// and project disposal.
+/// stops before closeServer (channels), and both precede the session and
+/// project disposal. #2294 routes the cron manager behind the automation
+/// bundle, so the observer label the cleanup carries is the bundle's —
+/// "automation" — while the stop order itself is unchanged.
 #[tokio::test]
-async fn cleanup_stops_cron_before_the_channels() {
+async fn cleanup_stops_automation_before_the_channels() {
     let (_scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#1326 fixture setup");
@@ -404,15 +416,17 @@ async fn cleanup_stops_cron_before_the_channels() {
     let recorded = order.lock().expect("#1326 cleanup order lock").clone();
     negative_assert_eq!(
         recorded,
-        ["cron", "channels", "session", "project"],
-        "#1326 cron stops first, then the channels, sessions, and project"
+        ["automation", "channels", "session", "project"],
+        "#1326 automation (the bundle that owns cron) stops first, then the channels, sessions, and project"
     );
 }
 
 /// A `CronManager::start()` failure must fail the whole assembly (the
 /// `project.dispose()` fallback path), never be swallowed into a
 /// half-started host. A `.cwd` marker that is a directory makes the startup
-/// discovery throw where TS's `readFileSync` would.
+/// discovery throw where TS's `readFileSync` would. #2294 wraps the failure
+/// in the automation bundle's startup `AggregateError`; its `Display` carries
+/// the provider causes, so the discovery error still surfaces verbatim.
 #[tokio::test]
 async fn cron_start_failure_fails_the_assembly() {
     let (_scratch, requests) =
@@ -512,6 +526,174 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
         ["channels", "session", "project"],
         "#1959 a budget cut mid-teardown must not skip the factory and project fallback disposals"
     );
+}
+
+/// #2294: a config `alwaysOn:` section with one enabled project stages the
+/// one `AlwaysOnManager` through the automation bundle — the assembly boots,
+/// the three names are advertised, and the control methods answer the real
+/// runtime envelopes through the live WS dispatch. The rows pick envelopes
+/// that need no store fixtures: a cycle id no store carries
+/// (`cycle_not_found`), a session key no run owns (`session_not_active`),
+/// and a plan id no store carries (`plan_not_found`, whose `runId` is the
+/// runtime's generated run id and therefore only checked non-empty).
+#[tokio::test]
+async fn configured_assembly_advertises_and_serves_the_three_always_on_names() {
+    let (scratch, requests) =
+        std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#2294 fixture setup");
+    let options = requests.options.clone();
+    let env = requests.env.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#2294 dispose unused fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2294 shutdown unused fixture owner");
+    let project = options.project.to_string_lossy().into_owned();
+    std::fs::write(
+        options.home.join("pilotdeck.yaml"),
+        format!("{ALWAYS_ON_BASE}alwaysOn:\n  projects:\n    {project}:\n      enabled: true\n"),
+    )
+    .expect("#2294 always-on config");
+    let mut harness = boot_with(options, env).await;
+    harness._scratch = Some(scratch);
+
+    send(&harness, "capabilities", "describe_server", json!({})).await;
+    let advertised = capabilities(&harness);
+    for name in crate::runtime::always_on::ALWAYS_ON_METHODS.iter().copied() {
+        negative_assert!(
+            advertised.contains(&name.to_owned()),
+            "#2294 the configured runtime advertises {name}"
+        );
+    }
+
+    send(
+        &harness,
+        "apply",
+        "always_on_apply",
+        json!({"projectKey": project, "workCycleId": "c1"}),
+    )
+    .await;
+    let apply = take_frame(&harness, "apply");
+    negative_assert_eq!(apply["ok"], true, "#2294 always_on_apply answers ok");
+    negative_assert_eq!(
+        apply["result"],
+        json!({"sessionKey": "",
+               "error": {"code": "cycle_not_found",
+                         "message": "Work cycle c1 not found"}}),
+        "#2294 always_on_apply answers the runtime envelope"
+    );
+
+    send(
+        &harness,
+        "abort",
+        "always_on_abort",
+        json!({"projectKey": project, "sessionKey": "s1"}),
+    )
+    .await;
+    let abort = take_frame(&harness, "abort");
+    negative_assert_eq!(abort["ok"], true, "#2294 always_on_abort answers ok");
+    negative_assert_eq!(
+        abort["result"],
+        json!({"aborted": false,
+               "sessionKey": "s1",
+               "error": {"code": "session_not_active",
+                         "message": "No active Always-On run owns this session."}}),
+        "#2294 always_on_abort answers the runtime envelope"
+    );
+
+    send(
+        &harness,
+        "rerun",
+        "always_on_rerun_plan",
+        json!({"projectKey": project, "planId": "p1"}),
+    )
+    .await;
+    let rerun = take_frame(&harness, "rerun");
+    negative_assert_eq!(rerun["ok"], true, "#2294 always_on_rerun_plan answers ok");
+    negative_assert_eq!(
+        rerun["result"]["error"],
+        json!({"code": "plan_not_found", "message": "Plan p1 not found"}),
+        "#2294 always_on_rerun_plan answers the runtime envelope"
+    );
+    negative_assert!(
+        rerun["result"]["runId"]
+            .as_str()
+            .is_some_and(|run_id| !run_id.is_empty()),
+        "#2294 always_on_rerun_plan carries its generated run id"
+    );
+
+    harness
+        .host
+        .shutdown(harness.options.drain_budget)
+        .await
+        .expect("#2294 host shutdown");
+}
+
+/// #2294 `createAlwaysOn` conditions at the assembly: a present
+/// `alwaysOn:` section whose projects are all disabled constructs no manager
+/// — the three names stay out of capabilities and the methods keep the
+/// #1313 not_configured envelopes byte for byte.
+#[tokio::test]
+async fn a_disabled_always_on_section_keeps_the_three_names_gated() {
+    let (scratch, requests) =
+        std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#2294 fixture setup");
+    let options = requests.options.clone();
+    let env = requests.env.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#2294 dispose unused fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2294 shutdown unused fixture owner");
+    let project = options.project.to_string_lossy().into_owned();
+    std::fs::write(
+        options.home.join("pilotdeck.yaml"),
+        format!("{ALWAYS_ON_BASE}alwaysOn:\n  projects:\n    {project}:\n      enabled: false\n"),
+    )
+    .expect("#2294 disabled always-on config");
+    let mut harness = boot_with(options, env).await;
+    harness._scratch = Some(scratch);
+
+    send(&harness, "capabilities", "describe_server", json!({})).await;
+    let advertised = capabilities(&harness);
+    for name in crate::runtime::always_on::ALWAYS_ON_METHODS.iter().copied() {
+        negative_assert!(
+            !advertised.contains(&name.to_owned()),
+            "#2294 the disabled section keeps {name} out of capabilities"
+        );
+    }
+
+    send(
+        &harness,
+        "apply",
+        "always_on_apply",
+        json!({"projectKey": project, "workCycleId": "c1"}),
+    )
+    .await;
+    let apply = take_frame(&harness, "apply");
+    negative_assert_eq!(
+        apply["result"],
+        json!({"sessionKey": "",
+               "error": {"code": "not_configured",
+                         "message": "Always-On apply is not configured on this gateway."}}),
+        "#2294 the unconfigured envelope is byte for byte the #1313 shape"
+    );
+
+    harness
+        .host
+        .shutdown(harness.options.drain_budget)
+        .await
+        .expect("#2294 host shutdown");
 }
 
 /// Issue #1326's "one scheduler, no re-execution across the switch": the

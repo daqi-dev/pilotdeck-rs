@@ -78,6 +78,72 @@ pub(super) fn build(
     Ok(Some(manager))
 }
 
+/// The native process's one cron provider for the automation bundle
+/// (#2294): `build` is the construction half, this is the lifecycle half
+/// the bundle drives (`ProjectAutomationCronProvider`). The bundle's
+/// `createCron` section gate stays its decision (:304-306) — this factory
+/// only ever sees a present section.
+pub(super) fn native_factory() -> super::automation::CronFactory {
+    use super::automation::CronFactoryInput;
+    Arc::new(|input: CronFactoryInput| {
+        // The bundle only calls this with a present section, so `build`'s
+        // `Some` is the only reachable arm.
+        let manager = build(Some(&input.section), &input.pilot_home)?
+            .expect("#2294 a present section constructs a manager");
+        Ok(Arc::new(NativeCronProvider { manager })
+            as Arc<dyn super::automation::ProjectAutomationProvider>)
+    })
+}
+
+/// `ProjectAutomationCronProvider`: the one `CronManager` behind the bundle's
+/// lifecycle surface.
+pub(super) struct NativeCronProvider {
+    manager: Arc<CronManager>,
+}
+
+impl super::automation::ProjectAutomationProvider for NativeCronProvider {
+    fn bind_agent_gateway(
+        &self,
+        gateway: &super::automation::ProjectAutomationAgentGateway,
+        _hooks: Option<super::automation::AlwaysOnBindHooks<'_>>,
+    ) -> Result<(), std::io::Error> {
+        // The cron bind signature takes no hooks record (the asymmetry
+        // ProjectAutomationBundle.ts:318-326 pins).
+        self.manager
+            .bind_agent_gateway(gateway.cron.clone())
+            .map_err(cron_io_error)
+    }
+
+    fn start(self: Arc<Self>) -> super::automation::AutomationFuture {
+        let manager = self.manager.clone();
+        Box::pin(async move {
+            manager
+                .start()
+                .map_err(|error| String::from_utf16_lossy(error.message().units()))
+        })
+    }
+
+    fn stop(self: Arc<Self>) -> super::automation::AutomationFuture {
+        let manager = self.manager.clone();
+        Box::pin(async move {
+            manager
+                .stop()
+                .map_err(|error| String::from_utf16_lossy(error.message().units()))
+        })
+    }
+
+    /// TS composes the cron provider's tool definitions into `extraTools`;
+    /// the port has none behind its manager (the #1305 firing half owns that
+    /// surface), so the publish composes none.
+    fn tools(&self) -> Vec<JsString> {
+        Vec::new()
+    }
+
+    fn cron_manager(&self) -> Option<Arc<CronManager>> {
+        Some(self.manager.clone())
+    }
+}
+
 /// `submitTurn`'s input exactly as CronFire.ts:80-88 builds it — the seven
 /// fields the port's `CronTurnSubmit` carries; a task without a projectKey
 /// omits the key, which reads as `undefined` to the submitter like TS.

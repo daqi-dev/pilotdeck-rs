@@ -380,6 +380,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         upload_gateway: Arc::new(UploadGateway::unavailable()),
         prepare_weixin_login: None,
         cron: None,
+        always_on: None,
         settings: Requests::stub_settings(owner),
         session_overrides: Arc::default(),
     }

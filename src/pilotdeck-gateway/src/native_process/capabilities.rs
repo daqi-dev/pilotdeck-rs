@@ -64,6 +64,13 @@ fn cron(requests: &Requests) -> bool {
     requests.cron.is_some()
 }
 
+/// `options.alwaysOnControl` (#2294): the three always-on names need the
+/// configured background runtime — a manager exists only when the
+/// `alwaysOn:` section has a project with `enabled: true`.
+fn always_on(requests: &Requests) -> bool {
+    requests.always_on.is_some()
+}
+
 /// Advertised names, in the order the TS baseline records them.
 // One row per name: the table is read as a table (and diffed against
 // `oracle.json` row by row), so it is laid out by hand rather than exploded
@@ -147,6 +154,14 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "cron_delete", methods: &[], wired: cron },
     Capability { name: "cron_stop", methods: &[], wired: cron },
     Capability { name: "cron_run_now", methods: &[], wired: cron },
+    // TS splices these three right after the cron six, gated the same way on
+    // `options.alwaysOnControl` (InProcessGateway.ts:2123-2126); the fixture
+    // does not configure always-on, which is why they are the other table
+    // names the recorded state does not contain. `ALWAYS_ON_METHODS` owns
+    // both sides (#2294).
+    Capability { name: "always_on_apply", methods: &[], wired: always_on },
+    Capability { name: "always_on_abort", methods: &[], wired: always_on },
+    Capability { name: "always_on_rerun_plan", methods: &[], wired: always_on },
 ];
 
 /// TS records these names but this process must not advertise them: the
@@ -186,24 +201,6 @@ pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[
 /// tree and so adding one without deleting its line fails a test.
 #[allow(dead_code)] // read by the capability tests only
 pub(super) const OUT_OF_SCOPE: &[(&str, &str)] = &[
-    // #1313 r1: the three wire methods are routed (methods/always_on.rs) but
-    // no always-on control is bound in this process — TS lists the names only
-    // with `options.alwaysOnControl` (InProcessGateway.ts:2123-2126), so the
-    // honest advertisement here is none. The control port and the runtime it
-    // fronts land in #2294, which moves these rows into the table with a real
-    // provider probe (the `cron` pattern).
-    (
-        "always_on_apply",
-        "no always-on control is bound; TS advertises only with options.alwaysOnControl (InProcessGateway.ts:2123-2126); runtime lands in #2294",
-    ),
-    (
-        "always_on_abort",
-        "no always-on control is bound; TS advertises only with options.alwaysOnControl (InProcessGateway.ts:2123-2126); runtime lands in #2294",
-    ),
-    (
-        "always_on_rerun_plan",
-        "no always-on control is bound; TS advertises only with options.alwaysOnControl (InProcessGateway.ts:2123-2126); runtime lands in #2294",
-    ),
     (
         "manager_browsers",
         "not this issue: the TS CLI only passes the callback through (cli/createLocalGateway.ts:1270) and nothing in the baseline tree calls it, so the baseline never advertises it either",
@@ -391,14 +388,22 @@ mod tests {
         }
         for name in &table {
             negative_assert!(
-                recorded.contains(name) || crate::runtime::cron::CRON_METHODS.contains(name),
-                "#1352 {name} is advertised but the TS baseline does not record it and it is not a cron name"
+                recorded.contains(name)
+                    || crate::runtime::cron::CRON_METHODS.contains(name)
+                    || crate::runtime::always_on::ALWAYS_ON_METHODS.contains(name),
+                "#1352 {name} is advertised but the TS baseline does not record it and it is neither a cron nor an always-on name"
             );
         }
         for name in crate::runtime::cron::CRON_METHODS {
             negative_assert!(
                 !recorded.contains(&name),
                 "#1352 cron name {name} is recorded by the fixture; the cron gate assumption is stale"
+            );
+        }
+        for name in crate::runtime::always_on::ALWAYS_ON_METHODS {
+            negative_assert!(
+                !recorded.contains(&name),
+                "#2294 always-on name {name} is recorded by the fixture; the always-on gate assumption is stale"
             );
         }
     }

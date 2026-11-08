@@ -55,6 +55,13 @@ pub struct Requests {
     /// capabilities and every call answers the `requireCron` gate
     /// (InProcessGateway.ts:3016-3022).
     pub cron: Option<Arc<crate::runtime::cron::CronManager>>,
+    /// A7.8 always-on background runtime (#2294): the automation bundle's
+    /// staged always-on manager, the port of TS `options.alwaysOnControl`.
+    /// `None` is the unconfigured shape (no `alwaysOn:` section, or no
+    /// project with `enabled: true`): the three names stay out of
+    /// capabilities and every call answers the #1313 `not_configured`
+    /// envelopes byte for byte (InProcessGateway.ts:2992-3016).
+    pub always_on: Option<Arc<crate::runtime::always_on::AlwaysOnManager>>,
     /// U7 global settings gateway (#1320): the six settings methods route
     /// here through the #1305 registry. Production binds
     /// [`crate::native_process::services::native_settings`].
