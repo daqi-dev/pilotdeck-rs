@@ -1265,7 +1265,7 @@ async fn native_budget_admission_captures_once_settles_before_projection_and_cle
     let run=RunRef{session_key:"s".into(),run_id:"r".into(),project_key:Some("p".into())};
     assert!(admission.admitted_preflight(&input,&run,&stub_completion()).await.unwrap().is_empty());
     *budget.spent.lock().unwrap()=1.0;
-    assert_eq!(admission.take_turn_budget(&run),js(&json!({"totalUsd":2.0,"spentUsd":0.5})),"turn keeps its admission snapshot");
+    assert_eq!(json(&admission.take_turn_budget(&run)),json!({"totalUsd":2.0,"spentUsd":0.5}),"turn keeps its admission snapshot");
     admission.observe_event(&input,&js(&json!({"type":"turn_completed","runId":"r","result":{"budget":{"taskBudgetUsd":2,"turnSpentUsd":1.0}}}))).await.unwrap();
     assert_eq!(*budget.writes.lock().unwrap(),vec![JsString::from("r")]);
     let events=admission.admitted_preflight(&input,&run,&stub_completion()).await.unwrap();

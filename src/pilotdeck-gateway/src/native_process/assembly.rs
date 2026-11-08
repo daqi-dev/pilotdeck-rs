@@ -70,6 +70,7 @@ pub(super) mod dialog_recovery;
 mod mcp;
 mod memory;
 mod sdk_adapter;
+mod prompt_suggestion;
 mod sdk_dispatch;
 pub(super) mod sdk_hooks;
 mod sdk_model;
@@ -1029,7 +1030,15 @@ async fn start_assembly(
                         .await
                         .map_err(|error| RuntimeError::new(error.to_string()))?,
                 );
+                let suggestions = sdk.prompt_config(&context.session_key).await
+                    .as_ref().and_then(|sdk|sdk.get("promptSuggestions"))==Some(&JsValue::Bool(true));
+                let suggestion_generator = suggestions.then(|| prompt_suggestion::suggestion_generator(
+                    model.providers.clone(), object([
+                        ("provider",config.get("provider").cloned().unwrap_or(JsValue::Undefined)),
+                        ("model",config.get("model").cloned().unwrap_or(JsValue::Undefined)),
+                    ])));
                 let tail = TailConfig {
+                    suggestion_generator,
                     cwd: Some(options.project.clone()),
                     // #1371: the controlled loop emits no assistant text, so
                     // the automatic title request is a stimulus difference

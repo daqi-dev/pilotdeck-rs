@@ -586,3 +586,85 @@ mod plan_contract_tests;
 
 #[path = "native_dialog_tools_tests.rs"]
 mod native_dialog_tools_tests;
+
+#[tokio::test]
+async fn sdk_progress_reaches_the_real_turn_emitter() {
+    use crate::host::modules::tool_context::ToolRuntimeContext;
+    let mut config = JsObject::new();
+    config.insert("includeToolProgress".into(), JsValue::Bool(true));
+    let (_scratch, tools, recorder, identity) =
+        make_tools(config, Arc::default(), RuleSetHandle::empty());
+    let events = Arc::new(std::sync::Mutex::new(Vec::<JsValue>::new()));
+    let captured = events.clone();
+    let ports = tools.turn_with_authority(
+        &identity,
+        recorder,
+        Cancellation::new(),
+        Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
+            can_prompt: Some(false),
+            policy_can_prompt: None,
+            sdk_permission_mode: None,
+            sdk_models: None,
+            sdk_hooks: None,
+            emit: Arc::new(move |value| {
+                captured.lock().unwrap().push(value);
+                true
+            }),
+        }),
+    );
+    let built = ports
+        .tool_context
+        .prepare(JsValue::Object(JsObject::new()))
+        .await
+        .unwrap();
+    let context = built.runtime.downcast_ref::<ToolRuntimeContext>().unwrap();
+    let progress = context
+        .progress
+        .as_ref()
+        .expect("SDK progress must be wired");
+    let mut event = JsObject::new();
+    for (key, value) in [
+        ("toolCallId", "call"),
+        ("toolName", "bash"),
+        ("message", "stdout: 1 bytes"),
+        ("createdAt", "2026-01-01T00:00:00.000Z"),
+    ] {
+        event.insert(key.into(), value.into());
+    }
+    progress(event);
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].get("type"), Some(&"tool_progress".into()));
+    assert_eq!(events[0].get("toolCallId"), Some(&"call".into()));
+    assert!(
+        events[0].get("sessionId").is_none(),
+        "gateway projector excludes host identity fields"
+    );
+}
+
+#[tokio::test]
+async fn sdk_tool_catalog_policy_blocks_real_execution_even_in_bypass_mode() {
+    for (policy, forbidden, input) in [
+        (crate::metadata::object([("managedTools",crate::metadata::object([("allow",JsValue::Array(vec!["read_file".into()])),("deny",JsValue::Array(Vec::new()))]))]), "write_file", crate::metadata::object([("file_path","must-not-exist".into()),("content","FORBIDDEN".into())])),
+        (crate::metadata::object([("sandbox",crate::metadata::object([("filesystem","read_only".into())]))]), "write_file", crate::metadata::object([("file_path","must-not-exist".into()),("content","FORBIDDEN".into())])),
+        (crate::metadata::object([("sandbox",crate::metadata::object([("process","deny".into())]))]), "bash", crate::metadata::object([("command","touch must-not-exist".into())])),
+    ] {
+        let (_scratch,tools,recorder,identity)=make_tools(policy.as_object().unwrap().clone(),Arc::default(),RuleSetHandle::empty());
+        let target=tools.options.project.join("must-not-exist");
+        let tools=tools.with_permission_mode_source(Arc::new(||Some("bypassPermissions".into())));
+        let ports=tools.turn(&identity,recorder,Cancellation::new());
+        let catalog=ports.tool_execution.list().await.unwrap(); assert!(catalog.iter().any(|tool|tool.fields().get("name")==Some(&"read_file".into()))); assert!(!catalog.iter().any(|tool|tool.fields().get("name")==Some(&forbidden.into())));
+        let resource=InteractionPermission::default();let mut router=crate::host::modules::ModuleRouter::default();
+        let permission=resource.bind_turn(identity.session_id,identity.run_id,ports.interaction.permission,ports.tool_execution.clone(),&mut router).unwrap();
+        ports.tool_execution.bind_turn_permission(permission.clone()).unwrap();
+        let context=ports.tool_context.prepare(JsValue::Undefined).await.unwrap();
+        let mut results=ports.tool_execution.execute_all(vec![ToolCall{id:"forbidden".into(),name:forbidden.into(),input}],context).await.unwrap();
+        let result=results.remove(0);assert_eq!(result.get("error").and_then(|error|error.get("code")),Some(&"tool_not_found".into()));assert!(!target.exists());
+        let context=ports.tool_context.prepare(JsValue::Undefined).await.unwrap();
+        let mut results=ports.tool_execution.execute_all(vec![ToolCall{id:"allowed".into(),name:"read_file".into(),input:crate::metadata::object([("file_path","probe.txt".into())])}],context).await.unwrap();
+        assert_eq!(results.remove(0).get("type"),Some(&"success".into()));
+        ports.tool_execution.dispose().await.unwrap();ports.tool_execution.wait_closed().await.unwrap();permission.close();
+    }
+}

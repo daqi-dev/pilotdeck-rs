@@ -739,18 +739,6 @@ impl ProjectAutomationBundle {
         }
     }
 
-    /// The staged generation's always-on control manager — the face TS's
-    /// `getInitialGatewayOptions` / `publishGeneration` hand the gateway
-    /// (where the provider *is* the manager; see the trait docs).
-    pub(crate) fn always_on_manager(&self) -> Option<Arc<AlwaysOnManager>> {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state
-            .generation
-            .always_on
-            .as_ref()
-            .and_then(|provider| provider.always_on_manager())
-    }
-
     /// The staged generation's cron control manager — the cron half of the
     /// same composition face (`getInitialGatewayOptions().cron`).
     pub(crate) fn cron_manager(&self) -> Option<Arc<CronManager>> {

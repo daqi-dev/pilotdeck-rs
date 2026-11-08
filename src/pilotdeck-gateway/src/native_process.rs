@@ -24,6 +24,7 @@ mod project_storage;
 mod projects;
 mod server_host;
 mod sop_control;
+mod sdk_tools;
 pub use local_host::{LocalHost, LocalHostOptions};
 pub use server_host::{
     ControlHandler, ControlReply, ControlRequest, HostExit, ServerOptions, legacy_local_bind_host,
@@ -66,6 +67,7 @@ mod switch_wiring;
 #[cfg(test)]
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
+mod sdk_tool_policy;
 mod tools;
 mod web;
 // #1433: the session MCP tool composition (SessionMcpRuntimeBundle) behind

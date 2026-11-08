@@ -1758,7 +1758,7 @@ async fn reload_ticket_releases_after_settlement() {
         let events = probe.events();
         if events
             .iter()
-            .filter(|event| *event == "mark-all-dirty:config_changed")
+            .filter(|event| event.starts_with("broadcast:config_changed:"))
             .count()
             == 2
         {
@@ -1770,9 +1770,8 @@ async fn reload_ticket_releases_after_settlement() {
         );
         tokio::task::yield_now().await;
     }
-    for _ in 0..200 {
-        tokio::task::yield_now().await;
-    }
+    // The final broadcast, rather than the preceding mark callback or an
+    // arbitrary yield count, is the settlement completion milestone.
     let settled: Vec<String> = probe
         .events()
         .into_iter()

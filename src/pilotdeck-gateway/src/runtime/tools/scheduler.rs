@@ -41,6 +41,7 @@ pub enum SchedulerMode {
 #[derive(Clone)]
 pub struct ToolRuntime {
     pub registry: ToolRegistry,
+    catalog_error: Option<JsString>,
     permission: Arc<dyn PermissionDecision>,
     mode_owner: Option<Arc<dyn PermissionDecision>>,
     turn_permission:
@@ -126,6 +127,7 @@ impl ToolRuntime {
     ) -> Self {
         Self {
             registry,
+            catalog_error: None,
             permission,
             mode_owner: None,
             turn_permission: Arc::default(),
@@ -135,6 +137,10 @@ impl ToolRuntime {
             #[cfg(unix)]
             native_sandbox_provider: None,
         }
+    }
+    pub(crate) fn with_catalog_error(mut self,error:Option<JsString>)->Self { self.catalog_error=error;self }
+    fn check_catalog(&self)->Result<(),HostError> {
+        match &self.catalog_error { Some(message)=>Err(ModuleError::new(message.clone()).into()),None=>Ok(()) }
     }
     pub(crate) fn with_mode_owner(mut self, owner: Arc<dyn PermissionDecision>) -> Self {
         self.mode_owner = Some(owner);
@@ -184,6 +190,7 @@ impl ToolRuntime {
         context: ToolRunContext,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<JsObject>, HostError>> + Send + '_>> {
         Box::pin(async move {
+            self.check_catalog()?;
             let mut concurrent = Vec::new();
             let mut sequential = Vec::new();
             let mut transitions = Vec::new();
@@ -302,6 +309,7 @@ impl ToolRuntime {
         call: ToolCall,
         context: ToolRunContext,
     ) -> Result<JsObject, HostError> {
+        self.check_catalog()?;
         let started = context.now_iso()?;
         let mut tool = self.registry.get(&call.name);
         let mut repaired = None;
@@ -1034,7 +1042,9 @@ impl ToolRuntime {
 impl ToolCatalog for ToolRuntime {
     fn list(&self) -> HostFuture<Vec<Arc<dyn ToolDefinition>>> {
         let registry = self.registry.clone();
+        let validity=self.check_catalog();
         Box::pin(async move {
+            validity?;
             Ok(registry
                 .list()?
                 .into_iter()

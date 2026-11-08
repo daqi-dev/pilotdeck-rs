@@ -30,6 +30,17 @@ impl Default for StructuredOutputTool {
         }
     }
 }
+impl StructuredOutputTool {
+    pub(crate) fn with_schema(schema: JsValue)->Self {
+        let mut tool=Self::default();
+        tool.fields.insert("inputSchema".into(),JsValue::Object(object([
+            ("type","object".into()),("required",JsValue::Array(vec!["value".into()])),
+            ("additionalProperties",JsValue::Bool(false)),
+            ("properties",JsValue::Object(object([("value",schema)]))),
+        ])));
+        tool
+    }
+}
 impl ToolDefinition for StructuredOutputTool {
     fn fields(&self) -> &JsObject {
         &self.fields

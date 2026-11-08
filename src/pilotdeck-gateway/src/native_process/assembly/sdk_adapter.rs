@@ -234,6 +234,14 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
 }
 
 pub(super) fn apply_prompt_config(target: &mut pilotdeck_protocol::JsObject, sdk: &JsValue) {
+    for key in ["toolAliases", "deferredTools", "outputFormat"] {
+        if let Some(value)=sdk.get(key).filter(|v|!v.is_undefined()){target.insert(key.into(),value.clone());}
+    }
+    if sdk.get("outputFormat").is_some_and(|v|!v.is_undefined()){target.insert("stopOnStructuredOutput".into(),JsValue::Bool(true));}
+
+    if sdk.get("agentProgressSummaries") == Some(&JsValue::Bool(true)) {
+        target.insert("includeToolProgress".into(), JsValue::Bool(true));
+    }
     if let Some(agents) = sdk.get("agents").and_then(JsValue::as_object) {
         target.insert(
             "subagentDefinitions".into(),
@@ -248,6 +256,8 @@ pub(super) fn apply_prompt_config(target: &mut pilotdeck_protocol::JsObject, sdk
         "appendSystemPrompt",
         "planModeInstructions",
         "userDialogKinds",
+        "managedTools",
+        "sandbox",
     ] {
         if let Some(value) = sdk.get(key).filter(|value| !value.is_undefined()) {
             target.insert(key.into(), value.clone());
@@ -262,8 +272,21 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
             "sdkSessionConfig must be an object.",
         )
     })?;
+    super::super::sdk_tool_policy::validate_sandbox(config)?;
     super::sdk_hooks::validate(config)?;
+    for key in ["agentProgressSummaries", "forwardSubagentText"] {
+        if object
+            .get(key)
+            .is_some_and(|v| !v.is_undefined() && v.as_bool().is_none())
+        {
+            return Err(SubmitError::new(
+                "INVALID_SDK_SESSION_CONFIG",
+                format!("{key} must be a boolean."),
+            ));
+        }
+    }
     super::task_budget::validate(config)?;
+    super::super::sdk_tools::validate(config)?;
     validate_agents(object.get("agents"))?;
     if let Some(value) = object.get("userDialogKinds").filter(|v| !v.is_undefined()) {
         let valid = match value {
@@ -307,8 +330,16 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
     }
     if object.entries().iter().any(|(key, value)| {
         ![
+            "agentProgressSummaries",
+            "forwardSubagentText",
             "permissionMode",
+            "managedTools",
+            "sandbox",
             "taskBudget",
+            "promptSuggestions",
+            "toolAliases",
+            "deferredTools",
+            "outputFormat",
             "managedModels",
             "fallbackModel",
             "hooks",
@@ -750,6 +781,13 @@ mod tests {
         assert_eq!(target.get("systemPrompt"), Some(&"new".into()));
     }
     #[test]
+    fn sdk_catalog_policies_are_projected_only_from_present_committed_config() {
+        let config=object([("managedTools",object([("allow",JsValue::Array(vec!["read*".into()])),("deny",JsValue::Array(Vec::new()))])),("sandbox",object([("process","deny".into())]))]);
+        assert!(validate_supported_config(&config).is_ok()); let mut target=pilotdeck_protocol::JsObject::new(); apply_prompt_config(&mut target,&config);
+        assert_eq!(target.get("managedTools"),config.get("managedTools")); assert_eq!(target.get("sandbox"),config.get("sandbox"));
+        apply_prompt_config(&mut target,&object([]));assert_eq!(target.get("managedTools"),config.get("managedTools"));
+    }
+    #[test]
     fn only_wired_sdk_modes_are_accepted() {
         assert!(validate_supported_config(&object([])).is_ok());
         for mode in ["acceptEdits", "dontAsk"] {
@@ -772,7 +810,7 @@ mod tests {
             validate_supported_config(&object([("sandbox", object([]))]))
                 .unwrap_err()
                 .code,
-            "CAPABILITY_UNAVAILABLE"
+            "INVALID_SDK_SESSION_CONFIG"
         );
     }
 }
@@ -803,5 +841,30 @@ mod user_dialog_config_tests {
         let mut projected = pilotdeck_protocol::JsObject::new();
         apply_prompt_config(&mut projected, &config);
         assert_eq!(projected.get("userDialogKinds"), Some(&kinds));
+    }
+    #[test]
+    fn progress_options_are_boolean_and_projected_only_when_enabled() {
+        for key in ["agentProgressSummaries", "forwardSubagentText"] {
+            for value in [JsValue::Null, "yes".into(), JsValue::Number(1.0)] {
+                assert_eq!(
+                    validate_supported_config(&object([(key, value)]))
+                        .unwrap_err()
+                        .code,
+                    "INVALID_SDK_SESSION_CONFIG"
+                );
+            }
+            for value in [true, false] {
+                assert!(validate_supported_config(&object([(key, JsValue::Bool(value))])).is_ok());
+            }
+        }
+        let mut config = pilotdeck_protocol::JsObject::new();
+        apply_prompt_config(
+            &mut config,
+            &object([("agentProgressSummaries", JsValue::Bool(true))]),
+        );
+        assert_eq!(
+            config.get("includeToolProgress"),
+            Some(&JsValue::Bool(true))
+        );
     }
 }

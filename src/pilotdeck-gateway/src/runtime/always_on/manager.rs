@@ -41,7 +41,7 @@ use std::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 use super::{
-    AlwaysOnConfig, AlwaysOnLogger, AlwaysOnPaths, ChannelLeaseRegistry, DiscoveryPlanRecord,
+    AlwaysOnConfig, AlwaysOnLogger, AlwaysOnPaths, ChannelLeaseRegistry,
     DiscoveryPlanStore, DiscoveryScheduler, DiscoveryStateStore, IsProjectBusy, SchedulerDeps,
     WorkCycleStore,
     fire::{

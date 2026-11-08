@@ -37,7 +37,7 @@ mod state;
 mod watcher;
 mod workspace;
 mod workspace_copy;
-pub(crate) use workspace::{NativeWorkspace, NativeWorkspaceDiff, WorkspaceError, WorkspaceHandle};
+pub(crate) use workspace::{NativeWorkspace, WorkspaceError, WorkspaceHandle};
 
 pub(crate) use control::{AlwaysOnControl, StandaloneApply, create_control};
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
@@ -48,8 +48,8 @@ pub(crate) use fire::{
 pub(crate) use gates::{GateBlockReason, GateInput, evaluate_always_on_discovery_gates};
 pub(crate) use leases::{ChannelLease, ChannelLeaseRegistry};
 pub(crate) use manager::{
-    AbortInput, AlwaysOnAgentGateway, AlwaysOnManagerOptions, ApplyInput, ControlError,
-    GatewayAbortInput, RerunInput, PhaseRequest, PhaseResult, PhaseObserver, PhaseCompletion, FireInputs, FireFactory,
+    AlwaysOnAgentGateway, AlwaysOnManagerOptions, ControlError,
+    GatewayAbortInput, PhaseRequest, PhaseResult, PhaseCompletion, FireInputs, FireFactory,
     AlwaysOnRunContextRegistry,
 };
 // The one face that crosses the crate boundary: `native_process::requests`
@@ -58,7 +58,7 @@ pub(crate) use manager::{
 // `pub(crate)`.
 pub use manager::AlwaysOnManager;
 pub(crate) use paths::{AlwaysOnPaths, resolve_always_on_paths};
-pub(crate) use scheduler::{ALWAYS_ON_METHODS, DiscoveryScheduler, SchedulerDeps};
+pub(crate) use scheduler::{DiscoveryScheduler, SchedulerDeps};
 pub(crate) use state::DiscoveryStateStore;
 pub(crate) use reports::DiscoveryReportStore;
 pub(crate) use watcher::{SignalWatcher, SignalWatcherOptions};

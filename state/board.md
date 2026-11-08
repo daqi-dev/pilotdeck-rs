@@ -5123,3 +5123,8 @@ r103全目标编译过；bundle12、配置FIFO/超限保快照1、owned shell3�
 ### 2026-11-09 06:08 · SOP 执行器与 SDK 消费链继续补齐
 
 r113 固定 d16309700 在 mbp2 全目标编译通过，Always-On106过0失败1忽略、native496过0失败66忽略、恢复8项通过；SOP host两失败已区分夹具缺usage/不支持cancel与真实续跑生命周期缺口，表单两差异另修后待验，不以整轮脚本0当全绿。现已逐hash整合SOP执行controller八文件、SOP模型验证与恢复同答幂等/异答拒绝片，尚未编译；SDK taskBudget、managedTools、managedModels仍补实际消费者。SOP startup guard暂保留直到真实执行装配验证。完整CLI仍未完成；仅本机源码/证据/提交，Rust全部mbp2，无GitHub写，旧快照保留。
+
+
+### 2026-11-09 06:31 · SOP 生产执行与 SDK 预算/策略收口
+
+r114固定59c3d16a6：mbp2 all-target check、AO106、native501、HTTP134、SOP host3/controller5、native预算2、SDK22通过；budget-store误用lib筛选命中0不计通过，r115改实际integration task_budget七过一忽略。r115固定fa61b4ff5已真实装配SOP并通过check、host3/controller5/model30/submit-host14；native504过1测试末广播竞态失败，admission10过1新增测试对象键序错误，两项已按真实广播完成和对象语义修夹具，待下一轮。managedTools/sandbox、弱引用deferred搜索、outputFormat/aliases、progress与真实建议生成器已整合待编译；settings/SDK local plugins/managedPermissions与ephemeral存储仍实施。恢复不同答案与结构化schema判断见当日决策，不改冻结尺子。只本机提交、全部Rust仅mbp2；完整CLI尚未完成，06:41交接后继续。

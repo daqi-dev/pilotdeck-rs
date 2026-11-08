@@ -474,6 +474,12 @@ impl SessionTools {
         config.insert("env".into(), JsValue::Object(self.env.clone()));
         config.insert("permissionMode".into(), JsValue::String(permission_mode));
         config.insert("permissionContext".into(), permission_context);
+        // The SDK can only narrow the complete ordinary catalog. Capture this
+        // same view in forks and native execution so refresh/aliases cannot
+        // reintroduce a blocked native, extension or MCP definition.
+        let tools = super::sdk_tool_policy::scope(tools, &self.config,
+            self.binding.context.allowed_tools.clone(), self.binding.context.disallowed_tools.clone())
+            .expect("new native turn registry is active");
         let fork_turn = self.forks.as_ref().map(|registry| {
             super::agent::ForkTurn::new(
                 registry.clone(),
@@ -496,6 +502,7 @@ impl SessionTools {
             }
             turn.register(&tools);
         }
+        let sdk_catalog_error = super::sdk_tools::install(&tools,&config).err().map(|error|error.message.into());
         let execution = ToolRuntime::new(
             tools,
             // Even a profile without an interaction resource keeps this turn's
@@ -503,6 +510,7 @@ impl SessionTools {
             Arc::new(Permissions(Mutex::new((turn_context.clone(), None)))),
             SchedulerMode::Concurrent,
         )
+        .with_catalog_error(sdk_catalog_error)
         .with_native_sandbox(
             self.config
                 .get("sandboxMode")
@@ -668,6 +676,29 @@ impl SessionTools {
             Arc::new(dialog.port.with_options(options)) as capability::RuntimeContext
         });
         let tool_ports = ToolContextPorts {
+            // ToolRuntimeContext creates this callback only when the frozen
+            // session config enables includeToolProgress.  Project exactly
+            // the gateway tool_progress shape before the owned turn emitter.
+            event_emitter: Some(Arc::new({
+                let emit = permission_emit.clone();
+                move |event: JsObject| {
+                    let mut frame = JsObject::new();
+                    frame.insert("type".into(), "tool_progress".into());
+                    for key in ["toolCallId", "toolName", "message", "createdAt"] {
+                        frame.insert(
+                            key.into(),
+                            event.get(key).cloned().unwrap_or(JsValue::Undefined),
+                        );
+                    }
+                    if let Some(value) = event
+                        .get("metadata")
+                        .filter(|v| crate::runtime::turn::submit::truthy(v))
+                    {
+                        frame.insert("metadata".into(), value.clone());
+                    }
+                    let _ = emit(JsValue::Object(frame));
+                }
+            })),
             user_dialog,
             file_update_notifier: sdk_file_notifier,
             subagent: fork_turn.as_ref().map(|turn| {
