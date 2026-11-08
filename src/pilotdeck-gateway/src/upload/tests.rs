@@ -2466,9 +2466,10 @@ async fn cleanup_clamps_a_zero_interval_instead_of_panicking() {
 // #1850: `store_swapping_tmp` for any single directory: the first `now`
 // callback renames `dir` to a sibling and replaces it with a symlink to
 // `outside`. Used with the record's task directory — the plain root above it
-// stays real, so only `inside_root` can refuse the cancel delete — and with
-// the lease `<id>` directory, whose emptied-parent removal is guarded the same
-// way.
+// stays real, so only the `canonical_home` component walk can refuse the
+// cancel delete (fix-r1; containment alone passes an in-root alias) — and
+// with the lease `<id>` directory, whose emptied-parent removal is guarded
+// the same way.
 fn store_swapping_dir(
     project: &Path,
     dir: PathBuf,
@@ -2545,7 +2546,8 @@ fn upload_cancel_does_not_follow_a_root_swapped_mid_mutate() {
 // #1850: the same delete, but the component swapped for an outside symlink
 // is the record's task directory — the root above it is still plain, so the
 // plain-root gate alone would let `remove_tree` follow the link. Only the
-// per-entry `inside_root` comparison refuses it.
+// per-entry `canonical_home` component walk refuses it (fix-r1;
+// `cancel-alias-walk-downgraded` is the containment-only shape it replaced).
 #[test]
 fn upload_cancel_does_not_follow_a_task_dir_swapped_mid_mutate() {
     let scratch = Scratch::new();
@@ -2757,5 +2759,44 @@ fn upload_cancel_does_not_delete_through_an_aliased_task_dir() {
     assert!(
         log.contains("[uploads] cancel skipped"),
         "the refused delete is logged: {log}"
+    );
+}
+
+// #2423 fix-r1 (deepseek r1 concurrency#1，仲裁实测坐实，比评审所述更深一层):
+// containment-only 比对放行指向根内 `<id>` 的链接 `<id>` 别名，而别名扫到的
+// 条目按 victim 自身字节判过期——别名指向**在用**租约目录时，其 lease.json 与
+// pin 硬链接全被当成孤儿租约逐个删光（探针 `lease-alias-probe.out.txt` 的
+// arb-lease-C 三行全 false）。条目删除点与 cancel 同用 `canonical_home` 组件
+// 走查后，链接 `<id>` 整体拒扫并记日志。
+#[test]
+fn upload_lease_cleanup_does_not_sweep_through_an_aliased_id_dir() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p-lease-alias-active");
+    let h = golden_store(&project);
+    let root = project.join(".tmp/chat-upload-leases");
+    let victim = root.join("upload-2/lease-a");
+    fs::create_dir_all(&victim).unwrap();
+    fs::write(
+        victim.join("lease.json"),
+        "{\"expiresAt\":\"2970-01-01T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
+    fs::write(victim.join("pin-1"), "pin").unwrap();
+    std::os::unix::fs::symlink(&victim, root.join("upload-1")).unwrap();
+    h.store.cleanup_expired().unwrap();
+
+    assert!(
+        victim.join("lease.json").exists(),
+        "an aliased id dir must not put an active lease's files on the sweep"
+    );
+    assert!(
+        victim.join("pin-1").exists(),
+        "an aliased id dir must not delete an active lease's pin set"
+    );
+    assert!(victim.exists(), "the active lease dir must survive");
+    let log = h.store.cleanup_log.lock().unwrap().join("\n");
+    assert!(
+        log.contains("linked lease dir"),
+        "the skip is logged: {log}"
     );
 }
