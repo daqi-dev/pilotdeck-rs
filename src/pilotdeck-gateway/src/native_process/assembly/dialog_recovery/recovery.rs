@@ -13,9 +13,14 @@ use std::{
     sync::Arc,
 };
 
+#[derive(Clone)]
+pub(crate) enum RecoveryResult {
+    Recovered(bool),
+    Live(Arc<crate::user_dialog::ResponseSnapshot>),
+}
 pub(super) struct RecoveryFlight {
     answer: Arc<DialogAnswer>,
-    receiver: tokio::sync::watch::Receiver<Option<Result<bool, RequestError>>>,
+    receiver: tokio::sync::watch::Receiver<Option<Result<RecoveryResult, RequestError>>>,
     #[cfg(test)]
     joined: usize,
 }
@@ -167,6 +172,7 @@ impl NativeDialogRecovery {
         .await
         .map_err(error)?
     }
+    #[cfg(test)]
     pub(crate) async fn recover_answer(
         self: &Arc<Self>,
         requests: &Requests,
@@ -175,8 +181,22 @@ impl NativeDialogRecovery {
         id: &JsString,
         answer: &DialogAnswer,
     ) -> Result<bool, RequestError> {
+        Ok(matches!(
+            self.recover_or_live(requests, params, session, id, answer)
+                .await?,
+            RecoveryResult::Recovered(true)
+        ))
+    }
+    pub(crate) async fn recover_or_live(
+        self: &Arc<Self>,
+        requests: &Requests,
+        params: &JsValue,
+        session: &JsString,
+        id: &JsString,
+        answer: &DialogAnswer,
+    ) -> Result<RecoveryResult, RequestError> {
         let Some(project) = self.selected(requests, params, session).await? else {
-            return Ok(false);
+            return Ok(RecoveryResult::Recovered(false));
         };
         let key = (project.clone(), session.clone(), id.clone());
         let (mut receiver, existing) = {
@@ -233,7 +253,12 @@ impl NativeDialogRecovery {
         loop {
             let result = receiver.borrow().clone();
             if let Some(result) = result {
-                return if same { result } else { result.map(|_| false) };
+                return match result? {
+                    RecoveryResult::Live(snapshot) => Ok(RecoveryResult::Live(snapshot)),
+                    RecoveryResult::Recovered(delivered) => {
+                        Ok(RecoveryResult::Recovered(same && delivered))
+                    }
+                };
             }
             receiver
                 .changed()
@@ -248,7 +273,16 @@ impl NativeDialogRecovery {
         session: &JsString,
         id: &JsString,
         answer: &DialogAnswer,
-    ) -> Result<bool, RequestError> {
+    ) -> Result<RecoveryResult, RequestError> {
+        let gate = crate::runtime::tools::builtin::user_dialog::dialog_start_gate(session).await;
+        let snapshot = requests
+            .user_dialog_bus
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .snapshot_for_response(session, id);
+        if let Some(snapshot) = snapshot {
+            return Ok(RecoveryResult::Live(Arc::new(snapshot)));
+        }
         let (chat, permit) = crate::native_process::methods::session_dir::resolve_chat_dir(
             self.home.clone(),
             project.clone(),
@@ -267,7 +301,7 @@ impl NativeDialogRecovery {
         let cache = self.cache.clone();
         // The write, fence and IO permit survive a caller disconnect together.
         tokio::task::spawn_blocking(move || {
-            let (_permit, _fence) = (permit, fence);
+            let (_permit, _fence, _gate) = (permit, fence, gate);
             let journal = journal(&home, &chat, &session)?;
             let dialogs = journal.recover().map_err(error)?;
             let Some(dialog) = dialogs.iter().find(|v| request_id(v) == Some(&id)) else { return Ok(false); };
@@ -329,7 +363,7 @@ impl NativeDialogRecovery {
             journal.remove(&id).map_err(error)?;
             cache.lock().unwrap_or_else(|e| e.into_inner()).remove(&(project, session));
             Ok(true)
-        }).await.map_err(error)?
+        }).await.map_err(error)?.map(RecoveryResult::Recovered)
     }
 }
 fn accepts(request: &JsValue, value: &JsValue) -> bool {
@@ -789,6 +823,127 @@ mod tests {
         assert!(text.contains("first"));
         assert!(!text.contains("different"));
         assert!(journal.recover().unwrap().is_empty());
+        cleanup(&requests).await;
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_journal_start_and_recovery_are_serialized_and_route_to_the_live_dialog() {
+        use crate::runtime::tools::builtin::user_dialog::NativeUserDialogPort;
+        use crate::user_dialog::{
+            ChannelOptions, GatewayUserDialogChannel, InputRequest, UserDialogJournal,
+        };
+        struct PausedJournal {
+            inner: GatewayUserDialogJournal,
+            started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+            release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+        }
+        impl UserDialogJournal for PausedJournal {
+            fn record(&self, event: &JsValue) -> crate::user_dialog::Result<()> {
+                self.inner.record(event)?;
+                if let Some(sender) = self.started.lock().unwrap().take() {
+                    let _ = sender.send(());
+                }
+                self.release.lock().unwrap().recv().unwrap();
+                Ok(())
+            }
+            fn remove(&self, id: &JsString) -> crate::user_dialog::Result<()> {
+                self.inner.remove(id)
+            }
+        }
+        let (_scratch, mut requests) = crate::native_process::management_tests::setup();
+        let recovery = Arc::new(super::super::tests::recovery(&requests));
+        requests.dialog_recovery = Some(recovery.clone());
+        let session: JsString = "live-start-race".into();
+        let chat = crate::native_process::methods::session_dir::bounded_chat_dir(
+            &requests.options.home,
+            &requests.options.project,
+        )
+        .unwrap();
+        let journal = journal(&requests.options.home, &chat, &session).unwrap();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let mut options = ChannelOptions::new(
+            session.clone(),
+            requests.user_dialog_bus.clone(),
+            Arc::new(|_| Ok(())),
+        );
+        options.uuid = Arc::new(|| "dialog".to_owned());
+        options.journal = Some(Arc::new(PausedJournal {
+            inner: journal,
+            started: std::sync::Mutex::new(Some(started_tx)),
+            release: std::sync::Mutex::new(release_rx),
+        }));
+        let channel = GatewayUserDialogChannel::new(options.clone());
+        let port = NativeUserDialogPort::new(options);
+        let begin = tokio::spawn(async move {
+            port.begin(move || {
+                channel.request_input(&InputRequest {
+                    tool_call_id: "tool-call".into(),
+                    tool_name: "request_user_input".into(),
+                    prompt: "Question?".into(),
+                    placeholder: None,
+                    allow_empty: false,
+                    abort: None,
+                })
+            })
+            .await
+            .unwrap()
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(3), started_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        let input = object([
+            ("sessionKey", JsValue::String(session.clone())),
+            ("requestId", "dialog".into()),
+            (
+                "result",
+                object([
+                    ("behavior", "answered".into()),
+                    ("value", "accepted".into()),
+                ]),
+            ),
+        ]);
+        let response = {
+            let requests = requests.clone();
+            tokio::spawn(async move {
+                requests
+                    .user_dialog_request("user_dialog_respond".into(), input)
+                    .await
+                    .unwrap()
+            })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while recovery.flights.lock().unwrap().is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            !response.is_finished(),
+            "recovery must wait until journal and bus registration form one operation"
+        );
+        release_tx.send(()).unwrap();
+        let mut request = tokio::time::timeout(std::time::Duration::from_secs(3), begin)
+            .await
+            .unwrap()
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), response)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.get("delivered"), Some(&JsValue::Bool(true)));
+        assert!(
+            result.get("recovered").is_none(),
+            "response must use the live generation"
+        );
+        assert!(
+            matches!(request.try_result(), Some(Ok(DialogAnswer::Answered(value))) if value == "accepted".into())
+        );
+        assert!(
+            !chat.join("live-start-race.jsonl").exists(),
+            "live answer must not create a synthetic recovery turn"
+        );
         cleanup(&requests).await;
     }
     #[test]

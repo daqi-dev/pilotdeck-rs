@@ -7,6 +7,7 @@ use crate::runtime::turn::{
     submit::{SubmitError, SubmitFuture},
 };
 use pilotdeck_protocol::{JsString, JsValue};
+pub(crate) use recovery::RecoveryResult;
 use std::{
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
