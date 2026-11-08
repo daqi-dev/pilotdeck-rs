@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+const root=resolve(process.env.PDRS_BASELINE||''); const source='src/tool/dialog/FormDialogSchema.ts';
+const expected='cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
+const verify=()=>{assert.equal(execFileSync('git',['-C',root,'rev-parse','HEAD'],{encoding:'utf8'}).trim(),expected);assert.equal(execFileSync('git',['-C',root,'hash-object',source],{encoding:'utf8'}).trim(),execFileSync('git',['-C',root,'rev-parse',`HEAD:${source}`],{encoding:'utf8'}).trim());};
+assert.equal(process.version,'v22.22.0');verify(); const out=process.argv[2];assert.ok(out?.startsWith('/private/tmp/'));await mkdir(out,{recursive:false});
+const {validateFormDialogSchema,acceptsFormDialogAnswer}=await import(pathToFileURL(join(root,source)).href);
+const cases=[['ascii','^a+$','aaa'],['ascii-no','^a+$','aa!'],['word-unicode','^\\w+$','é'],['word-ascii','^\\w+$','abc_'],['digit-unicode','^\\d+$','١'],['dot-astral','^.$','🙂'],['double-dot-astral','^..$','🙂'],['surrogate','^.$','\ud800'],['surrogate-pattern','^\ud800$','\ud800'],['lookahead','^(?=a)b','b'],['lookbehind','(?<=x)y','xy'],['backref','^(a+)\\1$','aaaa'],['negated','^[^a]+$','é'],['space-bom','^\\s$','\ufeff'],['empty','','anything'],['syntax-bad','[','a'],['identity-escape','\\q','q'],['nested','^(a+)+$','aaaaaa!']];
+const records=cases.map(([id,pattern,value])=>{const schema={type:'object',properties:{s:{type:'string',pattern}}}; const answer={s:value};const validation=validateFormDialogSchema(schema);return{id,pattern,value,validation,accepted:validation.ok?acceptsFormDialogAnswer(validation.schema,answer):null};});
+verify();await writeFile(join(out,'oracle.json'),JSON.stringify({records},null,2)+'\n');

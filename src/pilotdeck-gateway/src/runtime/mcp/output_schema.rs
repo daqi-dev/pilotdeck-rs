@@ -2219,7 +2219,7 @@ fn ascii_fold_haystack(text: &str) -> std::borrow::Cow<'_, str> {
     }
 }
 
-fn string_format_valid(format: &str, text: &str) -> Option<bool> {
+pub(crate) fn string_format_valid(format: &str, text: &str) -> Option<bool> {
     if format == "regex" {
         return regex_format_valid(text);
     }

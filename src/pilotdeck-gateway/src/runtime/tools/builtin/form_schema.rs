@@ -16,32 +16,31 @@ fn json(v: &JsValue, budget: &mut usize, depth: usize) -> bool {
 }
 fn name_ok(name: &str) -> bool { let mut chars = name.chars(); chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && name.len() <= 64 && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') }
 fn refname(value: &JsString) -> Option<String> { let value = value.to_utf8().ok()?; let name = value.strip_prefix("#/$defs/")?; name_ok(name).then(|| name.to_owned()) }
-fn legacy_regex(value: &JsString) -> Result<regex::Regex, String> {
-    let pattern = value.to_utf8().map_err(|_| "Pattern contains an unpaired surrogate".to_string())?;
-    // ECMAScript without /u works in UTF-16 code units. Refuse constructs
-    // whose Rust Unicode behaviour could otherwise admit an invalid answer.
-    if !pattern.is_ascii() || pattern.contains('.') || pattern.contains("[^") {
-        return Err("Pattern requires unsupported ECMAScript UTF-16 regex semantics".into());
-    }
-    let mut translated = String::new(); let mut chars = pattern.chars(); let mut in_class = false;
-    while let Some(c) = chars.next() {
-        if c == '[' { in_class = true; } else if c == ']' { in_class = false; }
-        if c != '\\' { translated.push(c); continue; }
-        let Some(next) = chars.next() else { return Err("Invalid regular expression".into()); };
-        if in_class { return Err("Escapes within character classes are not supported".into()); }
-        match next {
-            'w' => translated.push_str("[A-Za-z0-9_]"),
-            'd' => translated.push_str("[0-9]"),
-            // Other JS escapes, boundaries and backreferences require the JS engine.
-            _ => return Err("Pattern requires unsupported ECMAScript regex semantics".into()),
+const REGEX_BACKTRACK_BUDGET: u64 = 10_000;
+const REGEX_SUBJECT_MAX_UNITS: usize = 1_048_576;
+const REGEX_CALL_COST: usize = 2_048;
+fn legacy_regex(value: &JsString) -> Result<regress::Regex, String> {
+    if value.len_utf16() > 4096 { return Err("Form pattern exceeds its native unit limit".into()); }
+    // Bound parser recursion before invoking the third-party compiler.
+    let mut depth = 0usize; let mut escaped = false; let mut in_class = false;
+    for unit in value.units() {
+        if escaped { escaped = false; continue; }
+        match *unit {
+            0x5c => escaped = true,
+            0x5b if !in_class => in_class = true,
+            0x5d if in_class => in_class = false,
+            0x28 if !in_class => { depth += 1; if depth > 128 { return Err("Form pattern nesting exceeds the native limit".into()); } },
+            0x29 if !in_class => depth = depth.saturating_sub(1),
+            _ => {},
         }
     }
-    regex::Regex::new(&translated).map_err(|_| "Invalid or unsupported regular expression".into())
+    regress::Regex::from_unicode(value.units().iter().copied().map(u32::from), regress::Flags::default())
+        .map_err(|_| "Invalid JavaScript regular expression".into())
 }
 fn pattern(value: &JsString, path: &str) -> Result<(), String> {
     if value.is_empty() { return Err(format!("{path} cannot contain an empty pattern.")); }
     if value.len_utf16() > 4096 { return Err(format!("{path} patterns must not exceed 4096 characters.")); }
-    legacy_regex(value).map(|_| ()).map_err(|e| format!("{path}: {e}."))
+    legacy_regex(value).map(|_| ()).map_err(|_| format!("{path} must be a valid JavaScript regular expression."))
 }
 fn node(value: &JsValue, path: &str, depth: usize, nodes: &mut usize, refs: &mut Vec<(String,String)>) -> Result<(), String> {
     let Some(o) = object(value) else { return Err(format!("{path} must be an object.")); };
@@ -67,7 +66,7 @@ fn node(value: &JsValue, path: &str, depth: usize, nodes: &mut usize, refs: &mut
     }
     for key in ["title","description","format","pattern"] { if present(value,key) && strval(value,key).is_none() { return Err(format!("{path}.{key} must be a string.")); } }
     if let Some(fmt) = strval(value,"format") { if !["email","uri","uuid","date","time","date-time"].iter().any(|x| fmt.equals_str(x)) { return Err(format!("{path}.format must be one of email, uri, uuid, date, time, date-time.")); } }
-    if let Some(p) = strval(value,"pattern") { if p.len_utf16() > 4096 { return Err(format!("{path}.pattern must not exceed 4096 characters.")); } if !p.is_empty() { pattern(p,&format!("{path}.pattern"))?; } }
+    if let Some(p) = strval(value,"pattern") { if p.len_utf16() > 4096 { return Err(format!("{path}.pattern must not exceed 4096 characters.")); } if !p.is_empty() { legacy_regex(p).map_err(|_| format!("{path}.pattern must be a valid JavaScript regular expression."))?; } }
     for key in ["minLength","maxLength","minItems","maxItems","minProperties","maxProperties","minContains","maxContains"] {
         if present(value,key) && numeric(value,key).is_none_or(|n| !n.is_finite() || n < 0.0 || n.fract() != 0.0) { return Err(format!("{path}.{key} must be a non-negative integer.")); }
     }
@@ -132,7 +131,7 @@ pub(crate) fn validate_schema(value: &JsValue) -> Result<(), String> {
     let bytes = pilotdeck_protocol::stringify_json(value).map_err(|e| e.to_string())?.ok_or("schema must contain only finite JSON values.")?;
     if bytes.len()>64_000 { return Err("schema must not exceed 64000 bytes.".into()); }
     if let Some(draft)=value.get("$schema").filter(|v| !v.is_undefined()) {
-        if draft.as_string().is_some_and(|v| v.equals_str(DRAFT)) { return Err("Draft 2020-12 form schemas are not available in this native build.".into()); }
+        if draft.as_string().is_some_and(|v| v.equals_str(DRAFT)) { return super::form_draft2020::validate(value); }
         return Err(format!("schema.$schema must be {DRAFT} to enable standards-based form validation."));
     }
     let mut refs=Vec::new(); node(value,"$",0,&mut 0,&mut refs)?;
@@ -165,9 +164,15 @@ fn type_match(value:&JsValue,t:&JsString) -> bool {
     else if t.equals_str("array") { matches!(value,JsValue::Array(_)) }
     else if t.equals_str("object") { value.as_object().is_some() } else { false }
 }
-fn match_pattern(pattern:&JsString, value:&JsString) -> bool {
-    let Ok(value)=value.to_utf8() else { return false; };
-    legacy_regex(pattern).is_ok_and(|r| r.is_match(&value))
+fn match_pattern(pattern:&JsString, value:&JsString, budget:&mut usize) -> bool {
+    *budget = budget.saturating_add(REGEX_CALL_COST);
+    if *budget > 100_000 || value.len_utf16() > REGEX_SUBJECT_MAX_UNITS { *budget = 100_001; return false; }
+    let Ok(regex)=legacy_regex(pattern) else { *budget = 100_001; return false; };
+    match regex.find_from_ucs2_budgeted(value.units(), 0, REGEX_BACKTRACK_BUDGET) {
+        regress::BudgetedMatch::Match(_) => true,
+        regress::BudgetedMatch::NoMatch => false,
+        regress::BudgetedMatch::BudgetExhausted => { *budget = 100_001; false },
+    }
 }
 fn date(s:&str)->bool {
     let b=s.as_bytes(); if b.len()!=10 || b[4]!=b'-' || b[7]!=b'-' || !b.iter().enumerate().all(|(i,c)| i==4 || i==7 || c.is_ascii_digit()) { return false; }
@@ -202,7 +207,7 @@ fn check(value:&JsValue,schema:&JsValue,root:&JsValue,depth:usize,budget:&mut us
     if let Some(s)=value.as_string() {
         let len=s.len_utf16() as f64;
         if numeric(schema,"minLength").is_some_and(|n|len<n) || numeric(schema,"maxLength").is_some_and(|n|len>n) {return false;}
-        if strval(schema,"pattern").is_some_and(|p|!match_pattern(p,s)) || strval(schema,"format").is_some_and(|f|!format_ok(f,s)) {return false;}
+        if strval(schema,"pattern").is_some_and(|p|!match_pattern(p,s,budget)) || strval(schema,"format").is_some_and(|f|!format_ok(f,s)) {return false;}
     }
     if let Some(n)=value.as_number() {
         if numeric(schema,"minimum").is_some_and(|x|n<x) || numeric(schema,"maximum").is_some_and(|x|n>x) || numeric(schema,"exclusiveMinimum").is_some_and(|x|n<=x) || numeric(schema,"exclusiveMaximum").is_some_and(|x|n>=x) || numeric(schema,"multipleOf").is_some_and(|x| ((n/x)-(n/x).round()).abs()>=1e-10) {return false;}
@@ -223,8 +228,7 @@ fn check(value:&JsValue,schema:&JsValue,root:&JsValue,depth:usize,budget:&mut us
         for (key,item) in &entries {
             if let Some(child)=props.and_then(|p|p.get_key(key)) {if !check(item,child,root,depth+1,budget){return false;}}
             else if let Some(additional)=schema.get("additionalProperties") {if additional.as_bool()==Some(false) || (object(additional).is_some() && !check(item,additional,root,depth+1,budget)){return false;}}
-            if let Some(patterns)=patterns { if key.to_utf8().is_err() { return false; }
-                for (p,child) in patterns.own_entries(){if match_pattern(p,key)&&!check(item,child,root,depth+1,budget){return false;}}}
+            if let Some(patterns)=patterns { for (p,child) in patterns.own_entries(){if match_pattern(p,key,budget)&&!check(item,child,root,depth+1,budget){return false;}}}
             if let Some(names)=schema.get("propertyNames") {if !check(&JsValue::String((*key).clone()),names,root,depth+1,budget){return false;}}
         }
         if let Some(deps)=schema.get("dependentRequired").and_then(object) {for (key,values) in deps.own_entries(){if map.get_key(key).is_some() {if let JsValue::Array(values)=values {if values.iter().any(|v|v.as_string().is_some_and(|s|map.get_key(s).is_none())){return false;}}}}}
@@ -239,7 +243,9 @@ fn check(value:&JsValue,schema:&JsValue,root:&JsValue,depth:usize,budget:&mut us
     *budget <= 100_000
 }
 pub(crate) fn accepts_form_dialog_answer(schema:&JsValue,value:&JsValue)->bool {
-    object(value).is_some() && json(value,&mut 0,0) && validate_schema(schema).is_ok() && check(value,schema,schema,0,&mut 0)
+    if object(value).is_none() || !json(value,&mut 0,0) || validate_schema(schema).is_err() { return false; }
+    if strval(schema,"$schema").is_some_and(|s| s.equals_str(DRAFT)) { return super::form_draft2020::accepts(schema,value); }
+    check(value,schema,schema,0,&mut 0)
 }
 
 #[cfg(test)]
@@ -269,9 +275,35 @@ mod tests {
         assert!(!accepts_form_dialog_answer(&schema,&make(1000)));
     }
     #[test]
-    fn draft2020_is_not_silently_interpreted_as_legacy() {
-        let s=pilotdeck_protocol::parse_json(r#"{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}"#).unwrap();
-        assert!(validate_schema(&s).unwrap_err().contains("not available"));
-        assert!(!accepts_form_dialog_answer(&s,&JsValue::Object(JsObject::new())));
+    fn fixed_node_legacy_regex_oracle_preserves_utf16() {
+        let fixture=pilotdeck_protocol::parse_json(include_str!("../../../../tests/fixtures/user-dialog-cli/regex-oracle.json")).unwrap();
+        let Some(JsValue::Array(rows))=fixture.get("records") else {panic!("records")};
+        let mut count=0;
+        for row in rows {
+            let pat=row.get("pattern").and_then(JsValue::as_string).unwrap();
+            let result=legacy_regex(pat); let expected=row.get("validation").unwrap();
+            assert_eq!(result.is_ok(),expected.get("ok").and_then(JsValue::as_bool).unwrap());
+            if result.is_ok() {let mut budget=0; assert_eq!(match_pattern(pat,row.get("value").and_then(JsValue::as_string).unwrap(),&mut budget),row.get("accepted").and_then(JsValue::as_bool).unwrap());}
+            count+=1;
+        }
+        assert_eq!(count,18);
+    }
+    #[test]
+    fn pathological_backtracking_is_interrupted_not_guessed() {
+        let pattern:JsString="^(a+)+$".into();
+        let subject=JsString::from(format!("{}!", "a".repeat(200)).as_str());
+        let mut budget=0;
+        assert!(!match_pattern(&pattern,&subject,&mut budget));
+        assert!(budget>100_000,"engine must signal exhausted work, not a normal non-match");
+    }
+    #[test]
+    fn fixed_node_draft2020_schema_answer_oracle() {
+        let fixture=pilotdeck_protocol::parse_json(include_str!("../../../../tests/fixtures/user-dialog-cli/draft-oracle.json")).unwrap();
+        let Some(JsValue::Array(rows))=fixture.get("records") else {panic!("records")};let mut count=0;
+        for row in rows {let schema=row.get("schema").unwrap();let expected=row.get("result").unwrap();let actual=validate_schema(schema);
+            assert_eq!(actual.is_ok(),expected.get("ok").and_then(JsValue::as_bool).unwrap(),"{:?}",row.get("id"));
+            if let Err(error)=actual {assert_eq!(Some(error.as_str()),expected.get("message").and_then(JsValue::as_string).and_then(|s|s.to_utf8().ok()).as_deref(),"{:?}",row.get("id"));}
+            else {assert_eq!(accepts_form_dialog_answer(schema,row.get("answer").unwrap()),row.get("accepted").and_then(JsValue::as_bool).unwrap(),"{:?}",row.get("id"));}count+=1;}
+        assert_eq!(count,25);
     }
 }

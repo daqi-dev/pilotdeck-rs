@@ -1,0 +1,914 @@
+{
+  "records": [
+    {
+      "id": "simple",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "x"
+        ]
+      },
+      "answer": {
+        "x": "ok"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "x"
+          ]
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "required",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "x"
+        ]
+      },
+      "answer": {},
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "x"
+          ]
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "surrogate",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1
+          }
+        }
+      },
+      "answer": {
+        "x": "\ud800"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "astral-codepoints",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "maxLength": 1
+          }
+        }
+      },
+      "answer": {
+        "x": "🙂"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "maxLength": 1
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "astral-pattern",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "pattern": "^.$"
+          }
+        }
+      },
+      "answer": {
+        "x": "🙂"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "pattern": "^.$"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "unevaluated-ok",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number"
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "answer": {
+        "a": 1
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            }
+          },
+          "unevaluatedProperties": false
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "unevaluated-no",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number"
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "answer": {
+        "a": 1,
+        "b": 2
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            }
+          },
+          "unevaluatedProperties": false
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "allof-evaluated",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "allOf": [
+          {
+            "properties": {
+              "a": {
+                "type": "number"
+              }
+            }
+          },
+          {
+            "properties": {
+              "b": {
+                "type": "number"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "answer": {
+        "a": 1,
+        "b": 2
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "allOf": [
+            {
+              "properties": {
+                "a": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "properties": {
+                "b": {
+                  "type": "number"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "anyof-evaluated",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "anyOf": [
+          {
+            "properties": {
+              "a": {
+                "type": "number"
+              }
+            }
+          },
+          {
+            "properties": {
+              "b": {
+                "type": "number"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "answer": {
+        "a": 1,
+        "b": 2
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "anyOf": [
+            {
+              "properties": {
+                "a": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "properties": {
+                "b": {
+                  "type": "number"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "oneof-evaluated",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "oneOf": [
+          {
+            "required": [
+              "a"
+            ],
+            "properties": {
+              "a": {
+                "type": "number"
+              }
+            }
+          },
+          {
+            "required": [
+              "b"
+            ],
+            "properties": {
+              "b": {
+                "type": "number"
+              }
+            }
+          }
+        ],
+        "unevaluatedProperties": false
+      },
+      "answer": {
+        "a": 1
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "oneOf": [
+            {
+              "required": [
+                "a"
+              ],
+              "properties": {
+                "a": {
+                  "type": "number"
+                }
+              }
+            },
+            {
+              "required": [
+                "b"
+              ],
+              "properties": {
+                "b": {
+                  "type": "number"
+                }
+              }
+            }
+          ],
+          "unevaluatedProperties": false
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "if-evaluated",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "tag": {
+            "type": "boolean"
+          }
+        },
+        "if": {
+          "properties": {
+            "tag": {
+              "const": true
+            }
+          }
+        },
+        "then": {
+          "properties": {
+            "x": {
+              "type": "string"
+            }
+          }
+        },
+        "else": {
+          "properties": {
+            "y": {
+              "type": "number"
+            }
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "answer": {
+        "tag": true,
+        "x": "y"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "tag": {
+              "type": "boolean"
+            }
+          },
+          "if": {
+            "properties": {
+              "tag": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "x": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "y": {
+                "type": "number"
+              }
+            }
+          },
+          "unevaluatedProperties": false
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "prefix-items",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              }
+            ],
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "answer": {
+        "x": [
+          "a",
+          1
+        ]
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                }
+              ],
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "unevaluated-items-ok",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              }
+            ],
+            "unevaluatedItems": false
+          }
+        }
+      },
+      "answer": {
+        "x": [
+          "a"
+        ]
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                }
+              ],
+              "unevaluatedItems": false
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "unevaluated-items-no",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              }
+            ],
+            "unevaluatedItems": false
+          }
+        }
+      },
+      "answer": {
+        "x": [
+          "a",
+          2
+        ]
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                }
+              ],
+              "unevaluatedItems": false
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "contains-evaluated",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "array",
+            "contains": {
+              "type": "integer"
+            },
+            "minContains": 1,
+            "maxContains": 1,
+            "unevaluatedItems": false
+          }
+        }
+      },
+      "answer": {
+        "x": [
+          1,
+          "x"
+        ]
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "array",
+              "contains": {
+                "type": "integer"
+              },
+              "minContains": 1,
+              "maxContains": 1,
+              "unevaluatedItems": false
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "ref-pointer",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "S": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/S"
+          }
+        }
+      },
+      "answer": {
+        "x": "v"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "S": {
+              "type": "string"
+            }
+          },
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/S"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "ref-other-pointer",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string"
+          },
+          "y": {
+            "$ref": "#/properties/x"
+          }
+        }
+      },
+      "answer": {
+        "x": "a",
+        "y": "b"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string"
+            },
+            "y": {
+              "$ref": "#/properties/x"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "ref-anchor",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "S": {
+            "$anchor": "mytype",
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#mytype"
+          }
+        }
+      },
+      "answer": {
+        "x": "v"
+      },
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: strict mode: unknown keyword: \"$anchor\""
+      },
+      "accepted": null
+    },
+    {
+      "id": "external",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "$ref": "https://example.test/schema"
+          }
+        }
+      },
+      "answer": {
+        "x": 1
+      },
+      "result": {
+        "ok": false,
+        "message": "$.properties.x.$ref must use a local # reference; Gateway form dialogs never fetch remote schemas."
+      },
+      "accepted": null
+    },
+    {
+      "id": "unknown-key",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "garbage": true
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: strict mode: unknown keyword: \"garbage\""
+      },
+      "accepted": null
+    },
+    {
+      "id": "bad-required",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "required": [
+          "missing"
+        ]
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: strict mode: required property \"missing\" is not defined at \"#\" (strictRequired)"
+      },
+      "accepted": null
+    },
+    {
+      "id": "boolean-schema",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": false
+        }
+      },
+      "answer": {
+        "x": 1
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": false
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "contains-minzero",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "array",
+            "contains": {
+              "type": "integer"
+            },
+            "minContains": 0
+          }
+        }
+      },
+      "answer": {
+        "x": [
+          "a"
+        ]
+      },
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: strict mode: \"minContains\" == 0 without \"maxContains\": \"contains\" keyword ignored"
+      },
+      "accepted": null
+    },
+    {
+      "id": "dependent",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string"
+          },
+          "b": {
+            "type": "string"
+          }
+        },
+        "dependentRequired": {
+          "a": [
+            "b"
+          ]
+        }
+      },
+      "answer": {
+        "a": "x"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "string"
+            },
+            "b": {
+              "type": "string"
+            }
+          },
+          "dependentRequired": {
+            "a": [
+              "b"
+            ]
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "nullable",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "answer": {
+        "x": null
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        }
+      },
+      "accepted": true
+    }
+  ]
+}
