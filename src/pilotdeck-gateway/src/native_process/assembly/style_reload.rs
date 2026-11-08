@@ -179,8 +179,10 @@ mod tests {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
         let a = requests.options.project.clone();
         let b = a.parent().unwrap().join("style-B");
-        std::fs::create_dir_all(b.join(".pilotdeck/output-styles")).unwrap();
-        std::fs::write(b.join(".pilotdeck/output-styles/project-b.md"), "Only B style").unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let mut b_options = requests.options.clone();
+        b_options.project = b.clone();
+        crate::native_process::assembly::register_project(&b_options).unwrap();
         let a_key = JsString::from(a.to_string_lossy().as_ref());
         let b_key = JsString::from(b.to_string_lossy().as_ref());
         requests.owner.enforce_project_binding();
@@ -209,6 +211,14 @@ mod tests {
         reload.reload(&input).await.unwrap();
         assert!(requests.owner.current_handle(&"style-a".into()).is_some(), "B reload closed A session");
         assert!(requests.owner.current_handle(&"style-b".into()).is_none(), "B reload did not close B session");
+        // Modify only B after its initial staging. Selecting the fallback A
+        // would return no change, so this proves the actual plugin consumer.
+        let plugin = b.join(".pilotdeck/plugins/style-plugin");
+        std::fs::create_dir_all(plugin.join("output-styles")).unwrap();
+        std::fs::write(plugin.join("plugin.json"), r#"{"name":"style-plugin"}"#).unwrap();
+        std::fs::write(plugin.join("output-styles/project-b.md"), "Only B style").unwrap();
+        let changed = reload.reload(&input).await.unwrap();
+        assert_eq!(changed.changed, vec![JsString::from("project-b")]);
         // The fixed TS loop intentionally closes all SDK-selected sessions
         // when projectKey is omitted, even though only the fallback reloads.
         reload.reload(&crate::metadata::object([])).await.unwrap();
