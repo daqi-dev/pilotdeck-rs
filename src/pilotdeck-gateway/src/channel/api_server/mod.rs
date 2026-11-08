@@ -12,7 +12,7 @@ mod tests;
 
 use self::mapper::SessionMapper;
 use super::protocol::*;
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsObject, JsValue};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -389,4 +389,47 @@ fn noop_handle() -> Arc<dyn ChannelHandle> {
         }
     }
     Arc::new(Noop)
+}
+
+/// Loader mount: builds the adapter from the `apiServer` loader option object
+/// (`build_options` already forwarded `extra.port` / `apiKey`). Absent values
+/// stay present-but-undefined like the TS literal's, and `resolve`'s nullish
+/// filters fold them back into the env / `DEFAULT_PORT` chain — the TS
+/// `Number(options.port ?? process.env.API_SERVER_PORT ?? DEFAULT_PORT)` /
+/// `options.apiKey ?? process.env.API_SERVER_KEY ?? ""` order. Only a real
+/// string `apiKey` maps: the landed `resolve` seam treats any other type as
+/// unset on the config path, and the mount keeps the two paths agreeing.
+/// #2301 fix-r1: the TS constructor's `Number(options.port ?? …)` throws on a
+/// failed toPrimitive, the loader's catch records the key and continues, and
+/// the channel never enters the startup array — the Rust channel defers the
+/// port conversion to `start`, so the mount applies the same check at
+/// construction and surfaces the same TypeError through the same loader catch
+/// (fix-r2: the shared coercion walk also covers arrays and the prototype
+/// chain the config merge installs, matching `Number()`'s join behavior).
+pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
+    mounts.register(
+        "apiServer",
+        Arc::new(|options: &JsObject| {
+            if let Some(port) = options.get("port").filter(|value| !nullish_port(value))
+                && let Some(error) = crate::js_value::number_conversion_error(port)
+            {
+                return Err(ChannelError::Plain(error));
+            }
+            Ok(Arc::new(ApiServerChannel::new(ApiServerOptions {
+                port: options.get("port").cloned(),
+                api_key: options
+                    .get("apiKey")
+                    .and_then(JsValue::as_string)
+                    .map(js_string_value),
+                ..ApiServerOptions::default()
+            })) as Arc<dyn ChannelAdapter>)
+        }),
+    );
+}
+
+/// `options.port` absent vs nullish: only a present, non-nullish value reaches
+/// the TS `Number(options.port ?? …)` coercion (the nullish arm falls back to
+/// the env / default chain, which never throws).
+fn nullish_port(value: &JsValue) -> bool {
+    matches!(value, JsValue::Undefined | JsValue::Null)
 }

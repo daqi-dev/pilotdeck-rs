@@ -124,8 +124,28 @@ fn validate_coercion(value: &JsValue) -> Result<(), ToStringError> {
                 }
                 pending.extend(items.iter().rev().map(|item| (item, depth + 1)));
             }
-            JsValue::Object(object) if object.get_property("toString").is_some() => {
-                return Err(ToStringError::NotPrimitive);
+            JsValue::Object(object) => {
+                // ToPrimitive throws when neither `valueOf` nor `toString` is
+                // usable. JSON cannot carry a callable, so any *visible*
+                // `toString` is a non-callable one that shadows the inherited
+                // method (the fix-r1 shape, including through the explicit
+                // prototype chain a config merge installs — `get_property`
+                // walks it). A chain that terminates at `null` (the
+                // `Object.create(null)` / `__proto__: null` shape, #2301
+                // fix-r3) finds neither method at all and throws the same
+                // TypeError; a missing explicit prototype is the *implicit*
+                // `Object.prototype` (both methods callable, no throw), and a
+                // non-object prototype value is ignored by JS the same way.
+                if object.get_property("toString").is_some() {
+                    return Err(ToStringError::NotPrimitive);
+                }
+                let mut prototype = object.prototype();
+                while let Some(JsValue::Object(inner)) = prototype {
+                    prototype = inner.prototype();
+                }
+                if matches!(prototype, Some(JsValue::Null)) {
+                    return Err(ToStringError::NotPrimitive);
+                }
             }
             _ => {}
         }
@@ -263,6 +283,30 @@ pub fn to_number(value: &JsValue) -> Result<f64, StackOverflow> {
         JsValue::String(s) => string_to_number(&String::from_utf16_lossy(s.units())),
         JsValue::Array(_) => string_to_number(&display(value)?),
     })
+}
+
+/// The error `Number(value)` raises when the value's coercion throws —
+/// `TypeError: Cannot convert object to primitive value` (toPrimitive finds
+/// nothing usable: the inherited `valueOf` returns the object itself, and the
+/// only `toString` is one that is not callable) or `RangeError: Maximum call
+/// stack size exceeded` (a too-deep array join). Node v22.22.0 probes:
+/// `_tmp/20261026-issue-2301/fix-r1/node-probe/probe1.out` (own `toString`
+/// shadowing the inherited callable) and `fix-r2/node-probe/probe1.out`
+/// (array element, nested array, prototype-carried `toString` via the real
+/// `mergeConfigSources`, deep array → RangeError). This is the same walk
+/// `String(value)` takes (`validate_coercion`): `Number([x])` joins the
+/// array first, so an element's failed toPrimitive and a too-deep nesting
+/// throw exactly like the scalar case, and the prototype chain a config
+/// merge installed is visible to `get_property`. The loader mounts run this
+/// at construction, where the TS constructors' `Number(options.port ?? …)`
+/// throws and the loader's catch records the key and continues (#2301 fix-r1;
+/// fix-r2 review P1 #3 closed the array / prototype-chain gaps, fix-r3 review
+/// P1 #2 the `__proto__: null` / `Object.create(null)` family — a chain that
+/// terminates at null finds neither `valueOf` nor `toString` at all).
+pub fn number_conversion_error(value: &JsValue) -> Option<String> {
+    validate_coercion(value)
+        .err()
+        .map(|error| format!("{}: {}", error.name(), error.message()))
 }
 
 /// ECMAScript StringToNumber.

@@ -5081,3 +5081,37 @@ Refs #2540 / #2549；#2550 继续跟进四fixture既有截断写与SIGKILL/并�
 ### 2026-11-09 Module2-host 初审修复（Codex，Refs #2570）
 
 保留94e审查ref后重基固定43a，src提取补丁逐字等价；按原payload.operation权威修复顶层方言，已接收module_call拒绝改关联response并保requestId/error明细。旧实现两项有效失败及枚举词表漂移负控保留，修后Module2/Protocol、strict与实际独立locked consumer通过；无损验证入口不声称直接可执行完整UTF16域，秒级UTC工具不冒充事件时间。consumer CI归#2560；本轮交两家增量复审，未push/开PR。
+
+### 03:2x–03:3x（缺块四 PR 全部派动 + 三 PR 入队段，接 03:13 段；下一段 04:30）
+
+**做了什么**：
+
+- **三张 PR 入队**：#2230（CI 全绿 03:20）· **#2544**（#2425 批收货完成：DS 四角色 P0=0 P1=0 P2=6 P3=13、本地+服务端 gate 双 PASS、CI 9/9 绿，报告 `_tmp/20261109-2425-harvest/report.md`）· #2407（批 5 决策卡 waiver 正文已补、edited 事件 pr-gate 过、CI 全绿 03:22）。队列现存 7 张：#2508/#2524/#2525/#2551/#2230/#2544/#2407（监视器 b2am30jq9 每 5 min 报队）。
+- **#2425 批 P2 六条开跟进单 #2552**（c1 收尾：5×c 档冻结程序钉 + 1×a 档 TARGET_OPTIONAL 豁免理由与实现相反——a 档因 PR 已入队转跟进记偏差，前置于 #2425 #2431 关单收口）。
+- **四张缺块停摆 PR 全部派评审轮**（03:13 段义务表当日清）：
+  - **#2387（#2272）**：车道已起，考古结论两 commit 均无评审覆盖 → DS+MM 审全量 `1cd9e01e8..fc2f0e3e8`（任务书 `_tmp/20261109-2387-reviewgap/task.md`）。
+  - **#2417（#2301）**：车道已起，只审 r5 增量 `f89d196e5..6cd006ed0`（纯账本同步），DS+MM 两家（`_tmp/20261109-2417-reviewgap/task.md`）。
+  - **#2397（#2294）**：rebase+复核车道已起——先审 `cff721c6e..7b30b45fe` 增量（r3b+r3c 未复核），rebase origin/main 逐块真合并（拿不准即 abort），冲突解再用 --diff-file 两家过审，force-with-lease 推 + gate 块（`_tmp/20261109-2397-rebase-review/task.md`）。
+  - **#2407**：已入队（上），无需评审轮。
+- **#2495 已派 cb8**（解锁 #1446 收口链）：issue-assemble 新树 wt-2495（worktree 61/60 超一名，本轮起不再开新树）、分支 claude/issue-2495。首派失败根因：remote-worker 要求 origin 有分支先推送，已补 `git push -u` 重派成功（cb8 pid 在案）。哨兵 b5yy2ly6z。
+- **#2543（c2 批）fix-r1 收货车道已起**：glm.exit exit=0 03:25，提交 `1c0cc24ad`（P1×2 修：EOF 判杀余量结构化 + 真实探针 OOM 形状成立）；任务书 `_tmp/20261109-2543-fixr1-harvest/task.md`（三查 → safe-push → DS+MM 两家增量复核 base 611629ff1 → PR 正文追加 r0 块之后 → gate）。
+- **#2363 stage C**：DS simplify 已出块、codex 在跑（原车道挂后台自续，无重复派）。
+
+**下一步（未结义务新增；03:13 段两表继续有效）**：
+
+| 下一步动作 | 唯一责任人 | 最迟复查 |
+|---|---|---|
+| 队列 7 张消化（#2508 头位 AWAITING_CHECKS 盯 CI） | 协调者（b2am30jq9） | 04:30 段内 |
+| #2387/#2417/#2397 三车道回报 → gate → 入队 | 协调者 | 车道通知到即收 |
+| #2543 fix-r1 收货回报 → gate → 入队 | 协调者 | 04:30 段内 |
+| #2495 首轮 glm.exit → 收货 → PR | 协调者（哨兵 b5yy2ly6z） | 04:30 段内 |
+| #2498/#1891/#2547 哨兵三班照旧（到期续挂） | 协调者 | 04:0x–04:30 |
+
+现场指针：`_tmp/20261109-2425-harvest/report.md`（#2544 收货正本）· `_tmp/20261109-2387-reviewgap/` `_tmp/20261109-2417-reviewgap/` `_tmp/20261109-2397-rebase-review/`（三车道任务书）· `_tmp/20261109-2543-fixr1-harvest/task.md`（c2 fix-r1 收货任务书）。
+
+
+### 2026-11-09 #2549 固定b9主线适配（Codex）
+
+保留c831审查ref与旧CI/43a证据，受控重基到固定 `b9fa7b69b676b93f1a396a47340ad9a59da05e57`，不追后续主线。唯一源码冲突为gateway js_value的公共实现归属：将新main null-prototype验证及number_conversion_error迁入Protocol唯一实现（getter公开、gateway reexport），保新main完整原测试以及既有NEL/泛型HostError/checkpoint单源修复。旧validate语义负控实际None≠TypeError失败；修后js_value6、config32、channel39通过，locked三库+Protocol58通过/1忽略，独立consumer通过，五包含gateway all-targets strict通过；anchors checked243/5852/errors0，未改fixture/oracle。新双家增量审查与新完整CI仍待，不把历史CI冒充当前。未push。
+
+Refs #2540 / #2549；#2550四fixture旧截断写/SIGKILL并发与#2560独立consumer持续CI前置维持原范围。现场指针：`_tmp/20261109-capability-rebase-b9/`；旧 `_tmp/20261109-capability-rebase-43a/` 保留。

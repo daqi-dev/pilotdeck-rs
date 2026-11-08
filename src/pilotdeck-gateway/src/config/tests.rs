@@ -414,6 +414,49 @@ fn merge_reads_prototype_values_with_utf16_keys_like_javascript() {
     assert_eq!(field(merged, "b"), &JsValue::Number(2.0));
 }
 
+/// #2301 fix-r3 review P1 #2: the real merge path installs the null
+/// prototype. Two config sources hold `adapters.wecomCallback.extra.port` as
+/// records (`{}` and `{__proto__: null}`), so the nested merge reaches the
+/// `__proto__` arm with a null value and sets it as the merged port's
+/// prototype — exactly the `mergeConfigSources` `output[key] = value` setter
+/// behavior the TS side shows (Node v22.22.0 probe
+/// `_tmp/20261026-issue-2301/fix-r3/node-probe/probe2.out`: after the real
+/// yaml → merge → loadEnabledChannels pipeline, `Object.getPrototypeOf(port)`
+/// is null and the loader records
+/// `[adapters] Failed to load channel "wecomCallback": TypeError: Cannot
+/// convert object to primitive value` while slack/bluebubbles/sms still
+/// construct). The shared number guard must reject the merged shape, not only
+/// a hand-installed prototype.
+#[test]
+fn merged_null_prototype_port_reports_the_number_conversion_error() {
+    let mut left = parse_json(r#"{"adapters": {"wecomCallback": {"extra": {"port": {}}}}}"#)
+        .expect("#2301 merge fixture base parses");
+    let right =
+        parse_json(r#"{"adapters": {"wecomCallback": {"extra": {"port": {"__proto__": null}}}}}"#)
+            .expect("#2301 merge fixture override parses");
+    super::merge(&mut left, right);
+    let port = left
+        .get("adapters")
+        .and_then(|adapters| adapters.get("wecomCallback"))
+        .and_then(|wecom| wecom.get("extra"))
+        .and_then(|extra| extra.get("port"))
+        .expect("#2301 the merged port is present");
+    let JsValue::Object(object) = port else {
+        panic!("#2301 the merged port is an object");
+    };
+    assert_eq!(
+        object.prototype(),
+        Some(&JsValue::Null),
+        "#2301 the real merge installs null as the port's prototype"
+    );
+    assert_eq!(
+        crate::js_value::number_conversion_error(port),
+        Some("TypeError: Cannot convert object to primitive value".to_owned()),
+        "#2301 a port whose chain terminates at null finds neither coercion method — \
+         Number() throws like TS, the channel must not construct on the default port"
+    );
+}
+
 /// #934 P1-3: the StaffDeck binding path message must keep the shared
 /// descriptor's raw UTF-16 units instead of `from_utf16_lossy`.
 #[test]
