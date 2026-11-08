@@ -11,7 +11,7 @@
 //! tick can leak a second timer (both fire, ticks overlap) and a timer that
 //! fired just before `stop()` can run one post-stop tick; the port serializes
 //! ticks on the one thread and `stop()` is authoritative, so neither can
-//! happen (stricter direction, registered in the #2295 ledger).
+//! happen (stricter direction, registered in A8.3-CRON-SCHED-SERIAL-001).
 use std::{
     sync::{Arc, Mutex, Weak},
     thread,
@@ -21,7 +21,7 @@ use std::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use pilotdeck_transport::system_clock::resolve_local;
 
-use super::fire::{CronFirePort, snapshot_active_run, task_id_text};
+use super::fire::{CronFirePort, panic_message, snapshot_active_run, task_id_text};
 use super::manager::{
     CronRuntime, computed_next_run_at_with, revision_of, spread_task, task_schedule_shape,
     timezone_str, value_string,
@@ -100,7 +100,10 @@ impl CronScheduler {
     /// `start` (CronScheduler.ts:31-41). The disabled/stopped/running gates
     /// are early `return`s in TS; the recalculation runs on the caller before
     /// the first arm, and a recalculation failure rejects `start()` with
-    /// `running` already set — exactly the TS state after the reject.
+    /// `running` already set — exactly the TS state after the reject. A
+    /// thread-spawn failure (EAGAIN) instead resets `running` before
+    /// rejecting, so a later `start()` retries instead of early-returning a
+    /// spurious Ok.
     pub fn start(&self) -> Result<(), CronError> {
         let enabled = self.inner.deps.config.enabled;
         {
@@ -115,13 +118,28 @@ impl CronScheduler {
         match recalc {
             Err(error) => Err(error),
             Ok(()) => {
-                if state.thread.is_none() {
+                // A stop that completed while the lock was down for the
+                // recalculation took the thread handle with it; spawning
+                // here would leak a handle nobody joins again (the thread
+                // exits immediately on its own stopped check).
+                if state.thread.is_none() && !state.stopped {
                     let inner = self.inner.clone();
-                    let handle = thread::Builder::new()
+                    match thread::Builder::new()
                         .name("cron-scheduler".into())
                         .spawn(move || scheduler_thread(inner))
-                        .map_err(|error| CronError::error(JsString::from(error.to_string())))?;
-                    state.thread = Some(handle);
+                    {
+                        Ok(handle) => state.thread = Some(handle),
+                        Err(error) => {
+                            // A spawn failure (EAGAIN/resource exhaustion)
+                            // must not latch `running`: the gate above would
+                            // swallow every later start() retry with a
+                            // spurious Ok.
+                            state.running = false;
+                            drop(state);
+                            self.inner.signal.notify_all();
+                            return Err(CronError::error(JsString::from(error.to_string())));
+                        }
+                    }
                 }
                 // `scheduleNextTick()` — arm only when nothing is armed: a
                 // poke during the recalc already set a closer deadline (TS
@@ -213,7 +231,17 @@ fn scheduler_thread(inner: Arc<SchedulerInner>) {
             // The timer fired: this.timer = undefined, then the tick chain.
             state.deadline = None;
             drop(state);
-            if let Err(error) = tick(&inner.deps) {
+            // TS folds a rejecting `tick()` into the warn and its `.then`
+            // still re-arms (CronScheduler.ts:77-86); a panicking seam would
+            // otherwise unwind this thread and leave `running` latched, so the
+            // panic is caught and folded the same way — the next arm stands.
+            let ticked = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tick(&inner.deps)
+            })) {
+                Ok(result) => result,
+                Err(panic) => Err(CronError::error(JsString::from(panic_message(&panic)))),
+            };
+            if let Err(error) = ticked {
                 // "cron scheduler tick failed" (CronScheduler.ts:77-79);
                 // the `.then` still re-arms below.
                 let message = String::from_utf16_lossy(error.message().units());
@@ -258,8 +286,9 @@ fn tick(deps: &SchedulerDeps) -> Result<(), CronError> {
         let run_id = (deps.uuid)();
         // TS registers the active run synchronously at the `void fire
         // .runTask(...)` call — before the fire's first await — so the tick
-        // thread does the same; the fire's own register replaces it
-        // (idempotent by runId).
+        // thread does the same; the fire's own register re-registers the same
+        // runId, which merges (a stop requested in the window survives, the
+        // runtime's register keeps `stop_requested`).
         let Some(runtime) = deps.runtime.upgrade() else {
             // The runtime went away mid-tick; the thread notices at the next
             // loop iteration. Nothing fired here ever reaches an observer.

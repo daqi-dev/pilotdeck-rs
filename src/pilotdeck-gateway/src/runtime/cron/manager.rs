@@ -814,7 +814,10 @@ impl CronRuntime {
                 })
             },
             // The app-level delivery handler is not surfaced through
-            // `CronManagerOptions` yet (#2295 ledger).
+            // `CronManagerOptions` yet — the native assembly keeps the
+            // callback absent, registered as a wiring gap (not a port
+            // limitation) in A8.3-CRON-FIRE-EVENTSTREAM-001; follow-up
+            // #1826 owns the channel-delivery family.
             on_result_delivery: None,
             logger: self.logger.clone(),
             zone_cache: self.zone_cache.clone(),
@@ -940,14 +943,24 @@ impl CronRuntime {
 
     /// `registerActiveRun` (CronRuntime.ts:412-414) — the `CronFire`
     /// dependency that owns a run's liveness; exposed for the fire half
-    /// (fire.rs) and the fixtures.
+    /// (fire.rs) and the fixtures. TS registers a run exactly once, in the
+    /// calling thread before the fire's first await; the port's fire
+    /// re-registers the entry the tick pre-registered, so a same-runId
+    /// re-register is idempotent on the snapshot fields but must keep a
+    /// `stop_requested` a stop task set in the window — TS's single event
+    /// loop has no such window (CronFire.ts:58's register runs before any
+    /// await can yield to a `stopTask`).
     pub fn register_active_run(&self, run: CronActiveRun) {
         let mut runs = self.active_runs.lock().unwrap_or_else(|e| e.into_inner());
         match runs
             .iter_mut()
             .find(|existing| existing.run_id == run.run_id)
         {
-            Some(existing) => *existing = run,
+            Some(existing) => {
+                let stop_requested = existing.stop_requested || run.stop_requested;
+                *existing = run;
+                existing.stop_requested = stop_requested;
+            }
             None => runs.push(run),
         }
     }

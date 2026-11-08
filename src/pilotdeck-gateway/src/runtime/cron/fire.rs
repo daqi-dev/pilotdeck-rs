@@ -15,8 +15,8 @@
 //! the one visible event. The seams this boundary cannot represent —
 //! assistant-text delivery for `deliverResult`, per-event `appendRunEvent`,
 //! `interaction_required`/`forcedFailure` latching, `onPhaseEvent`,
-//! `onTurnEvent` — are registered in the #2295 ledger, not silently
-//! dropped.
+//! `onTurnEvent` — are registered in A8.3-CRON-FIRE-EVENTSTREAM-001, not
+//! silently dropped.
 use std::{cell::Cell, sync::Arc};
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
@@ -75,8 +75,9 @@ type ResultDelivery = Arc<dyn Fn(&JsValue) -> Result<(), CronError> + Send + Syn
 /// `CronFireDependencies` (CronFire.ts:28-44). The runtime closures are the
 /// port's injectable seams, exactly the five TS wires; `onResultDelivery` is
 /// optional and absent in the current native assembly (the app-level
-/// delivery handler is not surfaced through `CronManagerOptions` yet —
-/// ledger).
+/// delivery handler is not surfaced through `CronManagerOptions` yet — a
+/// wiring gap, not a port limitation, registered in
+/// A8.3-CRON-FIRE-EVENTSTREAM-001 with follow-up #1826).
 pub struct CronFireDeps {
     pub gateway: Arc<dyn CronAgentGateway>,
     pub store: CronTaskStore,
@@ -130,6 +131,20 @@ impl CronFire {
         let started_at_ms = (self.deps.now)();
         // registerActiveRun before the try (CronFire.ts:58).
         (self.deps.register_active_run)(snapshot_active_run(task_snapshot, run_id));
+        // TS's `finally` runs `unregisterActiveRun(runId)` even when the try
+        // block throws (CronFire.ts:150-202); a Rust panic skips sequential
+        // code, so the guard is that unregister on the unwind path — a
+        // residue would keep the run counted against the manager-wide
+        // capacity gate forever and defer every later cron task. The
+        // terminal record, delivery and post-run update stay skipped on the
+        // unwind: TS production cannot reach a throw there (the port's Err
+        // mapping of a seam panic is the only caller of this path), see
+        // A8.3-CRON-FIRE-EVENTSTREAM-001.
+        let mut unregister = UnregisterOnUnwind {
+            unregister: &self.deps.unregister_active_run,
+            run_id,
+            armed: true,
+        };
 
         let mut task = task_snapshot.clone();
         let mut outcome = CronRunOutcome::Completed;
@@ -237,6 +252,7 @@ impl CronFire {
         if (self.deps.get_active_run)(run_id).is_some_and(|run| run.stop_requested) {
             outcome = CronRunOutcome::Stopped;
         }
+        unregister.armed = false;
         (self.deps.unregister_active_run)(run_id);
         if !started_run {
             // `return` inside finally (CronFire.ts:156-158): no record, no
@@ -438,6 +454,22 @@ impl CronFirePort for CronFire {
     }
 }
 
+/// The finally's `unregisterActiveRun` on the unwind path: TS's `finally`
+/// runs even when the try block throws, so the drop stands in for it on a
+/// panic. Armed until the explicit unregister of the normal path disarms it.
+struct UnregisterOnUnwind<'a> {
+    unregister: &'a ActiveRunLookup,
+    run_id: &'a JsString,
+    armed: bool,
+}
+impl Drop for UnregisterOnUnwind<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            (self.unregister)(self.run_id);
+        }
+    }
+}
+
 /// `matchesScheduledSnapshot` (CronFire.ts:283-288). The status is compared
 /// against the literal `"scheduled"`, not against the snapshot's own status.
 fn matches_scheduled_snapshot(current: &JsValue, snapshot: &JsValue) -> bool {
@@ -526,7 +558,7 @@ fn fire_warn(
 
 /// `error instanceof Error ? error.message : String(error)` for a Rust panic
 /// payload standing in for a thrown non-Error value.
-fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
+pub(super) fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(text) = panic.downcast_ref::<&str>() {
         (*text).to_owned()
     } else if let Some(text) = panic.downcast_ref::<String>() {

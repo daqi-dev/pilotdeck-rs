@@ -21,11 +21,15 @@ break `due-once-fires` (the due seed never fires / fires into a warn). The
 stop row cannot bind the replay: manager.stop() drops the runtime and the
 scheduler thread exits through its weak-upgrade check before any post-stop
 tick could run, so the gold observation would match anyway — it binds
-`start_after_stop_does_not_revive`, which holds the runtime Arc through the
-stop and asserts on the post-restart window (poll 100ms, sleep 300ms). The
-remaining two rows pin the observation seams the replay cannot see:
-start-arms-nothing pins `armed_tick_delay_ms` after start, delay-skipped pins
-the constant-60s deferral on the direct scheduler.
+`start_after_stop_does_not_revive`, whose first deterministic failure is the
+armed-delay assertion right after the restart attempt (the mutated stop leaves
+the deadline armed, so `armed_tick_delay_ms()` is `Some` whether or not a tick
+fired first). The remaining rows pin the observation seams and the fix-r1
+liveness properties the replay cannot see: start-arms-nothing pins
+`armed_tick_delay_ms` after start, delay-skipped pins the constant-60s
+deferral on the direct scheduler, re-register-clobbers-stop pins the
+pre-register-window merge, tick-panic-kills-thread pins the panic fold into
+the warn, panic-unregister-gone pins the fire's unwind unregister.
 """
 from pathlib import Path
 import json
@@ -40,16 +44,21 @@ from negative_suite import Case, classify, passed
 root = Path(__file__).resolve().parents[5]
 scheduler = root / 'src/pilotdeck-gateway/src/runtime/cron/scheduler.rs'
 manager = root / 'src/pilotdeck-gateway/src/runtime/cron/manager.rs'
+fire = root / 'src/pilotdeck-gateway/src/runtime/cron/fire.rs'
 tests = root / 'src/pilotdeck-gateway/src/runtime/cron/scheduler_tests.rs'
 oracle = root / 'src/pilotdeck-gateway/tests/fixtures/cron-scheduler/oracle.json'
 REPLAY = 'runtime::cron::scheduler_tests::scheduler_replays_the_ts_gold'
 RESTART = 'runtime::cron::scheduler_tests::start_after_stop_does_not_revive'
 ARMED = 'runtime::cron::scheduler_tests::start_arms_the_idle_poll_and_poke_floors_at_250ms'
 CAPACITY = 'runtime::cron::scheduler_tests::capacity_defers_by_the_constant_sixty_seconds'
+PREREGISTER = 'runtime::cron::scheduler_tests::stop_in_the_pre_register_window_survives_the_re_register'
+TICKPANIC = 'runtime::cron::scheduler_tests::tick_panic_folds_into_a_warn_and_re_arms'
+SUBMITPANIC = 'runtime::cron::scheduler_tests::submit_panic_still_unregisters'
 mutations = [
     # The runtime's stop never stops the scheduler, so the armed poll survives
-    # the stop; the restart-holding test sees the fire window reopen (the
-    # replay cannot: manager.stop() drops the runtime and the thread exits
+    # the stop; the restart-holding test's first deterministic failure is the
+    # armed-delay assertion right after the restart attempt (the replay
+    # cannot bind this: manager.stop() drops the runtime and the thread exits
     # through its weak-upgrade check before ticking).
     ('stop-not-wired', manager,
      '    pub fn stop(&self) -> Result<(), CronError> {\n'
@@ -61,7 +70,41 @@ mutations = [
      '            let _ = scheduler;\n'
      '        }',
      RESTART,
-     '#2295 nothing may fire after the restart attempt'),
+     '#2295 the stopped scheduler must not re-arm'),
+    # A same-runId re-register goes back to whole-entry replacement, so the
+    # stop the pre-register window test requests before opening the gate is
+    # clobbered and the terminal record reads "completed".
+    ('re-register-clobbers-stop', manager,
+     '            Some(existing) => {\n'
+     '                let stop_requested = existing.stop_requested || run.stop_requested;\n'
+     '                *existing = run;\n'
+     '                existing.stop_requested = stop_requested;\n'
+     '            }',
+     '            Some(existing) => *existing = run,',
+     PREREGISTER,
+     "#2295 a stop requested in the pre-register window must survive the fire's re-register"),
+    # The caught panic is resumed instead of folded, killing the scheduler
+    # thread, so the warn the test waits for never appears.
+    ('tick-panic-kills-thread', scheduler,
+     '                Err(panic) => Err(CronError::error(JsString::from(panic_message(&panic)))),',
+     '                Err(panic) => std::panic::resume_unwind(panic),',
+     TICKPANIC,
+     '#2295 timed out waiting for the panicked tick to fold into a warn'),
+    # The unwind guard is born disarmed, so a panicking submit seam skips the
+    # unregister and the run leaks into the registry.
+    ('panic-unregister-gone', fire,
+     '        let mut unregister = UnregisterOnUnwind {\n'
+     '            unregister: &self.deps.unregister_active_run,\n'
+     '            run_id,\n'
+     '            armed: true,\n'
+     '        };',
+     '        let mut unregister = UnregisterOnUnwind {\n'
+     '            unregister: &self.deps.unregister_active_run,\n'
+     '            run_id,\n'
+     '            armed: false,\n'
+     '        };',
+     SUBMITPANIC,
+     '#2295 a panicking submit seam must not leak the active run'),
     # The poke disarms instead of re-arming at the 250ms floor, so the
     # poke-fires-early cell's fast-forward never ticks.
     ('poke-no-reschedule', scheduler,
@@ -143,7 +186,7 @@ def main():
     out.mkdir(parents=True, exist_ok=False)
     summary = []
     fixture = Path(__file__).resolve().parent
-    guarded = list(dict.fromkeys([scheduler, manager, tests, oracle, Path(__file__).resolve(),
+    guarded = list(dict.fromkeys([scheduler, manager, fire, tests, oracle, Path(__file__).resolve(),
         fixture / 'generate.mts', fixture / 'probe.mts', fixture / 'README.md',
         Path(__file__).resolve().parents[1] / 'negative_process.py',
         Path(__file__).resolve().parents[1] / 'negative_suite.py']))
