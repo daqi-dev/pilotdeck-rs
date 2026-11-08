@@ -123,9 +123,6 @@ fn checkpoint_prefix_len(messages: &[JsValue]) -> usize {
     }
     i
 }
-fn positive(value: Option<f64>) -> Option<f64> {
-    value.filter(|n| n.is_finite() && *n > 0.0).map(f64::floor)
-}
 fn clamp(value: f64, min: f64, max: f64) -> f64 {
     if value.is_nan() {
         min
@@ -141,9 +138,6 @@ fn message(role: &str, value: JsString) -> JsValue {
 }
 fn text(value: &str) -> JsValue {
     JsValue::String(value.into())
-}
-fn text_opt(value: &Option<JsString>) -> JsValue {
-    JsValue::String(value.clone().unwrap_or_default())
 }
 fn num(value: usize) -> JsValue {
     JsValue::Number(value as f64)

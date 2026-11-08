@@ -502,7 +502,7 @@ pub mod recovery;
 pub mod summary;
 
 #[cfg(test)]
-mod tests {
+mod signed_zero_tests {
     use super::{js_max, js_min};
 
     const PLUS_ZERO: u64 = 0.0f64.to_bits();
