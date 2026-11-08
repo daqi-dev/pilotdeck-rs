@@ -563,6 +563,16 @@ impl SubmitHostServices for Services {
         status: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         Box::pin(async {
+            // #2498: this gated record is a *cancellable* `Gate::wait()`
+            // future — when a budget drops the await, the gate future is
+            // simply cancelled and its continuation never runs. Production
+            // `record_failure` (native_process/services.rs) dispatches a
+            // `spawn_blocking` task that cannot be cancelled: its durable
+            // write keeps running and can land after the budget and the
+            // close. The #2498 cells therefore prove the wire side (no
+            // terminal frame enqueues past the budget) and the bounded
+            // close; the durable late write is registered separately in
+            // specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md.
             if self.session.setup["failureGate"] == true {
                 self.session.log.host("failure_enter");
                 self.session.failure_gate.wait().await;
@@ -1835,9 +1845,15 @@ async fn never_settling_appends_still_close_the_panic_turn() {
 /// #2498 fix-r1: the durable failure record hangs ahead of the budget —
 /// pre-fix the abort-budget timer was never even created, so the turn (and
 /// its admission and completion fence) hung on the stuck host future. With
-/// the record inside the same budget, the tail is abandoned at the budget
-/// and the hard close ends the turn; no failure frame is enqueued, so the
-/// wire carries no terminal frame at all.
+/// the record inside the same budget, the budget drops the await of the
+/// record future and the hard close ends the turn; no failure frame is
+/// enqueued, so the wire carries no terminal frame at all. What the budget
+/// drops is the await — the fixture's gated record is a cancellable
+/// `Gate::wait()`, while production `record_failure` is `spawn_blocking`
+/// (uncancellable; its durable write can still land after the close, which
+/// is registered in
+/// `specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`, not
+/// proven here).
 #[tokio::test]
 async fn stuck_failure_record_still_closes_the_panic_turn() {
     let case = json!({
@@ -1857,10 +1873,15 @@ async fn stuck_failure_record_still_closes_the_panic_turn() {
 /// failure record settles, but only after the budget has expired. TS has no
 /// budget at all: the record and the appends share one unbounded wait chain
 /// (probe C, `_tmp/20261026-issue-2498/fix-r2/ts-probe-2498-r2.out`), so both
-/// failure frames are delivered once the slow record settles. Rust abandons
-/// the record at the budget, so the terminal frames never enter the queue —
-/// a wire-visible divergence registered in
-/// `specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`.
+/// failure frames are delivered once the slow record settles. Rust drops
+/// the await of the record at the budget, so the terminal frames never
+/// enter the queue — a wire-visible divergence registered in
+/// `specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`. What the
+/// budget drops is the await: the fixture's gated record is a cancellable
+/// `Gate::wait()`, while production `record_failure` is `spawn_blocking`
+/// (uncancellable — its durable write can still land after the budget and
+/// the close, registered alongside in the R3 entry); this cell proves the
+/// wire side and the bounded close only.
 #[tokio::test]
 async fn slow_failure_record_settling_after_budget_drops_the_failure_frames() {
     let case = json!({
@@ -1880,10 +1901,17 @@ async fn slow_failure_record_settling_after_budget_drops_the_failure_frames() {
 /// unbounded host future ahead of the settlement and the `close_live` — a
 /// stuck record parked the manage arm forever (and the worker parks on the
 /// settlement), the same hang shape the panic arm had before fix-r1. TS
-/// exhibits the same hang (`settleTimeout` awaits the record; the pump
-/// finally awaits that settlement), so bounding it is the registered
-/// "close over hang" trade-off, not a TS-matching fix
-/// (`specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`).
+/// exhibits the same wait (`settleTimeout` awaits the record, the pump
+/// finally awaits that settlement — probe D shows the turn closing only
+/// after a slow record settles,
+/// `_tmp/20261026-issue-2498/fix-r3/ts-probe-2498-r3.out`), so bounding it
+/// is the registered "close over hang" trade-off, not a TS-matching fix
+/// (`specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`). The
+/// fixture's gated record is a cancellable `Gate::wait()`; production
+/// `record_failure` is `spawn_blocking` and its durable write can land
+/// after the budget and the close (registered in the R3 entry) — this cell
+/// proves the manage arm does not wait past the budget and the turn closes,
+/// not the durable late write.
 #[tokio::test]
 async fn stuck_timer_record_still_closes_the_turn() {
     let case = json!({

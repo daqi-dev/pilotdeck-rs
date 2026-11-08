@@ -75,7 +75,7 @@ from negative_selection import (baseline_passed, claim_dir, missing_target, refu
                                refuse_unusable_target, registered, select,
                                verdict_exit)
 from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
-                              run_owned, wait_for_slot)
+                              run_owned, wait_for_slot, write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/runtime/turn'
@@ -258,8 +258,16 @@ bound_tests = list(dict.fromkeys(row[4] for row in run_rows))
 
 # #2498 fix-r2: the timer-arm mutation and the broken-baseline self-check
 # below touch submit.rs and submit_tests.rs too, so both join the guarded set.
-with mutating_sources(root, sorted({source / filename for _, filename, _, _, _ in run_rows}
-                                   | {source / 'submit_tests.rs'})) as snapshots:
+guarded = sorted({source / filename for _, filename, _, _, _ in run_rows}
+                 | {source / 'submit_tests.rs'})
+with mutating_sources(root, guarded) as snapshots:
+    # #2498 fix-r3: every write-back below (self-check and mutation loop)
+    # publishes through the shared atomic rename — the same protocol
+    # `mutating_sources`' own restore uses. `write_text` / `write_bytes`
+    # truncate in place, so a SIGKILL mid-write-back leaves a half-written
+    # source and the whole crate stops compiling. The mode is captured while
+    # the files are pristine, exactly when `mutating_sources` snapshots it.
+    source_modes = {path: path.stat().st_mode & 0o7777 for path in guarded}
     def run(full):
         result = run_owned(['cargo','test','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib',
             full, '--', '--exact'], cwd=root, env=env, timeout=600)
@@ -320,7 +328,10 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _ i
     if selfcheck_row is None:
         # A subset without its pin cannot self-check the gate; run the full
         # table (or include panic-finish-unbounded) for the self-check.
-        raise ValueError('broken-baseline selfcheck: panic-finish-unbounded is not selected')
+        # #2498 fix-r3: refuse (rc=2, "never started"), never a traceback
+        # exit 1 — rc 1 reads as "ran and was not green", i.e. a surviving
+        # mutant, the false-FAIL direction of the audit.
+        refuse('broken-baseline selfcheck: panic-finish-unbounded is not selected')
     _, selfcheck_file, selfcheck_old, selfcheck_new, _ = selfcheck_row
     selfcheck_path = source / selfcheck_file
     selfcheck_original = snapshots[selfcheck_path]
@@ -334,7 +345,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _ i
             fromfile='submit_tests.rs', tofile='submit_tests.rs')))
         slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
         (out / 'broken-baseline-tests.slots.log').write_text(slots.stdout + slots.stderr)
-        tests_path.write_text(broken_tests)
+        write_source_atomic(root, tests_path, broken_tests.encode(), mode=source_modes[tests_path])
         code, log = run(SUBMIT_TEST)
         (out / 'broken-baseline-unmutated.log').write_text(log)
         # Teeth: with the gate bypassed (a pretend-green baseline), the red
@@ -346,14 +357,21 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _ i
                         if code == 0 and baseline_passed(log, SUBMIT_TEST)
                         else set())
         # End-to-end: the real mutation, still against the broken baseline,
-        # must not be KILLED.
-        selfcheck_path.write_text(selfcheck_content.replace(selfcheck_old, selfcheck_new, 1))
+        # must not be KILLED. #2498 fix-r3: this second cargo run waits for
+        # its slot like every other invocation (it used to be the one call
+        # outside the shared quota).
+        slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
+        (out / 'broken-baseline-mutated.slots.log').write_text(slots.stdout + slots.stderr)
+        write_source_atomic(root, selfcheck_path,
+                             selfcheck_content.replace(selfcheck_old, selfcheck_new, 1).encode(),
+                             mode=source_modes[selfcheck_path])
         try:
             code, log = run(SUBMIT_TEST)
             (out / 'broken-baseline-mutated.log').write_text(log)
             refused = not kill_verdict(SUBMIT_TEST, code, log, broken_green)
         finally:
-            selfcheck_path.write_bytes(selfcheck_original)
+            write_source_atomic(root, selfcheck_path, selfcheck_original,
+                                mode=source_modes[selfcheck_path])
             restored = hashlib.sha256(selfcheck_path.read_bytes()).hexdigest()
             if restored != selfcheck_before:
                 raise RuntimeError(
@@ -364,7 +382,8 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _ i
         if not selfcheck_ok:
             failures.append('broken-baseline selfcheck')
     finally:
-        tests_path.write_bytes(tests_original)
+        write_source_atomic(root, tests_path, tests_original,
+                            mode=source_modes[tests_path])
         restored = hashlib.sha256(tests_path.read_bytes()).hexdigest()
         if restored != tests_before:
             raise RuntimeError(
@@ -389,7 +408,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _ i
             # #1908: same shared-wait migration as the baseline above.
             slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-            path.write_text(changed)
+            write_source_atomic(root, path, changed.encode(), mode=source_modes[path])
             code, log = run(bound)
             (out / f'{name}.log').write_text(log)
             # #819: the kill must be the bound test's own #2498 assertion —
@@ -413,7 +432,7 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _, _ i
                                 sourceSha256=before))
             failures.append(name)
         finally:
-            path.write_bytes(original)
+            write_source_atomic(root, path, original, mode=source_modes[path])
             restored = hashlib.sha256(path.read_bytes()).hexdigest()
             if restored != before:
                 raise RuntimeError(
@@ -426,5 +445,13 @@ if failures:
     print(f'not killed: {", ".join(failures)}', file=sys.stderr)
 killed_rows = sum(1 for row in summary if row['status'] == 'KILLED')
 print(f'{killed_rows}/{len(run_rows)} killed; every source restored byte-for-byte', flush=True)
+# #2498 fix-r3: a broken-baseline self-check (or a red baseline) used to be
+# print-only — `verdict_exit` sees only the mutation rows, so an INVALID
+# self-check still exited 0, the fix-r1 false-green shape again. The sibling
+# close (turn-publish/negative.py:169-175): `failures` must reach the exit
+# code. Chosen over folding the self-check into `summary` because a refused
+# self-check is a failure of the apparatus, not a mutation verdict row.
+if failures:
+    sys.exit(1)
 # #1666: a zero-row run is never success (`0/0 killed` used to exit 0).
 sys.exit(verdict_exit(summary, key='status'))
