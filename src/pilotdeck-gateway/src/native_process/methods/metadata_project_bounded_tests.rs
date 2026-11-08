@@ -7,7 +7,7 @@ use std::{
 
 #[test]
 fn native_project_reader_fifo_subprocess() {
-    for case in ["list", "describe", "catalog", "files_list", "file_read"] {
+    for case in ["list", "describe", "catalog", "files_list", "file_read", "archive_manifest", "archive_entries", "archive_artifact"] {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--nocapture", "native_project_reader_child"])
             .env("PDRS_PROJECT_READER_CASE", case)
@@ -88,9 +88,18 @@ async fn native_project_reader_child() {
             "describe" => "describe_project",
             "files_list" => "project_files_list",
             "file_read" => "project_file_read",
+            "archive_manifest" => "native_archive_manifest",
+            "archive_entries" => "native_archive_entries",
+            "archive_artifact" => "native_archive_artifact",
             _ => unreachable!(),
         };
-        let params = if case == "file_read" {
+        let params = if case.starts_with("archive_") {
+            object([
+                ("projectKey", project.to_string_lossy().as_ref().into()),
+                ("sessionKey", "fixture".into()),
+                ("artifactName", "fixture.txt".into()),
+            ])
+        } else if case == "file_read" {
             object([
                 ("projectKey", project.to_string_lossy().as_ref().into()),
                 ("path", "fixture".into()),
@@ -108,7 +117,7 @@ async fn native_project_reader_child() {
     let error = result.expect_err("FIFO accepted");
     if case == "catalog" {
         assert_eq!(error.code, "CONFIG_READ_NOT_REGULAR");
-    } else {
+    } else if !case.starts_with("archive_") {
         assert_eq!(
             error.message.to_utf8().unwrap(),
             "Unsafe or oversized native project metadata."
@@ -217,5 +226,40 @@ async fn large_summary_and_many_projects_remain_readable() {
         .expect("registered project file RPC works");
         assert!(!result.is_undefined(), "{method}");
     }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn archive_markers_and_artifacts_use_distinct_bounded_reads() {
+    use crate::metadata::Files;
+    let root = std::env::temp_dir().join(format!("pdrs-archive-bounded-{}", uuid::Uuid::new_v4()));
+    let home = root.join("home");
+    let project = root.join("project");
+    let stored = home.join("projects").join(crate::metadata::project_id(&project));
+    std::fs::create_dir_all(stored.join("chats")).unwrap();
+    let artifacts = project.join(".pilotdeck/tool-results/fixture");
+    std::fs::create_dir_all(&artifacts).unwrap();
+    let marker = stored.join(".cwd");
+    std::fs::write(&marker, project.to_string_lossy().as_bytes()).unwrap();
+    // Artifact bytes above the marker budget retain the legacy byte count and
+    // truncation contract; a marker and artifact must never share that limit.
+    std::fs::write(artifacts.join("fixture.txt"), vec![b'x'; 100_000]).unwrap();
+    let params = object([
+        ("projectKey", project.to_string_lossy().as_ref().into()),
+        ("sessionKey", "fixture".into()),
+        ("artifactName", "fixture.txt".into()),
+        ("maxBytes", JsValue::Number(20.0)),
+    ]);
+    let result = project_metadata(home.clone(), crate::config::Env::new(), "native_archive_artifact".into(), params.clone()).await.unwrap();
+    assert_eq!(result.get("bytes"), Some(&JsValue::Number(100_000.0)));
+    assert_eq!(result.get("truncated"), Some(&JsValue::Bool(true)));
+    // Real sparse storage, not a mocked length, reaches the descriptor bound.
+    std::fs::File::create(artifacts.join("fixture.txt")).unwrap()
+        .set_len(crate::storage::TRANSCRIPT_MAX_BYTES + 1).unwrap();
+    assert!(project_metadata(home.clone(), crate::config::Env::new(), "native_archive_artifact".into(), params).await.is_err());
+    std::fs::write(&marker, vec![b'x'; 65_537]).unwrap();
+    let reader = BoundedMetadataFiles::new();
+    assert!(reader.archive_marker_read(&home.canonicalize().unwrap(), &marker.canonicalize().unwrap()).is_err());
+    assert!(reader.was_refused());
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -181,7 +181,7 @@ try{
   // error, process failure or deadline remains an unclassified INVALID.
   if(error?.code==='ERR_ASSERTION'){
     const first=String(error.message).split('\n')[0];
-    if(['#1071 clean signal exit','#1071 refreshed hooks refused','#1071 readiness address carries a port','#1131 readiness reports the kernel-assigned port'].includes(first)) assertionFailure=first;
+    if(['#1071 clean signal exit','#1071 refreshed unknown top-level hooks ignored','#1071 readiness address carries a port','#1131 readiness reports the kernel-assigned port'].includes(first)) assertionFailure=first;
   }
   throw error;
 }finally{

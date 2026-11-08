@@ -232,6 +232,11 @@ pub(crate) trait Files {
         }
         self.project_read(root, path, limit)
     }
+    /// Markers may use a tighter native resource policy than archive artifacts.
+    /// The default preserves the legacy and snapshot reader contract.
+    fn archive_marker_read(&self, root: &Path, path: &Path) -> io::Result<Vec<u8>> {
+        self.archive_read(root, path, usize::MAX)
+    }
     /// libc kill(pid, 0), through rustix's safe libc wrapper. All errors, including
     /// EPERM, mean false, matching Node's unconditional catch.
     fn process_alive(&self, pid: i32) -> bool {
@@ -1060,7 +1065,7 @@ fn metadata_summary(value: &JsValue) -> bool {
         .is_some_and(|text| !js_trim_units(text.units()).is_empty())
 }
 
-const LITE_BYTES: usize = 65_536;
+pub(crate) const LITE_BYTES: usize = 65_536;
 
 fn session_has_summary(bytes: &[u8]) -> Result<bool, ()> {
     let head = &bytes[..bytes.len().min(LITE_BYTES)];

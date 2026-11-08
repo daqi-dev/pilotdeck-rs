@@ -235,7 +235,7 @@ impl<F: Files> Files for RegistryFiles<'_, F> {
         if !target.starts_with(&root) {
             return Err(io::Error::from_raw_os_error(libc::EACCES));
         }
-        self.inner.archive_read(&root, &target, usize::MAX)
+        self.inner.archive_marker_read(&root, &target)
     }
 }
 fn registry<F: Files>(metadata: &Metadata<F>) -> Metadata<RegistryFiles<'_, F>> {
