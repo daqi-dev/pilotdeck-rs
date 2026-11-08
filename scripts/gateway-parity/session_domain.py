@@ -1715,6 +1715,21 @@ def _retirement_census(gateway_pid, baseline):
             'declaredAlive': declared_alive, 'pattern': pattern}
 
 
+def _census_unobserved(census):
+    """#2519: the one shared test for "this round recorded no process census".
+
+    A census that is not a dict or whose sampled rows are not a list is an
+    *unobserved* host set, never an empty one (R3 #1355 fix-r2).  The
+    criterion used to be written once per face — the report face's guard and
+    the control face's rows derivation — so the two could drift apart (#2519,
+    from the #1355 r1 harvest review); every face reads this one function
+    now.  Whether the declared owned set actually contains a sampled pid
+    stays with the verdict: an emptied declared set is the TS_HOST control's
+    injection and must score FAIL, never read as unobserved.
+    """
+    return not isinstance(census, dict) or not isinstance(census.get('rows'), list)
+
+
 def _retirement_census_verdict(census):
     """R3 (#1355 fix-r2): an unobservable census is not an empty host set.
 
@@ -1722,7 +1737,14 @@ def _retirement_census_verdict(census):
     sampling time) before "no undeclared rows" can mean PASS; an empty sample
     or a dead declared pid is a non-PASS observation, mirroring the
     process_tree rule that an inaccessible census is not an empty tree.
+    #2519: an *unobserved* census (no dict, no rows list) blocks here via the
+    same `_census_unobserved` predicate the TS_HOST control reads, instead of
+    raising on ``census['rows']``.
     """
+    if _census_unobserved(census):
+        return {'status': 'BLOCKED', 'rule': 'HOST_CENSUS', 'undeclared': [],
+                'problems': ['the round recorded no process census; an unobserved census is '
+                             'not an empty host set']}
     rows, declared = census['rows'], census.get('declared', [])
     undeclared = [row for row in rows if row['pid'] not in declared]
     missing_declared = [pid for pid in declared if pid not in {row['pid'] for row in rows}]
@@ -1748,14 +1770,12 @@ def _retirement_report_census(round_row):
     recorded no observation raised KeyError inside ``retirement_report`` and
     main's fallback dropped all 16 scoring faces — the collapse this PR exists
     to remove.  A missing census is an *unobserved* host set, never an empty
-    one, so it blocks instead of passing.
+    one, so it blocks instead of passing.  #2519: the unobserved criterion
+    itself lives in `_retirement_census_verdict` (via `_census_unobserved`)
+    now, so this report face and the verdict cannot drift apart again; this
+    function stays the report face's tolerant key read.
     """
-    census = round_row.get('census')
-    if not isinstance(census, dict) or not isinstance(census.get('rows'), list):
-        return {'status': 'BLOCKED', 'rule': 'HOST_CENSUS', 'undeclared': [],
-                'problems': ['the round recorded no process census; an unobserved census is '
-                             'not an empty host set']}
-    return _retirement_census_verdict(census)
+    return _retirement_census_verdict(round_row.get('census'))
 
 
 def _retirement_connections(pid):
@@ -2135,7 +2155,10 @@ def _retirement_controls(round_row, expected):
                    require_pair=(victim, 'send frame missing'))
     # 2. 隐藏 TS 宿主: the census still shows the gateway pid, but it is undeclared.
     census = round_row.get('census') or {}
-    census_rows = census.get('rows') or []
+    # #2519: the same `_census_unobserved` predicate the report face blocks on;
+    # an unobserved census reads as no rows here, so the class is unestablished
+    # instead of raising on a garbage-shaped observation.
+    census_rows = [] if _census_unobserved(census) else census['rows']
     gateway_pid = _retirement_gateway_pid(round_row)
     if gateway_pid is None or not any(row.get('pid') == gateway_pid for row in census_rows):
         # P2a (#1355 fix-r4c, anthropic sibling #2): the injection is "the
@@ -2734,9 +2757,23 @@ webui:
                                           'listeners', 'census', 'connections', 'processes',
                                           'audit', 'elapsedSeconds')
                                          if key in row})
-    require(row['audit']['allStopped'], 'CLEANUP', f"round {index}: owned process-group cleanup unverified: "
-                                                  f"{row['audit']}")
+    require(_cleanup_stopped(row['audit']), 'CLEANUP',
+            f"round {index}: owned process-group cleanup unverified: {row['audit']}")
     return row
+
+
+def _cleanup_stopped(audit):
+    """#2519: the one shared read of a round audit's stopped verdict.
+
+    ``audit.allStopped`` is the cleanup criterion the round face's CLEANUP
+    require and the report face's cleanupAudit aggregation both judge on
+    (A8.6 cleanup audit); each face used to keep its own read, so the two
+    could drift (#2519, from the #1355 r1 harvest review).  Deliberately a
+    truthiness read, not ``is True``: both call sites judged truthiness
+    before, real rounds record a bool from cleanup_owned, and tightening
+    here would change the registered scoring semantics.
+    """
+    return bool(audit['allStopped'])
 
 
 def _retirement_baseline_revision(baseline):
@@ -2864,7 +2901,7 @@ def _retirement_report(output, baseline):
                                 'gateway': row['ports']['gateway']} for row in rounds]},
         'portAudit': port_attempts,
         'processAudit': [row['audit'] for row in rounds],
-        'cleanupAudit': {'status': 'PASS' if all(row['audit']['allStopped'] for row in rounds) else 'FAIL'},
+        'cleanupAudit': {'status': 'PASS' if all(_cleanup_stopped(row['audit']) for row in rounds) else 'FAIL'},
         # R9 (#1355 fix-r2): executionStatus is the overall verdict; the
         # coverage face lives in methodCoverage.status.  A BLOCKED report must
         # never read as an executed PASS.
