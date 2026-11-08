@@ -336,6 +336,7 @@ impl TurnHostFactory {
             ports
         });
         let close_timeout = self.limits.close_timeout;
+        let unique_tcp_request_id = matches!(&self.deployment, Deployment::Tcp { .. });
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
         let factory = Arc::new(self);
@@ -355,7 +356,8 @@ impl TurnHostFactory {
             Limits::default().close_timeout
         } else {
             close_timeout
-        });
+        })
+        .with_unique_tcp_request_id(unique_tcp_request_id);
         let session = match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,

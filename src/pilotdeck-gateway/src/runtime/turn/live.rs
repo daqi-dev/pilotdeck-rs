@@ -77,6 +77,8 @@ pub struct LiveSessionAdapter {
     host_factory: Arc<TurnHostFactory>,
     close_timeout: std::time::Duration,
     agent_config: Option<JsObject>,
+    /// Shared TCP sidecars retain request identities across connections.
+    unique_tcp_request_id: bool,
     /// #1864 (b): re-read on every run, like InProcessGateway.ts:1443's
     /// `livePermissionMode` — the stored permission-mode selection takes
     /// effect on the next turn without a session close.
@@ -119,6 +121,7 @@ impl LiveSessionAdapter {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
+            unique_tcp_request_id: false,
             permission_mode_source: None,
             tail: None,
             recorder,
@@ -144,6 +147,13 @@ impl LiveSessionAdapter {
     /// Session-owned serialized AgentRuntimeConfig for the real sidecar.
     pub fn with_agent_config(mut self, config: JsObject) -> Self {
         self.agent_config = Some(config);
+        self
+    }
+
+    /// A listener shared across TCP connections requires a fresh implicit
+    /// request identity per logical execution. Explicit IDs are untouched.
+    pub(super) fn with_unique_tcp_request_id(mut self, enabled: bool) -> Self {
+        self.unique_tcp_request_id = enabled;
         self
     }
 
@@ -242,6 +252,7 @@ impl LiveSessionAdapter {
         Self {
             close_timeout: crate::host::Limits::default().close_timeout,
             agent_config: None,
+            unique_tcp_request_id: false,
             permission_mode_source: None,
             tail: None,
             recorder,
@@ -1918,6 +1929,14 @@ fn parse_execute_request(
     ))
 }
 
+fn assign_tcp_request_id(request: &mut ExecuteRequest, options: &JsValue, enabled: bool) {
+    if enabled && extract_string(options, "requestId").is_err() {
+        // Allocated once, before the request and identity are cloned into host
+        // ports and recovery. Reconnect/resume keep this same value.
+        request.identity.request_id = uuid::Uuid::new_v4().to_string().as_str().into();
+    }
+}
+
 fn extract_string(obj: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
     match obj {
         JsValue::Object(map) => map
@@ -1978,6 +1997,28 @@ pub(crate) fn test_recorder() -> Arc<Recorder> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tcp_implicit_request_identity_is_unique_and_explicit_identity_is_preserved() {
+        let input = parse_json(r#"{"type":"text","text":"hello"}"#).unwrap();
+        let options = parse_json(r#"{"sessionId":"same","turnId":"turn"}"#).unwrap();
+        let mut first = parse_execute_request(&input, &options, vec![]).unwrap().0;
+        let mut second = parse_execute_request(&input, &options, vec![]).unwrap().0;
+        assign_tcp_request_id(&mut first, &options, true);
+        assign_tcp_request_id(&mut second, &options, true);
+        assert_ne!(first.identity.request_id, second.identity.request_id);
+        assert_ne!(first.identity.request_id, JsString::from("default"));
+        // A recovery clone is the same operation, not a second allocation.
+        assert_eq!(first.clone().identity.request_id, first.identity.request_id);
+        let explicit =
+            parse_json(r#"{"sessionId":"other","turnId":"turn","requestId":"default"}"#).unwrap();
+        let mut supplied = parse_execute_request(&input, &explicit, vec![]).unwrap().0;
+        assign_tcp_request_id(&mut supplied, &explicit, true);
+        assert_eq!(supplied.identity.request_id, JsString::from("default"));
+        let mut stdio = parse_execute_request(&input, &options, vec![]).unwrap().0;
+        assign_tcp_request_id(&mut stdio, &options, false);
+        assert_eq!(stdio.identity.request_id, JsString::from("default"));
+    }
 
     #[test]
     fn terminal_message_boundaries_match_ts() {
@@ -2499,6 +2540,7 @@ impl LiveSessionAdapter {
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
+        assign_tcp_request_id(&mut request, &options, self.unique_tcp_request_id);
         if let Some(config) = &self.agent_config {
             let mut config = config.clone();
             if config.get("isSubagent") == Some(&JsValue::Bool(true))
