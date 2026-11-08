@@ -25,6 +25,11 @@ shape, killed by the drain case's during-drain client assertion) and
 `sms-stop-drain-unbounded` (the TS unbounded-block shape, killed by the
 `#[ignore]`d bound case; the executor's `--include-ignored` runs it, one phase
 costs up to ~80 s of the 480 s budget).
+
+`#2257` registers `sms-stop-drain-on-sender-drop` (the closed-channel path
+drains unobserved and holds the port, killed by both port-rebind cases) and
+`#2269` `sms-stop-drain-predrain-count` (the r1 pre-drain snapshot the
+truncation warn used to count with, killed by the bound case's warn count).
 """
 import argparse
 import os
@@ -62,6 +67,23 @@ switches = [
     ('sms-stop-drain-unbounded', SMS / 'mod.rs',
      'stop_returns_at_the_drain_bound_when_a_connection_outlives_it',
      '#2026 the drain bound must return stop() while the connection outlives it'),
+    # #2257: the closed-channel path (every watch sender gone — a stop task
+    # that panicked at its first log line, or a handle dropped without stop)
+    # drains unobserved and holds the listener's port for the whole bound.
+    # Killed by both port-rebind cases: with the drain restored the rebind
+    # cannot land inside the 2 s bound while the stalled connection (90 s
+    # head deadline) outlives the 60 s one.
+    ('sms-stop-drain-on-sender-drop', SMS / 'mod.rs',
+     ['a_stop_task_that_panics_at_its_log_line_frees_the_port_without_a_drain',
+      'a_dropped_handle_frees_the_port_without_a_drain'],
+     ['did not rebind inside', 'did not rebind inside']),
+    # #2269: the r1 counting shape — the truncation warn reads a pre-drain
+    # snapshot, so the connection that retired during the drain is still
+    # counted as aborted. Killed by the bound case's warn-count assertion
+    # (3 where the aborted set holds 2).
+    ('sms-stop-drain-predrain-count', SMS / 'mod.rs',
+     'stop_returns_at_the_drain_bound_when_a_connection_outlives_it',
+     '#2026 the truncation warn counts only the connections still in the'),
 ]
 GUARDED = [
     SMS / 'mod.rs',
