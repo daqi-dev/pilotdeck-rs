@@ -7,11 +7,11 @@ pub mod factory;
 mod handle;
 #[cfg(unix)]
 pub mod kernel;
+#[cfg(unix)]
+mod kernel_archive;
 pub(crate) mod kernel_config;
 #[cfg(unix)]
 pub(crate) mod kernel_projection;
-#[cfg(unix)]
-mod kernel_archive;
 #[cfg(unix)]
 pub(crate) mod kernel_replay;
 mod owner;

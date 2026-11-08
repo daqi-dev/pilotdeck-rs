@@ -28,6 +28,8 @@ pub use methods::registered_methods;
 pub(crate) use methods::METHODS as SETTINGS_FAMILY_METHODS;
 #[cfg(test)]
 mod channels_tests;
+#[cfg(unix)]
+mod compaction;
 pub mod kernel_profile;
 #[cfg(test)]
 mod management_tests;
@@ -35,8 +37,6 @@ mod management_tests;
 mod mcp_status_tests;
 mod requests;
 mod services;
-#[cfg(unix)]
-mod compaction;
 mod session_overrides;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
 #[cfg(test)]

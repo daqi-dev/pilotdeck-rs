@@ -1226,8 +1226,11 @@ pub(crate) fn normalize_stream_event(
     state: &mut StreamState,
 ) -> Result<Vec<JsValue>, ModelStreamError> {
     let chunk = as_record(raw);
-    if let Some(canonical)=pilotdeck_model_anthropic::errors::openai_stream_error(raw) {
-        return Ok(vec![event([("type","error".into()),("error",JsValue::Object(canonical))])]);
+    if let Some(canonical) = pilotdeck_model_anthropic::errors::openai_stream_error(raw) {
+        return Ok(vec![event([
+            ("type", "error".into()),
+            ("error", JsValue::Object(canonical)),
+        ])]);
     }
     if let Some(response_id) = read_non_empty_string(field(chunk, "id"))
         && state.stream_response_id.is_none()

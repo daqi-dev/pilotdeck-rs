@@ -794,10 +794,15 @@ async fn start_assembly(
                                 &options.project,
                             )?
                         {
-                            let allowed=binding.context.allowed_tools.clone();
-                            let denied=binding.context.disallowed_tools.clone();
-                            let kernel_port_preflight:crate::runtime::refresh::BoxFuture<crate::runtime::project::RuntimeResult>=Box::pin(async move {
-                                crate::runtime::session::kernel_config::session_tool_filters(allowed.as_deref(),denied.as_deref())?;
+                            let allowed = binding.context.allowed_tools.clone();
+                            let denied = binding.context.disallowed_tools.clone();
+                            let kernel_port_preflight: crate::runtime::refresh::BoxFuture<
+                                crate::runtime::project::RuntimeResult,
+                            > = Box::pin(async move {
+                                crate::runtime::session::kernel_config::session_tool_filters(
+                                    allowed.as_deref(),
+                                    denied.as_deref(),
+                                )?;
                                 kernel_port_preflight.await
                             });
                             let mut kernel_config = config.clone();
@@ -1092,7 +1097,10 @@ async fn start_assembly(
             ));
             let admission = SubmitAdmissionOptions {
                 #[cfg(unix)]
-                compaction: Some(Arc::new(super::compaction::NativeCompactionRouter { owner:owner.clone(),options:options.clone() })),
+                compaction: Some(Arc::new(super::compaction::NativeCompactionRouter {
+                    owner: owner.clone(),
+                    options: options.clone(),
+                })),
                 interactions: interactions.clone(),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
