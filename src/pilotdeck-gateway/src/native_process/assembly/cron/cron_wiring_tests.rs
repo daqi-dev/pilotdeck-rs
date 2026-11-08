@@ -322,30 +322,35 @@ async fn a_stopped_manager_rejects_the_six_management_methods() {
             .await
             .expect("#1353 route after frame");
     }
-    let frames = text.0.lock().expect("#1353 frames lock");
-    for method in crate::runtime::cron::CRON_METHODS {
-        let after = frames
-            .iter()
-            .find(|frame| frame["id"] == format!("after-{method}"))
-            .expect("#1353 after response frame")
-            .clone();
-        negative_assert_eq!(
-            after["ok"],
-            false,
-            "#1353 the stopped manager rejects {method}"
-        );
-        negative_assert_eq!(
-            after["error"]["code"],
-            "SWITCH_IN_PROGRESS",
-            "#1353 A6: the rejection names the switch for {method}"
-        );
-        negative_assert_eq!(
-            after["error"]["message"],
-            "switch in progress: cron management is closed",
-            "#1353 A6: the rejection message crosses verbatim"
-        );
+    // The guard must not live across the shutdown `.await` below (clippy
+    // `await_holding_lock`; the explicit `drop(frames)` this replaces was not
+    // recognized by clippy 1.99, which kept the CI red), so the assertions
+    // run inside a block that ends the guard's scope before the await.
+    {
+        let frames = text.0.lock().expect("#1353 frames lock");
+        for method in crate::runtime::cron::CRON_METHODS {
+            let after = frames
+                .iter()
+                .find(|frame| frame["id"] == format!("after-{method}"))
+                .expect("#1353 after response frame")
+                .clone();
+            negative_assert_eq!(
+                after["ok"],
+                false,
+                "#1353 the stopped manager rejects {method}"
+            );
+            negative_assert_eq!(
+                after["error"]["code"],
+                "SWITCH_IN_PROGRESS",
+                "#1353 A6: the rejection names the switch for {method}"
+            );
+            negative_assert_eq!(
+                after["error"]["message"],
+                "switch in progress: cron management is closed",
+                "#1353 A6: the rejection message crosses verbatim"
+            );
+        }
     }
-    drop(frames);
     host.shutdown(options.drain_budget)
         .await
         .expect("#1353 host shutdown observes the earlier stop");
