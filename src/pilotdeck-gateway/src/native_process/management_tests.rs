@@ -248,6 +248,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             // that no longer exists. A case that genuinely needs the
             // unconnected state builds it explicitly.
             dialog_recovery: None,
+        sop: None,
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
                 crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),

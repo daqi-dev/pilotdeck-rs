@@ -4,7 +4,7 @@ use pilotdeck_protocol::JsValue;
 
 // Wire names are the WebSocket frame method names from the TS frames registry
 // (frames.ts:47-48). Both methods pass through admission as ordinary session
-// requests; the isolated native process never attaches an SOP runtime.
+// requests. Production installs the native project-bound control owner.
 pub(super) const METHODS: &[&str] = &["sop_status", "sop_resume"];
 pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Requests::sop_request);
 
@@ -24,31 +24,19 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
-            let _ = params;
-
-            // The isolated native process never attaches an SOP runtime, so
-            // both methods return CAPABILITY_UNAVAILABLE. For sop_resume the
-            // TS capability gate fires before every other guard
-            // (GatewayWsConnection.ts:332 and InProcessGateway.ts:640, ahead
-            // of the :641 busy gate and the createLocalGateway.ts:1066-1069
-            // authority/subject override guard): a request carrying an
-            // override or racing an active turn still fails with
-            // CAPABILITY_UNAVAILABLE, like a TS gateway whose resumeSop
-            // callback is absent. These guards are documented to come back
-            // with a wired SOP runtime; tracking lives in #1313 and
-            // follow-ups, and the gate order must be re-verified against TS
-            // when they return.
-            //
-            // The capability gate also precedes every params guard, including
-            // the required sessionKey: the TS connection layer has no runtime
-            // schema parsing for params (GatewayWsConnection.ts:630-637
-            // isRequestFrame validates only type/id/method, and dispatch hands
-            // `frame.params as never` to the gateway), and the
-            // InProcessGateway.ts:635/:640 capability check is the first
-            // statement of sopStatus/resumeSop, so any field access or
-            // validation in the downstream callback is never reached. A frame
-            // missing sessionKey — or any other required field — therefore
-            // answers CAPABILITY_UNAVAILABLE, not a validation error.
+            if let Some(control) = &self.sop {
+                if method == "sop_status" {
+                    return control.status(&params).await.map_err(super::super::sop_control::request_error);
+                }
+                if let Some(session) = params.get("sessionKey").and_then(JsValue::as_string)
+                    && self.owner.has_active_turn(session) {
+                    return Err(RequestError { code: "SESSION_BUSY".into(),
+                        message: "Cannot resume StaffDeck SOP while a turn is active.".into(), details: None, validation: None });
+                }
+                return control.resume(&params).await.map_err(super::super::sop_control::request_error);
+            }
+            // Bare embeddings retain the capability-first TS gate; production
+            // installs the same control owner used by the public HTTP bridge.
             Err(unavailable(if method == "sop_status" {
                 "StaffDeck SOP status is unavailable."
             } else {

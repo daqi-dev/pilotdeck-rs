@@ -113,6 +113,7 @@ pub(crate) struct Config {
     /// `options.gateway`). `None` keeps the pre-#2354 surface, the shape
     /// every non-gateway listener and frozen fixture still pins.
     pub api_web: Option<crate::api_web::Config>,
+    pub approvals: Option<crate::module_host::approvals::Config>,
 }
 
 /// Route one parsed non-upgrade request to its TS-equivalent response.
@@ -136,6 +137,12 @@ pub(crate) async fn serve_with_body(
     config: &Config,
 ) -> Result<hyper::Response<Body>, io::Error> {
     let version = request.version();
+    if let Some(approvals) = &config.approvals {
+        if let Some(rejection) = node_parser_admission(&request)? { return finish(version, rejection); }
+        if let Some(response) = crate::module_host::approvals::serve(&mut request, approvals).await {
+            return finish(version, response?);
+        }
+    }
     if config.control.is_some()
         && matches!(
             request_path(&request).as_str(),

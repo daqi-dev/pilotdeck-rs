@@ -375,6 +375,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         // #1600: production assembles a connected bus (assembly/user_dialog.rs);
         // this stub must match, not the retired observer-coupled state.
         dialog_recovery: None,
+        sop: None,
         user_dialog_bus: Arc::new(Mutex::new(GatewayUserDialogBus::connected(
             DialogRuntime::default(),
         ))),

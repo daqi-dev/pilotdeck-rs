@@ -338,6 +338,7 @@ pub(super) async fn start_with_webhook(
         host,
         crate::channel::feishu::FeishuWebhookSlot::resolver(&slot),
         super::switch_wiring::AssemblySwitchHandles {
+            approvals: switch_slots.approvals.get().cloned(),
             cron: switch_slots.cron.get().cloned(),
             automation: switch_slots.automation.get().cloned(),
             channels: switch_slots.channels.get().cloned().ok_or_else(|| {
@@ -464,6 +465,11 @@ async fn start_assembly(
     .await
     .map_err(|error| format!("Native project registration task failed: {error}"))??;
     let project = project_registry(&options, &env);
+    let sop = super::sop_control::NativeSopControl::new(options.clone(), env.clone(), project.clone())
+        .map_err(|error| String::from_utf16_lossy(super::sop_control::request_error(error).message.units()))?;
+    if let Some(slots) = &switch_slots {
+        slots.approvals.set(sop.bridge()).map_err(|_| "SOP approval slot is already occupied")?;
+    }
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
         snapshot::snapshot_recorder(&options, &project, snapshot_enabled).await?;
@@ -528,6 +534,7 @@ async fn start_assembly(
     let prepare_session_events = session_events.clone();
     let storage_forks = fork_registry.clone();
     let prepare_project = project.clone();
+    let prepare_sop = sop.clone();
     let prepare_options = options.clone();
     let prepare_env = env.clone();
     let prepare_recorders = recorders.clone();
@@ -567,6 +574,7 @@ async fn start_assembly(
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, session_mcp_runtimes| {
             let project = prepare_project.clone();
+            let sop = prepare_sop.clone();
             let forks = prepare_forks.clone();
             let session_events = prepare_session_events.clone();
             let mut options = prepare_options.clone();
@@ -864,6 +872,15 @@ async fn start_assembly(
                     super::project_storage::for_generation(options.home.clone(), generation)
                 };
                 retained.set_storage_factory(storage_factory)?;
+                let admission_sop = sop.clone();
+                let admission_snapshot = snapshot.clone();
+                let admission_project: JsString = options.project.to_string_lossy().into_owned().into();
+                retained.set_admission(Arc::new(move |_| {
+                    let sop = admission_sop.clone();
+                    let snapshot = admission_snapshot.clone();
+                    let project = admission_project.clone();
+                    Box::pin(async move { Ok(sop.creation_admission(&project, &snapshot).await) })
+                }))?;
                 let release_owner = fork_owner.clone();
                 retained.push(move || release_owner.release_generation());
                 retained.push(move || {
@@ -1531,6 +1548,7 @@ async fn start_assembly(
                 async_hook_registry,
                 user_dialog_bus: user_dialog_bus.clone(),
                 dialog_recovery: Some(dialog_recovery.clone()),
+                sop: Some(sop.clone()),
                 upload_gateway: upload_gateway.clone(),
                 // The CLI `prepareWeixinLogin` callback (pilotdeck.ts:240-247):
                 // hot-start the weixin channel on request, after the same

@@ -46,6 +46,7 @@ pub struct Requests {
     pub async_hook_registry: Option<Arc<AsyncHookRegistry>>,
     /// Gateway user-dialog bus backing the `user_dialog` / `respond` methods.
     pub user_dialog_bus: Arc<Mutex<GatewayUserDialogBus>>,
+    pub(crate) sop: Option<Arc<super::sop_control::NativeSopControl>>,
     pub(crate) dialog_recovery: Option<Arc<super::assembly::dialog_recovery::NativeDialogRecovery>>,
     /// A8 U1 upload + attachment lease gateway (#1321).
     pub upload_gateway: Arc<UploadGateway>,

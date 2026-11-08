@@ -101,6 +101,7 @@ pub(super) async fn run_embedding(
     let (host, feishu_webhook, switch_handles) =
         assembly::start_with_webhook(options.clone(), env).await?;
     let api_web = super::production_api_web(embedding.token.clone(), options.home.clone());
+    let approvals = crate::module_host::approvals::Config { token: embedding.token.clone(), bridge: switch_handles.approvals.clone() };
     let server = match super::production_listener(
         options.listen,
         host.clone(),
@@ -114,6 +115,7 @@ pub(super) async fn run_embedding(
         // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
         // registers it on the HTTP server, after `/auth/local-token`).
         Ok(mut server) => {
+            server = server.with_approvals(approvals);
             if let Some(root) = embedding.static_assets {
                 server = server.with_static_root(root);
             }
