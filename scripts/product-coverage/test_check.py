@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import re
 import subprocess
 import unittest
 from pathlib import Path
@@ -91,26 +92,32 @@ class CoverageControls(unittest.TestCase):
 
     def test_channel_key_literal_drift_fails(self):
         # The #2283 pre-fix misalignment, reconstructed on the real loader.rs:
-        # deleting one UNMIGRATED_CHANNEL_KEYS line leaves every entry below
-        # it one line stale — each pointing at the adjacent next key, wecom
-        # at the closing `];` (issue #2286). Range-only validation passed on
-        # exactly this form; the key-literal assertion must go red per entry.
+        # every entry anchored at a member line drifts one line stale — each
+        # pointing at the adjacent next key, wecom at the closing `];`
+        # (issue #2286). Range-only validation passed on exactly this form;
+        # the key-literal assertion must go red per entry.
         loader = "src/pilotdeck-gateway/src/channel/loader.rs"
-        drifted = {"gateway.channel:whatsapp": 52, "gateway.channel:signal": 53,
-                   "gateway.channel:mattermost": 54, "gateway.channel:matrix": 55,
-                   "gateway.channel:slack": 56, "gateway.channel:discord": 57,
-                   "gateway.channel:telegram": 58, "gateway.channel:qq": 59,
-                   "gateway.channel:wecom": 60}
+        # Derived from the ledger and the table itself, not hardcoded
+        # (#2286 fix-r3, DS sibling P2#1): every entry anchored at a member
+        # line of the table drifts by exactly +1; entries anchored in
+        # loader.rs but outside the literal table stay put.
+        source = split_lines((ROOT / loader).read_text())
+        inside = literal_table_lines(source)
+        drifted = {row["id"]: int(row["evidence"].rsplit(":", 1)[1]) + 1
+                   for row in self.data["entries"]
+                   if row["evidence"].startswith(loader + ":")
+                   and int(row["evidence"].rsplit(":", 1)[1]) in inside}
         data = copy.deepcopy(self.data)
         for row in data["entries"]:
             if row["id"] in drifted:
                 row["evidence"] = f"{loader}:{drifted[row['id']]}"
         errors = check(data, self.baseline)
+        # every drifted entry goes red per entry — each now points at the
+        # adjacent next key, wecom at the closing `];`. The restore below
+        # proves the correct anchors stay green, which also rules out a
+        # ruler that flags every table member regardless of correctness.
         for key in drifted:
             self.assertIn("evidence key literal mismatch: " + key, errors)
-        for unaffected in ("gateway.channel:bluebubbles", "gateway.channel:dingtalk",
-                           "gateway.channel:email", "gateway.channel:homeassistant"):
-            self.assertNotIn("evidence key literal mismatch: " + unaffected, errors)
         for row in data["entries"]:  # restore must go back to green
             if row["id"] in drifted:
                 row["evidence"] = f"{loader}:{drifted[row['id']] - 1}"
@@ -163,6 +170,18 @@ class CoverageControls(unittest.TestCase):
             ['pub const T: &[&str] =', '    &[', '    "a",', '    "b",', '];']), {3, 4, 5})
         self.assertEqual(literal_table_lines(
             ['pub const T: &[&str] = &[ // keep sorted', '    "a",', '];']), {2, 3})
+        # a // comment between the declaration and the wrapped &[ is
+        # transparent, same as inside the table (fix-r3, DS boundary P1 /
+        # sibling P2#2)
+        self.assertEqual(literal_table_lines(
+            ['pub const T: &[&str] =', '    // why wrap', '    &[',
+             '    "a",', '];']), {4, 5})
+        # a closure body mentioning static is not a key table, even though
+        # the line above a bare `[` declares a binding-shaped word
+        # (fix-r3, DS boundary P2#2: title.rs / recovery.rs shapes)
+        self.assertEqual(
+            literal_table_lines(['static E: LazyLock<[u8; 1]> = LazyLock::new(|| {',
+                                '    [', '    "a",', '];']), set())
         # a wrapped `&[` under a non-binding line stays out
         self.assertEqual(literal_table_lines(
             ['let xs =', '    &[', '    "a",', '];']), set())
@@ -180,14 +199,18 @@ class CoverageControls(unittest.TestCase):
         # per entry (wecom lands on the closing `];`).
         loader = "src/pilotdeck-gateway/src/channel/loader.rs"
         path = (ROOT / loader).resolve()
-        noisy = split_lines(path.read_text())
-        # Anchor the interior comment to the table's own opening line, not
-        # to a file-level absolute offset: any edit above UNMIGRATED_
-        # CHANNEL_KEYS would silently push the insert outside the table and
-        # turn this control into a no-comment rerun (#2286 fix-r2,
-        # anthropic boundary P2 / simplify P2, two families).
-        header = next(i for i, line in enumerate(noisy)
-                      if "UNMIGRATED_CHANNEL_KEYS" in line)
+        # One snapshot, two in-memory derivations: re-reading between the
+        # noisy and annotated controls would reuse a stale header index if
+        # anything edited the file in between (#2286 fix-r3, DS
+        # concurrency P2#1). The anchor matches the declaration shape, not
+        # any line mentioning the name — a doc comment above the table must
+        # not steal it (DS sibling P2#3 / simplify P2#1).
+        base = split_lines(path.read_text())
+        header = next(i for i, line in enumerate(base)
+                      if re.fullmatch(
+                          r"\s*(?:pub(?:\([^)]*\))?\s+)?const\s+"
+                          r"UNMIGRATED_CHANNEL_KEYS\b.*", line))
+        noisy = list(base)
         noisy.insert(header + 1, "    // churn")
         tables = {path: (noisy, literal_table_lines(noisy))}
         current = {row["id"]: int(row["evidence"].rsplit(":", 1)[1])
@@ -209,7 +232,7 @@ class CoverageControls(unittest.TestCase):
         # literal_member admits it into the table, so the comparison has to
         # strip the comment instead of flagging a mismatch (fix-r2, DS
         # boundary P1 / sibling P1).
-        annotated = split_lines(path.read_text())
+        annotated = list(base)
         annotated.insert(header + 1, "    // churn")
         whatsapp = current["gateway.channel:whatsapp"] + 1  # on-key after shift
         annotated[whatsapp - 1] += "  // keep last"
@@ -227,12 +250,16 @@ class CoverageControls(unittest.TestCase):
         # if the const/static gate were dropped and the list re-entered
         # the table, this would flag a mismatch (fix-r2; the old probe
         # keyed 1267, whose literal matches, and could never turn red).
+        proxy = "src/pilotdeck-gateway/src/http_proxy.rs"
+        proxy_lines = split_lines((ROOT / proxy).read_text())
+        keep_alive = next(i for i, line in enumerate(proxy_lines, 1)
+                          if line.strip() == '"keep-alive",')
+        connection = next(i for i, line in enumerate(proxy_lines, 1)
+                          if line.strip() == '"connection",')
         self.assertIsNone(key_literal_error(
-            "gateway.header:connection",
-            "src/pilotdeck-gateway/src/http_proxy.rs:1268"))
+            "gateway.header:connection", f"{proxy}:{keep_alive}"))
         self.assertIsNone(key_literal_error(
-            "gateway.header:connection",
-            "src/pilotdeck-gateway/src/http_proxy.rs:1267"))
+            "gateway.header:connection", f"{proxy}:{connection}"))
 
     def test_unknown_express_shapes_fail(self):
         subprocess.run(["node", str(Path(__file__).with_name("test_shapes.mjs"))], check=True, timeout=10)
