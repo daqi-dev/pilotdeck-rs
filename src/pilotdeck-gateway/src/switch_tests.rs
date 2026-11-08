@@ -393,6 +393,57 @@ fn bounded_timeout_predicate_rejects_unbounded_values() {
     assert!(BoundedTimeout::from_millis(u64::MAX).is_err());
 }
 
+/// #2363: the backstop spelling — the same predicate shape one ceiling
+/// higher, exercised on its own instead of through the shared spelling's
+/// tests. The backstop's cap clause is a copy in [`BoundedTimeout`], not a
+/// call through [`BoundedTimeout::from_millis_f64`], so the shared
+/// spelling's coverage proved nothing about this one (the
+/// `switch-unbounded-timeout` mutant survived against every backstop test
+/// — fake coverage through the cap copy).
+#[test]
+fn backstop_timeout_predicate_rejects_unbounded_values() {
+    for rejected in [
+        0.0f64,
+        -1.0f64,
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        u64::MAX as f64,
+        1e300f64,
+        (TIMEOUT_CAP_MS + BACKSTOP_SLACK_MS + 1) as f64,
+    ] {
+        // The negative-control anchor
+        // (`switch-backstop-unbounded-timeout` deletes the backstop's own
+        // cap clause): the receipt-emitting form, so the uncapped spellings
+        // cannot pass as bounded backstops.
+        negative_assert!(
+            BoundedTimeout::backstop_from_millis(rejected).is_err(),
+            "#2363 the backstop spelling rejects the uncapped value"
+        );
+    }
+    // The boundary value itself is bounded: the ceiling admits its own
+    // edge, and the derived backstops (budget + slack) sit on it.
+    for accepted in [
+        1.0f64,
+        5000.0f64,
+        (TIMEOUT_CAP_MS + BACKSTOP_SLACK_MS) as f64,
+    ] {
+        assert!(
+            BoundedTimeout::backstop_from_millis(accepted).is_ok(),
+            "#2363 the backstop spelling accepts the capped value {accepted}"
+        );
+    }
+    // Fractional milliseconds round to a nonzero duration — accepting the
+    // value must not collapse it to zero.
+    assert_eq!(
+        BoundedTimeout::backstop_from_millis(0.5)
+            .expect("#2363 the fractional backstop is bounded")
+            .duration(),
+        Duration::from_micros(500),
+        "#2363 the backstop spelling keeps the fractional millisecond"
+    );
+}
+
 /// #1353 DC-1: the operator-facing production bounds stay at the shared
 /// cap, and the slack makes the machine bound a backstop rather than a
 /// racing copy of the face's own deadline — the backstops are derived

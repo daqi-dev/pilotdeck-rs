@@ -65,7 +65,13 @@ impl Requests {
             // flag is checked before the dispatch leaves the routing seam,
             // so a management call racing the stop observes the gate, not a
             // half-stopped manager.
-            if crate::switch::cron_management_closed(cron.as_ref()) {
+            // `switch-cron-management-open` (negative control, #2363): the
+            // `cron_management_closed` gate check bypassed, so the stopped
+            // manager keeps serving the management methods — the TS
+            // baseline's D5 shape.
+            if crate::switch::cron_management_closed(cron.as_ref())
+                && !crate::mutants::on("switch-cron-management-open")
+            {
                 return Err(wire_error(cron::CronError::gateway(
                     "SWITCH_IN_PROGRESS",
                     pilotdeck_protocol::JsString::from(

@@ -127,7 +127,12 @@ impl BoundedTimeout {
         if ms <= 0.0 {
             return Err(format!("switch backstop must be positive, got {ms}"));
         }
-        if ms > (TIMEOUT_CAP_MS + BACKSTOP_SLACK_MS) as f64 {
+        // `switch-backstop-unbounded-timeout` (negative control, #2363): the
+        // backstop's own copy of the cap clause deleted, so an over-cap value
+        // passes as a bounded backstop here.
+        if ms > (TIMEOUT_CAP_MS + BACKSTOP_SLACK_MS) as f64
+            && !crate::mutants::on("switch-backstop-unbounded-timeout")
+        {
             return Err(format!(
                 "switch backstop must be at most {} ms, got {ms}",
                 TIMEOUT_CAP_MS + BACKSTOP_SLACK_MS
