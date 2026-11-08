@@ -21,11 +21,13 @@ use pilotdeck_protocol::{JsString, JsValue};
 use std::{
     collections::HashMap,
     future::Future,
+    panic::{AssertUnwindSafe, catch_unwind},
     pin::Pin,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
+    task::Poll,
     time::Duration,
 };
 use tokio::{
@@ -656,13 +658,15 @@ impl HostedConnection {
 /// settles from turning a fast builder failure into a hung
 /// `start_with_cleanup`. The two synchronous disposals below always run.
 ///
-/// #1942: the two fixture-only switches below exist so this cleanup has a
+/// #1942: the three fixture-only switches below exist so this cleanup has a
 /// standing negative control, not just the positive
 /// `a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup`:
 /// `native-ws-skip-initialization-cleanup` skips the whole teardown (the
-/// coordinator and its interactions are left live), and
+/// coordinator and its interactions are left live),
 /// `native-ws-skip-initialization-embedding-cleanup` skips only the embedding
-/// cleanup poll. Each is registered in the native-ws-entry roster
+/// cleanup poll, and `native-ws-initialization-cleanup-panic-uncaught` (see
+/// [`caught_cleanup`]) lets a panicking cleanup escape instead of being
+/// converted to an `Err`. Each is registered in the native-ws-entry roster
 /// (`tests/fixtures/native-ws-entry/negative_controls.py`) and must be killed
 /// by that test's own marker.
 async fn dispose_initialization(
@@ -684,8 +688,24 @@ async fn dispose_initialization(
             tokio::time::timeout_at(shutdown_deadline, services.submitter.owner.shutdown()).await;
     }
     if !skip_cleanup && let Some(cleanup) = cleanup {
-        let cleanup_deadline = tokio::time::Instant::now() + cleanup_bound;
-        let _ = tokio::time::timeout_at(cleanup_deadline, cleanup).await;
+        // #1949: a bound too large for the clock (an embedding's
+        // `Duration::MAX`, the idiomatic "no bound" a library caller can pass
+        // straight into the public `start_with_cleanup_budget`) must not
+        // overflow the deadline arithmetic. The std panic would kill the host
+        // thread and turn the declared deadline semantics into an opaque
+        // "gateway host initialization stopped" with the coordinator and its
+        // interactions left live. A deadline past every representable instant
+        // is equivalent to none, so the cleanup is awaited without one — the
+        // embedding that declared MAX explicitly waived #1746's no-hang
+        // guarantee, which only covers bounded budgets.
+        match tokio::time::Instant::now().checked_add(cleanup_bound) {
+            Some(cleanup_deadline) => {
+                let _ = tokio::time::timeout_at(cleanup_deadline, caught_cleanup(cleanup)).await;
+            }
+            None => {
+                let _ = caught_cleanup(cleanup).await;
+            }
+        }
     }
     if skip_teardown {
         return;
@@ -694,6 +714,31 @@ async fn dispose_initialization(
     if let Some(interactions) = interactions {
         interactions.dispose(&"gateway_disposed".into());
     }
+}
+
+/// #1942: the embedding cleanup is third-party code polled on the host
+/// thread, so a panic in it must not skip the coordinator and interaction
+/// disposals behind it — the same shape `runtime::replacement` gives its
+/// port calls. Every poll (not just the synchronous prefix) is caught, and a
+/// caught panic becomes an `Err` the callers already ignore, letting the
+/// teardown finish. The `native-ws-initialization-cleanup-panic-uncaught`
+/// switch restores the original unguarded poll for the negative control.
+fn caught_cleanup(
+    mut cleanup: Call<'static, Result<(), String>>,
+) -> impl Future<Output = Result<(), String>> {
+    std::future::poll_fn(move |cx| {
+        match catch_unwind(AssertUnwindSafe(|| cleanup.as_mut().poll(cx))) {
+            Ok(poll) => poll,
+            Err(payload) => {
+                if crate::mutants::on("native-ws-initialization-cleanup-panic-uncaught") {
+                    std::panic::resume_unwind(payload);
+                }
+                let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())
+                    .unwrap_or("embedding cleanup panicked");
+                Poll::Ready(Err(message.to_owned()))
+            }
+        }
+    })
 }
 
 /// #1746: the two awaits of [`dispose_initialization`] do not share a clock,
