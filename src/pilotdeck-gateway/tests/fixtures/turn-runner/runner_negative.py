@@ -18,7 +18,7 @@ env = os.environ.copy()
 command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
            '-p', 'pilotdeck-gateway', '--lib', 'runtime::turn::runner::tests']
 mutations = [
-    ('start-durable', 'start', [('self.io(|r, s, t| r.start_turn(s, t)).await?;', '')]),
+    ('start-durable', 'start', [('self.io(move |r, s, t| r.start_turn_with_inbox(s, t, inbox.as_ref()))', 'std::future::ready(Ok::<(), RecorderError>(()))')]),
     ('accepted-before-write', 'accept', [('.record_accepted_input(s, t, written, input.metadata)?', '.record_accepted_input(s, t, written, input.metadata).unwrap_or_default()')]),
     ('accepted-boundary', 'accept', [('JsValue::Array(accepted)', 'JsValue::Array(self.messages.clone())')]),
     ('synthetic-durable', 'accept', [('.chain(input.synthetic)', '.chain(std::iter::empty())')]),
