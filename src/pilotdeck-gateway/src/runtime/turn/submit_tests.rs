@@ -51,6 +51,7 @@ struct Log {
     consumer_hold: Mutex<Option<Arc<Gate>>>,
     /// Observed terminal-writer counts, recorded by interleaving steps.
     observations: Mutex<Vec<usize>>,
+    captured_workspaces: Mutex<Vec<(bool, String)>>,
 }
 impl Log {
     fn host(&self, value: &str) {
@@ -91,13 +92,32 @@ struct Session {
     pump_error_gate: Gate,
 }
 impl LiveSession for Arc<Session> {
+    fn workspace_cwd(&self) -> Option<JsString> {
+        self.setup["ownedWorkspaceCwd"]
+            .as_str()
+            .map(JsString::from)
+            .or_else(|| {
+                self.snapshot()
+                    .get("cwd")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+            })
+    }
     fn snapshot(&self) -> JsValue {
-        if self.setup["snapshotCwdUnavailable"] == true {
+        if self.setup["snapshotCwdUnavailable"] == true
+            || self.setup["publicSnapshotCwdMissing"] == true
+        {
             object([])
         } else {
             object([
                 ("messages", JsValue::Array(vec![])),
-                ("cwd", "/unused".into()),
+                (
+                    "cwd",
+                    self.setup["publicSnapshotCwd"]
+                        .as_str()
+                        .unwrap_or("/unused")
+                        .into(),
+                ),
             ])
         }
     }
@@ -247,6 +267,12 @@ impl SubmitSnapshots for TestSnapshots {
         pre: bool,
     ) -> SubmitFuture<'a, Result<WorkspaceSnapshotResult, SubmitError>> {
         Box::pin(async move {
+            self.session
+                .log
+                .captured_workspaces
+                .lock()
+                .expect("#748 captured workspace fixture lock")
+                .push((pre, input.workspace_dir.clone()));
             self.session
                 .log
                 .host(if pre { "snapshot_pre" } else { "snapshot_post" });
@@ -1048,6 +1074,42 @@ async fn replay_case(case: &Value) {
         }
     }
     consumer.await.expect("#748 submit fixture prerequisite");
+    if let Some(owned) = setup["ownedWorkspaceCwd"].as_str() {
+        let expected: Vec<_> = case["ownedCapturePhases"]
+            .as_array()
+            .expect("#748 capture phase fixture")
+            .iter()
+            .map(|pre| {
+                (
+                    pre.as_bool().expect("#748 capture phase boolean"),
+                    owned.to_owned(),
+                )
+            })
+            .collect();
+        let actual = log
+            .captured_workspaces
+            .lock()
+            .expect("#748 captured workspace fixture lock")
+            .clone();
+        crate::negative_assert_eq!(
+            actual,
+            expected,
+            "#748 owned workspace capture uses owner cwd"
+        );
+        assert_eq!(
+            session.submits.load(Ordering::SeqCst),
+            1,
+            "owned-cwd case must reach native submit"
+        );
+        assert!(
+            log.ended.load(Ordering::SeqCst),
+            "owned-cwd capture must settle the consumer"
+        );
+        assert!(
+            !owner.has_active_turn(&"s".into()),
+            "owned-cwd capture releases admission"
+        );
+    }
     if setup["statusRecordGate"] == true {
         let released = case["steps"]
             .as_array()
@@ -1507,4 +1569,46 @@ async fn context_budget_cancelled_wait_does_not_retain_admission() {
     tokio::time::timeout(Duration::from_secs(5), replay_case(&case))
         .await
         .expect("#748 cancelled status bounded turn");
+}
+
+#[tokio::test]
+async fn workspace_capture_uses_owned_cwd_instead_of_public_snapshot() {
+    let oracle = crate::test_baseline::oracle(ORACLE);
+    let oracle = json(&oracle);
+    for scenario in ["snapshot-success", "snapshot-agent-failed"] {
+        let original = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == scenario)
+            .unwrap();
+        // The pre/post phases are taken from the fixed TS observations, not
+        // recomputed from the Rust implementation under test.
+        let phases: Vec<_> = original["results"].as_array().unwrap().last().unwrap()["hostCalls"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|call| match call.as_str() {
+                Some("snapshot_pre") => Some(true),
+                Some("snapshot_post") => Some(false),
+                _ => None,
+            })
+            .collect();
+        assert!(!phases.is_empty());
+        for missing in [false, true] {
+            let mut case = original.clone();
+            case["name"] = format!("owned-cwd-{scenario}-missing-{missing}").into();
+            case["orderOnly"] = true.into();
+            case["ownedCapturePhases"] = json!(phases);
+            case["setup"]["ownedWorkspaceCwd"] = "/owned/workspace".into();
+            if missing {
+                case["setup"]["publicSnapshotCwdMissing"] = true.into();
+            } else {
+                case["setup"]["publicSnapshotCwd"] = "/untrusted/public-snapshot".into();
+            }
+            tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+                .await
+                .expect("#748 owned-cwd submit bounded completion");
+        }
+    }
 }

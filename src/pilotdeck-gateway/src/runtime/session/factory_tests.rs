@@ -7734,9 +7734,10 @@ async fn production_workspace_cwd_is_storage_owned_without_extending_public_snap
     // has the correct project cwd, independently of adapter agent_config.
     let before = json_value(&session.snapshot());
     assert_eq!(before, serde_json::json!({"messages":[],"status":"idle"}));
-    assert_eq!(
+    crate::negative_assert_eq!(
         session.workspace_cwd(),
-        Some(JsString::from(h.root.to_str().expect("fixture UTF8 cwd")))
+        Some(JsString::from(h.root.to_str().expect("fixture UTF8 cwd"))),
+        "#745 production owned workspace cwd"
     );
     assert_eq!(
         session
