@@ -488,6 +488,27 @@ impl Harness {
 }
 impl Drop for Harness {
     fn drop(&mut self) {
+        // Observations are complete. A captured storage callback owns Observed,
+        // while Observed owns handles (and their Tokio executors). Break only
+        // that fixture cycle; production disposal/lease assertions stay above.
+        // Take under the locks, but drop outside them: handle Drop may schedule
+        // cleanup whose callbacks acquire another observation lock.
+        let handles = std::mem::take(
+            &mut *self
+                .observed
+                .created_handles
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        let bindings = std::mem::take(
+            &mut *self
+                .observed
+                .bindings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        drop(handles);
+        drop(bindings);
         let _ = std::fs::remove_dir_all(&self.root);
     }
 }
