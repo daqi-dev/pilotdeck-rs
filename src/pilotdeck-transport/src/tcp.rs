@@ -58,6 +58,31 @@ pub fn listen_host(value: Option<&str>) -> &str {
         .filter(|v| !v.is_empty())
         .unwrap_or("127.0.0.1")
 }
+// Only known transient listener failures are retried. Unknown or permanent
+// failures must return to the supervisor rather than loop as a dead listener.
+fn retryable_accept_error(error: &io::Error) -> bool {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionAborted
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::OutOfMemory
+            | io::ErrorKind::NetworkDown
+            | io::ErrorKind::NetworkUnreachable
+            | io::ErrorKind::HostUnreachable
+    ) {
+        return true;
+    }
+    // POSIX resource pressure; use this target's actual errno constants.
+    #[cfg(unix)]
+    if matches!(
+        error.raw_os_error(),
+        Some(libc::ENOMEM | libc::ENFILE | libc::EMFILE | libc::ENOBUFS)
+    ) {
+        return true;
+    }
+    false
+}
+
 struct ConnectionTask {
     socket: TcpStream,
     server: Arc<ExecutionServer>,
@@ -71,6 +96,10 @@ pub struct TcpExecutionServer {
     clock: Arc<dyn ExecutionClock>,
     ledger: SharedExecutionLedger,
     budget: Arc<crate::server::TransportBudget>,
+    #[cfg(test)]
+    panic_closer: bool,
+    #[cfg(test)]
+    fail_after_clones: bool,
 }
 impl TcpExecutionServer {
     pub fn bind(
@@ -88,6 +117,10 @@ impl TcpExecutionServer {
             clock,
             ledger: SharedExecutionLedger::default(),
             budget: Arc::default(),
+            #[cfg(test)]
+            panic_closer: false,
+            #[cfg(test)]
+            fail_after_clones: false,
         })
     }
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -143,20 +176,15 @@ impl TcpExecutionServer {
                     thread::sleep(Duration::from_millis(5));
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::InvalidInput
-                            | io::ErrorKind::NotConnected
-                            | io::ErrorKind::Unsupported
-                    ) =>
-                {
+                // Aborted pending peers and OS descriptor/resource pressure
+                // are retryable accept failures, with bounded backoff.
+                Err(error) if retryable_accept_error(&error) => {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(error) => {
                     failure = Some(error);
                     break;
                 }
-                // Aborted pending peers and OS descriptor/resource pressure
-                // are retryable accept failures, with bounded backoff.
-                Err(_) => thread::sleep(Duration::from_millis(25)),
             }
         }
         drop(self.listener);
@@ -186,6 +214,10 @@ impl TcpExecutionServer {
         let input = socket.try_clone()?;
         let output = socket.try_clone()?;
         let shutdown = socket.try_clone()?;
+        #[cfg(test)]
+        if self.fail_after_clones {
+            return Err(io::Error::other("injected setup failure after socket clones"));
+        }
         let mut binding = self.binding.clone();
         binding.connection_generation = format!(
             "{}-{}",
@@ -201,6 +233,8 @@ impl TcpExecutionServer {
             self.ledger.clone(),
         );
         let serving = server.clone();
+        #[cfg(test)]
+        let panic_closer = self.panic_closer;
         // An output failure must interrupt the independent blocking reader too.
         let worker = match thread::Builder::new()
             .name("sidecar-tcp".into())
@@ -211,6 +245,10 @@ impl TcpExecutionServer {
                     .spawn(move || {
                         while !watcher.is_retired() {
                             thread::sleep(Duration::from_millis(5));
+                        }
+                        #[cfg(test)]
+                        if panic_closer {
+                            panic!("injected closer panic");
                         }
                         let _ = shutdown.shutdown(Shutdown::Both);
                     }) {
@@ -313,6 +351,140 @@ mod tests {
         stop.store(true, Ordering::SeqCst);
         assert!(worker.join().unwrap().is_ok());
         assert_eq!(observed.unwrap().get("ok"), Some(&JsValue::Bool(true)));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fatal_accept_errors_return_to_supervisor_without_retry() {
+        use crate::server::{ExecuteRequest, ExecutionContext, ExecutionTerminal};
+        use pilotdeck_protocol::JsString;
+        use std::sync::atomic::AtomicUsize;
+        struct Fixture;
+        impl ExecutionClock for Fixture {
+            fn now_epoch_ms(&self) -> f64 { 1000.0 }
+            fn now_iso(&self) -> JsString { "1970-01-01T00:00:01.000Z".into() }
+            fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> { Ok(None) }
+        }
+        impl ExecutionFactory for Fixture {
+            fn execute(&self, _: &ExecuteRequest, _: &mut ExecutionContext)
+                -> pilotdeck_agent::ports::PortResult<ExecutionTerminal> {
+                unreachable!("accept error cannot execute")
+            }
+        }
+        for errno in [libc::EPERM, libc::EBADF, libc::EACCES, libc::EFAULT, libc::EINVAL] {
+            let binding = SidecarBinding {
+                module_id: "test".into(), module_instance_id: "instance".into(),
+                connection_generation: "base".into(), capabilities_version: "1".into(),
+            };
+            let listener = TcpExecutionServer::bind(("127.0.0.1", 0), binding,
+                Arc::new(Fixture), Arc::new(Fixture)).unwrap();
+            let stop = Arc::new(AtomicBool::new(false));
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let worker_stop = stop.clone();
+            let worker_attempts = attempts.clone();
+            let worker = thread::spawn(move || listener.serve_accept(
+                worker_stop, Duration::from_secs(1), move |_| {
+                    worker_attempts.fetch_add(1, Ordering::SeqCst);
+                    Err(io::Error::from_raw_os_error(errno))
+                }
+            ));
+            // A broken retry loop cannot hang the test: stop it, then require Err.
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while !worker.is_finished() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(5));
+            }
+            stop.store(true, Ordering::SeqCst);
+            assert_eq!(worker.join().unwrap().unwrap_err().raw_os_error(), Some(errno));
+            assert_eq!(attempts.load(Ordering::SeqCst), 1, "errno {errno}");
+        }
+    }
+
+    #[test]
+    fn failed_setup_drops_every_socket_clone_and_keeps_listener() {
+        use crate::server::{ExecuteRequest, ExecutionContext, ExecutionTerminal};
+        use pilotdeck_protocol::JsString;
+        use std::io::Read;
+        struct Fixture;
+        impl ExecutionClock for Fixture {
+            fn now_epoch_ms(&self) -> f64 { 1000.0 }
+            fn now_iso(&self) -> JsString { "1970-01-01T00:00:01.000Z".into() }
+            fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> { Ok(None) }
+        }
+        impl ExecutionFactory for Fixture {
+            fn execute(&self, _: &ExecuteRequest, _: &mut ExecutionContext)
+                -> pilotdeck_agent::ports::PortResult<ExecutionTerminal> {
+                unreachable!("failed setup cannot execute")
+            }
+        }
+        let binding = SidecarBinding {
+            module_id: "test".into(), module_instance_id: "instance".into(),
+            connection_generation: "base".into(), capabilities_version: "1".into(),
+        };
+        let mut listener = TcpExecutionServer::bind(("127.0.0.1", 0), binding,
+            Arc::new(Fixture), Arc::new(Fixture)).unwrap();
+        listener.fail_after_clones = true;
+        let address = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(address).unwrap();
+        client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let accepted = loop {
+            match listener.listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                    thread::sleep(Duration::from_millis(5)),
+                Err(error) => panic!("accept failed: {error}"),
+            }
+        };
+        assert!(listener.connection(accepted, Duration::from_secs(1)).is_err());
+        let mut data = [0u8; 1];
+        assert_eq!(client.read(&mut data).unwrap(), 0, "all server socket clones must be closed");
+        // The failed connection never owns the listener itself.
+        let second = TcpStream::connect(address).unwrap();
+        drop(second);
+    }
+
+    #[test]
+    fn closer_panic_reports_listener_failure() {
+        use crate::server::{ExecuteRequest, ExecutionContext, ExecutionTerminal};
+        use pilotdeck_protocol::JsString;
+        use std::io::{BufRead, Write};
+        struct Fixture;
+        impl ExecutionClock for Fixture {
+            fn now_epoch_ms(&self) -> f64 { 1000.0 }
+            fn now_iso(&self) -> JsString { "1970-01-01T00:00:01.000Z".into() }
+            fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> { Ok(None) }
+        }
+        impl ExecutionFactory for Fixture {
+            fn execute(&self, _: &ExecuteRequest, _: &mut ExecutionContext)
+                -> pilotdeck_agent::ports::PortResult<ExecutionTerminal> {
+                unreachable!("hello cannot execute")
+            }
+        }
+        let binding = SidecarBinding {
+            module_id: "test".into(), module_instance_id: "instance".into(),
+            connection_generation: "base".into(), capabilities_version: "1".into(),
+        };
+        let mut listener = TcpExecutionServer::bind(("127.0.0.1", 0), binding,
+            Arc::new(Fixture), Arc::new(Fixture)).unwrap();
+        listener.panic_closer = true;
+        let address = listener.local_addr().unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let signal = stop.clone();
+        let worker = thread::spawn(move || listener.serve(signal, Duration::from_secs(1)));
+        let mut socket = TcpStream::connect(address).unwrap();
+        socket.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        writeln!(socket, "{{\"kind\":\"request\",\"messageId\":\"hello\",\"method\":\"hello\",\"payload\":{{}}}}").unwrap();
+        let mut response = String::new();
+        BufReader::new(&socket).read_line(&mut response).unwrap();
+        assert!(response.contains("\"ok\":true"));
+        drop(socket);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !worker.is_finished() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        stop.store(true, Ordering::SeqCst);
+        let error = worker.join().unwrap().expect_err("panic must reach supervisor as failure");
+        assert!(error.to_string().contains("cleanup was incomplete"));
     }
 
     #[test]

@@ -39,7 +39,14 @@ fn main() -> ExitCode {
     // #1371: an armed controlled loop resolves and validates its plan before
     // the server advertises readiness, so an invalid control directory fails
     // closed here exactly like the gateway assembly.
-    if let Ok(value) = std::env::var(pilotdeck_transport::loop_stimulus::STIMULUS_ENV) {
+    if let Some(value) = std::env::var_os(pilotdeck_transport::loop_stimulus::STIMULUS_ENV) {
+        let value = match value.into_string() {
+            Ok(value) => value,
+            Err(_) => {
+                eprintln!("native loop stimulus must be valid UTF-8.");
+                return ExitCode::from(2);
+            }
+        };
         match pilotdeck_transport::loop_stimulus::validate_value(&value) {
             Ok(dir) => {
                 // Resolve and freeze the plan here, at startup, not on the
