@@ -18,8 +18,10 @@
 // The deep fire seam above means most of this port's surface — the fire
 // pipeline's inputs, the lease registry's mutators, the report paths — is
 // driven by those replay tests rather than the shipping build, until the
-// fire half itself is ported. The fire-half items carry their own
-// `#[allow(dead_code)]` with the reason inline.
+// fire half itself is ported. The port's wire-shape items keep the reason
+// inline with their own `#[allow(dead_code)]`; this umbrella covers the
+// rest of the unported surface (paths, mutators, tick entries).
+#![allow(dead_code)]
 mod cycles;
 mod fire;
 mod gates;
