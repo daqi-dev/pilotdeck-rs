@@ -227,15 +227,17 @@ jobs:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    # 外层预算必须**大于**装置内部预算之和（评审 r8 P2；r9 P2 重算——算式在
-    # self_check.py 的 INTERNAL_WORST_CASE_SECONDS 派生机检）：七项自检 worst-case
-    # emit 300 s + check 300 s + 负控 1800 s + 三趟锁探针（七项 1 趟 + control_lock
-    # 两趟）各 660 s（4×60 s 等锁 + 2×60 s wait + 敌意锁 3×50 s + 守卫 fd 3×50 s）
-    # + 敌意写目标 4×50 s → 全 job ≈ 4580 s ≈ 76.3 min，55 min 装不下——内部超时
-    # 永远打不着、失败退化为平台硬杀（cancelled，summary 不发布）；85 min 给足
-    # 余量（内部和 4580 s + 300 s 开销 < 85×60 = 5100 s）——与 negative-controls
-    # job 的既有口径一致。
-    timeout-minutes: 85
+    # 外层预算必须**大于**装置内部预算之和（评审 r8 P2；r10 P0 复算——算式在
+    # self_check.py 的 INTERNAL_WORST_CASE_SECONDS 派生机检，趟数与子进程数由
+    # _assert_pass_counting 与源码调用点同源互证）：七项自检 worst-case emit 300 s
+    # + check 300 s + 负控 1800 s + 六趟锁探针（七项 1 趟 + control_lock 5 趟：
+    # detail / 弱化 flock / 守卫 fd 三变异循环）各 660 s（4×60 s 等锁 + 2×60 s
+    # wait + 敌意锁 3×50 s + 守卫 fd 3×50 s）+ 敌意写目标 4×50 s + control_check
+    # 三个变异方向各一个 300 s checker 子进程 → 全 job ≈ 7460 s ≈ 124.3 min
+    # （r9 的 4580 s 漏算了 control_lock 的三趟与 control_check 的子进程，85 min
+    # 下派生不等式恒真）；130 min = 7800 s > 7460 + 300 s 开销——与
+    # negative-controls job 的既有口径一致。
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@v4
       # #2017-A：接线守卫（r5 起）按 PyYAML 解析后的完整标量判，解析器版本钉死

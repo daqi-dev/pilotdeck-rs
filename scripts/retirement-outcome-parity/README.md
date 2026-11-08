@@ -30,8 +30,12 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
   `self_check.py` 的 `check` 用例**机检**（对入库夹具复算 5 轮 `methods.json` /
   `frames.jsonl` 的 sha256 并断言互异，r8；切回去掉容差字段的切片当场红）。
   互异只排除「同一份数据的多个副本」这一退化，排不掉「五份互异但都被换过」——r9 起
-  复算值还须**逐轮等于** `fixtures/PROVENANCE.md` 登记的原始采集 sha256（表解析不出 /
-  行数对不上 / 任一字节改动都当场红，负控 `control_check` 两个方向各验证一次）。
+  `methods.json` 的复算值须**逐轮等于** `fixtures/PROVENANCE.md` 登记的原始采集
+  sha256；r10 P1 起 `frames.jsonl` **同口径**（此前 frames 只有金样
+  `rounds.files[].framesSha256` 的自指锚——金样本身从入库件 emit 出，改一个判据
+  不消费的字节全绿；现 PROVENANCE 逐轮登记原始哈希）。表解析不出 / 行数对不上 /
+  任一字节改动都当场红，负控 `control_check` 三个方向各验证一次（methods 塞字节 /
+  frames 塞字节 / 删表行）。
   解析后的 `(outcome, errorCode)` 值集合断言在 P7 判据下则是恒真（5 轮解析值必须相同，
   同片与互异数据给出同一集合）——非退化的机器证据是**字节级同片 + 原始 sha256 交叉核对**，
   不是解析值集合。
@@ -302,13 +306,17 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 | `self_check.py`（七项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · 敌意写目标 · CI 接线，七条守卫本身都还在 |
 | `self_check.py --self-check-controls` | 给上面这些守卫造违反样本，它们必须**变红**（接线守卫自己的变异自检） |
 
-外层 `timeout-minutes: 85` 必须**大于**装置内部预算之和（r9 重算，算式在 `self_check.py`
+外层 `timeout-minutes: 130` 必须**大于**装置内部预算之和（r10 P0 复算，算式在 `self_check.py`
 的 `INTERNAL_WORST_CASE_SECONDS` 派生机检：emit 300 s + check 300 s + 负控 1800 s +
-锁与探针三趟——七项自检 1 趟 + `control_lock` 2 趟——各 660 s（4×60 s 等锁 + 2×60 s wait +
-敌意锁 3×50 s + 守卫 fd 3×50 s）+ 敌意写目标 4×50 s = **4580 s ≈ 76.3 min**，55 min
-装不下——r8 的 ≈3020 s 没算合并带入的守卫 fd 探针与正控；`check_wiring` 钉住 85 这个值并
-断言 85×60 > 4580 + 300 s job 开销余量，变异样本 `retirement-job-timeout-lowered` 把它降到
-55 必红），否则内部超时永远打不着、失败退化为平台硬杀（cancelled，summary 不发布）。
+锁与探针**六趟**——七项自检 1 趟 + `control_lock` 5 趟（detail / 弱化 flock / 守卫 fd
+三变异循环）——各 660 s（4×60 s 等锁 + 2×60 s wait + 敌意锁 3×50 s + 守卫 fd 3×50 s）
++ 敌意写目标 4×50 s + `control_check` 三个变异方向各一个 300 s checker 子进程 =
+**7460 s ≈ 124.3 min**，55 min 装不下——r9 的 4580 s 把 `check_lock` 按 3 趟计（实际
+6 趟）、`control_check` 的子进程也不计，85 min 下派生不等式恒真；`check_wiring` 钉住 130
+这个值并断言 130×60 > 7460 + 300 s job 开销余量，锁趟数与子进程数由
+`_assert_pass_counting` 与源码调用点同源互证（新增 / 删除调用点而算式没跟上当场红），
+变异样本 `retirement-job-timeout-lowered` 把它降到 55 必红），否则内部超时永远打不着、
+失败退化为平台硬杀（cancelled，summary 不发布）。
 
 `self_check.py` 是这些守卫的单一实现，本地可整跑：
 
