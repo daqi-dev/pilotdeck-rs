@@ -1943,33 +1943,47 @@ pub(super) fn builtin_skills_root_at(
 pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
     Arc::new(ProjectRuntimeRegistry::new(
         options.project.clone(),
-        Arc::new(ProjectResourcesFactory::new(ProjectResourcesOptions {
-            pilot_home: options.home.clone(),
-            cwd: options.project.clone(),
-            env: env.clone(),
-            homedir: Some(options.home.clone()),
-            builtin_skills_root: explicit_builtin_skills_root(options, env),
-            now: Arc::new(SystemTime::now),
-            telemetry: None,
-            config_version: None,
-            runtime_profile_overrides: RuntimeProfileOverrides::default(),
-            families: Families {
-                lsp: Some(Arc::new(LspFamily)),
-                session_title: Some(Arc::new(TitleFamily)),
-                ..Families::unwired()
-            }
-            .with_native_models()
-            .with_context_memory()
-            .with_tools_mcp()
-            .with_native_background_tasks()
-            .with_native_style_plugins(crate::runtime::plugins::PluginRuntimeOptions {
-                project_root: options.project.clone(),
-                pilot_home: options.home.clone(),
-                builtin_skills_root: explicit_builtin_skills_root(options, env),
-                builtin_plugins: vec![],
-                builtin_plugins_enabled: HashMap::new(),
-            })
-            .with_interaction(),
-        })),
+        Arc::new(super::projects::NativeProjectFactory::new(
+            options.clone(),
+            env.clone(),
+        )),
     ))
+}
+
+/// Reuse the actual resource-family composition for each registry root. Boot
+/// cwd/env/bundled assets remain process selections; project-owned extensions
+/// use the root being staged, like the model/context/persistence stage context.
+pub(super) fn project_resources_factory(
+    options: &Options,
+    env: &Env,
+    project_root: &Path,
+) -> ProjectResourcesFactory {
+    ProjectResourcesFactory::new(ProjectResourcesOptions {
+        pilot_home: options.home.clone(),
+        cwd: options.project.clone(),
+        env: env.clone(),
+        homedir: Some(options.home.clone()),
+        builtin_skills_root: explicit_builtin_skills_root(options, env),
+        now: Arc::new(SystemTime::now),
+        telemetry: None,
+        config_version: None,
+        runtime_profile_overrides: RuntimeProfileOverrides::default(),
+        families: Families {
+            lsp: Some(Arc::new(LspFamily)),
+            session_title: Some(Arc::new(TitleFamily)),
+            ..Families::unwired()
+        }
+        .with_native_models()
+        .with_context_memory()
+        .with_tools_mcp()
+        .with_native_background_tasks()
+        .with_native_style_plugins(crate::runtime::plugins::PluginRuntimeOptions {
+            project_root: project_root.to_path_buf(),
+            pilot_home: options.home.clone(),
+            builtin_skills_root: explicit_builtin_skills_root(options, env),
+            builtin_plugins: vec![],
+            builtin_plugins_enabled: HashMap::new(),
+        })
+        .with_interaction(),
+    })
 }

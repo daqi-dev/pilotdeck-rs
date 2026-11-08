@@ -17,6 +17,7 @@ mod background;
 mod background_archive;
 mod deployment;
 mod local_host;
+mod projects;
 mod server_host;
 pub use local_host::{LocalHost, LocalHostOptions};
 pub use server_host::{
