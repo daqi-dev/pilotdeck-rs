@@ -41,7 +41,8 @@ pub(crate) use gates::{GateBlockReason, GateInput, evaluate_always_on_discovery_
 pub(crate) use leases::{ChannelLease, ChannelLeaseRegistry};
 pub(crate) use manager::{
     AbortInput, AlwaysOnAgentGateway, AlwaysOnManagerOptions, ApplyInput, ControlError,
-    GatewayAbortInput, RerunInput,
+    GatewayAbortInput, RerunInput, PhaseRequest, PhaseResult, PhaseObserver, PhaseCompletion,
+    AlwaysOnRunContextRegistry,
 };
 // The one face that crosses the crate boundary: `native_process::requests`
 // carries it in a public field (`Requests::always_on`), the same `pub`

@@ -12,10 +12,50 @@ use std::collections::HashMap;
 
 #[derive(Default)]
 struct Inner {
+    automation: HashMap<JsString, AutomationEntry>,
     permission_modes: HashMap<JsString, JsString>,
     thinking: HashMap<JsString, JsValue>,
     output_styles: HashMap<JsString, JsString>,
     output_style_order: Vec<JsString>,
+}
+
+/// Host-owned overrides for an unattended automation session. These are not
+/// accepted from a public turn request.
+#[derive(Clone)]
+pub(crate) struct AutomationOverrides {
+    pub cwd: std::path::PathBuf,
+    pub permission_mode: JsString,
+    pub bypass_available: bool,
+    pub can_prompt: bool,
+    pub exclude_tools: Vec<JsString>,
+    pub permission_deny: Vec<crate::config::permission::PermissionRule>,
+    pub context_registry: Option<std::sync::Arc<crate::runtime::always_on::AlwaysOnRunContextRegistry>>,
+}
+
+struct AutomationEntry {
+    identity: std::sync::Arc<()>,
+    value: AutomationOverrides,
+}
+
+/// Revoke only the generation installed by this lease, even if an old task
+/// finishes after its slot has been replaced.
+pub(crate) struct AutomationOverrideLease {
+    owner: std::sync::Weak<SessionOverrides>,
+    key: JsString,
+    identity: std::sync::Arc<()>,
+}
+
+impl Drop for AutomationOverrideLease {
+    fn drop(&mut self) {
+        if let Some(owner) = self.owner.upgrade() {
+            let mut state = owner.inner.lock().unwrap_or_else(|e| e.into_inner());
+            if state.automation.get(&self.key).is_some_and(|entry| {
+                std::sync::Arc::ptr_eq(&entry.identity, &self.identity)
+            }) {
+                state.automation.remove(&self.key);
+            }
+        }
+    }
 }
 
 /// The minimal equivalent registry #1839 allows: one shared instance per
@@ -27,6 +67,33 @@ pub struct SessionOverrides {
 }
 
 impl SessionOverrides {
+    /// One active automation generation per session; no silent replacement.
+    pub(crate) fn acquire_automation(
+        self: &std::sync::Arc<Self>,
+        key: JsString,
+        value: AutomationOverrides,
+    ) -> Result<AutomationOverrideLease, &'static str> {
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if state.automation.contains_key(&key) {
+            return Err("automation session override already active");
+        }
+        let identity = std::sync::Arc::new(());
+        state.automation.insert(key.clone(), AutomationEntry {
+            identity: identity.clone(),
+            value,
+        });
+        Ok(AutomationOverrideLease {
+            owner: std::sync::Arc::downgrade(self),
+            key,
+            identity,
+        })
+    }
+
+    pub(crate) fn automation(&self, key: &JsString) -> Option<AutomationOverrides> {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner())
+            .automation.get(key).map(|entry| entry.value.clone())
+    }
+
     pub fn clear_sdk_state(&self, key: &JsString) {
         let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         state.thinking.remove(key);
@@ -187,5 +254,47 @@ mod tests {
             Some(&JsString::from("bypassPermissions")),
             "#1864 the replacement-character key keeps its own slot"
         );
+    }
+}
+
+#[cfg(test)]
+mod automation_override_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    fn config(path: &str) -> AutomationOverrides {
+        AutomationOverrides {
+            cwd: path.into(),
+            permission_mode: "bypassPermissions".into(),
+            bypass_available: true,
+            can_prompt: false,
+            exclude_tools: vec!["ask_user_question".into()],
+            context_registry: None,
+            permission_deny: vec![crate::config::permission::PermissionRule::new(
+                "policy", "deny", "bash"
+            ).with_pattern("git push*")],
+        }
+    }
+
+    #[test]
+    fn automation_lease_rejects_overlap_and_preserves_regular_selection() {
+        let owner = Arc::new(SessionOverrides::default());
+        let key = JsString::from("auto-session");
+        owner.set_permission_mode(&key, "plan".into());
+        let lease = owner.acquire_automation(key.clone(), config("/project/a")).unwrap();
+        assert!(owner.acquire_automation(key.clone(), config("/project/b")).is_err());
+        let got = owner.automation(&key).unwrap();
+        assert_eq!(got.cwd, std::path::PathBuf::from("/project/a"));
+        assert!(got.bypass_available);
+        assert!(!got.can_prompt);
+        assert_eq!(got.exclude_tools.len(), 1);
+        assert_eq!(got.permission_deny.len(), 1);
+        assert!(got.permission_mode.equals_str("bypassPermissions"));
+        drop(lease);
+        assert!(owner.automation(&key).is_none());
+        assert!(owner.permission_mode(&key).unwrap().equals_str("plan"));
+        let next = owner.acquire_automation(key.clone(), config("/project/b")).unwrap();
+        assert_eq!(owner.automation(&key).unwrap().cwd, std::path::PathBuf::from("/project/b"));
+        drop(next);
     }
 }

@@ -71,10 +71,70 @@ pub(crate) struct GatewayAbortInput<'a> {
     pub reason: Option<&'a str>,
 }
 
+/// One unattended phase submitted through the existing native session owner.
+#[derive(Clone)]
+pub(crate) struct PhaseRequest {
+    pub project_key: JsString,
+    pub session_key: JsString,
+    pub channel_key: JsString,
+    pub run_id: JsString,
+    pub message: JsString,
+    pub cwd: PathBuf,
+    pub permission_mode: JsString,
+    pub bypass_available: bool,
+    pub can_prompt: bool,
+    pub exclude_tools: Vec<JsString>,
+    pub permission_deny: Vec<crate::config::permission::PermissionRule>,
+    pub context_registry: Arc<AlwaysOnRunContextRegistry>,
+    pub register_automation_tools: bool,
+    pub observer: Arc<dyn PhaseObserver>,
+}
+
+/// Bounded ordered turn events, including the terminal event. `error` is the
+/// first error event; phase-specific missing codes are filled by the caller.
+pub(crate) struct PhaseResult {
+    pub events: Vec<JsValue>,
+    pub error: Option<ControlError>,
+    completion: Option<Box<dyn PhaseCompletion>>,
+}
+impl PhaseResult {
+    pub(crate) fn new(events: Vec<JsValue>, error: Option<ControlError>) -> Self {
+        Self { events, error, completion: None }
+    }
+    pub(crate) fn with_completion(mut self, completion: Box<dyn PhaseCompletion>) -> Self {
+        self.completion = Some(completion);
+        self
+    }
+    /// Fire emits its completed/failed event before releasing the session.
+    /// An abandoned receipt still owns cleanup through the implementation's Drop.
+    pub(crate) async fn finish(&mut self) {
+        if let Some(completion) = self.completion.take() {
+            completion.close().await;
+        }
+    }
+}
+pub(crate) trait PhaseCompletion: Send {
+    fn close(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+}
+pub(crate) trait PhaseObserver: Send + Sync {
+    fn on_event<'a>(
+        &'a self,
+        session: &'a JsString,
+        channel: &'a JsString,
+        phase_run: &'a JsString,
+        event: &'a JsValue,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+}
+
 /// The abort half of the turn facade. The error is the `Error.message` the TS
 /// catch reads (`error instanceof Error ? error.message : String(error)`,
 /// AlwaysOnRuntime.ts:399-400).
 pub(crate) trait AlwaysOnAgentGateway: Send + Sync {
+    fn run_phase<'a>(
+        &'a self,
+        request: PhaseRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<PhaseResult, ControlError>> + Send + 'a>>;
+
     fn abort_turn<'a>(
         &'a self,
         input: GatewayAbortInput<'a>,
@@ -907,6 +967,16 @@ mod tests {
         calls: Mutex<Vec<serde_json::Value>>,
     }
     impl AlwaysOnAgentGateway for RecordingGateway {
+        fn run_phase<'a>(
+            &'a self,
+            _request: PhaseRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<PhaseResult, ControlError>> + Send + 'a>> {
+            Box::pin(async { Err(ControlError {
+                code: "unexpected_phase".into(),
+                message: "A phase was unexpectedly submitted by this fixture".into(),
+            }) })
+        }
+
         fn abort_turn<'a>(
             &'a self,
             input: GatewayAbortInput<'a>,

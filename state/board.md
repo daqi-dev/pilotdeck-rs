@@ -5098,3 +5098,8 @@ r89 全CLI546过0失败140忽略，默认32技能catalog/read_skill、插件MCP/
 ### 2026-11-09 03:16 · 多项目消费接线与首轮实测修复
 
 本机正本已到f2da5c6b7，Requests/submit按同一选中项目固定上下文、owner、模型/存储代及replay；seed/style/上传/active快照补齐，旧publisher迟到写按实例身份隔离。r95（98e45f806，mbp2）all-target编译、memory6、style2、submit11、UTF1635、input2、context、native-plugin11/代际4、coordinator39通过；publish筛选命中0不计通过。5个management失败为真实装配memory能力期望过时、storage测试未append、upload get真bug（目录返回{projects:[...]}被误判顶层数组）及2项clippy已修，均等r96复验；r96固定f2da5c6b7正在扩跑native全模块、owner和正确publish模块。第二隔离镜像固定e79dbcdb7构建全CLI/库测试/实际bins，未记通过。双谱系loader增量复核在跑；scope/steer剩余入口与实际新代skills源码安装继续，旧17优先变异原件已回收（16KILLED/1INVALID不改写）。所有Rust仅mbp2，本机只源码/证据/提交，无GitHub写；完整CLI尚未完成，03:16后继续，下一交接04:41。
+
+
+### 2026-11-09 04:02 · 自动化真实执行与最终原生入口继续补齐
+
+r97全目标编译及submit/admission/plugin通过，native两项新steer夹具在关闭时挂起，已保sample并仅终止该测试子进程，2a89修清理顺序、1203修strict后交r98实跑；未将整轮标绿。8b3本机整合只读项目延迟archive与model/style/history实际TS参数合同。范围复核确认实际CLI还装配always-on深执行及SOP控制，裸IPG拒绝能力不能算完整；已从固定上游7b30精确复用17个新增产品/夹具文件，Terra负责fire/工具、audit有界存储/workspace、Sol SOP、root真实gateway回调/权限/注册。32默认技能已获用户许可并入源码，真实新版安装仍待验证。47个实际变异独立镜像在跑，loader七项均KILLED，其余未结束；当前两家session审查新发现待处置，完整CLI未完成。只本机提交、Rust只mbp2、无GitHub写；唯一正本与旧树快照不变，04:41继续交接。
