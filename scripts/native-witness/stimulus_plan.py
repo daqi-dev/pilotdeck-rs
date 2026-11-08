@@ -197,9 +197,17 @@ def _loop(evidence, phase, key=None, site='loop'):
 
 
 def _storage(evidence, site, phase, key):
+    """Receipts at one storage boundary.
+
+    A `release` receipt carrying ``bounded: true`` is the product's own
+    bound expiring and self-releasing the blocked write — not the
+    collector's controlled release — so it never attests the release
+    edge (#2396 fix-r1, codex boundary P0 / DS boundary P1).
+    """
     return [receipt for receipt in evidence.get('storageReceipts', [])
             if receipt.get('site') == site and receipt.get('phase') == phase
-            and receipt.get('key') == key]
+            and receipt.get('key') == key
+            and not (phase == 'release' and receipt.get('bounded') is True)]
 
 
 def _queued(evidence, site):
@@ -261,8 +269,25 @@ def _settlement_witnesses(stimulus, evidence):
     return found
 
 
+def _plan_pids(evidence):
+    """The pids the plan's own input/wait receipts name (key=planId).
+
+    Final/return loop receipts are this case's only when their pid is in
+    this set: a receipt trailing in from the previous case's turn carries
+    that turn's pid (#2396 fix-r1, codex boundary P0 / sibling P1 / DS P2).
+    """
+    plan_id = evidence.get('planId')
+    return {receipt.get('pid') for receipt in evidence.get('loopReceipts', [])
+            if receipt.get('site') == 'loop' and receipt.get('key') == plan_id
+            and receipt.get('phase') in ('input', 'wait')}
+
+
 def _final_frame(evidence):
-    return [frame for frame in evidence.get('frames', []) if frame.get('final')]
+    """The final frames of this case's request, never another request's."""
+    request = evidence.get('requestId')
+    return [frame for frame in evidence.get('frames', [])
+            if frame.get('final')
+            and (request is None or frame.get('id') == request)]
 
 
 def _timer_cleared(evidence):
@@ -343,6 +368,10 @@ def _target_witnesses(stimulus, target, evidence):
             absent.append('control.status.fifo.checked (writer queued receipt)')
         if not fifo:
             absent.append('control.status.fifo.checked action')
+        if blocked and queued and not blocked[0]['seq'] < queued[0]['seq']:
+            absent.append('status.block.seq < queued.seq (FIFO follower)')
+        if queued and released and not queued[0]['seq'] < released[0]['seq']:
+            absent.append('queued.seq < status.release.seq')
         found += blocked[:1] + released[:1] + queued[:1] + fifo[:1]
         found += _storage(evidence, 'writer', 'complete', 'turn_timeout')[:1]
     elif name == 'slowCatchStatus':
@@ -352,6 +381,8 @@ def _target_witnesses(stimulus, target, evidence):
             absent.append('status.block(gateway_submit_failed)')
         if not released:
             absent.append('status.release(gateway_submit_failed)')
+        if blocked and released and not blocked[0]['seq'] < released[0]['seq']:
+            absent.append('status.block.seq < status.release.seq')
         found += blocked[:1] + released[:1]
     elif name == 'slowAppend':
         keys = list(target.get('blockedKeys') or [])
@@ -371,6 +402,40 @@ def _target_witnesses(stimulus, target, evidence):
             absent.append('control.registry.fifo.checked (registry queued receipt)')
         if not _actions(evidence, 'control.registry.fifo.checked'):
             absent.append('control.registry.fifo.checked action')
+        # Product-side sequence edges (#2396 fix-r1): the status append
+        # blocks, the error append queues behind it, the status append
+        # releases, and only then does the re-armed error barrier block.
+        if not special:
+            base = variant['slowAppend']
+            status_block = _storage(evidence, 'registry', 'block', 'agent_status:' + base)
+            status_release = _storage(evidence, 'registry', 'release', 'agent_status:' + base)
+            error_block = _storage(evidence, 'registry', 'block', 'error:' + base)
+            error_release = _storage(evidence, 'registry', 'release', 'error:' + base)
+            queued = _queued(evidence, 'registry')
+            if status_block and queued and not status_block[0]['seq'] < queued[0]['seq']:
+                absent.append('registry.persist.block.seq < queued.seq (FIFO follower)')
+            if status_block and status_release \
+                    and not status_block[0]['seq'] < status_release[0]['seq']:
+                absent.append('registry.persist.block.seq < release.seq (status append)')
+            if status_release and error_block \
+                    and not status_release[0]['seq'] < error_block[0]['seq']:
+                absent.append('status release before the re-armed error block')
+            if error_block and error_release \
+                    and not error_block[0]['seq'] < error_release[0]['seq']:
+                absent.append('error block.seq < release.seq')
+            # Collector-side edge: the second barrier is armed before the
+            # first is released, so the driver's fifo sighting precedes the
+            # re-arm, which precedes the first barrier's release.
+            fifo_action = _actions(evidence, 'control.registry.fifo.checked')
+            rearm = _actions(evidence, 'rearm-storage')
+            if fifo_action and rearm and not fifo_action[0]['monotonic'] < rearm[0]['monotonic']:
+                absent.append('control.registry.fifo.checked before rearm-storage')
+            if rearm and status_block:
+                first_release = [action for action in evidence.get('controlActions', [])
+                                 if action.get('action') == 'release-storage'
+                                 and action.get('detail', {}).get('seq') == status_block[0]['seq']]
+                if first_release and not rearm[0]['monotonic'] < first_release[0]['monotonic']:
+                    absent.append('rearm-storage before the first registry release')
         found += _queued(evidence, 'registry')[:1]
         found += _actions(evidence, 'control.registry.fifo.checked')[:1]
     elif name == 'failStatus':
@@ -398,11 +463,16 @@ def _witness_order(stimulus, evidence, found):
     order = stimulus['order']
     variant = stimulus['variant']
     absent = []
+    pids = _plan_pids(evidence)
+
+    def plan_bound(receipts):
+        return [receipt for receipt in receipts if receipt.get('pid') in pids]
+
     release_unknown = _actions(evidence, 'release-loop', stage='outcome', outcome='unknown')
     release_known = _actions(evidence, 'release-loop', stage='outcome', outcome='known')
-    final_unknown = _loop(evidence, 'final', 'result_unknown')
-    final_completed = _loop(evidence, 'final', 'completed')
-    final_suppressed = _loop(evidence, 'final', 'completed-suppressed')
+    final_unknown = plan_bound(_loop(evidence, 'final', 'result_unknown'))
+    final_completed = plan_bound(_loop(evidence, 'final', 'completed'))
+    final_suppressed = plan_bound(_loop(evidence, 'final', 'completed-suppressed'))
     final = _final_frame(evidence)
     settlement = _settlement_witnesses(stimulus, evidence)
     if order in ('unknown-first', 'known-final-first'):
@@ -422,8 +492,9 @@ def _witness_order(stimulus, evidence, found):
         found.append({'timerCleared': _timer_cleared(evidence)})
     elif order == 'known-final-before-timeout-pending':
         # The product's own receipt keys the held generator return as
-        # phase=`return`, key=`block` (controlled_loop.rs), not the plan id.
-        blocked = _loop(evidence, 'return', 'block')
+        # phase=`return`, key=`block` (controlled_loop.rs), not the plan id;
+        # the pid binding is what makes it this case's block.
+        blocked = plan_bound(_loop(evidence, 'return', 'block'))
         returned = _actions(evidence, 'release-loop', stage='return')
         # After the timeout-decided final the bounded delivery of the buffered
         # turn_completed either lands within the drain budget (`completed`) or
@@ -455,6 +526,10 @@ def _witness_order(stimulus, evidence, found):
             absent.append('control.release.unknown')
         if not final_unknown:
             absent.append('loop.final(result_unknown)')
+        # after-complete: the fence gates the outcome release, so the
+        # release must land at or after the final frame (#2396 fix-r1).
+        if evidence.get('notes', {}).get('outcomeReleaseAfterFinal') is not True:
+            absent.append('outcome release after the fence-gated final')
         found += fence[:1] + release_unknown[:1] + final_unknown[:1] + final[:1]
         found += settlement[:1]
     else:
@@ -466,6 +541,15 @@ def _witness_order(stimulus, evidence, found):
             absent.append('control.release.unknown')
         if not final_unknown:
             absent.append('loop.final(result_unknown)')
+        # timeout-first order edge (#2396 fix-r1, codex sibling P1 / DS
+        # boundary P2): a held write (slowStatus/slowAppend) releases the
+        # unknown strictly before the final frame — the native final is
+        # itself gated behind those barriers (#1370) — while every other
+        # variant releases it only once the final is seen.
+        expected_after = not (variant.get('slowStatus') or variant.get('slowAppend'))
+        if evidence.get('notes', {}).get('outcomeReleaseAfterFinal') is not expected_after:
+            absent.append('outcome release ' + ('after' if expected_after else 'before')
+                          + ' the final frame (timeout-first)')
         found += settlement[:1] + final[:1] + release_unknown[:1] + final_unknown[:1]
         found.append({'outcomeReleaseAfterFinal':
                       evidence.get('notes', {}).get('outcomeReleaseAfterFinal')})

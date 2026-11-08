@@ -307,6 +307,39 @@ class WitnessTests(unittest.TestCase):
                 error = caught
             self.assertTrue(error is None, '#1140 the frozen wire checker accepts a real received row: ' + str(error))
 
+    def test_receive_poll_partial_frame_is_bounded(self):
+        # #2396 fix-r1: a frame that only partially arrives within the poll
+        # timeout must not fall back to blocking on the capture deadline —
+        # the half-frame stays buffered and completes on a later poll.
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        listener.listen(1)
+        listener.settimeout(10)
+        client_side = socket.create_connection(('127.0.0.1', port))
+        connection, _ = listener.accept()
+        with connection, client_side:
+            client = c.WireClient.__new__(c.WireClient)
+            payload = b'{"ok":1}'
+            frame = b'\x81' + bytes([len(payload)]) + payload
+            client.socket, client.buffer, client.rows = client_side, b'', []
+            client.deadline = time.monotonic() + 30
+            connection.sendall(frame[:1])
+            time.sleep(0.05)
+            started = time.monotonic()
+            self.assertTrue(client.receive_poll(0.2) is None,
+                            '#2396 a partial frame returns None within the poll cap')
+            self.assertTrue(time.monotonic() - started < 2,
+                            '#2396 the poll never blocks past its own cap')
+            self.assertTrue(client.buffer == frame[:1],
+                            '#2396 the partial bytes stay buffered')
+            connection.sendall(frame[1:])
+            value = client.receive_poll(5)
+            self.assertTrue(value == json.loads(payload),
+                            '#2396 the completed frame parses on the next poll')
+        listener.close()
+
     def test_recorder_rows_audit(self):
         # A real loopback WebSocket exchange: every observer row the frozen
         # audit consumes is produced by the real WireClient against a real
