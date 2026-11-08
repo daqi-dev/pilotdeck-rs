@@ -12,7 +12,7 @@ async fn native_failure_waits_for_the_whole_validated_event_prefix() {
     let mut limits = limits();
     limits.terminal_drain_timeout = Duration::from_secs(5);
     let client = HostClient::spawn(&mut native_peer(), Some(&"fixture".into()), limits)
-        .await.unwrap().with_native_terminal_errors();
+        .await.unwrap().with_native_terminal_errors(true);
     let final_received = client.final_received();
     let worker = tokio::spawn(client.execute(request(), handler.clone()));
     wait_for_event("native final received", || final_received.load(Ordering::SeqCst)).await;
@@ -39,7 +39,7 @@ async fn blocked_native_failure_prefix_reports_bounded_drain_failure() {
     let mut limits = limits();
     limits.terminal_drain_timeout = Duration::from_millis(30);
     let client = HostClient::spawn(&mut native_peer(), Some(&"fixture".into()), limits)
-        .await.unwrap().with_native_terminal_errors();
+        .await.unwrap().with_native_terminal_errors(true);
     let error = tokio::time::timeout(Duration::from_secs(10), client.execute(request(), handler.clone()))
         .await.unwrap().unwrap_err();
     assert_eq!(error.kind, HostErrorKind::Timeout);

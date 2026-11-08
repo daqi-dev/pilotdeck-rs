@@ -39,7 +39,7 @@ fn assemble_with_native_collation(
         }
     })?;
     let compare =
-        |left: &JsString, right: &JsString| collator.compare_utf16(left.units(), right.units());
+        |left: &JsString, right: &JsString| collator.compare_utf16_preserving_surrogates(left.units(), right.units());
     OriginalRequestAssembler
         .assemble_with_collation(state, host, parameters, options, observer, &compare)
 }

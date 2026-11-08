@@ -6,6 +6,8 @@ use base64::{
 };
 use icu_casemap::CaseMapper;
 use icu_collator::CollatorBorrowed;
+#[cfg(test)]
+use icu_collator::Collator;
 use icu_locale_core::{LanguageIdentifier, Locale};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
