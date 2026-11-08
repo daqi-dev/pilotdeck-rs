@@ -5014,3 +5014,26 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | #1355 r1 探针坐实四 P1，等 MM r6 → fix-r7 | #1355 车道 + 协调者 | MM r6 回报后 |
 
 现场指针：`_tmp/20261107-coord/patrol-0231.md`（本段正本）· `_tmp/20261109-2498-2501-harvest/task.md`（漏收补捞任务书）· `_tmp/20261109-2230-count-fix/task.md`（#2230 计数小修任务书）（沿 02:2x 段所列）。
+
+### 03:1x（用户三问 + P0 派单段，接 02:3x 段；下一段 04:30；落笔 `date` 实测 03:13）
+
+**做了什么**：
+
+- **#2498 fix-r1 已派 cb8（本轮最高优先）**：补捞车道 DS 四角色双撞 P0（never-settling append 场景 consume 臂 `next()` 尾随 `wait_for` 无上界、`close_live()` 只置 closed 不清 pending；修复只是把挂死从 manage 臂挪到 consume 臂）→ `fix-assemble 2498 glm fix-r1` 派 cb8（评审原文 `_tmp/20261109-2498-2501-harvest/review-ds-2498/` 四角色 + 必修清单；P0 最小复现格要求旧代码红/新代码绿）。哨兵 bm6uokzlv。#2501 侧 PR #2547 已开（CI 终态哨兵 bi45ymtoi，绿后入队）。
+- **本机盘闸解除**：02:18 删 wt-1770 后仍回落 19 GiB（< 20 cargo 闸）→ 本轮删 4 棵 idle 树可重建 cargo-target（wt-2363 2.0G / wt-2142 2.0G / wt-297 1.9G / wt-1355 2.1G，均 idle >20 min 无 cargo 进程；wt-1891 的 16.8G 在用不动）→ **27 GiB**。`_build+_tmp` 70.1/200 GiB 正常——卷满在仓外（用户日常机）。
+- **#2532 fix-r2 收货续单已派**（三查已过不重做）：safe-push e47cfa70f → DS+anthropic 两家增量复核（base 72d9523ec）→ PR 正文追加 + check-pr-gate；不 merge。任务书 `_tmp/20261109-2532-fixr2-harvest/task2.md`。
+- **#1317 车道结果已消化**（许久没消息项）：Phase 1 报告 + 五项判定 11-08 21:3x 已回执；Phase 2 卡 **PR #2397（#2294 always-on）**——pr-gate FAIL「缺角色审计结果块」（评审块不覆盖当前 head 7b30b45f）+ DIRTY 需 rebase。同病四张：#2397/#2407（决策卡已人批）/#2387（#2272）/#2417（#2301 loader 接线）均「缺角色审计结果块」停摆 6–16 h → **下轮派评审轮车道**（rebase 后对当前 head 出块）。
+- **macmini 盘摸底（用户问「可以清吗」）**：44 GiB 空闲 < 宿主准入 45。`~/ws` 297 GiB 三大头：`pdrs-runner-build/issue-1433` **129 GiB**（#1433 已合入关闭的宿主链仓外树，build 可重建；证据先核已拷回）、`pilotdeck-kernel-complete-20261107` **72 GiB**（非本协调会话产物，不认不动）、`neg-1352-macos-*` **36 GiB**（#1352 已 CLOSED 的负控宿主树）。前两项清理待人点头（仓外清理授权待人项）；清 1+3 ≈ 165 GiB → macmini 回 ~209 GiB。
+- **#1355 fix-r7 进展**：修复+文档+重新 pin 完成（head b9bcc3059，148/148 test_safety、0 存活 negctl、check_frozen×2 过），DS+MM 两轮四角色评审在飞 → 回报后 PR → gate。
+
+**下一步（未结义务新增；上表五项继续有效）**：
+
+| 下一步动作 | 唯一责任人 | 最迟复查 |
+|---|---|---|
+| #2498 fix-r1 glm.exit → 收货 → 两家复核 → 入队 | 协调者（哨兵 bm6uokzlv） | 04:30 段内 |
+| #2547 CI 全绿 → 入队 | 协调者（哨兵 bi45ymtoi） | 04:0x |
+| #1891 glm.exit → 收货销账 | 协调者（哨兵 bluyxxz8x） | 04:0x |
+| 四张缺块停摆 PR（#2397/#2407/#2387/#2417）派评审轮 | 协调者 | 04:30 段内 |
+| macmini 仓外清理授权待人点头（#1157 总表在案） | 人 | 下次派 macmini 宿主前 |
+
+现场指针：`_tmp/20261109-2498-2501-harvest/`（#2498 评审 + 补捞证据）· `_tmp/20261109-2532-fixr2-harvest/`（task2.md 收货续单）· `_tmp/20261107-coord/sweep-0305.md`（六灯 sweep 正本）· `_tmp/20261107-coord/patrol-0231.md`（沿 02:3x 段）。
