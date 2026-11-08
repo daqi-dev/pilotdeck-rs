@@ -87,7 +87,7 @@ mutations = [
     ('oracle-corruption', ORACLE, '"node": "v22.22.0"', '"node": "v0.0.0"', 'native_process::management_tests::regenerates_identically', '#280 native-management/oracle.json differs'),
 ]
 mutations.append(('cursor-array-refused', SOURCE, 'JsValue::Array(items) => encode(items),', 'JsValue::Array(_items) => Err(invalid()),', TEST, '#1231 method wire result'))
-mutations.append(('pending-io-blocks-host', SOURCE, '        Some(\n            tokio::task::spawn_blocking(move || {\n                runtime.block_on(requests.management(&method, &params))\n            })\n            .await\n            .map_err(|e| RequestError::new(e.to_string()))\n            .and_then(|result| result),\n        )', '        let _ = runtime; Some(requests.management(&method, &params).await)', 'native_process::management_tests::pending_file_read_does_not_block_serial_host', '#1231 pending file IO must not block host'))
+mutations.append(('pending-io-blocks-host', SOURCE, '        Some(\n            tokio::task::spawn_blocking(move || {\n                let _permit = permit;\n                runtime.block_on(requests.management(&method, &params))\n            })\n            .await\n            .map_err(|e| RequestError::new(e.to_string()))\n            .and_then(|result| result),\n        )', '        let _permit = permit; let _ = runtime; Some(requests.management(&method, &params).await)', 'native_process::management_tests::pending_file_read_does_not_block_serial_host', '#1231 pending file IO must not block host'))
 
 mutations.append(('commands-nested-blocking', SOURCE, 'return Some(self.commands(params).await);', 'let requests = self.clone(); let params = params.clone(); let runtime = tokio::runtime::Handle::current();\n            return Some(tokio::task::spawn_blocking(move || runtime.block_on(requests.commands(&params))).await.map_err(|e| RequestError::new(e.to_string())).and_then(|r| r));', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
 
@@ -175,8 +175,16 @@ mutations.append((
 mutations.append((
     'memory-project-key-exact-only',
     ASSEMBLY_MEMORY,
-    '        self.metadata\n'
-    '            .resolve_dialog_project(project_key)\n'
+    '        let metadata = Metadata {\n'
+    '            home: self.options.home.clone(),\n'
+    '            cwd: std::path::PathBuf::new(),\n'
+    '            files: crate::native_process::methods::session_dir::BoundedSessionMarkers::new(),\n'
+    '        };\n'
+    '        let resolved = metadata.resolve_dialog_project(project_key);\n'
+    '        if metadata.files.was_refused() {\n'
+    '            return Err(MemoryProviderError::new("Unsafe project marker."));\n'
+    '        }\n'
+    '        resolved\n'
     '            .map(JsString::from)\n'
     '            .ok_or_else(|| MemoryProviderError::unknown_project_key(project_key.units()))',
     '        let root = self.options.project.to_str().unwrap_or_default();\n'
