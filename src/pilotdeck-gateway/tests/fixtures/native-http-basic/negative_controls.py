@@ -214,6 +214,11 @@ switches = [
     ('native-http-case-variant-extra-cell', SOURCE_TESTS,
      'only_the_registered_cell_has_a_case_variant_fixture_hit',
      '#1383 static-upper-lower is the only routed cell whose path case-collides with a fixture file'),
+    # #1947: with the framing fix off, hyper knows the webhook reply's size
+    # again and writes a `content-length` line on the 1.0 reply where Node's
+    # respondJson is close-delimited, so the pinned webhook reply turns red.
+    ('native-http-http10-framing-off', SOURCE, 'http10_webhook_json_is_close_delimited',
+     "#1947 pin pin-http10-webhook: the 1.0 webhook reply is close-delimited, no content-length"),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_ws.rs',

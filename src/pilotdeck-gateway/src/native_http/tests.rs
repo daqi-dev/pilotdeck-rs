@@ -1077,6 +1077,10 @@ async fn http10_close_delimited_response() {
             "#1209 pin {id}: HTTP/1.0 is answered close with no keep-alive: {raw:?}"
         );
         assert!(
+            !raw.to_ascii_lowercase().contains("content-length"),
+            "#1947 pin {id}: the HTTP/1.0 reply is close-delimited, no content-length: {raw:?}"
+        );
+        assert!(
             raw.ends_with("{\"ok\":true}"),
             "#1209 pin {id}: the HTTP/1.0 body is close-delimited, not chunked: {raw:?}"
         );
@@ -1086,6 +1090,101 @@ async fn http10_close_delimited_response() {
         );
     }
     let _ = std::fs::remove_dir_all(&fixture.parent);
+}
+
+/// #1947: the `/feishu/webhook` reply is `respondJson` — `writeHead` +
+/// `end(JSON.stringify(body))`, the one sized body this router builds — and
+/// on HTTP/1.0 Node's reply is close-delimited with no `content-length`, so
+/// the sized body must not leak hyper's `content-length` onto the 1.0 reply
+/// (the framing fix mirrors the webhook channel's #1684 finalize). hyper's
+/// `HTTP/1.0` status line stays the registered diff, so this is a raw pin on
+/// the listener's own `serve_with_body` dispatch.
+#[tokio::test]
+async fn http10_webhook_json_is_close_delimited() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("#1947 bind webhook listener");
+    let bound = listener
+        .local_addr()
+        .expect("#1947 webhook listener address");
+    let config = Config {
+        token: String::new(),
+        loopback: false,
+        static_root: None,
+        webhook: Some(Arc::new(|| {
+            Some(Arc::new(|_body: String| {
+                Box::pin(async { (200u16, "{\"ok\":true}".to_owned()) })
+                    as std::pin::Pin<Box<dyn std::future::Future<Output = WebhookReply> + Send>>
+            }))
+        })),
+        api_web: None,
+    };
+    let server_task = tokio::spawn(async move {
+        loop {
+            let Ok((socket, _)) = listener.accept().await else {
+                break;
+            };
+            let config = config.clone();
+            tokio::spawn(async move {
+                // The production path always carries a stop signal; a sender
+                // that is dropped on the spot is the no-stop case.
+                let (_, stop) = watch::channel(false);
+                let served = http_proxy::serve_connection_native_with_shutdown(
+                    socket,
+                    move |request, _lease| {
+                        let config = config.clone();
+                        async move { serve_with_body(request, &config).await }
+                    },
+                    stop,
+                    None,
+                    None,
+                )
+                .await;
+                if let Err(error) = served {
+                    eprintln!("#1947 webhook connection error: {error}");
+                }
+            });
+        }
+    });
+    for (id, connection) in [
+        ("pin-http10-webhook", ""),
+        ("pin-http10-webhook-keep", "Connection: keep-alive\r\n"),
+    ] {
+        let mut stream = timeout(DEADLINE, TcpStream::connect(bound))
+            .await
+            .expect("#1947 connect deadline")
+            .expect("#1947 connect to webhook listener");
+        stream
+            .write_all(&latin1_bytes(&format!(
+                "POST /feishu/webhook HTTP/1.0\r\nHost: 127.0.0.1\r\n{connection}Content-Length: 2\r\n\r\n{{}}"
+            )))
+            .await
+            .expect("#1947 write webhook request");
+        let (raw, closed) = capture(&mut stream, id).await;
+        assert!(
+            raw.starts_with("HTTP/1.0 200 OK\r\n"),
+            "#1947 pin {id}: the 1.0 webhook reply carries hyper's 1.0 status line (registered diff): {raw:?}"
+        );
+        assert!(
+            raw.contains("\r\nConnection: close\r\n")
+                && !raw.to_ascii_lowercase().contains("keep-alive"),
+            "#1947 pin {id}: the 1.0 webhook reply closes with no keep-alive: {raw:?}"
+        );
+        assert!(
+            !raw.to_ascii_lowercase().contains("content-length")
+                && !raw.to_ascii_lowercase().contains("transfer-encoding"),
+            "#1947 pin {id}: the 1.0 webhook reply is close-delimited, no content-length: {raw:?}"
+        );
+        assert!(
+            raw.ends_with("{\"ok\":true}"),
+            "#1947 pin {id}: the webhook body runs to the connection end: {raw:?}"
+        );
+        assert!(
+            closed,
+            "#1947 pin {id}: the 1.0 webhook reply closes the connection like TS"
+        );
+    }
+    server_task.abort();
 }
 
 struct Unused;

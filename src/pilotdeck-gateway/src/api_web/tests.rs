@@ -616,6 +616,10 @@ async fn http10_close_delimited_response() {
             && !raw.to_ascii_lowercase().contains("keep-alive"),
         "#1348 pin http10: the 1.0 response is close with no keep-alive like Node: {raw:?}"
     );
+    assert!(
+        !raw.to_ascii_lowercase().contains("content-length"),
+        "#1947 pin http10: the 1.0 reply is close-delimited, no content-length: {raw:?}"
+    );
     let expected = format!(
         "{{\"projects\":[{{\"projectKey\":\"{root_text}\",\"name\":\"proj\",\"fullPath\":\"{root_text}\",\"sessionCount\":2,\"lastActivity\":1234567890,\"createdAt\":1234500000}}]}}"
     );
