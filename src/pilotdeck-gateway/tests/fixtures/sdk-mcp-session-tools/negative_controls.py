@@ -197,7 +197,13 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
-    check_binding_scope()
+    # #2441: the binding self-check runs before any mutation, so a failure is
+    # a startup refusal (rc 2) like the guards below — not an uncaught
+    # traceback (rc 1) that the host reads as "ran and not green".
+    try:
+        check_binding_scope()
+    except RuntimeError as error:
+        refuse(f'#1433 binding self-check failed: {error}')
     # #1433 fix-r1 (review P1-1): every refusal below happens before any
     # mutation, so it is rc 2 ("this run never started", printed by
     # `negative_selection.refuse`) and not rc 1 ("ran, not green") — the
