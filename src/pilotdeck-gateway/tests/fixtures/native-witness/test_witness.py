@@ -373,6 +373,67 @@ class WitnessTests(unittest.TestCase):
                             '#2396 exactly one receive row is recorded')
         listener.close()
 
+    def test_receive_poll_partial_extra_frame_resumes(self):
+        # #2396 fix-r3: a frame cut INSIDE the extended-length field (its
+        # head consumed, only 1 of the 2 extra bytes arrived) must resume on
+        # the next poll — the `extra is None: return None` branch also keeps
+        # its consumed prefix, not just the payload cut (DS boundary P2 /
+        # sibling P2 — the r2 test only cut inside the payload).
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        listener.listen(1)
+        listener.settimeout(10)
+        client_side = socket.create_connection(('127.0.0.1', port))
+        connection, _ = listener.accept()
+        with connection, client_side:
+            client = c.WireClient.__new__(c.WireClient)
+            payload = json.dumps({'text': 'y' * 300}).encode()  # > 125: extended
+            header = b'\x81\x7e' + len(payload).to_bytes(2, 'big')  # unmasked, 16-bit
+            frame = header + payload
+            client.socket, client.buffer, client.rows = client_side, b'', []
+            client.deadline = time.monotonic() + 30
+            connection.sendall(frame[:3])  # head + 1 of the 2 extra bytes
+            time.sleep(0.05)
+            self.assertTrue(client.receive_poll(0.2) is None,
+                            '#2396 an extra cut returns None within the poll cap')
+            connection.sendall(frame[3:])
+            value = client.receive_poll(5)
+            self.assertTrue(value == json.loads(payload),
+                            '#2396 the resumed frame parses exactly once, uncorrupted')
+            self.assertTrue(all(row['direction'] == 'receive' for row in client.rows)
+                            and len(client.rows) == 1
+                            and client.rows[0]['wireHex'] == frame.hex(),
+                            '#2396 exactly one receive row is recorded, wire-exact')
+        listener.close()
+
+    def test_read_observation_drops_foreign_frames(self):
+        # #2396 fix-r3: a foreign frame riding along in `received` (e.g. one
+        # left in the socket buffer by the previous case's turn) must not
+        # fail the whole read through the strict projection — the collector
+        # scores this request's own frames (DS sibling P1).
+        with tempfile.TemporaryDirectory(prefix='pdrs-2396-obs-') as tmp:
+            home = Path(tmp).resolve()
+            project = home / 'projects' / 'proj'
+            project.mkdir(parents=True)
+            (project / '.cwd').write_text(str(project))
+            (project / 'chats').mkdir()
+            (project / 'chats' / 'session-1.jsonl').write_text('')
+            own = [{'type': 'event', 'id': 'case-01', 'seq': 0, 'final': False,
+                    'event': {'type': 'model_request_started'}},
+                   {'type': 'event', 'id': 'case-01', 'seq': 1, 'final': True,
+                    'event': w.native.WS_TERMINAL_FALLBACK}]
+            received = [own[0],
+                        {'type': 'event', 'id': 'other-req', 'seq': 9, 'final': False,
+                         'event': {'type': 'model_request_started'}},
+                        own[1]]
+            observation = c.read_observation(home, str(project), 'session-1', 'run-01',
+                                             received, request_id='case-01')
+            self.assertTrue(observation['frames'] == [{'type': 'model_request_started'}],
+                            '#2396 the foreign frame is dropped, this request\'s '
+                            'yield frames are scored in seq order')
+
     def test_recorder_rows_audit(self):
         # A real loopback WebSocket exchange: every observer row the frozen
         # audit consumes is produced by the real WireClient against a real

@@ -364,7 +364,7 @@ def _target_witnesses(stimulus, target, evidence):
             absent.append('client.frame(' + prefix_type + ')')
         if waits and waits[0].get('planPhase') != stimulus['phase']:
             absent.append('loop/wait planPhase=' + str(waits[0].get('planPhase')))
-        if inputs and waits and not inputs[0].get('seq', 0) < waits[0].get('seq', 0):
+        if inputs and waits and not _seq_lt(inputs[0], waits[0]):
             absent.append('loop input.seq < wait.seq bracket')
         if stimulus['registry']:
             if prefix_type not in _registry_types(evidence):
@@ -455,12 +455,20 @@ def _target_witnesses(stimulus, target, evidence):
                 absent.append('control.registry.fifo.checked before rearm-storage')
             if rearm and status_block:
                 seq = status_block[0].get('seq')
-                first_release = [] if not isinstance(seq, (int, float)) else [
-                    action for action in evidence.get('controlActions', [])
-                    if action.get('action') == 'release-storage'
-                    and action.get('detail', {}).get('seq') == seq]
-                if first_release and not rearm[0]['monotonic'] < first_release[0]['monotonic']:
-                    absent.append('rearm-storage before the first registry release')
+                if not isinstance(seq, (int, float)):
+                    # The rearm-before-release edge needs the block's numeric
+                    # seq to find the matching release; a receipt without one
+                    # never attests it — the edge lands in `absent`, the same
+                    # fail-closed rule as every other seq edge instead of a
+                    # silent skip (#2396 fix-r3, DS concurrency P2).
+                    absent.append('rearm-storage before the first registry release (seq absent)')
+                else:
+                    first_release = [
+                        action for action in evidence.get('controlActions', [])
+                        if action.get('action') == 'release-storage'
+                        and action.get('detail', {}).get('seq') == seq]
+                    if first_release and not rearm[0]['monotonic'] < first_release[0]['monotonic']:
+                        absent.append('rearm-storage before the first registry release')
         found += _queued(evidence, 'registry')[:1]
         found += _actions(evidence, 'control.registry.fifo.checked')[:1]
     elif name == 'failStatus':

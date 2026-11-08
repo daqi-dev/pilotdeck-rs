@@ -42,10 +42,21 @@ CASE_BUDGET_SECONDS = STORAGE_BOUND_MS / 1000.0 + 2 * MILESTONE_SECONDS
 
 
 def case_budget_seconds(variant):
-    """The case budget, scaled by the number of storage barriers it stacks."""
-    barriers = 2 if (variant.get('slowAppend')
-                     and second_append_key(variant) is not None) else 1
-    return barriers * CASE_BUDGET_SECONDS
+    """The case budget, scaled by the number of storage barriers it stacks.
+
+    Every armed barrier can hold its whole bound: the writer barrier gates
+    the status write, the registry barrier gates the append, and a re-armed
+    registry barrier gates the error append, so the worst-case wall clock is
+    their sum (#2396 fix-r3, DS boundary/sibling/concurrency P2 — three
+    families; the old count ignored the writer site and gave 3-barrier
+    variants like both-slow only 2).  Counting them serially is the
+    conservative direction: the budget can only stretch the window, never
+    truncate a slow case into a missing final.
+    """
+    barriers = (1 if (variant.get('slowStatus') or variant.get('slowCatchStatus')) else 0) \
+        + (1 if variant.get('slowAppend') else 0) \
+        + (1 if second_append_key(variant) is not None else 0)
+    return max(1, barriers) * CASE_BUDGET_SECONDS
 
 PREFIX_TYPES = {'model': 'model_request_started', 'tool': 'tool_call_started'}
 
@@ -355,12 +366,15 @@ class StimulusDriver:
         A trailing receipt from the previous case's turn — published after
         this case's directory snapshot was taken — carries that turn's pid,
         so final/return receipts are only this case's when their pid is in
-        this set (#2396 fix-r1, codex boundary/sibling).
+        this set (#2396 fix-r1, codex boundary/sibling).  A receipt without
+        a pid never names one either — the same `pid is not None` guard the
+        ruler side already has (#2396 fix-r3, DS sibling P2).
         """
         state = self._active
         return {receipt.get('pid') for receipt in state['loopReceipts']
                 if receipt.get('site') == 'loop' and receipt.get('key') == state['planId']
-                and receipt.get('phase') in ('input', 'wait')}
+                and receipt.get('phase') in ('input', 'wait')
+                and receipt.get('pid') is not None}
 
     def _loop_final(self):
         pids = self._plan_pids()

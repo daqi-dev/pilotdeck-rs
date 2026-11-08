@@ -560,6 +560,24 @@ class AdapterTests(unittest.TestCase):
                                             else 'error:' + variant['slowAppend']
                                             if variant.get('slowAppend') else None), marker)
 
+    def test_case_budget_counts_every_armed_barrier(self):
+        marker = '#2396 fix-r3: the case budget scales with every armed barrier, writer site included'
+        # The barrier topology has one source of truth — storage_arms plus
+        # the re-arm — and the budget must follow it, not a second hand
+        # count that silently misses a site (DS boundary/sibling/concurrency
+        # P2: both-slow stacked 3 barriers on a 2-barrier budget).
+        for index, plan in enumerate(c.stimuli.plans(), start=1):
+            with self.subTest(case=plan['case']):
+                variant = plan['variant']
+                arms = c.stimulus_driver.storage_arms(plan['case'], index, variant)
+                armed = sum(1 for site in (arms['writer'], arms['registry'])
+                            for kind in site if kind == 'barrier')
+                rearmed = 1 if c.stimulus_driver.second_append_key(variant) else 0
+                expected = max(1, armed + rearmed)
+                self.assertEqual(c.stimulus_driver.case_budget_seconds(variant),
+                                 expected * c.stimulus_driver.CASE_BUDGET_SECONDS,
+                                 marker + ': ' + plan['case'])
+
     def test_driver_slow_status_choreography(self):
         marker = '#2396 slowStatus: block gates the outcome release, FIFO then release precedes final'
         case = 'no-registry-slow/status-slow/model'
@@ -813,6 +831,106 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(verdict['status'] == 'NOT_RUN'
                         and any('seq' in row for row in verdict['missing']), marker
                         + ': ' + json.dumps(verdict['missing']))
+
+    def test_plan_loop_receipt_without_seq_attests_no_phase_bracket(self):
+        marker = '#2396 fix-r3: a loop input receipt without a seq lands the phase bracket in missing'
+        # The r2 negative control only stripped seq from storage receipts; the
+        # phase edge still compared raw `.get("seq", 0)`, so a seq-less input
+        # receipt silently "attested" the bracket (DS boundary P1 + sibling
+        # P1 + concurrency P2 — three families).
+        case = 'no-registry-slow/status-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1', planPhase='model'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: p.storage('writer', 'block', 'turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('writer', 'queued', 'turn_result', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: p.storage('writer', 'release', 'turn_timeout', 3),
+            lambda p: p.storage('writer', 'complete', 'turn_timeout', 4),
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        baseline = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(baseline['status'] == 'WITNESSED', marker + ': baseline must be green first')
+        for receipt in evidence['loopReceipts']:
+            if receipt.get('phase') == 'input':
+                receipt.pop('seq', None)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('loop input.seq < wait.seq bracket' in row
+                                for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+
+    def test_plan_status_block_without_seq_attests_no_rearm_edge(self):
+        marker = '#2396 fix-r3: a status block without a seq lands the rearm edge in missing'
+        # The old shape silently skipped the edge when the block's seq was
+        # missing (first_release = []) instead of recording it absent — the
+        # one seq edge that failed open (DS concurrency P2).
+        case = 'registry-slow/status-fast-append-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: p.storage('registry', 'block', 'agent_status:turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('registry', 'queued', 'error:turn_timeout', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: p.storage('registry', 'release', 'agent_status:turn_timeout', 3),
+            lambda p: p.storage('registry', 'block', 'error:turn_timeout', 4, boundMs=8000),
+            lambda p: p.storage('registry', 'release', 'error:turn_timeout', 5),
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        baseline = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(baseline['status'] == 'WITNESSED', marker + ': baseline must be green first')
+        for receipt in evidence['storageReceipts']:
+            if receipt.get('phase') == 'block' and receipt.get('key') == 'agent_status:turn_timeout':
+                receipt.pop('seq', None)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('rearm-storage before the first registry release (seq absent)'
+                                in row for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+
+    def test_driver_pidless_loop_receipts_do_not_attest(self):
+        marker = '#2396 fix-r3: a pid-less loop receipt never attests the held return'
+        # The driver-side _plan_pids mirrored the ruler's cross-case pid
+        # binding but not its `pid is not None` guard, so a world of pid-less
+        # receipts attested its own final/return (DS sibling P2).  The green
+        # with-pid twin is test_driver_known_final_pending_release.
+        case = 'no-registry-fast/known-final-before-timeout-pending/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        timeout = frame('case-01', 1, {'type': 'agent_status', 'event': 'turn_timeout'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+
+        def pidless(phase, key, **extra):
+            def step(p):
+                receipt = {'seq': p.loop_seq, 'site': 'loop', 'phase': phase, 'key': key,
+                           'at': '2026-11-08T00:00:00Z'}
+                receipt.update(extra)
+                p._publish(p.loop_dir, f'00000000-{p.loop_seq:06d}.json', receipt)
+                p.loop_seq += 1
+                return None
+            return step
+
+        steps = [
+            lambda p: (pidless('input', case + '#1')(p), prefix)[1],
+            lambda p: pidless('wait', case + '#1', planPhase='model')(p),
+            lambda p: self._assert_outcome_released(p, 'known'),
+            lambda p: pidless('return', 'block')(p),
+            timeout,
+            final,
+            lambda p: pidless('final', 'completed-suppressed')(p),
+        ]
+        evidence = drive_case(case, steps)
+        # returnReleaseAfterFinal is False exactly when no return release
+        # was ever issued after the final frame — the with-pid twin pins it True.
+        self.assertTrue(evidence['notes']['returnReleaseAfterFinal'] is False,
+                        marker + ': ' + json.dumps(evidence['notes']))
 
     def test_driver_slow_append_out_of_order_receipts_do_not_attest(self):
         marker = '#2396 slowAppend: an error block preceding the status release fails the sequence edges'
