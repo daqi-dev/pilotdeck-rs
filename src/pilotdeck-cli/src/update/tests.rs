@@ -480,6 +480,14 @@ mod filesystem {
             previous
         );
         assert!(engine.target_generation().is_none());
+        for (parent, prefix) in [
+            (&scratch.0, ".pilotdeck-install-"),
+            (&engine.installation.root, ".prepare-"),
+        ] {
+            assert!(fs::read_dir(parent).unwrap().all(|entry| {
+                !entry.unwrap().file_name().to_string_lossy().starts_with(prefix)
+            }), "failed skills validation left staging files");
+        }
     }
     #[test]
     fn bundled_skills_follow_the_published_generation_and_keep_old_bytes() {
@@ -577,13 +585,25 @@ mod filesystem {
         let bad_root = scratch.0.join("invalid-install");
         let result = bootstrap_with_external_skills(
             &bad_root,
-            first.policy,
+            first.policy.clone(),
             &original,
             &old,
             &mut engine.builder,
             Some(&scratch.0.join("does-not-exist")),
         );
-        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().reason, "invalidSkillsRoot");
+        assert!(!bad_root.exists());
+        let external_file = scratch.0.join("external-file");
+        fs::write(&external_file, b"not a skill directory").unwrap();
+        let result = bootstrap_with_external_skills(
+            &bad_root,
+            first.policy,
+            &original,
+            &old,
+            &mut engine.builder,
+            Some(&external_file),
+        );
+        assert_eq!(result.err().unwrap().reason, "invalidSkillsRoot");
         assert!(!bad_root.exists());
     }
 }

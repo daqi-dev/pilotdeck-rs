@@ -12,4 +12,4 @@ python3 two_turns.py --case fresh-marker --control /absolute/path/pilotdeck-cont
 
 同一 driver 对旧 r80 的 normal 必须因第二轮 `OPERATION_REQUIRES_RECONCILIATION` 退出非零，不能将超时或启动错误算作负控。所有运行保留 result、wire、provider、stderr，另核输入与二进制 SHA 及子进程清理。SIGTERM 由 driver 捕获并进入 finally，向其自建进程组发送 SIGTERM，必要时升级 SIGKILL，关闭并 join relay，再保存记录；driver 必须非零退出。
 
-非 normal 场景严格验证旧 marker 为 mode 000 且读取失败，否则不计通过。退出先关闭自有进程组和 socket、限时 join 所有产生错误的线程；任何清理或超时错误都使结果失败。清理和归档期间的 SIGTERM/SIGINT 被记录而不打断证据写入，结果提交前复核并以非零退出；结果文件须待进程退出后读取。SIGKILL 无法捕获。
+非 normal 场景严格验证旧 marker 为 mode 000 且读取失败，否则不计通过。退出先关闭自有进程组和 socket、限时 join 所有产生错误的线程；任何清理或超时错误都使结果失败。清理和归档期间的 SIGTERM/SIGINT 被记录而不打断证据写入，最终提交开始时采样，已观察到的信号使退出非零。该采样之后进入不可中断的最终提交区间，不承诺采样之后的信号改变结论。先写非权威 pending 文件，折叠归档错误后原子发布 result.json；发布失败不得遗留权威 PASS。结果文件须待进程退出后与退出码一起读取。SIGKILL 无法捕获。

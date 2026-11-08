@@ -128,7 +128,7 @@ async fn native_session_io_child() {
     if case == "marker" {
         if method == "manager_sessions" {
             assert_eq!(
-                result.expect_err("manager unsafe marker accepted").message,
+                result.expect_err("native manager preserves unsafe marker refusal: unsafe marker accepted").message,
                 JsString::from("Unsafe project marker."),
                 "native manager preserves unsafe marker refusal"
             );

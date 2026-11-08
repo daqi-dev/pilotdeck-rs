@@ -239,22 +239,29 @@ finally:
  for name,value in (("wire.json",wire),("provider.json",rows)):
   try:(out/name).write_text(json.dumps(value,indent=2)+"\n")
   except Exception as e:errors.append("evidence write failed: "+name+": "+repr(e))
- # Write provisionally with the recording handler still active, then block
- # signals for the final result commit and rewrite failures observed while
- # writing any evidence. Callers must wait for exit before reading result.
- try:(out/"result.json").write_text(json.dumps(result,indent=2)+"\n")
- except Exception as e:errors.append("evidence write failed: result.json: "+repr(e))
+ # The pending file is never an authoritative result. Only the final rename
+ # publishes it after all archival errors and pre-commit signals are folded.
+ pending_result=out/".result.pending.json"
+ try:pending_result.write_text(json.dumps(result,indent=2)+"\n")
+ except Exception as e:errors.append("evidence write failed: pending result: "+repr(e))
+ # This sample starts the final commit. Signals after this boundary do not
+ # invalidate already-completed work; callers still require process exit 0.
  signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGTERM,signal.SIGINT})
  pending=signal.sigpending() & {signal.SIGTERM,signal.SIGINT}
  if pending:termination_signals.extend(int(sig) for sig in pending)
  if termination_signals:
   message="termination signal(s): "+repr(termination_signals)
   if message not in errors:errors.append(message)
- if errors:
+ try:
+  if errors:
+   success=False
+   result["pass"]=False
+   result["cleanupErrors"]=list(errors)
+   pending_result.write_text(json.dumps(result,indent=2)+"\n")
+  pending_result.replace(out/"result.json")
+ except Exception as e:
   success=False
-  result["pass"]=False
-  result["cleanupErrors"]=list(errors)
-  try:(out/"result.json").write_text(json.dumps(result,indent=2)+"\n")
-  except Exception as e:print("evidence write failed: result.json: "+repr(e),flush=True)
+  errors.append("result publication failed: "+repr(e))
+  print(errors[-1],flush=True)
  print(json.dumps({"pass":success,"error":result.get("error"),"cleanupErrors":errors}))
  raise SystemExit(0 if success else 1)
