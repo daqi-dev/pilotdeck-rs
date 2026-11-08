@@ -32,6 +32,7 @@ mod capabilities;
 pub(crate) mod channels;
 pub(crate) mod elicitation;
 mod families;
+pub(crate) mod input_admission;
 mod management;
 mod methods;
 pub(crate) mod plan_todo;

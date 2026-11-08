@@ -83,6 +83,7 @@ pub struct LiveSessionAdapter {
     /// `livePermissionMode` — the stored permission-mode selection takes
     /// effect on the next turn without a session close.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    input_admission: Option<Arc<crate::native_process::input_admission::InputAdmission>>,
     tail: Option<Arc<super::runner::tail::SessionTail>>,
     recorder: Arc<Recorder>,
     history: Arc<dyn Fn() -> Vec<JsValue> + Send + Sync>,
@@ -123,6 +124,7 @@ impl LiveSessionAdapter {
             agent_config: None,
             unique_tcp_request_id: false,
             permission_mode_source: None,
+            input_admission: None,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -135,6 +137,14 @@ impl LiveSessionAdapter {
             }),
             state: Arc::default(),
         }
+    }
+
+    pub(crate) fn with_input_admission(
+        mut self,
+        admission: Arc<crate::native_process::input_admission::InputAdmission>,
+    ) -> Self {
+        self.input_admission = Some(admission);
+        self
     }
 
     /// Install session-owned tail dependencies. With no installation, auxiliary
@@ -254,6 +264,7 @@ impl LiveSessionAdapter {
             agent_config: None,
             unique_tcp_request_id: false,
             permission_mode_source: None,
+            input_admission: None,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -452,6 +463,8 @@ pub(super) struct LiveTurnStream {
     events: mpsc::Receiver<ForwardedEvent>,
     identity: ExecutionIdentity,
     input: TurnInput,
+    prompt_input: Option<AgentInput>,
+    should_call_model: bool,
     // The instance the host-side receive hook observes into. finish() also
     // consults it so a contradiction received but dropped before delivery (for
     // example turn_failed followed by success) still fails the terminal.
@@ -543,7 +556,9 @@ impl LiveTurn for LiveTurnStream {
                             (
                                 "user_prompt_submitted",
                                 RecordingAction::SubmitPrompt(
-                                    self.input.input.clone(),
+                                    self.prompt_input
+                                        .clone()
+                                        .unwrap_or_else(|| self.input.input.clone()),
                                     self.callback_cancel.clone().expect("host cancellation"),
                                 ),
                             )
@@ -572,6 +587,23 @@ impl LiveTurn for LiveTurnStream {
                             .await;
                     }
                     runner.begin_tail_work();
+                    if !self.should_call_model {
+                        let error = crate::metadata::object([
+                            ("code", "agent_unsupported_feature".into()),
+                            (
+                                "message",
+                                "Input was accepted but model execution was not requested.".into(),
+                            ),
+                        ]);
+                        return self
+                            .begin_recording(
+                                RecordingAction::Fail(error),
+                                JsValue::Null,
+                                true,
+                                None,
+                            )
+                            .await;
+                    }
                     let messages = if crate::mutants::on("prompt-execute-context") {
                         self.input.loop_messages()
                     } else {
@@ -2095,6 +2127,8 @@ mod tests {
             events: mpsc::channel(1).1,
             identity: request.identity,
             input,
+            prompt_input: None,
+            should_call_model: true,
             integrity,
             delivered: StreamIntegrity::new(),
             active: None,
@@ -2556,6 +2590,7 @@ impl LiveSessionAdapter {
         queued_claim: Option<JsString>,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
+        let is_meta = input.get("isMeta").is_some_and(super::submit::truthy);
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
         assign_tcp_request_id(&mut request, &options, self.unique_tcp_request_id);
         if let Some(config) = &self.agent_config {
@@ -2605,6 +2640,26 @@ impl LiveSessionAdapter {
             state.reload_execution = Arc::default();
         }
         let active = Arc::new(ActiveTurn(self.state.clone()));
+        // Input admission is session-owned and cannot run for a rejected turn.
+        // Keep the original for UserPromptSubmit, including child directives.
+        let mut prompt_input = None;
+        let mut should_call_model = true;
+        if let Some(admission) = &self.input_admission {
+            prompt_input = Some(input.input.clone());
+            should_call_model = !is_meta;
+            let text = match &mut input.input {
+                AgentInput::Text(text) => Some(text),
+                AgentInput::Fork { directive, .. } => Some(directive),
+                AgentInput::Blocks(_) => None,
+            };
+            if let Some(text) = text {
+                let processed = admission.process_text(text);
+                // TS TurnInputProcessor forwards messages/shouldCallModel;
+                // it does not emit InputProcessor diagnostics as gateway events.
+                let _ = processed.diagnostics;
+                *text = processed.text;
+            }
+        }
         let reload_execution = self.reload_execution_started();
         // Read the projection only after admission owns the slot. Rejected
         // submissions must not observe history or race its current owner.
@@ -2769,6 +2824,8 @@ impl LiveSessionAdapter {
             events: receiver,
             identity,
             input,
+            prompt_input,
+            should_call_model,
             integrity,
             delivered: StreamIntegrity::new(),
             active: Some(active),

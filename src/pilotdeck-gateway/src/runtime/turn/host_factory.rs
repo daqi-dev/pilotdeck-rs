@@ -214,6 +214,7 @@ pub struct TurnHostFactory {
     agent_config: Option<JsObject>,
     pinned_generation: Option<std::sync::Weak<RuntimeLease>>,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    input_admission: Option<Arc<crate::native_process::input_admission::InputAdmission>>,
 }
 
 impl TurnHostFactory {
@@ -288,7 +289,16 @@ impl TurnHostFactory {
             agent_config: None,
             pinned_generation: None,
             permission_mode_source: None,
+            input_admission: None,
         }
+    }
+
+    pub(crate) fn with_input_admission(
+        mut self,
+        admission: Arc<crate::native_process::input_admission::InputAdmission>,
+    ) -> Self {
+        self.input_admission = Some(admission);
+        self
     }
 
     /// Native child sessions retain the parent's selected execution world.
@@ -339,6 +349,7 @@ impl TurnHostFactory {
         let unique_tcp_request_id = matches!(&self.deployment, Deployment::Tcp { .. });
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
+        let input_admission = self.input_admission.take();
         let factory = Arc::new(self);
         let session = LiveSessionAdapter::with_interaction_authority(
             recorder,
@@ -360,6 +371,10 @@ impl TurnHostFactory {
         .with_unique_tcp_request_id(unique_tcp_request_id);
         let session = match agent_config {
             Some(config) => session.with_agent_config(config),
+            None => session,
+        };
+        let session = match input_admission {
+            Some(admission) => session.with_input_admission(admission),
             None => session,
         };
         match permission_mode_source {

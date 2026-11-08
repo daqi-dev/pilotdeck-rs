@@ -158,6 +158,8 @@ fn stream(
         input: parse_execute_request(&input(), &options(), vec![])
             .expect("#741i/#855: static turn fixture must parse and retain its shape")
             .1,
+        prompt_input: None,
+        should_call_model: true,
         integrity,
         delivered: StreamIntegrity::new(),
         active: None,
@@ -4950,4 +4952,64 @@ async fn wire_durable_messages_match_ts_yield_before_callback() {
             std::fs::remove_dir_all(root).expect("#748 durable fixture cleanup");
         }
     }
+}
+
+#[tokio::test]
+async fn session_input_admission_records_expanded_text_keeps_raw_prompt_and_blocks_meta_model() {
+    let commands = vec![crate::runtime::plugins::PluginCommandContribution {
+        name: "demo".into(),
+        content: "body".into(),
+        description: None,
+        argument_hint: None,
+        namespace: "fixture".into(),
+    }];
+    let admission = Arc::new(crate::native_process::input_admission::InputAdmission::new(
+        &commands,
+    ));
+    let client_polled = Arc::new(AtomicBool::new(false));
+    let observed = client_polled.clone();
+    let handler = Arc::new(Handler::default());
+    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
+        let observed = observed.clone();
+        let handler = handler.clone();
+        Box::pin(async move {
+            let client: HostFuture<HostClient> = Box::pin(async move {
+                observed.store(true, Ordering::SeqCst);
+                Err(HostError::new(
+                    crate::host::HostErrorKind::Protocol,
+                    "unexpected model execution",
+                ))
+            });
+            Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
+        })
+    })
+    .with_input_admission(admission);
+    let raw = parse_json(r#"{"type":"text","text":"/demo xyz","isMeta":true}"#).unwrap();
+    let mut turn = session.submit_turn_for_test(raw, options()).unwrap();
+    let mut accepted = None;
+    let mut prompt = None;
+    let mut failure = None;
+    for _ in 0..12 {
+        let Some(event) = next(turn.as_mut()).await.unwrap() else {
+            break;
+        };
+        let ty = event.get("type").and_then(JsValue::as_string);
+        if ty.is_some_and(|x| x.equals_str("input_accepted")) {
+            accepted = event.get("messages").cloned();
+        }
+        if ty.is_some_and(|x| x.equals_str("user_prompt_submitted")) {
+            prompt = event.get("prompt").cloned();
+        }
+        if ty.is_some_and(|x| x.equals_str("turn_failed")) {
+            failure = event.get("error").cloned();
+        }
+    }
+    let expected = parse_json(r#"[{"role":"user","content":[{"type":"text","text":"<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n<command-argument>\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\nxyz\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\n</command-argument>\n</plugin-command>"}]}]"#).unwrap();
+    assert_eq!(accepted, Some(expected));
+    assert_eq!(prompt, Some("/demo xyz".into()));
+    assert_eq!(
+        failure.as_ref().and_then(|x| x.get("code")),
+        Some(&"agent_unsupported_feature".into())
+    );
+    assert!(!client_polled.load(Ordering::SeqCst));
 }

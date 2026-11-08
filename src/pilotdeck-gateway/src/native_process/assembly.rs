@@ -786,6 +786,9 @@ async fn start_assembly(
                     .acquire_session_contributions(vec![])
                     .await
                     .map_err(|error| RuntimeError::new(error.to_string()))?;
+                let input_admission = Arc::new(super::input_admission::InputAdmission::new(
+                    &skill_lease.contributions.commands,
+                ));
                 let plugin_hooks = skill_lease.contributions.hooks.clone();
                 let plugin_mcp_servers = skill_lease.contributions.mcp_servers.clone();
                 let native_skills = if skills_disabled {
@@ -1074,6 +1077,7 @@ async fn start_assembly(
                             },
                         )
                         .with_pinned_generation(pinned_generation)
+                        .with_input_admission(input_admission)
                         .with_native_terminal_errors()
                         .with_agent_config(config)
                         // #1864 (b): TS re-reads the permission-mode override
