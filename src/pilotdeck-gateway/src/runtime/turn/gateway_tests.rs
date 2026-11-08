@@ -1845,6 +1845,50 @@ fn a_maximal_teardown_budget_still_reports_the_builder_error() {
     );
 }
 
+/// #1949: the failed-initialization twin of the clock-edge drain test below
+/// — `dispose_initialization` turns the declared budget back into a deadline
+/// through the same `checked_add` plus tick-conversion headroom, so a budget
+/// that fits the clock but lands within the headroom of its ceiling must be
+/// awaited as the waiver there too. The teardown still completes, the
+/// builder error still reaches the caller verbatim, and the coordinator is
+/// still disposed.
+#[test]
+fn a_clock_edge_teardown_budget_still_reports_the_builder_error() {
+    let coordinator_disposed = Arc::new(AtomicBool::new(false));
+    let disposed = coordinator_disposed.clone();
+    // The same maximal-fit binary search the drain twin documents, backed
+    // off into the middle of the tick-conversion headroom so the teardown
+    // site's own (later) clock read still admits it inside that tier.
+    let mut lo = std::time::Duration::ZERO;
+    let mut hi = std::time::Duration::MAX;
+    for _ in 0..512 {
+        let mid = lo + (hi - lo) / 2;
+        if tokio::time::Instant::now().checked_add(mid).is_some() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let error = TurnGateway::start_with_cleanup_budget(
+        TurnReplayOptions::new(),
+        lo - TICK_CONVERSION_HEADROOM / 2,
+        move |coordinator| {
+            coordinator.set_after_dispose_hook(Arc::new(move || {
+                disposed.store(true, Ordering::SeqCst);
+            }));
+            Err(std::io::Error::other("#1949 clock-edge budget fixture"))
+        },
+        async { Ok(()) },
+    )
+    .err()
+    .expect("#1949 a builder failure must fail the host");
+    assert_eq!("#1949 clock-edge budget fixture", error.to_string());
+    assert!(
+        coordinator_disposed.load(Ordering::SeqCst),
+        "#1949 a clock-edge budget must still dispose the coordinator after its cleanup"
+    );
+}
+
 /// #1942: the embedding cleanup is third-party code polled on the host
 /// thread; a panic in it must not skip the coordinator and interaction
 /// disposals behind it (`caught_cleanup` converts the panic to an `Err` the
@@ -1978,6 +2022,47 @@ async fn a_maximal_drain_budget_still_settles_the_drain() {
     .await
     .expect("#1949 the maximal-budget drain must settle within the guard");
     settled.expect("#1949 a maximal drain budget must settle the drain itself");
+}
+
+/// #1949: a budget that fits the clock but lands within the tick-conversion
+/// headroom of its ceiling still gets the waiver. Tokio converts a deadline
+/// into a timer tick through an unchecked `Instant + Duration` (tokio 1.48
+/// `time/instant.rs:169`, fed by `TimeSource::deadline_to_tick`'s
+/// `Duration::from_nanos(999_999)`), so the maximal deadline `checked_add`
+/// admits panics on registration where the old `timeout(budget, …)` call
+/// survived the very same budget. Binary-search the maximal budget the
+/// clock admits and shut the host down with one backed off into the middle
+/// of the headroom: the drain site reads its own clock on the host thread
+/// after the caller's, so the exact maximum overflows at that later read
+/// and never reaches the headroom tier, while the backed-off one fits there
+/// and must be routed to the waiver, not `timeout_at`. The fixture cleanup
+/// settles at once, so the drain must settle `Ok` and the host thread must
+/// not panic.
+#[tokio::test]
+async fn a_budget_at_the_clock_edge_is_treated_as_the_waiver() {
+    let host = native_ws_fixture_with_cleanup(Arc::new(Requests), async { Ok(()) });
+    // Binary-search the maximal duration the monotonic clock still admits;
+    // 512 rounds exhaust the nanosecond resolution long before they run out.
+    let mut lo = std::time::Duration::ZERO;
+    let mut hi = std::time::Duration::MAX;
+    for _ in 0..512 {
+        let mid = lo + (hi - lo) / 2;
+        if tokio::time::Instant::now().checked_add(mid).is_some() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    // Back the maximum off into the middle of the tick-conversion headroom:
+    // the drain site reads its clock after this one (the host thread wakes
+    // to observe the shutdown), so the exact maximum overflows at that later
+    // read, while this budget still lands within the headroom of the
+    // ceiling — the tier `TICK_CONVERSION_HEADROOM` treats as the waiver.
+    let budget = lo - TICK_CONVERSION_HEADROOM / 2;
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(5), host.shutdown(budget))
+        .await
+        .expect("#1949 a clock-edge budget must still settle the drain within the guard");
+    settled.expect("#1949 a clock-edge budget is the waiver, so the drain keeps its own result");
 }
 
 /// #1949 fixture: a factory whose creation never settles, so the owner's
