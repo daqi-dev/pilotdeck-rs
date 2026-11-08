@@ -264,7 +264,8 @@ fn scoped_snapshots(
                 None => unknown = true,
             }
         }
-        match fs::read(snapshot.dir.join(".cwd")) {
+        let marker_path = snapshot.dir.join(".cwd");
+        match fs::read(&marker_path) {
             Ok(bytes) => {
                 let raw = String::from_utf8_lossy(&bytes);
                 let marker = js_trim(&raw);
@@ -275,7 +276,8 @@ fn scoped_snapshots(
                 }
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(io::Error::new(error.kind(),
+                format!("{}: {error}", marker_path.display())).into()),
         }
         let included = keys.iter().any(|key| scope(key));
         if included {

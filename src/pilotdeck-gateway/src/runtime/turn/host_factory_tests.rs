@@ -2131,3 +2131,14 @@ async fn session_hooks_wrap_real_turn_and_retain_lease_through_end() {
             .expect("#743 production dispose");
     }
 }
+
+
+#[test]
+fn tcp_listener_and_gateway_port_grammars_stay_paired() {
+    for value in ["1", "65535", "65536", "0", "-0", "+80", "80.0", "1e3", "1e-3",
+        "0x50", "0X000000000050", "0b1010000", "0o120", "+0x50", "0x+50", "0x", "0o8",
+        "NaN", "Infinity", "inf", "80.5", "1_000", "\u{feff}80\u{a0}", "\u{85}80", "80\0"] {
+        let listener = pilotdeck_transport::tcp::optional_port(Some(value)).ok().flatten();
+        assert_eq!(listener, required_port(Some(value)).ok(), "{value:?}");
+    }
+}
