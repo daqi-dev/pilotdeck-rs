@@ -1479,28 +1479,23 @@ impl SubmitHostServices for Services {
     }
     fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
         Box::pin(async {
-            let current = crate::runtime::project::NativeConfigSource::new(
-                self.options.project.clone(),
-                self.env.clone(),
-                Some(self.options.home.clone()),
-                None,
-            );
-            use crate::runtime::project::ConfigSource;
-            let fresh = current
-                .load(&self.options.project)
-                .map_err(|e| failure(e.to_string()))?;
-            let lease = self
-                .project
-                .acquire(Some(&self.options.project))
-                .map_err(|e| failure(e.to_string()))?;
-            let staged = lease
-                .runtime()
-                .resources()
-                .get::<ProjectResources>()
-                .ok_or_else(|| failure("Native project resources are missing."))?
-                .context()
-                .snapshot();
-            if fresh.get("config") != staged.get("config") {
+            let options = self.options.clone();
+            let env = self.env.clone();
+            let project = self.project.clone();
+            let permit = super::methods::session_dir::session_io_permit().await
+                .map_err(|error| failure(String::from_utf16_lossy(error.message.units())))?;
+            let changed = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                use crate::runtime::project::ConfigSource;
+                let fresh = crate::runtime::project::NativeConfigSource::new(
+                    options.project.clone(), env, Some(options.home), None,
+                ).bounded().load(&options.project).map_err(|e| failure(e.to_string()))?;
+                let lease = project.acquire(Some(&options.project)).map_err(|e| failure(e.to_string()))?;
+                let staged = lease.runtime().resources().get::<ProjectResources>()
+                    .ok_or_else(|| failure("Native project resources are missing."))?.context().snapshot();
+                Ok::<_, SubmitError>(fresh.get("config") != staged.get("config"))
+            }).await.map_err(|error| failure(error.to_string()))??;
+            if changed {
                 self.project.invalidate(Some(&self.options.project));
                 use crate::runtime::refresh::RefreshRouter;
                 self.owner.mark_project_dirty(

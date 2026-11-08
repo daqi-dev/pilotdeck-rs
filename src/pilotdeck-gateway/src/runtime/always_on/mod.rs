@@ -22,6 +22,8 @@
 // inline with their own `#[allow(dead_code)]`; this umbrella covers the
 // rest of the unported surface (paths, mutators, tick entries).
 #![allow(dead_code)]
+mod control;
+mod report_contract;
 mod cycles;
 mod fire;
 mod gates;
@@ -32,6 +34,7 @@ mod scheduler;
 mod state;
 mod watcher;
 
+pub(crate) use control::{AlwaysOnControl, StandaloneApply, create_control};
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
 pub(crate) use fire::{
     acquire_discovery_lock, derive_execution_session_key, derive_report_session_key,

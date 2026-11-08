@@ -757,6 +757,13 @@ async fn start_assembly(
                         }
                     }
                 }
+                let automation = session_overrides.automation(&context.session_key);
+                if let Some(automation) = &automation {
+                    config.insert("cwd".into(), automation.cwd.to_string_lossy().as_ref().into());
+                    config.insert("permissionMode".into(), JsValue::String(automation.permission_mode.clone()));
+                    config.insert("bypassAvailable".into(), JsValue::Bool(automation.bypass_available));
+                    config.insert("canPrompt".into(), JsValue::Bool(automation.can_prompt));
+                }
                 let skills_disabled = project_skills_disabled
                     || config.get("nativeSkillsDisabled") == Some(&JsValue::Bool(true));
                 config.insert(
@@ -866,6 +873,10 @@ async fn start_assembly(
                     .as_ref()
                     .map(|scope| scope.permission_rules.clone())
                     .unwrap_or_else(|| permission_lease.rules());
+                let native_permission_rules = match &automation {
+                    Some(automation) => native_permission_rules.with_policy_deny(&automation.permission_deny),
+                    None => native_permission_rules,
+                };
                 // Sync MCP ask rules on acquire, mirroring
                 // ProjectRuntimeRegistry.ts:305-308 where the wiring layer
                 // calls `lease.rules().ask` via syncSdkMcpPermissionRules.
@@ -1052,6 +1063,7 @@ async fn start_assembly(
                             Arc::new(move || {
                                 child_mode
                                     .clone()
+                                    .or_else(|| session_overrides.automation(&session).map(|value| value.permission_mode))
                                     .or_else(|| session_overrides.permission_mode(&session))
                             })
                         };
@@ -1068,6 +1080,7 @@ async fn start_assembly(
                         .with_pinned_steer(pinned_steer)
                         .with_permission_mode_source(permission_source.clone())
                         .with_permission_rules(native_permission_rules)
+                        .with_automation(automation)
                         .with_web(native_web)
                         .with_plugin_hooks(plugin_hooks)
                         .with_hook_proxy(hook_proxy)
@@ -1246,6 +1259,7 @@ async fn start_assembly(
             Some(options.home.clone()),
             None,
         )
+        .bounded()
         .load(&options.project);
         let config = match config {
             Ok(config) => config,
@@ -1840,6 +1854,7 @@ async fn validate_profile_inner(
         Some(options.home.clone()),
         None,
     )
+    .bounded()
     .load(&options.project)?;
     // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK
     // contribution authorities may supply executable hooks.
@@ -1994,7 +2009,7 @@ pub(super) fn project_resources_factory(
             builtin_plugins_enabled: HashMap::new(),
         })
         .with_interaction(),
-    })
+    }).with_bounded_config()
 }
 
 #[cfg(test)]

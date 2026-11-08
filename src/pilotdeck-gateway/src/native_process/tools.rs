@@ -62,6 +62,7 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    automation: Option<super::session_overrides::AutomationOverrides>,
     pinned_steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
     session_emit: Option<super::session_events::SessionEmit>,
     forks: Option<Arc<super::agent::NativeForkRegistry>>,
@@ -110,7 +111,8 @@ impl SessionTools {
     ) -> Result<Self, RuntimeError> {
         let context =
             permission::create_default_permission_context(DefaultPermissionContextOptions {
-                cwd: options.project.to_string_lossy().into_owned().into(),
+                cwd: config.get("cwd").and_then(JsValue::as_string).cloned()
+                    .unwrap_or_else(|| options.project.to_string_lossy().into_owned().into()),
                 can_prompt: Some(false),
                 bypass_available: Some(true),
                 ..Default::default()
@@ -121,6 +123,7 @@ impl SessionTools {
             binding.projection.clone(),
         );
         Ok(Self {
+            automation: None,
             pinned_steer: None,
             session_emit: None,
             forks: None,
@@ -150,6 +153,17 @@ impl SessionTools {
             #[cfg(unix)]
             native_sandbox: None,
         })
+    }
+
+    pub(super) fn with_automation(mut self, automation: Option<super::session_overrides::AutomationOverrides>) -> Self {
+        if let Some(automation) = &automation {
+            let denied = self.binding.context.disallowed_tools.get_or_insert_with(Vec::new);
+            for name in &automation.exclude_tools {
+                if !denied.contains(name) { denied.push(name.clone()); }
+            }
+        }
+        self.automation = automation;
+        self
     }
 
     pub(super) fn with_plan_files(mut self, files: Arc<super::plan_todo::NativePlanFiles>) -> Self {
@@ -328,6 +342,11 @@ impl SessionTools {
             && !policy_disabled
             && !sdk_mode.is_some_and(|m| m.equals_str("dontAsk"));
         turn_context.policy_can_prompt = policy_disabled.then_some(false);
+        if let Some(automation) = &self.automation {
+            turn_context.can_prompt &= automation.can_prompt;
+            if !automation.can_prompt { turn_context.policy_can_prompt = Some(false); }
+            turn_context.bypass_available = automation.bypass_available;
+        }
         turn_context.rules = self.permission_rules.snapshot();
         if let Some(files) = &self.plan_files {
             turn_context.plan_directory_path = Some(files.directory_string());
@@ -377,6 +396,10 @@ impl SessionTools {
                     .register(Arc::new(builtin::plan_todo::Tool::new(kind)))
                     .expect("native plan tool names are unique");
             }
+        }
+        if let Some(contexts) = self.automation.as_ref().and_then(|value| value.context_registry.as_ref()) {
+            crate::runtime::always_on::register_tools(&tools, contexts.clone(), &identity.session_id)
+                .expect("native automation tool names are unique");
         }
         self.skills.register(&tools);
         if let Some(web) = &self.web {

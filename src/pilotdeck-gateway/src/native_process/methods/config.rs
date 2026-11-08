@@ -629,18 +629,12 @@ impl Requests {
         };
         let project = lexical_project(self, params)?;
         let styles = self.plugin_styles(&project).await?;
-        if let Some(name) = &name {
-            if !styles
-                .iter()
-                .any(|style| JsString::from(style.name.as_str()) == *name)
-            {
-                let mut units: Vec<u16> = "Unknown output style: ".encode_utf16().collect();
-                units.extend_from_slice(name.units());
-                return Err(gateway_error(
-                    "OUTPUT_STYLE_NOT_FOUND",
-                    JsString::from_utf16(units),
-                ));
-            }
+        if let Some(name) = &name
+            && !styles.iter().any(|style| JsString::from(style.name.as_str()) == *name)
+        {
+            let mut units: Vec<u16> = "Unknown output style: ".encode_utf16().collect();
+            units.extend_from_slice(name.units());
+            return Err(gateway_error("OUTPUT_STYLE_NOT_FOUND", JsString::from_utf16(units)));
         }
         match &name {
             Some(name) => self

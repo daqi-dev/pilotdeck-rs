@@ -272,4 +272,5 @@ async fn history_empty_key_worker() {
     assert!(!text(&foreign).contains("A_REPLAY_ONLY"));
     requests.coordinator.retain_terminal(&key, &"run-A".into());
     close(&requests).await;
+    crate::test_process::receipt("empty-history");
 }
