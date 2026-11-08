@@ -34,7 +34,7 @@ fn local_ref<'a>(root:&'a JsValue,r:&JsString)->Option<&'a JsValue>{
             let hex=|b:u8|match b{b'0'..=b'9'=>Some(b-b'0'),b'a'..=b'f'=>Some(b-b'a'+10),b'A'..=b'F'=>Some(b-b'A'+10),_=>None};
             decoded.push(hex(bytes[i+1])?*16+hex(bytes[i+2])?);i+=3;}else{decoded.push(bytes[i]);i+=1;}}
         let segment=String::from_utf8(decoded).ok()?;let mut plain=String::new();let mut chars=segment.chars();
-        while let Some(c)=chars.next(){if c=='~'{match chars.next()?{'0'=>plain.push('~'),'1'=>plain.push('/'),_=>return None;}}else{plain.push(c);}}
+        while let Some(c)=chars.next(){if c=='~'{match chars.next()?{'0'=>plain.push('~'),'1'=>plain.push('/'),_=>return None,}}else{plain.push(c);}}
         current=match current{JsValue::Object(o)=>o.get(&plain)?,JsValue::Array(a)=>a.get(plain.parse::<usize>().ok()?)?,_=>return None};
     }Some(current)
 }
