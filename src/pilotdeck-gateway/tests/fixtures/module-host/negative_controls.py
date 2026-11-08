@@ -2,11 +2,14 @@
 """#1349 compiled controls: compile every switch once, then run the selected
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
-mutates exactly one module_host transport gate and is killed by the replay
-cell that pins that gate's TS bytes: #1813 added the recording-field guard and
-#1696 the pad/budget guards. Run one sample in the
-authoring session; the coordinator runs the complete list after the patch is
-committed.
+mutates exactly one module_host transport gate and is killed by the binding
+its switches-table row names: a replay cell's one-line assertion, a component
+test's one-line assertion or a #1696 recording-guard unit test (#1813 added
+the recording-field guard and its switch binds that pair of component tests;
+#1947's module-host-http10-framing-off pins
+http10_value_body_is_close_delimited outside the replay_tests! table). Run
+one sample in the authoring session; the coordinator runs the complete list
+after the patch is committed.
 """
 import argparse
 import os
