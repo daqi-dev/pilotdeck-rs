@@ -1,0 +1,929 @@
+[
+  {
+    "id": "g1-key-not-in-config",
+    "value": {
+      "ok": false,
+      "reason": "project_disabled"
+    }
+  },
+  {
+    "id": "g2-disabled",
+    "value": {
+      "ok": false,
+      "reason": "project_disabled"
+    }
+  },
+  {
+    "id": "g3-missing",
+    "value": {
+      "ok": false,
+      "reason": "project_missing"
+    }
+  },
+  {
+    "id": "g4-dormant",
+    "value": {
+      "ok": false,
+      "reason": "dormant_no_signal"
+    }
+  },
+  {
+    "id": "g5-session-in-flight",
+    "value": {
+      "ok": false,
+      "reason": "agent_busy"
+    }
+  },
+  {
+    "id": "g6-lease-agent-busy",
+    "value": {
+      "ok": false,
+      "reason": "agent_busy"
+    }
+  },
+  {
+    "id": "g7-recent-user-msg",
+    "value": {
+      "ok": false,
+      "reason": "recent_user_msg"
+    }
+  },
+  {
+    "id": "g7b-user-msg-exactly-window",
+    "value": {
+      "ok": true,
+      "lease": {
+        "schemaVersion": 1,
+        "writtenAt": "2026-01-01T00:04:30.000Z",
+        "channelKey": "web",
+        "writerId": "w1",
+        "projectKey": "/proj/a",
+        "sessionKey": "s1",
+        "agentBusy": false,
+        "lastUserMsgAt": "2026-01-01T00:00:00.000Z"
+      }
+    }
+  },
+  {
+    "id": "g8-cooldown",
+    "value": {
+      "ok": false,
+      "reason": "cooldown"
+    }
+  },
+  {
+    "id": "g8b-cooldown-elapsed",
+    "value": {
+      "ok": true
+    }
+  },
+  {
+    "id": "g9-daily-budget",
+    "value": {
+      "ok": false,
+      "reason": "daily_budget"
+    }
+  },
+  {
+    "id": "g10-lock-held",
+    "value": {
+      "ok": false,
+      "reason": "lock_busy"
+    }
+  },
+  {
+    "id": "g11-ok-no-leases",
+    "value": {
+      "ok": true
+    }
+  },
+  {
+    "id": "g12-ok-preferred-lease",
+    "value": {
+      "ok": true,
+      "lease": {
+        "schemaVersion": 1,
+        "writtenAt": "2026-01-01T00:04:30.000Z",
+        "channelKey": "web",
+        "writerId": "w2",
+        "projectKey": "/proj/a",
+        "sessionKey": "s1",
+        "agentBusy": false,
+        "lastUserMsgAt": null
+      }
+    }
+  },
+  {
+    "id": "g13-ok-fallback-first-lease",
+    "value": {
+      "ok": true,
+      "lease": {
+        "schemaVersion": 1,
+        "writtenAt": "2026-01-01T00:04:30.000Z",
+        "channelKey": "cli",
+        "writerId": "w1",
+        "projectKey": "/proj/a",
+        "sessionKey": "s1",
+        "agentBusy": false,
+        "lastUserMsgAt": null
+      }
+    }
+  },
+  {
+    "id": "g14-first-fail-wins",
+    "value": {
+      "ok": false,
+      "reason": "project_disabled"
+    }
+  },
+  {
+    "id": "g15-order-missing-before-dormant",
+    "value": {
+      "ok": false,
+      "reason": "project_missing"
+    }
+  },
+  {
+    "id": "g16-lease-list-not-filtered",
+    "value": {
+      "ok": false,
+      "reason": "agent_busy"
+    }
+  },
+  {
+    "id": "s1-default",
+    "value": {
+      "schemaVersion": 1,
+      "todayKey": "2026-01-01",
+      "todayRunCount": 0,
+      "consecutiveFailures": 0
+    }
+  },
+  {
+    "id": "s2-markFireStarted",
+    "value": {
+      "schemaVersion": 1,
+      "todayKey": "2026-01-01",
+      "todayRunCount": 1,
+      "consecutiveFailures": 0,
+      "lastFireStartedAt": "2026-01-01T00:05:00.000Z",
+      "lastRunId": "run-1"
+    }
+  },
+  {
+    "id": "s3-markFireCompleted",
+    "value": {
+      "schemaVersion": 1,
+      "lastFireStartedAt": "2026-01-01T00:05:00.000Z",
+      "lastFireCompletedAt": "2026-01-01T00:05:00.000Z",
+      "lastFireOutcome": "failed",
+      "lastRunId": "run-1",
+      "todayKey": "2026-01-01",
+      "todayRunCount": 1,
+      "consecutiveFailures": 1
+    }
+  },
+  {
+    "id": "s4-setDormant",
+    "value": {
+      "schemaVersion": 1,
+      "lastFireStartedAt": "2026-01-01T00:05:00.000Z",
+      "lastFireCompletedAt": "2026-01-01T00:05:00.000Z",
+      "lastFireOutcome": "failed",
+      "lastRunId": "run-1",
+      "todayKey": "2026-01-01",
+      "todayRunCount": 1,
+      "consecutiveFailures": 1,
+      "dormant": {
+        "since": "2026-01-01T00:05:00.000Z",
+        "lastBaselineAt": "2026-01-01T00:05:00.000Z"
+      }
+    }
+  },
+  {
+    "id": "s5-clearDormant",
+    "value": {
+      "schemaVersion": 1,
+      "lastFireStartedAt": "2026-01-01T00:05:00.000Z",
+      "lastFireCompletedAt": "2026-01-01T00:05:00.000Z",
+      "lastFireOutcome": "failed",
+      "lastRunId": "run-1",
+      "todayKey": "2026-01-01",
+      "todayRunCount": 1,
+      "consecutiveFailures": 1
+    }
+  },
+  {
+    "id": "s6-activeCycle",
+    "value": {
+      "schemaVersion": 1,
+      "lastFireStartedAt": "2026-01-01T00:05:00.000Z",
+      "lastFireCompletedAt": "2026-01-01T00:05:00.000Z",
+      "lastFireOutcome": "failed",
+      "lastRunId": "run-1",
+      "todayKey": "2026-01-01",
+      "todayRunCount": 1,
+      "consecutiveFailures": 1,
+      "activeWorkCycleId": "cycle-1"
+    }
+  },
+  {
+    "id": "s7-daily-reset",
+    "value": {
+      "schemaVersion": 1,
+      "todayKey": "2026-01-01",
+      "todayRunCount": 0,
+      "consecutiveFailures": 2
+    }
+  },
+  {
+    "id": "s8-malformed",
+    "value": {
+      "schemaVersion": 1,
+      "todayKey": "2026-01-01",
+      "todayRunCount": 0,
+      "consecutiveFailures": 0
+    }
+  },
+  {
+    "id": "s9-wrong-schema",
+    "value": {
+      "schemaVersion": 1,
+      "todayKey": "2026-01-01",
+      "todayRunCount": 0,
+      "consecutiveFailures": 0
+    }
+  },
+  {
+    "id": "s10-markFireStarted-bytes",
+    "value": {
+      "bytes": "{\n  \"schemaVersion\": 1,\n  \"todayKey\": \"2026-01-01\",\n  \"todayRunCount\": 1,\n  \"consecutiveFailures\": 0,\n  \"lastFireStartedAt\": \"2026-01-01T00:05:00.000Z\",\n  \"lastRunId\": \"run-bytes\"\n}"
+    }
+  },
+  {
+    "id": "l1-acquire-release",
+    "value": {
+      "first": true,
+      "bytes": "{\n  \"pid\": 4242,\n  \"runId\": \"lock-run-1\",\n  \"startedAt\": \"2026-01-01T00:05:00.000Z\"\n}",
+      "second": false,
+      "bytesAfter": "{\n  \"pid\": 4242,\n  \"runId\": \"lock-run-1\",\n  \"startedAt\": \"2026-01-01T00:05:00.000Z\"\n}",
+      "afterRelease": false,
+      "doubleReleaseOk": true
+    }
+  },
+  {
+    "id": "t2-disabled",
+    "value": {
+      "result": {
+        "outcome": "blocked",
+        "reason": "project_disabled"
+      },
+      "fireCalls": 0,
+      "lockAfter": false,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"project_disabled\"}"
+      ]
+    }
+  },
+  {
+    "id": "t3-missing",
+    "value": {
+      "result": {
+        "outcome": "blocked",
+        "reason": "project_missing"
+      },
+      "fireCalls": 0,
+      "lockAfter": false,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"project_missing\"}"
+      ]
+    }
+  },
+  {
+    "id": "t4-dormant",
+    "value": {
+      "result": {
+        "outcome": "blocked",
+        "reason": "dormant_no_signal"
+      },
+      "fireCalls": 0,
+      "lockAfter": false,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"dormant_no_signal\"}"
+      ]
+    }
+  },
+  {
+    "id": "t5-agent-busy",
+    "value": {
+      "result": {
+        "outcome": "blocked",
+        "reason": "agent_busy"
+      },
+      "fireCalls": 0,
+      "lockAfter": false,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"agent_busy\"}"
+      ]
+    }
+  },
+  {
+    "id": "t6-cooldown",
+    "value": {
+      "result": {
+        "outcome": "blocked",
+        "reason": "cooldown"
+      },
+      "fireCalls": 0,
+      "lockAfter": false,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"cooldown\"}"
+      ]
+    }
+  },
+  {
+    "id": "t7-daily-budget",
+    "value": {
+      "result": {
+        "outcome": "blocked",
+        "reason": "daily_budget"
+      },
+      "fireCalls": 0,
+      "lockAfter": false,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"daily_budget\"}"
+      ]
+    }
+  },
+  {
+    "id": "t8-lock-busy",
+    "value": {
+      "result": {
+        "outcome": "blocked",
+        "reason": "lock_busy"
+      },
+      "fireCalls": 0,
+      "lockAfter": true,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"lock_busy\"}"
+      ]
+    }
+  },
+  {
+    "id": "t9-recent-user-msg",
+    "value": {
+      "result": {
+        "outcome": "blocked",
+        "reason": "recent_user_msg"
+      },
+      "fireCalls": 0,
+      "lockAfter": false,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"recent_user_msg\"}"
+      ]
+    }
+  },
+  {
+    "id": "t1-fired",
+    "value": {
+      "result": {
+        "outcome": "fired"
+      },
+      "fireCalls": [
+        "probe-run-1"
+      ],
+      "state": {
+        "schemaVersion": 1,
+        "todayKey": "2026-01-01",
+        "todayRunCount": 1,
+        "consecutiveFailures": 0,
+        "lastFireStartedAt": "2026-01-01T00:05:00.000Z",
+        "lastRunId": "probe-run-1"
+      },
+      "lockAfter": false,
+      "log": [
+        "fire.run:probe-run-1",
+        "info:always-on fire complete:{\"runId\":\"probe-run-1\",\"outcome\":\"executed\"}"
+      ]
+    }
+  },
+  {
+    "id": "t10-cycle-full",
+    "value": {
+      "full": {
+        "outcome": "blocked",
+        "reason": "cycle_full"
+      },
+      "notFull": {
+        "outcome": "fired"
+      },
+      "fireCalls": 1,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"cycle_full\"}",
+        "fire.run:probe-run-2",
+        "info:always-on fire complete:{\"runId\":\"probe-run-2\",\"outcome\":\"executed\"}"
+      ]
+    }
+  },
+  {
+    "id": "t11-fire-crash",
+    "value": {
+      "crash": {
+        "name": "AlwaysOnError",
+        "code": "workspace_prepare_failed",
+        "message": "probe: fire crashed"
+      },
+      "state": {
+        "schemaVersion": 1,
+        "todayKey": "2026-01-01",
+        "todayRunCount": 1,
+        "consecutiveFailures": 0,
+        "lastFireStartedAt": "2026-01-01T00:05:00.000Z",
+        "lastRunId": "probe-run-3"
+      },
+      "lockAfter": false,
+      "nextTick": {
+        "outcome": "blocked",
+        "reason": "daily_budget"
+      },
+      "log": [
+        "fire.run:probe-run-3",
+        "warn:always-on fire crashed:{\"runId\":\"probe-run-3\",\"error\":\"probe: fire crashed\"}",
+        "info:always-on gate blocked:{\"reason\":\"daily_budget\"}"
+      ]
+    }
+  },
+  {
+    "id": "t12-after-stop",
+    "value": {
+      "outcome": "blocked",
+      "reason": "project_disabled"
+    }
+  },
+  {
+    "id": "i1-floor-1000ms",
+    "value": {
+      "before": 0,
+      "after": 1,
+      "log": [
+        "lock.acquire",
+        "fire.run:probe-run-4",
+        "info:always-on fire complete:{\"runId\":\"probe-run-4\",\"outcome\":\"executed\"}",
+        "lock.release"
+      ]
+    }
+  },
+  {
+    "id": "i2-two-minutes",
+    "value": {
+      "before": 0,
+      "after": 1,
+      "log": [
+        "lock.acquire",
+        "fire.run:probe-run-5",
+        "info:always-on fire complete:{\"runId\":\"probe-run-5\",\"outcome\":\"executed\"}",
+        "lock.release"
+      ]
+    }
+  },
+  {
+    "id": "w1-stop-waits",
+    "value": {
+      "duringStop": {
+        "stopDone": false,
+        "fireStarted": true,
+        "stateWritten": "probe-run-6",
+        "lockHeld": true
+      },
+      "afterStop": {
+        "stopDone": true,
+        "lockAfter": false,
+        "log": [
+          "lock.acquire",
+          "fire.run:probe-run-6",
+          "info:always-on fire complete:{\"runId\":\"probe-run-6\",\"outcome\":\"executed\"}",
+          "lock.release",
+          "stop.done"
+        ]
+      }
+    }
+  },
+  {
+    "id": "r1-control-envelopes",
+    "value": {
+      "before": {
+        "apply": {
+          "sessionKey": "",
+          "error": {
+            "code": "not_ready",
+            "message": "AlwaysOnRuntime.bindGateway not called"
+          }
+        },
+        "abort": {
+          "aborted": false,
+          "sessionKey": "always-on/discovery:project=x:run=y",
+          "error": {
+            "code": "not_ready",
+            "message": "AlwaysOnRuntime.bindGateway not called"
+          }
+        },
+        "rerun": {
+          "runId": "",
+          "error": {
+            "code": "not_ready",
+            "message": "AlwaysOnRuntime.bindGateway not called"
+          }
+        }
+      },
+      "rerunMissing": {
+        "runId": "probe-run-7",
+        "error": {
+          "code": "plan_not_found",
+          "message": "Plan p-missing not found"
+        }
+      },
+      "rerunNoBody": {
+        "runId": "probe-run-8",
+        "error": {
+          "code": "plan_body_missing",
+          "message": "Plan markdown for p1 not found on disk"
+        }
+      },
+      "applyMissing": {
+        "sessionKey": "",
+        "error": {
+          "code": "cycle_not_found",
+          "message": "Work cycle c-missing not found"
+        }
+      },
+      "applyNoWorkspace": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'strategy')"
+      },
+      "abortUnknown": {
+        "aborted": false,
+        "sessionKey": "always-on/discovery:project=elsewhere:run=z",
+        "error": {
+          "code": "session_not_active",
+          "message": "No active Always-On run owns this session."
+        }
+      },
+      "abortOwned": {
+        "aborted": true,
+        "sessionKey": "always-on/discovery:project=x:run=owned",
+        "runId": "owned-run"
+      },
+      "afterStopAbort": {
+        "aborted": false,
+        "sessionKey": "always-on/discovery:project=x:run=owned",
+        "error": {
+          "code": "not_ready",
+          "message": "AlwaysOnRuntime.bindGateway not called"
+        }
+      },
+      "gatewayCalls": [
+        {
+          "op": "abortTurn",
+          "input": {
+            "sessionKey": "always-on/discovery:project=x:run=owned",
+            "runId": "owned-run",
+            "reason": "probe/abort"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "id": "r9-manager-project-not-found",
+    "value": {
+      "apply": {
+        "sessionKey": "",
+        "error": {
+          "code": "project_not_found",
+          "message": "No Always-On runtime for project /elsewhere"
+        }
+      },
+      "abort": {
+        "aborted": false,
+        "sessionKey": "k",
+        "error": {
+          "code": "project_not_found",
+          "message": "No Always-On runtime for project /elsewhere"
+        }
+      },
+      "rerun": {
+        "runId": "",
+        "error": {
+          "code": "project_not_found",
+          "message": "No Always-On runtime for project /elsewhere"
+        }
+      }
+    }
+  },
+  {
+    "id": "d1-dormant-signal",
+    "value": {
+      "firedWhileDormant": 0,
+      "blocked": true,
+      "dormantAfter": null,
+      "firedAfterSignal": 2,
+      "log": [
+        "info:always-on gate blocked:{\"reason\":\"dormant_no_signal\"}",
+        "info:always-on gate blocked:{\"reason\":\"dormant_no_signal\"}",
+        "info:always-on gate blocked:{\"reason\":\"dormant_no_signal\"}",
+        "fire.run:probe-run-11",
+        "info:always-on fire complete:{\"runId\":\"probe-run-11\",\"outcome\":\"executed\"}",
+        "fire.run:probe-run-12",
+        "info:always-on fire complete:{\"runId\":\"probe-run-12\",\"outcome\":\"executed\"}"
+      ]
+    }
+  },
+  {
+    "id": "b1-create-conditions",
+    "value": {
+      "noConfig": {
+        "aoCount": 0,
+        "cronCount": 0,
+        "fallbackCount": 0
+      },
+      "noEnabled": {
+        "aoCount": 0,
+        "cronCount": 0,
+        "fallbackCount": 0
+      },
+      "enabled": {
+        "aoCount": 1,
+        "cronCount": 1,
+        "fallbackCount": 0
+      }
+    }
+  },
+  {
+    "id": "b2-start-stop-order",
+    "value": {
+      "started": {
+        "alwaysOn": true,
+        "cron": true
+      },
+      "log": [
+        "ao-factory:1",
+        "cron-factory:1",
+        "ao.bind:hooks",
+        "cron.bind:none",
+        "ao.start",
+        "cron.start",
+        "cron.stop",
+        "ao.stop"
+      ],
+      "published": [
+        {
+          "tools": [
+            "ao-tool",
+            "cron-tool"
+          ],
+          "cronIsProvider": true,
+          "alwaysOnIsProvider": true
+        },
+        {
+          "tools": [],
+          "cronIsProvider": false,
+          "alwaysOnIsProvider": false
+        }
+      ]
+    }
+  },
+  {
+    "id": "b3-stop-failures",
+    "value": {
+      "singleErr": {
+        "name": "Error",
+        "message": "ao stop boom"
+      },
+      "bothErr": {
+        "name": "AggregateError",
+        "message": "Project automation provider cleanup failed.",
+        "errors": [
+          "cron stop boom",
+          "ao stop boom"
+        ]
+      },
+      "single": [
+        "ao-factory:1",
+        "cron-factory:1",
+        "ao.bind:hooks",
+        "cron.bind:none",
+        "ao.start",
+        "cron.start",
+        "cron.stop",
+        "ao.stop"
+      ],
+      "both": [
+        "ao-factory:1",
+        "cron-factory:1",
+        "ao.bind:hooks",
+        "cron.bind:none",
+        "ao.start",
+        "cron.start",
+        "cron.stop",
+        "ao.stop"
+      ]
+    }
+  },
+  {
+    "id": "b4-start-failure",
+    "value": {
+      "err": {
+        "name": "AggregateError",
+        "message": "Project automation startup failed.",
+        "errors": [
+          "ao start boom"
+        ]
+      },
+      "log": [
+        "ao-factory:1",
+        "ao.bind:hooks",
+        "ao.start",
+        "ao.stop"
+      ]
+    }
+  },
+  {
+    "id": "b5-reload-no-change",
+    "value": {
+      "status": {
+        "alwaysOn": true,
+        "cron": true
+      },
+      "optsBefore": {
+        "aoCount": 1,
+        "cronCount": 1,
+        "fallbackCount": 0
+      },
+      "optsAfter": {
+        "aoCount": 1,
+        "cronCount": 1,
+        "fallbackCount": 0
+      },
+      "logAdded": []
+    }
+  },
+  {
+    "id": "b6-reload-cron-only",
+    "value": {
+      "status": {
+        "alwaysOn": true,
+        "cron": true
+      },
+      "opts": {
+        "aoCount": 1,
+        "cronCount": 2,
+        "fallbackCount": 0
+      },
+      "log": [
+        "ao-factory:1",
+        "cron-factory:1",
+        "ao.bind:hooks",
+        "cron#1.bind:none",
+        "ao.start",
+        "cron#1.start",
+        "cron-factory:2",
+        "cron#1.stop",
+        "cron#2.bind:none",
+        "cron#2.start"
+      ],
+      "lastPublishAlwaysOnIsPrevious": true
+    }
+  },
+  {
+    "id": "b7-reload-stop-failure",
+    "value": {
+      "err": {
+        "name": "AggregateError",
+        "message": "Project automation reload could not stop the previous generation; no replacement was started.",
+        "errors": [
+          "ao stop boom"
+        ]
+      },
+      "log": [
+        "ao-factory:1",
+        "ao.bind:hooks",
+        "ao.start",
+        "ao-factory:2",
+        "fallback-factory",
+        "ao.stop"
+      ]
+    }
+  },
+  {
+    "id": "b8-reload-restore",
+    "value": {
+      "err": {
+        "name": "AggregateError",
+        "message": "Project automation reload failed; the previous generation was restored.",
+        "errors": [
+          "ao#2 start boom"
+        ]
+      },
+      "opts": {
+        "aoCount": 3,
+        "cronCount": 0,
+        "fallbackCount": 1
+      },
+      "log": [
+        "ao-factory:1",
+        "ao#1.bind:hooks",
+        "ao#1.start",
+        "ao-factory:2",
+        "fallback-factory",
+        "ao#1.stop",
+        "ao#2.bind:hooks",
+        "ao#2.start",
+        "ao#2.stop",
+        "ao-factory:3",
+        "ao#3.bind:hooks",
+        "ao#3.start"
+      ]
+    }
+  },
+  {
+    "id": "b9-reload-restore-failure",
+    "value": {
+      "err": {
+        "name": "AggregateError",
+        "message": "Project automation reload failed and the previous generation could not be restored.",
+        "errors": [
+          "ao#2 start boom",
+          "ao#3 start boom"
+        ]
+      },
+      "opts": {
+        "aoCount": 3,
+        "cronCount": 0,
+        "fallbackCount": 2
+      },
+      "log": [
+        "ao-factory:1",
+        "ao#1.bind:hooks",
+        "ao#1.start",
+        "ao-factory:2",
+        "fallback-factory",
+        "ao#1.stop",
+        "ao#2.bind:hooks",
+        "ao#2.start",
+        "ao#2.stop",
+        "ao-factory:3",
+        "ao#3.bind:hooks",
+        "ao#3.start",
+        "fallback-factory"
+      ],
+      "lastPublishFallback": "fallback",
+      "statusAfter": {
+        "alwaysOn": false,
+        "cron": false
+      }
+    }
+  },
+  {
+    "id": "b10-reload-before-start",
+    "value": {
+      "status": {
+        "alwaysOn": true,
+        "cron": false
+      },
+      "opts": {
+        "aoCount": 2,
+        "cronCount": 0,
+        "fallbackCount": 0
+      },
+      "log": [
+        "ao-factory:1",
+        "ao#1.bind:hooks",
+        "ao-factory:2",
+        "ao#2.bind:hooks"
+      ]
+    }
+  },
+  {
+    "id": "b11-fallback-publish",
+    "value": {
+      "status": {
+        "alwaysOn": false,
+        "cron": true
+      },
+      "opts": {
+        "aoCount": 0,
+        "cronCount": 1,
+        "fallbackCount": 1
+      },
+      "alwaysOnControl": {
+        "kind": "standalone-fallback"
+      },
+      "log": [
+        "cron-factory:1",
+        "cron.bind:none",
+        "cron.start",
+        "fallback-factory"
+      ]
+    }
+  }
+]

@@ -296,7 +296,7 @@ async fn production_cleanup_matrix() {
         if ["release", "cancel", "never"].contains(&mode) {
             negative_assert_eq!(
                 calls.lock().expect("#1071 before cleanup calls").clone(),
-                vec!["channels", "session"],
+                vec!["automation", "channels", "session"],
                 "#1071 production cleanup waits for predecessor"
             );
             if mode != "never" {
@@ -323,9 +323,9 @@ async fn production_cleanup_matrix() {
             if mode == "never" {
                 // #1328: the channel assembly stops before the gateway
                 // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37).
-                vec!["channels", "session"]
+                vec!["automation", "channels", "session"]
             } else {
-                vec!["channels", "session", "project"]
+                vec!["automation", "channels", "session", "project"]
             },
             "#1071 production cleanup attempts both resources"
         );
@@ -362,16 +362,25 @@ async fn production_cleanup_matrix() {
         // channels step is pinned here, on the Rust side, and dropped before
         // the golden comparison. Making the generator emit a synthetic
         // "channels" entry would turn the fixture into a mirror of this
-        // implementation instead of a reading of the baseline.
+        // implementation instead of a reading of the baseline. #2294: the
+        // automation bundle now stops ahead of the channels
+        // (PilotDeckServerShutdownBundle.ts:32) for the same reason — the
+        // probe observes neither — so both native-only steps are pinned here
+        // and dropped together.
         negative_assert_eq!(
             actual_calls.first().copied(),
+            Some("automation"),
+            "#2294 automation bundle stops before the channel assembly"
+        );
+        negative_assert_eq!(
+            actual_calls.get(1).copied(),
             Some("channels"),
             "#1328 channel assembly stops before the gateway lifecycle disposal"
         );
         let gateway_calls: Vec<&str> = actual_calls
             .iter()
             .copied()
-            .filter(|step| *step != "channels")
+            .filter(|step| !matches!(*step, "automation" | "channels"))
             .collect();
         negative_assert_eq!(
             json!(gateway_calls),
@@ -929,6 +938,7 @@ async fn project_path_boundaries_worker() {
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         prepare_weixin_login: None,
         cron: None,
+        always_on: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
     };
