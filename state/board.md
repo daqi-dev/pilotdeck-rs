@@ -5143,3 +5143,8 @@ r118固定6a802全目标check和native519通过，其余套件在跑；已合SDK
 ### 2026-11-09 06:45 · SDK 权限实际执行接入
 
 已逐SHA整合 managedPermissions/additionalWorkingDirectories 11文件候选：immutable ask/deny与会话grant/MCP共享数组并存，真实目录授权与dontAsk上下文进入native工具消费者，新增固定TS 12格原件及实际read/deny/cancel测试，尚未Rust验证。AO发现/执行/报告缺码与空码6格真TS原件已入回归；report默认码按实源为report_degraded。r118全部选择器通过（native519、tools141、plugins86、SOP8、admission11、SDK24），r119固定5a409编译通过并继续strict/bins；完整CLI仍未完成，所有Rust仅mbp2、仅本机提交。
+
+
+### 2026-11-09 06:56 · 严格检查修复与真实 SDK 链路
+
+r119固定5a409全目标check/native522/AO106/四个实际bin构建通过；strict报63项，已从mbp2 rustfix逐hash+三方真合机械片，另明确修type/无用参数/构造返回/测试模块布局，SOP largeErr等仍待Sol，未报strict通过。AO两家r118评审收敛到无P0但有P1：3个同源多drain已补enable+notify_waiters及并发回归，boundary引用解析诊断争议新增真实损坏JSON/未知schema回归待编译仲裁；workspace两P2由audit接续。真实CLI/sidecar/provider SDK已有deferred/aliases/schema/managedTools/plugin/suggestion/progress七项实际通过，预算按真实usage.cost停机+下一轮preflight继续验证，前几次探针参数/断言失败原件全保。第二mbp2镜像固定0fd820d已编好全Gateway bin，分组+FD曲线正在跑；不等同解决旧单进程累积。所有Rust仅mbp2、仅本机提交，完整CLI仍未完成。

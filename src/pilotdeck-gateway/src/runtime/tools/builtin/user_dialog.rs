@@ -367,8 +367,8 @@ fn validate(kind: Kind, input: &JsValue) -> Option<Vec<JsObject>> {
                     return issue(&format!("{path}.value"), "choice values must be unique.");
                 }
             }
-            if let Some(value) = input.get("defaultValue").filter(|v| !v.is_undefined()) {
-                if value
+            if let Some(value) = input.get("defaultValue").filter(|v| !v.is_undefined())
+                && value
                     .as_string()
                     .is_none_or(|s| s.len_utf16() > 512 || !seen.contains(s))
                 {
@@ -377,12 +377,11 @@ fn validate(kind: Kind, input: &JsValue) -> Option<Vec<JsObject>> {
                         "defaultValue must match one of the choice values.",
                     );
                 }
-            }
         }
         Kind::Confirmation => {
             for key in ["confirmLabel", "cancelLabel"] {
-                if let Some(value) = input.get(key).filter(|v| !v.is_undefined()) {
-                    if value
+                if let Some(value) = input.get(key).filter(|v| !v.is_undefined())
+                    && value
                         .as_string()
                         .is_none_or(|s| blank(s) || s.len_utf16() > 128)
                     {
@@ -394,7 +393,6 @@ fn validate(kind: Kind, input: &JsValue) -> Option<Vec<JsObject>> {
                             .as_str(),
                         );
                     }
-                }
             }
             if input
                 .get("defaultValue")

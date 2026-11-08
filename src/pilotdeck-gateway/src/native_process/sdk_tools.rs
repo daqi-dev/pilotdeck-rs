@@ -302,8 +302,8 @@ pub(super) fn install(registry: &ToolRegistry, config: &JsObject) -> Result<(), 
 }
 pub(super) fn validate(config: &JsValue) -> Result<(), SubmitError> {
     let invalid = |s| SubmitError::new("INVALID_SDK_SESSION_CONFIG", s);
-    if let Some(aliases) = config.get("toolAliases").filter(|v| !v.is_undefined()) {
-        if !aliases.as_object().is_some_and(|o| {
+    if let Some(aliases) = config.get("toolAliases").filter(|v| !v.is_undefined())
+        && !aliases.as_object().is_some_and(|o| {
             o.entries().iter().all(|(k, v)| {
                 !trim(k).is_empty() && v.as_string().is_some_and(|s| !trim(s).is_empty())
             })
@@ -312,24 +312,21 @@ pub(super) fn validate(config: &JsValue) -> Result<(), SubmitError> {
                 "toolAliases must be a non-empty string-to-string map.",
             ));
         }
-    }
-    if let Some(rows) = config.get("deferredTools").filter(|v| !v.is_undefined()) {
-        if !matches!(rows,JsValue::Array(rows) if rows.len()<=1024 && rows.iter().all(|v|v.get("name").and_then(JsValue::as_string).is_some_and(|s|!trim(s).is_empty())&&v.get("searchHint").is_none_or(|s|s.is_undefined()||s.as_string().is_some())))
+    if let Some(rows) = config.get("deferredTools").filter(|v| !v.is_undefined())
+        && !matches!(rows,JsValue::Array(rows) if rows.len()<=1024 && rows.iter().all(|v|v.get("name").and_then(JsValue::as_string).is_some_and(|s|!trim(s).is_empty())&&v.get("searchHint").is_none_or(|s|s.is_undefined()||s.as_string().is_some())))
         {
             return Err(invalid(
                 "deferredTools must contain canonical tool names and optional string search hints.",
             ));
         }
-    }
-    if let Some(format) = config.get("outputFormat").filter(|v| !v.is_undefined()) {
-        if format.get("type") != Some(&JsValue::from("json_schema"))
-            || !format.get("schema").is_some_and(schema_shape)
+    if let Some(format) = config.get("outputFormat").filter(|v| !v.is_undefined())
+        && (format.get("type") != Some(&JsValue::from("json_schema"))
+            || !format.get("schema").is_some_and(schema_shape))
         {
             return Err(invalid(
                 "outputFormat must be a json_schema object using PilotDeck's JSON-schema subset.",
             ));
         }
-    }
     Ok(())
 }
 fn schema_shape(value: &JsValue) -> bool {

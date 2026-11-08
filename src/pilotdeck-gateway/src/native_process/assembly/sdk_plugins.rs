@@ -166,4 +166,113 @@ mod tests {
             Some("SDK_PLUGIN_LOAD_FAILED")
         );
     }
+    #[tokio::test]
+    async fn fixed_ts_local_plugin_view_is_session_owned_and_complete() {
+        use crate::runtime::plugins::{PluginRuntime, PluginRuntimeOptions};
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-sdk-plugin/oracle.json"
+        ))
+        .unwrap();
+        let root = Scratch(
+            std::env::temp_dir().join(format!("pdrs-sdk-plugin-view-{}", uuid::Uuid::new_v4())),
+        );
+        let plugin = root.0.join("local-fixture");
+        for d in ["commands", "skills/guide", "output-styles"] {
+            std::fs::create_dir_all(plugin.join(d)).unwrap();
+        }
+        std::fs::write(plugin.join("plugin.json"),r#"{"name":"session-plugin","version":"1.0.0","mcpServers":{"fixture":{"type":"stdio","command":"fixture-command","deferredTools":[{"name":"echo","searchHint":"find echo"}]}}}"#).unwrap();
+        std::fs::write(
+            plugin.join("commands/hello.md"),
+            "---\ndescription: Fixture command\n---\nCOMMAND_TOKEN\n",
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join("skills/guide/SKILL.md"),
+            "---\nname: guide\ndescription: Fixture skill\n---\nSKILL_TOKEN\n",
+        )
+        .unwrap();
+        std::fs::write(
+            plugin.join("output-styles/brief.md"),
+            "---\ndescription: Fixture style\n---\nSTYLE_TOKEN\n",
+        )
+        .unwrap();
+        let loaded = load_batch(&[descriptor(&plugin)], &[]).unwrap();
+        let runtime = PluginRuntime::new(PluginRuntimeOptions {
+            project_root: root.0.join("project"),
+            pilot_home: root.0.join("home"),
+            builtin_skills_root: None,
+            builtin_plugins: vec![],
+            builtin_plugins_enabled: Default::default(),
+        });
+        runtime.refresh().await.unwrap();
+        let mut local = runtime.acquire_session_contributions(loaded).await.unwrap();
+        let mut other = runtime.acquire_session_contributions(vec![]).await.unwrap();
+        let got = object([
+            (
+                "commands",
+                JsValue::Array(
+                    local
+                        .contributions
+                        .commands
+                        .iter()
+                        .map(|v| {
+                            object([
+                                ("name", v.name.as_str().into()),
+                                ("content", v.content.as_str().into()),
+                                ("namespace", v.namespace.as_str().into()),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+            (
+                "skills",
+                JsValue::Array(
+                    local
+                        .contributions
+                        .skills
+                        .iter()
+                        .map(|v| {
+                            object([
+                                ("name", v.name.as_str().into()),
+                                ("content", v.content.as_str().into()),
+                                ("namespace", v.namespace.as_str().into()),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+            (
+                "styles",
+                JsValue::Array(
+                    local
+                        .contributions
+                        .output_styles
+                        .iter()
+                        .map(|v| {
+                            object([
+                                ("name", v.name.as_str().into()),
+                                ("content", v.content.as_str().into()),
+                                ("plugin", v.plugin.as_str().into()),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+            (
+                "servers",
+                JsValue::Object(local.contributions.mcp_servers.clone()),
+            ),
+        ]);
+        assert_eq!(Some(&got), oracle.get("session"));
+        assert!(
+            other.contributions.commands.is_empty()
+                && other.contributions.skills.is_empty()
+                && other.contributions.output_styles.is_empty()
+                && other.contributions.mcp_servers.is_empty()
+        );
+        local.release().await.unwrap();
+        other.release().await.unwrap();
+        runtime.dispose().await.unwrap();
+    }
 }

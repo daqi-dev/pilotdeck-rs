@@ -262,91 +262,6 @@ fn phase_event_error(event: &JsValue, channel: &JsString) -> ControlError {
     )
 }
 
-#[cfg(test)]
-mod phase_event_code_tests {
-    use super::*;
-    #[test]
-    fn fixed_ts_apply_error_code_oracle_preserves_empty_and_defaults_nullish() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(
-            "../../../tests/fixtures/native-ao-error-code/oracle.json"
-        ))
-        .unwrap();
-        let Some(JsValue::Array(records)) = oracle.get("records") else {
-            panic!("records")
-        };
-        assert_eq!(records.len(), 4);
-        for record in records {
-            let mut event = pilotdeck_protocol::JsObject::new();
-            if record.get("code") != Some(&"<undefined>".into()) {
-                event.insert("code".into(), record.get("code").cloned().unwrap());
-            }
-            event.insert("message".into(), "deterministic failure".into());
-            let actual = phase_event_error(&JsValue::Object(event), &"always-on/apply".into());
-            let expected = record.get("result").unwrap().get("error").unwrap();
-            assert_eq!(
-                Some(actual.code.as_str()),
-                expected
-                    .get("code")
-                    .and_then(JsValue::as_string)
-                    .and_then(|v| v.to_utf8().ok())
-                    .as_deref()
-            );
-            assert_eq!(actual.message, "deterministic failure");
-        }
-        for (channel, code) in [
-            ("always-on/discovery", "discovery_failed"),
-            ("always-on/execute", "execution_failed"),
-            ("always-on/report", "report_degraded"),
-        ] {
-            assert_eq!(
-                phase_event_error(&crate::metadata::object([]), &channel.into()).code,
-                code
-            );
-        }
-    }
-    #[test]
-    fn fixed_ts_discovery_execution_and_report_error_codes() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(
-            "../../../tests/fixtures/native-ao-error-code/phases.json"
-        ))
-        .unwrap();
-        let Some(JsValue::Array(records)) = oracle.get("records") else {
-            panic!("records")
-        };
-        assert_eq!(records.len(), 6);
-        for record in records {
-            let phase = record.get("phase").and_then(JsValue::as_string).unwrap();
-            let channel = if phase.equals_str("execution") {
-                "always-on/execute"
-            } else if phase.equals_str("discovery") {
-                "always-on/discovery"
-            } else {
-                "always-on/report"
-            };
-            let mut event = pilotdeck_protocol::JsObject::new();
-            if record.get("code") != Some(&"<undefined>".into()) {
-                event.insert("code".into(), record.get("code").cloned().unwrap());
-            }
-            event.insert("message".into(), "fixture failure".into());
-            let actual = phase_event_error(&JsValue::Object(event), &channel.into());
-            let expected = record
-                .get("result")
-                .unwrap()
-                .get("error")
-                .unwrap()
-                .get("code")
-                .and_then(JsValue::as_string)
-                .unwrap();
-            assert_eq!(
-                actual.code,
-                expected.to_utf8().unwrap(),
-                "phase {:?}",
-                phase
-            );
-        }
-    }
-}
-
 const MAX_PHASE_EVENTS: usize = 16_384;
 const MAX_PHASE_EVENT_BYTES: usize = 16 * 1024 * 1024;
 fn phase_error(code: &str, message: &str) -> ControlError {
@@ -503,5 +418,90 @@ impl ProjectAutomationProvider for NativeAlwaysOnProvider {
 
     fn always_on_manager(&self) -> Option<Arc<AlwaysOnManager>> {
         Some(self.manager.clone())
+    }
+}
+
+#[cfg(test)]
+mod phase_event_code_tests {
+    use super::*;
+    #[test]
+    fn fixed_ts_apply_error_code_oracle_preserves_empty_and_defaults_nullish() {
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-ao-error-code/oracle.json"
+        ))
+        .unwrap();
+        let Some(JsValue::Array(records)) = oracle.get("records") else {
+            panic!("records")
+        };
+        assert_eq!(records.len(), 4);
+        for record in records {
+            let mut event = pilotdeck_protocol::JsObject::new();
+            if record.get("code") != Some(&"<undefined>".into()) {
+                event.insert("code".into(), record.get("code").cloned().unwrap());
+            }
+            event.insert("message".into(), "deterministic failure".into());
+            let actual = phase_event_error(&JsValue::Object(event), &"always-on/apply".into());
+            let expected = record.get("result").unwrap().get("error").unwrap();
+            assert_eq!(
+                Some(actual.code.as_str()),
+                expected
+                    .get("code")
+                    .and_then(JsValue::as_string)
+                    .and_then(|v| v.to_utf8().ok())
+                    .as_deref()
+            );
+            assert_eq!(actual.message, "deterministic failure");
+        }
+        for (channel, code) in [
+            ("always-on/discovery", "discovery_failed"),
+            ("always-on/execute", "execution_failed"),
+            ("always-on/report", "report_degraded"),
+        ] {
+            assert_eq!(
+                phase_event_error(&crate::metadata::object([]), &channel.into()).code,
+                code
+            );
+        }
+    }
+    #[test]
+    fn fixed_ts_discovery_execution_and_report_error_codes() {
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-ao-error-code/phases.json"
+        ))
+        .unwrap();
+        let Some(JsValue::Array(records)) = oracle.get("records") else {
+            panic!("records")
+        };
+        assert_eq!(records.len(), 6);
+        for record in records {
+            let phase = record.get("phase").and_then(JsValue::as_string).unwrap();
+            let channel = if phase.equals_str("execution") {
+                "always-on/execute"
+            } else if phase.equals_str("discovery") {
+                "always-on/discovery"
+            } else {
+                "always-on/report"
+            };
+            let mut event = pilotdeck_protocol::JsObject::new();
+            if record.get("code") != Some(&"<undefined>".into()) {
+                event.insert("code".into(), record.get("code").cloned().unwrap());
+            }
+            event.insert("message".into(), "fixture failure".into());
+            let actual = phase_event_error(&JsValue::Object(event), &channel.into());
+            let expected = record
+                .get("result")
+                .unwrap()
+                .get("error")
+                .unwrap()
+                .get("code")
+                .and_then(JsValue::as_string)
+                .unwrap();
+            assert_eq!(
+                actual.code,
+                expected.to_utf8().unwrap(),
+                "phase {:?}",
+                phase
+            );
+        }
     }
 }

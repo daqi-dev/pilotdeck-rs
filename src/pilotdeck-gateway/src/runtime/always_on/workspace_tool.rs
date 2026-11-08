@@ -20,12 +20,14 @@ pub(crate) struct WorkspaceState { pub handle: Option<WorkspaceHandle> }
 pub(crate) struct WorkspacePending { count: AtomicUsize, changed: tokio::sync::Notify }
 impl WorkspacePending {
     pub(crate) async fn drain(&self) {
-        loop { let changed = self.changed.notified(); if self.count.load(Ordering::Acquire) == 0 { return; } changed.await; }
+        loop { let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable(); if self.count.load(Ordering::Acquire) == 0 { return; } changed.await; }
     }
 }
 struct PendingGuard(Arc<WorkspacePending>);
 impl Drop for PendingGuard {
-    fn drop(&mut self) { if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 { self.0.changed.notify_one(); } }
+    fn drop(&mut self) { if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 { self.0.changed.notify_waiters(); } }
 }
 pub(crate) struct WorkspaceHandler {
     pub run_id: JsString,
@@ -99,5 +101,34 @@ mod tests {
         assert!(handler.execute("always_on_prepare_workspace", JsValue::Object(input), context()).await.is_err());
         assert!(state.lock().await.handle.as_ref().unwrap().cwd.equals_str("/p/workspace"));
         handler.pending.drain().await;
+    }
+}
+
+#[cfg(test)]
+mod concurrent_drain_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn all_waiters_finish_after_the_last_owned_job() {
+        let pending = Arc::new(WorkspacePending::default());
+        pending.count.store(1, Ordering::Release);
+        let guard = PendingGuard(pending.clone());
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let mut waiters = Vec::new();
+        for _ in 0..2 {
+            let pending = pending.clone();
+            let barrier = barrier.clone();
+            waiters.push(tokio::spawn(async move {
+                barrier.wait().await;
+                pending.drain().await;
+            }));
+        }
+        barrier.wait().await;
+        tokio::task::yield_now().await;
+        drop(guard);
+        for waiter in waiters {
+            tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+                .await.expect("drain must wake all waiters").expect("waiter panicked");
+        }
     }
 }

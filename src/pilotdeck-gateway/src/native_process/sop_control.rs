@@ -461,11 +461,10 @@ impl NativeApprovalCatalog for NativeSopControl {
             let mut output = vec![JsString::from(home.to_string_lossy().into_owned())];
             if let JsValue::Array(rows) = value(&listed, "projects") {
                 for row in rows {
-                    if let Some(root) = value(row, "projectKey").as_string() {
-                        if !output.contains(root) {
+                    if let Some(root) = value(row, "projectKey").as_string()
+                        && !output.contains(root) {
                             output.push(root.clone());
                         }
-                    }
                 }
             }
             Ok(output)
@@ -740,7 +739,8 @@ mod resume_error_tests {
                     .map(|s| crate::metadata::object([(
                         "httpStatus",
                         JsValue::Number(f64::from(s))
-                    )])).map(Box::new)
+                    )]))
+                    .map(Box::new)
             );
         }
         let error = resume_error(ApprovalFailure {
@@ -755,10 +755,10 @@ mod resume_error_tests {
         );
         assert_eq!(
             error.details,
-            Some(crate::metadata::object([(
+            Some(Box::new(crate::metadata::object([(
                 "httpStatus",
                 JsValue::Number(409.0)
-            )])).map(Box::new)
+            )])))
         );
     }
 }

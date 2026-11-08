@@ -116,12 +116,11 @@ impl StaffDeckController {
             .as_string()
             .expect("validated default SOP");
         let mut required = vec![];
-        if let JsValue::Array(rows) = field(&self.bundle, "sops") {
-            if let Some(row) = rows
+        if let JsValue::Array(rows) = field(&self.bundle, "sops")
+            && let Some(row) = rows
                 .iter()
                 .find(|r| definitions::id(r).as_ref() == Some(selected))
-            {
-                if let JsValue::Array(nodes) = field(field(row, "content"), "nodes") {
+                && let JsValue::Array(nodes) = field(field(row, "content"), "nodes") {
                     for node in nodes {
                         for action in strings(field(node, "allowed_actions")) {
                             if let Some(name) =
@@ -136,8 +135,6 @@ impl StaffDeckController {
                         }
                     }
                 }
-            }
-        }
         let missing = required
             .into_iter()
             .filter(|name| {
@@ -196,11 +193,10 @@ impl StaffDeckController {
         } else {
             field(&self.profile, "defaultSopId").as_string().cloned()
         };
-        if let Some(id) = &selected {
-            if !definitions::contains(&self.bundle, id) {
+        if let Some(id) = &selected
+            && !definitions::contains(&self.bundle, id) {
                 return Err(error("SOP_DISCOVERY_SELECTION_UNAVAILABLE",format!("StaffDeck SOP discovery selected '{}', but it is not present in the PilotDeck bundle.",String::from_utf16_lossy(id.units())).as_str()));
             }
-        }
         Ok(selected)
     }
 }
@@ -413,7 +409,8 @@ async fn finish(
     native.finish_node(Some(outcome)).await
 }
 fn merge_result(previous: JsValue, mut current: JsValue) -> JsValue {
-    for field_name in ["turns"] {
+    {
+        let field_name = "turns";
         let n = field(&previous, field_name).as_number().unwrap_or(0.0)
             + field(&current, field_name).as_number().unwrap_or(0.0);
         set(&mut current, field_name, JsValue::Number(n));

@@ -13,8 +13,10 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
+type RecoveredDialogs = std::collections::HashMap<(PathBuf, JsString), Vec<JsValue>>;
+
 pub(crate) struct NativeDialogRecovery {
-    cache: Arc<std::sync::Mutex<std::collections::HashMap<(PathBuf, JsString), Vec<JsValue>>>>,
+    cache: Arc<std::sync::Mutex<RecoveredDialogs>>,
     flights: std::sync::Mutex<
         std::collections::HashMap<(PathBuf, JsString, JsString), recovery::RecoveryFlight>,
     >,
@@ -161,10 +163,10 @@ fn clear_journal_at(home: &Path, directory: &Path, session: &JsString) -> Result
         // Journal.clear is unlink-only, never reads possibly hostile content.
         // Pin its existing parent under the isolated home; missing parents are
         // the same no-op as unlink(ENOENT), without making a new chat directory.
-        let parent = match crate::project_files::open_directory_beneath(home, &directory) {
+        let parent = match crate::project_files::open_directory_beneath(home, directory) {
             Ok(parent) => parent,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(error) => return Err(io_failure(error, "open", &directory)),
+            Err(error) => return Err(io_failure(error, "open", directory)),
         };
         match rustix::fs::unlinkat(&parent, name.as_str(), rustix::fs::AtFlags::empty()) {
             Ok(()) => Ok(()),

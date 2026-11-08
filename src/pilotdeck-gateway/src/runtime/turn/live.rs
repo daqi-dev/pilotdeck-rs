@@ -2641,6 +2641,7 @@ impl LiveSessionAdapter {
                 && crate::runtime::permission::managed_default_mode(&config).is_none()
                 && let Some(mode) = source()
             {
+                let mode = crate::runtime::permission::effective_permission_mode(&config, Some(mode));
                 config.insert("permissionMode".into(), JsValue::String(mode));
             }
             request

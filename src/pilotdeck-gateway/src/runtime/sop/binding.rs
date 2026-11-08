@@ -55,8 +55,8 @@ fn project(request: &mut JsObject, step: &JsValue) {
             crate::metadata::object([("type", "tool".into()), ("name", tool::CONTROL.into())])
         },
     );
-    if strings(field(step, "requiredToolNames")).is_empty() {
-        if let Some(JsValue::Array(tools)) = request.get("tools") {
+    if strings(field(step, "requiredToolNames")).is_empty()
+        && let Some(JsValue::Array(tools)) = request.get("tools") {
             let filtered = tools
                 .iter()
                 .filter(|t| field(t, "name") == &JsValue::from(tool::CONTROL))
@@ -64,7 +64,6 @@ fn project(request: &mut JsObject, step: &JsValue) {
                 .collect();
             request.insert("tools".into(), JsValue::Array(filtered));
         }
-    }
 }
 struct Model {
     base: Arc<dyn model::ModelExecution>,

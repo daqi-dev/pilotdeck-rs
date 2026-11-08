@@ -13,6 +13,8 @@ impl PlanPending {
     pub(crate) async fn drain(&self) {
         loop {
             let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             if self.count.load(Ordering::Acquire) == 0 { return; }
             changed.await;
         }
@@ -21,7 +23,7 @@ impl PlanPending {
 struct PendingGuard(Arc<PlanPending>);
 impl Drop for PendingGuard {
     fn drop(&mut self) {
-        if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 { self.0.changed.notify_one(); }
+        if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 { self.0.changed.notify_waiters(); }
     }
 }
 pub(crate) struct PlanHandler {
@@ -156,5 +158,34 @@ mod tests {
         drop(state);
         handler.pending.drain().await;
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod concurrent_drain_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn all_waiters_finish_after_the_last_owned_job() {
+        let pending = Arc::new(PlanPending::default());
+        pending.count.store(1, Ordering::Release);
+        let guard = PendingGuard(pending.clone());
+        let barrier = Arc::new(tokio::sync::Barrier::new(3));
+        let mut waiters = Vec::new();
+        for _ in 0..2 {
+            let pending = pending.clone();
+            let barrier = barrier.clone();
+            waiters.push(tokio::spawn(async move {
+                barrier.wait().await;
+                pending.drain().await;
+            }));
+        }
+        barrier.wait().await;
+        tokio::task::yield_now().await;
+        drop(guard);
+        for waiter in waiters {
+            tokio::time::timeout(std::time::Duration::from_secs(2), waiter)
+                .await.expect("drain must wake all waiters").expect("waiter panicked");
+        }
     }
 }

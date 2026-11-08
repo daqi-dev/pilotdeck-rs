@@ -192,7 +192,7 @@ pub(crate) fn parse_model(value: &JsValue) -> Option<JsObject> {
     let units = s.units();
     if units
         .iter()
-        .any(|u| char::from_u32(u32::from(*u)).is_some_and(|c| crate::metadata::js_space(c)))
+        .any(|u| char::from_u32(u32::from(*u)).is_some_and(crate::metadata::js_space))
     {
         return None;
     }

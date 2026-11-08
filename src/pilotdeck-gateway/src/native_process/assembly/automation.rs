@@ -117,6 +117,9 @@ impl fmt::Display for AutomationError {
 /// trait objects: the always-on half only ever calls `abortTurn`
 /// (`AlwaysOnRuntime.ts:387-392`), and the cron face is the
 /// `SessionAdmissionCronGateway` the #1326 wiring already constructs.
+type NativeCronBind = Arc<dyn Fn(Arc<CronManager>)
+    -> io::Result<Arc<crate::switch::CronStopHandle>> + Send + Sync>;
+
 #[derive(Clone)]
 pub(crate) struct ProjectAutomationAgentGateway {
     /// The always-on `abortTurn` face.
@@ -125,8 +128,7 @@ pub(crate) struct ProjectAutomationAgentGateway {
     pub cron: Arc<dyn CronAgentGateway>,
     /// Native provider generations construct their own cancellation and drain
     /// handle while sharing this host's session owner and turn submitter.
-    pub native_cron_bind: Option<Arc<dyn Fn(Arc<CronManager>)
-        -> io::Result<Arc<crate::switch::CronStopHandle>> + Send + Sync>>,
+    pub native_cron_bind: Option<NativeCronBind>,
 }
 
 /// The hooks record the always-on bind signature takes

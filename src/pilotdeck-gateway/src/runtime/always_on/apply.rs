@@ -211,7 +211,7 @@ fn apply_prompt(
     units.extend(")\n".encode_utf16());
     out.clear();
     if let Some(branch) = branch.filter(|branch| !branch.is_empty()) {
-        units.extend("Branch: ".encode_utf16());
+        units.extend(if chinese { "工作区分支：" } else { "Branch: " }.encode_utf16());
         units.extend_from_slice(branch.units());
         units.push(10);
     }
@@ -223,11 +223,19 @@ fn apply_prompt(
             "No changes were detected."
         });
     } else {
-        out.push_str(&format!(
-            "\nFiles: {}{}\n",
-            diff.file_count,
-            if diff.truncated { " (truncated)" } else { "" }
-        ));
+        if chinese {
+            out.push_str(&format!(
+                "\n变更内容：{} 个文件{}\n",
+                diff.file_count,
+                if diff.truncated { "（已截断）" } else { "" }
+            ));
+        } else {
+            out.push_str(&format!(
+                "\nFiles: {}{}\n",
+                diff.file_count,
+                if diff.truncated { " (truncated)" } else { "" }
+            ));
+        }
     }
     units.extend(out.encode_utf16());
     if !empty {
@@ -526,6 +534,18 @@ mod tests {
             *events.0.lock().unwrap(),
             ["apply_started", "run_failed", "closed"]
         );
+    }
+
+    #[test]
+    fn chinese_apply_localizes_branch_and_diff_labels() {
+        let diff = WorkspaceDiff { text: "+中文".into(), file_count: 2, truncated: true };
+        let prompt = apply_prompt(&"项目".into(), "/project", "/workspace", "git-worktree", &"计划".into(), &"id".into(), Some(&"topic".into()), &diff, true);
+        let text = prompt.to_utf8().expect("valid fixture");
+        assert!(text.contains("工作区分支：topic"));
+        assert!(text.contains("变更内容：2 个文件（已截断）"));
+        assert!(text.contains("+中文"));
+        assert!(!text.contains("Branch: "));
+        assert!(!text.contains("Files: "));
     }
 
     #[test]

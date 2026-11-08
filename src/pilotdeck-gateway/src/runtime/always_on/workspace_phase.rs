@@ -228,6 +228,8 @@ mod failure_cleanup_tests {
                     "phase" => return Err(failure("injected_phase_failure", "phase failed after actual workspace tool success")),
                     "index" => std::fs::set_permissions(self.paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o500)).unwrap(),
                     "state" => std::fs::create_dir(&self.paths.state_file).unwrap(),
+                    "corrupt" => std::fs::write(&self.paths.cycle_index_file, b"{").unwrap(),
+                    "schema" => { std::fs::write(&self.paths.cycle_index_file, br#"{"schemaVersion":2,"cycles":[]}"#).unwrap(); std::fs::set_permissions(self.paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o500)).unwrap(); },
                     _ => unreachable!(),
                 }
                 Ok(result)
@@ -250,18 +252,25 @@ mod failure_cleanup_tests {
         let cycles = Arc::new(WorkCycleStore::new(paths.clone()));
         let phase = WorkspacePhase { project: project.to_str().unwrap().into(), gateway: Arc::new(GatewayFault { paths: paths.clone(), fault }), contexts: Arc::new(AlwaysOnRunContextRegistry::new()), observer: Arc::new(super::tests::Observer), workspace: provider.clone(), cycles: cycles.clone(), state: Arc::new(DiscoveryStateStore::new(paths.clone())), now: Arc::new(||0.0), uuid: Arc::new(|| "cleanup-cycle".into()), chinese: false };
         let result = phase.run("cleanup-run", "fixture".into(), &JsValue::Object(Default::default())).await;
-        if fault == "index" { std::fs::set_permissions(paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o700)).unwrap(); }
-        let target = paths.snapshots_dir().join("cleanup-run"); let cycle = cycles.read_apply("cleanup-cycle".into()).await.unwrap();
+        if fault == "index" || fault == "schema" { std::fs::set_permissions(paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o700)).unwrap(); }
+        let target = paths.snapshots_dir().join("cleanup-run"); let cycle = if fault == "corrupt" { assert!(cycles.read_apply("cleanup-cycle".into()).await.is_err()); None } else { cycles.read_apply("cleanup-cycle".into()).await.unwrap() };
         let closed = provider.close().await; let drained = registry.dispose().await;
         assert!(result.is_err()); assert!(closed.is_ok()); assert!(drained.is_ok());
         if fault == "state" {
             assert!(target.exists(), "a committed cycle must retain its actual workspace even when set-active fails");
             let cycle = cycle.unwrap().0; assert_eq!(cycle.workspace.unwrap().cwd.to_utf8().unwrap(), target.to_string_lossy());
             assert!(result.err().unwrap().message.contains("durable cycle owns workspace"));
+        } else if fault == "corrupt" || fault == "schema" {
+            assert!(target.exists(), "uncertain cycle persistence must retain the actual workspace");
+            let message = result.err().unwrap().message;
+            assert!(message.contains("cycle persistence is uncertain; workspace retained."), "{message}");
+            assert!(!message.contains("durable cycle owns workspace"), "{message}");
         } else { assert!(cycle.is_none()); assert!(!target.exists(), "uncommitted newly created workspace must be reclaimed: {fault}"); }
         assert_eq!(std::fs::read(project.join("source")).unwrap(), b"ORIGINAL");
     }
     #[tokio::test] async fn phase_failure_reclaims_only_the_new_workspace() { fixture("phase").await; }
     #[tokio::test] async fn cycle_write_failure_reclaims_an_unreferenced_workspace() { fixture("index").await; }
     #[tokio::test] async fn set_active_failure_retains_the_already_durable_cycle_workspace() { fixture("state").await; }
+    #[tokio::test] async fn corrupt_cycle_json_retains_workspace_with_uncertain_diagnostic() { fixture("corrupt").await; }
+    #[tokio::test] async fn unknown_cycle_schema_retains_workspace_with_uncertain_diagnostic() { fixture("schema").await; }
 }

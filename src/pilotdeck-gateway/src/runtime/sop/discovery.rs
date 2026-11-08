@@ -92,13 +92,11 @@ impl Discovery {
             .as_string()
             .filter(|s| !s.is_empty())
             .cloned();
-        if let Some(selected) = &selected {
-            if let JsValue::Array(candidates) = field(&response.body, "candidate_sop_ids") {
-                if !candidates.iter().any(|v| v.as_string() == Some(selected)) {
+        if let Some(selected) = &selected
+            && let JsValue::Array(candidates) = field(&response.body, "candidate_sop_ids")
+                && !candidates.iter().any(|v| v.as_string() == Some(selected)) {
                     return Err(error("SOP_DISCOVERY_SELECTION_NOT_VISIBLE",format!("StaffDeck SOP discovery selected '{}', but StaffDeck did not expose it as a candidate.",String::from_utf16_lossy(selected.units())).as_str()));
                 }
-            }
-        }
         Ok(selected)
     }
 }

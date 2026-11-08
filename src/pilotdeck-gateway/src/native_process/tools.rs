@@ -861,7 +861,6 @@ impl SessionTools {
                     .zip(self.config.get("model").and_then(JsValue::as_string))
                     .map(|(p, m)| (p.clone(), m.clone())),
                 agent_max_context_tokens: self.config.get("maxContextTokens").cloned(),
-                ..RouterModelPortOptions::main_agent()
             },
             recorder: None,
             tool_results_dir: session_tool_results_dir(&self.options.project, &identity.session_id),
