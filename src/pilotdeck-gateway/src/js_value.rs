@@ -268,6 +268,29 @@ pub(crate) fn to_number(value: &JsValue) -> Result<f64, StackOverflow> {
     })
 }
 
+/// The V8 `TypeError` `Number(value)` raises when the value's toPrimitive
+/// finds nothing usable — `TypeError: Cannot convert object to primitive
+/// value` (Node v22.22.0 probe, `_tmp/20261026-issue-2301/fix-r1/node-probe/
+/// probe1.out`). ToPrimitive tries `valueOf` then `toString`; the inherited
+/// `Object.prototype.valueOf` returns the object itself and never wins, so
+/// the only primitive source is the inherited `Object.prototype.toString`
+/// (`[object Object]` → NaN). Config-sourced objects carry no functions, so
+/// the failing shape is exactly an own `toString` entry shadowing the
+/// inherited callable one — an own `valueOf` (any non-callable) only shadows
+/// a method that never yields a primitive anyway. Primitives, arrays and
+/// objects without an own `toString` convert without throwing (NaN at worst).
+/// The loader mounts run this at construction, where the TS constructors'
+/// `Number(options.port ?? …)` throws and the loader's catch records the key
+/// and continues (#2301 fix-r1).
+pub(crate) fn number_conversion_type_error(value: &JsValue) -> Option<&'static str> {
+    match value {
+        JsValue::Object(object) if object.get("toString").is_some() => {
+            Some("TypeError: Cannot convert object to primitive value")
+        }
+        _ => None,
+    }
+}
+
 /// ECMAScript StringToNumber.
 pub(crate) fn string_to_number(text: &str) -> f64 {
     let t = js_trim(text);

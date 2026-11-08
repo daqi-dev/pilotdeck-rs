@@ -845,9 +845,18 @@ impl WeComCallbackChannel {
     /// `ChannelLoaderMounts` mount for `wecomCallback`. Assembly supplies the
     /// interaction port here and the single shared A7 port through
     /// `ChannelStartDeps.turn_gateway`, like every other A8.3 adapter; no
-    /// per-channel session owner is created.
+    /// per-channel session owner is created. #2301 fix-r1: the TS constructor's
+    /// `Number(options.port ?? process.env.WECOM_CB_PORT ?? DEFAULT_PORT)`
+    /// throws on a failed toPrimitive and the loader's catch records the key
+    /// and continues, so the mount surfaces the same TypeError at construction
+    /// instead of letting `config_port` fold it into the default port.
     pub fn constructor(interaction: Arc<dyn InteractionPort>) -> ChannelAdapterConstructor {
         Arc::new(move |options: &JsObject| {
+            if let Some(port) = options.get("port").filter(|value| !nullish(Some(value)))
+                && let Some(error) = crate::js_value::number_conversion_type_error(port)
+            {
+                return Err(ChannelError::Plain(error.to_owned()));
+            }
             Ok(Arc::new(Self::from_object(
                 options,
                 interaction.clone(),

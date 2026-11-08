@@ -399,10 +399,20 @@ fn noop_handle() -> Arc<dyn ChannelHandle> {
 /// `options.apiKey ?? process.env.API_SERVER_KEY ?? ""` order. Only a real
 /// string `apiKey` maps: the landed `resolve` seam treats any other type as
 /// unset on the config path, and the mount keeps the two paths agreeing.
+/// #2301 fix-r1: the TS constructor's `Number(options.port ?? …)` throws on a
+/// failed toPrimitive, the loader's catch records the key and continues, and
+/// the channel never enters the startup array — the Rust channel defers the
+/// port conversion to `start`, so the mount applies the same check at
+/// construction and surfaces the same TypeError through the same loader catch.
 pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
     mounts.register(
         "apiServer",
         Arc::new(|options: &JsObject| {
+            if let Some(port) = options.get("port").filter(|value| !nullish_port(value))
+                && let Some(error) = crate::js_value::number_conversion_type_error(port)
+            {
+                return Err(ChannelError::Plain(error.to_owned()));
+            }
             Ok(Arc::new(ApiServerChannel::new(ApiServerOptions {
                 port: options.get("port").cloned(),
                 api_key: options
@@ -413,4 +423,11 @@ pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
             })) as Arc<dyn ChannelAdapter>)
         }),
     );
+}
+
+/// `options.port` absent vs nullish: only a present, non-nullish value reaches
+/// the TS `Number(options.port ?? …)` coercion (the nullish arm falls back to
+/// the env / default chain, which never throws).
+fn nullish_port(value: &JsValue) -> bool {
+    matches!(value, JsValue::Undefined | JsValue::Null)
 }
