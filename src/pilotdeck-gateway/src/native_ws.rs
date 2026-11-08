@@ -425,7 +425,7 @@ impl Drop for InputBuffer {
         }
     }
 }
-const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
+pub(crate) const MAX_OUTPUT_PAYLOAD: usize = MAX_INPUT_PAYLOAD;
 const MAX_OUTPUT_BYTES: usize = MAX_OUTPUT_PAYLOAD + frame::MAX_SERVER_HEADER_BYTES;
 const MAX_OUTPUT_FRAMES: usize = 64;
 const MAX_PENDING_REQUESTS: usize = 64;

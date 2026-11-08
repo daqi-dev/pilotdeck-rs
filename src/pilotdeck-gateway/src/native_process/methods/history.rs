@@ -45,6 +45,8 @@ impl Requests {
     ) -> Call<'_, Result<JsValue, RequestError>> {
         let replacement = self.replacement.clone();
         let coordinator = self.coordinator.clone();
+        let options = self.options.clone();
+        let project_runtime = self.project.clone();
         Box::pin(async move {
             match method.as_str() {
                 "export_session_transcript" => Err(unavailable(
@@ -55,20 +57,21 @@ impl Requests {
                     "restoreSessionTranscript",
                     "restore_session_transcript",
                 )),
-                "read_session_messages" => read::read_session_messages(
-                    &coordinator,
-                    None::<&dyn SessionHistoryReader>,
-                    &params,
-                )
-                .await
-                .map_err(|error| RequestError {
-                    code: error
-                        .code
-                        .unwrap_or_else(|| "gateway_request_failed".into()),
-                    message: error.message,
-                    details: None,
-                    validation: None,
-                }),
+                "read_session_messages" => {
+                    if let Some(project)=params.get("projectKey").and_then(JsValue::as_string) {
+                        let project=String::from_utf16_lossy(project.units());
+                        if !options.serves_project(&project) {
+                            return Err(RequestError {code:"CAPABILITY_UNAVAILABLE".into(),message:"The isolated native process serves only its configured project.".into(),details:None,validation:None});
+                        }
+                    }
+                    let history=crate::runtime::history::NativeHistoryReader {
+                        files:crate::runtime::history::HistoryFiles{home:options.home.clone(),project:options.project.clone()},
+                        project_runtime,
+                    };
+                    read::read_session_messages(&coordinator,Some(&history as &dyn SessionHistoryReader),&params).await.map_err(|error| RequestError {
+                        code:error.code.unwrap_or_else(||"gateway_request_failed".into()),message:error.message,details:None,validation:None,
+                    })
+                },
                 "read_subagent_messages" => Err(RequestError {
                     code: "gateway_request_failed".into(),
                     message: "read_subagent_messages is not configured. Wire `readSubagentMessages` via createLocalGateway.".into(),

@@ -4806,3 +4806,8 @@ CLI路径与skills migrate现区分真实进程环境/注入环境，HOME未设�
 ### 2026-11-08 · setup HOME 延迟查询（Codex，本机提交）
 
 setup现按TS独立env||join目录规则处理HOME未设，显式PILOT_HOME保持字面且不提前要求账户home；Weixin真正保存才解析其独立mkdir目录，既有空/相对label保留。mbp2 r1严格clippy/49普通+4父实际调用helper/build通过；固定TS受控OS十格原件全exit0无timeout，查询时机、输出、文件位置与请求已实采，只fake账户/网络、不写真实home。新增完整十格Rust断言后mbp2 r2严格clippy/50普通+4父实际调用helper/build全部通过，源码postfmt零变化，独立非作者审无确认P0/P1或需处置P2；源码与证据见startup-home fixture和主仓setup-lazy目录。仍不冒称两家formal gate/人验收，未标D2/完整CLI完成；后续裸~路径另片。仅本机交付，无GitHub。
+
+
+### 2026-11-08 · CLI 工作树统一与历史读取接续（Codex，仅本机）
+
+按人令统一到 `~/.codex/worktrees/cli-gateway-setup/pilotdeck-rs`，两侧原始20文件/patch/本地分支快照与bundle均保留，3af476bbc对4265个tree entry逐项核得期望并集，未遗漏或覆盖；旧8e32停在70883b759、工作区clean并锁定保留，不再开发。主仓 `_tmp/20261108-cli-consolidation/README.md` 汇总出处。mbp2 r4全CLI 505 passed/0 failed/139 ignored（含父调用helper和需外置条件项），六格旧路径消费者实际回放、handle_path7、严格clippy与构建通过；本地508514bcd收货消费者测试。native历史读取r6补真实TS消息/背景封套、cursor类型、IO与完整响应上限；独审发现的marker FIFO、后台元数据和编码许可已修候选，尚待合最新main12f919509后的mbp2编译与原生链路实测，当前提交仅可恢复检查点，不能认作CLI/A/真人实效完成。仅本机Git提交，不向GitHub写入、不在本机编译；继续验证history，再推进未接native权限/local fallback。

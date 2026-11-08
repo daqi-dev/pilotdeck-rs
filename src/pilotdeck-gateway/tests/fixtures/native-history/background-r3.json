@@ -1,0 +1,2947 @@
+{
+  "cases": [
+    {
+      "id": "background-nonempty-distinct-file",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/job.jsonl"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        },
+        "id": "background-nonempty-distinct-file",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-nonempty-distinct-file-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-nonempty-distinct-file-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-nonempty-distinct-file-project/chats/tasks/job.jsonl",
+      "actualReadSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-nonempty-distinct-file-project/chats/tasks/job.jsonl",
+          "size": 1085
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-nonempty-distinct-file-project/chats/tasks/job.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10"
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND INPUT"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "BACKGROUND ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "type": "session_metadata",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2.5,
+          "createdAt": "2026-01-01T00:00:02.500Z",
+          "metadata": {
+            "title": "BACKGROUND TITLE",
+            "firstPrompt": "BACKGROUND META FIRST",
+            "parentSessionId": "from-background-metadata"
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "BACKGROUND INPUT",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "BACKGROUND ANSWER",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "history:fixture",
+          "lastModified": 0,
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        }
+      }
+    },
+    {
+      "id": "background-explicit-project",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/job.jsonl",
+        "projectKey": "<CASE>/project"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        },
+        "projectKey": true,
+        "id": "background-explicit-project",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-explicit-project-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-explicit-project-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-explicit-project-project/chats/tasks/job.jsonl",
+      "actualReadSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-explicit-project-project/chats/tasks/job.jsonl",
+          "size": 1085
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-explicit-project-project/chats/tasks/job.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10"
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND INPUT"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "BACKGROUND ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "type": "session_metadata",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2.5,
+          "createdAt": "2026-01-01T00:00:02.500Z",
+          "metadata": {
+            "title": "BACKGROUND TITLE",
+            "firstPrompt": "BACKGROUND META FIRST",
+            "parentSessionId": "from-background-metadata"
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "projectKey": "<CASE>/project",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "BACKGROUND INPUT",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "projectKey": "<CASE>/project",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "BACKGROUND ANSWER",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "history:fixture",
+          "lastModified": 0,
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        }
+      }
+    },
+    {
+      "id": "background-empty",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/job.jsonl"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        },
+        "id": "background-empty",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-project/chats/tasks/job.jsonl",
+      "actualReadSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-project/chats/tasks/job.jsonl",
+          "size": 0
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-project/chats/tasks/job.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        }
+      ],
+      "loadedEntries": [],
+      "diagnostics": [],
+      "result": {
+        "messages": [],
+        "total": 0,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "history:fixture",
+          "lastModified": 0,
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        }
+      }
+    },
+    {
+      "id": "background-missing",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/job.jsonl"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        },
+        "backgroundMissing": true,
+        "id": "background-missing",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-missing-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-missing-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": null,
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-missing-project/chats/tasks/job.jsonl",
+      "actualReadSha256": null,
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-missing-project/chats/tasks/job.jsonl",
+          "error": "ENOENT"
+        }
+      ],
+      "loadedEntries": [],
+      "diagnostics": [
+        {
+          "code": "transcript_missing",
+          "severity": "warning",
+          "message": "Transcript <CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-missing-project/chats/tasks/job.jsonl does not exist."
+        }
+      ],
+      "result": {
+        "messages": [],
+        "total": 0,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "history:fixture",
+          "lastModified": 0,
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        }
+      }
+    },
+    {
+      "id": "ordinary-same-id-distinct-file",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {},
+        "id": "ordinary-same-id-distinct-file",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-ordinary-same-id-distinct-file-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-ordinary-same-id-distinct-file-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [
+        {
+          "kind": "agent",
+          "sessionId": "history:fixture",
+          "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-ordinary-same-id-distinct-file-project/chats/history:fixture.jsonl",
+          "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-ordinary-same-id-distinct-file-project/chats/history:fixture.jsonl.projections.json"
+        }
+      ],
+      "catalogCalls": [
+        {
+          "projectRoot": "<CASE>/project",
+          "pilotHome": "<CASE>/home"
+        }
+      ],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-ordinary-same-id-distinct-file-project/chats/history:fixture.jsonl",
+      "actualReadSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-ordinary-same-id-distinct-file-project/chats/history:fixture.jsonl",
+          "size": 828
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-ordinary-same-id-distinct-file-project/chats/history:fixture.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3"
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY INPUT"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "ORDINARY ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "ORDINARY INPUT",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "ORDINARY ANSWER",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "CATALOG SUMMARY",
+          "lastModified": 1234,
+          "firstPrompt": "CATALOG FIRST",
+          "cwd": "CATALOG CWD",
+          "parentSessionId": "catalog-parent"
+        }
+      }
+    },
+    {
+      "id": "background-parent-override",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/job.jsonl",
+        "parentSessionId": "explicit-parent"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl",
+          "parentSessionId": "explicit-parent"
+        },
+        "id": "background-parent-override",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-parent-override-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-parent-override-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-parent-override-project/chats/tasks/job.jsonl",
+      "actualReadSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-parent-override-project/chats/tasks/job.jsonl",
+          "size": 1085
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-parent-override-project/chats/tasks/job.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10"
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND INPUT"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "BACKGROUND ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "type": "session_metadata",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2.5,
+          "createdAt": "2026-01-01T00:00:02.500Z",
+          "metadata": {
+            "title": "BACKGROUND TITLE",
+            "firstPrompt": "BACKGROUND META FIRST",
+            "parentSessionId": "from-background-metadata"
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "BACKGROUND INPUT",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "BACKGROUND ANSWER",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "history:fixture",
+          "lastModified": 0,
+          "sessionKind": "background_task",
+          "parentSessionId": "explicit-parent",
+          "relativeTranscriptPath": "tasks/job.jsonl"
+        }
+      }
+    },
+    {
+      "id": "background-normalized-relative",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/sub/../job.jsonl"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/sub/../job.jsonl"
+        },
+        "id": "background-normalized-relative",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-normalized-relative-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-normalized-relative-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-normalized-relative-project/chats/tasks/job.jsonl",
+      "actualReadSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-normalized-relative-project/chats/tasks/job.jsonl",
+          "size": 1085
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-normalized-relative-project/chats/tasks/job.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10"
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND INPUT"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "BACKGROUND ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "type": "session_metadata",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2.5,
+          "createdAt": "2026-01-01T00:00:02.500Z",
+          "metadata": {
+            "title": "BACKGROUND TITLE",
+            "firstPrompt": "BACKGROUND META FIRST",
+            "parentSessionId": "from-background-metadata"
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "BACKGROUND INPUT",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "BACKGROUND ANSWER",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "history:fixture",
+          "lastModified": 0,
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/sub/../job.jsonl"
+        }
+      }
+    },
+    {
+      "id": "background-empty-relative-is-ordinary",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": ""
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": ""
+        },
+        "id": "background-empty-relative-is-ordinary",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-relative-is-ordinary-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-relative-is-ordinary-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [
+        {
+          "kind": "agent",
+          "sessionId": "history:fixture",
+          "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-relative-is-ordinary-project/chats/history:fixture.jsonl",
+          "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-relative-is-ordinary-project/chats/history:fixture.jsonl.projections.json"
+        }
+      ],
+      "catalogCalls": [
+        {
+          "projectRoot": "<CASE>/project",
+          "pilotHome": "<CASE>/home"
+        }
+      ],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-relative-is-ordinary-project/chats/history:fixture.jsonl",
+      "actualReadSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-relative-is-ordinary-project/chats/history:fixture.jsonl",
+          "size": 828
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-empty-relative-is-ordinary-project/chats/history:fixture.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3"
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY INPUT"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "ORDINARY ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "ORDINARY INPUT",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "ORDINARY ANSWER",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "CATALOG SUMMARY",
+          "lastModified": 1234,
+          "firstPrompt": "CATALOG FIRST",
+          "cwd": "CATALOG CWD",
+          "parentSessionId": "catalog-parent",
+          "relativeTranscriptPath": ""
+        }
+      }
+    },
+    {
+      "id": "background-no-relative-is-ordinary",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task"
+        },
+        "id": "background-no-relative-is-ordinary",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-no-relative-is-ordinary-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-no-relative-is-ordinary-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [
+        {
+          "kind": "agent",
+          "sessionId": "history:fixture",
+          "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-no-relative-is-ordinary-project/chats/history:fixture.jsonl",
+          "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-no-relative-is-ordinary-project/chats/history:fixture.jsonl.projections.json"
+        }
+      ],
+      "catalogCalls": [
+        {
+          "projectRoot": "<CASE>/project",
+          "pilotHome": "<CASE>/home"
+        }
+      ],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-no-relative-is-ordinary-project/chats/history:fixture.jsonl",
+      "actualReadSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-no-relative-is-ordinary-project/chats/history:fixture.jsonl",
+          "size": 828
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-no-relative-is-ordinary-project/chats/history:fixture.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3"
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY INPUT"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "ORDINARY ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "ORDINARY INPUT",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "ORDINARY ANSWER",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "CATALOG SUMMARY",
+          "lastModified": 1234,
+          "firstPrompt": "CATALOG FIRST",
+          "cwd": "CATALOG CWD",
+          "parentSessionId": "catalog-parent"
+        }
+      }
+    },
+    {
+      "id": "background-trailing-slash-normalized",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/job.jsonl/"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl/"
+        },
+        "id": "background-trailing-slash-normalized",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-trailing-slash-normalized-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-trailing-slash-normalized-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-trailing-slash-normalized-project/chats/tasks/job.jsonl",
+      "actualReadSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "ioTrace": [
+        {
+          "op": "stat",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-trailing-slash-normalized-project/chats/tasks/job.jsonl",
+          "size": 1085
+        },
+        {
+          "op": "readFile",
+          "path": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-trailing-slash-normalized-project/chats/tasks/job.jsonl",
+          "encoding": "utf8",
+          "decodedUtf8Sha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10"
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND INPUT"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "BACKGROUND ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "type": "session_metadata",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2.5,
+          "createdAt": "2026-01-01T00:00:02.500Z",
+          "metadata": {
+            "title": "BACKGROUND TITLE",
+            "firstPrompt": "BACKGROUND META FIRST",
+            "parentSessionId": "from-background-metadata"
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "BACKGROUND INPUT",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "BACKGROUND ANSWER",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "history:fixture",
+          "lastModified": 0,
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "tasks/job.jsonl/"
+        }
+      }
+    },
+    {
+      "id": "background-traversal-refused",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "../outside.jsonl"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "../outside.jsonl"
+        },
+        "id": "background-traversal-refused",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-traversal-refused-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-traversal-refused-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadSha256": null,
+      "ioTrace": [],
+      "error": {
+        "name": "Error",
+        "message": "relativeTranscriptPath points outside the project transcript directory."
+      }
+    },
+    {
+      "id": "background-absolute-refused",
+      "input": {
+        "sessionKey": "history:fixture",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "/fixture-outside-history.jsonl"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "normalEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "ORDINARY INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "ORDINARY ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "backgroundEntries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "BACKGROUND INPUT"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "BACKGROUND ANSWER"
+                }
+              ]
+            }
+          },
+          {
+            "type": "session_metadata",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2.5,
+            "createdAt": "2026-01-01T00:00:02.500Z",
+            "metadata": {
+              "title": "BACKGROUND TITLE",
+              "firstPrompt": "BACKGROUND META FIRST",
+              "parentSessionId": "from-background-metadata"
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "sessionKind": "background_task",
+          "relativeTranscriptPath": "/fixture-outside-history.jsonl"
+        },
+        "id": "background-absolute-refused",
+        "catalog": [
+          {
+            "sessionId": "history:fixture",
+            "summary": "CATALOG SUMMARY",
+            "lastModified": 1234,
+            "firstPrompt": "CATALOG FIRST",
+            "cwd": "CATALOG CWD",
+            "parentSessionId": "catalog-parent"
+          }
+        ]
+      },
+      "normalPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-absolute-refused-project/chats/history:fixture.jsonl",
+      "backgroundPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r3-background-absolute-refused-project/chats/tasks/job.jsonl",
+      "normalSha256": "4c7fec66bf7720de8db8e6f5105bfe45deb680ba0d7d20bedc5addecaa4cb1a3",
+      "backgroundSha256": "3ae1b1119ae3918d781f046f7726c7a417410001c614dba6ec8a2246f67f6a10",
+      "providerCalls": [],
+      "catalogCalls": [],
+      "actualReadSha256": null,
+      "ioTrace": [],
+      "error": {
+        "name": "Error",
+        "message": "relativeTranscriptPath must be a relative path."
+      }
+    }
+  ]
+}

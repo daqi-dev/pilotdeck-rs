@@ -27,6 +27,8 @@ pub use transcript_adapter::{
     project_subagent_references, sanitize_session_id,
 };
 
+pub(crate) use transcript::read_transcript_bounded;
+pub(crate) use transcript::timestamp as transcript_timestamp_for_history;
 pub(crate) use transcript::{
     LedgerLock, MAX_BYTES as TRANSCRIPT_MAX_BYTES, canonical_transcript_path,
 };
@@ -125,3 +127,5 @@ pub(crate) fn fail_next_registry_persist(registry: &FileRunRegistry) {
         .fail_persist
         .store(true, std::sync::atomic::Ordering::SeqCst);
 }
+
+pub(crate) use transcript::read_transcript_beneath;

@@ -24,7 +24,7 @@ use crate::runtime::memory::js_trim_units;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fs::{self, File},
-    io::{Read, Seek, SeekFrom},
+    io::{self, Read, Seek, SeekFrom},
     path::Path,
 };
 
@@ -174,6 +174,45 @@ fn read_session_info(
         None => None,
     };
     Ok(merge_session_info(fast, metadata_info).map(|info| (lite.mtime, info)))
+}
+
+/// History catalog projection from the same bounded descriptor snapshot used
+/// to decode the transcript; no pathname is reopened by this path.
+pub(crate) fn history_session_info(
+    bytes: &[u8],
+    metadata: &fs::Metadata,
+    session_id: &JsString,
+    project_root: &Path,
+) -> Result<Option<JsValue>, JsString> {
+    let size = metadata.len();
+    if size == 0 || size as usize > bytes.len() {
+        return Ok(None);
+    }
+    let size_usize = size as usize;
+    let head_len = size_usize.min(SESSION_LITE_READ_BYTES as usize);
+    let tail_start = size_usize.saturating_sub(SESSION_LITE_READ_BYTES as usize);
+    let lite = SessionLite {
+        mtime: metadata.modified().ok().map(system_time_ms).unwrap_or(0.0),
+        size,
+        head: String::from_utf8_lossy(&bytes[..head_len]).into_owned(),
+        tail: String::from_utf8_lossy(&bytes[tail_start..size_usize]).into_owned(),
+    };
+    let fast = parse_session_info_from_lite(session_id, &lite, project_root)?;
+    if fast.is_some() && size <= SESSION_LITE_READ_BYTES {
+        return Ok(fast);
+    }
+    if let Some(snapshot) = read_latest_tail_snapshot(&lite)
+        && let Some(info) =
+            parse_session_info_from_metadata(session_id, &lite, &snapshot, project_root)?
+    {
+        return Ok(merge_session_info(fast, Some(info)));
+    }
+    let merged = read_metadata_from(io::Cursor::new(bytes));
+    let info = match merged.as_ref() {
+        Some(value) => parse_session_info_from_metadata(session_id, &lite, value, project_root)?,
+        None => None,
+    };
+    Ok(merge_session_info(fast, info))
 }
 
 /// `parseSessionInfoFromLite`.
@@ -409,7 +448,11 @@ fn read_latest_tail_snapshot(lite: &SessionLite) -> Option<JsObject> {
 /// `readLastSessionMetadata`: streaming 64 KiB scan that skips oversized
 /// non-metadata lines and merges every complete `session_metadata` record.
 fn read_last_session_metadata(path: &Path) -> Option<JsObject> {
-    let mut file = File::open(path).ok()?;
+    let file = File::open(path).ok()?;
+    read_metadata_from(file)
+}
+
+fn read_metadata_from(mut file: impl Read) -> Option<JsObject> {
     let mut merged = JsObject::new();
     let mut buffer = vec![0; SESSION_METADATA_SCAN_CHUNK_BYTES];
     let mut line = Vec::new();

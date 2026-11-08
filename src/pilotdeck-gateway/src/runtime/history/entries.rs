@@ -1,16 +1,22 @@
 //! Projection of durable transcript entries in display order.
-use super::project::{Context, ProjectionError, flatten_message};
+use super::project::{Context, ProjectionError, flatten_message_budgeted};
 use pilotdeck_protocol::{JsString, JsValue};
 fn field<'a>(v: &'a JsValue, k: &str) -> &'a JsValue {
     static U: JsValue = JsValue::Undefined;
     v.get(k).unwrap_or(&U)
 }
 fn is(v: &JsValue, s: &str) -> bool {
-    v.as_string().is_some_and(|s| s.equals_str(s))
+    v.as_string().is_some_and(|value| value.equals_str(s))
 }
 fn visible(message: &JsValue) -> bool {
     let metadata = field(message, "metadata");
-    field(metadata, "synthetic") != &JsValue::Bool(true)
+    !match field(metadata, "synthetic") {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.units().is_empty(),
+        _ => true,
+    }
         && field(metadata, "compactReplacement") != &JsValue::Bool(true)
 }
 fn non_text(message: &JsValue) -> Result<bool, ProjectionError> {
@@ -27,8 +33,48 @@ pub fn messages(
     project: Option<&JsValue>,
     now: &JsValue,
 ) -> Result<Vec<JsValue>, ProjectionError> {
+    messages_with_artifacts(entries, session, project, now, true)
+}
+pub(super) fn messages_with_artifacts(
+    entries: &[JsValue],
+    session: &JsString,
+    project: Option<&JsValue>,
+    now: &JsValue,
+    include_artifacts: bool,
+) -> Result<Vec<JsValue>, ProjectionError> {
     let mut out = Vec::new();
     let mut index = 0usize;
+    let mut budget = super::budget::Budget::default();
+    // WebHistory's durable-message reducer inspects content before visibility.
+    for entry in entries {
+        if [
+            "assistant_message",
+            "tool_result_message",
+            "durable_message",
+        ]
+        .iter()
+        .any(|t| is(field(entry, "type"), t))
+        {
+            match field(field(entry, "message"), "content") {
+                JsValue::Null => {
+                    return Err(ProjectionError(
+                        "Cannot read properties of null (reading 'some')".into(),
+                    ));
+                }
+                JsValue::Undefined => {
+                    return Err(ProjectionError(
+                        "Cannot read properties of undefined (reading 'some')".into(),
+                    ));
+                }
+                JsValue::Array(_) => {}
+                _ => {
+                    return Err(ProjectionError(
+                        "message.content.some is not a function".into(),
+                    ));
+                }
+            }
+        }
+    }
     for entry in entries {
         let typ = field(entry, "type");
         let (records, fork) = if is(typ, "accepted_input") {
@@ -54,25 +100,6 @@ pub fn messages(
         {
             (vec![field(entry, "message")], false)
         } else {
-            if [
-                "control_boundary",
-                "agent_status_message",
-                "file_artifacts",
-                "subagent_started",
-                "subagent_completed",
-            ]
-            .iter()
-            .any(|t| is(typ, t))
-            {
-                return Err(ProjectionError(
-                    "History transcript event requires additional projection".into(),
-                ));
-            }
-            if is(typ, "turn_result") && is(field(field(entry, "result"), "type"), "error") {
-                return Err(ProjectionError(
-                    "History error result requires additional projection".into(),
-                ));
-            }
             continue;
         };
         for msg in records {
@@ -93,10 +120,19 @@ pub fn messages(
                 message_index: index,
                 fork_unsupported: fork,
             };
-            out.extend(flatten_message(msg, &ctx)?);
+            out.extend(flatten_message_budgeted(msg, &ctx, &mut budget)?);
             index += 1;
         }
     }
+    super::events::inject(
+        entries,
+        &mut out,
+        session,
+        project,
+        now,
+        include_artifacts,
+        &mut budget,
+    )?;
     Ok(out)
 }
 
@@ -119,6 +155,12 @@ mod tests {
             "block-id-timeline",
             "thinking-metadata",
             "tool-result",
+            "incomplete-turn",
+            "compact-boundary",
+            "turn-error",
+            "status-error-dedup",
+            "file-artifacts",
+            "subagent-recovery",
         ] {
             let case = cases.iter().find(|c| is(field(c, "id"), id)).unwrap();
             let JsValue::Array(entries) = field(case, "loadedEntries") else {

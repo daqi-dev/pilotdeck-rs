@@ -58,19 +58,30 @@ fn base(ctx: &Context<'_>, suffix: &str, role: &str, kind: &str) -> JsObject {
     o.insert("kind".into(), kind.into());
     o
 }
-fn finish(mut o: JsObject, ctx: &Context<'_>) -> JsValue {
+fn finish(
+    mut o: JsObject,
+    ctx: &Context<'_>,
+    message: &JsValue,
+    budget: &mut super::budget::Budget,
+) -> Result<JsValue, ProjectionError> {
     o.insert("source".into(), "history".into());
-    if let Some(v) = ctx.turn_id {
-        o.insert("turnId".into(), v.clone());
-    } else {
-        o.insert("turnId".into(), JsValue::Undefined);
+    for name in ["queueItemId", "moduleId"] {
+        let value = field(field(message, "metadata"), name);
+        if truthy_string(value) {
+            o.insert(name.into(), value.clone());
+        }
     }
-    if let Some(v) = ctx.sequence {
-        o.insert("sequence".into(), v.clone());
-    } else {
-        o.insert("sequence".into(), JsValue::Undefined);
-    }
-    JsValue::Object(o)
+    o.insert(
+        "turnId".into(),
+        ctx.turn_id.cloned().unwrap_or(JsValue::Undefined),
+    );
+    o.insert(
+        "sequence".into(),
+        ctx.sequence.cloned().unwrap_or(JsValue::Undefined),
+    );
+    let value = JsValue::Object(o);
+    budget.charge(&value)?;
+    Ok(value)
 }
 fn append_utf16(target: &mut Vec<u16>, v: &JsValue) -> Result<(), ProjectionError> {
     let s = v
@@ -83,10 +94,91 @@ fn truthy_string(v: &JsValue) -> bool {
     v.as_string().is_some_and(|s| !s.units().is_empty())
 }
 
+fn truthy(v: &JsValue) -> bool {
+    match v {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(v) => *v,
+        JsValue::Number(v) => *v != 0.0 && !v.is_nan(),
+        JsValue::String(v) => !v.units().is_empty(),
+        _ => true,
+    }
+}
+fn image(block: &JsValue) -> Result<JsValue, ProjectionError> {
+    let data = required(block, "data")?
+        .as_string()
+        .ok_or_else(|| ProjectionError("History image data must be a string".into()))?;
+    let mime = required(block, "mimeType")?
+        .as_string()
+        .ok_or_else(|| ProjectionError("History image mimeType must be a string".into()))?;
+    let value = if is(field(block, "source"), "url") {
+        data.clone()
+    } else {
+        let mut units = "data:".encode_utf16().collect::<Vec<_>>();
+        units.extend_from_slice(mime.units());
+        units.extend(";base64,".encode_utf16());
+        units.extend_from_slice(data.units());
+        JsString::from_utf16(units)
+    };
+    let mut out = JsObject::new();
+    out.insert("data".into(), JsValue::String(value));
+    out.insert("mimeType".into(), JsValue::String(mime.clone()));
+    Ok(JsValue::Object(out))
+}
+fn append_tool_content(target: &mut Vec<u16>, block: &JsValue) -> Result<(), ProjectionError> {
+    if is(field(block, "type"), "text") {
+        return append_utf16(target, required(block, "text")?);
+    }
+    let data = required(block, "data")?
+        .as_string()
+        .ok_or_else(|| ProjectionError("History attachment data must be string".into()))?;
+    let mime = required(block, "mimeType")?
+        .as_string()
+        .ok_or_else(|| ProjectionError("History attachment mimeType must be string".into()))?;
+    let prefix = if is(field(block, "type"), "image") {
+        "[Image: "
+    } else if is(field(block, "type"), "pdf") {
+        "[PDF: "
+    } else {
+        return Err(ProjectionError(
+            "Unsupported tool result content block".into(),
+        ));
+    };
+    target.extend(prefix.encode_utf16());
+    target.extend_from_slice(mime.units());
+    target.extend(", ".encode_utf16());
+    if is(field(block, "type"), "image") && is(field(block, "source"), "url") {
+        target.extend_from_slice(data.units());
+    } else {
+        target.extend(format!("{} base64 characters", data.units().len()).encode_utf16());
+    }
+    if is(field(block, "type"), "pdf") && truthy(field(block, "pages")) {
+        target.extend(", ".encode_utf16());
+        let p = field(block, "pages");
+        append_utf16(
+            target,
+            &JsValue::String(
+                crate::js_value::display(p)
+                    .map_err(|_| ProjectionError("Cannot format PDF pages".into()))?
+                    .into(),
+            ),
+        )?;
+        target.extend(" pages".encode_utf16());
+    }
+    target.push(b']' as u16);
+    Ok(())
+}
 /// Flatten one canonical message in source order; unsupported blocks fail closed.
 pub fn flatten_message(
     message: &JsValue,
     ctx: &Context<'_>,
+) -> Result<Vec<JsValue>, ProjectionError> {
+    let mut budget = super::budget::Budget::default();
+    flatten_message_budgeted(message, ctx, &mut budget)
+}
+pub(super) fn flatten_message_budgeted(
+    message: &JsValue,
+    ctx: &Context<'_>,
+    budget: &mut super::budget::Budget,
 ) -> Result<Vec<JsValue>, ProjectionError> {
     let role = if is(field(message, "role"), "user") {
         "user"
@@ -99,50 +191,64 @@ pub fn flatten_message(
     };
     let mut output = Vec::new();
     let mut text = Vec::new();
+    let mut images = Vec::<JsValue>::new();
+    let mut last_tool_result: Option<usize> = None;
     let mut block_id = JsValue::Undefined;
     let mut timeline = JsValue::Undefined;
-    let flush =
-        |out: &mut Vec<JsValue>, text: &mut Vec<u16>, block_id: &JsValue, timeline: &JsValue| {
-            if text.is_empty() {
-                return;
-            }
-            let suffix = format!("-msg-{}-{}", ctx.message_index, out.len());
-            let mut o = base(ctx, &suffix, role, "text");
-            o.insert(
-                "text".into(),
-                JsValue::String(JsString::from_utf16(std::mem::take(text))),
+    let flush = |out: &mut Vec<JsValue>,
+                 text: &mut Vec<u16>,
+                 images: &mut Vec<JsValue>,
+                 block_id: &JsValue,
+                 timeline: &JsValue,
+                 budget: &mut super::budget::Budget|
+     -> Result<(), ProjectionError> {
+        if text.is_empty() && images.is_empty() {
+            return Ok(());
+        }
+        let suffix = format!("-msg-{}-{}", ctx.message_index, out.len());
+        let mut o = base(ctx, &suffix, role, "text");
+        o.insert(
+            "text".into(),
+            JsValue::String(JsString::from_utf16(std::mem::take(text))),
+        );
+        if truthy_string(block_id) {
+            o.insert("blockId".into(), block_id.clone());
+        }
+        if !matches!(
+            timeline,
+            JsValue::Null | JsValue::Undefined | JsValue::Bool(false)
+        ) {
+            o.insert("timeline".into(), timeline.clone());
+        }
+        if role == "assistant"
+            && let Some(v) = field(message, "metadata")
+                .get("model")
+                .filter(|v| v.as_string().is_some())
+        {
+            o.insert("model".into(), v.clone());
+        }
+        if !images.is_empty() {
+            o.insert("images".into(), JsValue::Array(std::mem::take(images)));
+        }
+        if ctx.fork_unsupported {
+            let mut p = JsObject::new();
+            p.insert("forkUnsupportedContent".into(), JsValue::Bool(true));
+            p.insert(
+                "forkUnsupportedReason".into(),
+                "This turn contains attachments or media.".into(),
             );
-            if truthy_string(block_id) {
-                o.insert("blockId".into(), block_id.clone());
-            }
-            if !matches!(
-                timeline,
-                JsValue::Null | JsValue::Undefined | JsValue::Bool(false)
-            ) {
-                o.insert("timeline".into(), timeline.clone());
-            }
-            if role == "assistant"
-                && let Some(v) = field(message, "metadata")
-                    .get("model")
-                    .filter(|v| v.as_string().is_some())
-            {
-                o.insert("model".into(), v.clone());
-            }
-            if ctx.fork_unsupported {
-                let mut p = JsObject::new();
-                p.insert("forkUnsupportedContent".into(), JsValue::Bool(true));
-                p.insert(
-                    "forkUnsupportedReason".into(),
-                    "This turn contains attachments or media.".into(),
-                );
-                o.insert("payload".into(), JsValue::Object(p));
-            }
-            if let Some(v) = ctx.entry_id.filter(|v| truthy_string(v)) {
-                o.insert("entryId".into(), v.clone());
-            }
-            out.push(finish(o, ctx));
-        };
+            o.insert("payload".into(), JsValue::Object(p));
+        }
+        if let Some(v) = ctx.entry_id.filter(|v| truthy_string(v)) {
+            o.insert("entryId".into(), v.clone());
+        }
+        out.push(finish(o, ctx, message, budget)?);
+        Ok(())
+    };
     for block in blocks {
+        if !is(field(block, "type"), "image") && !is(field(block, "type"), "tool_result") {
+            last_tool_result = None;
+        }
         match field(block, "type")
             .as_string()
             .and_then(|s| s.to_utf8().ok())
@@ -151,14 +257,28 @@ pub fn flatten_message(
             Some("text") => {
                 let next = field(block, "blockId");
                 if &block_id != next {
-                    flush(&mut output, &mut text, &block_id, &timeline);
+                    flush(
+                        &mut output,
+                        &mut text,
+                        &mut images,
+                        &block_id,
+                        &timeline,
+                        budget,
+                    )?;
                 }
                 block_id = next.clone();
                 timeline = field(block, "timeline").clone();
                 append_utf16(&mut text, required(block, "text")?)?;
             }
             Some("thinking") => {
-                flush(&mut output, &mut text, &block_id, &timeline);
+                flush(
+                    &mut output,
+                    &mut text,
+                    &mut images,
+                    &block_id,
+                    &timeline,
+                    budget,
+                )?;
                 block_id = JsValue::Undefined;
                 timeline = JsValue::Undefined;
                 let suffix = format!("-thinking-{}-{}", ctx.message_index, output.len());
@@ -168,14 +288,22 @@ pub fn flatten_message(
                 if truthy_string(b) {
                     o.insert("blockId".into(), b.clone());
                 }
+                o.insert("source".into(), "history".into());
                 let t = field(block, "timeline");
-                if !matches!(t, JsValue::Null | JsValue::Undefined | JsValue::Bool(false)) {
+                if truthy(t) {
                     o.insert("timeline".into(), t.clone());
                 }
-                output.push(finish(o, ctx));
+                output.push(finish(o, ctx, message, budget)?);
             }
             Some("tool_call") => {
-                flush(&mut output, &mut text, &block_id, &timeline);
+                flush(
+                    &mut output,
+                    &mut text,
+                    &mut images,
+                    &block_id,
+                    &timeline,
+                    budget,
+                )?;
                 block_id = JsValue::Undefined;
                 timeline = JsValue::Undefined;
                 let call = required(block, "id")?
@@ -192,14 +320,85 @@ pub fn flatten_message(
                 o.insert("toolCallId".into(), JsValue::String(call.clone()));
                 o.insert("toolName".into(), required(block, "name")?.clone());
                 o.insert("payload".into(), field(block, "input").clone());
+                o.insert("source".into(), "history".into());
                 let t = field(block, "timeline");
-                if !matches!(t, JsValue::Null | JsValue::Undefined | JsValue::Bool(false)) {
+                if truthy(t) {
                     o.insert("timeline".into(), t.clone());
                 }
-                output.push(finish(o, ctx));
+                output.push(finish(o, ctx, message, budget)?);
+            }
+            Some("image" | "pdf" | "audio") => {
+                if is(field(block, "type"), "image") && role == "user" {
+                    let value = image(block)?;
+                    if last_tool_result.is_some() {
+                        budget.charge(&value)?;
+                    }
+                    if let Some(index) = last_tool_result {
+                        if let JsValue::Object(o) = &mut output[index] {
+                            let mut items = match o.get("images") {
+                                Some(JsValue::Array(v)) => v.clone(),
+                                _ => Vec::new(),
+                            };
+                            items.push(value);
+                            if o.contains_key("images") {
+                                o.insert("images".into(), JsValue::Array(items));
+                            } else {
+                                let mut replaced = JsObject::new();
+                                for (k, v) in o.entries() {
+                                    if k.equals_str("turnId") {
+                                        replaced
+                                            .insert("images".into(), JsValue::Array(items.clone()));
+                                    }
+                                    replaced.insert(k.clone(), v.clone());
+                                }
+                                *o = replaced;
+                            }
+                        }
+                    } else {
+                        images.push(value);
+                    }
+                } else {
+                    flush(
+                        &mut output,
+                        &mut text,
+                        &mut images,
+                        &block_id,
+                        &timeline,
+                        budget,
+                    )?;
+                    block_id = JsValue::Undefined;
+                    timeline = JsValue::Undefined;
+                    let suffix = format!("-attachment-{}-{}", ctx.message_index, output.len());
+                    let mut o = base(ctx, &suffix, role, "status");
+                    let label = if is(field(block, "type"), "image") {
+                        "[image attachment]"
+                    } else if is(field(block, "type"), "pdf") {
+                        "[pdf attachment]"
+                    } else {
+                        "[audio attachment]"
+                    };
+                    o.insert("text".into(), label.into());
+                    let mut p = JsObject::new();
+                    p.insert("mimeType".into(), field(block, "mimeType").clone());
+                    p.insert("bytes".into(), field(block, "bytes").clone());
+                    o.insert("payload".into(), JsValue::Object(p));
+                    o.insert("source".into(), "history".into());
+                    let t = field(block, "timeline");
+                    if truthy(t) {
+                        o.insert("timeline".into(), t.clone());
+                    }
+                    output.push(finish(o, ctx, message, budget)?);
+                }
             }
             Some("tool_result" | "tool_result_reference" | "media_reference") => {
-                flush(&mut output, &mut text, &block_id, &timeline);
+                flush(
+                    &mut output,
+                    &mut text,
+                    &mut images,
+                    &block_id,
+                    &timeline,
+                    budget,
+                )?;
                 block_id = JsValue::Undefined;
                 timeline = JsValue::Undefined;
                 let kind = field(block, "type");
@@ -262,16 +461,14 @@ pub fn flatten_message(
                         ));
                     };
                     let mut joined = Vec::new();
+                    let mut result_images = Vec::new();
                     for (i, part) in parts.iter().enumerate() {
                         if i > 0 {
                             joined.push(b'\n' as u16);
                         }
-                        if is(field(part, "type"), "text") {
-                            append_utf16(&mut joined, required(part, "text")?)?;
-                        } else {
-                            return Err(ProjectionError(
-                                "Unsupported tool result content block".into(),
-                            ));
+                        append_tool_content(&mut joined, part)?;
+                        if is(field(part, "type"), "image") {
+                            result_images.push(image(part)?);
                         }
                     }
                     o.insert("text".into(), JsValue::String(JsString::from_utf16(joined)));
@@ -296,12 +493,19 @@ pub fn flatten_message(
                     {
                         o.insert("payload".into(), data.clone());
                     }
+                    if !result_images.is_empty() {
+                        o.insert("images".into(), JsValue::Array(result_images));
+                    }
                 }
                 let t = field(block, "timeline");
-                if !matches!(t, JsValue::Null | JsValue::Undefined | JsValue::Bool(false)) {
+                o.insert("source".into(), "history".into());
+                if truthy(t) {
                     o.insert("timeline".into(), t.clone());
                 }
-                output.push(finish(o, ctx));
+                if is(kind, "tool_result") {
+                    last_tool_result = Some(output.len());
+                }
+                output.push(finish(o, ctx, message, budget)?);
             }
             other => {
                 return Err(ProjectionError(format!(
@@ -311,17 +515,14 @@ pub fn flatten_message(
             }
         }
     }
-    flush(&mut output, &mut text, &block_id, &timeline);
-    for v in &mut output {
-        if let JsValue::Object(o) = v {
-            for field_name in ["queueItemId", "moduleId"] {
-                let val = field(field(message, "metadata"), field_name);
-                if truthy_string(val) {
-                    o.insert(field_name.into(), val.clone());
-                }
-            }
-        }
-    }
+    flush(
+        &mut output,
+        &mut text,
+        &mut images,
+        &block_id,
+        &timeline,
+        budget,
+    )?;
     Ok(output)
 }
 

@@ -323,8 +323,8 @@ pub async fn read_session_messages(
 /// InProcessGateway.ts:2858: `{ ...history, stream }`. Key order follows the
 /// history object; a `stream` key the host already returned keeps its position
 /// and gets the fresh snapshot's value.
-fn merge_history_and_stream(history: JsValue, stream: &ActiveTurnSnapshot) -> JsValue {
-    let mut merged = history.as_object().cloned().unwrap_or_default();
+fn merge_history_and_stream(mut history: JsValue, stream: &ActiveTurnSnapshot) -> JsValue {
+    let mut merged = match &mut history { JsValue::Object(object) => std::mem::take(object), _ => JsObject::new() };
     merged.insert("stream".into(), stream.to_json());
     JsValue::Object(merged)
 }

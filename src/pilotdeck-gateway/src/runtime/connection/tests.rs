@@ -178,6 +178,7 @@ impl ConnectionGateway for Gateway {
                     details: Some(Box::new(js(&json!({"nested":{"value":1}})))),
                     validation: None,
                 }),
+                Some("read_session_messages") => Ok(json_text(r#"{"messages":[]}"#)),
                 Some("skill_validate") => Err(RequestError {
                     code: "validation_failed".into(),
                     message: "Validation failed.".into(),
@@ -1660,4 +1661,34 @@ async fn deeply_nested_malformed_frame_closes_invalid_json_like_ts() {
         vec![json!({"code":4002,"reason":"invalid_json"})]
     );
     assert_eq!(text.frames.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn history_response_budget_includes_id_and_stream() {
+    let frame = parse_json(r#"{"type":"response","id":"long-id","ok":true,"result":{"messages":[],"stream":{"events":["payload"]}}}"#).unwrap();
+    let text = stringify_json(&frame).unwrap().unwrap();
+    assert_eq!(encode_history_response(frame.clone(), text.len()), text);
+    let rejected = parse_json(&encode_history_response(frame, text.len() - 1)).unwrap();
+    assert_eq!(rejected.get("id").and_then(JsValue::as_string).unwrap().to_utf8().unwrap(), "long-id");
+    assert_eq!(rejected.get("ok"), Some(&JsValue::Bool(false)));
+    assert_eq!(rejected.get("error").and_then(|v| v.get("message")).and_then(JsValue::as_string).unwrap().to_utf8().unwrap(), "History output exceeds Gateway frame limit");
+}
+
+#[test]
+fn history_response_without_tokio_runtime() {
+    use std::task::{Context, Poll, Waker};
+    fn run_ready(mut future: Call<'_, Result<(), RequestError>>) {
+        let waker = Waker::noop();
+        let mut cx = Context::from_waker(waker);
+        assert!(matches!(future.as_mut().poll(&mut cx), Poll::Ready(Ok(()))));
+    }
+    let text = Arc::new(MemoryText::default());
+    let gateway = Arc::new(Gateway::new(false));
+    let connection = GatewayConnection::new(text.clone(), gateway, "fixture-token".into(), "test".into());
+    let hello = format!(r#"{{"type":"hello","protocolVersion":"{}","clientName":"ui","clientVersion":"test","token":"fixture-token"}}"#, GATEWAY_PROTOCOL_VERSION);
+    run_ready(connection.receive(&hello));
+    run_ready(connection.receive(r#"{"type":"request","id":"h","method":"read_session_messages","params":{}}"#));
+    let frames = text.frames.lock().unwrap();
+    let response = parse_json(frames.last().unwrap()).unwrap();
+    assert_eq!(response.get("ok"), Some(&JsValue::Bool(true)));
 }

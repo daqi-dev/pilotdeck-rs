@@ -138,13 +138,19 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
     // is exactly the shape `node_io::read_file` documents for that case.
     file.read_to_end(&mut bytes)
         .map_err(|error| descriptor_error(error, "read"))?;
+    let read = decode_transcript(&bytes)?;
+    Ok((bytes, read))
+}
+
+/// Decode already-bounded bytes using the same diagnostics and ordering as the legacy reader.
+fn decode_transcript(bytes: &[u8]) -> Result<TranscriptRead> {
     let mut read = TranscriptRead {
         entries: vec![],
         diagnostics: vec![],
     };
     // Match Node readFile(path, "utf8"): replacement characters are observable
     // in parsed values, while original bytes stay intact for the next append.
-    for (index, line) in String::from_utf8_lossy(&bytes).split('\n').enumerate() {
+    for (index, line) in String::from_utf8_lossy(bytes).split('\n').enumerate() {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if js_trim(line).is_empty() {
             continue;
@@ -207,7 +213,78 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
                 )
         }
     });
-    Ok((bytes, read))
+    Ok(read)
+}
+
+/// Opt-in bounded descriptor read for public native history. Unlike the legacy
+/// reader it refuses special files and checks the bound after reading as well.
+pub(crate) struct BoundedTranscript {
+    pub read: TranscriptRead,
+    pub snapshot: Option<(Vec<u8>, fs::Metadata)>,
+}
+#[cfg(unix)]
+pub(crate) fn read_transcript_bounded(path: &Path) -> Result<BoundedTranscript> {
+    let mut options = OpenOptions::new();
+    options.read(true).custom_flags(libc::O_NONBLOCK);
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(BoundedTranscript {
+                read: missing_transcript(path).1,
+                snapshot: None,
+            });
+        }
+        Err(error) => return Err(path_error(error, "open", path).into()),
+    };
+    read_open_transcript(file)
+}
+
+#[cfg(unix)]
+pub(crate) fn read_transcript_beneath(root: &Path, path: &Path) -> Result<BoundedTranscript> {
+    let file = match crate::project_files::open_beneath(root, path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(BoundedTranscript { read: missing_transcript(path).1, snapshot: None });
+        }
+        Err(error) => return Err(path_error(error, "open", path).into()),
+    };
+    read_open_transcript(file)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn read_transcript_beneath(_root: &Path, _path: &Path) -> Result<BoundedTranscript> {
+    Err(invalid("Bounded native history is unavailable on this platform."))
+}
+
+#[cfg(unix)]
+fn read_open_transcript(file: fs::File) -> Result<BoundedTranscript> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| descriptor_error(error, "fstat"))?;
+    if !metadata.is_file() {
+        return Err(invalid("History transcript is not a regular file."));
+    }
+    if metadata.len() > MAX_BYTES {
+        return Err(invalid("History transcript exceeds the 50 MiB limit."));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| descriptor_error(error, "read"))?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(invalid("History transcript exceeds the 50 MiB limit."));
+    }
+    let read = decode_transcript(&bytes)?;
+    Ok(BoundedTranscript {
+        read,
+        snapshot: Some((bytes, metadata)),
+    })
+}
+#[cfg(not(unix))]
+pub(crate) fn read_transcript_bounded(_path: &Path) -> Result<BoundedTranscript> {
+    Err(invalid(
+        "Bounded native history is unavailable on this platform.",
+    ))
 }
 
 /// A single-owner JSONL adapter, using `<canonical path>.lock` advisory locking.
@@ -528,7 +605,7 @@ pub(super) fn uuid() -> io::Result<String> {
         &hex[20..]
     ))
 }
-pub(super) fn timestamp() -> Result<String> {
+pub(crate) fn timestamp() -> Result<String> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| invalid(e.to_string()))?;

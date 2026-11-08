@@ -12,10 +12,7 @@ fn trim(v: &JsValue) -> Option<JsValue> {
     (!units.is_empty()).then(|| JsValue::String(JsString::from_utf16(units.to_vec())))
 }
 fn date(v: &JsValue) -> Option<f64> {
-    let s = v.as_string()?.to_utf8().ok()?;
-    chrono::DateTime::parse_from_rfc3339(&s)
-        .ok()
-        .map(|d| d.timestamp_millis() as f64)
+    crate::runtime::model::stats::parse_date_ms(v.as_string()?)
 }
 fn nullish(v: &JsValue) -> bool {
     matches!(v, JsValue::Undefined | JsValue::Null)
@@ -29,17 +26,16 @@ pub fn fallback(entries: &[JsValue], key: &JsString, project: &JsValue) -> JsVal
         if is(field(entry, "type"), "accepted_input") {
             if let JsValue::Array(messages) = field(entry, "messages") {
                 for message in messages {
-                    if let JsValue::Array(content) = field(message, "content") {
-                        if let Some(v) = content
+                    if let JsValue::Array(content) = field(message, "content")
+                        && let Some(v) = content
                             .iter()
                             .find(|b| is(field(b, "type"), "text"))
                             .and_then(|b| trim(field(b, "text")))
-                        {
-                            if first.is_undefined() {
-                                first = v.clone();
-                            }
-                            last = v;
+                    {
+                        if first.is_undefined() {
+                            first = v.clone();
                         }
+                        last = v;
                     }
                 }
             }
@@ -114,4 +110,33 @@ pub fn fallback(entries: &[JsValue], key: &JsString, project: &JsValue) -> JsVal
         }
     }
     JsValue::Object(session)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pilotdeck_protocol::{parse_json, stringify_json};
+    #[test]
+    fn fallback_matches_real_ts_session_metadata() {
+        let oracle = parse_json(include_str!(
+            "../../../tests/fixtures/native-history/typical-r1.json"
+        ))
+        .unwrap();
+        let Some(JsValue::Array(cases)) = oracle.get("cases") else {
+            panic!("cases")
+        };
+        for name in ["text-basic", "session-metadata"] {
+            let case = cases.iter().find(|c| is(field(c, "id"), name)).unwrap();
+            let JsValue::Array(entries) = field(case, "loadedEntries") else {
+                panic!("entries")
+            };
+            let actual = fallback(
+                entries,
+                &JsString::from("history:fixture"),
+                &JsValue::from("<CASE>/project"),
+            );
+            let actual = parse_json(&stringify_json(&actual).unwrap().unwrap()).unwrap();
+            assert_eq!(&actual, field(field(case, "result"), "session"), "{name}");
+        }
+    }
 }
