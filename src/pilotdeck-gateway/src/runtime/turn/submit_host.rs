@@ -311,15 +311,15 @@ impl SubmitHost for GatewaySubmitHost {
                     ),
                 ]),
             };
-            if field(&prepared.model_selection, "source") == &JsValue::from("kernel_assembly") {
-                if let JsValue::Object(options) = &mut prepared.options {
-                    for key in ["mode", "basePermissionMode"] {
-                        if let Some(value) = input
-                            .get(key)
-                            .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
-                        {
-                            options.insert(key.into(), value.clone());
-                        }
+            if field(&prepared.model_selection, "source") == &JsValue::from("kernel_assembly")
+                && let JsValue::Object(options) = &mut prepared.options
+            {
+                for key in ["mode", "basePermissionMode"] {
+                    if let Some(value) = input
+                        .get(key)
+                        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                    {
+                        options.insert(key.into(), value.clone());
                     }
                 }
             }

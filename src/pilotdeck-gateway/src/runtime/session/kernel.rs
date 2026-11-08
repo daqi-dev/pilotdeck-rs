@@ -103,7 +103,7 @@ pub struct KernelBackendFactory {
 }
 pub enum BackendOwner {
     Legacy,
-    Kernel(KernelBackendFactory),
+    Kernel(Box<KernelBackendFactory>),
 }
 impl KernelBackendFactory {
     pub fn with_port_preflight(
@@ -149,7 +149,7 @@ impl KernelBackendFactory {
             }
             return match saved["backend"].as_str() {
                 Some("legacy") => Ok(BackendOwner::Legacy),
-                Some("kernel") => Ok(BackendOwner::Kernel(Self {
+                Some("kernel") => Ok(BackendOwner::Kernel(Box::new(Self {
                     preflight: None,
                     durable_create: saved["schema"] == 2,
                     creation_query_only: ["gateway", "history", "configuration"]
@@ -170,7 +170,7 @@ impl KernelBackendFactory {
                     interactions: None,
                     agent_config: JsObject::new(),
                     permission_mode_source: None,
-                })),
+                }))),
                 _ => Err(error("Unsupported persisted session backend.")),
             };
         }
@@ -214,7 +214,7 @@ impl KernelBackendFactory {
                 "Durable creation requires an explicit immutable PILOTDECK_KERNEL_LOOP_VERSION.",
             ));
         }
-        Ok(BackendOwner::Kernel(Self {
+        Ok(BackendOwner::Kernel(Box::new(Self {
             preflight: None,
             socket,
             loop_version,
@@ -228,7 +228,7 @@ impl KernelBackendFactory {
             interactions: None,
             agent_config: JsObject::new(),
             permission_mode_source: None,
-        }))
+        })))
     }
 }
 fn write_owner(path: &std::path::Path, owner: &Value) -> RuntimeResult {
@@ -507,11 +507,13 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
     let events = events
         .as_array()
         .ok_or_else(|| error("Kernel event journal must be an array."))?;
-    let mut state = State::default();
-    state.cursor = events
-        .last()
-        .and_then(|e| e["cursor"].as_u64())
-        .unwrap_or(0);
+    let mut state = State {
+        cursor: events
+            .last()
+            .and_then(|e| e["cursor"].as_u64())
+            .unwrap_or(0),
+        ..State::default()
+    };
     if let Some(root) = events.iter().rev().find(|event| {
         event["kind"] == "call.accepted" && event["payload"]["cause_execution_ref"].is_null()
     }) {
@@ -554,12 +556,11 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
             if let Some(wait) = event["payload"]["waiting"]["id"].as_str() {
                 state.seen_waits.insert(wait.into());
             }
-            if event["state"] == "needs_human" {
-                if let Some(child) = event["call_ref"].as_str() {
-                    if child != call {
-                        candidates.insert(child.to_string());
-                    }
-                }
+            if event["state"] == "needs_human"
+                && let Some(child) = event["call_ref"].as_str()
+                && child != call
+            {
+                candidates.insert(child.to_string());
             }
         }
         if state.run.is_some() {
@@ -570,10 +571,10 @@ async fn recover(rpc: &mut Rpc, session: &str) -> Result<State, RuntimeError> {
                         json!({"session_id":session,"call_ref":child}),
                     )
                     .await?;
-                if view["state"] == "needs_human" {
-                    if let Some(wait) = view["waiting"]["id"].as_str() {
-                        state.waits.insert(wait.into(), child);
-                    }
+                if view["state"] == "needs_human"
+                    && let Some(wait) = view["waiting"]["id"].as_str()
+                {
+                    state.waits.insert(wait.into(), child);
                 }
             }
         }
@@ -1049,20 +1050,19 @@ impl SessionBackendFactory for KernelBackendFactory {
                     "Kernel loop revision does not match this session's pinned owner.",
                 ));
             }
-            if let Some(saved) = &saved {
-                if (saved["schema"] != 2 || saved["creation_state"] == "confirmed")
-                    && (saved["binding"] != binding || saved["context_ref"] != context_ref)
-                {
-                    return Err(error("Kernel binding/context owner mismatch."));
-                }
+            if let Some(saved) = &saved
+                && (saved["schema"] != 2 || saved["creation_state"] == "confirmed")
+                && (saved["binding"] != binding || saved["context_ref"] != context_ref)
+            {
+                return Err(error("Kernel binding/context owner mismatch."));
             }
             if opened["protocol"].as_str().is_none() {
                 return Err(error("Kernel Scheduler protocol unavailable."));
             }
-            if let Some(saved) = &saved {
-                if let Some(node) = saved["node_id"].as_str() {
-                    rpc.node = node.to_string();
-                }
+            if let Some(saved) = &saved
+                && let Some(node) = saved["node_id"].as_str()
+            {
+                rpc.node = node.to_string();
             }
             // Reopening observation never acquires execution authority. The
             // first effect renews this same owner's live lease or acquires an
@@ -1340,7 +1340,7 @@ impl LiveSession for KernelSession {
                             &mut rpc,
                             &kernel_id,
                             &context_ref,
-                            Some(&projection),
+                            Some(projection),
                         )
                         .await?;
                         projection.sync(&with_index(history, &facts))?;
@@ -1849,28 +1849,28 @@ impl KernelTurn {
                     if event["correlation_id"] != self.run {
                         continue;
                     }
-                    if event["state"] == "needs_human" {
-                        if let (Some(wait), Some(call)) = (
+                    if event["state"] == "needs_human"
+                        && let (Some(wait), Some(call)) = (
                             event["payload"]["waiting"]["id"].as_str(),
                             event["call_ref"].as_str(),
-                        ) {
-                            let fresh = {
-                                let mut state = self.state.lock().unwrap();
-                                let fresh = state.seen_waits.insert(wait.into());
-                                if fresh {
-                                    state.waits.insert(wait.into(), call.into());
-                                }
-                                fresh
-                            };
+                        )
+                    {
+                        let fresh = {
+                            let mut state = self.state.lock().unwrap();
+                            let fresh = state.seen_waits.insert(wait.into());
                             if fresh {
-                                if let Some(interactions) = &self.interactions {
-                                    interactions.reconnect_port().set_external_pending(
-                                        &JsString::from(self.session.clone()),
-                                        true,
-                                    );
-                                }
-                                self.queue.push_back(js(&json!({"type":"permission_request","sessionId":self.session,"turnId":self.run,"requestId":wait,"executionId":call,"toolName":event["payload"]["waiting"]["schema"]["tool_name"],"payload":event["payload"]["waiting"]["schema"]}))?);
+                                state.waits.insert(wait.into(), call.into());
                             }
+                            fresh
+                        };
+                        if fresh {
+                            if let Some(interactions) = &self.interactions {
+                                interactions.reconnect_port().set_external_pending(
+                                    &JsString::from(self.session.clone()),
+                                    true,
+                                );
+                            }
+                            self.queue.push_back(js(&json!({"type":"permission_request","sessionId":self.session,"turnId":self.run,"requestId":wait,"executionId":call,"toolName":event["payload"]["waiting"]["schema"]["tool_name"],"payload":event["payload"]["waiting"]["schema"]}))?);
                         }
                     }
                     let root = self.state.lock().unwrap().call.clone();
@@ -1921,10 +1921,10 @@ impl KernelTurn {
                             self.queue.push_back(js(&agent_event)?);
                         }
                     }
-                    if event["kind"] == "response" {
-                        if let Some(content) = event["payload"]["content"].as_str() {
-                            self.queue.push_back(js(&json!({"type":"model_event","sessionId":self.session,"event":{"type":"text_delta","text":content}}))?);
-                        }
+                    if event["kind"] == "response"
+                        && let Some(content) = event["payload"]["content"].as_str()
+                    {
+                        self.queue.push_back(js(&json!({"type":"model_event","sessionId":self.session,"event":{"type":"text_delta","text":content}}))?);
                     }
                 }
                 // The controller may complete while its loop/children still run;

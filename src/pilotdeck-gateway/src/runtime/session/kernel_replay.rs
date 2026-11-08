@@ -54,15 +54,14 @@ pub(crate) fn snapshot(
         if event["correlation_id"] != run {
             continue;
         }
-        if event["state"] == "needs_human" {
-            if let (Some(wait), Some(call)) = (
+        if event["state"] == "needs_human"
+            && let (Some(wait), Some(call)) = (
                 event["payload"]["waiting"]["id"].as_str(),
                 event["call_ref"].as_str(),
-            ) {
-                if waits.insert(wait.to_string()) {
-                    raw.push(json!({"type":"permission_request","requestId":wait,"executionId":call,"toolName":event["payload"]["waiting"]["schema"]["tool_name"],"payload":event["payload"]["waiting"]["schema"]}));
-                }
-            }
+            )
+            && waits.insert(wait.to_string())
+        {
+            raw.push(json!({"type":"permission_request","requestId":wait,"executionId":call,"toolName":event["payload"]["waiting"]["schema"]["tool_name"],"payload":event["payload"]["waiting"]["schema"]}));
         }
         if event["call_ref"].as_str() != root {
             continue;
@@ -74,10 +73,10 @@ pub(crate) fn snapshot(
             if agent["type"] == "turn_completed" {
                 final_event = Some(agent);
             } else if agent["type"] == "permission_request" {
-                if let Some(wait) = agent["requestId"].as_str() {
-                    if waits.insert(wait.to_string()) {
-                        raw.push(agent);
-                    }
+                if let Some(wait) = agent["requestId"].as_str()
+                    && waits.insert(wait.to_string())
+                {
+                    raw.push(agent);
                 }
             } else {
                 if agent["type"] == "turn_failed" {

@@ -71,12 +71,12 @@ impl ArchiveProjection {
             if !message.is_object() {
                 return Err(error("invalid canonical message"));
             }
-            if let Some(id) = strong(message) {
-                if !ids.insert(id) {
-                    return Err(error(
-                        "message identity repeated within one committed version",
-                    ));
-                }
+            if let Some(id) = strong(message)
+                && !ids.insert(id)
+            {
+                return Err(error(
+                    "message identity repeated within one committed version",
+                ));
             }
         }
         self.merge(messages)?;
@@ -84,10 +84,9 @@ impl ArchiveProjection {
         if let Some(id) = boundary["compactMetadata"]["compactionId"]
             .as_str()
             .filter(|id| !id.is_empty())
+            && self.boundaries.insert(id.into())
         {
-            if self.boundaries.insert(id.into()) {
-                self.display.push(json!({"role":"system","metadata":{"kernelProjectionBoundary":true,"kernelMessageId":format!("kernel-compaction:{id}")},"content":[{"type":"compact_boundary","payload":boundary["compactMetadata"]}]}));
-            }
+            self.display.push(json!({"role":"system","metadata":{"kernelProjectionBoundary":true,"kernelMessageId":format!("kernel-compaction:{id}")},"content":[{"type":"compact_boundary","payload":boundary["compactMetadata"]}]}));
         }
         self.revision = revision;
         Ok(())

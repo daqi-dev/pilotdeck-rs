@@ -129,10 +129,10 @@ fn verify_media(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(data)
         .map_err(|_| err("Attachment base64 is invalid."))?;
-    if let Some(size) = block["bytes"].as_u64() {
-        if size != bytes.len() as u64 {
-            return Err(err("Attachment byte count does not match content."));
-        }
+    if let Some(size) = block["bytes"].as_u64()
+        && size != bytes.len() as u64
+    {
+        return Err(err("Attachment byte count does not match content."));
     }
     let mut manifest = path;
     manifest["sha256"] = json!(format!("{:x}", Sha256::digest(bytes)));
@@ -162,31 +162,31 @@ fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
         }) {
             return Err(err("Transfer contains unverified message runtime state."));
         }
-        if let Some(metadata) = message.get("metadata") {
-            if metadata.as_object().is_none_or(|o| {
+        if let Some(metadata) = message.get("metadata")
+            && metadata.as_object().is_none_or(|o| {
                 o.iter().any(|(key, value)| {
                     !matches!(
                         key.as_str(),
                         "model" | "turnId" | "createdAt" | "kernelMessageId"
                     ) || !value.is_string()
                 })
-            }) {
-                return Err(err(
-                    "Only read-only display identity/model annotations are imported from message metadata.",
-                ));
-            }
+            })
+        {
+            return Err(err(
+                "Only read-only display identity/model annotations are imported from message metadata.",
+            ));
         }
         for key in ["kernelMessageId", "turnId"] {
-            if let Some(value) = message["metadata"].get(key) {
-                if value.as_str().is_none_or(|value| value.trim().is_empty()) {
-                    return Err(err(format!("Invalid display {key}.")));
-                }
+            if let Some(value) = message["metadata"].get(key)
+                && value.as_str().is_none_or(|value| value.trim().is_empty())
+            {
+                return Err(err(format!("Invalid display {key}.")));
             }
         }
-        if let Some(id) = message["metadata"]["kernelMessageId"].as_str() {
-            if !message_ids.insert(id.to_string()) {
-                return Err(err("Duplicate canonical display message identity."));
-            }
+        if let Some(id) = message["metadata"]["kernelMessageId"].as_str()
+            && !message_ids.insert(id.to_string())
+        {
+            return Err(err("Duplicate canonical display message identity."));
         }
         if let Some(created) = message["metadata"].get("createdAt") {
             let created = created
@@ -297,12 +297,11 @@ fn verify_messages(messages: &Value) -> Result<Vec<Value>, RequestError> {
                 .or(block_id);
             if !matches!(block["type"].as_str(), Some("tool_call" | "tool_result"))
                 && let (Some(scope), Some(id)) = (scope, display_id)
+                && !block_ids.insert((scope.to_string(), id.to_string()))
             {
-                if !block_ids.insert((scope.to_string(), id.to_string())) {
-                    return Err(err(
-                        "Duplicate display block identity in one declared turn.",
-                    ));
-                }
+                return Err(err(
+                    "Duplicate display block identity in one declared turn.",
+                ));
             }
             let kind = block["type"]
                 .as_str()
@@ -766,10 +765,10 @@ impl Requests {
             .map_err(RequestError::from_runtime)?
             .ok_or_else(|| err("Kernel import receipt observation unavailable."))?;
         if replay.get("found") == Some(&JsValue::Bool(true)) {
-            return Ok(replay
+            return replay
                 .get("import")
                 .cloned()
-                .ok_or_else(|| err("Kernel import receipt projection missing."))?);
+                .ok_or_else(|| err("Kernel import receipt projection missing."));
         }
         let current_messages = if let Some(proof) = &legacy_proof {
             proof.messages.clone()

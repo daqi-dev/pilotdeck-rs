@@ -385,16 +385,16 @@ impl GatewayRequests for Requests {
                         .await
                         .map_err(RequestError::from_runtime)?
                 {
-                    if method == "reconnect_interaction" {
-                        if let JsValue::Object(ref mut output) = value {
-                            output.insert(
-                                "binding".into(),
-                                self.interactions
-                                    .get_binding(session)
-                                    .map(|binding| binding.to_value())
-                                    .unwrap_or(JsValue::Null),
-                            );
-                        }
+                    if method == "reconnect_interaction"
+                        && let JsValue::Object(ref mut output) = value
+                    {
+                        output.insert(
+                            "binding".into(),
+                            self.interactions
+                                .get_binding(session)
+                                .map(|binding| binding.to_value())
+                                .unwrap_or(JsValue::Null),
+                        );
                     }
                     if method == "run_get" || method == "run_reattach" || method == "run_events" {
                         let native = value;
@@ -402,20 +402,19 @@ impl GatewayRequests for Requests {
                             methods::request(self, method.clone(), params.clone()).await?;
                         if let JsValue::Object(ref mut p) = projected {
                             p.insert("nativeExecution".into(), native.clone());
-                            if method != "run_events" {
-                                if let Some(state) = native
+                            if method != "run_events"
+                                && let Some(state) = native
                                     .get("state")
                                     .and_then(JsValue::as_string)
                                     .and_then(|s| s.to_utf8().ok())
-                                {
-                                    let state = match state.as_str() {
-                                        "needs_human" => "running",
-                                        "cancelled" => "aborted",
-                                        "unknown" => "interrupted",
-                                        other => other,
-                                    };
-                                    p.insert("state".into(), state.into());
-                                }
+                            {
+                                let state = match state.as_str() {
+                                    "needs_human" => "running",
+                                    "cancelled" => "aborted",
+                                    "unknown" => "interrupted",
+                                    other => other,
+                                };
+                                p.insert("state".into(), state.into());
                             }
                         }
                         value = projected;

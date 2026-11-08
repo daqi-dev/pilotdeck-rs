@@ -209,12 +209,11 @@ impl KernelProjection {
 pub(crate) fn normalize_display_timelines(value: &mut Value, run: &str) {
     match value {
         Value::Object(object) => {
-            if let Some(timeline) = object.get_mut("timeline").and_then(Value::as_object_mut) {
-                if timeline.get("version") == Some(&json!(1))
-                    && timeline.get("id").is_some_and(Value::is_string)
-                {
-                    timeline.insert("turnId".into(), json!(run));
-                }
+            if let Some(timeline) = object.get_mut("timeline").and_then(Value::as_object_mut)
+                && timeline.get("version") == Some(&json!(1))
+                && timeline.get("id").is_some_and(Value::is_string)
+            {
+                timeline.insert("turnId".into(), json!(run));
             }
             for (key, child) in object.iter_mut() {
                 if !matches!(key.as_str(), "input" | "arguments" | "payload" | "metadata") {
@@ -343,19 +342,17 @@ pub(crate) fn reconcile_identity(history: &Value, journal: &Value, roots: &[Valu
 
 pub(crate) fn with_active_input(history: &Value, index: &Value, created: &str) -> Value {
     let mut messages = history.as_array().cloned().unwrap_or_default();
-    if index["active"] == true {
-        if let (Some(run), Some(prompt), Some(call)) = (
+    if index["active"] == true
+        && let (Some(run), Some(prompt), Some(call)) = (
             index["runId"].as_str(),
             index["prompt"].as_str(),
             index["executionId"].as_str(),
-        ) {
-            if !messages
-                .iter()
-                .any(|message| message["role"] == "user" && message["metadata"]["turnId"] == run)
-            {
-                messages.push(json!({"role":"user","content":[{"type":"text","text":prompt}],"metadata":{"turnId":run,"createdAt":created,"kernelMessageId":format!("kernel-active-input:{call}"),"kernelPending":true,"executionId":call}}));
-            }
-        }
+        )
+        && !messages
+            .iter()
+            .any(|message| message["role"] == "user" && message["metadata"]["turnId"] == run)
+    {
+        messages.push(json!({"role":"user","content":[{"type":"text","text":prompt}],"metadata":{"turnId":run,"createdAt":created,"kernelMessageId":format!("kernel-active-input:{call}"),"kernelPending":true,"executionId":call}}));
     }
     json!(messages)
 }

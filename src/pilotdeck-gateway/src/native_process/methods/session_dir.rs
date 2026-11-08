@@ -163,7 +163,7 @@ impl Requests {
                 .as_os_str()
                 .to_os_string();
             expected.push(".backend.json");
-            if entry.path() != std::path::PathBuf::from(expected) {
+            if entry.path() != expected {
                 return Err(RequestError::new(
                     "Kernel session index owner path collision.",
                 ));

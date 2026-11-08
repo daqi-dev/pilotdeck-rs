@@ -146,12 +146,12 @@ pub(crate) fn verify_history_quiescent(
     let mut state = session_domain::DomainState::default();
     let undefined = pilotdeck_protocol::JsValue::Undefined;
     for entry in entries {
-        if let Some(id) = entry.get("sessionId") {
-            if id.as_string() != Some(session) {
-                return Err(invalid(
-                    "History source session identity does not match the requested key.",
-                ));
-            }
+        if let Some(id) = entry.get("sessionId")
+            && id.as_string() != Some(session)
+        {
+            return Err(invalid(
+                "History source session identity does not match the requested key.",
+            ));
         }
         state
             .next(entry)
