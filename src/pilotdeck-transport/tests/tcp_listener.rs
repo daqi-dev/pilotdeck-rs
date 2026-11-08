@@ -26,8 +26,8 @@ impl ExecutionClock for Clock {
     fn now_iso(&self) -> JsString {
         "1970-01-01T00:00:01.000Z".into()
     }
-    fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> {
-        Ok(None)
+    fn parse_date(&self, value: &JsString) -> Result<Option<f64>, JsString> {
+        Ok(value.equals_str("fixture-future").then_some(61_000.0))
     }
 }
 #[derive(Default)]
@@ -356,4 +356,69 @@ fn tcp_partial_frame_does_not_spend_another_connections_input_budget() {
     h.wait_entered("op-independent");
     stalled.shutdown(Shutdown::Both).unwrap();
     assert_eq!(get(get(&status(&mut healthy, "still-running", "independent"), "payload"), "state"), &JsValue::from("running"));
+}
+
+
+#[test]
+fn tcp_deadline_admission_enforces_the_process_timer_limit() {
+    let h = Harness::new();
+    let mut socket = h.connect();
+    for index in 0..33 {
+        let tag = format!("deadline-{index}");
+        let mut value = execute(&tag);
+        value.insert_str(value.len() - 1, ",\"operationDeadline\":\"fixture-future\"");
+        send(&mut socket, &value);
+        let accepted = response(&socket, &format!("execute-{tag}"));
+        if index < 32 {
+            assert_eq!(get(&accepted, "ok"), &JsValue::Bool(true));
+            if index == 0 { h.wait_entered("op-deadline-0"); }
+        } else {
+            assert_eq!(get(&accepted, "code"), &JsValue::from("EXECUTION_TIMER_LIMIT"));
+        }
+    }
+    assert_eq!(h.factory.entered.lock().unwrap().len(), 1, "rejected work must not execute");
+}
+
+#[test]
+fn tcp_connection_limit_refuses_only_the_excess_peer() {
+    let h = Harness::new();
+    let mut peers = Vec::new();
+    for index in 0..32 {
+        let mut socket = h.connect();
+        assert_eq!(get(&hello(&mut socket, &format!("seat-{index}")), "ok"), &JsValue::Bool(true));
+        peers.push(socket);
+    }
+    let mut refused = h.connect();
+    let mut byte = [0];
+    let result = std::io::Read::read(&mut refused, &mut byte);
+    assert!(matches!(result, Ok(0)) || result.is_err_and(|error| matches!(error.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::ConnectionAborted)));
+    assert_eq!(get(&hello(&mut peers[0], "retained"), "ok"), &JsValue::Bool(true));
+}
+
+#[test]
+fn tcp_ledger_refusal_preserves_prior_terminal_identity() {
+    let h = Harness::new();
+    h.factory.release.store(true, Ordering::SeqCst);
+    let mut socket = h.connect();
+    let mut refused = false;
+    for index in 0..4097 {
+        let tag = format!("ledger-{index}");
+        send(&mut socket, &execute(&tag));
+        let accepted = response(&socket, &format!("execute-{tag}"));
+        if accepted.get("ok") == Some(&JsValue::Bool(false)) {
+            assert_eq!(get(&accepted, "code"), &JsValue::from("EXECUTION_LEDGER_FULL"));
+            refused = true;
+            break;
+        }
+        // Wait for this exact operation's final before charging the next one.
+        loop { if read(&socket).get("final") == Some(&JsValue::Bool(true)) { break; } }
+    }
+    assert!(refused, "item or byte ceiling must bound the live ledger");
+    assert_eq!(get(get(&status(&mut socket, "old-result", "ledger-0"), "payload"), "state"), &JsValue::from("completed"));
+    let count = h.factory.entered.lock().unwrap().len();
+    let mut other = h.connect();
+    send(&mut other, &execute("ledger-0"));
+    assert_eq!(get(&response(&other, "execute-ledger-0"), "code"), &JsValue::from("OPERATION_REQUIRES_RECONCILIATION"));
+    assert_eq!(h.factory.entered.lock().unwrap().len(), count);
+    assert_eq!(get(&hello(&mut other, "after-full"), "ok"), &JsValue::Bool(true));
 }

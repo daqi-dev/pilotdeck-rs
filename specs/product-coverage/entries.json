@@ -619,7 +619,7 @@
     {"id": "gateway.ws:/ws", "sources": ["src/gateway/server/GatewayServer.ts:145"], "group": "A678", "status": "partial-native", "evidence": "src/pilotdeck-gateway/src/native_ws.rs:635"},
     {"id": "sidecar:factory", "sources": ["src/cli/pilotdeck-agent-loop-sidecar.ts:11"], "group": "Cprofile", "status": "unsupported", "evidence": "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:26"},
     {"id": "sidecar:stdio", "sources": ["src/cli/pilotdeck-agent-loop-sidecar.ts:29"], "group": "C", "status": "rust-unaccepted", "evidence": "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:26"},
-    {"id": "sidecar:tcp", "sources": ["src/cli/pilotdeck-agent-loop-sidecar.ts:27"], "group": "Cprofile", "status": "unsupported", "evidence": "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:26"},
+    {"id": "sidecar:tcp", "sources": ["src/cli/pilotdeck-agent-loop-sidecar.ts:27"], "group": "Cprofile", "status": "rust-unaccepted", "evidence": "src/pilotdeck-transport/src/tcp.rs:98"},
     {"id": "ui.background:memory-scheduler", "sources": ["ui/server/index.js:3712"], "group": "B36", "status": "ts-only", "evidence": "specs/ui-server-parity/rust-routes.json"},
     {"id": "ui.background:plugins", "sources": ["ui/server/index.js:3715"], "group": "B36", "status": "ts-only", "evidence": "specs/ui-server-parity/rust-routes.json"},
     {"id": "ui.background:session-forwarding", "sources": ["ui/server/index.js:218"], "group": "B36", "status": "ts-only", "evidence": "specs/ui-server-parity/rust-routes.json"},
