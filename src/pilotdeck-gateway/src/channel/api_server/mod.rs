@@ -403,15 +403,17 @@ fn noop_handle() -> Arc<dyn ChannelHandle> {
 /// failed toPrimitive, the loader's catch records the key and continues, and
 /// the channel never enters the startup array — the Rust channel defers the
 /// port conversion to `start`, so the mount applies the same check at
-/// construction and surfaces the same TypeError through the same loader catch.
+/// construction and surfaces the same TypeError through the same loader catch
+/// (fix-r2: the shared coercion walk also covers arrays and the prototype
+/// chain the config merge installs, matching `Number()`'s join behavior).
 pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
     mounts.register(
         "apiServer",
         Arc::new(|options: &JsObject| {
             if let Some(port) = options.get("port").filter(|value| !nullish_port(value))
-                && let Some(error) = crate::js_value::number_conversion_type_error(port)
+                && let Some(error) = crate::js_value::number_conversion_error(port)
             {
-                return Err(ChannelError::Plain(error.to_owned()));
+                return Err(ChannelError::Plain(error));
             }
             Ok(Arc::new(ApiServerChannel::new(ApiServerOptions {
                 port: options.get("port").cloned(),

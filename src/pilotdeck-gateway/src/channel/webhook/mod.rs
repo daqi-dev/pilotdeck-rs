@@ -283,9 +283,9 @@ pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
         "webhook",
         Arc::new(|options: &JsObject| {
             if let Some(port) = options.get("port").filter(|value| !nullish(value))
-                && let Some(error) = crate::js_value::number_conversion_type_error(port)
+                && let Some(error) = crate::js_value::number_conversion_error(port)
             {
-                return Err(ChannelError::Plain(error.to_owned()));
+                return Err(ChannelError::Plain(error));
             }
             Ok(Arc::new(WebhookChannel::from_options(options)) as Arc<dyn ChannelAdapter>)
         }),

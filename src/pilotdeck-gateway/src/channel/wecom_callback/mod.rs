@@ -853,9 +853,9 @@ impl WeComCallbackChannel {
     pub fn constructor(interaction: Arc<dyn InteractionPort>) -> ChannelAdapterConstructor {
         Arc::new(move |options: &JsObject| {
             if let Some(port) = options.get("port").filter(|value| !nullish(Some(value)))
-                && let Some(error) = crate::js_value::number_conversion_type_error(port)
+                && let Some(error) = crate::js_value::number_conversion_error(port)
             {
-                return Err(ChannelError::Plain(error.to_owned()));
+                return Err(ChannelError::Plain(error));
             }
             Ok(Arc::new(Self::from_object(
                 options,

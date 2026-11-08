@@ -31,13 +31,16 @@ STARTUP_CALL = (
     '            startup.extend(channel_assembly.create_startup_configured());\n'
 )
 
-# The configured half's body: the loadEnabledChannels port itself.
+# The configured half's body: the loadEnabledChannels port itself. #2301
+# fix-r2 (review P0 #2): the loader's console.error closure is the same
+# best-effort console write as the channel log (`eprintln!` panics on a
+# failed write, which `assembly::start` calls before any channel starts).
 CONFIGURED_BODY = (
     '        load_enabled_channels(\n'
     '            self.config.get("adapters"),\n'
     '            &LoadEnabledChannelsOptions { pilot_home: None },\n'
     '            &production_loader_mounts(),\n'
-    '            &mut |message| eprintln!("{message}"),\n'
+    '            &mut |message| console_log_line(&mut std::io::stderr(), &message),\n'
     '        )\n'
 )
 

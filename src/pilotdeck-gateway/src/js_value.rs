@@ -268,27 +268,26 @@ pub(crate) fn to_number(value: &JsValue) -> Result<f64, StackOverflow> {
     })
 }
 
-/// The V8 `TypeError` `Number(value)` raises when the value's toPrimitive
-/// finds nothing usable — `TypeError: Cannot convert object to primitive
-/// value` (Node v22.22.0 probe, `_tmp/20261026-issue-2301/fix-r1/node-probe/
-/// probe1.out`). ToPrimitive tries `valueOf` then `toString`; the inherited
-/// `Object.prototype.valueOf` returns the object itself and never wins, so
-/// the only primitive source is the inherited `Object.prototype.toString`
-/// (`[object Object]` → NaN). Config-sourced objects carry no functions, so
-/// the failing shape is exactly an own `toString` entry shadowing the
-/// inherited callable one — an own `valueOf` (any non-callable) only shadows
-/// a method that never yields a primitive anyway. Primitives, arrays and
-/// objects without an own `toString` convert without throwing (NaN at worst).
-/// The loader mounts run this at construction, where the TS constructors'
-/// `Number(options.port ?? …)` throws and the loader's catch records the key
-/// and continues (#2301 fix-r1).
-pub(crate) fn number_conversion_type_error(value: &JsValue) -> Option<&'static str> {
-    match value {
-        JsValue::Object(object) if object.get("toString").is_some() => {
-            Some("TypeError: Cannot convert object to primitive value")
-        }
-        _ => None,
-    }
+/// The error `Number(value)` raises when the value's coercion throws —
+/// `TypeError: Cannot convert object to primitive value` (toPrimitive finds
+/// nothing usable: the inherited `valueOf` returns the object itself, and the
+/// only `toString` is one that is not callable) or `RangeError: Maximum call
+/// stack size exceeded` (a too-deep array join). Node v22.22.0 probes:
+/// `_tmp/20261026-issue-2301/fix-r1/node-probe/probe1.out` (own `toString`
+/// shadowing the inherited callable) and `fix-r2/node-probe/probe1.out`
+/// (array element, nested array, prototype-carried `toString` via the real
+/// `mergeConfigSources`, deep array → RangeError). This is the same walk
+/// `String(value)` takes (`validate_coercion`): `Number([x])` joins the
+/// array first, so an element's failed toPrimitive and a too-deep nesting
+/// throw exactly like the scalar case, and the prototype chain a config
+/// merge installed is visible to `get_property`. The loader mounts run this
+/// at construction, where the TS constructors' `Number(options.port ?? …)`
+/// throws and the loader's catch records the key and continues (#2301 fix-r1;
+/// fix-r2 review P1 #3 closed the array / prototype-chain gaps).
+pub(crate) fn number_conversion_error(value: &JsValue) -> Option<String> {
+    validate_coercion(value)
+        .err()
+        .map(|error| format!("{}: {}", error.name(), error.message()))
 }
 
 /// ECMAScript StringToNumber.
@@ -455,6 +454,50 @@ mod tests {
             object = JsValue::Object(parent);
         }
         assert_eq!(json_stringify(&object), Err(StackOverflow));
+    }
+
+    /// #2301 fix-r2 review P1 #3: `Number(value)` throws on more than an own
+    /// `toString` — arrays join (so the element's toPrimitive fails), nesting
+    /// recurses, and the prototype chain a config merge installed is visible
+    /// to the lookup; a too-deep array reports V8's RangeError instead.
+    #[test]
+    fn number_conversion_error_covers_arrays_and_prototypes() {
+        let json = |text: &str| parse_json(text).unwrap();
+        // Clean shapes never throw (NaN at worst).
+        assert_eq!(number_conversion_error(&json("[]")), None);
+        assert_eq!(number_conversion_error(&json("[5]")), None);
+        assert_eq!(number_conversion_error(&json("[1,2]")), None);
+        assert_eq!(number_conversion_error(&json("{}")), None);
+        assert_eq!(number_conversion_error(&json("5")), None);
+        // The own `toString` (the fix-r1 shape), inside an array, and nested.
+        let type_error = "TypeError: Cannot convert object to primitive value".to_owned();
+        assert_eq!(
+            number_conversion_error(&json(r#"{"toString": null}"#)),
+            Some(type_error.clone())
+        );
+        assert_eq!(
+            number_conversion_error(&json(r#"[{"toString": null}]"#)),
+            Some(type_error.clone())
+        );
+        assert_eq!(
+            number_conversion_error(&json(r#"[[{"toString": null}]]"#)),
+            Some(type_error)
+        );
+        // The `__proto__` shape: the config merge installs the value as the
+        // object's prototype (`config::merge`'s prototype arm), so the lookup
+        // walks the chain.
+        let mut port = pilotdeck_protocol::JsObject::new();
+        port.set_prototype(json(r#"{"toString": null}"#));
+        assert_eq!(
+            number_conversion_error(&JsValue::Object(port)),
+            Some("TypeError: Cannot convert object to primitive value".to_owned())
+        );
+        // A too-deep array join reports V8's RangeError, not a Rust overflow.
+        assert_eq!(
+            number_conversion_error(&nested(MAX_ARRAY_DEPTH + 1)),
+            Some("RangeError: Maximum call stack size exceeded".to_owned())
+        );
+        assert_eq!(number_conversion_error(&nested(MAX_ARRAY_DEPTH)), None);
     }
 
     #[test]

@@ -64,10 +64,31 @@ pub fn noop_close_host() -> CloseHost {
 /// make that visible (the `api-server: listening on …` / `sms: twilio not
 /// installed…` anchors the #1853 r1 probe recorded on the TS side).
 pub fn console_channel_log() -> ChannelLog {
-    Arc::new(|level: &str, message: &str| match level {
-        "info" => console_log_line(&mut std::io::stdout(), message),
-        _ => console_log_line(&mut std::io::stderr(), message),
+    Arc::new(|level: &str, message: &str| {
+        write_console_line(
+            level,
+            message,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        )
     })
+}
+
+/// `consoleLogger`'s one line over an explicit sink pair: `info` to the out
+/// sink, `warn` / `error` to the err sink. The production closure passes the
+/// real stdout/stderr; the routing and failing-sink controls drive this same
+/// entry (#2301 fix-r2 review P1 #5 — a control that only exercised the
+/// helper could not see the production closure regress).
+pub(crate) fn write_console_line(
+    level: &str,
+    message: &str,
+    out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) {
+    match level {
+        "info" => console_log_line(out, message),
+        _ => console_log_line(err, message),
+    }
 }
 
 /// One console line on an explicit sink. `console.log` / `console.error`
@@ -319,13 +340,18 @@ impl NativeChannels {
     /// options travel on this path: TS calls
     /// `this.loadConfiguredChannels(config.adapters)` with no second
     /// argument, so `pilotHome` stays `undefined` (only the matrix loader
-    /// reads it, and matrix is not implemented).
+    /// reads it, and matrix is not implemented). The error port is the same
+    /// best-effort console write as the channel log: `assembly::start` calls
+    /// this synchronously before any channel starts, outside every
+    /// `catch_unwind`, so an `eprintln!` here (std panic on a failed write,
+    /// #2301 fix-r2 review P0 #2) would abort the startup of every already
+    /// constructed channel; TS's `console.error` never throws.
     pub fn create_startup_configured(&self) -> Vec<Arc<dyn ChannelAdapter>> {
         load_enabled_channels(
             self.config.get("adapters"),
             &LoadEnabledChannelsOptions { pilot_home: None },
             &production_loader_mounts(),
-            &mut |message| eprintln!("{message}"),
+            &mut |message| console_log_line(&mut std::io::stderr(), &message),
         )
     }
 
