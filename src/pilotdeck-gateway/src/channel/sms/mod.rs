@@ -765,6 +765,13 @@ impl ChannelAdapter for SmsChannel {
                     // bare `tokio::spawn`s of the pre-#2026 code.
                     std::mem::forget(connections);
                 } else {
+                    // #2269: the r1 shape (`deab130c0`) read the count
+                    // before the drain started, so every connection the
+                    // drain retired was still counted — the bound case in
+                    // `head_timeout_tests.rs` kills the mutant by its warn
+                    // text (3 where the aborted set holds 2).
+                    let pre_drain_count = crate::mutants::on("sms-stop-drain-predrain-count")
+                        .then(|| connections.len());
                     let drain = async { while connections.join_next().await.is_some() {} };
                     if crate::mutants::on("sms-stop-drain-unbounded") {
                         drain.await;
@@ -782,7 +789,7 @@ impl ChannelAdapter for SmsChannel {
                         // connection the whole drain retired. An
                         // under-report cannot happen — a live task stays in
                         // the set until it is reaped.
-                        let remaining = connections.len();
+                        let remaining = pre_drain_count.unwrap_or_else(|| connections.len());
                         server_shared.log(
                             "warn",
                             format!(
