@@ -600,8 +600,10 @@ class EnvironmentControls(unittest.TestCase):
 
         # 闸门 step 删掉 `shell: bash`：裸 run step 继承任何 defaults.run.shell。
         change_job('retirement-gate-shell-removed', 'retirement-outcome-parity',
-                   '      - name: check 5 轮\n        shell: bash\n        run: |\n',
-                   '      - name: check 5 轮\n        run: |\n',
+                   '      - name: check 5 轮\n        shell: bash\n'
+                   '        timeout-minutes: 5\n        run: |\n',
+                   '      - name: check 5 轮\n        timeout-minutes: 5\n'
+                   '        run: |\n',
                    '#1809 the retirement-outcome-parity run step pins `shell: bash` (parsed)')
         # 必需检查的聚合 Require step 换 shell 值：`/bin/true {0}` 把 exit 1 变 rc=0。
         change_job('require-scope-shell-swapped', 'check',
@@ -928,7 +930,7 @@ class EnvironmentControls(unittest.TestCase):
 
         r10 P0（评审）：r9 的兄弟断言手抄 `85×60 > 4580 + 300`，装置侧重算后
         这边不会跟着红——第二份裸数字只会静默漂移。subprocess 按 spec 加载
-        self_check.py（模块体只设 pycache 隔离与常量，不跑 main），打印
+        self_check.py（模块体从实际 job steps 遍历推导完整和，不跑 main），打印
         RETIREMENT_JOB_TIMEOUT_MINUTES / INTERNAL_WORST_CASE_SECONDS /
         JOB_OVERHEAD_MARGIN_SECONDS 三个登记值。
         """
@@ -940,6 +942,7 @@ class EnvironmentControls(unittest.TestCase):
             f'{str(source)!r})\n'
             'module = importlib.util.module_from_spec(spec)\n'
             'spec.loader.exec_module(module)\n'
+            'module._assert_step_budget_coverage(module.retirement_budget_rows())\n'
             'print(json.dumps([module.RETIREMENT_JOB_TIMEOUT_MINUTES, '
             'module.INTERNAL_WORST_CASE_SECONDS, '
             'module.JOB_OVERHEAD_MARGIN_SECONDS]))\n')
@@ -953,12 +956,9 @@ class EnvironmentControls(unittest.TestCase):
         return minutes, internal, margin
 
     def test_retirement_job_bounds_its_wall_clock(self):
-        # #1632 / #1692 §1 的 timeout 钉死范式，#1809 r10 P0（评审复算）：
-        # 内部最坏和从装置源码同源推导（锁趟数 = 七项自检 1 + control_lock 5
-        # ——detail / 弱化 flock / 守卫 fd 三变异循环；control_check 三个变异
-        # 方向各一个 300 s checker 子进程；r9 的 4580 s 漏算了这三趟锁与这些
-        # 子进程，85 min 下派生不等式恒真）。外层超时若先到，步骤被 SIGKILL、
-        # 证据目录半途而废而闸门读不到红。
+        # #1809 r11 P0：导出和遍历实际 job steps，包含三个直跑 gate、七项与
+        # 变异自检；checkout/setup/upload 显式共享 margin 桶。兄弟断言不再继承
+        # 只含两个自检 step 的不完整和。外层先到会硬杀步骤、截断证据。
         minutes, internal, margin = self.retirement_budget_constants()
         body = self.ci_jobs('#1809')['retirement-outcome-parity']
         self.assertIn(f'    timeout-minutes: {minutes}\n', body,

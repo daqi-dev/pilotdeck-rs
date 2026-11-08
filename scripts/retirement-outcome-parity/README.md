@@ -306,17 +306,32 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 | `self_check.py`（七项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · 敌意写目标 · CI 接线，七条守卫本身都还在 |
 | `self_check.py --self-check-controls` | 给上面这些守卫造违反样本，它们必须**变红**（接线守卫自己的变异自检） |
 
-外层 `timeout-minutes: 130` 必须**大于**装置内部预算之和（r10 P0 复算，算式在 `self_check.py`
-的 `INTERNAL_WORST_CASE_SECONDS` 派生机检：emit 300 s + check 300 s + 负控 1800 s +
-锁与探针**六趟**——七项自检 1 趟 + `control_lock` 5 趟（detail / 弱化 flock / 守卫 fd
-三变异循环）——各 660 s（4×60 s 等锁 + 2×60 s wait + 敌意锁 3×50 s + 守卫 fd 3×50 s）
-+ 敌意写目标 4×50 s + `control_check` 三个变异方向各一个 300 s checker 子进程 =
-**7460 s ≈ 124.3 min**，55 min 装不下——r9 的 4580 s 把 `check_lock` 按 3 趟计（实际
-6 趟）、`control_check` 的子进程也不计，85 min 下派生不等式恒真；`check_wiring` 钉住 130
-这个值并断言 130×60 > 7460 + 300 s job 开销余量，锁趟数与子进程数由
-`_assert_pass_counting` 与源码调用点同源互证（新增 / 删除调用点而算式没跟上当场红），
-变异样本 `retirement-job-timeout-lowered` 把它降到 55 必红），否则内部超时永远打不着、
-失败退化为平台硬杀（cancelled，summary 不发布）。
+外层 `timeout-minutes: 170` 必须**大于**全 job 有效内部最坏和 + 开销余量（r11 P0）。
+`self_check.py` 的 `retirement_budget_rows` 遍历 ci.yml 实际声明的全部 steps，各步
+贡献记录与 `RETIREMENT_STEP_ORDER` 双向互证后，累加导出 `INTERNAL_WORST_CASE_SECONDS`。
+未知形态没有预算规则即红；遗漏一项贡献或多算一个幽灵 step 也红，不再手列全 job 加数。
+
+| step | 上限来源 | 内部贡献 |
+|---|---|---|
+| checkout / 安装 PyYAML / upload | `JOB_OVERHEAD_STEPS` 显式共享 overhead 桶，桶集合双向核覆盖 | 共享下方 300 s 余量 |
+| 直跑 emit | step 声明 `timeout-minutes: 5`，守卫钉住且求和读取声明 | 300 s |
+| 直跑 check | step 声明 `timeout-minutes: 5`，同上 | 300 s |
+| 直跑负控 | 读 `negative_controls` 的参考轮集合、控件登记与 `CHECK_TIMEOUT_SECONDS`；再应用 step 声明 `timeout-minutes: 30`（登记与自检 NEGCTL 同源） | 原始 (5+1+18+2)×600 = 15600 s；有效 min(15600, 1800) = 1800 s |
+| 七项自检 | EMIT + CHECK + NEGCTL + 一趟 LOCK + WRITES | 3260 s |
+| 变异自检 | (LOCK_CHECK_PASSES−1)×LOCK + CONTROL_CHECK_SUBPROCESSES×CHECK | 4200 s |
+
+两项自检沿用 r10 内部推导：LOCK 单趟 660 s（4×60 s 等锁 + 2×60 s wait +
+敌意锁 3×50 s + 守卫 fd 3×50 s），共六趟；WRITES 4×50 s；control_check 三趟
+各 300 s。公式与 `_assert_pass_counting` 的调用点互证不变。完整内部和
+原始和 **23660 s ≈ 394.3 min**；直跑负控加声明上限后，有效内部和
+**9860 s ≈ 164.3 min**，外层 **170×60 = 10200 > 9860 + 300 s**。
+本轮采用任务书修项 3 的 step 上限路线：仅把外层抬到 400 min 无法满足
+`ubuntu-latest` 的托管 job [6 小时平台上限](https://docs.github.com/en/actions/reference/limits)；
+超过平台上限的 timeout 会[先按平台上限取消](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idtimeout-minutes)。
+保留完整原始推导，再用实际声明的 step 上限约束有效贡献，不改变 PASS/KILLED 判分。
+r9 的 85 min、r10 的 130 min 均源自不完整和；本轮补全覆盖范围，不改严格大于判据。
+`retirement-job-timeout-lowered` 降到 55 仍须红，其失败锚串从外层预算常量派生。
+外层不足会退化为平台硬杀（cancelled，summary 不发布）。
 
 `self_check.py` 是这些守卫的单一实现，本地可整跑：
 

@@ -769,13 +769,9 @@ LOCK_CHECK_PASSES = (
 # 300 s 上限的 checker 子进程，完全不在预算算式里；r10 P1 的 frames 变异方向再加
 # 一次——三个变异方向各一趟，由 _assert_pass_counting 与调用点互证）。
 CONTROL_CHECK_SUBPROCESSES = 3
-INTERNAL_WORST_CASE_SECONDS = (
-    EMIT_TIMEOUT_SECONDS + CHECK_TIMEOUT_SECONDS + NEGCTL_TIMEOUT_SECONDS
-    + LOCK_CHECK_PASSES * LOCK_WORST_CASE_SECONDS + WRITES_WORST_CASE_SECONDS
-    + CONTROL_CHECK_SUBPROCESSES * CHECK_TIMEOUT_SECONDS)
 # runner 侧非守卫开销（checkout / venv 装 PyYAML / 上传证据）的余量。
 JOB_OVERHEAD_MARGIN_SECONDS = 300
-RETIREMENT_JOB_TIMEOUT_MINUTES = 130
+RETIREMENT_JOB_TIMEOUT_MINUTES = 170
 
 
 def _assert_pass_counting():
@@ -914,6 +910,29 @@ RETIREMENT_STEP_ORDER = (
     ('gate', '接线守卫变异自检'),
     ('uses', '上传负控证据'),
 )
+# r11 P0：直跑 gate 没有内部包裹超时，以 step 声明作预算上限。
+# check_wiring 钉住声明值；预算遍历读取 YAML 声明，不再手列全 job 的加数。
+GATE_STEP_TIMEOUT_MINUTES = {
+    'emit 复算与金样逐字节比对': 5,
+    'check 5 轮': 5,
+    '负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD': NEGCTL_TIMEOUT_SECONDS // 60,
+}
+# 这三步共享 JOB_OVERHEAD_MARGIN_SECONDS，不另计入 internal。桶也双向核覆盖，
+# 新 uses/setup 不能静默当成零秒；新增形态必须明确登记或给出上限。
+JOB_OVERHEAD_STEPS = frozenset({
+    ('uses', 'actions/checkout@v4'),
+    ('setup', '安装钉死 PyYAML（#2017-A）'),
+    ('uses', '上传负控证据'),
+})
+
+
+def _retirement_run_step_keys(kind, label):
+    keys = {'name', 'run', 'shell'}
+    if kind == 'gate' and label in GATE_STEP_TIMEOUT_MINUTES:
+        keys.add('timeout-minutes')
+    return keys
+
+
 # 非闸门 step 必须是 action：action step 不执行 shell，吞不掉闸门结果。
 # `with` 只允许出现在登记过的 uses step 上，且内容逐键钉死（USE_STEP_WITH_KEYS）：
 # 给 `actions/checkout@v4` 加 `with: {ref: …}` 会让闸门执行**另一棵树**的脚本，
@@ -1151,6 +1170,103 @@ def _step_list(yaml, path, node, job):
         raise CheckFailure(f'{path}: `{job}` has no step list')
     return [dict(_pairs(yaml, path, item, f'`{job}` step'))
             for item in node.value]
+
+
+def retirement_budget_rows(workflow=None):
+    """逐个遍历真实 job steps，返回实际入算记录（再由守卫独立核覆盖）。
+
+    七项/变异自检沿用 r10 内部公式及 _assert_pass_counting 互证；直跑负控从
+    自己的模块读参考轮与控件登记、子进程超时，不抄第二份计数或秒数。
+    """
+    path = Path(workflow or WORKFLOW)
+    yaml, root = _workflow_root(path)
+    jobs = dict(_pairs(yaml, path, dict(_pairs(
+        yaml, path, root, 'the workflow')).get('jobs'), 'jobs'))
+    job = _job_map(yaml, path, jobs, RETIREMENT_JOB, RETIREMENT_JOB_KEYS)
+    steps = _step_list(yaml, path, job.get('steps'), RETIREMENT_JOB)
+    kinds = {label: kind for kind, label in RETIREMENT_STEP_ORDER}
+    rows = []
+    for step in steps:
+        label = _scalar_text(yaml, path, step.get('name', step.get('uses')),
+                             'a retirement budget step identity')
+        kind = kinds.get(label)
+        identity = (kind, label)
+        cap_seconds = None
+        if kind == 'gate' and label in GATE_STEP_TIMEOUT_MINUTES:
+            timeout = _scalar_text(yaml, path, step.get('timeout-minutes'),
+                                   f'`{label}` step `timeout-minutes`')
+            expected = GATE_STEP_TIMEOUT_MINUTES[label]
+            if timeout != str(expected):
+                raise CheckFailure(
+                    f'#1809 r11 step timeout: `{label}` expected `{expected}`, '
+                    f'got `{timeout}`; the declared cap must stay pinned')
+            cap_seconds = int(timeout) * 60
+        if identity in JOB_OVERHEAD_STEPS:
+            seconds, passes, limit = 0, 1, JOB_OVERHEAD_MARGIN_SECONDS
+            source = 'shared JOB_OVERHEAD_MARGIN_SECONDS'
+        elif kind == 'gate' and label in ('emit 复算与金样逐字节比对', 'check 5 轮'):
+            if cap_seconds is None:
+                raise CheckFailure(f'#1809 r11 budget rule missing: `{label}` step cap')
+            seconds, passes, limit = cap_seconds, 1, cap_seconds
+            source = 'declared step timeout-minutes'
+        elif kind == 'gate' and label == '负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD':
+            spec = importlib.util.spec_from_file_location('negative_controls', CONTROLS)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            names = module.reference_rounds(FIXTURES)
+            passes = (len(names) + 1 + module.EXPECTED_CONTROLS
+                      + module.EXPECTED_POSITIVES)
+            limit = module.CHECK_TIMEOUT_SECONDS
+            seconds = passes * limit
+            source = (f'negative_controls: preflight ({len(names)}+1) + '
+                      f'controls {module.EXPECTED_CONTROLS} + '
+                      f'positives {module.EXPECTED_POSITIVES}')
+        elif kind == 'gate' and label == '装置守卫自检（七项）':
+            seconds = (EMIT_TIMEOUT_SECONDS + CHECK_TIMEOUT_SECONDS
+                       + NEGCTL_TIMEOUT_SECONDS + LOCK_WORST_CASE_SECONDS
+                       + WRITES_WORST_CASE_SECONDS)
+            passes, limit = 1, seconds
+            source = 'EMIT + CHECK + NEGCTL + one LOCK + WRITES'
+        elif kind == 'gate' and label == '接线守卫变异自检':
+            seconds = ((LOCK_CHECK_PASSES - 1) * LOCK_WORST_CASE_SECONDS
+                       + CONTROL_CHECK_SUBPROCESSES * CHECK_TIMEOUT_SECONDS)
+            passes, limit = 1, seconds
+            source = ('(LOCK_CHECK_PASSES - 1) * LOCK + '
+                      'CONTROL_CHECK_SUBPROCESSES * CHECK')
+        else:
+            raise CheckFailure(
+                f'#1809 r11 budget rule missing: {identity!r}; every declared '
+                'step needs a derived contribution or a registered overhead bucket')
+        # 保留底层原始推导供复算，再应用声明的硬上限。直跑负控原始 15600 s
+        # 不能只靠 400 min 外层兜底：ubuntu-latest 的 job 平台上限是 6 小时。
+        raw_seconds = seconds
+        if cap_seconds is not None:
+            seconds = min(seconds, cap_seconds)
+        rows.append(dict(identity=identity, seconds=seconds, raw_seconds=raw_seconds,
+                         passes=passes, limit=limit, cap_seconds=cap_seconds,
+                         source=source))
+    return rows
+
+
+def _assert_step_budget_coverage(rows):
+    """实际贡献记录与步骤/桶登记双向互证，漏算与幽灵加数都当场红。"""
+    counted = tuple(row['identity'] for row in rows)
+    if counted != RETIREMENT_STEP_ORDER:
+        raise CheckFailure(
+            f'#1809 r11 budget coverage: expected {RETIREMENT_STEP_ORDER!r}, '
+            f'got {counted!r}; declared and counted steps must match both ways')
+    overhead = frozenset(row['identity'] for row in rows
+                         if row['source'] == 'shared JOB_OVERHEAD_MARGIN_SECONDS')
+    if overhead != JOB_OVERHEAD_STEPS:
+        raise CheckFailure(
+            f'#1809 r11 overhead coverage: expected {sorted(JOB_OVERHEAD_STEPS)!r}, '
+            f'got {sorted(overhead)!r}')
+    capped = {row['identity'][1] for row in rows
+              if row['cap_seconds'] is not None}
+    if capped != set(GATE_STEP_TIMEOUT_MINUTES):
+        raise CheckFailure(
+            f'#1809 r11 step cap coverage: expected '
+            f'{sorted(GATE_STEP_TIMEOUT_MINUTES)!r}, got {sorted(capped)!r}')
 
 
 def _step_with_keys(yaml, path, step, what):
@@ -1442,10 +1558,12 @@ def check_wiring(workflow=None, pr_gate=None):
                 f'found `{label}`')
         if kind in ('gate', 'setup'):
             registry = GATE_SCRIPTS if kind == 'gate' else SETUP_SCRIPTS
-            if set(step) != {'name', 'run', 'shell'}:
+            allowed = _retirement_run_step_keys(kind, label)
+            if set(step) != allowed:
                 raise CheckFailure(
                     f'{path}: {kind} step `{label}` may only carry `name`, `run` and '
-                    f'`shell`, found {sorted(step)}; `env` / `with` / `if` / '
+                    f'`shell` (plus its registered timeout-minutes), found '
+                    f'{sorted(step)}; `env` / `with` / `if` / '
                     '`continue-on-error` can disable the step or replace what it executes')
             if _scalar_text(yaml, path, step['shell'],
                             f'`{label}` `shell`') != PINNED_STEP_SHELL:
@@ -1482,6 +1600,14 @@ def check_wiring(workflow=None, pr_gate=None):
                     f'{sorted(with_keys)}; an added `with: ref/repository` on the '
                     'checkout makes the gates run scripts from a different tree while '
                     'every pinned `run` scalar stays verbatim-identical')
+
+    rows = retirement_budget_rows(path)
+    _assert_step_budget_coverage(rows)
+    internal = sum(row['seconds'] for row in rows)
+    if internal != INTERNAL_WORST_CASE_SECONDS:
+        raise CheckFailure(
+            f'#1809 r11 budget total: expected {INTERNAL_WORST_CASE_SECONDS}s, '
+            f'got {internal}s from actual job steps')
 
     # 聚合闸门那一侧同样要守：Require step 被 `if: false` 挡掉、条件被改弱、或
     # `run: exit 0` 时，retirement job 照跑照过，job 结果仍是 success。
@@ -2249,7 +2375,8 @@ SAMPLE_FAILURE_ANCHORS = {
     'aggregate-job-if-false': '`check` job condition',
     'multi-document': 'expected exactly one YAML document',
     'root-defaults-shell': 'unregistered root key',
-    'gate-step-shell-removed': "found ['name', 'run']",
+    'gate-step-shell-removed':
+        f"found {sorted(_retirement_run_step_keys('gate', 'check 5 轮') - {'shell'})}",
     'gate-step-shell-swapped': 'must pin `shell: bash`',
     'require-step-shell-swapped': 'the aggregate Require step must pin `shell: bash`',
     'rust-step-shell-removed': 'has a run step without the pinned `shell: bash`',
@@ -2262,7 +2389,8 @@ SAMPLE_FAILURE_ANCHORS = {
     'require-if-continuation': 'the aggregate Require step condition',
     'folded-block': 'is a folded block',
     'job-outside-jobs': 'no `retirement-outcome-parity` job under `jobs:`',
-    'retirement-job-timeout-lowered': 'must stay exactly `130`',
+    'retirement-job-timeout-lowered':
+        f'must stay exactly `{RETIREMENT_JOB_TIMEOUT_MINUTES}`',
     'pr-gate-step-shell-removed': "found ['env', 'name', 'run']",
     'pr-gate-root-defaults-shell':
         'the pr-gate workflow carries the unregistered root key',
@@ -2463,6 +2591,10 @@ def main(argv=None):
             return 2
         return run_self_check_controls(names)
     return run_checks(args.only or ORDER)
+
+
+# 唯一的完整内部和：实际声明每步贡献的遍历累加；兄弟测试同源导入这个导出值。
+INTERNAL_WORST_CASE_SECONDS = sum(row['seconds'] for row in retirement_budget_rows())
 
 
 if __name__ == '__main__':
