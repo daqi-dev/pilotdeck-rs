@@ -4977,3 +4977,8 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-08 19:41 · CLI 子循环、MCP与Hooks验证检查点
 
 8c9cbdce4已真合origin/main183d23ad7，产品字节与084d5a7a5一致，未重复或覆盖；本轮继续本机保全SDK自定义agent、fork独立MCP owner、工具前后Hook派发、SessionEnd同源沙箱/输出上限和取消drain。mbp2 r45编译/所选实际用例/双strict/四bin全0（逐文件用例数主仓 `_tmp/20261108-cli-completion/verify-r45/test-counts.txt`）；r42/r43部分interaction/switch/review筛选名曾匹配0用例，不计覆盖，现已用正确selector补跑。r42/r43 CLI全套537过140忽略，忽略生成器/子进程helper未冒称运行。真实execute_code、父子4stream+2sidecar+历史、普通/嵌套Pre与Post、HTTP proxy A→B已跑通，最新取消落盘/MCP子端点/SessionEnd溢出实跑继续。独立workflow双谱系找出计划工具文案与旧oracle不一致P1、预算边界/goal只读分类/Cron交付收尾P2，正在逐项修；产品negative fixture7个旧拒绝锚点失配另有P1，属于非冻结产品测试（不在FROZEN inventory），将保覆盖重绑，不改冻结尺子。完整CLI及人签仍未收口，SDK hooks生命周期与后台/续跑继续；唯一正本/旧树快照/本机提交和mbp2构建约束维持。
+
+
+### 2026-11-08 20:09 · CLI 计划兼容与执行代际检查点
+
+本轮恢复plan工具的完整旧提示/审批选项/turn身份，真实原生服务逐项消费固定TS9格结果+请求+快照全过；计划容量提前核验并预留首次待办空间。Cron交付纳入owned fire worker，回收等待/超时测试通过；原claim窗口三次shutdown与timeout/CRUD真实链在mbp2完成，原失败记录保留。SDK子代理现在继承创建turn实际generation（非首次prepare旧代），max_turns按真实TS正常报告，取消/timeout真实child aborted落盘已过。r47编译/plan/goal/Cron/agent/turn-host/execute_code19格真实Python语法/strict/四bin通过，native-review仅新增测试fixture缺provider失败，修后r48 34过50忽略及71负控静态绑定过；7条实际注错判杀待跑，不能以静态check替代。主证据 `_tmp/20261108-cli-completion/verify-r{47,48}`，r47冻结bin附该单失败范围。独立execution/machine评审继续；SDK特殊hooks及后台/续跑仍未完成。20:01本机磁盘短暂ENOSPC，暂停本机写并核mbp2仍91GiB；随后本机空间自行回升8.8GiB，未停止其他会话构建或删除任何材料。唯一正本/双方快照/只本机提交/仅mbp2编译约束不变，下一交接20:41。

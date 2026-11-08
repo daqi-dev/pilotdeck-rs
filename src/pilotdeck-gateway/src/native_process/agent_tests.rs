@@ -47,6 +47,7 @@ fn turn(config: JsObject) -> Arc<ForkTurn> {
         None,
         ToolRegistry::new(None, None),
         super::super::skills::NativeSkills::default(),
+        None,
         #[cfg(unix)]
         None,
     )
@@ -242,25 +243,27 @@ fn session_factory_reference_is_weak_and_does_not_form_an_assembly_cycle() {
 }
 
 #[test]
-fn child_terminal_requires_an_explicit_complete_finish_reason() {
-    assert!(terminal_is_complete(
-        Some(&"completed".into()),
-        Some(&"success".into())
-    ));
-    for reason in ["max_tokens", "length", "max_turns", "aborted", "error", ""] {
-        assert!(
-            !terminal_is_complete(Some(&reason.into()), Some(&"success".into())),
-            "{reason}"
-        );
-    }
-    assert!(!terminal_is_complete(None, Some(&"success".into())));
+fn actual_ts_max_turns_is_reportable_but_aborted_and_error_are_not() {
+    let fixture =
+        pilotdeck_protocol::parse_json(include_str!("agent_terminal_oracle.json")).unwrap();
+    let terminal = fixture.get("terminal").unwrap();
+    let kind = terminal.get("type").and_then(JsValue::as_string);
+    assert_eq!(kind, Some(&"max_turns".into()));
+    assert_eq!(terminal.get("stopReason"), Some(&"max_turns".into()));
+    assert!(terminal_is_reportable(kind));
+    let report = fixture.get("report").unwrap();
+    assert_eq!(report.get("markdown"), Some(&"".into()));
+    assert_eq!(report.get("turns"), Some(&JsValue::Number(2.0)));
+    assert_eq!(
+        fixture.get("parentCompleted").unwrap().get("errored"),
+        Some(&JsValue::Bool(false))
+    );
+    assert!(terminal_is_reportable(Some(&"success".into())));
     for kind in ["error", "aborted"] {
-        assert!(!terminal_is_complete(
-            Some(&"completed".into()),
-            Some(&kind.into())
-        ));
+        assert!(!terminal_is_reportable(Some(&kind.into())));
     }
 }
+
 #[tokio::test]
 async fn child_close_retains_pending_work_and_returns_sticky_cleanup_failure_to_every_owner() {
     let turn = turn(JsObject::new());
@@ -373,4 +376,36 @@ fn sdk_initial_prompt_is_durable_before_directive_and_wire_input_cannot_construc
         )
         .is_err()
     );
+}
+
+#[tokio::test]
+async fn warm_parent_child_inherits_actual_turn_generation_after_reload() {
+    use crate::runtime::project::{ProjectRuntimeRegistry, ResourceBundle, RuntimeState};
+    let registry = ProjectRuntimeRegistry::new(
+        "/fixture-turn-generation",
+        Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+    );
+    let prepare = registry.acquire(None).unwrap();
+    let old = prepare.runtime().clone();
+    let owner = NativeForkOwner::new(prepare);
+    registry.reload().await.unwrap();
+    let current = registry.acquire(None).unwrap();
+    let new = current.runtime().clone();
+    assert!(!Arc::ptr_eq(&old, &new));
+    assert_eq!(old.state(), RuntimeState::Retired);
+    let turn = turn(JsObject::new());
+    assert!(turn.generation.get().is_none());
+    turn.bind_generation(Arc::new(current)).unwrap();
+    let mut child = turn.generation.get().unwrap().fork().unwrap();
+    assert!(Arc::ptr_eq(child.runtime(), &new));
+    assert!(!Arc::ptr_eq(child.runtime(), &old));
+    assert!(
+        turn.bind_generation(owner.generation().unwrap()).is_err(),
+        "a later/old source cannot replace this turn's binding"
+    );
+    child.release().await.unwrap();
+    turn.clone().close().await.unwrap();
+    drop(turn);
+    owner.release_generation().await.unwrap();
+    registry.dispose().await.unwrap();
 }

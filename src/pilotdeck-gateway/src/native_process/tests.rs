@@ -985,6 +985,23 @@ async fn production_profile_and_registration() {
         assembly::validate_profile(&options, &env).await.is_ok(),
         "#1071 disabled skills module is supported"
     );
+    std::fs::write(
+        options.home.join("pilotdeck.yaml"),
+        format!("{CONFIG}modules:\n  skills: {{enabled: true, provider: pilotdeck}}\n"),
+    )
+    .expect("#1071 enabled module fixture");
+    crate::runtime::project::NativeConfigSource::new(
+        options.project.clone(),
+        env.clone(),
+        Some(options.home.clone()),
+        None,
+    )
+    .load(&options.project)
+    .expect("#1071 unsupported profile binding is valid loader input");
+    negative_assert!(
+        assembly::validate_profile(&options, &env).await.is_err(),
+        "#1071 unsupported module bindings refused"
+    );
 }
 #[test]
 fn tool_policy_and_turn_environment() {

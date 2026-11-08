@@ -128,11 +128,9 @@ impl PlanFiles for NativePlanFiles {
                 }
                 let text = String::from_utf8_lossy(&bytes);
                 let trimmed = crate::metadata::js_trim(&text);
-                if trimmed.is_empty() {
-                    Ok(JsValue::Undefined)
-                } else {
-                    Ok(JsValue::String(trimmed.into()))
-                }
+                let plan: JsString = trimmed.into();
+                super::projection::validate_plan(&plan).map_err(|e| error(e.to_string()))?;
+                Ok(JsValue::String(plan))
             })
             .await
             .map_err(|e| error(e.to_string()))?
@@ -211,6 +209,20 @@ mod tests {
             .unwrap()
             .is_undefined()
         );
+        fs::write(&path, " ").unwrap();
+        assert_eq!(
+            files
+                .read(".pilotdeck/plans/plan.md".into(), cwd.clone())
+                .await
+                .unwrap(),
+            JsValue::from("")
+        );
+        fs::write(&path, "x".repeat(3 * 1024 * 1024)).unwrap();
+        let error = files
+            .read(".pilotdeck/plans/plan.md".into(), cwd.clone())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("before requesting approval"));
         fs::OpenOptions::new()
             .write(true)
             .open(&path)

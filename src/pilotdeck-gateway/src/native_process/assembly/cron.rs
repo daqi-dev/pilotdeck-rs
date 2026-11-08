@@ -111,21 +111,77 @@ pub(super) fn bind_callbacks(
                     .map(crate::channel::protocol::ChannelKey::new),
                 text: required("text")?,
             };
-            let server = server.clone();
-            std::mem::drop(runtime.spawn(async move {
-                let task = String::from_utf16_lossy(delivery.task_id.units());
-                let run = String::from_utf16_lossy(delivery.run_id.units());
-                match tokio::time::timeout(std::time::Duration::from_secs(30), server.deliver_cron_result(delivery)).await {
-                    Ok(true) => {},
-                    Ok(false) => eprintln!("[cron] result delivery was not handled task={task} run={run}"),
-                    Err(_) => eprintln!("[cron] result delivery failed native delivery timed out task={task} run={run}"),
+            let task = String::from_utf16_lossy(delivery.task_id.units());
+            let run = String::from_utf16_lossy(delivery.run_id.units());
+            // CronFire invokes this synchronous callback on its owned OS
+            // worker. Keep delivery inside that worker's lifetime so native
+            // stop_and_drain cannot report success while delivery is pending.
+            match complete_delivery(
+                &runtime,
+                std::time::Duration::from_secs(30),
+                server.deliver_cron_result(delivery),
+            ) {
+                Ok(true) => Ok(()),
+                Ok(false) => {
+                    eprintln!("[cron] result delivery was not handled task={task} run={run}");
+                    Ok(())
                 }
-            }));
-            Ok(())
+                Err(error) => Err(CronError::error(format!(
+                    "Native cron result delivery failed task={task} run={run}: {error}"
+                ))),
+            }
         })),
         ..Default::default()
     };
     manager.set_execution_callbacks(callbacks)
+}
+
+fn complete_delivery(
+    runtime: &tokio::runtime::Handle,
+    budget: std::time::Duration,
+    delivery: impl std::future::Future<Output = bool>,
+) -> Result<bool, &'static str> {
+    runtime.block_on(async {
+        tokio::time::timeout(budget, delivery)
+            .await
+            .map_err(|_| "delivery timed out")
+    })
+}
+
+#[cfg(test)]
+mod delivery_completion_tests {
+    use super::*;
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fire_worker_cannot_finish_before_delivery_and_reports_timeout() {
+        let runtime = tokio::runtime::Handle::current();
+        let (entered, ready) = tokio::sync::oneshot::channel();
+        let (release, wait) = tokio::sync::oneshot::channel();
+        let worker = tokio::task::spawn_blocking(move || {
+            complete_delivery(&runtime, std::time::Duration::from_secs(2), async {
+                entered.send(()).unwrap();
+                wait.await.unwrap();
+                true
+            })
+        });
+        ready.await.unwrap();
+        assert!(
+            !worker.is_finished(),
+            "fire worker must retain pending delivery"
+        );
+        release.send(()).unwrap();
+        assert_eq!(worker.await.unwrap(), Ok(true));
+        let runtime = tokio::runtime::Handle::current();
+        let result = tokio::task::spawn_blocking(move || {
+            complete_delivery(
+                &runtime,
+                std::time::Duration::from_millis(20),
+                std::future::pending(),
+            )
+        })
+        .await
+        .unwrap();
+        assert_eq!(result, Err("delivery timed out"));
+    }
 }
 
 /// `submitTurn`'s input exactly as CronFire.ts:80-88 builds it — the seven

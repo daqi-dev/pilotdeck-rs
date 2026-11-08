@@ -110,19 +110,35 @@ fn mode(ctx: &ToolRunContext) -> Option<&JsString> {
         .and_then(JsValue::as_string)
 }
 fn enter(ctx: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+    let path = ctx.host.plan_directory.as_ref().map(|p| &p.path);
+    let mut message = String::new();
     if mode(ctx).is_some_and(|v| v.equals_str("plan")) {
-        return Err(fail(
-            "tool_execution_failed",
-            "Plan mode is already active. Continue working on the plan.",
-        ));
+        message.push_str("Plan mode is already active.\n\n");
+        if let Some(path) = path {
+            message.push_str(&format!("Your plan directory is: {}\nContinue refining markdown plan files under that directory, then submit one explicitly with exit_plan_mode(plan_file_path).\n\n", String::from_utf16_lossy(path.units())));
+        }
+        message.push_str(
+            "Stay in read-only exploration/planning until you are ready to call exit_plan_mode.",
+        );
+        return Err(fail("tool_execution_failed", message));
     }
-    let path = ctx
-        .host
-        .plan_directory
-        .as_ref()
-        .map(|p| String::from_utf16_lossy(p.path.units()))
-        .unwrap_or_else(|| ".pilotdeck/plans".into());
-    Ok(output(format!("Plan mode activated. Explore the project without changing implementation files. Write a markdown plan under {path}, then call exit_plan_mode to request review.").into(),object([("requestedMode",string("plan"))])))
+    message.push_str(
+        "Plan mode activated. You are now in a read-only exploration and planning phase.\n\n",
+    );
+    if let Some(path) = path {
+        message.push_str(&format!("## Plan Directory\nCreate your plan as a markdown file under: {}\nYou may name the file yourself, but it must live under this directory.\n", String::from_utf16_lossy(path.units())));
+    }
+    message.push_str("\n## What To Do\n1. Explore the codebase using read_file, grep, glob to understand existing patterns and structure\n2. Identify the key files, functions, and data flows relevant to the task\n3. Design your implementation approach — consider trade-offs between alternatives\n");
+    message.push_str(if path.is_some() {"4. Create and refine your own markdown plan file under the plan directory above\n5. When your plan is ready, call exit_plan_mode with the plan_file_path you want to submit"} else {"4. When your plan is ready, call exit_plan_mode to present it for user approval"});
+    message.push_str("\n\n## Rules\n- DO NOT call bash with write commands for any reason");
+    if path.is_some() {
+        message.push_str("; use write_file/edit_file only for markdown plan files under the designated plan directory");
+    }
+    message.push_str("\n- You MAY use ask_user_question to clarify requirements or choose between approaches\n- Focus on understanding before proposing — read first, plan second");
+    Ok(output(
+        message.into(),
+        object([("requestedMode", string("plan"))]),
+    ))
 }
 fn payload(ctx: &ToolRunContext, method: &str) -> JsObject {
     object([
@@ -216,6 +232,12 @@ async fn exit(input: JsValue, ctx: ToolRunContext) -> Result<ToolOutput, ToolErr
             ),
         ));
     };
+    if plan.is_empty() {
+        return Err(fail(
+            "invalid_tool_input",
+            "Plan file is empty. Write your plan first before calling exit_plan_mode.",
+        ));
+    }
     let question = JsValue::Object(object([
         ("question", string("What should happen next?")),
         ("header", string("Plan")),
@@ -224,13 +246,18 @@ async fn exit(input: JsValue, ctx: ToolRunContext) -> Result<ToolOutput, ToolErr
             JsValue::Array(vec![
                 JsValue::Object(object([
                     ("label", string("continue_planning")),
-                    ("description", string("Keep planning and revise the plan.")),
+                    (
+                        "description",
+                        string(
+                            "Keep planning and update the plan before any implementation starts.",
+                        ),
+                    ),
                 ])),
                 JsValue::Object(object([
                     ("label", string("execute_plan")),
                     (
                         "description",
-                        string("Approve the plan and begin implementation."),
+                        string("Leave plan mode and let the agent execute this plan."),
                     ),
                 ])),
             ]),
@@ -243,7 +270,7 @@ async fn exit(input: JsValue, ctx: ToolRunContext) -> Result<ToolOutput, ToolErr
     ]));
     let turn = ctx
         .fields
-        .get("currentToolCallId")
+        .get("turnId")
         .and_then(JsValue::as_string)
         .cloned()
         .unwrap_or_default();
@@ -285,7 +312,8 @@ async fn exit(input: JsValue, ctx: ToolRunContext) -> Result<ToolOutput, ToolErr
     }
     let Some(action) = action else {
         return Ok(output(
-            "Exit plan mode was cancelled. Continue refining the plan.".into(),
+            "Exit plan mode was cancelled. Stay in plan mode and continue refining the plan file."
+                .into(),
             object([
                 ("plan", JsValue::String(plan)),
                 ("action", string("cancelled")),
@@ -326,7 +354,7 @@ async fn exit(input: JsValue, ctx: ToolRunContext) -> Result<ToolOutput, ToolErr
             ("plan", JsValue::String(plan.clone())),
             ("action", JsValue::String(action)),
             ("requestedMode", string("default")),
-            ("planFilePath", JsValue::String(resolved)),
+            ("planFilePath", JsValue::String(resolved.clone())),
         ]);
         if let Some(title) = title {
             data.insert("planTitle".into(), JsValue::String(title));
@@ -338,9 +366,14 @@ async fn exit(input: JsValue, ctx: ToolRunContext) -> Result<ToolOutput, ToolErr
             );
         }
         let mut units: Vec<u16> =
-            "The plan was approved. Initialize the todo checklist before making changes.\n\n"
+            "User has approved your plan. You can now start coding.\nDo NOT output any confirmation text like \"Plan approved, starting implementation\" — the user already knows. Proceed directly with todo_write and implementation.\nBefore using any non-read-only tool, you MUST call todo_write with a markdown checklist derived from the approved plan.\nAfter each completed implementation step, call todo_write again to refresh the checklist and mark completed items with `- [x]`.\n\nSubmitted plan file: "
                 .encode_utf16()
                 .collect();
+        units.extend_from_slice(resolved.units());
+        units.extend(
+            "\nYou can refer back to it during implementation if needed.\n\n## Approved Plan\n"
+                .encode_utf16(),
+        );
         units.extend_from_slice(plan.units());
         return Ok(output(JsString::from_utf16(units), data));
     }
@@ -363,13 +396,15 @@ async fn exit(input: JsValue, ctx: ToolRunContext) -> Result<ToolOutput, ToolErr
         ("plan", JsValue::String(plan)),
         ("action", JsValue::String(action)),
     ]);
-    let mut message: Vec<u16> = "Continue planning and revise the plan before implementation."
+    let mut message: Vec<u16> = "The user wants to continue planning before implementation. Stay in plan mode, refine the plan file, and call exit_plan_mode again when the updated plan is ready."
         .encode_utf16()
         .collect();
     if let Some(notes) = feedback {
         message.extend("\n\nUser feedback:\n".encode_utf16());
         message.extend_from_slice(notes.units());
         data.insert("feedback".into(), JsValue::String(notes));
+    } else {
+        message.extend("\n\nNo additional feedback was provided.".encode_utf16());
     }
     Ok(output(JsString::from_utf16(message), data))
 }

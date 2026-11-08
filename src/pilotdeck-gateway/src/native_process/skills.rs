@@ -314,4 +314,30 @@ mod disabled_tests {
                 .any(|tool| tool.fields().get("name") == Some(&"read_skill".into()))
         );
     }
+    #[test]
+    fn configured_skill_contributions_are_readable_and_registered() {
+        let catalog = NativeSkills::from_contributions(&[PluginSkillContribution {
+            name: "fixture:example".into(),
+            description: Some("Configured fixture".into()),
+            path: std::path::PathBuf::from("/fixture/example/SKILL.md"),
+            content: "ORIGINAL-CONTRIBUTION\n".into(),
+            namespace: "fixture".into(),
+        }]);
+        let registry = ToolRegistry::new(None, None);
+        catalog.register(&registry);
+        let output = catalog.read(&"fixture:example".into());
+        let content = output
+            .content
+            .iter()
+            .filter_map(|block| block.get("text").and_then(JsValue::as_string))
+            .map(|value| String::from_utf16_lossy(value.units()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        crate::negative_assert!(
+            registry.has(&"read_skill".into())
+                && catalog.list_skills().len() == 1
+                && content.contains("ORIGINAL-CONTRIBUTION\n"),
+            "#1071 configured skill contributions reach the native tool"
+        );
+    }
 }

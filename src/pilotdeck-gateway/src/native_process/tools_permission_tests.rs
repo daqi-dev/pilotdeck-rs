@@ -563,3 +563,7 @@ async fn plan_enter_blocks_a_sibling_write_in_the_same_batch() {
 
 #[path = "ask_mode_native_tests.rs"]
 mod ask_mode_native_tests;
+
+#[cfg(unix)]
+#[path = "plan_contract_tests.rs"]
+mod plan_contract_tests;

@@ -67,6 +67,14 @@ pub trait ToolContext: Send + Sync {
 
 /// Port implementations must return promptly and do I/O asynchronously.
 pub trait ToolExecution: ToolCatalog {
+    /// The actual turn's generation, bound by TurnHostFactory after acquire.
+    /// Native forks inherit this capability; they cannot choose a registry entry.
+    fn bind_execution_generation(
+        &self,
+        _generation: Arc<crate::runtime::project::RuntimeLease>,
+    ) -> Result<(), HostError> {
+        Ok(())
+    }
     fn applies_mode_effects(&self) -> bool {
         false
     }

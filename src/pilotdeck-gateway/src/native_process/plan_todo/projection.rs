@@ -226,6 +226,8 @@ impl Snapshot {
         {
             return Ok(());
         }
+        // Restore historical events with their original limit. New approvals
+        // are validated before append by PlanTodo::execute.
         let charge = if kind.equals_str("plan_todo_progressed") {
             0
         } else {
@@ -366,6 +368,23 @@ impl Snapshot {
     }
 }
 
+/// Plan admission reserves half of the bounded projection for its first
+/// checklist and later history. Apply the same check before asking the user
+/// and before a machine caller can append an approval event.
+pub(super) fn validate_plan(plan: &JsString) -> Result<(), RuntimeError> {
+    let event = JsValue::Object(object([
+        ("type", "plan_todo_plan_changed".into()),
+        ("plan", JsValue::String(plan.clone())),
+    ]));
+    if measure(&event)?.checked_mul(4).ok_or_else(limit)? > crate::native_ws::MAX_OUTPUT_PAYLOAD / 2
+    {
+        return Err(RuntimeError::new(
+            "Plan is too large for the bounded plan/todo projection; shorten it before requesting approval.",
+        ));
+    }
+    Ok(())
+}
+
 fn limit() -> RuntimeError {
     RuntimeError::new("Plan/todo projection exceeds Gateway resource limit.")
 }
@@ -438,6 +457,40 @@ mod tests {
                 "event {index}"
             );
         }
+    }
+    #[test]
+    fn admitted_plan_reserves_checklist_room_and_rejected_history_keeps_previous_state() {
+        let plan: JsString = "x"
+            .repeat(crate::native_ws::MAX_OUTPUT_PAYLOAD / 48 - 256)
+            .into();
+        validate_plan(&plan).unwrap();
+        let mut state = Snapshot::default();
+        state
+            .apply(&JsValue::Object(object([
+                ("type", "plan_todo_plan_changed".into()),
+                ("plan", JsValue::String(plan)),
+            ])))
+            .unwrap();
+        let write = pilotdeck_protocol::parse_json(r#"{"type":"plan_todo_written","mode":"markdown","markdown":"- [ ] first","todos":[{"id":"1","content":"first","status":"in_progress"}]}"#).unwrap();
+        state.apply(&write).unwrap();
+        assert_eq!(
+            state.value().get("requiresInitialization"),
+            Some(&JsValue::Bool(false))
+        );
+        let before = state.value();
+        state.budget = crate::native_ws::MAX_OUTPUT_PAYLOAD;
+        assert!(state.apply(&write).is_err());
+        assert_eq!(
+            state.value(),
+            before,
+            "rejected write must not mutate current projection or restore the initialization gate"
+        );
+        assert!(
+            validate_plan(&JsString::from(
+                "x".repeat(crate::native_ws::MAX_OUTPUT_PAYLOAD / 48)
+            ))
+            .is_err()
+        );
     }
     #[test]
     fn lone_surrogate_survives_normalization() {

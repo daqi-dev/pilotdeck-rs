@@ -537,7 +537,16 @@ async fn start_assembly(
             let sdk = prepare_sdk.clone();
             Box::pin(async move {
                 let fork_scope = forks.scope(&context);
-                let lease = project.acquire(None)?;
+                let lease = match &fork_scope {
+                    Some(scope) => scope
+                        .generation
+                        .upgrade()
+                        .ok_or_else(|| {
+                            RuntimeError::new("Parent fork execution world has been released.")
+                        })?
+                        .fork()?,
+                    None => project.acquire(None)?,
+                };
                 let resources = lease
                     .runtime()
                     .resources()
@@ -768,7 +777,14 @@ async fn start_assembly(
                         .context_runtime,
                 );
                 let mut retained = PreparedResources::default();
-                retained.retain_lease(lease);
+                let fork_owner = super::agent::NativeForkOwner::new(lease);
+                let pinned_generation = if fork_scope.is_some() {
+                    fork_owner.generation().map(|lease| Arc::downgrade(&lease))
+                } else {
+                    None
+                };
+                let release_owner = fork_owner.clone();
+                retained.push(move || release_owner.release_generation());
                 retained.push(move || {
                     Box::pin(async move {
                         skill_lease
@@ -911,6 +927,13 @@ async fn start_assembly(
                     ..Default::default()
                 };
                 let session = context.session_key;
+                let closing_owner = fork_owner.clone();
+                retained.push(move || {
+                    Box::pin(async move {
+                        closing_owner.close_admission();
+                        Ok(())
+                    })
+                });
                 Ok(PreparedSession {
                     resources: retained,
                     tail,
@@ -960,7 +983,7 @@ async fn start_assembly(
                         .with_plan_files(plan_files)
                         .with_skills(native_skills, native_context)
                         .with_fork_mcp_names(fork_mcp_names)
-                        .with_forks(forks, fork_scope);
+                        .with_forks(forks, fork_scope, fork_owner);
                         #[cfg(unix)]
                         let ports = ports
                             .with_background_tasks(background_tasks)
@@ -983,6 +1006,7 @@ async fn start_assembly(
                                 None => turn_ports(&ports, identity, recorder, signal),
                             },
                         )
+                        .with_pinned_generation(pinned_generation)
                         .with_agent_config(config)
                         // #1864 (b): TS re-reads the permission-mode override
                         // on every run (InProcessGateway.ts:1443), so an

@@ -17,6 +17,8 @@ import sys
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
+SERVER_HOST = ROOT / 'src/pilotdeck-gateway/src/native_process/server_host.rs'
+SKILLS = ROOT / 'src/pilotdeck-gateway/src/native_process/skills.rs'
 FAMILIES = ROOT / 'src/pilotdeck-gateway/src/native_process/families.rs'
 ASSEMBLY = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
@@ -194,10 +196,7 @@ impl Clone for ReplacementCoordinator {
     ('empty-project-boundaries', MARKER_ORACLE,
      '"boundaries": [', '"boundaries": [], "unusedBoundaries": [',
      'native_process::tests::review::project_path_boundaries_worker', '#1137 project boundary matrix count'),
-    ('configured-hooks', ASSEMBLY,
-     'row.get("path") == Some(&"hooks".into())',
-     'row.get("path") == Some(&"unused-hooks".into())',
-     'native_process::tests::review::configured_hooks_are_refused', '#1071 configured hooks refused before readiness'),
+    ('configured-hooks', ASSEMBLY, '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK', '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK\n    if snapshot.get("diagnostics").is_some_and(|value| matches!(value, JsValue::Array(rows) if rows.iter().any(|row| row.get("path") == Some(&"hooks".into())))) { return Err("#1071 incorrectly refusing ignored top-level hooks".into()); }', 'native_process::tests::review::top_level_hooks_are_ignored_like_ts', '#1071 unknown top-level hooks do not become persistent hooks'),
     ('refreshed-hooks', SERVICES,
      'super::assembly::validate_profile(&self.options, &self.env)',
      'async { Ok::<(), crate::ProxyError>(()) }',
@@ -205,17 +204,7 @@ impl Clone for ReplacementCoordinator {
     ('cleanup-first-error', ASSEMBLY,
      'sessions.and(project)', 'project.and(sessions)',
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup returns first error'),
-    ('cleanup-skips-project-after-error', ASSEMBLY,
-     '''let project = cleanup_observer(
-                    "project",
-                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
-                )
-                .await;''',
-     '''let project = if sessions.is_err() { Ok(()) } else { cleanup_observer(
-                    "project",
-                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
-                ).await };''',
-     'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup attempts both resources'),
+    ('cleanup-skips-project-after-error', ASSEMBLY, '                let project = cleanup_project.dispose().await.map_err(|e| e.to_string());\n                project_finished.store(true, std::sync::atomic::Ordering::Release);\n                let project = cleanup_observer("project", project).await;', '                let project = if sessions.is_err() { Ok(()) } else {\n                    let project = cleanup_project.dispose().await.map_err(|e| e.to_string());\n                    project_finished.store(true, std::sync::atomic::Ordering::Release);\n                    cleanup_observer("project", project).await\n                };', 'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup attempts both resources'),
     ('cleanup-project-diagnostic', ASSEMBLY,
      'cleanup_diagnostic(error);', 'let _ = error;',
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup reports project failure'),
@@ -264,18 +253,12 @@ impl Clone for ReplacementCoordinator {
     # completed machine is the clean exit — the anchor is the Ok arm of the
     # machine's match (a clean signal exit that reports failure is exactly
     # the #1071 regression this control kills).
-    ('signal-exit-status', SOURCE,
-     '        Ok(()) => Ok(()),',
-     '        Ok(()) => Err("#1071 incorrect clean signal status".into()),',
-     'executable_native_and_a4', '#1071 executable clean signal exit'),
+    ('signal-exit-status', SERVER_HOST, '        Ok(()) => Ok(if restart {\n            HostExit::Restart\n        } else {\n            HostExit::Stopped\n        }),', '        Ok(()) => { let _ = restart; Err("#1071 incorrect clean signal status".into()) },', 'executable_native_and_a4', '#1071 executable clean signal exit'),
     ('non-utf8-environment', SOURCE,
      'value.to_string_lossy().into_owned()',
      'value.to_str().expect("#1071 invalid environment mutation").to_owned()',
      'native_process::tests::explicit_options_and_environment', '#1071 non UTF-8 environment does not panic'),
-    ('configured-modules', ASSEMBLY,
-     '.is_some_and(|modules| !modules.own_entries().is_empty())',
-     '.is_some_and(|modules| modules.own_entries().is_empty())',
-     'native_process::tests::production_profile_and_registration', '#1071 unsupported module bindings refused'),
+    ('configured-modules', ASSEMBLY, '        .and_then(|v| v.get("modules"))\n        .and_then(JsValue::as_object)', '        .and_then(|v| v.get("unusedModules"))\n        .and_then(JsValue::as_object)', 'native_process::tests::production_profile_and_registration', '#1071 unsupported module bindings refused'),
     ('disconnected-cancel-signal', ASSEMBLY,
      'ports.turn(identity, recorder, signal)',
      'ports.turn(identity, recorder, { let _ = signal; crate::runtime::hooks::Cancellation::new() })',
@@ -332,18 +315,9 @@ impl Clone for ReplacementCoordinator {
      'std::fs::hard_link(&temporary, &marker)',
      'Ok(())',
      'native_process::tests::production_profile_and_registration', '#1071 project visible to metadata'),
-    ('configured-mcp', ASSEMBLY,
-     'if !mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty() {',
-     'if false && (!mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty()) {',
-     'native_process::tests::production_profile_and_registration', '#1071 unsupported MCP refused'),
-    ('configured-contributions', ASSEMBLY,
-     'if entries.count() != 0 {',
-     'if entries.count() == usize::MAX {',
-     'native_process::tests::production_profile_and_registration', '#1071 unsupported contributions refused'),
-    ('configured-subagents', ASSEMBLY,
-     '.is_some_and(|v| !v.is_undefined())',
-     '.is_some_and(|v| v.is_undefined())',
-     'native_process::tests::production_profile_and_registration', '#1071 unsupported subagents refused'),
+    ('configured-mcp', TOOLS, '        for tool in &self.per_session {\n            // Atomic raw-name replacement', '        for tool in &self.per_session[0..0] {\n            // Atomic raw-name replacement', 'native_process::tools::tests::register_keeps_shared_names_and_replaces_per_session_names', '#1433 a per-session MCP tool replaces the same-name builtin'),
+    ('configured-contributions', SKILLS, '            skills\n                .iter()\n                .map(|skill| NativeSkill {', '            skills\n                .iter()\n                .take(0)\n                .map(|skill| NativeSkill {', 'native_process::skills::disabled_tests::configured_skill_contributions_are_readable_and_registered', '#1071 configured skill contributions reach the native tool'),
+    ('configured-subagents', ASSEMBLY, '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK', '    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK\n    if snapshot.get("config").and_then(|config| config.get("agent")).and_then(|agent| agent.get("subagents")).is_some_and(|value| !value.is_undefined()) { return Err("#1071 incorrectly refusing supported subagents".into()); }', 'native_process::tests::production_profile_and_registration', 'native default subagent configuration is supported'),
     ('empty-allowlist', TOOLS,
      'allowed.as_ref().is_none_or(|names| names.contains(name))',
      'allowed.as_ref().is_none_or(|_names| true)',
@@ -357,14 +331,16 @@ impl Clone for ReplacementCoordinator {
 
 def test_body(test, texts=None):
     if texts is None:
-        texts = {path: path.read_text() for path in [TESTS, PROCESS_TEST, WS_TEST, REVIEW_TEST]}
+        texts = {path: path.read_text() for path in [TESTS, PROCESS_TEST, WS_TEST, REVIEW_TEST, TOOLS, SKILLS]}
     path = (REVIEW_TEST if test.startswith('native_process::tests::review::') else
+            TOOLS if test.startswith('native_process::tools::tests::') else
+            SKILLS if test.startswith('native_process::skills::disabled_tests::') else
             TESTS if test.startswith('native_process::tests::') else
             WS_TEST if test.startswith('native_ws::tests::') else PROCESS_TEST)
-    # These files use top-level test functions. A column-zero closing brace is
-    # the end of this function, so a sibling's assertion cannot satisfy it.
-    pattern = r'^(?:async )?fn ' + re.escape(test.rsplit('::', 1)[-1]) + r'\([^\n]*\).*?^}'
-    bodies = re.findall(pattern, texts[path], re.M | re.S)
+    # Match this function's own indentation, including existing nested test
+    # modules. A sibling's assertion must never satisfy its receipt binding.
+    pattern = r'^(?P<indent>[ \t]*)(?:async )?fn ' + re.escape(test.rsplit('::', 1)[-1]) + r'\([^\n]*\).*?^(?P=indent)}'
+    bodies = [match.group(0) for match in re.finditer(pattern, texts[path], re.M | re.S)]
     return bodies[0] if len(bodies) == 1 else ''
 
 
@@ -374,6 +350,11 @@ def check_binding_scope():
         raise RuntimeError('#1071 binding checker accepted sibling assertion')
     if 'only sibling' not in test_body('sibling', {PROCESS_TEST: fixture}):
         raise RuntimeError('#1071 binding checker lost its own assertion')
+    nested = 'mod tests {\n    fn target() {\n    }\n    fn sibling() {\n        assert!(false, "only nested sibling");\n    }\n}\n'
+    if 'only nested sibling' in test_body('target', {PROCESS_TEST: nested}):
+        raise RuntimeError('#1071 binding checker accepted nested sibling assertion')
+    if 'only nested sibling' not in test_body('sibling', {PROCESS_TEST: nested}):
+        raise RuntimeError('#1071 binding checker lost nested own assertion')
 
 
 def main():
@@ -406,7 +387,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [SOURCE, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
+    guarded = [SOURCE, SERVER_HOST, SKILLS, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
                ROOT / 'src/pilotdeck-gateway/src/lib.rs',

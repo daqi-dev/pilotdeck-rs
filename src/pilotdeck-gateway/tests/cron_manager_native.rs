@@ -3,7 +3,7 @@
 //! `SessionAdmission` from the committed trees in
 //! `tests/fixtures/native-cron/`.
 //!
-//! The three seams this issue owns from the #1305 CronFire/CronScheduler
+//! The three seams this issue owns from the #2295 CronFire/CronScheduler
 //! contract:
 //! - the active-run registry (`registerActiveRun`/`unregisterActiveRun`,
 //!   CronRuntime.ts:412-420) — the cancel and stop-drain paths observe it;

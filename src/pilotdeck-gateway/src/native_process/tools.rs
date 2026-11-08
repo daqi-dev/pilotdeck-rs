@@ -63,6 +63,7 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 
 pub struct SessionTools {
     forks: Option<Arc<super::agent::NativeForkRegistry>>,
+    fork_owner: Option<Arc<super::agent::NativeForkOwner>>,
     fork_scope: Option<Arc<super::agent::ForkScope>>,
     web: Option<super::web::NativeWebTools>,
     skills: super::skills::NativeSkills,
@@ -119,6 +120,7 @@ impl SessionTools {
         );
         Ok(Self {
             forks: None,
+            fork_owner: None,
             fork_scope: None,
             goal,
             plugin_hooks: Vec::new(),
@@ -155,9 +157,11 @@ impl SessionTools {
         mut self,
         forks: Arc<super::agent::NativeForkRegistry>,
         scope: Option<Arc<super::agent::ForkScope>>,
+        owner: Arc<super::agent::NativeForkOwner>,
     ) -> Self {
         self.forks = Some(forks);
         self.fork_scope = scope;
+        self.fork_owner = Some(owner);
         self
     }
     pub(super) fn with_fork_mcp_names(mut self, names: Vec<JsString>) -> Self {
@@ -387,6 +391,7 @@ impl SessionTools {
                 self.fork_scope.as_deref(),
                 tools.clone(),
                 self.skills.clone(),
+                self.fork_owner.as_ref(),
                 #[cfg(unix)]
                 self.native_sandbox.clone(),
             )

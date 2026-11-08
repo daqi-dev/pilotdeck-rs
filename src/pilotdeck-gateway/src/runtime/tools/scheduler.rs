@@ -478,7 +478,10 @@ impl ToolRuntime {
                 for effect in &result.effects {
                     match effect {
                         HookEffect::Block { reason, .. } => {
-                            return fail(&name, ToolError::new("permission_denied", reason.clone()));
+                            return fail(
+                                &name,
+                                ToolError::new("permission_denied", reason.clone()),
+                            );
                         }
                         HookEffect::PermissionDecision { behavior, reason }
                             if behavior.equals_str("deny") =>

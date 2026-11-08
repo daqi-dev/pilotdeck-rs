@@ -117,6 +117,7 @@ impl PlanTodo {
                 }
                 if method.equals_str("mark_plan_approved") {
                     let plan = get_string(&payload, "plan")?;
+                    projection::validate_plan(plan).map_err(|e| error(e.to_string()))?;
                     let units = crate::runtime::memory::js_trim_units(plan.units());
                     draft.insert("type".into(), "plan_todo_plan_changed".into());
                     draft.insert(

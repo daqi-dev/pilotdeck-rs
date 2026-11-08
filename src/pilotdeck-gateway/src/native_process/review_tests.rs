@@ -418,6 +418,79 @@ async fn top_level_hooks_are_ignored_like_ts() {
             assembly::validate_profile(&options, &env).await.is_ok(),
             "#1071 unknown top-level hooks do not become persistent hooks"
         );
+        use crate::runtime::project::ConfigSource;
+        let snapshot = crate::runtime::project::NativeConfigSource::new(
+            options.project.clone(),
+            env.clone(),
+            Some(options.home.clone()),
+            None,
+        )
+        .load(&options.project)
+        .expect("#1071 production hooks configuration projection");
+        let projected = snapshot.get("config").expect("#1071 projected config");
+        negative_assert!(
+            projected.get("hooks").is_none_or(JsValue::is_undefined),
+            "#1071 unknown top-level hooks absent from production projection"
+        );
+        let mut agent = projected
+            .get("agent")
+            .and_then(JsValue::as_object)
+            .cloned()
+            .unwrap_or_default();
+        negative_assert!(
+            agent.get("hooks").is_none_or(JsValue::is_undefined),
+            "#1071 unknown top-level hooks do not become agent settings"
+        );
+        agent.insert(
+            "cwd".into(),
+            options.project.to_string_lossy().as_ref().into(),
+        );
+        use crate::host::modules::tool_context::HostToolCheckpoint;
+        use crate::runtime::session::{SessionContext, factory::SessionBinding};
+        let recorder = crate::runtime::turn::live::test_recorder();
+        let binding = SessionBinding {
+            context: SessionContext {
+                session_key: "hook-source-probe".into(),
+                project_key: None,
+                channel_key: "probe".into(),
+                allowed_tools: None,
+                disallowed_tools: None,
+            },
+            recorder: recorder.clone(),
+            checkpoint: HostToolCheckpoint::new(None, &[]).expect("#1071 hooks checkpoint"),
+            projection: Arc::default(),
+        };
+        let tools = tools::SessionTools::new(
+            &options,
+            &env,
+            binding,
+            agent,
+            Arc::default(),
+            Arc::default(),
+            tools::SessionMcpTools::empty(),
+        )
+        .expect("#1071 production hook-source session tools");
+        let identity = pilotdeck_protocol::admission::ExecutionIdentity {
+            request_id: "hook-request".into(),
+            run_id: "hook-run".into(),
+            operation_id: "hook-operation".into(),
+            session_id: "hook-source-probe".into(),
+            turn_id: "hook-turn".into(),
+        };
+        let ports = assembly::turn_ports(
+            &tools,
+            &identity,
+            recorder,
+            crate::runtime::hooks::Cancellation::new(),
+        );
+        negative_assert!(
+            ports.interaction.hooks.is_empty()
+                && ports
+                    .context_config
+                    .get("hooks")
+                    .is_none_or(JsValue::is_undefined),
+            "#1071 ignored top-level hooks never enter native turn hook authority"
+        );
         std::fs::remove_file(path).expect("#1071 remove hook config fixture");
     }
 }

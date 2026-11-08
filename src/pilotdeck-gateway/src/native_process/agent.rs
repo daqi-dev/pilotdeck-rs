@@ -74,6 +74,10 @@ fn concat(parts: &[&JsString]) -> JsString {
     )
 }
 
+#[path = "agent_background.rs"]
+mod background;
+pub(super) use background::NativeForkOwner;
+
 pub(super) struct NativeForkRegistry {
     factory: OnceLock<Weak<ProjectSessionFactory>>,
     scopes: Mutex<HashMap<JsString, Arc<ForkScope>>>,
@@ -110,6 +114,7 @@ pub(super) struct ForkScope {
     pub store: Arc<dyn TranscriptStore>,
     pub key: TranscriptKey,
     pub skills: super::skills::NativeSkills,
+    pub generation: Weak<crate::runtime::project::RuntimeLease>,
     channel: JsString,
 }
 impl ForkScope {
@@ -151,6 +156,8 @@ pub(super) struct ForkTurn {
     prompt_route: Option<JsString>,
     tools: ToolRegistry,
     skills: super::skills::NativeSkills,
+    generation: OnceLock<Arc<crate::runtime::project::RuntimeLease>>,
+    owner: Option<Weak<NativeForkOwner>>,
     #[cfg(unix)]
     sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     events: mpsc::Sender<JsObject>,
@@ -173,6 +180,7 @@ impl ForkTurn {
         scope: Option<&ForkScope>,
         tools: ToolRegistry,
         skills: super::skills::NativeSkills,
+        owner: Option<&Arc<NativeForkOwner>>,
         #[cfg(unix)] sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     ) -> Arc<Self> {
         let (events, events_rx) = mpsc::channel(16);
@@ -187,6 +195,8 @@ impl ForkTurn {
             prompt_route: scope.map(|scope| scope.prompt_session.clone()),
             tools,
             skills,
+            generation: OnceLock::new(),
+            owner: owner.map(Arc::downgrade),
             #[cfg(unix)]
             sandbox,
             events,
@@ -196,6 +206,14 @@ impl ForkTurn {
             next: AtomicU64::new(1),
             cleanup_errors: Mutex::default(),
             close_done,
+        })
+    }
+    fn bind_generation(
+        &self,
+        generation: Arc<crate::runtime::project::RuntimeLease>,
+    ) -> Result<(), HostError> {
+        self.generation.set(generation).map_err(|_| {
+            ModuleError::new("Native fork execution generation is already bound.").into()
         })
     }
     async fn emit(&self, mut value: JsObject) -> Result<(), ToolError> {
@@ -358,6 +376,12 @@ impl ToolCatalog for ForkExecution {
     }
 }
 impl ToolExecution for ForkExecution {
+    fn bind_execution_generation(
+        &self,
+        generation: Arc<crate::runtime::project::RuntimeLease>,
+    ) -> Result<(), HostError> {
+        self.turn.bind_generation(generation)
+    }
     fn applies_mode_effects(&self) -> bool {
         self.inner.applies_mode_effects()
     }
@@ -575,6 +599,11 @@ impl ForkApi {
                 ),
                 "subagent_depth_exceeded",
             ));
+        }
+        if let Some(owner) = &self.turn.owner
+            && !owner.upgrade().is_some_and(|owner| owner.is_open())
+        {
+            return Err(ToolError::aborted());
         }
         let permit = self
             .turn
@@ -827,6 +856,12 @@ impl ForkApi {
             store,
             key,
             skills,
+            generation: self
+                .turn
+                .generation
+                .get()
+                .map(Arc::downgrade)
+                .ok_or_else(|| error("Parent fork execution world is unavailable."))?,
             channel: channel.clone(),
         });
         lock(&self.turn.registry.scopes).insert(session.clone(), scope);
@@ -1022,7 +1057,6 @@ impl ForkApi {
             Err(e) => Err(error(e.to_string())),
             Ok(mut stream) => {
                 let mut terminal = None;
-                let mut terminal_finish = None;
                 let mut last_text = JsString::default();
                 let mut failure = None;
                 loop {
@@ -1052,10 +1086,6 @@ impl ForkApi {
                             let kind = event.get("type").and_then(JsValue::as_string);
                             if kind.is_some_and(|kind| kind.equals_str("turn_completed")) {
                                 terminal = event.get("result").cloned();
-                                terminal_finish = event
-                                    .get("result")
-                                    .and_then(|result| result.get("stopReason"))
-                                    .cloned();
                             }
                             if kind.is_some_and(|kind| kind.equals_str("assistant_message"))
                                 && let Some(message) = event.get("message")
@@ -1086,7 +1116,7 @@ impl ForkApi {
                     Err(failure)
                 } else if let Some(result) = terminal {
                     let kind = result.get("type").and_then(JsValue::as_string);
-                    if !terminal_is_complete(terminal_finish.as_ref(), kind) {
+                    if !terminal_is_reportable(kind) {
                         Err(error(format!(
                             "Subagent turn failed: {}",
                             pilotdeck_protocol::stringify_json(&result)
@@ -1172,11 +1202,11 @@ impl ForkApi {
         Ok(())
     }
 }
-fn terminal_is_complete(finish: Option<&JsValue>, kind: Option<&JsString>) -> bool {
-    finish
-        .and_then(JsValue::as_string)
-        .is_some_and(|value| value.equals_str("completed"))
-        && !kind.is_some_and(|value| value.equals_str("error") || value.equals_str("aborted"))
+fn terminal_is_reportable(kind: Option<&JsString>) -> bool {
+    // The fixed TS SubAgentSession rejects aborted/error types only. A
+    // max_turns result is a real (possibly empty) report, with its exact
+    // termination reason retained in the selected child transcript.
+    !kind.is_some_and(|value| value.equals_str("error") || value.equals_str("aborted"))
 }
 
 fn definitions(config: &JsObject) -> JsObject {

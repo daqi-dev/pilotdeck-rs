@@ -212,6 +212,7 @@ pub struct TurnHostFactory {
     expected_module_id: Option<JsString>,
     ports: Arc<PortsFactory>,
     agent_config: Option<JsObject>,
+    pinned_generation: Option<std::sync::Weak<RuntimeLease>>,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
 }
 
@@ -278,8 +279,19 @@ impl TurnHostFactory {
             expected_module_id,
             ports: Arc::new(ports),
             agent_config: None,
+            pinned_generation: None,
             permission_mode_source: None,
         }
+    }
+
+    /// Native child sessions retain the parent's selected execution world.
+    /// A missing pin rejects; it never silently falls back to a newer world.
+    pub(crate) fn with_pinned_generation(
+        mut self,
+        generation: Option<std::sync::Weak<RuntimeLease>>,
+    ) -> Self {
+        self.pinned_generation = generation;
+        self
     }
 
     /// Bind the session's explicit serialized AgentRuntimeConfig.
@@ -399,10 +411,19 @@ impl TurnHostFactory {
                 ));
             }
         };
-        let lease = self
-            .registry
-            .acquire(None)
-            .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
+        let lease = match &self.pinned_generation {
+            Some(generation) => generation
+                .upgrade()
+                .ok_or_else(|| {
+                    HostError::new(
+                        HostErrorKind::Session,
+                        "Pinned child execution world has been released.",
+                    )
+                })?
+                .fork(),
+            None => self.registry.acquire(None),
+        }
+        .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let ports = (self.ports)(identity, recorder, signal, authority);
         let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
@@ -456,6 +477,11 @@ impl TurnHostFactory {
             })?
             .context();
         let profile = context.profile().interaction;
+        tool_execution.bind_execution_generation(Arc::new(
+            lease
+                .fork()
+                .map_err(|error| HostError::new(HostErrorKind::Session, error.message))?,
+        ))?;
         tool_context.bind_interaction_profile(profile)?;
         if interaction.switches.elicitation_available == Some(true) {
             interaction.switches.elicitation_available =

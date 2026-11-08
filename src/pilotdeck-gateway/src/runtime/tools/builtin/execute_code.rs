@@ -5,6 +5,8 @@ mod boundary_tests;
 mod process;
 mod rpc;
 #[cfg(test)]
+mod syntax_tests;
+#[cfg(test)]
 mod tests;
 use super::{object, schema, string, text};
 use crate::{
@@ -178,30 +180,9 @@ impl ExecutableTool for ExecuteCodeTool {
                 if let Ok(result) = result
                     && !result.timed_out
                     && result.exit_code != Some(0)
-                    && let Ok(value) = pilotdeck_protocol::parse_json(&result.stdout)
+                    && let Some(diagnostic) = syntax_issue(&result.stdout)
                 {
-                    let line = value
-                        .get("line")
-                        .and_then(JsValue::as_number)
-                        .filter(|n| *n > 0.)
-                        .unwrap_or(1.);
-                    let column = value
-                        .get("column")
-                        .and_then(JsValue::as_number)
-                        .filter(|n| *n > 0.)
-                        .unwrap_or(1.);
-                    let message = value
-                        .get("message")
-                        .and_then(JsValue::as_string)
-                        .map(text)
-                        .unwrap_or_else(|| "Invalid Python syntax.".into());
-                    issues.push(issue(
-                        "$.code",
-                        format!(
-                            "Python syntax error at L{line}:{column}: {}",
-                            message.trim()
-                        ),
-                    ));
+                    issues.push(diagnostic);
                 }
             }
             Ok((!issues.is_empty()).then_some(issues))
@@ -244,6 +225,65 @@ impl ExecutableTool for ExecuteCodeTool {
             ))
         })
     }
+}
+// syntaxDiagnostics.ts clips the checker string before JSON parsing; its
+// MAX_CHECKER_OUTPUT_BYTES name is historical, but String.slice counts UTF-16.
+fn syntax_issue(stdout: &str) -> Option<JsObject> {
+    let clipped = stdout.encode_utf16().take(16_384).collect::<Vec<_>>();
+    let value = pilotdeck_protocol::parse_json(&String::from_utf16_lossy(&clipped)).ok()?;
+    if !matches!(&value, JsValue::Array(_) | JsValue::Object(_)) {
+        return None;
+    }
+    let positive = |key: &str| {
+        value
+            .get(key)
+            .and_then(JsValue::as_number)
+            .filter(|n| n.is_finite())
+            .map(f64::floor)
+            .filter(|n| *n > 0.)
+            .unwrap_or(1.)
+    };
+    let line = positive("line");
+    let column = positive("column");
+    let message = value
+        .get("message")
+        .and_then(JsValue::as_string)
+        .filter(|message| !message.is_empty())
+        .cloned()
+        .unwrap_or_else(|| "Invalid Python syntax.".into());
+    let compact = compact_diagnostic(&message);
+    let mut full = format!("Python syntax error at L{line}:{column}: ")
+        .encode_utf16()
+        .collect::<Vec<_>>();
+    full.extend_from_slice(compact.units());
+    Some(issue("$.code", JsString::from_utf16(full)))
+}
+fn compact_diagnostic(message: &JsString) -> JsString {
+    let space =
+        |unit: u16| char::from_u32(u32::from(unit)).is_some_and(crate::runtime::tools::js_space);
+    let mut compact = Vec::new();
+    let mut pending_space = false;
+    for unit in message.units() {
+        if space(*unit) {
+            if !compact.is_empty() {
+                pending_space = true;
+            }
+        } else {
+            if pending_space {
+                compact.push(32);
+                pending_space = false;
+            }
+            compact.push(*unit);
+        }
+    }
+    if compact.len() > 220 {
+        compact.truncate(217);
+        while compact.last().is_some_and(|unit| space(*unit)) {
+            compact.pop();
+        }
+        compact.extend_from_slice(&[46, 46, 46]);
+    }
+    JsString::from_utf16(compact)
 }
 const SYNTAX_CHECKER: &str = "import json,sys\ntry:\n compile(sys.stdin.read(),sys.argv[1],'exec')\nexcept (SyntaxError,ValueError) as e:\n print(json.dumps({'line':getattr(e,'lineno',1) or 1,'column':getattr(e,'offset',1) or 1,'message':getattr(e,'msg',str(e))}))\n sys.exit(1)\n";
 fn environment(context: &ToolRunContext) -> Vec<(String, String)> {
