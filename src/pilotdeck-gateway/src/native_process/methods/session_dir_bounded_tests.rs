@@ -133,7 +133,13 @@ async fn native_session_io_child() {
                 "native manager preserves unsafe marker refusal"
             );
         } else {
-            assert!(result.is_err(), "{method}: unsafe marker accepted");
+            assert_eq!(
+                result
+                    .expect_err("session route unsafe marker accepted")
+                    .message,
+                JsString::from("Unsafe project marker."),
+                "native session route preserves unsafe marker refusal"
+            );
         }
     } else if method == "rewind_files" {
         assert_eq!(

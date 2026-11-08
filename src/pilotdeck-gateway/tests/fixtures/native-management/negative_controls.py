@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process/management.rs'
 TURN_SUBMIT = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
 SESSION_FACTORY = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
+SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir.rs'
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 # #1352: the advertised capability table moved out of `requests.rs`.
@@ -509,7 +510,15 @@ mutations.append(('manager-marker-refusal-dropped', SOURCE,
                   'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_fifo_subprocess',
                   'native manager preserves unsafe marker refusal'))
 
-EXPECTED_TOTAL = 102
+# Same public resolver is consumed by rename/tag/status/delete/list and rewind.
+# Keep its real rejection message, not only the fact that an error occurred.
+mutations.append(('session-dir-marker-refusal-message-changed', SESSION_DIR,
+                  '    if metadata.files.was_refused() {\n        return Err(RequestError::new("Unsafe project marker."));\n    }',
+                  '    if metadata.files.was_refused() {\n        return Err(RequestError::new("Different marker error."));\n    }',
+                  'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_fifo_subprocess',
+                  'native session route preserves unsafe marker refusal'))
+
+EXPECTED_TOTAL = 103
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -613,6 +622,7 @@ EXPECTED_NAMES = (
     'workspace-cwd-from-public-snapshot',
     'owned-workspace-cwd-unavailable',
     'manager-marker-refusal-dropped',
+    'session-dir-marker-refusal-message-changed',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '

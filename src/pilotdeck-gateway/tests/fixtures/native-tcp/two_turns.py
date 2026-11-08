@@ -10,7 +10,7 @@ home=out/"home";project=out/"project";home.mkdir();project.mkdir()
 legacy=home/"projects/000-fixture";legacy.mkdir(parents=True)
 (legacy/".cwd").write_text(str(project))
 rows=[];wire=[];wire_lock=threading.Lock();errors=[];ready=queue.Queue();lines=queue.Queue();children=[];success=False
-threads=[];threads_lock=threading.Lock();sockets=set();sockets_lock=threading.Lock();cleanup_done=False;term_seen=False
+threads=[];threads_lock=threading.Lock();sockets=set();sockets_lock=threading.Lock();cleanup_done=False;termination_signals=[]
 def spawn(fn,*args):
  def guarded():
   try:fn(*args)
@@ -99,17 +99,15 @@ side_env=env|{"PILOTDECK_AGENT_LOOP_TCP_HOST":"127.0.0.1","PILOTDECK_AGENT_LOOP_
 host_env=env|{"PILOTDECK_AGENT_LOOP_TRANSPORT":"tcp","PILOTDECK_AGENT_LOOP_TCP_HOST":"127.0.0.1","PILOTDECK_AGENT_LOOP_TCP_PORT":str(relay.server_address[1])}
 host=client=sidecar=None;result={}
 def terminate_requested(signum, _frame):
+ termination_signals.append(signum)
  raise SystemExit("received signal " + str(signum))
-signal.signal(signal.SIGTERM, terminate_requested)
+for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,terminate_requested)
 def cleanup():
- global cleanup_done,term_seen
+ global cleanup_done
+ # Install both handlers before the idempotence check or any cleanup work.
+ def during_cleanup(signum,_frame):termination_signals.append(signum)
+ for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,during_cleanup)
  if cleanup_done:return
- cleanup_done=True
- # Later TERM is recorded instead of interrupting evidence preservation.
- def during_cleanup(_signum,_frame):
-  global term_seen
-  term_seen=True
- signal.signal(signal.SIGTERM,during_cleanup)
  for child in reversed(children):
   try:
    if child.poll() is None:
@@ -121,20 +119,24 @@ def cleanup():
  # pin the driver. Force-close all tracked sockets before joining producers.
  for label,server in (("relay",relay),("provider",provider)):
   def stop_server(server=server):server.shutdown();server.server_close()
-  t=threading.Thread(target=stop_server,daemon=True);t.start();t.join(3)
+  t=spawn(stop_server);t.join(3)
   if t.is_alive():errors.append(label+" shutdown timed out")
  with sockets_lock:open_sockets=list(sockets)
  for sock in open_sockets:
   try:sock.shutdown(socket.SHUT_RDWR)
-  except OSError:pass
-  try:sock.close()
   except OSError:pass
  deadline=time.monotonic()+5
  with threads_lock:joined=list(threads)
  for thread in joined:
   thread.join(max(0,deadline-time.monotonic()))
   if thread.is_alive():errors.append("thread join timed out: "+thread.name)
- if term_seen:errors.append("SIGTERM received during cleanup")
+ # Closing a socket object while a handler may next select on it produces
+ # fd=-1 / ValueError. Shutdown wakes readers; close only after bounded join.
+ for sock in open_sockets:
+  try:sock.close()
+  except OSError:pass
+ if termination_signals:errors.append("termination signal(s): "+repr(termination_signals))
+ cleanup_done=True
 try:
  sidecar=subprocess.Popen([str(a.sidecar)],cwd=project,env=side_env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True);children.append(sidecar)
  spawn(log_stream,sidecar.stderr,out/"sidecar.stderr")
@@ -234,15 +236,25 @@ except BaseException as e:
 finally:
  try:cleanup()
  except BaseException as e:errors.append("cleanup failed: "+repr(e))
- if term_seen and "SIGTERM received during cleanup" not in errors:errors.append("SIGTERM received during cleanup")
+ for name,value in (("wire.json",wire),("provider.json",rows)):
+  try:(out/name).write_text(json.dumps(value,indent=2)+"\n")
+  except Exception as e:errors.append("evidence write failed: "+name+": "+repr(e))
+ # Write provisionally with the recording handler still active, then block
+ # signals for the final result commit and rewrite failures observed while
+ # writing any evidence. Callers must wait for exit before reading result.
+ try:(out/"result.json").write_text(json.dumps(result,indent=2)+"\n")
+ except Exception as e:errors.append("evidence write failed: result.json: "+repr(e))
+ signal.pthread_sigmask(signal.SIG_BLOCK,{signal.SIGTERM,signal.SIGINT})
+ pending=signal.sigpending() & {signal.SIGTERM,signal.SIGINT}
+ if pending:termination_signals.extend(int(sig) for sig in pending)
+ if termination_signals:
+  message="termination signal(s): "+repr(termination_signals)
+  if message not in errors:errors.append(message)
  if errors:
   success=False
   result["pass"]=False
   result["cleanupErrors"]=list(errors)
- for name,value in (("wire.json",wire),("provider.json",rows),("result.json",result)):
-  try:(out/name).write_text(json.dumps(value,indent=2)+"\n")
-  except Exception as e:
-   success=False
-   print("evidence write failed: "+name+": "+repr(e),flush=True)
+  try:(out/"result.json").write_text(json.dumps(result,indent=2)+"\n")
+  except Exception as e:print("evidence write failed: result.json: "+repr(e),flush=True)
  print(json.dumps({"pass":success,"error":result.get("error"),"cleanupErrors":errors}))
  raise SystemExit(0 if success else 1)
