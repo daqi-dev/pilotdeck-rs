@@ -62,6 +62,9 @@ SCRIPTS = (
     # negative_selection (claim_dir + missing_target/refuse_unusable_target
     # + select + registered + verdict_exit).
     ('regex-proto-budget/negative_controls.py', (), ()),
+    # #1433 fix-r1: same entry shape after the migration to negative_selection
+    # (review P1-1); its --check is also wired into CI.
+    ('sdk-mcp-session-tools/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
