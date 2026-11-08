@@ -15,6 +15,63 @@ pub(super) struct ObserverLaunch {
     pub max: f64,
     pub context: ToolRunContext,
 }
+
+/// Match the OneShot caller catch: a rejected success-path observer admission
+/// is retried once with failure outcome. A failed observed run already entered
+/// that catch and therefore gets only one observer admission attempt.
+pub(super) fn launch_with_retry(
+    outcome: ObserverOutcome,
+    mut launch: impl FnMut(ObserverOutcome) -> Result<(), ToolError>,
+) -> Result<(), ToolError> {
+    let observed_success = outcome.success;
+    let observed_error = outcome.error.clone();
+    let first = match launch(outcome) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    if !observed_success {
+        return Err(observer_launch_aggregate(
+            observed_error.unwrap_or_else(|| "Subagent failed.".into()),
+            first.message,
+        ));
+    }
+    let retry = ObserverOutcome {
+        success: false,
+        markdown: None,
+        error: Some(first.message.clone()),
+    };
+    match launch(retry) {
+        Ok(()) => Err(first),
+        Err(second) => Err(observer_launch_aggregate(first.message, second.message)),
+    }
+}
+fn observer_launch_aggregate(first: JsString, second: JsString) -> ToolError {
+    let mut failure = error("Subagent failed and its observer could not be launched.");
+    failure.details = Some(
+        object([
+            ("name", "AggregateError".into()),
+            (
+                "errors",
+                JsValue::Array(
+                    [first, second]
+                        .into_iter()
+                        .map(|message| {
+                            object([
+                                ("name", "Error".into()),
+                                ("message", JsValue::String(message)),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ])
+        .as_object()
+        .unwrap()
+        .clone(),
+    );
+    failure
+}
+
 impl ForkApi {
     pub(super) fn observer_definition(
         &self,
@@ -267,5 +324,88 @@ mod tests {
         drop(normal);
         drop(api);
         resources.dispose().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod caller_retry_tests {
+    use super::*;
+    use serde_json::Value;
+    #[test]
+    fn actual_ts_caller_retries_only_success_path_launch_failure_and_keeps_tool_failure() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/native-process/observer-caller-oracle.json"
+        ))
+        .unwrap();
+        let cases = fixture["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 6);
+        for case in cases {
+            let mode = case["mode"].as_str().unwrap();
+            let observed = case["completed"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|event| event["subagentId"] == "observed-fixed")
+                .unwrap();
+            let observed_success = observed["errored"] == false;
+            let failures = match mode {
+                "observer-launch-fails" | "observer-key-only" => 2,
+                "observer-first-launch-fails-once" => 1,
+                _ => 0,
+            };
+            let messages: Vec<String> = case["result"]["errors"]
+                .as_array()
+                .map(|errors| {
+                    errors
+                        .iter()
+                        .map(|error| error["message"].as_str().unwrap().to_owned())
+                        .collect()
+                })
+                .unwrap_or_else(|| vec!["oracle launcher rejection".to_owned()]);
+            let mut attempts = vec![];
+            let result = launch_with_retry(
+                ObserverOutcome {
+                    success: observed_success,
+                    markdown: observed_success.then(|| "SELF_WRITTEN_CONTROLLED_REPORT".into()),
+                    error: (!observed_success)
+                        .then(|| JsString::from(case["result"]["message"].as_str().unwrap())),
+                },
+                |outcome| {
+                    attempts.push(outcome);
+                    let index = attempts.len() - 1;
+                    if index < failures {
+                        Err(error(messages[index.min(messages.len() - 1)].as_str()))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert_eq!(
+                attempts.len(),
+                case["launches"].as_array().unwrap().len(),
+                "{mode}"
+            );
+            assert_eq!(
+                observed_success && result.is_ok(),
+                case["result"]["ok"].as_bool().unwrap(),
+                "{mode}"
+            );
+            if let Err(error) = result {
+                assert_eq!(
+                    error.message.to_utf8().unwrap(),
+                    case["result"]["message"].as_str().unwrap(),
+                    "{mode}"
+                );
+            }
+            assert_eq!(attempts[0].success, observed_success, "{mode}");
+            if attempts.len() == 2 {
+                assert!(!attempts[1].success, "{mode}");
+                assert_eq!(
+                    attempts[1].error.as_ref().unwrap().to_utf8().unwrap(),
+                    messages[0],
+                    "{mode}"
+                );
+            }
+        }
     }
 }

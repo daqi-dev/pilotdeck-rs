@@ -1291,21 +1291,25 @@ impl ForkApi {
                     .as_ref()
                     .map(|activity| lock(activity).take())
                     .unwrap_or_default();
-                let launch = observer_host::ObserverLaunch {
-                    factory,
-                    definition: definition.clone(),
-                    subagent: subagent.clone(),
-                    observer,
-                    directive,
-                    observer_message: string(&spec, "observerMessage"),
-                    activity,
-                    outcome,
-                    depth,
-                    max,
-                    context,
-                };
-                if let Err(failure) = self.launch_observer(launch) {
-                    append_subagent_failure(&mut result, failure);
+                let launched = observer_host::launch_with_retry(outcome, |outcome| {
+                    self.launch_observer(observer_host::ObserverLaunch {
+                        factory: factory.clone(),
+                        definition: definition.clone(),
+                        subagent: subagent.clone(),
+                        observer: observer.clone(),
+                        directive: directive.clone(),
+                        observer_message: string(&spec, "observerMessage"),
+                        // The collector retains bounded digest prefixes only,
+                        // never copies full tool results or assistant bodies.
+                        activity: activity.clone(),
+                        outcome,
+                        depth,
+                        max,
+                        context: context.clone(),
+                    })
+                });
+                if let Err(failure) = launched {
+                    result = Err(failure);
                 }
             }
             let report = result?;
