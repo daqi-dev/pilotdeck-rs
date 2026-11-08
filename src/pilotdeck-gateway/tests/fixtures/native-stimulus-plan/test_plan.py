@@ -606,6 +606,20 @@ class AdapterTests(unittest.TestCase):
                         and {w['target'] for w in verdict['witnesses']}
                         == {'registry', 'phase', 'order', 'slowStatus'}, marker)
         self.assertTrue(evidence['notes']['outcomeReleaseAfterFinal'] is False, marker)
+        # fix-r5, DS sibling P2#2: the declared (fifo, release) pair is now
+        # attested on the driver's own action log too — swapping the FIFO
+        # sighting with the controlled release-storage stamps must break
+        # the slowStatus witness, not only the choreography assertion above.
+        fifo = next(action for action in evidence['controlActions']
+                    if action['action'] == 'control.status.fifo.checked')
+        rel = next(action for action in evidence['controlActions']
+                   if action['action'] == 'release-storage')
+        fifo['monotonic'], rel['monotonic'] = rel['monotonic'], fifo['monotonic']
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('control.status.fifo.checked before the status release'
+                                in row for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
 
     def test_driver_slow_append_two_barriers(self):
         marker = '#2396 slowAppend: first block, FIFO, re-arm the second key, then release'
@@ -957,7 +971,12 @@ class AdapterTests(unittest.TestCase):
         ]
         # The failed status store prevents its registry status append, so the
         # registry surface carries only the prefix event.
-        evidence = drive_case(case, steps, registry_events=[{'type': 'model_request_started'}])
+        # The failed status store prevents its registry status append, so the
+        # registry surface carries only the prefix event.
+        def fresh_evidence():
+            return drive_case(case, steps, registry_events=[{'type': 'model_request_started'}])
+
+        evidence = fresh_evidence()
         baseline = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
         self.assertTrue(baseline['status'] == 'WITNESSED', marker + ': ' + json.dumps(baseline['missing']))
         for receipt in evidence['storageReceipts']:
@@ -967,6 +986,68 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(verdict['status'] == 'NOT_RUN'
                         and any('registry.persist.block.seq < queued.seq (FIFO follower)'
                                 in row for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+        # fix-r5, DS concurrency P2#1: the block→release edge needs its own
+        # discriminating negative — the release receipt moves before the
+        # block while the queued receipt stays between them, so the
+        # block→fifo edge keeps attesting and only this edge fires its
+        # message.
+        evidence = fresh_evidence()
+        for receipt in evidence['storageReceipts']:
+            if receipt.get('phase') == 'release' and receipt.get('key') == 'error:turn_timeout':
+                receipt['seq'] = 1  # before the block (2)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('error block.seq < release.seq' in row
+                                for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+        # fix-r5, DS boundary P2#2: the projection types a seq as a plain
+        # int, so a float seq is synthetic or truncated evidence — it must
+        # fail closed instead of attesting the ordering edge.
+        evidence = fresh_evidence()
+        for receipt in evidence['storageReceipts']:
+            if receipt.get('phase') == 'queued':
+                receipt['seq'] = 3.5
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('registry.persist.block.seq < queued.seq (FIFO follower)'
+                                in row for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+        # fix-r5, DS sibling P1 + boundary P1 (two families): the declared
+        # (fifo, release) edge itself — the queued receipt lands after the
+        # release while the block stays before both, so every other edge
+        # keeps attesting and only the r5 edge fires.
+        evidence = fresh_evidence()
+        for receipt in evidence['storageReceipts']:
+            if receipt.get('phase') == 'queued':
+                receipt['seq'] = 4  # after the release
+            elif receipt.get('phase') == 'release' and receipt.get('key') == 'error:turn_timeout':
+                receipt['seq'] = 3
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('queued.seq < release.seq (FIFO before release)' in row
+                                for row in verdict['missing'])
+                        and not any('FIFO follower' in row or 'error block.seq < release.seq'
+                                    in row for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+        # fix-r5 collector side: the driver's FIFO sighting action must
+        # precede its controlled release-storage record (matched by the
+        # error barrier's block seq) — swapping their monotonic stamps
+        # breaks the choreography edge, not any receipt edge.
+        evidence = fresh_evidence()
+        fifo_action = [action for action in evidence['controlActions']
+                       if action.get('action') == 'control.registry.fifo.checked']
+        rel_action = [action for action in evidence['controlActions']
+                      if action.get('action') == 'release-storage'
+                      and action.get('detail', {}).get('seq') == 2]
+        self.assertTrue(fifo_action and rel_action, marker)
+        fifo_action[0]['monotonic'], rel_action[0]['monotonic'] = \
+            rel_action[0]['monotonic'], fifo_action[0]['monotonic']
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('control.registry.fifo.checked before the error release'
+                                in row and 'record' not in row
+                                for row in verdict['missing']), marker
                         + ': ' + json.dumps(verdict['missing']))
 
     def test_plan_bool_seq_never_attests_order_edge(self):
@@ -1003,6 +1084,23 @@ class AdapterTests(unittest.TestCase):
         self.assertTrue(verdict['status'] == 'NOT_RUN'
                         and any('rearm-storage before the first registry release '
                                 '(seq absent)' in row
+                                for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+        # fix-r5, DS boundary P2#2 mirror direction: the block keeps its int
+        # seq while the driver's release-storage record carries detail.seq
+        # = True.  `True == 1` must not key the record, so the rearm edge
+        # falls to (release record absent) instead of attesting.
+        for receipt in evidence['storageReceipts']:
+            if receipt.get('phase') == 'block' and receipt.get('key') == 'agent_status:turn_timeout':
+                receipt['seq'] = 1  # restore the int seq
+        for action in evidence['controlActions']:
+            if action.get('action') == 'release-storage' \
+                    and action.get('detail', {}).get('seq') == 1:
+                action['detail']['seq'] = True
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('rearm-storage before the first registry release '
+                                '(release record absent)' in row
                                 for row in verdict['missing']), marker
                         + ': ' + json.dumps(verdict['missing']))
 
@@ -1136,6 +1234,14 @@ class AdapterTests(unittest.TestCase):
                         and notes['finalElapsedMs'] < notes['timeoutMs'] == 30000, marker)
         verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
         self.assertTrue(verdict['status'] == 'WITNESSED', marker + ': ' + json.dumps(verdict['missing']))
+        # fix-r5, anthropic sibling P2: a boolean timeoutMs must never satisfy
+        # the timer.clear comparison — True == 1 would keep it numeric under
+        # a bare isinstance check and the cleared-timer edge would attest.
+        evidence['notes']['timeoutMs'] = True
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                       and any('timer.clear' in row for row in verdict['missing']), marker
+                       + ': ' + json.dumps(verdict['missing']))
 
     def test_adapter_precise_missing_per_target(self):
         marker = '#2396 a target without its raw receipts keeps the row NOT_RUN with a precise missing'
