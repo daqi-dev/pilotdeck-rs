@@ -40,6 +40,9 @@ switches = [
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
     OWNER,
+    # The one row binds a runtime::session::owner::tests test defined in
+    # owner_tests.rs; guard the bound test source like schemata.py does.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/session/owner_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
