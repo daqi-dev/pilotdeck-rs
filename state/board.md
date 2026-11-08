@@ -4663,3 +4663,6 @@ PD代码ce7b82422与Kernel661375e7、integration f3c723e组成七二进制候选
 ### 2026-11-08 Kernel 持久化未知回执的产品投影（接入 lane B）
 
 联合故障审计发现公开 execution.events 的 Scheduler OUTCOME_UNKNOWN 被 RPC display 包装丢失结构，产品只收到普通后端错误。现在 RuntimeError 保留原boxed Scheduler error，按实际 -32000/data.domain=scheduler/reason/diagnostic.params 包络识别明确Unknown或persistence_uncertain，投影为result_unknown及非权威产品final（kernelOutcomeConfirmed=false，无伪Kernel status），保留原session/run/idempotencyKey和已知原call_ref；不重发execution.input。仅本run清等待与reconnect pending，late旧run不污染新run，已确认root terminal的缓存投影失败不重标Unknown；普通REVISION_CONFLICT保持原失败。Kernel模块23/23通过，真实UDS五分支覆盖input自身未确认、accepted后events未确认、COMMIT_FAILED标记、明确CAS拒绝、旧run晚失败；原active_turn_snapshot/read_session_messages/reconnect入口另核真实包络错误，公开RequestError保KERNEL_OUTCOME_UNKNOWN及原diagnostic，拒绝造空idle或最新history。此UDS故障证据验证真实Client/产品边界，不能冒充物理store掉电持久性；默认legacy和桌面P3不变。
+
+
+2026-11-08 本轮收口定向复验：作者HEAD 6cfa4316e（仅board差于e4c9693a1，生产源码等价）复用B原pd-kernel-capabilities编译缓存，原runtime::turn::submit::tests为10 PASS/0 FAIL/1原TS再生ignored，含原submit oracle/UTF16与Kernel timeout/旧run围栏；native_process::methods::history_transfer::tests为7 PASS/0 FAIL，保留原hash/pendingtools/active-state拒绝、工具配对和附件字节及canonical metadata。未运行完整gateway千项/未重生冻结oracle。日志分别/tmp/product-persistence-submit-regression.log与/tmp/product-persistence-history-transfer-regression.log。
