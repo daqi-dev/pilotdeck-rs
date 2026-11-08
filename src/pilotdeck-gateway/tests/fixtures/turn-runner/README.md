@@ -18,7 +18,7 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway \
 
 `recorder_completion.rs` 每格独立测试，逐字节比较 transcript；`turn_runner_regenerates_identically` 是显式 ignored 重生成守卫，实际运行会比较整个 oracle 字节并启动真实 TS sidecar。正常测试不要求 Node。
 
-`negative_controls.py <新证据目录>` 覆盖 10 个源码变异，要求运行时断言失败，最后恢复正控。它使用共享 `mutating_sources/run_owned/wait_for_slot`，默认要求已提交、干净的产品源码。沙箱交付时使用证据目录里的隔离 Git tree 快照作为 `PDRS_NEGATIVE_BASELINE`；不创建 commit/ref，不改主仓 Git metadata。执行负控期间同树不得并发写入或运行 cargo。
+`negative_controls.py <新证据目录>` 覆盖 10 个源码变异，要求运行时断言失败，最后恢复正控。它使用共享 `mutating_sources/run_owned/wait_for_slot`，默认要求已提交、干净的产品源码。沙箱交付时使用证据目录里的隔离 Git tree 快照作为 `PDRS_NEGATIVE_BASELINE`；不创建 commit/ref，不改主仓 Git metadata。#1540 起对这类非 HEAD 基线的全绿运行退出 42（NON-HOST EVIDENCE）而非 0，并在证据目录记录 `baseline.json`。执行负控期间同树不得并发写入或运行 cargo。
 
 ## runner 独立端口（pr2 部分交付）
 
@@ -172,3 +172,19 @@ printf '%s\n' "$out"
 使用既有 `negative_suite.py`，逐项执行完整测试名的正控、变异及恢复正控，所有选中项结束后汇总
 KILLED / SURVIVED / INVALID。锚点失配、编译错误、非绑定消息、超时均不得算 KILLED。
 运行负控仍须显式提供本树 `CARGO_TARGET_DIR`，默认校验 HEAD；长套件在宿主前台运行。
+
+## #2116 `.generation-owner` 判据与手工负控
+
+`generate.mts` 的 `.generation-owner` 是对 OUT 的首个 `wx` 写入（早于逐格 `<name>.jsonl`），身份串 `turn-runner\n`：OUT 已被外来 marker 标记时，生成器在写出任何输出前于该独占 open 处以 EEXIST 退出，外来 owner 字节不被覆写。本夹具不分配 `run-*` 工作根（那是 session-factory / turn-runner-tail / projection-cache 侧的约定），marker 在此不承载清理所有权，承载输出目录的跨生成器独占。
+
+两处重生成守卫 `runner_regenerates_identically`（`runtime::turn::runner::tests`）与 `stream_integrity_regenerates_identically`（`runtime::turn::live::stream_tests`）跑同一 `generate.mts`、经共享 helper 只重放 `oracle.json` 字节，marker 不进入比较面（#1500/#2116 口径）；marker 判据由专用用例 `turn_runner_generator_writes_owned_marker` 承载：成功格钉 marker 存在且内容为身份串，冲突格预置外来 `.generation-owner`，断言失败点落在独占 open（输出同时含 `EEXIST` 与 `.generation-owner`）且外来字节保留。
+
+按 #2116 两条 issue 评论的结论，本轮不为这些 `#[ignore]` marker 断言登记自动化负控变异体（不扩 `integrity_negative.py` 等既有表）；判据强度由交付证据中的手工负控留档保证：`{flag:'wx'}`→`{flag:'w'}`、marker 写入改 no-op、身份串换邻居夹具（`turn-prompt-hooks`）三只 `generate.mts` 变异各使绑定断言 FAILED（KILLED），恢复后复跑通过。钉版 Node v22.22.0 / ICU 78.2、`PDRS_BASELINE` 指向 `cc7c4e65` 检出后从仓库根（加 `--manifest-path src/Cargo.toml`）复跑正控，`test result:` 行须为 `1 passed; 0 failed`：
+
+```sh
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
+  runtime::turn::runner::tests::turn_runner_generator_writes_owned_marker \
+  -- --exact --include-ignored
+```
+
+手工负控复跑：对 `generate.mts` 的 marker 写入行分别施加上述三只变异，同命令复跑须 FAILED 于对应 `#2116` 绑定断言（`test result:` 行含 `1 failed`）；每只跑完 `git checkout -- <generate.mts>` 恢复并核对工作区干净，复跑正控须回到 `1 passed; 0 failed`。

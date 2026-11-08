@@ -11,6 +11,7 @@ use std::{
     future::Future,
     net::{Ipv4Addr, SocketAddr},
     path::PathBuf,
+    pin::Pin,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -162,11 +163,55 @@ impl NativeWsServer {
     /// drain budget: on expiry it returns an error and shuts down the host.
     /// The budget also covers incomplete HTTP handshakes and peers that never
     /// finish. A timeout is never reported as successful quiescence.
+    ///
+    /// Exactly [`Self::run_phased`]'s two halves in sequence, minus the
+    /// switch-only A5 close frame — every existing `run()` caller keeps the
+    /// pre-#1353 behavior: survivors are aborted, not closed. The A5 close
+    /// frames are a registered switch-path difference
+    /// (specs/gateway-parity/diffs/), so they fire only through
+    /// [`Self::run_phased`].
     pub fn run(
         self,
-        stop: impl Future<Output = ()>,
+        stop: impl Future<Output = ()> + Send + 'static,
         drain_budget: Duration,
     ) -> impl Future<Output = Result<(), ProxyError>> {
+        let phased = self.phased_run(stop, drain_budget, false);
+        async move {
+            phased.drained().await;
+            phased.finish().await
+        }
+    }
+
+    /// The #1353 A8.5-pr2 phased run: `drained()` is the switch machine's S2
+    /// half — stop accepting on `stop` and drain existing connections within
+    /// the budget, resolving `false` when the budget expired first.
+    /// `finish()` is S4's WS half — survivors get an explicit close frame
+    /// (A5), a bounded flush window, the strong abort, and the host
+    /// shutdown with the same error reporting `run()` has always produced.
+    ///
+    /// The accept loop runs from construction — a phased run serves steady
+    /// state exactly like the awaited `run()` future did; only the *waiting*
+    /// is split. The stop future is erased to `Send` boxed form so the
+    /// returned handle is a concrete type the switch wiring can hold across
+    /// faces (`native_process/switch_wiring.rs`); every existing caller
+    /// already spawns the run, so the bound changes nothing observable.
+    pub fn run_phased(
+        self,
+        stop: impl Future<Output = ()> + Send + 'static,
+        drain_budget: Duration,
+    ) -> PhasedRun {
+        self.phased_run(stop, drain_budget, true)
+    }
+
+    /// The shared construction behind [`Self::run`] and [`Self::run_phased`]:
+    /// `switch_close` picks whether the S4 half owes the survivors their
+    /// A5 close frames — only the switch path does.
+    fn phased_run(
+        self,
+        stop: impl Future<Output = ()> + Send + 'static,
+        drain_budget: Duration,
+        switch_close: bool,
+    ) -> PhasedRun {
         let cleanup = StopHost(
             self.host.clone(),
             if crate::mutants::on("native-ws-unbounded-cancel") {
@@ -175,112 +220,290 @@ impl NativeWsServer {
                 drain_budget
             },
         );
-        async move {
-            let _host_cleanup = cleanup;
-            let Self {
-                listener,
-                host,
-                token,
-                version,
-                resources,
-                http,
-                grid_anchor,
-                stop_observed,
-            } = self;
-            let mut connections = JoinSet::new();
-            // Node's server.close() closes idle keep-alive connections (probe
-            // `probe-fixr1.out` B); each connection task hears the stop and
-            // shuts down its HTTP serving when the accept loop exits.
-            let (stop_http, stop_http_rx) = watch::channel(false);
-            tokio::pin!(stop);
-            let accept_error = loop {
-                tokio::select! {
-                    biased;
-                    _ = &mut stop => break None,
-                    // Reap before accept: a permanently ready listener must not
-                    // accumulate completed task records outside the live cap.
-                    _ = connections.join_next(), if !connections.is_empty() && !crate::mutants::on("ws-caps-unreaped-records") => {},
-                    accepted = listener.accept() => match accepted {
-                        Ok((socket, _)) => {
-                            let Ok(permit) = resources.connections.clone().try_acquire_owned() else {
-                                // No task/HTTP parser is created for an excess peer.
-                                drop(socket);
-                                continue;
-                            };
-                            let host = host.clone();
-                            let token = token.clone();
-                            let version = version.clone();
-                            let input = resources.input.clone();
-                            let http = http.clone();
-                            let stop_http = stop_http_rx.clone();
-                            let stop_observed = stop_observed.clone();
-                            connections.spawn(async move {
-                                let _permit = if crate::mutants::on("ws-caps-early-connection-release") {
-                                    drop(permit);
-                                    None
-                                } else {
-                                    Some(permit)
-                                };
-                                if let Err(error) =
-                                    serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed)
-                                        .await
-                                {
-                                    eprintln!("native WS connection: {error}");
-                                }
-                                if crate::mutants::on("ws-caps-connection-leak") {
-                                    std::mem::forget(_permit);
-                                }
-                            });
-                            #[cfg(test)]
-                            resources.task_high_watermark.fetch_max(connections.len(), std::sync::atomic::Ordering::SeqCst);
-                        }
-                        Err(error) if matches!(error.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported) => break Some(error),
-                        Err(error) => {
-                            eprintln!("native WS accept: {error}");
-                            tokio::select! {
-                                _ = &mut stop => break None,
-                                _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-                            }
-                        }
-                    },
-                }
-            };
-            drop(listener);
-            let _ = stop_http.send(true);
-            if crate::mutants::on("native-ws-skip-drain") {
-                return Ok(());
+        // A5: the close-frame notice the S4 half fires at the drain boundary.
+        // The sender lives as long as the run: a dropped sender would let the
+        // connections' `changed()` resolve (with an error) and read as a close
+        // request.
+        let (close_notice, close_notice_rx) = watch::channel(false);
+        let inner = Arc::new(tokio::sync::Mutex::new(PhasedInner {
+            listener: Some(self.listener),
+            host: self.host,
+            token: self.token,
+            version: self.version,
+            resources: self.resources,
+            http: self.http,
+            grid_anchor: self.grid_anchor,
+            stop_observed: self.stop_observed,
+            stop: Box::pin(stop),
+            connections: JoinSet::new(),
+            stop_http: None,
+            close_notice,
+            close_notice_rx,
+            switch_close,
+            drain_budget,
+            accept_error: None,
+            drained: None,
+            finished: None,
+        }));
+        // The steady-state loop: accept until `stop`, then drain the
+        // connections. `drained()` observes its completion through the
+        // watch; dropping the handle aborts it, restoring the drop
+        // semantics of the unawaited `run()` future.
+        let (done, _) = watch::channel(None::<bool>);
+        let runner_done = done.clone();
+        let runner_inner = inner.clone();
+        let runner = tokio::spawn(async move {
+            let mut guard = runner_inner.lock().await;
+            if guard.drained.is_none() {
+                guard.drain_entries().await;
             }
-            let budget = if crate::mutants::on("native-ws-drain-no-deadline")
-                || crate::mutants::on("native-ws-handshake-no-deadline")
-            {
-                Duration::from_secs(3600)
-            } else {
-                drain_budget
-            };
-            let drained = tokio::time::timeout(budget, async {
-                while connections.join_next().await.is_some() {}
-            })
-            .await
-            .is_ok();
-            // Aborting transport waiters never cancels business jobs on the serial
-            // host. Its shutdown cancels owned turns and waits for finally fences.
-            if crate::mutants::on("native-ws-handshake-leak") {
-                connections.detach_all();
-            } else {
-                connections.abort_all();
-                while connections.join_next().await.is_some() {}
-            }
-            host.shutdown(drain_budget)
-                .await
-                .map_err(std::io::Error::other)?;
-            if !drained && !crate::mutants::on("native-ws-drain-false-success") {
-                return Err("native WS drain deadline exceeded".into());
-            }
-            if let Some(error) = accept_error {
-                return Err(error.into());
-            }
-            Ok(())
+            let drained = guard.drained.unwrap_or(false);
+            drop(guard);
+            runner_done.send_replace(Some(drained));
+        });
+        PhasedRun {
+            _cleanup: cleanup,
+            inner,
+            done,
+            runner: runner.abort_handle(),
+            drain_budget,
         }
+    }
+}
+
+/// The phased run's shared state, serialized by the mutex: `drained()` holds
+/// it through the accept loop and the drain, `finish()` through the abort
+/// and host shutdown.
+struct PhasedInner {
+    listener: Option<tokio::net::TcpListener>,
+    host: TurnGateway,
+    token: String,
+    version: String,
+    resources: Resources,
+    http: native_http::Config,
+    grid_anchor: tokio::time::Instant,
+    stop_observed: Arc<std::sync::atomic::AtomicUsize>,
+    stop: Pin<Box<dyn Future<Output = ()> + Send>>,
+    connections: JoinSet<()>,
+    stop_http: Option<watch::Sender<bool>>,
+    close_notice: watch::Sender<bool>,
+    close_notice_rx: watch::Receiver<bool>,
+    /// Whether the S4 half owes the survivors their A5 close frames — the
+    /// switch path (`run_phased`) yes, a plain `run()` no (the registered
+    /// difference is switch-scoped).
+    switch_close: bool,
+    drain_budget: Duration,
+    accept_error: Option<std::io::Error>,
+    /// `None` until the accept loop and drain ran; `Some(false)` is the
+    /// expired-budget shape `finish()` must report.
+    drained: Option<bool>,
+    /// Once-only `finish()`: the death-march path after a halted machine
+    /// calls it a second time and must observe the recorded result.
+    finished: Option<Result<(), String>>,
+}
+
+impl PhasedInner {
+    /// The accept loop and the bounded connection drain — everything up to
+    /// the S2/S3 boundary.
+    async fn drain_entries(&mut self) {
+        // Node's server.close() closes idle keep-alive connections (probe
+        // `probe-fixr1.out` B); each connection task hears the stop and
+        // shuts down its HTTP serving when the accept loop exits.
+        let (stop_http, stop_http_rx) = watch::channel(false);
+        self.stop_http = Some(stop_http);
+        let mut stop = self.stop.as_mut();
+        let accept_error = loop {
+            tokio::select! {
+                biased;
+                _ = &mut stop => break None,
+                // Reap before accept: a permanently ready listener must not
+                // accumulate completed task records outside the live cap.
+                _ = self.connections.join_next(), if !self.connections.is_empty() && !crate::mutants::on("ws-caps-unreaped-records") => {},
+                accepted = self.listener.as_mut().expect("the listener is held until stop").accept() => match accepted {
+                    Ok((socket, _)) => {
+                        let Ok(permit) = self.resources.connections.clone().try_acquire_owned() else {
+                            // No task/HTTP parser is created for an excess peer.
+                            drop(socket);
+                            continue;
+                        };
+                        let host = self.host.clone();
+                        let token = self.token.clone();
+                        let version = self.version.clone();
+                        let input = self.resources.input.clone();
+                        let http = self.http.clone();
+                        let stop_http = stop_http_rx.clone();
+                        let close_notice = self.close_notice_rx.clone();
+                        let stop_observed = self.stop_observed.clone();
+                        let grid_anchor = self.grid_anchor;
+                        self.connections.spawn(async move {
+                            let _permit = if crate::mutants::on("ws-caps-early-connection-release") {
+                                drop(permit);
+                                None
+                            } else {
+                                Some(permit)
+                            };
+                            if let Err(error) =
+                                serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed, close_notice)
+                                .await
+                            {
+                                eprintln!("native WS connection: {error}");
+                            }
+                            if crate::mutants::on("ws-caps-connection-leak") {
+                                std::mem::forget(_permit);
+                            }
+                        });
+                        #[cfg(test)]
+                        self.resources.task_high_watermark.fetch_max(self.connections.len(), std::sync::atomic::Ordering::SeqCst);
+                    }
+                    Err(error) if matches!(error.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported) => break Some(error),
+                    Err(error) => {
+                        eprintln!("native WS accept: {error}");
+                        tokio::select! {
+                            _ = &mut stop => break None,
+                            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                        }
+                    }
+                },
+            }
+        };
+        self.accept_error = accept_error;
+        self.listener = None;
+        if let Some(stop_http) = self.stop_http.take() {
+            let _ = stop_http.send(true);
+        }
+        if crate::mutants::on("native-ws-skip-drain") {
+            self.drained = Some(true);
+            self.finished = Some(Ok(()));
+            return;
+        }
+        let budget = if crate::mutants::on("native-ws-drain-no-deadline")
+            || crate::mutants::on("native-ws-handshake-no-deadline")
+        {
+            Duration::from_secs(3600)
+        } else {
+            self.drain_budget
+        };
+        let drained = tokio::time::timeout(budget, async {
+            while self.connections.join_next().await.is_some() {}
+        })
+        .await
+        .is_ok();
+        self.drained = Some(drained);
+    }
+
+    /// The S4 half: A5 close notice, bounded frame flush, strong abort, host
+    /// shutdown, and the error reporting `run()` has always produced.
+    async fn finish(&mut self) -> Result<(), ProxyError> {
+        if let Some(result) = self.finished.clone() {
+            return result.map_err(ProxyError::from);
+        }
+        // A5: the drain boundary notice — every surviving WS connection gets
+        // an explicit close(1001, "server switching") and stops dispatching
+        // new requests, before the strong abort takes them. Switch path
+        // only: a plain `run()` keeps the pre-#1353 abort behavior (the
+        // registered difference is scoped to the switch).
+        if self.switch_close {
+            let _ = self.close_notice.send(true);
+            if !self.connections.is_empty() {
+                let _ = tokio::time::timeout(CLOSE_FRAME_WINDOW, async {
+                    while self.connections.join_next().await.is_some() {}
+                })
+                .await;
+            }
+        }
+        // Aborting transport waiters never cancels business jobs on the serial
+        // host. Its shutdown cancels owned turns and waits for finally fences.
+        if crate::mutants::on("native-ws-handshake-leak") {
+            self.connections.detach_all();
+        } else {
+            self.connections.abort_all();
+            while self.connections.join_next().await.is_some() {}
+        }
+        self.host
+            .shutdown(self.drain_budget)
+            .await
+            .map_err(std::io::Error::other)?;
+        let result = if !self.drained.unwrap_or(false)
+            && !crate::mutants::on("native-ws-drain-false-success")
+        {
+            Err("native WS drain deadline exceeded".to_owned())
+        } else if let Some(error) = self.accept_error.take() {
+            Err(error.to_string())
+        } else {
+            Ok(())
+        };
+        self.finished = Some(result.clone());
+        result.map_err(ProxyError::from)
+    }
+}
+
+/// #1353 A5 (DC-2): after the client-drain deadline expired, the machine
+/// still owes the survivors their explicit close frames. This window bounds
+/// the frame flush between the notice and the strong abort — the drain
+/// deadline itself governs the *waiting* for clients, this is the machine's
+/// own delivery grace.
+const CLOSE_FRAME_WINDOW: Duration = Duration::from_secs(2);
+
+/// The two-phase handle [`NativeWsServer::run_phased`] returns. The steady
+/// state (the accept loop) runs from construction on the runner task;
+/// `drained()` observes its completion and `finish()` takes over from there.
+/// The drop guard keeps the `request_shutdown` semantics of the unrefactored
+/// `run()`: dropping a phased run that never finished stops accepting and
+/// still asks the host to shut down.
+pub struct PhasedRun {
+    /// Never read: the drop guard is the point — dropping an unfinished
+    /// phased run still asks the host to shut down.
+    _cleanup: StopHost,
+    inner: Arc<tokio::sync::Mutex<PhasedInner>>,
+    /// The runner's completion: `None` while accepting/draining, then the
+    /// drain's own verdict.
+    done: watch::Sender<Option<bool>>,
+    /// Aborted when this handle drops, so an abandoned phased run stops
+    /// accepting exactly like an unawaited `run()` future did.
+    runner: tokio::task::AbortHandle,
+    /// The drain budget this run was constructed with — immutable after
+    /// construction, so readable without the inner lock. The post-halt walk
+    /// bounds its own close join with it (`switch_wiring.rs`).
+    drain_budget: Duration,
+}
+
+impl Drop for PhasedRun {
+    fn drop(&mut self) {
+        self.runner.abort();
+    }
+}
+
+impl PhasedRun {
+    /// S2: stop accepting and drain existing connections. `true` means the
+    /// drain completed within the budget; `false` means the budget expired
+    /// with connections outstanding (the A4/A10 failure shape `finish()`
+    /// reports). Idempotent — every waiter observes the same verdict.
+    pub async fn drained(&self) -> bool {
+        let mut receiver = self.done.subscribe();
+        loop {
+            if let Some(drained) = *receiver.borrow_and_update() {
+                return drained;
+            }
+            // The sender outlives the runner here, so this resolves through
+            // the value, not the closed channel; the fallback only covers a
+            // runner that exited between the check and the await.
+            if receiver.changed().await.is_err() {
+                return self.inner.lock().await.drained.unwrap_or(false);
+            }
+        }
+    }
+
+    /// The drain budget this run was constructed with: the entries-scale
+    /// bound the post-halt walk reuses for its own close join.
+    pub fn drain_budget(&self) -> Duration {
+        self.drain_budget
+    }
+
+    /// S4's WS half: close notice, abort, host shutdown, error reporting.
+    /// Idempotent — a second call observes the recorded result.
+    pub async fn finish(&self) -> Result<(), ProxyError> {
+        let mut guard = self.inner.lock().await;
+        guard.finish().await
     }
 }
 
@@ -603,6 +826,7 @@ async fn serve_socket(
     grid_anchor: tokio::time::Instant,
     stop: watch::Receiver<bool>,
     stop_observed: Arc<std::sync::atomic::AtomicUsize>,
+    close_notice: watch::Receiver<bool>,
 ) -> Result<(), ProxyError> {
     let (upgrade, upgraded) = oneshot::channel();
     let upgrade = Mutex::new(Some(upgrade));
@@ -660,7 +884,7 @@ async fn serve_socket(
     };
     let socket = http_proxy::upgraded_stream::<TcpStream>(upgraded.await?)?;
     drop(lease);
-    transport_with_budget(socket, host, token, version, input).await
+    transport_with_budget(socket, host, token, version, input, close_notice).await
 }
 
 // Poll the host completion futures directly: a finished host job must not
@@ -773,22 +997,30 @@ async fn transport<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
-    transport_with_budget(
+    // The never-firing close notice: the sender is held for the future's
+    // lifetime so `changed()` below cannot resolve through a dropped sender.
+    let (close_notice_tx, close_notice) = watch::channel(false);
+    let result = transport_with_budget(
         socket,
         host,
         token,
         version,
         Arc::new(Semaphore::new(MAX_TOTAL_INPUT_BYTES)),
+        close_notice,
     )
-    .await
+    .await;
+    drop(close_notice_tx);
+    result
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn transport_with_budget<S>(
     socket: S,
     host: TurnGateway,
     token: String,
     version: String,
     input_budget: Arc<Semaphore>,
+    mut close_notice: watch::Receiver<bool>,
 ) -> Result<(), ProxyError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -824,6 +1056,13 @@ where
                 }
                 _ = closing_deadline(closing_rx.clone()), if !crate::mutants::on("native-ws-reader-deadline") => {
                     return Err("native WS connection close deadline exceeded".into());
+                }
+                // #1353 A5: the drain boundary notice — an explicit
+                // close(1001, "server switching") and no further dispatch;
+                // the S4 abort takes whatever is still stuck afterwards.
+                _ = close_notice.changed() => {
+                    text.close(1001, "server switching");
+                    break;
                 }
                 read = reader.read(&mut input[..capacity]) => read?,
                 _ = reap_requests(&mut requests, true), if reap_completed && !requests.is_empty() => continue,

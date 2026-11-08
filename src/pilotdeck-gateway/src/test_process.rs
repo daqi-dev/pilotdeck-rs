@@ -1775,11 +1775,25 @@ fn an_unreadable_stat_of_a_possible_child_fails_the_child_audit() {
         std::fs::Permissions::from_mode(0o000),
     )
     .expect("#2138 make the child stat unreadable");
-    // A privileged test runner ignores the mode bits; the case cannot be built.
+    // #1461 r6 (DS r5 concurrency P2): probe the behaviour, not the uid —
+    // the native read probe alone already covers every permission-blind
+    // runner (root, CAP_DAC_OVERRIDE, permission-blind mounts), and an
+    // euid shortcut would false-fail a mode-enforced root host (NFS
+    // root_squash) under PDRS_REQUIRE_PERMISSION_FAULTS=1. Probe-only
+    // shape, as tests/write_tools.rs.
     if std::fs::read_to_string(child_entry.join("stat")).is_ok() {
-        eprintln!("#2138 skipping: this test must not run as root, mode-000 is readable");
         let _ = child.kill();
         let _ = child.wait();
+        assert!(
+            !crate::test_permission_faults::require_permission_faults(),
+            "#2138 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the stat \
+             read (root or a permission-blind runner); this test needs a host that enforces mode \
+             bits (需要强制 mode 位的宿主)"
+        );
+        crate::test_skip_line::stderr_skip_line(
+            "#2138 skip: an_unreadable_stat_of_a_possible_child_fails_the_child_audit: \
+             running where mode 000 is readable (root or CAP_DAC_OVERRIDE)\n",
+        );
         return;
     }
     let outcome = child_processes_in(scratch.path());
@@ -1934,10 +1948,22 @@ fn an_unreadable_holder_of_this_user_fails_the_data_dir_audit() {
     std::fs::create_dir(blind.join("fd")).expect("#2138 create the unlistable fd entry");
     std::fs::set_permissions(blind.join("fd"), std::fs::Permissions::from_mode(0o000))
         .expect("#2138 make the blind holder's fd unlistable");
-    // A privileged test runner is not refused by the mode bits, so the case
-    // cannot be constructed; say so rather than report a pass or a regression.
+    // #1461 r6 (DS r5 concurrency P2): probe the behaviour, not the uid —
+    // the native listing probe alone covers every permission-blind runner,
+    // and an euid shortcut would false-fail a mode-enforced root host under
+    // PDRS_REQUIRE_PERMISSION_FAULTS=1 (probe-only shape, as
+    // tests/write_tools.rs).
     if std::fs::read_dir(blind.join("fd")).is_ok() {
-        eprintln!("#2138 skipping: this test must not run as root, mode-000 is readable");
+        assert!(
+            !crate::test_permission_faults::require_permission_faults(),
+            "#2138 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the listing \
+             (root or a permission-blind runner); this test needs a host that enforces mode bits \
+             (需要强制 mode 位的宿主)"
+        );
+        crate::test_skip_line::stderr_skip_line(
+            "#2138 skip: an_unreadable_holder_of_this_user_fails_the_data_dir_audit: \
+             running where mode 000 is readable (root or CAP_DAC_OVERRIDE)\n",
+        );
         return;
     }
     // One readable source, so the sweep has something it could see and the

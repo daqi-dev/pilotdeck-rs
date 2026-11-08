@@ -389,10 +389,16 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
 /// One native gateway method outcome. `Forward` is the A8 contract: the
 /// projection hit a measured host boundary (`requires_host`), so the WS entry
 /// must send the whole request to the Node host instead of surfacing a
-/// synthesized error.
+/// synthesized error. `Error` carries a thrown TS error: the real
+/// `snapshotList` / `snapshotGet` / `snapshotRestore` throw, and the WS
+/// connection answers `{ok:false,error:{code,message}}`
+/// (`GatewayWsConnection.ts:231-260`), so the entry must return a request
+/// failure rather than a successful response whose body happens to be an
+/// error object (#2194, the #1456 `MemoryDispatch` shape).
 #[derive(Clone, Debug, PartialEq)]
 pub enum SnapshotDispatch {
     Response(JsValue),
+    Error(SnapshotProjectionError),
     Forward,
 }
 
@@ -400,8 +406,14 @@ pub enum SnapshotDispatch {
 ///
 /// The method validators run **before** the capability check, exactly like the
 /// TS wrapper; the inner `createLocalGateway` methods check the provider first
-/// after entry validation. `dispatch` is the only wire-facing entry and is
-/// deliberately absent from `dispatch.rs`'s `LOCAL_METHODS`.
+/// after entry validation. `dispatch` is deliberately absent from
+/// `dispatch.rs`'s `LOCAL_METHODS` and has no production consumer yet (the
+/// native-process entry in `native_process/management.rs` calls `list` /
+/// `get` / `restore` directly); its outcome shape mirrors
+/// [`crate::runtime::memory::gateway::MemoryDispatch`] since #2194: unknown methods
+/// return `None`, a host boundary is [`SnapshotDispatch::Forward`], a success
+/// is the wire result JSON, and a failure is [`SnapshotDispatch::Error`],
+/// never a flattened response.
 pub struct SnapshotGateway<R> {
     projection: SnapshotProjection<R>,
 }
@@ -459,7 +471,7 @@ impl<R: SnapshotProjectResolver> SnapshotGateway<R> {
         Some(match outcome {
             Ok(value) => SnapshotDispatch::Response(value),
             Err(error) if error.requires_host() => SnapshotDispatch::Forward,
-            Err(error) => SnapshotDispatch::Response(error.as_json()),
+            Err(error) => SnapshotDispatch::Error(error),
         })
     }
 }
@@ -1116,20 +1128,68 @@ mod tests {
             "Gateway snapshot provider is unavailable.",
             "#888 capability message"
         );
+    }
 
+    /// `dispatch` answers each snapshot method's failures as request
+    /// failures, never a successful response whose body happens to describe
+    /// the error (#2194, the #1456 `MemoryDispatch` shape). Each input is a
+    /// measured TS wrapper throw: `snapshotList` blank projectKey,
+    /// `snapshotGet` absent snapshotId, `snapshotRestore` blank
+    /// targetProjectKey.
+    #[test]
+    fn dispatch_routes_only_snapshot_methods() {
+        let scratch = TempDir::new();
+        let home = scratch.0.join("pilot-home");
+        fs::create_dir_all(&home).expect("#2194 create home");
+        let gateway =
+            SnapshotGateway::new(None, SnapshotProjects::new(&home, &scratch.0), "/fallback");
+        for (method, input, code) in [
+            (
+                "snapshot_list",
+                params(&[("projectKey", JsValue::Null)]),
+                "PROJECT_NOT_FOUND",
+            ),
+            (
+                "snapshot_get",
+                params(&[("projectKey", "/registered".into())]),
+                "INVALID_MANAGEMENT_IDENTIFIER",
+            ),
+            (
+                "snapshot_restore",
+                params(&[
+                    ("projectKey", "/registered".into()),
+                    ("snapshotId", "s".into()),
+                    ("targetProjectKey", JsValue::Null),
+                ]),
+                "PROJECT_NOT_FOUND",
+            ),
+        ] {
+            let outcome = gateway.dispatch(method, &input);
+            let Some(SnapshotDispatch::Error(error)) = outcome else {
+                panic!(
+                    "#2194 {method} failure must dispatch as SnapshotDispatch::Error, got {outcome:?}"
+                )
+            };
+            assert_eq!(
+                error.code(),
+                Some(code),
+                "#2194 {method} dispatch error code"
+            );
+            assert_eq!(
+                error.name(),
+                "DialogGatewayError",
+                "#2194 {method} dispatch error name"
+            );
+        }
+        assert!(
+            gateway.dispatch("memory_list", &params(&[])).is_none(),
+            "#2194 non-snapshot methods stay forwardable"
+        );
         assert!(
             gateway
                 .dispatch("snapshot_upload", &JsValue::Null)
                 .is_none(),
-            "#888 unknown methods stay forwardable"
-        );
-        let routed = gateway
-            .dispatch("snapshot_list", &params(&[("projectKey", JsValue::Null)]))
-            .expect("#888 known method routes");
-        assert_eq!(
-            routed,
-            SnapshotDispatch::Response(required.as_json()),
-            "#888 ordinary errors become a wire response"
+            "#2194 unknown methods stay forwardable"
         );
     }
 
@@ -1201,9 +1261,18 @@ mod tests {
             .expect("#888 known method routes");
         // Asserting only `Response(_)` would also accept the old boundary
         // answered as a local *error* object (#132 review P1): require the
-        // list payload so reinstating the refusal turns this red.
-        let SnapshotDispatch::Response(response) = routed else {
-            panic!("#132 unpaired-surrogate collation answers locally, never forwards");
+        // list payload so reinstating the refusal turns this red. Since #2194
+        // a refusal is `Error`, never a flattened response, so the guard
+        // itself carries the payload marker for the `workspace-host-remains`
+        // mutant.
+        let response = match routed {
+            SnapshotDispatch::Response(response) => response,
+            SnapshotDispatch::Error(cause) => {
+                panic!("#132 collation case answers with a list, not an error: {cause:?}")
+            }
+            SnapshotDispatch::Forward => {
+                panic!("#132 unpaired-surrogate collation answers locally, never forwards")
+            }
         };
         let Some(JsValue::Array(items)) = response.get("items") else {
             panic!("#132 collation case answers with a list, not an error: {response:?}");

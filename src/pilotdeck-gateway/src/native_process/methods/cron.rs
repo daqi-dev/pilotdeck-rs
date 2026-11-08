@@ -57,6 +57,22 @@ impl Requests {
         let cron = self.cron.clone();
         let dispatch_method = method.clone();
         Box::pin(async move {
+            // #1353 A6 (DC-5): once the switch machine's S1 has stopped the
+            // cron manager, the six management methods answer an explicit
+            // rejection instead of operating on the stopped manager. The TS
+            // baseline keeps serving them on a stopped manager (D5) — a
+            // registered Rust difference (specs/gateway-parity/diffs/). The
+            // flag is checked before the dispatch leaves the routing seam,
+            // so a management call racing the stop observes the gate, not a
+            // half-stopped manager.
+            if crate::switch::cron_management_closed(cron.as_ref()) {
+                return Err(wire_error(cron::CronError::gateway(
+                    "SWITCH_IN_PROGRESS",
+                    pilotdeck_protocol::JsString::from(
+                        "switch in progress: cron management is closed",
+                    ),
+                )));
+            }
             let dispatched = tokio::task::spawn_blocking(move || {
                 cron::dispatch(cron.as_deref(), &dispatch_method, &params)
             })

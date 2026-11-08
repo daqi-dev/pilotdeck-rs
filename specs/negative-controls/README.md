@@ -110,7 +110,9 @@
 `settings` · `memory-maintenance` · `upload-gateway` · `html-timing` · `interaction-bus` ·
 `node-io` · `project-files-linux-dirent` · `network-timing`（含 `negative_private.py`）·
 `sdk-settings` · `settings-gateway` · `interaction-values` · `turn-submit-admission` ·
-`turn-runner/runner_negative.py` · `cli-parity-mock-gateway`。**其余同族入口尚未迁移**，
+`turn-runner/runner_negative.py` · `cli-parity-mock-gateway`，以及后批加入的
+`memory-gateway` · `snapshot-projection` · `regex-proto-budget`（#1456、#1265）。
+**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。
@@ -142,7 +144,9 @@
 
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
 被信号直接杀死（SIGINT 130 / SIGTERM 143 / SIGKILL 137）不在表内，看证据是否完整。
-这套分界不依赖 `assert`，所以 `-O` 下不变。
+这套分界不依赖 `assert`，所以 `-O` 下不变。已知的唯一例外是 `regex-proto-budget`（#1265）：
+它在 `claim_dir` 之后、第一个变异之前自己跑一遍 crate 的 compile_fail doctest 基线（CI 跑不了
+特性门测试），红了也以 2 拒跑、`OUT/doctests.log` 留档——这一次 2 带证据目录，是刻意的。
 
 实现进度按行读：**已迁移脚本**对未知 / 重复变异名、名册漂移、输出目录已存在
 （走 `claim_dir`，`FileExistsError` 不再落成 1）、`CARGO_TARGET_DIR` 不可用
@@ -160,7 +164,8 @@ target 读取；
 **树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
-另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录。
+另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
+（唯一例外见上面的 `regex-proto-budget` doctest 基线：认领 OUT 之后的红基线）。
 `network-timing` 的正式路径进共享执行器 `mutation_suite`（它先占目录再取环境），因此缺
 `CARGO_TARGET_DIR` 的拒跑放在 `main()` 里、早于名册与源码守卫；共享执行器自身遇到启动期的
 `refuse()`（rc 2）时不发布 `summary.json`：目录仍为空则撤掉（目录已被外部删掉时按「没有残留」

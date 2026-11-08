@@ -59,6 +59,31 @@ if __name__ == '__main__':
     raise SystemExit(matrix_main(root, __file__, '', cases, passed_count=1,
         child_count=0, paths=[shell, live, hooks, handle, steer, mailbox, writer, runner, cleanup,
         root / 'src/pilotdeck-gateway/src/runtime/turn/host_factory_tests.rs',
+        # #2228 r11+r12 (DS r10 sibling P1#3 -> DS r11 sibling P1×2 +
+        # concurrency P1 + MM r11 sibling P1, both families): guard the
+        # bound judge's inputs. live_session_tests.rs bakes
+        # live-session/oracle.json (:202-206 — the expectation the
+        # session_matrix rows here judge by) and live.rs bakes
+        # live-e2e/terminal-boundaries/oracle.json (:2143);
+        # tests/common/baseline.rs (with its #[path] regeneration_masks.rs)
+        # is compiled into the same --lib binary and backs
+        # test_baseline::oracle(); host_factory_tests.rs (registered above)
+        # bakes host-factory/oracle.json (:463/:562/:614),
+        # tool-budget-cwd/oracle.json (:803) and host-manifest/oracle.json
+        # (:1495). Guard semantics note (MM r11 concurrency/boundary P2):
+        # these paths feed the write guard — each row's window refuses entry
+        # when any of them differs from HEAD and restores HEAD bytes on
+        # exit — not the hash read guard the schemata fixtures use; an edit
+        # landing inside a row's window is reverted, not detected.
+        # Detection-grade (record_sources) guarding is #2241's shared-
+        # mechanism item.
+        fixtures / 'live-session/oracle.json',
+        fixtures / 'live-e2e/terminal-boundaries/oracle.json',
+        root / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+        root / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+        fixtures / 'host-factory/oracle.json',
+        fixtures / 'tool-budget-cwd/oracle.json',
+        fixtures / 'host-manifest/oracle.json',
         root / 'src/pilotdeck-gateway/src/runtime/turn/interaction.rs',
         root / 'src/pilotdeck-gateway/tests/fixtures/live-session/peer.py',
         root / 'src/pilotdeck-gateway/src/runtime/turn/live_session_tests.rs',

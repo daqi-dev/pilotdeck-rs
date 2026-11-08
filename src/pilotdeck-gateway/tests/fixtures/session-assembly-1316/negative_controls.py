@@ -2,8 +2,9 @@
 """#1316 A7.8-pr1 session-domain assembly: product mutations for the wire-up.
 
 Every mutant breaks one piece of the assembly (removes a registry entry or a
-describe capability, alters an always-on method message or its wire code,
-registers the always-on family, or advertises a deferred capability) and must
+describe capability, alters an always-on method message or its envelope code,
+registers the always-on family, or advertises an always-on capability no
+control backs) and must
 be killed by the named oracle test in the same process, with the marker of the
 mutant inside that test's own panic payload. Original source bytes and hashes
 are verified after every mutation; the summary is emitted only after all
@@ -48,27 +49,28 @@ mutations = [
      '    "elicitation_respond",',
      'native_process::methods::tests::session_domain_reconciles_with_coverage_manifest',
      '#1316 A7 method reconnect_interaction is dispatched'),
+    # #1352: the advertised table moved out of `requests.rs` into
+    # `native_process/capabilities.rs`, so these four describe anchors follow it.
+    # Renaming a row drops the name from the advertised set exactly like
+    # deleting a literal line did.
     ('describe-drops-permission-decide',
-     'native_process/requests.rs',
-     '                            "permission_decide",\n'
-     '                            "async_hook_result",',
-     '                            "async_hook_result",',
+     'native_process/capabilities.rs',
+     'Capability { name: "permission_decide", methods: &[], wired: compiled_in },',
+     'Capability { name: "unwired_permission_decide", methods: &[], wired: compiled_in },',
      'native_process::management_tests::production_host_management_and_restart',
      '#1231 exact wired capability set'),
     # Dropping the registry entry sends `always_on_apply` to the
-    # `metadata::unavailable` fallback, whose code is the SAME
-    # CAPABILITY_UNAVAILABLE the family returns (metadata.rs:69). The code
-    # assertion therefore passes on this mutant; the family-specific message
-    # assertion is the discriminator that must panic, so the required marker
-    # names it. The test still asserts the code first for every other mutant
-    # (the marker here is evidence, not a weakening: any registry drop still
-    # fails the run).
+    # `metadata::unavailable` fallback, an Err where the family answers the TS
+    # not-configured result envelope (#1313 r1: the 2026-11-05
+    # CAPABILITY_UNAVAILABLE rescope was lifted on 2026-11-08). The envelope
+    # test's unwrap of the Ok is the discriminator that must panic, so the
+    # required marker names it.
     ('registry-drops-always-on',
      'native_process/methods/mod.rs',
      '    interaction: interaction::METHODS,\n    always_on: always_on::METHODS,',
      '    interaction: interaction::METHODS,',
-     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
-     '#1316 always_on_apply message'),
+     'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
+     '#1313 always_on_apply message'),
     ('http-store-branch-removed',
      'native_http.rs',
      '    if path.starts_with(crate::user_dialog::http_store::STORE_PATH_PREFIX) {\n'
@@ -83,13 +85,14 @@ mutations = [
      '',
      'native_http::tests::user_dialog_store_entry_is_explicitly_not_yet_open',
      '#1316 user-dialog store entry is a 503'),
-    # #1632 P2-1 / #1476: the wire-up mutation points are the three interaction
-    # registry entries, three always-on per-method messages, two describe
-    # capabilities, the always-on family registration, the explicit HTTP store
-    # entry, the always-on wire code and one advertised always-on capability.
-    # Four were covered above, so the nine below cover the rest. Each row names
-    # the assertion message the product test already prints, so the kill is
-    # attributable to that one assertion.
+    # #1632 P2-1 / #1476 / #1313 r1: the wire-up mutation points are the three
+    # interaction registry entries, three always-on per-method messages, the
+    # abort arm's sessionKey read, three describe capabilities, the always-on
+    # family registration, the explicit HTTP store entry, the always-on
+    # envelope code and one advertised always-on capability. Four were covered
+    # above, so the ten below cover the rest. Each row names the assertion
+    # message the product test already prints, so the kill is attributable to
+    # that one assertion.
     ('registry-drops-elicitation-respond',
      'native_process/methods/interaction.rs',
      '    "elicitation_respond",\n',
@@ -109,56 +112,63 @@ mutations = [
     # turn, so a redundant arm cannot hide behind a sibling.
     ('always-on-abort-copies-apply-message',
      'native_process/methods/always_on.rs',
-     '                "always_on_abort" => "Always-On abort is not configured on this gateway.",',
-     '                "always_on_abort" => "Always-On apply is not configured on this gateway.",',
-     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
-     '#1316 always_on_abort message'),
+     '                    not_configured_error("Always-On abort is not configured on this gateway."),',
+     '                    not_configured_error("Always-On apply is not configured on this gateway."),',
+     'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
+     '#1313 always_on_abort message'),
     ('always-on-rerun-copies-apply-message',
      'native_process/methods/always_on.rs',
-     '                "always_on_rerun_plan" => "Always-On rerun is not configured on this gateway.",',
-     '                "always_on_rerun_plan" => "Always-On apply is not configured on this gateway.",',
-     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
-     '#1316 always_on_rerun_plan message'),
+     '                    not_configured_error("Always-On rerun is not configured on this gateway."),',
+     '                    not_configured_error("Always-On apply is not configured on this gateway."),',
+     'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
+     '#1313 always_on_rerun_plan message'),
     ('always-on-apply-copies-abort-message',
      'native_process/methods/always_on.rs',
-     '                _ => "Always-On apply is not configured on this gateway.",',
-     '                _ => "Always-On abort is not configured on this gateway.",',
-     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
-     '#1316 always_on_apply message'),
-    # #1476: the two honesty claims themselves, not just their message text.
-    # Neither row is covered by the message mutants above, because each leaves
-    # the other half of the assertion intact. The code row keeps the family
-    # message and swaps only the wire code, so it isolates the code half; the
-    # describe row advertises one deferred method, which is the cheapest false
+     '                    not_configured_error("Always-On apply is not configured on this gateway."),',
+     '                    not_configured_error("Always-On abort is not configured on this gateway."),',
+     'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
+     '#1313 always_on_apply message'),
+    # #1476 / #1313 r1: the honesty claims themselves, not just their message
+    # text. The envelope row keeps the family messages and swaps only the
+    # envelope's `error.code`, so it isolates the code half (the envelope test
+    # compares the wire JSON byte for byte, so code and message share one
+    # assertion - the marker is that assertion's message); the describe row
+    # advertises one method no control backs, which is the cheapest false
     # capability claim (`assert_ts_capability_subset` only bounds the set from
     # above, so an over-claim has to be killed here).
-    ('always-on-code-not-capability-unavailable',
+    # #1313 r1-fix1 (DS/MM boundary P2): only the abort arm reads
+    # `input.sessionKey`; the nullish-params test is otherwise driven by no
+    # mutation. Replacing the read with an empty object drops the boundary
+    # TypeError, and the test's expect_err panic is the kill.
+    ('always-on-abort-skips-the-input-read',
      'native_process/methods/always_on.rs',
-     '        code: "CAPABILITY_UNAVAILABLE".into(),',
-     '        code: "NOT_CONFIGURED".into(),',
-     'native_process::methods::always_on::tests::always_on_methods_answer_capability_unavailable',
-     '#1316 always_on_apply code'),
+     '                    let session_key = super::input_property(&params, "sessionKey")?;',
+     '                    let session_key = super::input_property(&JsValue::Object(Default::default()), "sessionKey")?;',
+     'native_process::methods::always_on::tests::always_on_abort_nullish_params_hit_the_session_key_read',
+     '#1313 abort nullish answers the TypeError'),
+    ('always-on-envelope-code-rewritten',
+     'native_process/methods/always_on.rs',
+     '        ("code", "not_configured".into()),',
+     '        ("code", "NOT_CONFIGURED".into()),',
+     'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
+     '#1313 always_on_apply message'),
     ('describe-advertises-always-on-apply',
-     'native_process/requests.rs',
-     '                            "delete_session",\n'
-     '                        ]\n',
-     '                            "delete_session",\n'
-     '                            "always_on_apply",\n'
-     '                        ]\n',
+     'native_process/capabilities.rs',
+     'Capability { name: "supported_agents", methods: &[], wired: compiled_in },',
+     'Capability { name: "supported_agents", methods: &[], wired: compiled_in },\n'
+     '    Capability { name: "always_on_apply", methods: &[], wired: compiled_in },',
      'native_process::methods::always_on::tests::always_on_methods_are_not_advertised',
-     '#1316 always_on_apply must not be advertised in describe'),
+     '#1313 always_on_apply must not be advertised in describe'),
     ('describe-drops-async-hook-result',
-     'native_process/requests.rs',
-     '                            "async_hook_result",\n'
-     '                            "delete_session",\n',
-     '                            "delete_session",\n',
+     'native_process/capabilities.rs',
+     'name: "async_hook_result",',
+     'name: "unwired_async_hook_result",',
      'native_process::management_tests::production_host_management_and_restart',
      '#1231 exact wired capability set'),
     ('describe-drops-delete-session',
-     'native_process/requests.rs',
-     '                            "delete_session",\n'
-     '                        ]\n',
-     '                        ]\n',
+     'native_process/capabilities.rs',
+     'Capability { name: "delete_session", methods: &[], wired: compiled_in },',
+     'Capability { name: "unwired_delete_session", methods: &[], wired: compiled_in },',
      'native_process::management_tests::production_host_management_and_restart',
      '#1231 exact wired capability set'),
 ]

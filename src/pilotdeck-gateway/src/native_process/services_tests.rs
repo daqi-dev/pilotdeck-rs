@@ -8,9 +8,17 @@
 //! diagnostics, stat-authoritative oversize gate and the EISDIR turn
 //! failure) plus the attach-followups-a follow-ups (#1458 pdf_size_estimate
 //! info, #1469 attachment_unsupported diagnostics, #1462 the Node EISDIR
-//! message, #1459/#1464 the lease-root/lease-path softening) and the #1320
-//! fix-r1 F2/F3 settings-composition tests (the production stack binds no
-//! notification server; the settings store anchors at PILOT_HOME).
+//! message, #1459/#1464 the lease-root/lease-path softening), the #1460
+//! two-pass split (a direct-content attachment with a channelKey path is
+//! still registered; its path failures stay silent like the audio skip —
+//! including the open failure of an unopenable lease file),
+//! the #1461 lone-surrogate fidelity (the outer diagnostic keeps the
+//! surrogate and the resolve prefix, only the fs error spelling is lossy,
+//! and the route words follow the raw spelling rather than the resolved
+//! tail),
+//! and the #1320 fix-r1 F2/F3 settings-composition tests (the production
+//! stack binds no notification server; the settings store anchors at
+//! PILOT_HOME).
 
 use super::services::{
     NativeSettingsOptions, attachment_identity_matches, canonical_upload_store,
@@ -116,6 +124,24 @@ fn block_text(block: &JsValue) -> String {
         .and_then(JsValue::as_string)
         .and_then(|s| s.to_utf8().ok())
         .unwrap_or_default()
+}
+
+/// #1461: a block's text as raw UTF-16 code units — a lone surrogate in
+/// the diagnostic text is not representable in a `String`, so the lossy
+/// `block_text` would silently erase exactly the thing being pinned.
+fn block_text_units(block: &JsValue) -> Vec<u16> {
+    block
+        .get("text")
+        .and_then(JsValue::as_string)
+        .map(|text| text.units().to_vec())
+        .unwrap_or_default()
+}
+
+fn units_contains(haystack: &[u16], needle: &[u16]) -> bool {
+    !needle.is_empty()
+        && haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
 }
 
 fn content_blocks(result: &JsValue) -> Vec<JsValue> {
@@ -557,8 +583,12 @@ fn lone_surrogate_path_becomes_not_found_diagnostic() {
     // P1-d (codex, ts-probe/probe.out "P1-d composer lone-surrogate"): a
     // lone-surrogate path is truthy in TS; `path.resolve` keeps it, fs
     // mangles it to U+FFFD, the stat fails ENOENT and the resolver emits
-    // the image-not-found diagnostic. Rust spells the path lossily
-    // (U+FFFD); it never reaches the lease guard, an open, or
+    // the image-not-found diagnostic. #1461: the diagnostic keeps both TS
+    // spellings — the outer path is the `path.resolve` form of the raw
+    // UTF-16 (lone surrogate and absolute prefix included) and only the fs
+    // error inside the parentheses carries the replacement character
+    // (ts-probe `_tmp/20261108-issue-1460-r2/probe/composer-probe.out`
+    // "Probe B"). It never reaches the lease guard, an open, or
     // allowedReadFiles.
     let mut fields = JsObject::new();
     fields.insert(
@@ -568,16 +598,33 @@ fn lone_surrogate_path_becomes_not_found_diagnostic() {
     fields.insert("mimeType".into(), JsValue::from("image/png"));
     let result = compose_attachment_turn(&scratch.0, &message("hello"), &[JsValue::Object(fields)])
         .expect("#1321 a lone-surrogate path composes the turn");
-    let lossy = "\u{FFFD}";
     let blocks = content_blocks(&result);
+    // The expected diagnostic in UTF-16 code units, so the lone surrogate
+    // itself is pinned: `path.resolve("<cwd>/\u{D800}")` for the outer path
+    // — the *process* cwd, which TS `path.resolve` uses as the base
+    // (composer-probe.out "Probe B": the prefix is `/tmp/pdrs-1460-probe-cwd/`
+    // while the project root is a different directory; the scratch project
+    // root here differs from the test process cwd the same way, so a
+    // project-root base would fail this expectation) — and the U+FFFD
+    // spelling only inside the ENOENT message.
+    let outer: Vec<u16> = std::env::current_dir()
+        .expect("#1461 process cwd readable")
+        .to_str()
+        .expect("#1461 cwd UTF-8")
+        .encode_utf16()
+        .chain([u16::from(b'/'), 0xD800])
+        .collect();
+    let inner: Vec<u16> = String::from_utf16_lossy(&outer).encode_utf16().collect();
+    let mut expected: Vec<u16> = "Image attachment not found: ".encode_utf16().collect();
+    expected.extend_from_slice(&outer);
+    expected.extend(" (ENOENT: no such file or directory, stat '".encode_utf16());
+    expected.extend_from_slice(&inner);
+    expected.extend("').".encode_utf16());
     negative_assert!(
-        diagnostics_block(&blocks).contains(&format!(
-            "Image attachment not found: {lossy} \
-             (ENOENT: no such file or directory, stat '{lossy}')."
-        )),
-        "#1321 P1-d: the lone-surrogate path must become the TS not-found \
-         diagnostic, got: {}",
-        diagnostics_block(&blocks)
+        blocks
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected)),
+        "#1461 the not-found diagnostic must keep the surrogate outer and the lossy inner spelling"
     );
     negative_assert!(
         result.get("allowedReadFiles").is_none(),
@@ -2107,6 +2154,457 @@ fn content_block_skips_the_path_branch() {
     negative_assert!(
         note_block(&blocks).is_empty(),
         "#1321 P1-a: the outside path must not produce a note line"
+    );
+}
+
+#[test]
+fn direct_content_with_channel_key_path_is_registered() {
+    let scratch = Scratch::new();
+    // #1460 (ts-probe `_tmp/20261108-issue-1460-r2/probe/composer-probe.out`
+    // "Probe A"): a direct-content attachment with a valid path and a
+    // channelKey gets both TS passes — the image block from the content
+    // branch (composer :211-221) and the registration collection the
+    // content `continue` never skips (composer :57/:173-193): the path note
+    // and allowedReadFiles carry the registered path.
+    let path = scratch.lease("direct.png");
+    std::fs::write(&path, [1u8, 2, 3, 4]).expect("#1460 lease fixture");
+    let entry = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("ABCD").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("bytes", JsValue::Number(4.0)),
+        ("path", JsValue::from(path.as_str())),
+        (
+            "metadata",
+            object([("channelKey", JsValue::from("chan-1"))]),
+        ),
+    ]);
+    let result = compose_attachment_turn(&scratch.0, &message("hello"), &[entry])
+        .expect("#1460 direct content with a channelKey path composes the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 3,
+        "#1460 direct content with a channelKey path must keep message, image and note blocks"
+    );
+    negative_assert!(
+        blocks[1].get("type") == Some(&"image".into())
+            && blocks[1].get("data")
+                == Some(&JsValue::from(BASE64_STANDARD.encode("ABCD").as_str()))
+            && blocks[1].get("bytes") == Some(&JsValue::Number(4.0)),
+        "#1460 the content image block must keep the direct-content shape"
+    );
+    let note = block_text(&blocks[2]);
+    negative_assert!(
+        note == format!(
+            "\n\n[Registered attachment files in this session:]\n- direct.png: {path}\n\
+             These are path references for reuse. If an image/PDF is already visible in this \
+             turn, do not call read_file just to view it."
+        ),
+        "#1460 the note must carry the registered path, got: {note}"
+    );
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed == vec![JsValue::from(path.as_str())],
+        "#1460 allowedReadFiles must carry the registered path"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1460 a valid direct-content path must not diagnose"
+    );
+}
+
+#[test]
+fn direct_content_with_an_invalid_channel_key_path_stays_silent() {
+    let scratch = Scratch::new();
+    // #1460: the registration collection swallows its own failures
+    // (composer :181-189 `catch {}`) and the content `continue` keeps the
+    // entry out of the resolver's diagnostics — an unresolvable or
+    // lone-surrogate path on a content attachment keeps its block and
+    // produces neither a diagnostic, nor a note line, nor allowedReadFiles.
+    let outside = scratch.0.with_file_name("pdrs-1460-outside-content.png");
+    let outside_path = outside.to_str().expect("#1460 outside UTF-8").to_owned();
+    let mut surrogate = JsObject::new();
+    surrogate.insert("type".into(), JsValue::from("image"));
+    surrogate.insert(
+        "content".into(),
+        JsValue::from(BASE64_STANDARD.encode("AB").as_str()),
+    );
+    surrogate.insert("mimeType".into(), JsValue::from("image/png"));
+    surrogate.insert(
+        "path".into(),
+        JsValue::String(JsString::from_utf16(vec![0xD800])),
+    );
+    surrogate.insert(
+        "metadata".into(),
+        object([("channelKey", JsValue::from("chan-1"))]),
+    );
+    let outside_entry = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("CD").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("path", JsValue::from(outside_path.as_str())),
+        (
+            "metadata",
+            object([("channelKey", JsValue::from("chan-1"))]),
+        ),
+    ]);
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[JsValue::Object(surrogate), outside_entry],
+    )
+    .expect("#1460 invalid paths on content attachments compose the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 3,
+        "#1460 content attachments with invalid paths must keep message and image blocks only"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1460 an invalid path on a content attachment must not diagnose"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1460 an invalid path on a content attachment must not register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1460 an invalid path on a content attachment must not produce a note line"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_content_with_an_eloop_path_stays_silent() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #1460: a P2 internal error (an ELOOP canonicalize failure of the
+    // path itself under a valid root) is swallowed for a content-produced
+    // attachment exactly like the registration pass's own `catch {}`
+    // swallows its stat error — the turn must not fail over a path the
+    // resolver projection never sees.
+    let link = scratch.lease("loop.png");
+    symlink(Path::new(&link), Path::new(&link)).expect("#1460 symlink loop fixture");
+    let entry = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("AB").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("path", JsValue::from(link.as_str())),
+        (
+            "metadata",
+            object([("channelKey", JsValue::from("chan-1"))]),
+        ),
+    ]);
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(&scratch.0, &message("hello"), &[entry]),
+        "#1460 an ELOOP path on a content attachment must not fail the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 2,
+        "#1460 an ELOOP content attachment must keep message and image blocks only"
+    );
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1460 an ELOOP path on a content attachment must not diagnose"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1460 an ELOOP path on a content attachment must not register allowedReadFiles"
+    );
+}
+
+#[test]
+fn folded_surrogate_path_routes_the_diagnostic_on_the_raw_spelling() {
+    let scratch = Scratch::new();
+    // DS r1 boundary P2: composer :234-251 routes the not-found words on the
+    // *original* attachment path. `report.pdf/\uD800/..` resolves to a
+    // `.pdf` tail, so routing on the resolved form would say "PDF
+    // attachment not found"; the raw spelling ends in `..` and routes as
+    // File — "Attachment not found" — while the resolved outer path (with
+    // its process-cwd prefix) is what the diagnostic carries.
+    let raw: Vec<u16> = "report.pdf/"
+        .encode_utf16()
+        .chain([0xD800])
+        .chain("/..".encode_utf16())
+        .collect();
+    let mut fields = JsObject::new();
+    fields.insert("path".into(), JsValue::String(JsString::from_utf16(raw)));
+    fields.insert("mimeType".into(), JsValue::from("text/plain"));
+    let result = compose_attachment_turn(&scratch.0, &message("hello"), &[JsValue::Object(fields)])
+        .expect("#1461 a folded surrogate path composes the turn");
+    let blocks = content_blocks(&result);
+    let outer: Vec<u16> = std::env::current_dir()
+        .expect("#1461 process cwd readable")
+        .to_str()
+        .expect("#1461 cwd UTF-8")
+        .encode_utf16()
+        .chain("/report.pdf".encode_utf16())
+        .collect();
+    let inner: Vec<u16> = String::from_utf16_lossy(&outer).encode_utf16().collect();
+    let mut expected: Vec<u16> = "Attachment not found: ".encode_utf16().collect();
+    expected.extend_from_slice(&outer);
+    expected.extend(" (ENOENT: no such file or directory, stat '".encode_utf16());
+    expected.extend_from_slice(&inner);
+    expected.extend("').".encode_utf16());
+    negative_assert!(
+        blocks
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected)),
+        "#1461 the not-found words route on the raw spelling, not the resolved tail"
+    );
+}
+
+// #1461 r6 (DS r5 boundary P2 / sibling P3): the worker this launches is
+// #[cfg(unix)]; without the same gate a non-unix build would spawn a test
+// name that does not exist there.
+#[cfg(unix)]
+#[test]
+fn absolute_surrogate_diagnostic_survives_deleted_cwd_matrix() {
+    crate::test_process::run_cases(
+        "native_process::services_tests::absolute_surrogate_diagnostic_survives_deleted_cwd",
+        vec![("absolute-deleted-cwd".into(), vec![])],
+    );
+}
+
+/// #1461 r2 (DS concurrency P1 / boundary P2): an absolute lone-surrogate
+/// path never consults the process cwd — Node `path.resolve` only reads it
+/// for relative spellings (the same shape as `skills::resolve`) — so the
+/// not-found diagnostic must survive a cwd that has been deleted.
+/// Launched in an isolated worker because deleting the cwd is
+/// process-global (`matrix` above spawns this test with `--exact`).
+#[cfg(unix)]
+#[test]
+#[ignore = "isolated cwd worker launched by absolute_surrogate_diagnostic_survives_deleted_cwd_matrix"]
+fn absolute_surrogate_diagnostic_survives_deleted_cwd() {
+    let holder = Scratch::new();
+    // A doomed cwd must be an empty directory: remove_dir(2) refuses a
+    // non-empty one, and a Scratch carries the lease subtree inside, so the
+    // doomed cwd is a bare temp dir with nothing in it (cb8-measured: the
+    // Scratch shape failed with DirectoryNotEmpty before the product path
+    // ever ran).
+    let gone = std::env::temp_dir().join(format!("pdrs-1461-gone-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&gone).expect("#1461 make the doomed cwd");
+    std::env::set_current_dir(&gone).expect("#1461 enter the doomed cwd");
+    std::fs::remove_dir(&gone).expect("#1461 delete the cwd");
+    let mut raw: Vec<u16> = holder
+        .0
+        .to_str()
+        .expect("#1461 scratch path UTF-8")
+        .encode_utf16()
+        .collect();
+    raw.push(b'/' as u16);
+    raw.push(0xD800);
+    let mut fields = JsObject::new();
+    fields.insert("path".into(), JsValue::String(JsString::from_utf16(raw)));
+    fields.insert("mimeType".into(), JsValue::from("image/png"));
+    let result = compose_attachment_turn(&holder.0, &message("hello"), &[JsValue::Object(fields)])
+        .expect("#1461 an absolute lone-surrogate path composes the turn with a deleted cwd");
+    let blocks = content_blocks(&result);
+    // The outer is the absolute spelling itself — the resolve never read
+    // the (deleted) cwd — and only the fs error inside the parentheses is
+    // lossy, exactly like Probe B's relative shape.
+    let outer: Vec<u16> = holder
+        .0
+        .to_str()
+        .expect("#1461 scratch path UTF-8")
+        .encode_utf16()
+        .chain([b'/' as u16, 0xD800])
+        .collect();
+    let inner: Vec<u16> = String::from_utf16_lossy(&outer).encode_utf16().collect();
+    let mut expected: Vec<u16> = "Image attachment not found: ".encode_utf16().collect();
+    expected.extend_from_slice(&outer);
+    expected.extend(" (ENOENT: no such file or directory, stat '".encode_utf16());
+    expected.extend_from_slice(&inner);
+    expected.extend("').".encode_utf16());
+    negative_assert!(
+        blocks
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected)),
+        "#1461 an absolute surrogate diagnostic must survive a deleted cwd without reading it"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1461 a lone-surrogate path must not register allowedReadFiles"
+    );
+    std::env::set_current_dir(&holder.0).expect("#1461 restore known cwd");
+    crate::test_process::receipt("absolute-deleted-cwd");
+}
+
+/// #1461 r5 (DS sibling P2 / boundary P2): a *relative* lone-surrogate
+/// spelling consults the process cwd, and the cache must behave like Node's
+/// `process.cwd()` — seeded by the first successful read, still answering
+/// after the cwd itself is deleted. The second relative diagnostic after
+/// the deletion must still carry the warm prefix; the lazy first-read
+/// residual (a cwd deleted *before* the first relative diagnostic stays
+/// silent) is documented on `cached_process_cwd`. Same worker shape as the
+/// absolute case above: deleting the cwd is process-global.
+#[cfg(unix)]
+#[test]
+#[ignore = "isolated cwd worker launched by relative_surrogate_diagnostic_uses_the_cached_first_cwd_matrix"]
+fn relative_surrogate_diagnostic_uses_the_cached_first_cwd() {
+    let holder = Scratch::new();
+    // Same constraint as the absolute worker: remove_dir(2) refuses a
+    // non-empty directory, so the warm cwd is a bare temp dir.
+    let warm = std::env::temp_dir().join(format!("pdrs-1461-warm-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&warm).expect("#1461 make the warm cwd");
+    std::env::set_current_dir(&warm).expect("#1461 enter the warm cwd");
+    // #1461 r6 (DS r5 concurrency P1 / boundary P2): the product cache
+    // seeds from `std::env::current_dir()`, which on macOS resolves the
+    // `/var` symlink to `/private/var` while `temp_dir()` keeps the
+    // literal spelling — build the expectation from the same physical
+    // read the cache sees, or the test is deterministically red on
+    // darwin (tests/native_process.rs and `path_scratch` precedent).
+    let warm_units: Vec<u16> = std::env::current_dir()
+        .expect("#1461 warm cwd readable")
+        .to_str()
+        .expect("#1461 warm path UTF-8")
+        .encode_utf16()
+        .collect();
+    // The relative spelling: a leaf that is a lone surrogate.
+    let mut raw: Vec<u16> = "rel".encode_utf16().collect();
+    raw.push(0xD800);
+    let expected_outer = |warm: &[u16]| {
+        let mut outer: Vec<u16> = warm.to_vec();
+        outer.push(b'/' as u16);
+        outer.extend_from_slice(&raw);
+        let inner: Vec<u16> = String::from_utf16_lossy(&outer).encode_utf16().collect();
+        let mut expected: Vec<u16> = "Image attachment not found: ".encode_utf16().collect();
+        expected.extend_from_slice(&outer);
+        expected.extend(" (ENOENT: no such file or directory, stat '".encode_utf16());
+        expected.extend_from_slice(&inner);
+        expected.extend("').".encode_utf16());
+        expected
+    };
+    let fields = || {
+        let mut fields = JsObject::new();
+        fields.insert(
+            "path".into(),
+            JsValue::String(JsString::from_utf16(raw.clone())),
+        );
+        fields.insert("mimeType".into(), JsValue::from("image/png"));
+        fields
+    };
+    // First compose while the cwd is readable: the diagnostic resolves
+    // against the live warm cwd and seeds the cache.
+    let first = compose_attachment_turn(&holder.0, &message("hello"), &[JsValue::Object(fields())])
+        .expect("#1461 a relative lone-surrogate path composes the turn on a live cwd");
+    negative_assert!(
+        content_blocks(&first)
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected_outer(&warm_units))),
+        "#1461 the first relative surrogate diagnostic seeds the cache with the warm cwd"
+    );
+    // Delete the cwd; the second relative diagnostic must still resolve
+    // against the cached first read, not drop the diagnostic.
+    std::fs::remove_dir(&warm).expect("#1461 delete the warm cwd");
+    let second =
+        compose_attachment_turn(&holder.0, &message("hello"), &[JsValue::Object(fields())])
+            .expect("#1461 a relative lone-surrogate path composes the turn with a deleted cwd");
+    negative_assert!(
+        content_blocks(&second)
+            .iter()
+            .any(|block| units_contains(&block_text_units(block), &expected_outer(&warm_units))),
+        "#1461 after the cwd is deleted the relative surrogate diagnostic still uses the cached first read"
+    );
+    negative_assert!(
+        second.get("allowedReadFiles").is_none(),
+        "#1461 a lone-surrogate path must not register allowedReadFiles after a cwd deletion"
+    );
+    std::env::set_current_dir(&holder.0).expect("#1461 restore known cwd");
+    crate::test_process::receipt("relative-deleted-cwd-warm");
+}
+
+// #1461 r6 (DS r5 boundary P2 / sibling P3): same gate as the absolute
+// matrix above — the launched worker is #[cfg(unix)]-only.
+#[cfg(unix)]
+#[test]
+fn relative_surrogate_diagnostic_uses_the_cached_first_cwd_matrix() {
+    crate::test_process::run_cases(
+        "native_process::services_tests::relative_surrogate_diagnostic_uses_the_cached_first_cwd",
+        vec![("relative-deleted-cwd-warm".into(), vec![])],
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn direct_content_with_an_unopenable_path_stays_silent() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    // DS r1 boundary P2: the open failure is one of the twelve silent
+    // points — a chmod-000 lease file still stats fine (the approved-stat
+    // and identity data are all readable without the open) but the open
+    // itself fails EACCES, and a content-produced attachment must stay as
+    // silent as the audio skip there.
+    let path = scratch.lease("secret.png");
+    std::fs::write(&path, b"AB").expect("#1460 lease fixture");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
+        .expect("#1460 chmod fixture");
+    // A privileged runner ignores the mode bits; the case cannot be built.
+    // #1461 r2 (DS sibling P1, the #1900/#1525 pattern): the skip has to
+    // reach the log through the shared writer and fail when the CI switch
+    // says the permission face is mandatory — same registration as the
+    // storage/tests.rs root arms.
+    // #1461 r6 (DS r5 concurrency P2): probe the behaviour, not the uid —
+    // the native read probe alone covers every permission-blind runner
+    // (root, CAP_DAC_OVERRIDE, permission-blind mounts), and an euid
+    // shortcut would false-fail a mode-enforced root host (NFS root_squash)
+    // under PDRS_REQUIRE_PERMISSION_FAULTS=1 (probe-only shape, as
+    // tests/write_tools.rs).
+    if std::fs::read(&path).is_ok() {
+        assert!(
+            !crate::test_permission_faults::require_permission_faults(),
+            "#1460 PDRS_REQUIRE_PERMISSION_FAULTS is set but mode 000 did not stop the open \
+             (root or a permission-blind runner); this arm needs a host that enforces mode bits \
+             (需要强制 mode 位的宿主)"
+        );
+        crate::test_skip_line::stderr_skip_line(
+            "#1460 skip: direct_content_with_an_unopenable_path_stays_silent: \
+             running where mode 000 is readable (root or CAP_DAC_OVERRIDE)\n",
+        );
+        return;
+    }
+    let entry = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("AB").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("path", JsValue::from(path.as_str())),
+        (
+            "metadata",
+            object([("channelKey", JsValue::from("chan-1"))]),
+        ),
+    ]);
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(&scratch.0, &message("hello"), &[entry]),
+        "#1460 an unopenable path on a content attachment must not fail the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).is_empty(),
+        "#1460 an unopenable path on a content attachment must not diagnose"
+    );
+    negative_assert!(
+        blocks.len() == 2,
+        "#1460 an unopenable content attachment must keep message and image blocks only"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1460 an unopenable path on a content attachment must not register allowedReadFiles"
     );
 }
 

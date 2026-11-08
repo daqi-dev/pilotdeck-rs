@@ -2053,6 +2053,94 @@ fn output_schema_generator_reproduces_the_committed_oracle_twice() {
     }
 }
 
+/// #1265: the regress oracle (108 cases, from WIP `2c2e4f87`) is also
+/// generated from the real SDK; two fresh runs must reproduce the committed
+/// bytes. Its generator is plain ESM TypeScript, so no tsx loader is needed.
+#[test]
+#[ignore = "requires fixed TS baseline and Node; run with PDRS_BASELINE"]
+fn regress_oracle_generator_reproduces_the_committed_oracle_twice() {
+    let baseline = std::env::var("PDRS_BASELINE").expect("set fixed baseline path");
+    let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/output-schema/generate-regress.mts");
+    let committed = include_str!("fixtures/output-schema/regress-oracle.json");
+    for run in 0..2 {
+        let scratch = Scratch::new("regress-oracle-generate");
+        let status = baseline::node_command()
+            .env("PDRS_BASELINE", &baseline)
+            .arg(&generator)
+            .arg(scratch.path())
+            .status()
+            .expect("run node");
+        assert!(status.success(), "generator run {run} failed");
+        let generated =
+            std::fs::read_to_string(scratch.path().join("regress-oracle.json")).unwrap();
+        assert!(
+            generated == committed,
+            "generator run {run} differs from the committed oracle"
+        );
+    }
+}
+
+/// #1265: the oracle generators write with `{flag: 'wx'}`, so a second run
+/// into the same output directory must refuse to clobber the existing oracle
+/// (EEXIST) instead of silently replacing it — the reproducibility tests
+/// above prove matching bytes, not that a stale file was never overwritten.
+/// Both `wx` writers in the family are covered: `generate-regress.mts`
+/// (regress-oracle.json) and `generate.mjs` (ajv-oracle.json).
+#[test]
+#[ignore = "requires fixed TS baseline and Node; run with PDRS_BASELINE"]
+fn oracle_generators_refuse_to_clobber_the_existing_oracle() {
+    let baseline = std::env::var("PDRS_BASELINE").expect("set fixed baseline path");
+    for (generator, output, committed) in [
+        (
+            "generate-regress.mts",
+            "regress-oracle.json",
+            include_str!("fixtures/output-schema/regress-oracle.json"),
+        ),
+        (
+            "generate.mjs",
+            "ajv-oracle.json",
+            include_str!("fixtures/output-schema/ajv-oracle.json"),
+        ),
+    ] {
+        let generator = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/output-schema")
+            .join(generator);
+        // One scratch for both runs: the first creates the oracle, the
+        // second must refuse it. `.output()` captures stderr for the EEXIST
+        // check.
+        let scratch = Scratch::new("oracle-generator-clobber");
+        let first = baseline::node_command()
+            .env("PDRS_BASELINE", &baseline)
+            .arg(&generator)
+            .arg(scratch.path())
+            .status()
+            .expect("run node");
+        assert!(first.success(), "the first run must create the oracle");
+        let second = baseline::node_command()
+            .env("PDRS_BASELINE", &baseline)
+            .arg(&generator)
+            .arg(scratch.path())
+            .output()
+            .expect("run node");
+        assert!(
+            !second.status.success(),
+            "the second {output} run must refuse to overwrite the existing oracle"
+        );
+        let stderr = String::from_utf8_lossy(&second.stderr);
+        assert!(
+            stderr.contains("EEXIST"),
+            "expected an EEXIST refusal for {output}, got: {stderr}"
+        );
+        // And the refusal left the first run's bytes in place.
+        let oracle = std::fs::read_to_string(scratch.path().join(output)).unwrap();
+        assert_eq!(
+            oracle, committed,
+            "the refused run must leave the original {output} untouched"
+        );
+    }
+}
+
 // #394: Tokio accepts spawn on a shut-down Handle and cancels the task.
 // A dropped lease may arrive on a plain thread after its original executor dies.
 #[test]

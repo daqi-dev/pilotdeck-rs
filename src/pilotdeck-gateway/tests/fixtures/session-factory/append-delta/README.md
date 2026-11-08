@@ -35,6 +35,22 @@ PR #1175 的“去掉 8 次一致性重试”不符合当前实现，应更正�
 
 原始 phase2 RESULT 不在本树引用资料中，问题归因依据为当前行号与 `73c9d952` 的 #1011 同类清理修复，未伪称读到原件。
 
+## #2116 `.generation-owner` 判据与手工负控
+
+`generate.mts` 的 `.generation-owner` 是对 OUT 的首个 `wx` 写入（早于 raw 报告与 oracle 等一切输出），身份串 `session-factory/append-delta\n`：OUT 已被外来 marker 标记时，生成器在写出任何输出前于该独占 open 处以 EEXIST 退出，外来 owner 字节不被覆写。本夹具不分配 `run-*` 工作根，marker 在此不承载清理所有权，承载输出目录的跨生成器独占。
+
+重生成守卫 `append_delta_regenerates_identically` 经共享 helper 只比较 `oracle.json` 字节，marker 不进入比较面（#1500/#2116 口径）；marker 判据由专用用例 `append_delta_generator_writes_owned_marker`（`runtime::session::factory::projection_delta_tests`）承载：成功格钉 marker 存在且内容为身份串，冲突格预置外来 `.generation-owner`，断言失败点落在独占 open（输出同时含 `EEXIST` 与 `.generation-owner`）且外来字节保留。
+
+按 #2116 两条 issue 评论的结论，本轮不为这些 `#[ignore]` marker 断言登记自动化负控变异体（不扩 `negative_controls.py` 的 37 项表）；判据强度由交付证据中的手工负控留档保证：`{flag:'wx'}`→`{flag:'w'}`、marker 写入改 no-op、身份串换邻居夹具（`session-factory`）三只 `generate.mts` 变异各使绑定断言 FAILED（KILLED），恢复后复跑通过。复跑正控（钉版 Node v22.22.0 / ICU 78.2，`PDRS_BASELINE` 指向 `cc7c4e65` 检出，从仓库根加 `--manifest-path src/Cargo.toml`），`test result:` 行须为 `1 passed; 0 failed`：
+
+```sh
+cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib \
+  runtime::session::factory::projection_delta_tests::append_delta_generator_writes_owned_marker \
+  -- --exact --include-ignored
+```
+
+手工负控复跑：对 `generate.mts` 的 marker 写入行分别施加上述三只变异，同命令复跑须 FAILED 于对应 `#2116` 绑定断言（`test result:` 行含 `1 failed`）；每只跑完 `git checkout -- <generate.mts>` 恢复并核对工作区干净，复跑正控须回到 `1 passed; 0 failed`。
+
 ## 复现
 
 调用方设置 `PDRS_BASELINE` 指向只读固定基线，PATH 的 node 必须满足版本与 ICU；`CARGO_TARGET_DIR` 使用本 worktree 独占目录，debug profile 两项设为 `line-tables-only`。从仓库根运行：

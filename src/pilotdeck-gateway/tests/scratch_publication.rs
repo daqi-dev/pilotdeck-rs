@@ -1813,6 +1813,9 @@ enum BlindSource {
     Related,
 }
 
+// #2248 (in passing): this impl alone missed the cfg the enum and every
+// BlindSource helper carry (ed8ef1218); ungated it broke macOS clippy for the
+// whole --all-targets gate — same rule as the 11-01 standing constraint.
 #[cfg(target_os = "linux")]
 impl BlindSource {
     /// #1409: whether a source can hold a descriptor of the scanned pipe at

@@ -97,6 +97,43 @@ summary 顶层包括 `mode: full|sample`、按声明次序的 `selected` 名单�
 
 `turn-submit/negative.py` 保留 57 个变异和 `baseline`，`failure-guard/negative.py` 保留 22 个变异和 `baseline-pure/baseline-submit`。两者支持 `--check`；运行参数仍为 `output [case ...]`，抽样总带正控，重复/未知选择拒绝。旧判分器不再参与迁后 runner：`_negkit/submit.py` 只复用 `negative_process` 的 HEAD 源码守卫和进程所有权工具，不复用旧判分和摘要发布。未提交的产品改动不能用 `PDRS_NEGATIVE_BASELINE` 或其他 git 对象放行。
 
+> **现状（#2106 实测）**：`negative_process` 共享 runner 入口（如 `config-store`、`turn-runner` 等）的
+> `PDRS_NEGATIVE_BASELINE` 候选基线逃生口按 scanner target 冷暖分两态（`_ensure_workspace_scanner`
+> 解析出的 `CARGO_TARGET_DIR`，默认 `<tree>/_build/cargo-target`；候选基线/身份的拒绝一律是
+> `SourceBaselineError`，rc 随入口契约各不相同：`config-store` 走 `run_cases` 归 rc=1；
+> `settings-gateway`（已迁移 `refuse()`/`entered` 契约）拒跑为 rc=2；`turn-runner` 等直连
+> `mutating_sources` 的自管入口未捕获异常退出归 rc=1；冷 target bootstrap 的槽位/构建失败抛
+> `CalledProcessError`/`TimeoutExpired`/`RuntimeError`，同样非零退出，fail-closed，不产生假 PASS）：
+>
+> - **冷 target（scanner 未预建）**：bootstrap 前按字面 `HEAD` 校验 `src`/`.cargo`/`rust-toolchain*`，
+>   候选 diff 只要有任何一处落在这些区域内即被拒（未跟踪缓存类文件按 `_assert_input_areas` 的排除表
+>   豁免；非 HEAD 候选即使已通过外层 `mutating_sources` 的基线区域断言也过不去这一关）；候选 diff
+>   完全在区域外且不在 scanner 字面输入集（如只改 `state/`；字面输入集定义见下段）时不受影响。
+> - **暖 target（scanner 已预建且身份匹配）**：候选 diff 不触碰 scanner 身份 5 文件
+>   （`src/Cargo.toml`、`src/Cargo.lock`、`src/pilotdeck-gateway/Cargo.toml`、
+>   `src/pilotdeck-gateway/tests/common/source_inputs.rs`、
+>   `src/pilotdeck-gateway/examples/workspace_inputs.rs`，依赖升级是最常见形态）时可用；触碰任一个
+>   会在 `_assert_product_pristine` 的 scanner 身份比对处被拒。「身份匹配」只比对这 5 个文件当前
+>   worktree 字节与 scanner 构建期内嵌摘要——HEAD 是否移动不参与判断（实测：空提交前移 HEAD、5 文件
+>   字节不动，非身份候选仍 ENTER-OK，`remote-verify-r4-probe/`）。身份 5 文件被改过（构建后漂移或
+>   候选自身触碰）时以同一条身份失配消息拒绝所有候选——包括 diff 在 5 文件之外的——须重建 scanner
+>   后再试。
+>
+> 另一项边界：候选改动落在 `src`/`.cargo`/`rust-toolchain*` 内时必须先 `git add` 进 index——
+> `_assert_input_areas` 的 `--cached` 腿对被扫描区域要求 index 等于候选基线快照，未暂存候选在冷、暖
+> target 上都会被外层基线断言拒绝；比对范围之外的改动（如 `state/`）不参与该比对。**scanner
+> 字面输入集**的定义见上级 [`fixtures/README.md`](../README.md)「共享输入扫描器」节（tracked
+> `src/**/*.rs` 种子 + include/path/mod 递归边；清单由 `workspace_inputs` 现算、不硬编码，
+> 项数随仓库演进漂移，判定以现算为准）——该集合不只落在 `src` 内：#2106 实测快照
+> （`remote-verify-r4-probe/`）中 `src` 外有 3 项：`scripts/cli-parity/help.txt`、
+> `scripts/cli-parity/scenarios.json`、`specs/gateway-coverage/coverage-manifest.json`。字面输入
+> 文件未暂存的改动同样被 `--cached` 腿报 `source baseline mismatch`——`scripts/`、`specs/` 里
+> 只有上列文件不豁免，其余文件仍属区域外候选。收货复核实测（暖 target、本 README 在 `src/` 内
+> 且改动已暂存：触碰 `src/Cargo.toml` 的候选被拒，仅改本 README 的候选 ENTER-OK）原始记录在
+> `_tmp/20261108-harvest-2106-r1/`（#2106）。
+> `_negkit/submit.py` 本身仍然禁用该变量（本目录政策不变）。终局口径未定（放宽 bootstrap
+> 校验，或把 `PDRS_NEGATIVE_BASELINE` 限定为暖 target 专用并文档化），登记在 #2106。
+
 适配器要求三个显式绝对环境路径。`PDRS_BASELINE` 还须是 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85` 的检出目录；保留调用方 `CARGO_HOME`、`CARGO_TARGET_DIR`，不自建构建目录。每个变异执行正控→应用变异→`cargo test --no-run`→精确测试→恢复字节→恢复正控；编译失败和普通执行异常也检查恢复正控。正控异常支配后续关联 case 为 INVALID，但其余诊断仍执行。取消交给外层 HEAD 守卫还原，恢复核验后才发布摘要。
 
 契约增加三种显式迁移形式，默认 `Case` 的严格断言规则不变：
@@ -139,3 +176,7 @@ python3 -I -B src/pilotdeck-gateway/tests/fixtures/_negkit/toy_runner.py /tmp/ne
 `toy_runner.py` 只修改自己的临时文本文件，使用有 5 秒上限的子进程观察变异，打印恢复时 summary 尚不存在的事实；没有 TS 或产品源码变异。自测将 toy 的全部模式跑在 10 秒子进程上限内，并比较两次正常 summary 为 EQUIVALENT。
 
 `negative_contract.py` 只将本模块变异编译为内存模块（每个先 `compile()`），逐个跑命名 unittest 的正控→变异→恢复正控；结构化 AssertionError 的完整测试名和最后一段专属消息必须同时匹配。所有变异跑完才汇总，过期锚点、编译失败、无关错误一律 INVALID/非零，不把编译失败冒充判杀；无需提交新文件后绕 HEAD 运行。无参数模式在临时目录运行，供 `negative_anchor_selfcheck.rs` 与 comparator 自测一起进入 CI。每个显式 UNSUPPORTED 登记同时受到现有 anchor checker 的逐项移除、额外信号和过期登记负控覆盖。
+
+## #2116 `.generation-owner` 手工负控登记
+
+按 #2116 两条 issue 评论的结论，`session-factory/append-delta`、`turn-prompt-hooks`、`turn-runner` 三个生成器的 `.generation-owner` marker 断言（专用 `#[ignore]` 用例 `append_delta_generator_writes_owned_marker` / `prompt_hooks_generator_writes_owned_marker` / `turn_runner_generator_writes_owned_marker`）不为它们登记自动化变异体：判据强度由交付证据中的手工负控（`{flag:'wx'}`→`{flag:'w'}`、marker 写入 no-op、身份串换邻居夹具，各 KILLED）加各夹具 README 留档的复跑命令保证。细节见 `session-factory/append-delta/README.md`、`turn-prompt-hooks/README.md`、`turn-runner/README.md` 的 `#2116` 节。本目录 runner 不为这些断言改造；`negative_suite.py` 的后续变更由在途 #2064 承载。

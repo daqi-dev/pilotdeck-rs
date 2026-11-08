@@ -16,8 +16,8 @@ use std::sync::LazyLock;
 use pilotdeck_protocol::{JsString, JsValue};
 
 use super::{
-    ComputedRunAt, CronCreateSchedule, DelayUnit, compute_next_run_at, cron_day_fields_use_or,
-    delay_to_milliseconds, is_valid_cron_timezone, resolve_cron_timezone,
+    ComputedRunAt, CronCreateSchedule, CronZoneResolverCache, DelayUnit, compute_next_run_at,
+    cron_day_fields_use_or, delay_to_milliseconds, is_valid_cron_timezone, resolve_cron_timezone,
 };
 
 fn oracle() -> &'static JsValue {
@@ -143,6 +143,7 @@ fn replay_next_run_cell(entry: &JsValue) {
         &schedule,
         number_or_nan(entry, "afterMs"),
         &text(entry, "fallback"),
+        &CronZoneResolverCache::new(),
     );
     match entry
         .get("error")
@@ -316,6 +317,93 @@ fn zone_resolver_failure_fails_closed() {
     );
 }
 
+/// #2181: the same zone resolves once — the second `compute_next_cron_run_at`
+/// call reuses the cached `ZonedPartsResolver` instead of re-opening and
+/// re-parsing the TZif file, and computes the same next run.
+#[test]
+fn zone_resolver_cache_parses_each_zone_once() {
+    let cache = CronZoneResolverCache::new();
+    let expression: JsString = "0 9 * * *".into();
+    let first = super::compute_next_cron_run_at(&expression, 0.0, "Asia/Tokyo", &cache)
+        .unwrap_or_else(|error| panic!("#2181 zone reuse: unexpected scan error {error}"));
+    let second = super::compute_next_cron_run_at(&expression, 0.0, "Asia/Tokyo", &cache)
+        .unwrap_or_else(|error| panic!("#2181 zone reuse: unexpected scan error {error}"));
+    assert_eq!(
+        first, second,
+        "#2181 zone reuse: the cached resolver must compute the same next run"
+    );
+    assert_eq!(
+        cache.parse_count(),
+        1,
+        "#2181 zone reuse: a second call for the same zone must not re-parse the TZif file"
+    );
+}
+
+/// #2181: the cache key is the folded zone. The zoneinfo parse is
+/// case-insensitive (like ICU), so case variants of one zone must share the
+/// memoized parse instead of each becoming its own permanent map entry —
+/// an unfoldable key space would let a caller shape unbounded memory by
+/// submitting case variants of one valid zone.
+#[test]
+fn zone_resolver_cache_folds_case_variants_into_one_entry() {
+    let cache = CronZoneResolverCache::new();
+    let first = cache.resolver("Asia/Tokyo");
+    let second = cache.resolver("aSIA/tOKYO");
+    for (label, result) in [("first probe", &first), ("case variant", &second)] {
+        assert!(
+            result.is_ok(),
+            "#2181 case fold: {label} must resolve like the canonical spelling"
+        );
+    }
+    assert_eq!(
+        cache.parse_count(),
+        1,
+        "#2181 case fold: a case variant must reuse the folded entry, not re-parse or hold its own"
+    );
+}
+
+/// #2181: a zone that fails to resolve is **not** memoized — the second
+/// call re-probes the zoneinfo tree, so a failure caused by the environment
+/// (an ICU-valid legacy alias this host tree lacks, tzdata installed after
+/// the process started, a transient `io::Error`) self-heals on the next call
+/// exactly like the per-call reads `A8.3-CRON-TZ-ALIAS-001` records, while
+/// each individual call still fails closed. The zone is fed straight to the
+/// cache (the production path's `is_valid_cron_timezone` gate rejects it
+/// before the cache, so this pins the cache itself without depending on
+/// this host lacking a zone).
+#[test]
+fn zone_resolver_cache_reprobes_unresolved_zones() {
+    let cache = CronZoneResolverCache::new();
+    let first = cache.resolver("Not/AZone");
+    let second = cache.resolver("Not/AZone");
+    // `ZonedPartsResolver` has no PartialEq/Debug, so each result is checked
+    // by its error payload (the shape the fail-closed fold consumes).
+    for (label, result) in [("first probe", &first), ("second probe", &second)] {
+        match result {
+            Err(message) => assert_eq!(
+                message,
+                &JsString::from("Invalid time zone specified"),
+                "#2181 failure re-probe: {label} must carry the transport's error"
+            ),
+            Ok(_) => panic!("#2181 failure re-probe: {label} must not resolve a missing zone"),
+        }
+    }
+    assert_eq!(
+        cache.parse_count(),
+        2,
+        "#2181 failure re-probe: a failed zone must be re-probed, never memoized as a permanent failure"
+    );
+    let expression: JsString = "0 9 * * *".into();
+    let Some(parsed) = super::schedule::parse_cron_expression(&expression) else {
+        panic!("#2181 failure re-probe: the probe expression must parse")
+    };
+    assert_eq!(
+        super::schedule::compute_next_resolved(&parsed, 0.0, second),
+        Ok(None),
+        "#2181 failure re-probe: an unresolved zone must still fail closed to undefined"
+    );
+}
+
 /// TimeClip normalizes `-0` to `+0` after `ToIntegerOrInfinity`, verified on
 /// Node v22.22.0 (`new Date(-0.5).getTime()` is `+0`, `Object.is(…, -0)`
 /// false); the oracle's JSON cannot distinguish the two zero bits, so this
@@ -329,6 +417,7 @@ fn delay_negative_zero_is_positive_zero() {
         },
         -1.0,
         "UTC",
+        &CronZoneResolverCache::new(),
     )
     .unwrap_or_else(|error| panic!("#1324 delay negative zero: unexpected scan error {error}"));
     let ComputedRunAt::Valid(epoch) = actual else {

@@ -63,8 +63,8 @@ MUTATIONS = [
      "    except RuntimeError as error:\n"
      "        print(json.dumps({'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))"),
     ('guard-main-exit-zero', GUARD,
-     '        raise SystemExit(code)\n    raise SystemExit(code)',
-     '        raise SystemExit(code)\n    raise SystemExit(0)'),
+     '    raise SystemExit(2 if code is None or code is False else code)',
+     '    raise SystemExit(0)'),
     ('guard-main-except-narrowed', GUARD,
      '    except (Exception, KeyboardInterrupt) as error:\n        failure = _failure(error, policy, common)',
      '    except Exception as error:\n        failure = _failure(error, policy, common)'),

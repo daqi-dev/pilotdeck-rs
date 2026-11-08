@@ -2044,17 +2044,101 @@ async fn read_response(client: &mut tokio::io::DuplexStream, what: &str) -> Stri
     text
 }
 
-/// #1250: probe for data/EOF at the current virtual time. The 50 ms timeout
-/// window is armed before its own 60 ms advance, so a still-open read resolves
-/// `Elapsed`, while an EOF latched by a close during the advance wins — tokio
-/// polls the inner future before the delay.
+/// #1250: the probe/tail helpers' shared internal advance — both
+/// `probe_still_open` and `eof_after_idle_close` arm an
+/// `IDLE_CLOSE_HELPER_READ_WINDOW_MS` read, then advance virtual time by
+/// this step before awaiting it (tokio polls the inner read before the
+/// delay, so an EOF latched during the advance wins). The advance must
+/// stay strictly greater than the read window (the const assert below):
+/// the helper crosses the read's timeout with the advance, so a
+/// still-open read resolves `Elapsed` while the latched EOF wins. The
+/// #1292 lane's two inline helpers (`headers_timeout_408_arrives` /
+/// `stream_ends_silently_at_grid_point`) deliberately keep their own
+/// 60 ms literals each — the 002-family literal collection is follow-up
+/// #2380, out of this change's scope. The family's window arithmetic
+/// below and the same-instant cell's half-close instant are both written
+/// in terms of this step, so the (5.99, 6.09] s judgment window stays
+/// recomputable from named constants alone.
+const IDLE_CLOSE_HELPER_ADVANCE_MS: u64 = 60;
+
+/// #1250: the probe/tail helpers' shared read window — the `timeout` each
+/// helper arms on its read before its `IDLE_CLOSE_HELPER_ADVANCE_MS`
+/// advance. Only the #1250 family's two helpers use it: the #1292 lane's
+/// own 50 ms literals stay inline (002 family, follow-up #2380).
+const IDLE_CLOSE_HELPER_READ_WINDOW_MS: u64 = 50;
+
+/// #1250: Node's effective keep-alive idle-close deadline —
+/// `keepAliveTimeout` 5 s plus the fixed 1 s `keepAliveTimeoutBuffer`
+/// (6 s). Every probe/tail window constant below is derived from this
+/// line, and the const asserts after them turn any drift between the
+/// probe instant, the deadline and the race step into a compile failure
+/// instead of a silently moved (5.99, 6.09] s window.
+const IDLE_CLOSE_DEADLINE_MS: u64 = 6_000;
+
+/// #1250: the 6 s keep-alive idle-close family's shared probe and tail
+/// windows. The arithmetic, recomputable from the named constants: the
+/// probe instant is `IDLE_CLOSE_DEADLINE_MS - 10` (10 ms short of the
+/// deadline), reached as `IDLE_CLOSE_PROBE_ADVANCE_MS` — the deadline
+/// minus `probe_still_open`'s internal `IDLE_CLOSE_HELPER_ADVANCE_MS`
+/// (6_000 - 60 - 10 = 5_930 ms) — plus that same helper advance
+/// (5_930 + 60 = 5_990 ms), and the late-close bound is
+/// `IDLE_CLOSE_TAIL_WINDOW` plus `eof_after_idle_close`'s internal
+/// `IDLE_CLOSE_HELPER_ADVANCE_MS` (40 + 60 = 100 ms past the probe
+/// instant, 6.090 s) — a judgment window of (5.99, 6.09] s: a close
+/// earlier than that fails the still-open probe's EOF, one later fails
+/// the tail read's still-open. Every cell of the family must use these,
+/// or constants derived from them, instead of per-cell literals — the
+/// #1292 lane's loose 200 ms tails and the pre-#1250 700 ms tails were
+/// exactly that drift, silently widening the window.
+const IDLE_CLOSE_PROBE_ADVANCE_MS: u64 = IDLE_CLOSE_DEADLINE_MS - IDLE_CLOSE_HELPER_ADVANCE_MS - 10;
+const IDLE_CLOSE_PROBE_ADVANCE: Duration = Duration::from_millis(IDLE_CLOSE_PROBE_ADVANCE_MS);
+const IDLE_CLOSE_TAIL_WINDOW: Duration = Duration::from_millis(40);
+
+/// #1250: the same-instant cell's half-close instant — 10 ms shy of the
+/// deadline (`IDLE_CLOSE_DEADLINE_MS - 10`), which is exactly the windowed
+/// cells' probe instant (`IDLE_CLOSE_PROBE_ADVANCE_MS` plus the probe
+/// helper's `IDLE_CLOSE_HELPER_ADVANCE_MS`), derived rather than
+/// re-spelled so the cell cannot drift from them when either source
+/// constant changes (`Duration` addition is not const, so the sum is
+/// spelled in milliseconds).
+const IDLE_CLOSE_PROBE_INSTANT_MS: u64 = IDLE_CLOSE_DEADLINE_MS - 10;
+const IDLE_CLOSE_PROBE_INSTANT: Duration = Duration::from_millis(IDLE_CLOSE_PROBE_INSTANT_MS);
+
+/// #1250: the same-instant cell's single crossing advance — 20 ms, i.e.
+/// 10 ms past the 6.000 s deadline, so the armed idle timer and the peer
+/// EOF both become ready inside the one `advance`. Kept independent of
+/// the window constants on purpose: that cell pins the same-instant race
+/// (whichever `select!` arm the runtime polls first), not a probe window.
+const IDLE_CLOSE_RACE_STEP_MS: u64 = 20;
+const IDLE_CLOSE_RACE_STEP: Duration = Duration::from_millis(IDLE_CLOSE_RACE_STEP_MS);
+
+/// #1250: the family's window invariants as compile-time checks (u64
+/// comparisons only — `Duration` arithmetic is not const): the probe
+/// instant stays short of the deadline while the race step still crosses
+/// the deadline within one advance of it, and the helpers' advance stays
+/// strictly greater than their read window (the helper must cross the
+/// read's timeout with the advance).
+const _: () = assert!(
+    IDLE_CLOSE_PROBE_INSTANT_MS < IDLE_CLOSE_DEADLINE_MS
+        && IDLE_CLOSE_DEADLINE_MS < IDLE_CLOSE_PROBE_INSTANT_MS + IDLE_CLOSE_RACE_STEP_MS
+);
+const _: () = assert!(IDLE_CLOSE_HELPER_ADVANCE_MS > IDLE_CLOSE_HELPER_READ_WINDOW_MS);
+
+/// #1250: probe for data/EOF at the current virtual time. The
+/// `IDLE_CLOSE_HELPER_READ_WINDOW_MS` timeout is armed before its own
+/// `IDLE_CLOSE_HELPER_ADVANCE_MS` advance, so a still-open read resolves
+/// `Elapsed`, while an EOF latched by a close during the advance wins —
+/// tokio polls the inner future before the delay.
 async fn probe_still_open(client: &mut tokio::io::DuplexStream, what: &str) {
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
     let mut probe = [0u8; 1];
-    let pending = timeout(Duration::from_millis(50), client.read(&mut probe));
-    tokio::time::advance(Duration::from_millis(60)).await;
+    let pending = timeout(
+        Duration::from_millis(IDLE_CLOSE_HELPER_READ_WINDOW_MS),
+        client.read(&mut probe),
+    );
+    tokio::time::advance(Duration::from_millis(IDLE_CLOSE_HELPER_ADVANCE_MS)).await;
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
@@ -2068,17 +2152,21 @@ async fn probe_still_open(client: &mut tokio::io::DuplexStream, what: &str) {
 
 /// #1250: advance virtual time past the idle deadline and read the latched
 /// EOF (a half-closed duplex keeps reading 0, so no window is needed). The
-/// read is itself bounded by a 50 ms timeout and one more 60 ms advance: a
-/// connection still open past the expected deadline fails here with the
-/// cell's own message instead of hanging until the harness wall guard.
+/// read is itself bounded by an `IDLE_CLOSE_HELPER_READ_WINDOW_MS` timeout
+/// and one more `IDLE_CLOSE_HELPER_ADVANCE_MS` advance: a connection still
+/// open past the expected deadline fails here with the cell's own message
+/// instead of hanging until the harness wall guard.
 async fn eof_after_idle_close(client: &mut tokio::io::DuplexStream, elapsed: Duration, what: &str) {
     tokio::time::advance(elapsed).await;
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
     let mut probe = [0u8; 1];
-    let pending = timeout(Duration::from_millis(50), client.read(&mut probe));
-    tokio::time::advance(Duration::from_millis(60)).await;
+    let pending = timeout(
+        Duration::from_millis(IDLE_CLOSE_HELPER_READ_WINDOW_MS),
+        client.read(&mut probe),
+    );
+    tokio::time::advance(Duration::from_millis(IDLE_CLOSE_HELPER_ADVANCE_MS)).await;
     for _ in 0..8 {
         tokio::task::yield_now().await;
     }
@@ -2178,7 +2266,7 @@ async fn keep_alive_idle_close_lands_at_six_seconds() {
             response.to_ascii_lowercase().contains("keep-alive: timeout=5"),
             "#1250 the advertisement stays the bare keepAliveTimeout: {response:?}"
         );
-        tokio::time::advance(Duration::from_millis(5_930)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
             "the idle connection stays open at +5.99 s: Node closes at keepAliveTimeout + the fixed 1 s keepAliveTimeoutBuffer (6 s), never at the bare 5 s or a shortened buffer",
@@ -2186,7 +2274,7 @@ async fn keep_alive_idle_close_lands_at_six_seconds() {
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(40),
+            IDLE_CLOSE_TAIL_WINDOW,
             "the idle close lands at 6 s after the response, not any later",
         )
         .await;
@@ -2246,7 +2334,7 @@ async fn idle_close_waits_for_streaming_body() {
             "#1250 held body end: the final chunk arrived, got {:?}",
             latin1_string(&tail)
         );
-        tokio::time::advance(Duration::from_millis(5_930)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
             "the streaming connection stays open at +5.99 s after its body ended: Node arms the idle deadline at response finish, not at handler return",
@@ -2254,7 +2342,7 @@ async fn idle_close_waits_for_streaming_body() {
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(40),
+            IDLE_CLOSE_TAIL_WINDOW,
             "the idle close lands 6 s after the streaming body ended",
         )
         .await;
@@ -2321,7 +2409,7 @@ async fn idle_close_refreshes_on_read_segments() {
             .await
             .expect("#1250 write the completing head segments");
         read_response(&mut client, "second health").await;
-        tokio::time::advance(Duration::from_millis(5_930)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
             "the second response's connection stays open at +5.99 s past the refreshed deadline",
@@ -2329,7 +2417,7 @@ async fn idle_close_refreshes_on_read_segments() {
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(40),
+            IDLE_CLOSE_TAIL_WINDOW,
             "the idle close lands 6 s after the last activity",
         )
         .await;
@@ -2384,16 +2472,16 @@ async fn handler_execution_blocks_idle_close() {
         .await;
         release_tx.send_replace(true);
         read_response(&mut client, "handler-held health").await;
-        tokio::time::advance(Duration::from_millis(5_400)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
-            "the served connection after a held handler stays open at +5.46 s",
+            "the served connection after a held handler stays open at +5.99 s",
         )
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(700),
-            "the idle close lands 6 s after the held handler's response",
+            IDLE_CLOSE_TAIL_WINDOW,
+            "the idle close lands at 6 s after the held handler's response, not any later",
         )
         .await;
         let served = task.await.expect("#1250 handler-held task join");
@@ -2481,16 +2569,16 @@ async fn idle_state_no_request_stays_open() {
             second.starts_with("HTTP/1.1 200 OK\r\n"),
             "#1250 the second request on the segmented-head connection is served: {second:?}"
         );
-        tokio::time::advance(Duration::from_millis(5_400)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
-            "the segmented-head connection stays open at +5.46 s after its second response",
+            "the segmented-head connection stays open at +5.99 s after its second response",
         )
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(700),
-            "the idle close lands 6 s after the segmented-head reuse response",
+            IDLE_CLOSE_TAIL_WINDOW,
+            "the idle close lands at 6 s after the segmented-head reuse response, not any later",
         )
         .await;
         let served = task.await.expect("#1250 no-request task join");
@@ -2568,22 +2656,113 @@ async fn pipelined_request_during_body() {
             tail.contains("HTTP/1.1 200 OK") && tail.matches("part2").count() == 2,
             "#1250 the pipelined follow-up was served after the body ended: {tail:?}"
         );
-        tokio::time::advance(Duration::from_millis(5_400)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
-            "the pipelined connection stays open at +5.46 s after the second response",
+            "the pipelined connection stays open at +5.99 s after the second response",
         )
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(700),
-            "the idle close lands 6 s after the second pipelined response",
+            IDLE_CLOSE_TAIL_WINDOW,
+            "the idle close lands at 6 s after the second pipelined response, not any later",
         )
         .await;
         let served = task.await.expect("#1250 pipelined task join");
         assert!(
             served.is_ok(),
             "#1250 the pipelined connection future resolves Ok once the idle close ends it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1366 (matrix S4×E5, the sub-grid #1250 fix-r1 deferred): a client that
+/// half-closes while the response body is held mid-stream — the
+/// release-channel hold of `idle_close_waits_for_streaming_body` — ends the
+/// connection through the connection future itself: the still-readable
+/// half-closed client receives the rest of the released body, the connection
+/// future resolves `Ok` and joins without a single virtual advance (no timer
+/// is armed or consulted), and the in-flight slot the held body kept is gone
+/// with it — the terminator plus the EOF leave nothing pending on the socket.
+/// TS matrix note (Node v22.22.0 probe
+/// `_tmp/20261108-issue-1366-r1/probe-s4e5-held-body-halfclose.out`, bare
+/// `http.createServer` = the TS GatewayServer's configuration): Node destroys
+/// the server socket at the FIN itself (+14 ms, response truncated — the held
+/// bytes never reach the client), while this lane completes the held body to
+/// the still-reading half-closed peer before the EOF; the connection-future
+/// outcome both share — `Ok`, no hang, no residual timer — is what this cell
+/// pins (the byte-level truncation difference is recorded in #1366's RESULT,
+/// outside this test-only change's scope). Aligned cell; no dedicated
+/// mutant: a slot the held body's end does not release is not observable
+/// here — the connection future ends at the peer EOF regardless of the
+/// counter, and the per-connection `in_flight` dies with the task — while the
+/// S4×E3/E4 cell `idle_close_waits_for_streaming_body` (bound to
+/// `native-http-inflight-body-off`) is the one that fires on it (读码推断:
+/// `IdleBody::release` / `InFlightRequest::drop`, the `in_flight` `Arc` is
+/// created per connection).
+#[tokio::test(start_paused = true)]
+async fn client_close_during_held_body_resolves_without_timer() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                async {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", "part2", release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+            None,
+            None,
+        ));
+        client
+            .write_all(&latin1_bytes("GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+            .await
+            .expect("#1366 write the held-body request");
+        let mut buffer = Vec::new();
+        read_until(&mut buffer, &mut client, "part1-", "#1366 held body first chunk").await;
+        client
+            .shutdown()
+            .await
+            .expect("#1366 half-close the connection during the held body");
+        release_tx.send_replace(true);
+        // No advance(): like the S5×E5 cell, the connection future must end
+        // without any timer — the body's completion plus the peer EOF alone.
+        let served = task.await.expect("#1366 held-body close task join");
+        assert!(
+            served.is_ok(),
+            "#1366 the held-body connection future resolves Ok once the half-closed peer ends it: {served:?}"
+        );
+        // The in-flight slot the held body kept is released on the body's own
+        // end, so drain the still-readable half-closed client to the EOF: the
+        // terminator proves the body ended (the path that drops the slot), the
+        // EOF that nothing is left pending on the socket. The 50 ms timeout is
+        // only the failure bound — the bytes are already buffered, so no
+        // virtual time moves.
+        let mut tail = Vec::new();
+        let mut chunk = [0u8; 256];
+        loop {
+            match timeout(Duration::from_millis(50), client.read(&mut chunk)).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(count)) => tail.extend_from_slice(&chunk[..count]),
+                Ok(Err(error)) => panic!("#1366 held-body tail read: {error}"),
+                Err(_) => panic!(
+                    "#1366 the half-closed client never reached EOF after the connection ended"
+                ),
+            }
+        }
+        let tail = latin1_string(&tail);
+        assert!(
+            tail.ends_with("part2\r\n0\r\n\r\n"),
+            "#1366 the held body completed to the half-closed client before the EOF: {tail:?}"
         );
     })
     .await;
@@ -2635,11 +2814,12 @@ async fn client_close_ends_connection_without_timer() {
 }
 
 /// #1250 (matrix S5×E2×E5 same instant): the idle deadline expiring and the
-/// client going away becoming ready at the same virtual moment — 10 ms shy
-/// of the 6 s deadline the client half-closes, then one 20 ms advance makes
-/// the idle timer and the peer EOF ready together. Whichever select! arm the
-/// runtime polls first, the serve future resolves `Ok` and never hangs
-/// (aligned cell; no dedicated mutant: both arms converge on the same
+/// client going away becoming ready at the same virtual moment — at the
+/// family probe's instant (`IDLE_CLOSE_PROBE_INSTANT`, 10 ms shy of the 6 s
+/// deadline) the client half-closes, then one `IDLE_CLOSE_RACE_STEP` advance
+/// makes the idle timer and the peer EOF ready together. Whichever select!
+/// arm the runtime polls first, the serve future resolves `Ok` and never
+/// hangs (aligned cell; no dedicated mutant: both arms converge on the same
 /// outcome).
 #[tokio::test(start_paused = true)]
 async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
@@ -2669,14 +2849,14 @@ async fn idle_deadline_and_client_close_same_instant_resolve_ok() {
             .await
             .expect("#1250 write the health request");
         read_response(&mut client, "same-instant health").await;
-        tokio::time::advance(Duration::from_millis(5_990)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_INSTANT).await;
         client
             .shutdown()
             .await
             .expect("#1250 half-close 10 ms shy of the idle deadline");
         // Both the idle timer (deadline at +6 s) and the connection future
         // (peer EOF) become ready inside this single advance.
-        tokio::time::advance(Duration::from_millis(20)).await;
+        tokio::time::advance(IDLE_CLOSE_RACE_STEP).await;
         let served = task.await.expect("#1250 same-instant task join");
         assert!(
             served.is_ok(),
@@ -2929,7 +3109,7 @@ async fn served_follow_up_head_silent_ends_at_idle_close() {
         for _ in 0..8 {
             tokio::task::yield_now().await;
         }
-        tokio::time::advance(Duration::from_millis(5_930)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
             "#1292 the silent partial follow-up head stays unanswered: the 6 s idle close owns it",
@@ -2937,8 +3117,8 @@ async fn served_follow_up_head_silent_ends_at_idle_close() {
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(200),
-            "#1292 the served connection ends at the 6 s idle close with no 408 first",
+            IDLE_CLOSE_TAIL_WINDOW,
+            "#1292 the served connection ends at the 6 s idle close with no 408 first, not any later",
         )
         .await;
         let served = task.await.expect("#1292 follow-up-head task join");
@@ -3597,7 +3777,7 @@ async fn in_flight_request_disarms_rearmed_timeout() {
         .await;
         release_tx.send_replace(true);
         read_response(&mut client, "held second health").await;
-        tokio::time::advance(Duration::from_millis(5_930)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
             "#1292 the second response's connection stays open at +5.99 s past its finish",
@@ -3605,8 +3785,8 @@ async fn in_flight_request_disarms_rearmed_timeout() {
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(200),
-            "#1292 the pipelined connection ends at the 6 s idle close",
+            IDLE_CLOSE_TAIL_WINDOW,
+            "#1292 the pipelined connection ends at the 6 s idle close, not any later",
         )
         .await;
         let served = task.await.expect("#1292 pipelined task join");
@@ -3681,7 +3861,7 @@ async fn held_response_gets_no_headers_timeout() {
         .await;
         release_tx.send_replace(true);
         read_response(&mut client, "held first health").await;
-        tokio::time::advance(Duration::from_millis(5_930)).await;
+        tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
         probe_still_open(
             &mut client,
             "#1292 the held response's connection stays open at +5.99 s past its finish",
@@ -3689,8 +3869,8 @@ async fn held_response_gets_no_headers_timeout() {
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(200),
-            "#1292 the held-response connection ends at the 6 s idle close",
+            IDLE_CLOSE_TAIL_WINDOW,
+            "#1292 the held-response connection ends at the 6 s idle close, not any later",
         )
         .await;
         let served = task.await.expect("#1292 held-response task join");

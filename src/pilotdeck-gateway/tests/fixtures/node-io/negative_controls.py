@@ -20,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_killed
 from negative_selection import (claim_dir, baseline_passed, missing_target, refuse, refuse_unusable_target, registered, select,
                                verdict_exit)
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               write_source_atomic)
 
 root = Path(__file__).resolve().parents[5]
 generated = root / 'src/pilotdeck-gateway/src/node_io/generated.rs'
@@ -148,7 +149,10 @@ with mutating_sources(root, [generated, fixture, node_io]) as snapshots:
             fromfile=str(path.relative_to(root)), tofile=str(path.relative_to(root)))))
         try:
             wait_for_slot(root / 'scripts/cargo-slots.sh')
-            path.write_text(changed)
+            # #1908: one rename, never a truncating in-place write; the shared
+            # publish helper (#1903) keeps a SIGKILL mid-write from leaving a
+            # source the next preflight would refuse as "differs from HEAD".
+            write_source_atomic(root, path, changed.encode())
             code, log = run_named()
             (out / f'{name}.log').write_text(log)
             killed = (baseline_ok and code == 101
@@ -165,7 +169,9 @@ with mutating_sources(root, [generated, fixture, node_io]) as snapshots:
             if status != 'KILLED':
                 failures.append(name)
         finally:
-            path.write_bytes(original)
+            # #1908: same rule on the way back; a truncating write_bytes
+            # restore has the same SIGKILL window as the mutation write.
+            write_source_atomic(root, path, original)
             restored = hashlib.sha256(path.read_bytes()).hexdigest()
             if restored != before:
                 raise RuntimeError(

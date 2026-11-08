@@ -37,6 +37,7 @@ import unittest
 from negative_panic import (marker_kills_named_test, named_test_failed,
                             named_test_killed, panic_evidence,
                             single_failed_test_run)
+from negative_suite import declares_test
 
 NAMED = 'pkg::tests::named'
 OTHER = 'pkg::tests::other'
@@ -397,7 +398,11 @@ class PanicBlockCriterion(unittest.TestCase):
             with self.subTest(marker=marker):
                 self.assertNotIn(marker, test_names)
                 self.assertIn(marker, tests_source)
-                self.assertIn(f'fn {test}(', tests_source)
+                # #2064: the last bare `fn <name>(` spelling joins the shared
+                # declaration rule, so a renamed test cannot keep passing off
+                # a stale mention in a comment or a string as its declaration.
+                self.assertTrue(declares_test(tests_source, test),
+                                '#2064 the named test must be declared in projector_tests.rs')
 
     def test_plugin_runtime_generic_assert_eq_marker_is_rejected(self):
         # The first plugin-runtime repair added `assertion `left == right`

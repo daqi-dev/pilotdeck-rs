@@ -31,6 +31,12 @@ rejecting filesystems (a forced-true probe walks the test into the EILSEQ
 fixture-create panic) and is SKIPPED on Linux, where the probe already
 returns true and forcing it changes nothing. Neither drop fails the run
 (same accounting as exact-rerun-receipt's DARWIN_ONLY rows).
+
+#1672 adds four rows that mutate the probe triage itself (the errno
+decision, its #1672 fd-limit arm, and the retry condition, now tested
+units instead of an untested call-site match) and bind to the two
+synthetic-errno unit tests; those rows are killable on every host, no
+filesystem cooperation needed.
 """
 from pathlib import Path
 import json
@@ -233,36 +239,35 @@ mutations = [
     # non-UTF-8 names — so the fixture creation runs where the bytes are
     # EILSEQ-rejected and dies at the #1400 create panic instead of skipping.
     # The mirror of entry-lossy-home: killable only off Linux (see
-    # NOT_ON_LINUX above). #1400 review (sibling/boundary P1): the probe now
-    # sorts by errno — EILSEQ alone skips, anything else panics with the
-    # "#1400 ... failed for a reason other than the file name" message — so
-    # forcing it to `true` still reaches the fixture's create panic, while a
-    # Linux-side EACCES/ENOSPC in the probe is a hard failure rather than a
-    # silent skip.
-    # #1400 third-round review (MiniMax boundary P1): this row kills "the
-    # probe lies", NOT the triage. Rewriting the guard to `Err(_) => false`
-    # (any error skips) is indistinguishable here — Linux's probe always
-    # succeeds, APFS's only reachable failure is EILSEQ — so the triage
-    # contract is carried by the unit test
-    # `runtime::cron::tests::only_eilseq_makes_the_non_utf8_probe_skippable`,
-    # which executes both arms with synthetic errnos on every host. A
-    # filesystem-level control needs fault injection the mutation mechanism
-    # does not have (registered as a follow-up).
+    # NOT_ON_LINUX above). #1400 review (sibling/boundary P1): the probe
+    # sorts by errno — EILSEQ alone skips, everything else fails closed, and
+    # since #1672 the fd limit (EMFILE/ENFILE) gets one bounded retry and
+    # then its own marker — so forcing the probe to `true` still reaches the
+    # fixture's create panic, while a Linux-side EACCES/ENOSPC in the probe
+    # is a hard failure rather than a silent skip.
+    # #1400 third-round review (MiniMax boundary P1) → #1672: this row kills
+    # "the probe lies", NOT the triage. Rewriting the guard to
+    # `Err(_) => false` (any error skips) is indistinguishable here —
+    # Linux's probe always succeeds, APFS's only reachable failure is
+    # EILSEQ — so the triage contract is carried by the unit tests
+    # `runtime::cron::tests::triage_probe_sorts_every_outcome_with_one_bounded_fd_retry`
+    # and
+    # `runtime::cron::tests::non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision`,
+    # which execute the decision (retry included) with synthetic errnos on
+    # every host, plus the four #1672 rows directly below, which mutate the
+    # decision itself and are killable on any host. A filesystem-level
+    # control still needs fault injection the mutation mechanism does not
+    # have (registered as a follow-up).
     ('skip-probe-forced-writable', tests,
      'fn non_utf8_names_writable(dir: &Path) -> bool {\n'
      '    use std::os::unix::ffi::OsStrExt;\n'
      '    let probe_home = dir.join(std::ffi::OsStr::from_bytes(b"probe-\\xff"));\n'
      '    let probe_project = probe_home.join("cron/projects/w-same");\n'
-     '    let outcome = fs::create_dir_all(&probe_project)\n'
-     '        .and_then(|()| fs::write(probe_project.join("tasks.json"), b"{\\"probe\\": true}"));\n'
-     '    let writable = match outcome {\n'
-     '        Ok(()) => true,\n'
-     '        Err(error) if probe_failure_is_a_rejected_name(&error) => false,\n'
-     '        Err(error) => panic!(\n'
-     '            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",\n'
-     '            probe_project.display()\n'
-     '        ),\n'
+     '    let probe = || {\n'
+     '        fs::create_dir_all(&probe_project)\n'
+     '            .and_then(|()| fs::write(probe_project.join("tasks.json"), b"{\\"probe\\": true}"))\n'
      '    };\n'
+     '    let writable = non_utf8_probe_skip(&triage_probe(probe), &probe_project);\n'
      '    let _ = fs::remove_dir_all(&probe_home);\n'
      '    writable\n'
      '}',
@@ -272,6 +277,55 @@ mutations = [
      '}',
      'runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key',
      '#1400 non-UTF-8 home: the probe accepted the name but creating'),
+    # #1672 (issue A): the triage's fallback arm folds every non-EILSEQ,
+    # non-fd-limit error into the skip ("any error is a rejecting host") —
+    # the exact regression #1400's third-round review wanted dead. Killable
+    # on every host: the bound test feeds synthetic errnos straight into
+    # the decision, no filesystem needed.
+    ('triage-any-error-skips', tests,
+     '        Err(error) => NonUtf8Probe::Failed(error),',
+     '        Err(_) => NonUtf8Probe::RejectsName,',
+     'runtime::cron::tests::triage_probe_sorts_every_outcome_with_one_bounded_fd_retry',
+     'is a real failure of the scratch, not a rejecting filesystem'),
+    # #1672 (issue B): the fd-limit predicate stops recognizing EMFILE/
+    # ENFILE, so the fd limit is folded back into the scratch-failure
+    # category with the misleading "reason other than the file name"
+    # diagnosis — the pre-#1672 misdiagnosis the issue documents
+    # (macmini-01 #816 first run, ulimit -n=256). The mutation hits the one
+    # predicate both the retry and the triage arm consult.
+    ('fd-limit-folded-into-scratch-failure', tests,
+     '    matches!(\n'
+     '        error.raw_os_error(),\n'
+     '        Some(libc::EMFILE) | Some(libc::ENFILE)\n'
+     '    )',
+     '    matches!(error.raw_os_error(), Some(libc::EPIPE))',
+     'runtime::cron::tests::triage_probe_sorts_every_outcome_with_one_bounded_fd_retry',
+     'must reach its own retry arm, not the scratch-failure marker'),
+    # #1672 (issue A): the fail-closed arm returns false instead of
+    # panicking — a Linux-side scratch EACCES/ENOSPC in the probe becomes a
+    # silent skip and the #1216 double-key guard evaporates from the suite
+    # while it stays green.
+    ('fail-closed-arm-skips', tests,
+     '        NonUtf8Probe::Failed(error) => panic!(\n'
+     '            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",\n'
+     '            probed.display()\n'
+     '        ),',
+     '        NonUtf8Probe::Failed(_) => false,',
+     'runtime::cron::tests::non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision',
+     '#1400 a probe failure must fail closed (panic), not skip'),
+    # #1672 fix-r2 (DS r2 reviews, three roles — the tight half of the retry
+    # contract had no ruler row): the retry condition is loosened into "any
+    # error retries once". Every non-fd errno then burns a second attempt;
+    # the calls == 1 pins in the mapping test are the kill.
+    ('fd-retry-any-error', tests,
+     '    if let Err(error) = &outcome\n'
+     '        && probe_hit_the_fd_limit(error)\n'
+     '    {',
+     '    if let Err(_error) = &outcome\n'
+     '        && true\n'
+     '    {',
+     'runtime::cron::tests::triage_probe_sorts_every_outcome_with_one_bounded_fd_retry',
+     'skip, do not fail, with no retry'),
     # fix-r2 P2 / fix-r3 P1: the entry consults the process cwd unconditionally
     # again, so a deleted cwd fails an absolute-home migration. Bound to the
     # worker itself, whose panic block carries the marker (the parent's

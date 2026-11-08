@@ -8,7 +8,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               wait_for_slot)
 
 REPO = Path(__file__).resolve().parents[5]
 SRC = REPO / 'src'
@@ -32,7 +33,9 @@ with mutating_sources(REPO, [ADAPTER, RECORDER, TEST]) as snapshots:
             path.write_text(text)
 
     def run(name, red):
-        slot = subprocess.run([str(REPO / 'scripts/cargo-slots.sh')], timeout=300, capture_output=True, text=True)
+        # #1908: the shared wait replaces the single 300 s slot sample; the
+        # budget now comes from the shared constant above the single-sample cap.
+        slot = wait_for_slot(REPO / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
         (OUT / f'{name}-slots.log').write_text(slot.stdout + slot.stderr)
         assert slot.returncode in (0, 69), 'no cargo slot; rerun later'
         env = dict(os.environ, CARGO_PROFILE_DEV_DEBUG=os.environ.get('CARGO_PROFILE_DEV_DEBUG', 'line-tables-only'), CARGO_PROFILE_TEST_DEBUG=os.environ.get('CARGO_PROFILE_TEST_DEBUG', 'line-tables-only'))

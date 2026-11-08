@@ -184,7 +184,6 @@ impl Requests {
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
-            let memory_enabled = self.memory.is_enabled();
             Ok(object([
                 ("mode", "in_process".into()),
                 (
@@ -202,119 +201,16 @@ impl GatewayRequests for Requests {
                 ),
                 (
                     "capabilities",
+                    // One table, composed per provider: `capabilities::advertised`
+                    // drops a name when its provider is not bound here or when a
+                    // method it promises is missing from the #1305 registry.
+                    // `hello_ok` reports this same call as `serverInfo`
+                    // (runtime/connection/mod.rs), so the two cannot drift.
                     JsValue::Array(
-                        [
-                            "run_get",
-                            "run_events",
-                            "run_reattach",
-                            "project_files_list",
-                            "project_file_read",
-                            "model_catalog_list",
-                            "session_model_get",
-                            // #1457: the seven session-config methods are now
-                            // served for real (methods/config.rs). The
-                            // spelling follows contract.capabilities in the
-                            // oracle verbatim; the block keeps the oracle's
-                            // relative order (the production list itself is
-                            // not oracle-ordered).
-                            "session_model_set",
-                            "session_model_clear",
-                            "set_permission_mode",
-                            "set_session_thinking",
-                            "output_styles_list",
-                            "set_output_style",
-                            "seed_read_state",
-                            "supported_agents",
-                            "snapshot_list",
-                            "snapshot_get",
-                            "snapshot_restore",
-                            "manager_sessions",
-                            "commands_list",
-                            "usage_snapshot",
-                            "model_usage_snapshot",
-                            "mcp_server_status",
-                            "rewind_files",
-                            #[cfg(unix)]
-                            "background_task_stop",
-                            #[cfg(unix)]
-                            "background_tasks",
-                            "set_mcp_servers",
-                            "mcp_server_reconnect",
-                            "mcp_server_toggle",
-                            "set_mcp_permission_mode_override",
-                            "memory_list",
-                            "memory_wipe",
-                            // #1320: TS advertises all four settings methods in
-                            // every config state (oracle.json `contract/`,
-                            // `contract/emptyStorage/`, `contract/missingStorage/`
-                            // capabilities: apply_flag_settings, update_settings,
-                            // resolve_settings, reload_output_styles — never
-                            // reload_config / reload_extensions). The native
-                            // process serves only `resolve_settings` for real;
-                            // the other three have no delegate here and always
-                            // answer CAPABILITY_UNAVAILABLE, so advertising them
-                            // would promise what cannot be delivered (the
-                            // `assert_ts_capability_subset` guard allows the
-                            // Rust set to be a subset of TS). Porting them is
-                            // #1671; deriving the list per provider from a
-                            // registry instead of this fixed list is #1352.
-                            "resolve_settings",
-                            // TS advertises both in every config state
-                            // (oracle.json:2801-2802, 2855-2856, 2956-2957).
-                            // permission_list is fully wired; user_dialog_list
-                            // is wired too. Production builds a connected bus
-                            // (#1445), so runtime availability is not gated on
-                            // a renderer change observer. Forwarding
-                            // `user_dialog_changed` remains a separate
-                            // broadcast gap.
-                            "user_dialog_list",
-                            "permission_list",
-                            // TS advertises these three unconditionally
-                            // (oracle.json capabilities); the native process
-                            // now serves them for real: the interaction
-                            // round-trip family (#1316), the steer family's
-                            // hook_async_result, and session deletion.
-                            "permission_decide",
-                            "async_hook_result",
-                            "delete_session",
-                        ]
-                        // TS splices the six cron names right after the
-                        // snapshot triplet, gated on `options.cron`
-                        // (InProcessGateway.ts:2114-2122). The advertised set
-                        // is order-insensitive on both sides — every Rust
-                        // assertion sorts before comparing and the TS-subset
-                        // guard is containment — so the names are appended to
-                        // the same chain rather than splitting the literal
-                        // (the shared #1316 negative controls anchor on that
-                        // literal). `CRON_METHODS` stays the single name owner
-                        // (#1325), so the advertisement, the capability filter
-                        // and the family registry cannot drift apart.
-                        .into_iter()
-                        .chain(crate::runtime::cron::CRON_METHODS)
-                        .chain([
-                            "upload_create",
-                            "upload_get",
-                            "upload_part",
-                            "upload_complete",
-                            "upload_cancel",
-                        ])
-                        .filter(|capability| {
-                            self.runs.is_some()
-                                || !matches!(*capability, "run_get" | "run_events" | "run_reattach")
-                        })
-                        .filter(|capability| {
-                            (self.snapshot_enabled
-                                || !matches!(
-                                    *capability,
-                                    "snapshot_list" | "snapshot_get" | "snapshot_restore"
-                                ))
-                                && (memory_enabled
-                                    || !matches!(*capability, "memory_list" | "memory_wipe"))
-                                && (self.cron.is_some()
-                                    || !crate::runtime::cron::CRON_METHODS.contains(capability))
-                        })
-                        .map(JsValue::from)
-                        .collect(),
+                        super::capabilities::advertised(self)
+                            .into_iter()
+                            .map(JsValue::from)
+                            .collect(),
                     ),
                 ),
             ]))

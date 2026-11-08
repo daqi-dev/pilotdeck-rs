@@ -1404,6 +1404,9 @@ fn an_unpublished_mcp_config_reports_the_skipped_sync() {
 /// only by calling the helper. The seam suppresses the MCP publication, so the
 /// acquire inside a real `submit_turn` meets an unpublished forward reference:
 /// it reports the skip (once) and leaves the live ask array alone.
+/// #2146: "once" is only observable against a second acquire, so after the
+/// first assertions the test rides a second `submit_turn` on a fresh session
+/// key and holds the report count at one.
 #[tokio::test]
 async fn acquiring_a_session_reports_the_skipped_mcp_ask_sync() {
     let scratch = Scratch::new();
@@ -1475,6 +1478,36 @@ async fn acquiring_a_session_reports_the_skipped_mcp_ask_sync() {
         ask_tool_names(&probe),
         vec!["kept".to_owned()],
         "#1429 a skipped sync leaves the live ask array untouched"
+    );
+    // #2146: "exactly once" is only testable against a second acquire — one
+    // submit_turn exercises the acquire path once, so deleting the OnceLock
+    // dedup left the count assertion above green (the rebase review's
+    // boundary finding). The owner serves a known session key from its cached
+    // record without re-running the prepare closure, so the second turn rides
+    // a fresh key: only that shape guarantees the acquire runs again.
+    let submit = connection.clone();
+    let second = tokio::spawn(async move {
+        // This turn may fail like the first (the fixture model URL refuses
+        // connections); only its session acquire matters here.
+        let _ = submit
+            .receive(
+                json!({"type":"request","id":"turn-2","method":"submit_turn","params":{"sessionKey":"session-2","runId":"run-2","message":"hello","channelKey":"test"}})
+                    .to_string(),
+            )
+            .await;
+    });
+    // The acquire decides while the request settles, so a completed receive
+    // proves the second acquire has already reported or stayed silent.
+    let settled = tokio::time::timeout(Duration::from_secs(30), second).await;
+    negative_assert!(
+        settled.is_ok(),
+        "#2146 the second submit_turn settles within the deadline"
+    );
+    let captured = reports.lock().expect("#1429 miss reports lock").clone();
+    negative_assert_eq!(
+        captured.len(),
+        1,
+        "#2146 the second acquire reports nothing: one miss report per assembly"
     );
     turn.abort();
     host.request_shutdown(options.drain_budget);

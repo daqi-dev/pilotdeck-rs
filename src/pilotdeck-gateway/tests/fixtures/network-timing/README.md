@@ -120,6 +120,9 @@ known_differences.json是TS原值/Rust当前原值/category/test的单一维护�
 
 仅本套 `negative_controls.py` 停用旧 `PDRS_NEGATIVE_BASELINE` 任意 Git tree 覆盖；
 设置它不会改变本套正式负控的 HEAD 守卫，其他套件仍按各自入口处理。
+#1540 起设置它会在正式负控开头宣告「覆盖被忽略、守卫恒为 HEAD」，且全绿的正式负控
+退出 42（NON-HOST EVIDENCE）而非 0：它测的是 HEAD，无法证明所指名的基线；
+`--baseline-only` 候选彩排不受影响，仍按 #994 契约返回自身结果。
 未提交候选先用 `--baseline-only` 检查选中变异所绑定的正控；它直接编译当前树，沿用调用方的产品 target，
 不创建源码副本、不写产品源码、不执行变异。这样候选验证不会因未提交源码被整套记为 INVALID。
 候选入口从来源采集到汇总写入一直持有同一源码树锁；前驱一直不释放时最多等待 60 秒后报错。

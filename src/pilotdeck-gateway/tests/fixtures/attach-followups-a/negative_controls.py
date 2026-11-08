@@ -36,7 +36,7 @@ from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
     ('pdf-size-estimate-dropped', SERVICES,
-     '                    diagnostics.push(pdf_size_estimate(metadata.len(), estimated_pages));',
+     '                    diagnostics.push(pdf_size_estimate(metadata.len(), estimated_pages).into());',
      '                    let _ = pdf_size_estimate(metadata.len(), estimated_pages);',
      'native_process::services_tests::unregistered_pdf_reports_size_estimate_diagnostic',
      '#1458 an unregistered pdf must carry the pdf_size_estimate diagnostic'),

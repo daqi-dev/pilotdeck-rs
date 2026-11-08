@@ -13,7 +13,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, wait_for_slot)
 from negative_suite import Case, classify, passed, publish_summary
 
 root = Path(__file__).resolve().parents[5]
@@ -58,7 +59,8 @@ def main():
         command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                    '-p', 'pilotdeck-transport', '--test', 'system_clock']
         try:
-            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=300)
+            # #1908: the wait budget must exceed the single-sample cap
+            slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             (args.out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
             # No `--nocapture`: the bound test prints nothing, and a clean
             # status line keeps the FAILED judge exact (#938 r14).

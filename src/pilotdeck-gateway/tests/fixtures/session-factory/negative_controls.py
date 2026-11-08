@@ -21,6 +21,8 @@ sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 # pristine guard: the session-switch-pristine-removed reverse negative in
 # negative-restore/test_restore.py reverts to it and must execute, not crash.
 from negative_process import mutating_sources, run_owned, wait_for_slot, tree_lock
+from negative_selection import (claim_dir, missing_target, refuse,
+                               refuse_unusable_target, select)
 from negative_suite import bind_module_file, classify, declares_test, invalidate_completed, passed
 from _negative_common import mutate
 
@@ -455,23 +457,40 @@ def audit():
     print(json.dumps(rows, indent=2))
     return int(any(row['status'] != 'CHECKED' for row in rows))
 
-if sys.argv[1:] == ['--audit']:
+# #1908 (from #1692 r15-4): ONE dispatch rule for every mode. Whole-argv
+# equality let `--audit extra` fall through to the main path, which treated
+# `--audit` as an output directory; an unknown `--flag` did the same. Every
+# mode now takes an exact argument list, and only a real OUT (or the
+# `--compile OUT` form) reaches the main path.
+USAGE = 'usage: negative_controls.py --audit | [--compile] OUT [mutation names]'
+mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
+if mode == '--audit':
+    if arguments:
+        raise SystemExit(f'--audit takes no arguments: {arguments!r}\n{USAGE}')
     raise SystemExit(audit())
-compile_only = len(sys.argv) > 1 and sys.argv[1] == '--compile'
-args = sys.argv[2:] if compile_only else sys.argv[1:]
+# Zero arguments and an unknown `-*` first argument are both usage errors;
+# `--compile` keeps its existing first-position contract: a prefix of the
+# main path, not a standalone mode.
+if mode is None:
+    raise SystemExit(USAGE)
+if mode != '--compile' and mode.startswith('-'):
+    raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
+compile_only = mode == '--compile'
+args = arguments if compile_only else [mode, *arguments]
 if not args:
-    raise SystemExit('usage: negative_controls.py [--compile] OUT [mutation names]')
+    raise SystemExit(USAGE)
 env = os.environ.copy()
-if not env.get('CARGO_TARGET_DIR') or not env.get('PDRS_BASELINE'):
-    raise SystemExit('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
+if missing_target() or not env.get('PDRS_BASELINE'):
+    refuse('caller must set CARGO_TARGET_DIR and PDRS_BASELINE')
+refuse_unusable_target()
 env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
 for switch in compile_switches.values():
     env.pop(switch, None)
-names = set(args[1:])
-if names - {row_name(c) for c in cases}:
-    raise SystemExit('unknown mutation')
-chosen = [c for c in cases if not names or row_name(c) in names]
-out = Path(args[0]); out.mkdir(parents=True, exist_ok=False)
+try:
+    chosen = select(cases, args[1:], name=row_name, always=())
+except ValueError as error:
+    refuse(str(error))
+out = claim_dir(args[0])
 command = ['cargo','test','--offline','--manifest-path','src/Cargo.toml','-p','pilotdeck-gateway','--lib']
 
 def run(label, test, compile=False):

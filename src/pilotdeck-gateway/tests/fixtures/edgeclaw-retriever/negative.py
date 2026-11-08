@@ -35,6 +35,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import (claim_dir, missing_target, refuse,
+                               refuse_unusable_target, select)
 
 root = Path(__file__).resolve().parents[5]
 retriever = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/retrieval/retriever.rs'
@@ -195,9 +197,24 @@ EXPECTED = {
 }
 
 names = [case[0] for case in cases]
-assert len(names) == len(set(names)), 'duplicate control name'
+if len(names) != len(set(names)):
+    refuse('duplicate control name')
 all_cases = list(cases)
-if sys.argv[1:] == ['--list']:
+# #1908 (from #1692 r15-4): ONE dispatch rule for every mode. Whole-argv
+# equality let extra arguments after a flag fall through to the main path,
+# which treated the flag as an output directory; an unknown `--flag` did the
+# same and ran the whole table green. Only a real OUT_DIR reaches the main
+# path now. The `--check-anchors` preflight below keeps its exact historical
+# shape on purpose: `anchor_selfcheck.py` recognizes the exiting preflight by
+# AST equality (SNAPSHOT_PREFLIGHT) and exempts its `originals` binding from
+# the one-declaration rule, so the branch body and its whole-argv test stay
+# verbatim. A `--check-anchors extra` call still cannot fall through: the mode
+# guard below rejects any `-*` first argument that reached it.
+USAGE = 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list | --check-anchors'
+mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
+if mode == '--list':
+    if arguments:
+        raise SystemExit(f'--list takes no arguments: {arguments!r}\n{USAGE}')
     print('\n'.join(names))
     raise SystemExit(0)
 if sys.argv[1:] == ['--check-anchors']:
@@ -215,18 +232,32 @@ if sys.argv[1:] == ['--check-anchors']:
     print(f'{len(all_cases)} anchors: ok')
     raise SystemExit(0)
 
-assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | negative.py --list | --check-anchors'
-selected = sys.argv[2:]
-unknown = set(selected) - set(names)
-assert not unknown, f'unknown controls: {sorted(unknown)}'
-if selected:
-    cases = [case for case in cases if case[0] in selected]
-assert cases, 'no controls selected'
+# Explicit exits, not asserts: `python3 -O` strips asserts and a bare
+# IndexError traceback is not a usage diagnostic. Zero arguments and an
+# unknown `-*` first argument are both usage errors (non-zero exit); a known
+# mode that reached this point only did so with extra arguments.
+if mode is None:
+    raise SystemExit(USAGE)
+if mode == '--check-anchors':
+    raise SystemExit(f'--check-anchors takes no arguments: {arguments!r}\n{USAGE}')
+if mode.startswith('-'):
+    raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
+# Judgment checks are explicit exits, not asserts: python3 -O strips asserts
+# (same hardening as the mode dispatch above), so a misspelled control name
+# must not silently run zero mutants and exit 0. select() also refuses a
+# repeated name (`a a` for `a b`) instead of folding it into a green run.
+try:
+    run_rows = select(all_cases, arguments, always=())
+except ValueError as error:
+    refuse(str(error))
+if not run_rows:
+    refuse('no controls selected')
 
-out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
-assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
-out.mkdir(parents=True, exist_ok=True)
+if missing_target():
+    refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
+refuse_unusable_target()
+out = claim_dir(mode)
 paths = sorted({case[1] for case in cases})
 
 env = dict(os.environ)
@@ -300,7 +331,7 @@ with mutating_sources(root, paths) as originals:
             print('baseline failed; mutants not run', flush=True)
             raise SystemExit(1)
 
-        for name, path, before, after, test in cases:
+        for name, path, before, after, test in run_rows:
             slots_text = ''
             log = ''
             returncode = None
@@ -338,7 +369,8 @@ with mutating_sources(root, paths) as originals:
     finally:
         for path, data in originals.items():
             path.write_bytes(data)
-            assert path.read_bytes() == data, 'restoration failed: ' + str(path)
+            if path.read_bytes() != data:
+                raise RuntimeError('restoration failed: ' + str(path))
 
 killed = [row['name'] for row in results if row['outcome'] == 'KILLED']
 survived = [row['name'] for row in results if row['outcome'] == 'SURVIVED']

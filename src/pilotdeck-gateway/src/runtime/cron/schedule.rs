@@ -11,7 +11,7 @@
 //! `get_current_time` tool. An ICU-valid legacy alias zone that the host
 //! zoneinfo tree lacks resolves fail-closed to `None`; that divergence is
 //! registered in `specs/gateway-parity/diffs/`.
-use std::fmt;
+use std::{collections::HashMap, fmt, sync::Mutex};
 
 use pilotdeck_protocol::JsString;
 use pilotdeck_transport::system_clock::{
@@ -104,6 +104,76 @@ pub fn delay_to_milliseconds(amount: f64, unit: DelayUnit) -> Option<f64> {
     Some(amount * unit.milliseconds())
 }
 
+/// #2181: the per-manager zone→resolver cache. TS resolves cron zones
+/// through `Intl.DateTimeFormat`, and V8 caches zone data internally; the
+/// port's `ZonedPartsResolver` re-opened and re-parsed the TZif file on
+/// every `cron.create`/`cron.update`. A zone's *rules* cannot change inside
+/// one process lifetime (tzdata is not hot-reloaded), so one successful
+/// parse per zone is pinned here. A *failed* parse is **not** memoized:
+/// `ZonedPartsResolver::new` folds every read failure — the zone missing
+/// from this host's tree, a transient `io::Error`, tzdata installed after
+/// the process started — into the same `Err`, and `A8.3-CRON-TZ-ALIAS-001`
+/// records the user-visible contract of the per-call reads this cache
+/// replaced: an environment that recovers must resolve on the next call,
+/// exactly like the TS gateway re-reading the zone. The key space is
+/// bounded by the `is_valid_cron_timezone` gate every production caller
+/// passes through, **after case folding**: the zoneinfo lookup (like ICU)
+/// is case-insensitive, so the cache key is the lowercased zone — ASCII
+/// case variants of one zone share the memoized parse instead of each
+/// becoming its own permanent map entry (an unbounded, attacker-shaped key
+/// space otherwise).
+///
+/// The whole [`Self::resolver`] runs under one lock, parse included: the
+/// callers run in `spawn_blocking` (#1509), so only a blocking thread can
+/// wait, and holding the lock across the parse keeps a concurrent
+/// same-zone first call from racing a second parse.
+#[derive(Default)]
+pub struct CronZoneResolverCache {
+    state: Mutex<CacheState>,
+}
+
+#[derive(Default)]
+struct CacheState {
+    zones: HashMap<String, Result<ZonedPartsResolver, JsString>>,
+    parses: usize,
+}
+
+impl CronZoneResolverCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// One zone's resolver, parsed at most once per cache *on success*: a
+    /// hit returns a clone of the memoized resolver. A failed parse is
+    /// returned without memoizing it — the next call re-probes the zoneinfo
+    /// tree (see the module doc: the environment must be allowed to
+    /// recover, like the per-call reads this cache replaced).
+    pub(super) fn resolver(&self, timezone: &str) -> Result<ZonedPartsResolver, JsString> {
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // The zoneinfo parse is case-insensitive (like ICU), so the cache key
+        // is the folded zone: case variants of one zone must share one entry
+        // instead of each holding its own permanent copy of the TZif data.
+        let cache_key = timezone.to_lowercase();
+        if let Some(cached) = state.zones.get(&cache_key) {
+            return cached.clone();
+        }
+        state.parses += 1;
+        let resolver = ZonedPartsResolver::new(timezone);
+        // Only a successful parse is memoized; a failure stays a miss.
+        if let Ok(parsed) = resolver.clone() {
+            state.zones.insert(cache_key, Ok(parsed));
+        }
+        resolver
+    }
+
+    /// How many zones reached `ZonedPartsResolver::new` — the observation
+    /// surface for the #2181 reuse and failure-memoization tests.
+    #[cfg(test)]
+    pub(super) fn parse_count(&self) -> usize {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).parses
+    }
+}
+
 /// `computeNextRunAt` (CronSchedule.ts:20). `after_epoch_ms` is the `after`
 /// Date's `getTime()` (a finite Date value or NaN). The `once` path parses
 /// with the Node v22.22.0 V8 date parser port; a local-wall `runAt` whose
@@ -113,6 +183,7 @@ pub fn compute_next_run_at(
     schedule: &CronCreateSchedule,
     after_epoch_ms: f64,
     fallback_timezone: &str,
+    zone_cache: &CronZoneResolverCache,
 ) -> Result<ComputedRunAt, InvalidTimeValue> {
     match schedule {
         CronCreateSchedule::Once { run_at } => Ok(once_computed_run_at(run_at, &resolve_local)),
@@ -135,7 +206,7 @@ pub fn compute_next_run_at(
                 return Ok(ComputedRunAt::Undefined);
             }
             let timezone = resolved.as_deref().unwrap_or(fallback_timezone);
-            compute_next_cron_run_at(expression, after_epoch_ms, timezone)
+            compute_next_cron_run_at(expression, after_epoch_ms, timezone, zone_cache)
                 .map(|next| next.map_or(ComputedRunAt::Undefined, ComputedRunAt::Valid))
         }
     }
@@ -157,11 +228,14 @@ pub(super) fn once_computed_run_at(
 }
 
 /// `computeNextCronRunAt` (CronSchedule.ts:44). `Err(InvalidTimeValue)` is
-/// the TS `RangeError` from formatting an Invalid Date candidate.
+/// the TS `RangeError` from formatting an Invalid Date candidate. The zone
+/// resolver comes from `zone_cache` (#2181): same acceptance, same
+/// fail-closed fold, one TZif parse per zone instead of one per call.
 pub fn compute_next_cron_run_at(
     expression: &JsString,
     after_epoch_ms: f64,
     timezone: &str,
+    zone_cache: &CronZoneResolverCache,
 ) -> Result<Option<f64>, InvalidTimeValue> {
     let Some(parsed) = parse_cron_expression(expression) else {
         return Ok(None);
@@ -169,7 +243,7 @@ pub fn compute_next_cron_run_at(
     if !is_valid_cron_timezone(timezone) {
         return Ok(None);
     }
-    compute_next_resolved(&parsed, after_epoch_ms, ZonedPartsResolver::new(timezone))
+    compute_next_resolved(&parsed, after_epoch_ms, zone_cache.resolver(timezone))
 }
 
 /// The minute scan with the resolver-construction result injected: a valid

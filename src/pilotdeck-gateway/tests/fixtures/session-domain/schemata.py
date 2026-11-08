@@ -75,6 +75,12 @@ switches = [
 ]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 GUARDED = [
+    # #2228 DS r4 P2 / zai r4 P2 (independent hit, fixed in-round): the
+    # declarator of the switch-site file — storage/mod.rs declares
+    # `mod session_domain`, capping the chain at the same declarator depth the
+    # seven turn fixtures registered in r4; the switch-site file and lib.rs are
+    # both already guarded without this middle link.
+    ROOT / 'src/pilotdeck-gateway/src/storage/mod.rs',
     DOMAIN,
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
@@ -82,6 +88,20 @@ GUARDED = [
     ROOT / 'src/Cargo.toml',
     ROOT / 'src/Cargo.lock',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+    # #2228 r6 (MM boundary P1 class, no regeneration binding here): the
+    # baseline module is unconditionally compiled with its #[path] submodule
+    # tests/common/regeneration_masks.rs, so a concurrent edit to it during a
+    # run must be caught by the source guard; the mask table itself stays
+    # unregistered because no domain switch binding runs a regeneration
+    # compare over it (the table is a dead input for this fixture).
+    ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+    # #2228 DS r3 P2 (fixed in-round, ~one line): the bound golden test bakes
+    # session-domain/oracle.json into the binary (include_str! at
+    # session_domain.rs when PDRS_SESSION_DOMAIN_ORACLE is unset), so a
+    # concurrent edit during a run must be caught by the source guard. The
+    # fixture has no regeneration binding, so generate.mts/cases.mts are never
+    # executed by the bound test and stay unregistered.
+    FIXTURES / 'session-domain/oracle.json',
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',

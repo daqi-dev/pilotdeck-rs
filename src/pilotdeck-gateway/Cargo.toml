@@ -42,7 +42,13 @@ pilotdeck-yaml = { path = "../pilotdeck-yaml" }
 url = "=2.5.8"
 regex = "=1.13.1"
 tokio = { version = "=1.48.0", features = ["macros", "rt-multi-thread", "net", "signal", "time", "io-util", "sync", "process", "fs"] }
-tokio-tungstenite = "=0.28.0"
+# #1344: slack Socket Mode WS client (SplitSink/SplitStream). Already locked
+# as a tokio-tungstenite transitive dependency; no version or download change
+# (same feature set: sink+std, no async-await macros).
+futures-util = { version = "=0.3.31", default-features = false, features = ["sink", "std"] }
+# #1344: production Slack socket-mode URLs are wss:// (the CLI's tokio-tungstenite
+# feature set); the fixture mock only speaks ws:// on loopback.
+tokio-tungstenite = { version = "=0.28.0", features = ["rustls-tls-webpki-roots"] }
 hyper = { version = "=1.7.0", features = ["client", "server", "http1"] }
 hyper-util = { version = "=0.1.17", features = ["client-legacy", "http1", "tokio"] }
 http-body-util = "=0.1.3"

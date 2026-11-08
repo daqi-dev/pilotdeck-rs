@@ -42,6 +42,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import (claim_dir, missing_target, refuse,
+                               refuse_unusable_target, select)
 
 root = Path(__file__).resolve().parents[5]
 protocol = root / 'src/pilotdeck-protocol/src/js_math.rs'
@@ -296,7 +298,8 @@ def self_test():
     ]
     for log, returncode, expected in samples:
         actual = classify(log, returncode)
-        assert actual == expected, (log, returncode, expected, actual)
+        if actual != expected:
+            raise RuntimeError((log, returncode, expected, actual))
     print('classify self-test: PASS')
 
 
@@ -315,29 +318,57 @@ def check_anchors(texts):
     print(f'{len(cases)} anchors: ok')
 
 
-if sys.argv[1:] == ['--check']:
+# #1908 (from #1692 r15-4): ONE dispatch rule for every mode. Whole-argv
+# equality let `--self-test extra` fall through to the main path, which
+# treated `--self-test` as an output directory; an unknown `--flag` did the
+# same and ran the whole table green. Every mode now takes an exact argument
+# list, and only a real OUT_DIR reaches the main path.
+USAGE = 'usage: negative.py OUT_DIR [NAME ...] | negative.py --check | negative.py --self-test'
+mode, arguments = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else (None, [])
+if mode == '--check':
+    if arguments:
+        raise SystemExit(f'--check takes no arguments: {arguments!r}\n{USAGE}')
     check_anchors({path: path.read_text() for _name, path, _b, _a, _t in cases})
     raise SystemExit(0)
-if sys.argv[1:] == ['--self-test']:
+if mode == '--self-test':
+    if arguments:
+        raise SystemExit(f'--self-test takes no arguments: {arguments!r}\n{USAGE}')
     self_test()
     raise SystemExit(0)
-
-assert len(sys.argv) >= 2, 'usage: negative.py OUT_DIR [NAME ...] | negative.py --check | negative.py --self-test'
+# Explicit exits, not asserts: `python3 -O` strips asserts and a bare
+# IndexError traceback is not a usage diagnostic. Zero arguments and an
+# unknown `-*` first argument are both usage errors (non-zero exit).
+if mode is None:
+    raise SystemExit(USAGE)
+if mode.startswith('-'):
+    raise SystemExit(f'unknown mode: {mode}\n{USAGE}')
+# Judgment checks are explicit exits, not asserts: python3 -O strips asserts
+# (same hardening as the mode dispatch above), so a misspelled control name
+# must not silently run zero mutants and exit 0.
 target = os.environ.get('CARGO_TARGET_DIR')
-assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'
+if missing_target():
+    refuse('set CARGO_TARGET_DIR to the caller-owned build tree before running')
 names = [case[0] for case in cases]
-assert len(names) == len(set(names)), 'duplicate control name'
-selected = sys.argv[2:]
-unknown = set(selected) - set(names)
-assert not unknown, f'unknown controls: {sorted(unknown)}'
-if selected:
-    cases = [case for case in cases if case[0] in selected]
-assert cases, 'no controls selected'
+if len(names) != len(set(names)):
+    refuse('duplicate control name')
+try:
+    run_rows = select(cases, arguments, always=())
+except ValueError as error:
+    refuse(str(error))
+if not run_rows:
+    refuse('no controls selected')
 
-out = Path(sys.argv[1]).resolve()
-out.mkdir(parents=True, exist_ok=False)
+refuse_unusable_target()
+out = claim_dir(mode)
 env = dict(os.environ)
 env['CARGO_TARGET_DIR'] = target
+# #1908 r6 (DS r5 四角色同撞 P1): paths must keep the FULL frozen table's
+# file set, not run_rows' subset. check_anchors() below iterates the whole
+# frozen `cases` table, so a subset run would KeyError on the first
+# unselected case's file (a traceback exit 1 that reads like "ran, not
+# green", with an empty claimed evidence dir). Snapshot set = anchor-check
+# set = the full table, same domain contract as edgeclaw-retriever:261;
+# only the mutation loop below runs the selected rows.
 paths = list(dict.fromkeys(case[1] for case in cases))
 results = []
 
@@ -366,7 +397,7 @@ with mutating_sources(root, paths) as originals:
     # Positive baseline for every affected target, once each.
     baseline_ok = True
     for package, (extra, filter) in BASELINE.items():
-        if not any(package_for(case[1]) == package for case in cases):
+        if not any(package_for(case[1]) == package for case in run_rows):
             continue
         result, log = run('baseline-' + package, [*extra, filter])
         ok = (result is not None and 'test result: ok.' in log
@@ -379,7 +410,7 @@ with mutating_sources(root, paths) as originals:
     if not baseline_ok:
         raise RuntimeError('unmutated baseline did not pass; mutants not run')
 
-    for name, path, before, after, test in cases:
+    for name, path, before, after, test in run_rows:
         package = package_for(path)
         extra, _filter = BASELINE[package]
         original = originals[path].decode()

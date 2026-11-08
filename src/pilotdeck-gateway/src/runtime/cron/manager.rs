@@ -30,9 +30,10 @@ use crate::{
 
 use super::{
     CRON_SCHEDULE_COMPUTATION_VERSION, ComputedRunAt, CronCreateSchedule, CronStoreError,
-    CronTaskStore, DelayUnit, MigrationInput, collator, compute_next_run_at, delay_to_milliseconds,
-    is_valid_cron_timezone, iso_from_epoch_ms, migrate_cron_stores, resolve_cron_timezone,
-    schedule::js_new_date, schedule::once_computed_run_at, strict_equals, truthy,
+    CronTaskStore, CronZoneResolverCache, DelayUnit, MigrationInput, collator, compute_next_run_at,
+    delay_to_milliseconds, is_valid_cron_timezone, iso_from_epoch_ms, migrate_cron_stores,
+    resolve_cron_timezone, schedule::js_new_date, schedule::once_computed_run_at, strict_equals,
+    truthy,
 };
 
 /// `defaultCronConfig` (`src/cron/config/parseCronConfig.ts`): the defaults a
@@ -680,12 +681,16 @@ pub struct CronRuntime {
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
     uuid: Arc<dyn Fn() -> JsString + Send + Sync>,
     logger: Arc<dyn CronLogger>,
+    /// The manager's #2181 zone cache, shared by every runtime it owns so
+    /// `compute_next_run_at` resolves each zone's TZif once per process.
+    zone_cache: Arc<CronZoneResolverCache>,
     session_overrides: Arc<Mutex<SessionConfigOverrides>>,
     gateway: Mutex<Option<Arc<dyn CronAgentGateway>>>,
     active_runs: Mutex<Vec<CronActiveRun>>,
 }
 
 impl CronRuntime {
+    #[allow(clippy::too_many_arguments)] // The manager's injected seams, one per field.
     fn new(
         config: CronManagerConfig,
         pilot_home: String,
@@ -693,6 +698,7 @@ impl CronRuntime {
         now: Arc<dyn Fn() -> f64 + Send + Sync>,
         uuid: Arc<dyn Fn() -> JsString + Send + Sync>,
         logger: Arc<dyn CronLogger>,
+        zone_cache: Arc<CronZoneResolverCache>,
         session_overrides: Arc<Mutex<SessionConfigOverrides>>,
     ) -> Result<Self, CronError> {
         // Only the process-cwd read can fail, and both inputs are already
@@ -706,6 +712,7 @@ impl CronRuntime {
             now,
             uuid,
             logger,
+            zone_cache,
             session_overrides,
             gateway: Mutex::new(None),
             active_runs: Mutex::new(Vec::new()),
@@ -1371,6 +1378,7 @@ impl CronRuntime {
                     },
                     now_ms,
                     timezone,
+                    &self.zone_cache,
                 )
                 .map_err(|_| CronError::range_error(JsString::from("Invalid time value")))?;
                 Ok(match computed {
@@ -1908,6 +1916,9 @@ fn count_meta(name: &str, count: usize) -> JsObject {
 pub struct CronManager {
     options: CronManagerOptions,
     pilot_home: String,
+    /// The #2181 per-zone resolver cache every runtime of this manager
+    /// shares (one TZif parse per zone per process).
+    zone_cache: Arc<CronZoneResolverCache>,
     gateway: Mutex<Option<Arc<dyn CronAgentGateway>>>,
     state: Mutex<ManagerState>,
 }
@@ -1925,6 +1936,7 @@ impl CronManager {
         Ok(Self {
             options,
             pilot_home,
+            zone_cache: Arc::new(CronZoneResolverCache::new()),
             gateway: Mutex::new(None),
             state: Mutex::new(ManagerState {
                 started: false,
@@ -2183,6 +2195,13 @@ impl CronManager {
             .cloned()
     }
 
+    /// The #2181 zone cache shared by every runtime of this manager — the
+    /// observation surface (`parse_count`) for the zone-reuse tests (the
+    /// `loaded_runtime` `Public for tests` precedent).
+    pub fn zone_resolver_cache(&self) -> &Arc<CronZoneResolverCache> {
+        &self.zone_cache
+    }
+
     pub fn runtime_count(&self) -> usize {
         self.state
             .lock()
@@ -2222,6 +2241,7 @@ impl CronManager {
                 .clone()
                 .unwrap_or_else(|| Arc::new(|| JsString::from(uuid::Uuid::new_v4().to_string()))),
             self.logger(),
+            self.zone_cache.clone(),
             self.options
                 .session_overrides
                 .clone()

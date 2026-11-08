@@ -12,11 +12,16 @@ or test process may run until restoration finishes.
 build other than the recorded 78.2 (homebrew node@22 baseline, decision card
 2026-10-31) gets the whole suite BLOCKED — a dedicated status that is never
 counted as INVALID — and the process exits 3 (0=all killed, 1=control failure
-or refusal, 2=unverified restore, 3=environment blocked).
+or refusal, 2=unverified restore, 3=environment blocked). #2248: libuv 1.52.1
+completes the pinned identity triple; a node build reporting another libuv is
+BLOCKED the same way. Version strings are compile-time constants: a dylib-only
+swap under the unchanged binary stays invisible to this gate (it surfaces as a
+byte mismatch, not BLOCKED); a loaded-object probe is follow-up #2340.
 """
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 
 sys.dont_write_bytecode = True
@@ -35,7 +40,9 @@ STRUCTURE = 'surrogate_collation_matrix_covers_locale_and_key_classes'
 DIFFERS = ('#280 surrogate-collation-matrix/oracle.json differs from committed '
            'bytes outside the exact masks')
 GENERATOR_FAILED = '#280 surrogate-collation-matrix: generator failed'
+NODE_PIN = 'v22.22.0'
 ICU_PIN = '78.2'
+UV_PIN = '1.52.1'
 BLOCKED_MARKER = '#132a BLOCKED'
 BLOCKED_EXIT = 3
 
@@ -48,17 +55,40 @@ class BlockedEnvironment(BaseException):
     """
 
 
-def icu_blockage():
-    """Return the BLOCKED reason when node's ICU build is not the recorded one."""
-    probe = run_owned(['node', '-p', 'process.versions.icu'], timeout=60)
-    if probe.returncode != 0:
-        # A missing node surfaces through the ordinary cargo failure path.
-        return None
-    version = probe.stdout.strip()
-    if version != ICU_PIN:
-        return (f'{BLOCKED_MARKER}: surrogate-collation-matrix requires ICU '
-                f'{ICU_PIN} (homebrew node@22 baseline, decision card '
-                f'2026-10-31); this host reports {version}')
+def runtime_blockage():
+    """Return the BLOCKED reason when node's pinned runtime (node, ICU, libuv) is not the recorded build."""
+    for probe_expr, pin, label in (('process.version', NODE_PIN, 'Node'),
+                                   ('process.versions.icu', ICU_PIN, 'ICU'),
+                                   ('process.versions.uv', UV_PIN, 'libuv')):
+        try:
+            probe = run_owned(['node', '-p', probe_expr], timeout=60)
+        except subprocess.TimeoutExpired:
+            # #2248 review r2 (sibling#7/concurrency#1/boundary#1): a hung
+            # probe is the same failure class as an unspawnable one — the
+            # environment is unverifiable, so it is a BLOCKED, never a bare
+            # traceback that the caller would read as exit 1 "control failure".
+            return (f'{BLOCKED_MARKER}: surrogate-collation-matrix cannot probe '
+                    f'{label} (node -p timed out after 60s); the pinned runtime '
+                    f'is unverified, treating the environment as blocked')
+        except OSError as exc:
+            # #2248 review boundary#1: an unspawnable probe must fail closed —
+            # "cannot verify the environment" is a BLOCKED, not a pass.
+            return (f'{BLOCKED_MARKER}: surrogate-collation-matrix cannot probe '
+                    f'{label} (node spawn failed: {exc}); the pinned runtime '
+                    f'is unverified, treating the environment as blocked')
+        if probe.returncode != 0:
+            # #2248 review boundary#1: a failing probe used to read as
+            # "environment verified" (None) and degraded every row to INVALID;
+            # report it as BLOCKED instead (#132a fix-r1 semantics).
+            return (f'{BLOCKED_MARKER}: surrogate-collation-matrix cannot probe '
+                    f'{label} (node -p exited {probe.returncode}: '
+                    f'{probe.stderr.strip()[:200]}); the pinned runtime is '
+                    f'unverified, treating the environment as blocked')
+        version = probe.stdout.strip()
+        if version != pin:
+            return (f'{BLOCKED_MARKER}: surrogate-collation-matrix requires {label} '
+                    f'{pin} (homebrew node@22 baseline, decision card '
+                    f'2026-10-31); this host reports {version}')
     return None
 
 
@@ -106,7 +136,8 @@ mutations = [
      GUARD, GENERATOR_FAILED),
     # #132a fix-r1: the ICU baseline gate itself is a check, so it gets its own
     # paired mutants — loosening either pin must fail the guard, not pass
-    # silently on whatever ICU build happens to be installed.
+    # silently on whatever ICU build happens to be installed. #2248: the libuv
+    # half of the identity triple gets the same paired treatment.
     ('generator-icu-pin-loosened', GENERATOR,
      "assert.equal(process.versions.icu, '78.2',", "assert.equal(process.versions.icu, '77.1',",
      GUARD, GENERATOR_FAILED),
@@ -114,6 +145,13 @@ mutations = [
      '        "78.2",\n        "#132a BLOCKED: surrogate-collation-matrix requires ICU 78.2 (homebrew node@22 baseline)"',
      '        "77.1",\n        "#132a BLOCKED: surrogate-collation-matrix requires ICU 78.2 (homebrew node@22 baseline)"',
      GUARD, '#132a BLOCKED: surrogate-collation-matrix requires ICU 78.2 (homebrew node@22 baseline)'),
+    ('generator-uv-pin-loosened', GENERATOR,
+     "assert.equal(process.versions.uv, '1.52.1',", "assert.equal(process.versions.uv, '1.51.0',",
+     GUARD, GENERATOR_FAILED),
+    ('guard-uv-pin-loosened', PROVENANCE,
+     '        "1.52.1",\n        "#132a BLOCKED: surrogate-collation-matrix requires libuv 1.52.1 (homebrew node@22 baseline)"',
+     '        "1.51.0",\n        "#132a BLOCKED: surrogate-collation-matrix requires libuv 1.52.1 (homebrew node@22 baseline)"',
+     GUARD, '#132a BLOCKED: surrogate-collation-matrix requires libuv 1.52.1 (homebrew node@22 baseline)'),
     ('oracle-node-version', ORACLE,
      '"node": "v22.22.0",\n  "icu": "78.2",\n  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",', '"node": "v22.21.0",\n  "icu": "78.2",\n  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",',
      STRUCTURE, '#132 pinned Node runtime'),
@@ -253,8 +291,9 @@ def main():
     # host (ICU 77.1 source-builds vs the recorded 78.2) reports the whole suite
     # BLOCKED instead of four GUARD mutations degrading into
     # "positive control did not pass" INVALIDs (macmini 2026-10-31).
+    # #2248: the gate now covers the full identity triple, libuv included.
     if not compile_only:
-        blocked = icu_blockage()
+        blocked = runtime_blockage()
         if blocked is not None:
             results = [dict(mutation=name, test=test, assertion=marker,
                             status='BLOCKED', reason=blocked, compiled=False)

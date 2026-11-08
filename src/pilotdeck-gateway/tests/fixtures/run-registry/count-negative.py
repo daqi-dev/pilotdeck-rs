@@ -3,8 +3,12 @@
 """#562 repair 5: both count guards reject added and missing TS scenarios.
 
 The import-closure and fail-closed dynamic-import helpers are hand-synced
-with recorder/fix3-negative.py (#1139). Run exclusively in this worktree,
-after committing all guarded inputs.
+with recorder/fix3-negative.py (#1139). #1147: the summary is published
+atomically through negative_suite.publish_summary and the exit follows
+run_cases' #1076 contract (2 = cancellation / unverified restore, 1 =
+refusal, 0 = all KILLED); why this runner cannot execute through run_cases
+itself is documented in README.md. Run exclusively in this worktree, after
+committing all guarded inputs, with a fresh NEW_OUTPUT_DIR argument.
 """
 from contextlib import contextmanager
 import copy
@@ -23,7 +27,8 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / '_shared'))
 from negative_control import environment, scratch
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed
+from negative_suite import (Case, classify, invalidate_completed, passed,
+                            publish_summary)
 
 FIXTURES = Path(__file__).resolve().parent
 REPO = FIXTURES.parents[4]
@@ -292,87 +297,179 @@ def generator_status(result, actual):
     return 'INVALID', 'missing bound generator count assertion; never a kill'
 
 
-def main():
-    results = []
-    # Allow the replay/generation suite plus cargo-slot and compilation headroom.
-    # README's outer timeout leaves another 60 seconds for cleanup.
-    with scratch('run-registry-count', deadline=1800) as root, guarded_inputs():
-        env = environment(root)
-        baseline = os.environ['PDRS_BASELINE']
-        oracle_path = root / 'oracle.json'
-        original = (FIXTURES / 'oracle.json').read_bytes()
-        env['PDRS_RUN_REGISTRY_ORACLE'] = str(oracle_path)
-        for name, change in [('drop', -1), ('add', 1)]:
-            label = f'{name}-run-registry-scenario'
-            row = dict(mutation=label, test=TEST_NAME,
-                       assertion='run-registry oracle scenario count',
-                       status='INVALID', reason='not run', compiled=False)
-            try:
-                oracle_path.write_bytes(original)
-                if not passed(execute(label + '-positive', TEST, env), TEST_NAME):
-                    raise RuntimeError('#1129 positive Rust replay failed')
-                oracle = json.loads(original)
-                assert len(oracle['scenarios']) == 25, '#1129 positive oracle scenario count'
-                if change < 0:
-                    oracle['scenarios'].pop()
-                else:
-                    oracle['scenarios'].append(copy.deepcopy(oracle['scenarios'][-1]))
-                oracle_path.write_text(json.dumps(oracle) + '\n')
-                compile_mutant(label, env)
-                row['compiled'] = True
-                case = Case(label, oracle_path, '', '', TEST_NAME, row['assertion'])
-                row['status'], row['reason'] = classify(execute(label, TEST, env), case)
-            except Exception as error:
-                row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-            finally:
-                oracle_path.write_bytes(original)
-            try:
-                if not passed(execute(label + '-restored', TEST, env), TEST_NAME):
-                    raise RuntimeError('#1129 restored Rust replay failed')
-            except Exception as error:
-                row.update(status='INVALID', reason=row['reason'] + f'; restored: {error}')
-            results.append(row)
+ORACLE_CHANGES = [('drop', -1), ('add', 1)]
+GENERATOR_MUTATIONS = [
+    ('drop', '  scenarios.pop();', 24),
+    ('add', '  scenarios.push(structuredClone(scenarios.at(-1)));', 26),
+]
 
-        source = (FIXTURES / 'generate.mts').read_text()
-        guard = "  assert.equal(scenarios.length, 25, 'run-registry oracle scenario count');"
-        for name, mutation, actual in [
-            ('drop', '  scenarios.pop();', 24),
-            ('add', '  scenarios.push(structuredClone(scenarios.at(-1)));', 26),
-        ]:
-            label = f'{name}-generated-run-registry-scenario'
-            # cargo would compile unmutated Rust here, so generator mutants
-            # carry no cargo receipt: their receipt is the node run of the
-            # mutated generator itself, and compiled stays an explicit False
-            # so the row schema matches the Rust rows (#1139, synced here).
-            row = dict(mutation=label, test='run-registry/generate.mts::scenario-count',
-                       assertion=f'run-registry oracle scenario count: {actual} !== 25',
-                       status='INVALID', reason='not run', compiled=False,
-                       receipt='not run')
+
+def oracle_identity(name):
+    return (f'{name}-run-registry-scenario', TEST_NAME,
+            'run-registry oracle scenario count')
+
+
+def generator_identity(name, actual):
+    return (f'{name}-generated-run-registry-scenario',
+            'run-registry/generate.mts::scenario-count',
+            f'run-registry oracle scenario count: {actual} !== 25')
+
+
+def planned_rows():
+    """Every control's (label, test, assertion), in execution order (#1147)."""
+    return ([oracle_identity(name) for name, _change in ORACLE_CHANGES]
+            + [generator_identity(name, actual)
+               for name, _mutation, actual in GENERATOR_MUTATIONS])
+
+
+def run_controls(root, results):
+    env = environment(root)
+    baseline = os.environ['PDRS_BASELINE']
+    oracle_path = root / 'oracle.json'
+    original = (FIXTURES / 'oracle.json').read_bytes()
+    env['PDRS_RUN_REGISTRY_ORACLE'] = str(oracle_path)
+    for name, change in ORACLE_CHANGES:
+        label, test, assertion = oracle_identity(name)
+        row = dict(mutation=label, test=test, assertion=assertion,
+                   status='INVALID', reason='not run', compiled=False)
+        try:
+            oracle_path.write_bytes(original)
+            if not passed(execute(label + '-positive', TEST, env), test):
+                raise RuntimeError('#1129 positive Rust replay failed')
+            oracle = json.loads(original)
+            assert len(oracle['scenarios']) == 25, '#1129 positive oracle scenario count'
+            if change < 0:
+                oracle['scenarios'].pop()
+            else:
+                oracle['scenarios'].append(copy.deepcopy(oracle['scenarios'][-1]))
+            oracle_path.write_text(json.dumps(oracle) + '\n')
+            compile_mutant(label, env)
+            row['compiled'] = True
+            case = Case(label, oracle_path, '', '', test, assertion)
+            row['status'], row['reason'] = classify(execute(label, TEST, env), case)
+        except Exception as error:
+            row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
+        finally:
+            oracle_path.write_bytes(original)
+        try:
+            if not passed(execute(label + '-restored', TEST, env), test):
+                raise RuntimeError('#1129 restored Rust replay failed')
+        except Exception as error:
+            row.update(status='INVALID', reason=row['reason'] + f'; restored: {error}')
+        results.append(row)
+
+    source = (FIXTURES / 'generate.mts').read_text()
+    guard = "  assert.equal(scenarios.length, 25, 'run-registry oracle scenario count');"
+    for name, mutation, actual in GENERATOR_MUTATIONS:
+        label, test, assertion = generator_identity(name, actual)
+        # cargo would compile unmutated Rust here, so generator mutants
+        # carry no cargo receipt: the node run of the mutated generator
+        # itself is folded into reason, and compiled stays an explicit
+        # False so the row schema matches the Rust rows (#1139, synced
+        # here). No `receipt` key: the comparator rejects unknown row
+        # fields, and the whole table would be unreadable.
+        row = dict(mutation=label, test=test, assertion=assertion,
+                   status='INVALID', reason='not run', compiled=False)
+        try:
+            # Mirroring from the repository root also keeps ../../ imports
+            # and the provenance guard's import.meta.url inside scratch.
+            generator_path = copy_local_import_closure(
+                FIXTURES / 'generate.mts', REPO, root / name)
+            assert source.count(guard) == 1, '#1129 unique generator count guard'
+            generator_path.write_text(source.replace(guard, mutation + '\n' + guard))
+            output = root / f'{name}-generated'
+            command = ['node', '--import', f'{baseline}/node_modules/tsx/dist/loader.mjs',
+                       str(generator_path), str(output)]
+            result = execute(label, command, env)
+            row['status'], row['reason'] = generator_status(result, actual)
+            row['reason'] += f'; generator mutant run: node exit={result.returncode}'
+            if row['status'] == 'KILLED':
+                assert not (output / 'oracle.json').exists(), '#1129 failed generator published an oracle'
+            generator_path.write_text(source)
+            command[-1] = str(root / f'{name}-restored')
+            restored = execute(label + '-restored', command, env)
+            if restored.returncode != 0:
+                raise RuntimeError('#1129 restored generator failed')
+            restored_oracle = json.loads((Path(command[-1]) / 'oracle.json').read_text())
+            assert len(restored_oracle['scenarios']) == 25, '#1129 restored generator scenario count'
+        except Exception as error:
+            row.update(status='INVALID',
+                       reason=row['reason'] + f'; {type(error).__name__}: {error}')
+        results.append(row)
+
+
+def main():
+    if len(sys.argv) != 2 or sys.argv[1].startswith('--'):
+        raise SystemExit('usage: count-negative.py NEW_OUTPUT_DIR')
+    # #1666/#1734: a missing or blank caller target or baseline is "never
+    # started" (2) and must refuse before any evidence directory is claimed
+    # or summary published; the shared environment() only guards
+    # CARGO_TARGET_DIR, so PDRS_BASELINE is checked here too
+    # (timestamp-negative.py's main refuses the same way, #1147 r2).
+    if not (os.environ.get('CARGO_TARGET_DIR') or '').strip() \
+            or not (os.environ.get('PDRS_BASELINE') or '').strip():
+        print('INVALID: caller must supply CARGO_TARGET_DIR and PDRS_BASELINE',
+              file=sys.stderr, flush=True)
+        return 2
+    out = Path(sys.argv[1]).resolve()
+    try:
+        out.mkdir(parents=True, exist_ok=False)
+    except OSError as error:
+        # #1666/#1734: an evidence directory that cannot be created (already
+        # taken, EACCES, ENOSPC, a non-directory in the path) means
+        # "never started" (2), not "ran and did not pass" (1); nothing was
+        # measured. The shared claim_dir refuses the same way.
+        print(f'INVALID: cannot create output directory {out}: {error}',
+              file=sys.stderr, flush=True)
+        return 2
+    results = []
+    # #1147: negative_suite.run_cases' three-state exit contract, adopted here
+    # because the controls themselves cannot run through run_cases (README
+    # documents why): 'enter' is a refusal to run (dirty tree, busy lock, bad
+    # argument) and keeps rc=1; 'exit' covers the guarded window's restore and
+    # re-verify; SystemExit is scratch's signal handler or deadline, and a
+    # cancellation or unverified restore always exits 2.
+    phase = 'enter'
+    body_error = None
+    try:
+        # Allow the replay/generation suite plus cargo-slot and compilation headroom.
+        # README's outer timeout leaves another 60 seconds for cleanup.
+        with scratch('run-registry-count', deadline=1800) as root, guarded_inputs():
+            phase = 'body'
             try:
-                # Mirroring from the repository root also keeps ../../ imports
-                # and the provenance guard's import.meta.url inside scratch.
-                generator_path = copy_local_import_closure(
-                    FIXTURES / 'generate.mts', REPO, root / name)
-                assert source.count(guard) == 1, '#1129 unique generator count guard'
-                generator_path.write_text(source.replace(guard, mutation + '\n' + guard))
-                output = root / f'{name}-generated'
-                command = ['node', '--import', f'{baseline}/node_modules/tsx/dist/loader.mjs',
-                           str(generator_path), str(output)]
-                result = execute(label, command, env)
-                row['receipt'] = f'generator mutant run: node exit={result.returncode}'
-                row['status'], row['reason'] = generator_status(result, actual)
-                if row['status'] == 'KILLED':
-                    assert not (output / 'oracle.json').exists(), '#1129 failed generator published an oracle'
-                generator_path.write_text(source)
-                command[-1] = str(root / f'{name}-restored')
-                restored = execute(label + '-restored', command, env)
-                if restored.returncode != 0:
-                    raise RuntimeError('#1129 restored generator failed')
-                restored_oracle = json.loads((Path(command[-1]) / 'oracle.json').read_text())
-                assert len(restored_oracle['scenarios']) == 25, '#1129 restored generator scenario count'
-            except Exception as error:
-                row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
-            results.append(row)
+                run_controls(root, results)
+            except BaseException as error:
+                # Remember the body's own exception: a different one raised
+                # while unwinding can only come from a guard's restore, and
+                # that is an unverified restore even though the phase still
+                # reads 'body' (#1076 fix-r2 shape).
+                body_error = error
+                raise
+            phase = 'exit'
+    except BaseException as error:
+        reason = f'source guard: {type(error).__name__}: {error}'
+        invalidate_completed(results, reason)
+        for label, test, assertion in planned_rows()[len(results):]:
+            results.append(dict(mutation=label, test=test, assertion=assertion,
+                                status='INVALID', reason=reason, compiled=False))
+        publish_summary(out, results)
+        for row in results:
+            print(json.dumps(row), flush=True)
+        counts = {status: sum(row['status'] == status for row in results)
+                  for status in ('KILLED', 'SURVIVED', 'INVALID')}
+        print('SUMMARY: ' + ' '.join(f'{status}={count}'
+                                     for status, count in counts.items()), flush=True)
+        # A raw SystemExit code must not decide the process status; re-raise
+        # the normalized cancellation code (#1076).
+        if isinstance(error, SystemExit):
+            raise SystemExit(2) from error
+        if (phase == 'exit' or not isinstance(error, Exception)
+                or (body_error is not None and error is not body_error)):
+            return 2
+        return 1
+    # The guarded window restored and re-verified every guarded input; only
+    # now may a final summary exist (#1076).
+    publish_summary(out, results)
     for row in results:
         print(json.dumps(row), flush=True)
     counts = {status: sum(row['status'] == status for row in results)

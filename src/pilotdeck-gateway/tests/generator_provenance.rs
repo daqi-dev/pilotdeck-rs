@@ -447,6 +447,21 @@ fn surrogate_collation_matrix_regenerates_identically() {
         "78.2",
         "#132a BLOCKED: surrogate-collation-matrix requires ICU 78.2 (homebrew node@22 baseline)"
     );
+    // #2248: libuv completes the pinned identity triple (decision card
+    // 2026-10-31 A), same shape as the #283 libuv gate below. process.versions
+    // pins the build-time triple of the node binary (a rebuilt node is caught
+    // here); a dylib-only swap under the unchanged binary is invisible to
+    // version strings — loaded-object probe is follow-up #2340.
+    let uv = baseline::node_command()
+        .args(["-p", "process.versions.uv"])
+        .output()
+        .expect("#2248 Node libuv probe");
+    assert!(uv.status.success(), "#2248 Node libuv probe failed");
+    assert_eq!(
+        String::from_utf8_lossy(&uv.stdout).trim(),
+        "1.52.1",
+        "#132a BLOCKED: surrogate-collation-matrix requires libuv 1.52.1 (homebrew node@22 baseline)"
+    );
     baseline::regenerates_identically("surrogate-collation-matrix");
 }
 regeneration!(task_budget_regenerates_identically, "task-budget");

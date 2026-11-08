@@ -415,10 +415,12 @@ impl Requests {
                 .any(|allowed| m.equals_str(allowed))
         });
         if !mode_ok {
-            let display = js_display(mode);
+            // Keep JS String(mode) in UTF-16, including lone surrogates (#1485).
+            let mut units: Vec<u16> = "Unsupported permission mode: ".encode_utf16().collect();
+            units.extend(crate::js_value::to_string_units(mode).unwrap_or_default());
             return Err(gateway_error(
                 "INVALID_PERMISSION_MODE",
-                format!("Unsupported permission mode: {display}"),
+                JsString::from_utf16(units),
             ));
         }
         if let Some(JsValue::String(key)) = params.get("sessionKey")
@@ -982,6 +984,55 @@ mod tests {
     }
 
     // ─────────────────────────────────────────────── session_model_set / clear
+
+    #[tokio::test]
+    async fn permission_mode_error_preserves_utf16() {
+        let (_scratch, r) =
+            std::panic::catch_unwind(crate::native_process::management_tests::setup)
+                .expect("#1485 permission mode fixture");
+        for (label, mode, expected_json) in [
+            (
+                "high",
+                JsValue::String(JsString::from_utf16(vec![0xd800])),
+                r#""Unsupported permission mode: \ud800""#,
+            ),
+            (
+                "low",
+                JsValue::String(JsString::from_utf16(vec![0xdc00])),
+                r#""Unsupported permission mode: \udc00""#,
+            ),
+            (
+                "mixed array",
+                JsValue::Array(vec![
+                    JsValue::String(JsString::from_utf16(vec![0xd800])),
+                    JsValue::String(JsString::from_utf16(vec![0xd83d, 0xde00, 0xdc00])),
+                ]),
+                r#""Unsupported permission mode: \ud800,😀\udc00""#,
+            ),
+        ] {
+            let error = r
+                .session_config_request(
+                    "set_permission_mode".into(),
+                    object([("sessionKey", "cfg-pm-utf16".into()), ("mode", mode)]),
+                )
+                .await
+                .expect_err("#1485 invalid UTF-16 mode is rejected");
+            negative_assert_eq!(error.code, "INVALID_PERMISSION_MODE", "#1485 mode code");
+            let expected =
+                pilotdeck_protocol::parse_json(expected_json).expect("#1485 expected message JSON");
+            negative_assert_eq!(
+                error.message.units(),
+                expected.as_string().expect("#1485 expected string").units(),
+                "#1485 mode UTF-16 preserved: {label}"
+            );
+            let wire = pilotdeck_protocol::stringify_json(&JsValue::String(error.message))
+                .expect("#1485 message serializes")
+                .expect("#1485 message is defined");
+            negative_assert_eq!(wire, expected_json, "#1485 mode JSON preserved: {label}");
+        }
+        r.owner.shutdown().await.expect("#1485 shutdown");
+        r.project.dispose().await.expect("#1485 dispose");
+    }
 
     #[tokio::test]
     async fn session_model_set_saves_selection_and_appends_transcript() {

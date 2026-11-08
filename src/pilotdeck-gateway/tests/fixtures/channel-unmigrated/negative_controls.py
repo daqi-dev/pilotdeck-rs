@@ -14,12 +14,19 @@ from negative_suite import matrix_main
 root = Path(__file__).resolve().parents[5]
 source = root / 'src/pilotdeck-gateway/src/channel'
 MUTATIONS = [
-    # M1: the reject table loses `telegram`; the telegram case must survive.
+    # M1: the reject table loses `telegram`; the telegram case must survive,
+    # and the #1853 partition pin counts the rejection group at nine loader
+    # keys after #1344 moved slack out (#1853 r2 review: the partition test's
+    # cell is registered here).
     ('telegram-dropped', source / 'loader.rs',
      '    "telegram",\n    "qq",',
      '    "qq",',
-     'rejects_unmigrated_telegram', '#1386 unmigrated channel must reject startup'),
-    # M2: the rejection is silenced into a skip; any one of the 13 cases kills.
+     [('rejects_unmigrated_telegram', '#1386 unmigrated channel must reject startup'),
+      ('loader_keys_partition_rejected_and_silent_subset',
+       '#1853 nine loader keys sit in the unmigrated rejection table')]),
+    # M2: the rejection is silenced into a skip; any one of the 11 cases kills
+    # (#1343: bluebubbles and #1344: slack left the table, so their rejection
+    # cases are gone).
     ('rejection-silenced', source / 'loader.rs',
      'return Err(ChannelError::error(format!(\n'
      '                "[adapters] channel \\"{key}\\" 未迁移到 Rust，需继续使用 TS gateway"\n'
@@ -27,12 +34,10 @@ MUTATIONS = [
      'continue;',
      [('rejects_unmigrated_telegram', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_discord', '#1386 unmigrated channel must reject startup'),
-      ('rejects_unmigrated_slack', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_matrix', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_mattermost', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_signal', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_whatsapp', '#1386 unmigrated channel must reject startup'),
-      ('rejects_unmigrated_bluebubbles', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_dingtalk', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_email', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_homeassistant', '#1386 unmigrated channel must reject startup'),
@@ -48,9 +53,17 @@ MUTATIONS = [
      '    "qq",\n    "wecom",\n];',
      '    "qq",\n    "wecom",\n    "sms",\n];',
      'unmigrated_subset_channels_stay_loadable', '#1386 subset channel must not be rejected'),
+    # M4b (#1344): the implemented channel must not be back in the reject
+    # table; re-inserting the key refuses startup for the subset the loader
+    # test keeps loadable (the #1343 precedent
+    # `reject-table-reinserts-bluebubbles`).
+    ('reject-table-reinserts-slack', source / 'loader.rs',
+     'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "homeassistant",',
+     'pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[\n    "slack",\n    "homeassistant",',
+     'unmigrated_subset_channels_stay_loadable', '#1386 subset channel must not be rejected'),
     # M5: the loader-table truthiness gate is constant-true; the falsy-enabled
     # control kills. Anchor is the `else` arm of `rejects_enabled`, which is
-    # the only place the eleven loader keys read `js_truthy`.
+    # the only place the nine loader keys read `js_truthy`.
     ('enabled-gate-always-true', source / 'loader.rs',
      '    } else {\n        js_truthy(cfg.get("enabled"))\n    }',
      '    } else {\n        true\n    }',
@@ -103,6 +116,82 @@ MUTATIONS = [
      'for key in CHANNEL_LOADER_KEYS {',
      [('rejects_unmigrated_qq', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_wecom', '#1386 unmigrated channel must reject startup')]),
+    # M12 (#1853 r2 review): the loader table gains a key in none of the
+    # three groups; the partition covering cell must kill it — without this
+    # row nothing pinned the fail-closed cell of
+    # `loader_keys_partition_rejected_and_silent_subset` (M1 only covers the
+    # nine-key count).
+    ('loader-table-gains-ungrouped-key', source / 'loader.rs',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 16] = [\n    "probe1853",\n    "telegram",',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every loader key is rejected, silent-subset, or native-mount'),
+    # M13 (#1853 r2 r1 review): the loader table loses the silent key `sms`;
+    # the silent-group reverse closure must kill it (M1/M12 only touch the
+    # count and covering cells).
+    ('loader-table-loses-silent-sms', source / 'loader.rs',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",\n    "discord",\n'
+     '    "slack",\n    "matrix",\n    "mattermost",\n    "signal",\n    "whatsapp",\n'
+     '    "bluebubbles",\n    "dingtalk",\n    "wecomCallback",\n    "email",\n    "sms",',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 14] = [\n    "telegram",\n    "discord",\n'
+     '    "slack",\n    "matrix",\n    "mattermost",\n    "signal",\n    "whatsapp",\n'
+     '    "bluebubbles",\n    "dingtalk",\n    "wecomCallback",\n    "email",',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every silent-subset key is a loader-table key'),
+    # M14 (#1853 r2 r1 review): the rejection table gains a key that is
+    # neither a loader key nor a strict bundle key; the rejection-side
+    # reverse closure must kill it (the count stays nine — probe1853 is not a
+    # loader key).
+    ('rejection-table-gains-foreign-key', source / 'loader.rs',
+     '    "telegram",\n    "qq",\n    "wecom",\n];',
+     '    "telegram",\n    "probe1853",\n    "qq",\n    "wecom",\n];',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every rejection-table key is a loader key or a strict bundle key'),
+    # M15 (#1853 r2 r1 review): the bundle table gains the silent key `sms`;
+    # the bundle-outside-loader cell fires first (sms is a loader key), which
+    # is the registered receipt for this row.
+    ('bundle-gains-silent-sms', source / 'loader.rs',
+     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];',
+     'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "sms"];',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 bundle keys stay outside the loader table'),
+    # M16 (#1853 r2 r3 review, two families hit the same cell): the loader
+    # table loses the native-mount key `slack` — the covering cell only
+    # iterates the loader table, so only the native group's membership closure
+    # catches it. The array length is decremented alongside, exactly like a
+    # real regression would, so the mutant compiles (same pattern as M13).
+    ('native-mount-loses-loader-key', source / 'loader.rs',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",\n    "discord",\n'
+     '    "slack",',
+     'pub const CHANNEL_LOADER_KEYS: [&str; 14] = [\n    "telegram",\n    "discord",',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 native-mount key is a loader-table key'),
+    # M17 (#1853 r2 r3 review): a silent key is duplicated into the native
+    # group — behavior cells cannot catch a key in both pinned groups, so the
+    # disjointness assertion is the only kill.
+    ('native-gains-silent-sms', source / 'tests.rs',
+     'const NATIVE_MOUNT_KEYS: [&str; 1] = ["slack"];',
+     'const NATIVE_MOUNT_KEYS: [&str; 2] = ["slack", "sms"];',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 silent-subset key is not a native-mount key'),
+    # M18 (#1853 r2 r3 review): the module subset whitelist loses a silent
+    # key; the silent-group reverse closure must kill it.
+    ('subset-whitelist-loses-silent-sms', source / 'tests.rs',
+     'const SUBSET_CHANNEL_KEYS: [&str; 8] = [\n    "weixin",\n    "feishu",\n'
+     '    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n'
+     '    "bluebubbles",\n    "slack",\n];',
+     'const SUBSET_CHANNEL_KEYS: [&str; 7] = [\n    "weixin",\n    "feishu",\n'
+     '    "apiServer",\n    "webhook",\n    "wecomCallback",\n'
+     '    "bluebubbles",\n    "slack",\n];',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every silent-subset key is in the module subset whitelist'),
+    # M19 (#1853 r2 r3 review): the module subset whitelist gains a key in
+    # none of the three groups; the subset reverse closure must kill it.
+    ('subset-whitelist-gains-foreign-key', source / 'tests.rs',
+     'const SUBSET_CHANNEL_KEYS: [&str; 8] = [\n    "weixin",',
+     'const SUBSET_CHANNEL_KEYS: [&str; 9] = [\n    "probe1853",\n    "weixin",',
+     'loader_keys_partition_rejected_and_silent_subset',
+     '#1853 every module subset key is silent-subset, bundle, or native-mount'),
 ]
 
 

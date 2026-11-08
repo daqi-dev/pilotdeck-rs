@@ -9,15 +9,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
-import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, panic_evidence
 from negative_selection import (claim_dir, baseline_passed, missing_target, refuse, refuse_unusable_target, registered, select,
                                verdict_exit)
-from negative_process import mutating_sources, run_owned
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, wait_for_slot)
 
 ANCHOR_COUNTS = {'reject-live-reentry': 2, 'deny-dispose-detached': 2}
 
@@ -151,16 +150,10 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in r
     baseline_ok = set()
     for test in dict.fromkeys(target_test(name) for name, *_ in run_rows):
         full = f'runtime::interaction::tests::{test}'
-        slot_deadline = time.monotonic() + 1800
-        while True:
-            slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=300)
-            if slots.returncode in (0, 69):
-                break
-            if slots.returncode != 1:
-                raise RuntimeError(slots.stdout + slots.stderr)
-            if time.monotonic() >= slot_deadline:
-                raise RuntimeError('cargo slots unavailable for 30 minutes')
-            time.sleep(5)
+        # #1908: the shared wait replaces the inline 300 s-sample /
+        # 1800 s-deadline loop; the budget now comes from the one shared
+        # constant that stays above the single-sample cap.
+        slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
         code, log = run(full)
         (out / f'baseline-{test}.log').write_text(log)
         ok = code == 0 and baseline_passed(log, full)
@@ -187,17 +180,9 @@ with mutating_sources(root, sorted({source / filename for _, filename, _, _ in r
             (out / f'{name}.patch').write_text(''.join(difflib.unified_diff(content.splitlines(True), changed.splitlines(True), fromfile=filename, tofile=filename)))
             # Required resource check; do not interpret the output as a concurrency
             # guarantee if the sandbox denies ps. Its raw output is retained.
-            slot_deadline = time.monotonic() + 1800
-            while True:
-                slots = subprocess.run([str(root / 'scripts/cargo-slots.sh')], cwd=root, capture_output=True, text=True, timeout=300)
-                (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
-                if slots.returncode in (0, 69):
-                    break
-                if slots.returncode != 1:
-                    raise RuntimeError(slots.stdout + slots.stderr)
-                if time.monotonic() >= slot_deadline:
-                    raise RuntimeError('cargo slots unavailable for 30 minutes')
-                time.sleep(5)
+            # #1908: same shared-wait migration as the baseline loop above.
+            slots = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
+            (out / f'{name}.slots.log').write_text(slots.stdout + slots.stderr)
             path.write_text(changed)
             code, log = run(full)
             (out / f'{name}.log').write_text(log)

@@ -277,6 +277,7 @@ pub(super) async fn start_observed_with_upload_cleanup(
         cleanup_observer,
         cleanup_diagnostic,
         None,
+        None,
         AssemblySeams::default(),
     )
     .await
@@ -284,12 +285,21 @@ pub(super) async fn start_observed_with_upload_cleanup(
 
 /// Production entry: the host plus the `/feishu/webhook` resolver the native
 /// listener mounts (`activeFeishu`, resolved per request so a stop or reload
-/// changes the answer).
+/// changes the answer), and the #1353 switch handles the embedding's machine
+/// drives (the cron stop handle, the channel assembly).
 pub(super) async fn start_with_webhook(
     options: Options,
     env: Env,
-) -> Result<(TurnGateway, crate::native_http::WebhookResolver), ProxyError> {
+) -> Result<
+    (
+        TurnGateway,
+        crate::native_http::WebhookResolver,
+        super::switch_wiring::AssemblySwitchHandles,
+    ),
+    ProxyError,
+> {
     let slot = Arc::new(std::sync::OnceLock::new());
+    let switch_slots = super::switch_wiring::AssemblySwitchSlots::default();
     let host = start_assembly(
         options,
         env,
@@ -297,15 +307,26 @@ pub(super) async fn start_with_webhook(
         Arc::new(|_, result| Box::pin(async move { result })),
         Arc::new(|error| eprintln!("native project cleanup: {error}")),
         Some(slot.clone()),
+        Some(switch_slots.clone()),
         AssemblySeams::default(),
     )
     .await?;
     let slot = slot.get().cloned().ok_or_else(|| {
         ProxyError::from("feishu webhook slot was not constructed during assembly")
     })?;
+    // The cron slot is filled by the builder on the gateway thread when a
+    // `cron:` section exists; `start_assembly` returning means the builder
+    // ran, so reading it here is deterministic (the feishu slot above reads
+    // the same way).
     Ok((
         host,
         crate::channel::feishu::FeishuWebhookSlot::resolver(&slot),
+        super::switch_wiring::AssemblySwitchHandles {
+            cron: switch_slots.cron.get().cloned(),
+            channels: switch_slots.channels.get().cloned().ok_or_else(|| {
+                ProxyError::from("channel assembly slot was not constructed during assembly")
+            })?,
+        },
     ))
 }
 
@@ -333,6 +354,7 @@ pub(super) async fn start_observed_with_permission_rule_sets(
         cleanup_observer,
         cleanup_diagnostic,
         None,
+        None,
         AssemblySeams {
             permission_rule_sets: Some(permission_rule_sets),
             acquire_miss_report: Some(miss_report),
@@ -350,6 +372,7 @@ async fn start_assembly(
     cleanup_observer: CleanupObserver,
     cleanup_diagnostic: Arc<dyn Fn(&str) + Send + Sync>,
     webhook_slot: Option<Arc<std::sync::OnceLock<Arc<crate::channel::feishu::FeishuWebhookSlot>>>>,
+    switch_slots: Option<super::switch_wiring::AssemblySwitchSlots>,
     seams: AssemblySeams,
 ) -> Result<TurnGateway, ProxyError> {
     let AssemblySeams {
@@ -965,16 +988,30 @@ async fn start_assembly(
         if let Some(slot) = webhook_slot {
             let _ = slot.set(channel_assembly.feishu_webhook_slot());
         }
+        // #1353 A8.5-pr2: the channel assembly is the machine's E4 face
+        // (close, the admission stop) and E3 face (flush, the durable state) —
+        // handed out here, where it is constructed, so the embedding can
+        // drive the switch without knowing the assembly's build order.
+        if let Some(slots) = &switch_slots {
+            let _ = slots.channels.set(channel_assembly.clone());
+        }
         (channel_assembly, cron_section)
     };
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
     // #1326: the builder constructs the one `CronManager` on the gateway
     // thread, but this cleanup closure is built before the builder runs —
-    // the shared slot carries the started manager from the builder to the
-    // cleanup, which stops it before the channels (automation precedes
-    // closeServer, PilotDeckServerShutdownBundle.ts:33-37).
-    let build_cron_slot: Arc<OnceLock<Arc<crate::runtime::cron::CronManager>>> = Arc::default();
+    // the shared slot carries the started manager's stop handle from the
+    // builder to the cleanup, which stops it before the channels (automation
+    // precedes closeServer, PilotDeckServerShutdownBundle.ts:33-37).
+    // #1353 A8.5-pr2: the slot now carries the shared idempotent stop handle
+    // rather than the bare manager — the switch machine's S1 stops the
+    // manager first, and the host teardown observes that stop instead of
+    // repeating it.
+    let build_cron_slot: Arc<OnceLock<Arc<crate::switch::CronStopHandle>>> = match &switch_slots {
+        Some(slots) => slots.cron.clone(),
+        None => Arc::default(),
+    };
     let cleanup_cron_slot = build_cron_slot.clone();
     let budget = options.drain_budget;
     let host = TurnGateway::start_with_cleanup_budget(
@@ -1094,16 +1131,26 @@ async fn start_assembly(
                     submitter.clone(),
                     tokio::runtime::Handle::current(),
                 ));
-                cron.bind_agent_gateway(Arc::new(
+                // #1353 A7: the recording wrapper the switch machine's S1
+                // face reads. `CronManager::stop` aborts in-flight runs
+                // through the bound gateway and swallows every rejection
+                // (the `let _ =` in manager.rs stop), so the rejection has
+                // to be recorded where the face can report it. Delegation is
+                // behavior-preserving.
+                let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(Arc::new(
                     crate::runtime::cron::SessionAdmissionCronGateway::new(
                         cron_admission.clone(),
                         body,
                     ),
-                ))
-                .map_err(cron::cron_io_error)?;
+                )));
+                cron.bind_agent_gateway(recording.clone())
+                    .map_err(cron::cron_io_error)?;
                 cron.start().map_err(cron::cron_io_error)?;
                 build_cron_slot
-                    .set(cron.clone())
+                    .set(Arc::new(crate::switch::CronStopHandle::new(
+                        cron.clone(),
+                        recording.failures(),
+                    )))
                     .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
@@ -1144,11 +1191,14 @@ async fn start_assembly(
                 // aborts active cron runs through the bound gateway (the
                 // synchronous abort prefix) and releases task sessions; a stop
                 // failure is observed but never blocks the remaining teardown.
+                // #1353: through the shared handle — after a machine-driven
+                // stop this observes the earlier stop instead of repeating it.
                 let cron_stop = match cleanup_cron_slot.get() {
-                    Some(cron) => {
+                    Some(handle) => {
                         cleanup_observer(
                             "cron",
-                            cron.stop()
+                            handle
+                                .stop_once()
                                 .map_err(|error| String::from_utf16_lossy(error.message().units())),
                         )
                         .await

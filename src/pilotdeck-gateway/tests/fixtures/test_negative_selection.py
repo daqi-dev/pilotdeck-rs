@@ -1,7 +1,9 @@
 # anchor-selfcheck: unsupported unit tests of the shared subset-selection helper
 """Negative controls for the shared subset selection (#813 fix-r3).
 
-Run from this directory: ``python3 -m unittest test_negative_selection.py``.
+Run from anywhere: ``python3 -I -B test_negative_selection.py`` — the import
+path is self-bootstrapped so the CI preflight can launch it with ``-I`` from
+any working directory (#1540 review r3 sibling#4).
 ``test_unknown_control_is_rejected_even_with_a_valid_name`` pins the defect the
 old runners had: they only asserted the filtered list was non-empty, so a typo
 next to a valid name looked like a successful subset and, worse, dropped the
@@ -9,9 +11,12 @@ baseline.
 """
 import io
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from negative_selection import (baseline_passed, claim_dir, refuse, registered,
                                 select, verdict_exit)

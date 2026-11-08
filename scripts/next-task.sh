@@ -10,11 +10,13 @@
 #   --board FILE                      换一份 board（测试用）
 # 退出码：0 有队首 · 2 board 或 READY 块缺失 · 3 无 ready 项（队列空或只剩 doing/human/blocked）· 4 格式错误 · 64 参数错
 # 副作用：无（只读）。stderr 提醒 human 项与外层循环锁状态。
+# board 固定读**主工作树**（定位复用 lib/disk-budget.sh 的 pdrs_disk_main_root）：$0 相对路径解析到的
+# 树 ≠ 主树、或主树 board 与 origin/main 不一致时 stderr 提示并自动纠正，不硬失败（2026-11-08 人令修）。
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BOARD="$ROOT/state/board.md"
+BOARD=""
 MODE=head
 ROUTE_KIND=""
 LOCK_DIR="/tmp/pdrs-loop.lock"
@@ -35,7 +37,7 @@ while [ $# -gt 0 ]; do
     --all) MODE=all ;;
     --check) MODE=check ;;
     --route) MODE=route; ROUTE_KIND="${2:-}"; shift ;;
-    --board) BOARD="${2:-}"; shift ;;
+    --board) BOARD="${2:-}"; [ -n "$BOARD" ] || { echo "next-task: --board 须带非空文件路径" >&2; exit 64; }; shift ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "next-task: 未知参数 $1" >&2; exit 64 ;;
   esac
@@ -47,7 +49,49 @@ if [ "$MODE" = route ]; then
   exit 0
 fi
 
+# ── board 定位（2026-11-08 人令修）：固定读主工作树的 state/board.md ──
+# 协调会话 cwd 常被派单/收货带进 _build/wt-*，$0 相对路径解析到的 scripts/ 也在该树上，
+# 会读到树基点上的陈旧 READY/待人清单（2026-11-08 00:5x 事故：wt-1344 报出 6 张早已拍板的
+# 待人单，污染派单判断）。主树定位复用 lib 的 pdrs_disk_main_root（与 pdrs-loop 磁盘闸、
+# new-tree 同一策略）；解析失败按本树继续并提示，不硬失败（协调者脚本常在树里跑）。
+# --board 显式指定时整段跳过。BOARD_ROOT 留给下面的 origin/main 一致性提示复用。
+if [ -z "$BOARD" ]; then
+  BOARD="$ROOT/state/board.md"
+  BOARD_ROOT="$ROOT"
+  if [ -r "$ROOT/scripts/lib/disk-budget.sh" ]; then
+    # shellcheck source=lib/disk-budget.sh
+    . "$ROOT/scripts/lib/disk-budget.sh"
+    if main_root="$(pdrs_disk_main_root "$ROOT")"; then
+      # 主树路径来自 git worktree list（物理路径），ROOT 来自 cd+pwd（逻辑路径）；/var→/private/var
+      # 一类符号链接别名会让字符串比对把主仓误判成「非主树」，比较前两边都解析成物理路径。
+      if main_real="$(cd "$main_root" 2>/dev/null && pwd -P)"; then :; else main_real="$main_root"; fi
+      if root_real="$(cd "$ROOT" 2>/dev/null && pwd -P)"; then :; else root_real="$ROOT"; fi
+      if [ "$main_real" != "$root_real" ]; then
+        echo "[next-task] cwd 非主工作树，改读 ${main_real}/state/board.md" >&2
+        BOARD="$main_real/state/board.md"
+        BOARD_ROOT="$main_real"
+      else
+        BOARD_ROOT="$main_real"
+      fi
+    else
+      echo "next-task: 无法定位主工作树（git worktree list 失败），按本树 $ROOT/state/board.md 读" >&2
+    fi
+  else
+    echo "next-task: 缺 $ROOT/scripts/lib/disk-budget.sh，无法定位主工作树，按本树 $ROOT/state/board.md 读" >&2
+  fi
+fi
+
 [ -f "$BOARD" ] || { echo "next-task: 找不到 $BOARD" >&2; exit 2; }
+
+# 第二道保险：主树 board 与 origin/main 不一致（可能落后，也可能本地草稿未推）时提示，
+# 不阻断——board 段子代理会在本地草稿上跑。git 不可用、无 origin/main、路径缺失都静默跳过。
+# origin/main 是本地引用，不 fetch 拿不到远端最新，提示只是提醒核分支。
+# 比较经 $() 吃掉两侧尾部换行：仅差尾部空行视为一致（提示性保险，不做字节级比较）。
+if [ -n "${BOARD_ROOT:-}" ] \
+   && origin_board="$(git -C "$BOARD_ROOT" show "origin/main:state/board.md" 2>/dev/null)" \
+   && [ "$origin_board" != "$(cat "$BOARD")" ]; then
+  echo "[next-task] board 与 origin/main 不一致（可能落后或有本地未推草稿），建议先 git fetch + 核分支" >&2
+fi
 
 # 解析：BEGIN/END 各恰好一个、BEGIN 在第一个历史段（行首「> ## 」）之前、有 updated 行、条目四段齐全。
 # 只用 POSIX awk 语法（macOS 自带 awk 不保证支持 {n} 区间）；错误逐行输出为「ERR<TAB>说明」。

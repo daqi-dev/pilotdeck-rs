@@ -21,6 +21,14 @@ ARTIFACTS = SRC / 'runner_artifacts.rs'
 RUNNER = SRC / 'runner.rs'
 LIVE = SRC / 'live.rs'
 PROMPT = SRC / 'runner_prompt.rs'
+# #2228 DS r2 P1: tail-empty-blocks binds a test in runner_prompt_tests.rs,
+# which runner.rs assembles through runner_tests.rs (`#[path]` chain); the
+# binding inherits via `use super::*` from both parents.
+RUNNER_TESTS = SRC / 'runner_tests.rs'
+PROMPT_TESTS = SRC / 'runner_prompt_tests.rs'
+RUNNER_NOTICE_TESTS = SRC / 'runner_notice_tests.rs'
+# Assembled by live.rs itself (`#[path]` at the `mod tail_tests` boundary).
+LIVE_TAIL_TESTS = SRC / 'live_tail_tests.rs'
 # The regeneration switch lives at the library-test call site: the shared
 # baseline module is compiled into integration-test crates as well, where the
 # library's switches do not exist.
@@ -113,8 +121,98 @@ GUARDED = [
     RUNNER,
     LIVE,
     PROMPT,
+    RUNNER_TESTS,
+    PROMPT_TESTS,
     TAIL_TESTS,
+    # #2228 DS r3 P1 / zai r3 P1 (independent hit): the LIVE_UNIT bindings run
+    # through live.rs's #[path] assembly of live_tail_tests.rs — the
+    # live_tail_progress_and_drop test body lives there and inherits via
+    # `use super::*`, and its setup() runs live-session/peer.py as a python3
+    # subprocess — so concurrent edits to either during a run must be caught
+    # by the source guard.
+    LIVE_TAIL_TESTS,
+    FIXTURES / 'live-session/peer.py',
+    # #2228 DS r3 P1: the row bindings bake turn-runner-tail/oracle.json into
+    # the binary (include_str! via runner_tail_tests.rs's row()) and the
+    # tail-regeneration binding runs turn-runner-tail/generate.mts through
+    # tests/common/baseline.rs, so concurrent edits to either during a run
+    # must be caught by the source guard.
+    FIXTURES / 'turn-runner-tail/oracle.json',
+    FIXTURES / 'turn-runner-tail/generate.mts',
+    # #2228 DS r4 P1: the tail-empty-blocks binding's row() bakes
+    # turn-prompt-hooks/oracle.json into the binary (runner_prompt_tests.rs:161
+    # include_str! via row()), so a concurrent edit during a run must be caught
+    # by the source guard; generate.mts stays unregistered because no binding
+    # here regenerates that fixture.
+    FIXTURES / 'turn-prompt-hooks/oracle.json',
+    # #2228 DS r6 sibling P2 / MM r6 concurrency P2 (same class as the r4
+    # entry above): RUNNER_TESTS also assembles runner_notice_tests.rs
+    # (`#[path]` at runner_tests.rs:18-19), whose row() bakes
+    # turn-start-notices/oracle.json into the same binary
+    # (runner_notice_tests.rs:46 include_str!); generate.mts stays
+    # unregistered for the same reason as the prompt twin above.
+    RUNNER_NOTICE_TESTS,
+    FIXTURES / 'turn-start-notices/oracle.json',
+    # #2228 r9 (MM r8 sibling P2 + MM r8 boundary P2): RUNNER_TESTS bakes two
+    # more inputs into the same --lib binary — turn-runner/oracle.json
+    # (runner_tests.rs:141/:352/:858 include_str!) and the source text of
+    # live_stream_tests.rs (runner_tests.rs:864 include_str!, consumed by the
+    # oracle_consumers_exist existence check; it also bakes runner_tests.rs
+    # itself at :863, which is already registered above) — so concurrent edits
+    # during a run must be caught by the source guard.
+    FIXTURES / 'turn-runner/oracle.json',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
+    # #2228 DS r3 P2 / zai r3 P2 (independent hit): the top of the turn chain —
+    # runtime/turn/mod.rs declares the runner/live modules the bindings
+    # resolve through, and runtime/mod.rs declares turn itself, capping the
+    # chain at the same declarator depth the project chain registers.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/mod.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/mod.rs',
     BASELINE,
+    # #2228 MM r6 boundary P1 / DS r6 sibling+concurrency P2 (two families,
+    # graded P1): baseline.rs unconditionally compiles its #[path] submodule
+    # tests/common/regeneration_masks.rs; the tail-regeneration row's compare()
+    # (runner_tail_tests.rs:521 → baseline.rs:348) executes that code, so it is
+    # a runtime judge of this fixture's verdict. r8 (DS r7 concurrency P2#2,
+    # code-verified): the shared mask table stays OUT — regeneration_masks.rs
+    # normalized() early-returns for every fixture but provider-timing and
+    # run-registry (:180-182), so the table is a dead input here and guarding
+    # a cross-fixture shared file would only invite needless INVALID.
+    ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
+    # #2228 MM r7 sibling P1: the regeneration row's TS-side judge closure —
+    # generate.mts:16 imports assertBaseline/baselineSourceHashes from
+    # _shared/baseline.mts, which itself imports _shared/generator_guard.mjs
+    # (bindBaseline/recordedSourceHashes) and tests/baseline_source_guard.mjs
+    # (sourceClosureSha256); the regeneration row executes them as its judge
+    # (TS-tree clean check and hash recording; r9 reword, MM conc P3: the
+    # oracle records hashes of the TS baseline tree's files, it does not bake
+    # these Rust-tree bytes), so concurrent edits during a run must be caught
+    # by the source guard. r9 (DS r8 P1, in-diff): native-metadata-cwd /
+    # native-process / live-e2e register only baseline.mts of this closure —
+    # their gap is tracked in #2346, not a precedent to copy.
+    FIXTURES / '_shared/baseline.mts',
+    FIXTURES / '_shared/generator_guard.mjs',
+    ROOT / 'src/pilotdeck-gateway/tests/baseline_source_guard.mjs',
+    # #2228 r9 (DS r8 + MM r8, both families): LIVE is registered above and
+    # bakes live-e2e/terminal-boundaries/oracle.json into the same binary
+    # (live.rs:2143), so a concurrent edit during a run must be caught by the
+    # source guard. Faces of the registered carriers (e.g. gates_tests.rs
+    # under live_stream_tests.rs) stay out — they are registered by the
+    # fixtures whose bound rows execute them, and the mechanical closure of
+    # the whole compiled chain is the #2241 consolidation target.
+    FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
+    # #2228 r10 (MM r9 sibling P1#2 + DS r9 concurrency P2, both families):
+    # live_stream_tests.rs (registered above) bakes four more oracles into the
+    # same --lib binary — live-recording/oracle.json (:3653/:3958),
+    # live-history/oracle.json (:4002), sidecar-payload/oracle.json (:4273)
+    # and live-write-order/oracle.json (:4816); live_tail_tests.rs is
+    # registered above (LIVE's #[path] face, the r3 entry). Same carriers,
+    # same set as turn-prompt-hooks/turn-start-notices — concurrent edits
+    # must be caught by the source guard.
+    FIXTURES / 'live-recording/oracle.json',
+    FIXTURES / 'live-history/oracle.json',
+    FIXTURES / 'sidecar-payload/oracle.json',
+    FIXTURES / 'live-write-order/oracle.json',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',

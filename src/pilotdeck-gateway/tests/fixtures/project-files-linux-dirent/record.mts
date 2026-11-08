@@ -12,6 +12,7 @@ import {spawnSync} from 'node:child_process';
 
 const PINNED_NODE = 'v22.22.0';
 const PINNED_ICU = '78.2';
+const PINNED_UV = '1.52.1';
 const PINNED_BASELINE = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85';
 const blocked = (message: string) => {
   console.error(`BLOCKED #133 ${message}`);
@@ -23,6 +24,12 @@ const blocked = (message: string) => {
 console.log(JSON.stringify({node: process.version, icu: process.versions.icu, uv: process.versions.uv, platform: process.platform, locale: new Intl.Collator().resolvedOptions().locale}));
 if (process.version !== PINNED_NODE) blocked(`requires Node ${PINNED_NODE}, found ${process.version}`);
 if (process.versions.icu !== PINNED_ICU) blocked(`requires ICU ${PINNED_ICU}, found ${process.versions.icu}`);
+// #2248: process.versions.* are compile-time constants of the node build, so
+// the probe pins the recorded build-time triple (run-linux.sh gates it too);
+// a dylib-only swap under the unchanged binary is invisible to version
+// strings (it surfaces as a byte mismatch, not BLOCKED) — loaded-object probe
+// is follow-up #2340.
+if (process.versions.uv !== PINNED_UV) blocked(`requires libuv ${PINNED_UV}, found ${process.versions.uv}`);
 const locale = new Intl.Collator().resolvedOptions().locale;
 if (locale !== 'en-US') blocked(`resolved locale ${locale}; run with LANG=C.UTF-8 and no LC_* override`);
 

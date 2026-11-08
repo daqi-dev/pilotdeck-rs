@@ -8,11 +8,11 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_panic import named_test_failed, named_test_killed, panic_evidence
-from negative_process import mutating_sources, run_owned
+from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
+                               run_owned, wait_for_slot)
 
 ROOT = Path(__file__).resolve().parents[5]
 PRODUCT = ROOT / 'src/pilotdeck-gateway/src/runtime/replacement.rs'
@@ -150,15 +150,14 @@ def main():
             print(f'INVALID baseline failed; see {baseline_log}', file=sys.stderr)
             return 1
         for name, path, before, after, count, pattern, tests, ignored in MUTATIONS:
-            slot_deadline = time.monotonic() + 1800
-            while True:
-                slots = subprocess.run([str(ROOT / 'scripts/cargo-slots.sh')], capture_output=True, text=True, timeout=300)
-                if slots.returncode in (0, 69):
-                    break
-                if slots.returncode != 1:
-                    raise RuntimeError(slots.stdout + slots.stderr)
-                assert time.monotonic() < slot_deadline, 'cargo slots unavailable for 30 minutes'
-                time.sleep(5)
+            # #1908: the shared wait replaces the inline 300 s-sample /
+            # 1800 s-deadline loop. The sample bounding is unchanged
+            # (one cold-bootstrap exemption); the total wait budget for
+            # the slot acquisition now comes from negative_process.py's
+            # single shared constant (see its docstring) instead of the
+            # old 1800 s; exceeding it fails closed instead of retrying
+            # for 30 minutes.
+            slots = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             assert all(p.read_bytes() == data for p, data in original.items()), 'concurrent source edit'
             mutated = original[path].replace(before.encode(), after.encode())
             log = evidence / f'{name}.log'

@@ -1,5 +1,5 @@
 //! Real TS lifecycle scenarios replayed through controlled local channels.
-use super::{loader::*, protocol::*, server::ChannelServer};
+use super::{loader::*, protocol::*, server::ChannelServer, slack};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use serde_json::{Value, json};
 use std::{
@@ -991,6 +991,92 @@ async fn late_start_stop_failure_matches_real_ts() {
     );
 }
 
+/// A channel whose `stop` always fails: the failure `finish_stop` must
+/// classify (not a panic, which would unwind past the restore branch).
+struct FailingStopHandle {
+    stops: std::sync::atomic::AtomicUsize,
+}
+impl ChannelHandle for FailingStopHandle {
+    fn stop(&self, _reason: &str) -> BoxFuture<Result<(), ChannelError>> {
+        self.stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { Err(ChannelError::error("injected stop failure")) })
+    }
+}
+struct FailingStopAdapter {
+    key: ChannelKey,
+    handle: Arc<FailingStopHandle>,
+}
+impl ChannelAdapter for FailingStopAdapter {
+    fn channel_key(&self) -> &ChannelKey {
+        &self.key
+    }
+    fn start(
+        &self,
+        _deps: ChannelStartDeps,
+    ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
+        let handle = self.handle.clone();
+        Box::pin(async move { Ok(handle as Arc<dyn ChannelHandle>) })
+    }
+}
+fn failing_stop() -> Arc<FailingStopAdapter> {
+    Arc::new(FailingStopAdapter {
+        key: ChannelKey::new("a"),
+        handle: Arc::new(FailingStopHandle {
+            stops: std::sync::atomic::AtomicUsize::new(0),
+        }),
+    })
+}
+
+/// #1353 A8.5-pr2 (A10): a stop that fails while the server is closing must
+/// not restore the handle to `running`. The closing gate has already
+/// rejected every later start, so a restored handle could never be stopped
+/// again — the flush that follows the drain must not observe a live entry.
+/// The same failure outside a close keeps the TS restore behavior.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_stop_during_close_restores_nothing() {
+    let server = ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(|| Box::pin(async { Ok(()) })),
+    );
+    let adapter = failing_stop();
+    bounded(server.hot_start_channel(adapter.clone()))
+        .await
+        .expect("#1353 failing-stop setup start");
+    let closed = bounded(server.close()).await;
+    let error = closed.expect_err("#1353 the failed stop surfaces from close");
+    assert_eq!(
+        error.message(),
+        "PilotDeck server shutdown failed",
+        "#1353 the stop failure is the close failure"
+    );
+    crate::negative_assert_eq!(
+        server.running_keys(),
+        Vec::<String>::new(),
+        "#1353 A10: a failed stop during close restores no running handle"
+    );
+    // Control: outside a close the same failure restores the handle, as in TS
+    // (`pilotdeckServer.ts` stop error path re-fills `runningHandles`).
+    let standalone = ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(|| Box::pin(async { Ok(()) })),
+    );
+    let other = failing_stop();
+    bounded(standalone.hot_start_channel(other.clone()))
+        .await
+        .expect("#1353 standalone restore setup start");
+    bounded(standalone.reconcile_channels(ReconcileInput {
+        channels: vec![],
+        managed_channel_keys: vec![ChannelKey::new("a")],
+    }))
+    .await
+    .expect_err("#1353 the standalone stop failure surfaces");
+    crate::negative_assert_eq!(
+        standalone.running_keys(),
+        vec!["a".to_owned()],
+        "#1353 A10: a failed stop outside close keeps the TS restore"
+    );
+}
+
 struct PrefixHandle {
     open: std::sync::atomic::AtomicBool,
     reenter: Mutex<Option<ChannelServer>>,
@@ -1141,25 +1227,30 @@ async fn stop_prefix_can_reenter_close() {
         .expect("#1327 prefix reentry memoized close");
 }
 
-// #1386 A8.3 (#1302 B): the 13 unmigrated channels refuse native startup
+// #1386 A8.3 (#1302 B): the 11 unmigrated channels refuse native startup
 // through `reject_unmigrated_channels`, the seam production assembly calls
 // from `native_process/assembly.rs` (before `NativeChannels` is constructed,
 // #1763). The seam takes no mounts and no console callback, so a rejection can
 // never come after an adapter construction or a `console.error` line — there
 // is nothing to construct or log through.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
-/// The six keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
+/// The eight keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
 /// `reject_unmigrated_channels` must leave them alone. This is *not* a
 /// "fully assembled" list: `weixin` is built by the native assembly, `feishu`
-/// is refused by `reject_unimplemented_bundle_channels` until #1329, and the
-/// four loader-table keys have no native construction unit yet (#1302 B).
-const SUBSET_CHANNEL_KEYS: [&str; 6] = [
+/// is refused by `reject_unimplemented_bundle_channels` until #1329, the
+/// four loader-table keys have no production assembly call yet (#1302 B),
+/// `bluebubbles` joined via #1343's `register` mount (like `sms`), and
+/// `slack` (#1344) has only the test-driven `register` mount — production
+/// assembly wiring is a registered diff (A8.3-CH-SLACK-001).
+const SUBSET_CHANNEL_KEYS: [&str; 8] = [
     "weixin",
     "feishu",
     "apiServer",
     "webhook",
     "wecomCallback",
     "sms",
+    "bluebubbles",
+    "slack",
 ];
 
 fn adapters_config(entries: &str) -> JsValue {
@@ -1213,10 +1304,6 @@ fn rejects_unmigrated_discord() {
     assert_rejects_unmigrated("discord");
 }
 #[test]
-fn rejects_unmigrated_slack() {
-    assert_rejects_unmigrated("slack");
-}
-#[test]
 fn rejects_unmigrated_matrix() {
     assert_rejects_unmigrated("matrix");
 }
@@ -1231,10 +1318,6 @@ fn rejects_unmigrated_signal() {
 #[test]
 fn rejects_unmigrated_whatsapp() {
     assert_rejects_unmigrated("whatsapp");
-}
-#[test]
-fn rejects_unmigrated_bluebubbles() {
-    assert_rejects_unmigrated("bluebubbles");
 }
 #[test]
 fn rejects_unmigrated_dingtalk() {
@@ -1257,7 +1340,7 @@ fn rejects_unmigrated_wecom() {
     assert_rejects_unmigrated("wecom");
 }
 
-// #1579 P1: the frozen TS baseline gates these 13 keys with two different
+// #1579 P1: the frozen TS baseline gates these 11 keys with two different
 // expressions. `ChannelAdapterBundle.createQQ` / `createWeCom` open with
 // `if (settings?.enabled !== true) return undefined`, so `enabled: 1` or
 // `"true"` builds nothing and the TS gateway starts — rejecting those configs
@@ -1276,7 +1359,7 @@ fn unmigrated_bundle_channels_require_strict_boolean_true() {
     }
 }
 
-// The other eleven keys are consumed by `loadEnabledChannels`'s
+// The other nine keys are consumed by `loadEnabledChannels`'s
 // `if (!cfg?.enabled) continue`, i.e. JS truthiness — so a non-boolean truthy
 // `enabled` must still reject.
 #[test]
@@ -1298,7 +1381,7 @@ fn unmigrated_loader_channels_use_js_truthiness() {
 // #1579 r3 P1: both suites above derive their key set from the constant, so a
 // wrong membership flips the TS-parity property with every test still green
 // (drop `qq` and the strict suite simply stops looking at it; add `telegram`
-// and the truthiness suite skips it). Pin the membership and the 2/11 split.
+// and the truthiness suite skips it). Pin the membership and the 2/9 split.
 #[test]
 fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
     let expected: &[&str] = &["qq", "wecom"];
@@ -1311,8 +1394,8 @@ fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
         .filter(|key| !STRICT_TRUE_CHANNEL_KEYS.contains(key))
         .count();
     crate::negative_assert!(
-        loader_keys == 11,
-        "#1386 eleven loader keys keep JS truthiness next to the two strict keys"
+        loader_keys == 9,
+        "#1386 nine loader keys keep JS truthiness next to the two strict keys"
     );
 }
 
@@ -1339,6 +1422,37 @@ fn unmigrated_subset_channels_stay_loadable() {
     crate::negative_assert!(
         reject_unmigrated_channels(Some(&mixed)).is_ok(),
         "#1386 subset channel must not be rejected"
+    );
+}
+
+// `slack::register` (#1344): the loader-table mount takes over the key, so an
+// enabled `slack` config now builds a channel instead of refusing startup.
+// Construction only — `SlackChannel::new` resolves the token chain and never
+// opens a socket, so no mock is needed (start is not exercised here).
+#[test]
+fn loader_mount_builds_slack_channel() {
+    let mut mounts = ChannelLoaderMounts::default();
+    slack::register(&mut mounts);
+    crate::negative_assert!(
+        mounts.is_registered("slack"),
+        "#1344 slack registers a loader-table mount"
+    );
+    let adapters = adapters_config(
+        r#"{"slack":{"enabled":true,"token":"xoxb-1","extra":{"appToken":"xoxa-1"}},"telegram":{"enabled":false}}"#,
+    );
+    let mut errors = Vec::new();
+    let channels = load_enabled_channels(
+        Some(&adapters),
+        &LoadEnabledChannelsOptions { pilot_home: None },
+        &mounts,
+        &mut |message| errors.push(message),
+    );
+    crate::negative_assert!(errors.is_empty(), "#1344 loader errors: {errors:?}");
+    crate::negative_assert_eq!(channels.len(), 1, "#1344 exactly the slack channel loads");
+    crate::negative_assert_eq!(
+        channels[0].channel_key().to_string(),
+        "slack",
+        "#1344 the loaded channel is slack"
     );
 }
 
@@ -1379,7 +1493,7 @@ fn unmigrated_falsy_or_absent_enabled_does_not_reject() {
 
 #[test]
 fn unmigrated_rejection_order_is_deterministic() {
-    // All 13 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
+    // All 11 enabled: the first key in UNMIGRATED_CHANNEL_KEYS order —
     // reverse CHANNEL_LOADER_KEYS order, then `qq`, then `wecom` — is
     // reported.
     let all = enabled_adapters(UNMIGRATED_CHANNEL_KEYS);
@@ -1419,6 +1533,165 @@ fn unmigrated_rejection_order_is_deterministic() {
         message.contains("channel \"discord\""),
         "#1386 unmigrated rejection order"
     );
+}
+
+// #1853: the fail-closed key-set trichotomy over the channel tables. Every
+// `CHANNEL_LOADER_KEYS` entry must be exactly one of: an unmigrated rejection
+// key (`UNMIGRATED_CHANNEL_KEYS`), a loader-subset key whose implementation
+// module has landed (#1333 apiServer, #1334 webhook, #1336 wecomCallback,
+// #1339 sms, #1343 bluebubbles) while the loader-family assembly wiring is
+// still pending (`load_enabled_channels` has no production call, #1763 §1;
+// #2301 is the terminal unit), or a native-mount key whose transition gap has
+// its own registered diff entry (#1344 slack — `A8.3-CH-SLACK-001`; until
+// production wiring lands there, slack behaves like the silent group too). A
+// key in none of the groups is
+// silently skipped by the native assembly today — not rejected, not
+// constructed, no TS fallback — which is the transition difference
+// `A8.3-CHANNEL-LOADER-SUBSET-001` registers. The silent group is pinned as
+// data on purpose: deriving it as the set difference would absorb any future
+// loader-table key into the skip and keep this test green.
+#[test]
+fn loader_keys_partition_rejected_and_silent_subset() {
+    // The silent-skip group as of this entry (decision A, 2026-11-08).
+    const SILENT_SUBSET_KEYS: [&str; 5] = [
+        "wecomCallback",
+        "sms",
+        "apiServer",
+        "webhook",
+        "bluebubbles",
+    ];
+    // The native loader-mount group after #1344: the loader key whose
+    // transition gap has its own registered diff entry (`A8.3-CH-SLACK-001`).
+    // Production assembly wiring is pending there too, so until it lands slack
+    // behaves like the silent group — its classification lives in that entry,
+    // not this one.
+    const NATIVE_MOUNT_KEYS: [&str; 1] = ["slack"];
+    let rejected: Vec<&str> = CHANNEL_LOADER_KEYS
+        .iter()
+        .copied()
+        .filter(|key| UNMIGRATED_CHANNEL_KEYS.contains(key))
+        .collect();
+    crate::negative_assert_eq!(
+        rejected.len(),
+        9,
+        "#1853 nine loader keys sit in the unmigrated rejection table"
+    );
+    // Covering: every loader key belongs to exactly one of the three groups.
+    // This is the fail-closed cell — a key added to `CHANNEL_LOADER_KEYS`
+    // without joining a group lands here, not inside a silent set
+    // difference that would absorb it.
+    let mut unassigned = Vec::new();
+    for key in CHANNEL_LOADER_KEYS {
+        if !UNMIGRATED_CHANNEL_KEYS.contains(&key)
+            && !SILENT_SUBSET_KEYS.contains(&key)
+            && !NATIVE_MOUNT_KEYS.contains(&key)
+        {
+            unassigned.push(key);
+        }
+    }
+    crate::negative_assert!(
+        unassigned.is_empty(),
+        "#1853 every loader key is rejected, silent-subset, or native-mount"
+    );
+    // Reverse closure for the silent group (the cell above only constrains
+    // loader-table keys): every silent entry must itself be a loader key, and
+    // the group must be exactly `SUBSET_CHANNEL_KEYS` minus the two bundle
+    // keys minus the native mount — the module-level whitelist and this local
+    // pin cannot drift apart in either direction.
+    for key in SILENT_SUBSET_KEYS {
+        crate::negative_assert!(
+            CHANNEL_LOADER_KEYS.contains(&key),
+            "#1853 every silent-subset key is a loader-table key"
+        );
+        crate::negative_assert!(
+            SUBSET_CHANNEL_KEYS.contains(&key),
+            "#1853 every silent-subset key is in the module subset whitelist"
+        );
+    }
+    for key in SUBSET_CHANNEL_KEYS {
+        crate::negative_assert!(
+            SILENT_SUBSET_KEYS.contains(&key)
+                || BUNDLE_CHANNEL_KEYS.contains(&key)
+                || NATIVE_MOUNT_KEYS.contains(&key),
+            "#1853 every module subset key is silent-subset, bundle, or native-mount"
+        );
+    }
+    // Reverse closure: a rejection-table entry that is neither a loader key
+    // nor one of the two bundle-built strict keys refuses configs TS accepts.
+    for key in UNMIGRATED_CHANNEL_KEYS {
+        crate::negative_assert!(
+            CHANNEL_LOADER_KEYS.contains(key) || STRICT_TRUE_CHANNEL_KEYS.contains(key),
+            "#1853 every rejection-table key is a loader key or a strict bundle key"
+        );
+    }
+    // Bundle side: the two `ChannelAdapterBundle` keys live outside the loader
+    // table; both are implemented and constructed at startup (`weixin` through
+    // `create_startup_weixin`, `feishu` since #1329), and
+    // `native_process::channels_tests::bundle_keys_match_the_assembly` pins
+    // `BUNDLE_CHANNEL_KEYS == IMPLEMENTED_BUNDLE_CHANNEL_KEYS`.
+    for key in BUNDLE_CHANNEL_KEYS {
+        crate::negative_assert!(
+            !CHANNEL_LOADER_KEYS.contains(key),
+            "#1853 bundle keys stay outside the loader table"
+        );
+    }
+    // The behavior grid the partition describes, one cell per class; the
+    // exhaustive per-key families are the tests above and the real-entrypoint
+    // suites in `native_process::channels_tests`:
+    // - rejected: enabling refuses, naming the key (also
+    //   `startup_refuses_every_unmigrated_channel`);
+    // - silent-subset: not refused today — #1853 过渡差异，终态见 #2301（also
+    //   `unmigrated_subset_channels_stay_loadable`）;
+    // - native-mount: the loader mount loads the key (`slack` in
+    //   `loader_mount_builds_slack_channel`);
+    // - implemented: constructed at startup (`weixin` in
+    //   `startup_gate_requires_strict_boolean_true`, `feishu` in
+    //   `startup_builds_the_enabled_feishu_channel`).
+    for key in &rejected {
+        assert_rejects_unmigrated(key);
+    }
+    for key in SILENT_SUBSET_KEYS {
+        let adapters = enabled_adapters(&[key]);
+        crate::negative_assert!(
+            reject_unmigrated_channels(Some(&adapters)).is_ok(),
+            "#1853 silent-subset key is not refused by the unmigrated gate"
+        );
+        crate::negative_assert!(
+            !BUNDLE_CHANNEL_KEYS.contains(&key),
+            "#1853 silent-subset key is not a bundle key"
+        );
+        // Disjoint from the native-mount group: behavior cells cannot catch a
+        // key sitting in both pinned groups (both "not refused" cells pass), so
+        // the disjointness is asserted on the tables themselves.
+        crate::negative_assert!(
+            !NATIVE_MOUNT_KEYS.contains(&key),
+            "#1853 silent-subset key is not a native-mount key"
+        );
+    }
+    // The native-mount cell: outside the rejection table, loadable through the
+    // loader mount, and outside the bundle table.
+    for key in NATIVE_MOUNT_KEYS {
+        let adapters = enabled_adapters(&[key]);
+        crate::negative_assert!(
+            reject_unmigrated_channels(Some(&adapters)).is_ok(),
+            "#1853 native-mount key is not refused by the unmigrated gate"
+        );
+        crate::negative_assert!(
+            SUBSET_CHANNEL_KEYS.contains(&key),
+            "#1853 native-mount key is in the module subset whitelist"
+        );
+        // Membership closure, symmetric with the silent group: the covering
+        // cell only iterates `CHANNEL_LOADER_KEYS`, so a native key dropped
+        // from the loader table would otherwise keep this test green.
+        crate::negative_assert!(
+            CHANNEL_LOADER_KEYS.contains(&key),
+            "#1853 native-mount key is a loader-table key"
+        );
+        crate::negative_assert!(
+            !SILENT_SUBSET_KEYS.contains(&key),
+            "#1853 native-mount key is not a silent-subset key"
+        );
+    }
 }
 
 /// #1738: `ActiveChat::admit` is the single place that decides "this turn owns

@@ -1167,76 +1167,271 @@ fn migration_non_utf8_home_keeps_one_physical_key() {
 /// and never mkdirs a non-UTF-8-named directory, so there the file write
 /// is the same-shape probe.
 ///
-/// Only `EILSEQ` — the errno APFS / HFS+ return for the invalid name bytes
-/// themselves (os error 92 on darwin, measured there for `open(O_CREAT)`,
-/// `mkdir` and `create_dir_all` alike; 84 on Linux) — answers "this
-/// filesystem can never host the fixture, skip". Every other error
-/// (EACCES, ENOSPC, EROFS, EMFILE, …) is a real failure of the scratch the
-/// caller handed us and panics with its own `#1400` marker: folding those
-/// into the skip would silently delete a Linux-side P1 guard from the
-/// suite, which is what #1289 refused to do and #1400 must not reintroduce.
-///
-/// #1400 third-round review (MiniMax boundary P1 at #1495 B10): the triage
-/// decision is split out so both arms are executed by
-/// [`only_eilseq_makes_the_non_utf8_probe_skippable`] below. No mutant in
-/// `tests/fixtures/cron-store/negative_controls.py` can falsify it on the
-/// hosts we run: rewriting the arm to `Err(_) => false` is indistinguishable
-/// where the probe always succeeds (Linux) or where `EILSEQ` is the only
-/// reachable failure (APFS), so a regression to "any error is a skipped
-/// host" would otherwise only be caught by reading the code — while on Linux
-/// it would turn a scratch EACCES/ENOSPC into a silent skip and delete the
-/// `#1216` double-key guard from the suite (a false PASS). A
-/// filesystem-level negative control needs fault injection the mutant
-/// mechanism does not have; that is registered as a follow-up, and this unit
-/// test is the executable evidence in the meantime.
-#[cfg(unix)]
-fn probe_failure_is_a_rejected_name(error: &std::io::Error) -> bool {
-    error.raw_os_error() == Some(libc::EILSEQ)
-}
-
-/// The executable half of the triage contract: `EILSEQ` skips, everything
-/// else fails closed. Runs on every host — the errors are synthetic, so this
-/// does not depend on a filesystem that can refuse a non-UTF-8 name.
-#[cfg(unix)]
-#[test]
-fn only_eilseq_makes_the_non_utf8_probe_skippable() {
-    let error = |errno: i32| std::io::Error::from_raw_os_error(errno);
-    assert!(
-        probe_failure_is_a_rejected_name(&error(libc::EILSEQ)),
-        "#1400 EILSEQ means the filesystem rejects these bytes: skip, do not fail"
-    );
-    for errno in [
-        libc::EACCES,
-        libc::ENOSPC,
-        libc::EROFS,
-        libc::EMFILE,
-        libc::EINVAL,
-        libc::ENOENT,
-    ] {
-        assert!(
-            !probe_failure_is_a_rejected_name(&error(errno)),
-            "#1400 errno {errno} is a real failure of the scratch, not a rejecting filesystem: it must fail closed, not skip"
-        );
-    }
-}
-
+/// #1672 (issue A): the outcome is triaged by [`triage_probe`] into a
+/// tested decision and folded by [`non_utf8_probe_skip`]. The skip/fail
+/// `match` used to sit inline in this function with no executable test —
+/// #1400's third-round review (DeepSeek boundary P1, MiniMax concurrency
+/// P1-1, MiniMax boundary P1, three roles agreeing) found only the errno
+/// predicate had a unit test, so a regression to `Err(_) => false` kept
+/// the suite green. The decision now lives in functions the unit tests
+/// below execute with synthetic errors on every host.
 #[cfg(unix)]
 fn non_utf8_names_writable(dir: &Path) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let probe_home = dir.join(std::ffi::OsStr::from_bytes(b"probe-\xff"));
     let probe_project = probe_home.join("cron/projects/w-same");
-    let outcome = fs::create_dir_all(&probe_project)
-        .and_then(|()| fs::write(probe_project.join("tasks.json"), b"{\"probe\": true}"));
-    let writable = match outcome {
-        Ok(()) => true,
-        Err(error) if probe_failure_is_a_rejected_name(&error) => false,
-        Err(error) => panic!(
-            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",
-            probe_project.display()
-        ),
+    let probe = || {
+        fs::create_dir_all(&probe_project)
+            .and_then(|()| fs::write(probe_project.join("tasks.json"), b"{\"probe\": true}"))
     };
+    let writable = non_utf8_probe_skip(&triage_probe(probe), &probe_project);
     let _ = fs::remove_dir_all(&probe_home);
     writable
+}
+
+/// #1672 (issue A): the triaged outcome of one probe attempt, before the
+/// skip/fail decision is made. `Writable` and `RejectsName` are the two
+/// arms the old call-site `match` had; `FdLimit` and `Failed` are its two
+/// ways to fail closed, kept apart because their diagnoses must not be
+/// confused (#1672 issue B).
+#[cfg(unix)]
+#[derive(Debug)]
+enum NonUtf8Probe {
+    /// The scratch accepted the raw bytes: the fixture can run here.
+    Writable,
+    /// The name bytes themselves are rejected: skip, never fail.
+    RejectsName,
+    /// The process or system fd limit (EMFILE/ENFILE): the failure's cause
+    /// lives outside the probed directory.
+    FdLimit(std::io::Error),
+    /// Any other errno: a real failure of the scratch, must fail closed.
+    Failed(std::io::Error),
+}
+
+/// Only `EILSEQ` — the errno APFS / HFS+ return for the invalid name bytes
+/// themselves (os error 92 on darwin, measured there for `open(O_CREAT)`,
+/// `mkdir` and `create_dir_all` alike; 84 on Linux) — answers "this
+/// filesystem can never host the fixture, skip". Every other error
+/// (EACCES, ENOSPC, EROFS, …) is a real failure of the scratch the caller
+/// handed us and fails closed: folding those into the skip would silently
+/// delete a Linux-side P1 guard from the suite, which is what #1289
+/// refused to do and #1400 must not reintroduce.
+///
+/// #1672 (issue B): `EMFILE`/`ENFILE` are triaged into their own category,
+/// with exactly one bounded retry ([`probe_hit_the_fd_limit`]). The fd limit
+/// belongs to the process (`ulimit -n`, EMFILE: the fd table is full) or
+/// the system (`kern.maxfiles` / `file-max`, ENFILE: the system table is
+/// full), not to the probed scratch — and the probe's own `open()` can be
+/// the one that hits the cap (measured on mbp2, darwin 25.6.0: with
+/// `ulimit -n 12` and the table exhausted, both probe shapes — the
+/// create_dir_all chain plus file write, and the file-leaf write — fail
+/// with `Too many open files`, EMFILE; macmini-01's #816 first run
+/// recorded the same family at `ulimit -n=256`). One retry
+/// lets an fd freed in between through; a persistent limit still fails
+/// closed, but with its own marker instead of the pre-#1672 misdiagnosis
+/// ("a reason other than the file name" on a host whose only problem was
+/// the fd limit — a false FAIL that does not reproduce elsewhere). This
+/// does not weaken the Linux-side guard: EACCES, ENOSPC and EROFS still
+/// fail closed unchanged.
+#[cfg(unix)]
+fn triage_probe(mut attempt: impl FnMut() -> std::io::Result<()>) -> NonUtf8Probe {
+    let mut outcome = attempt();
+    if let Err(error) = &outcome
+        && probe_hit_the_fd_limit(error)
+    {
+        outcome = attempt();
+    }
+    match outcome {
+        Ok(()) => NonUtf8Probe::Writable,
+        Err(error) if error.raw_os_error() == Some(libc::EILSEQ) => NonUtf8Probe::RejectsName,
+        Err(error) if probe_hit_the_fd_limit(&error) => NonUtf8Probe::FdLimit(error),
+        Err(error) => NonUtf8Probe::Failed(error),
+    }
+}
+
+/// #1672 (issue B): whether this probe failure is the process's own fd
+/// table (EMFILE) or the system's open-file table (ENFILE) running out —
+/// the one errno family whose cause lives outside the probed directory.
+#[cfg(unix)]
+fn probe_hit_the_fd_limit(error: &std::io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::EMFILE) | Some(libc::ENFILE)
+    )
+}
+
+/// The skip decision over a triaged outcome — the half of the triage
+/// contract that #1672 (issue A) moved out of the untested call-site
+/// `match`: `Writable` runs the fixture, `RejectsName` skips it, and both
+/// failure categories fail closed, each with its own `#1400` marker. A
+/// regression to "any error skips" (`Failed(_) => false`) turns the Linux
+/// side's scratch EACCES/ENOSPC into a silent skip and deletes the `#1216`
+/// double-key guard from the suite; the unit test below executes every arm
+/// on every host, so that regression is a red test, not a code review.
+#[cfg(unix)]
+fn non_utf8_probe_skip(probe: &NonUtf8Probe, probed: &Path) -> bool {
+    match probe {
+        NonUtf8Probe::Writable => true,
+        NonUtf8Probe::RejectsName => false,
+        NonUtf8Probe::FdLimit(error) => panic!(
+            "#1400 non-UTF-8 home: probing {} hit the process fd limit, not the file name: {error}",
+            probed.display()
+        ),
+        NonUtf8Probe::Failed(error) => panic!(
+            "#1400 non-UTF-8 home: probing {} failed for a reason other than the file name: {error}",
+            probed.display()
+        ),
+    }
+}
+
+/// #1672 (issue A): the executable evidence for the triage contract. Runs
+/// on every host — the errors are synthetic, so this does not depend on a
+/// filesystem that can refuse a non-UTF-8 name. Covers every mapping of
+/// [`triage_probe`], including the #1672 fd-limit category and the
+/// exactly-once retry.
+#[cfg(unix)]
+#[test]
+fn triage_probe_sorts_every_outcome_with_one_bounded_fd_retry() {
+    let error = |errno: i32| std::io::Error::from_raw_os_error(errno);
+    assert!(
+        matches!(triage_probe(|| Ok(())), NonUtf8Probe::Writable),
+        "#1400 a succeeding probe means the scratch accepts the raw bytes: run the fixture, do not skip"
+    );
+    // fix-r1 (DS boundary P2): the counting closures pin the tight half of
+    // the retry contract too — a non-fd error is attempted exactly once, so
+    // loosening the retry condition into "any error retries" is a red test.
+    let mut calls = 0;
+    assert!(
+        matches!(
+            triage_probe(|| {
+                calls += 1;
+                Err(error(libc::EILSEQ))
+            }),
+            NonUtf8Probe::RejectsName
+        ) && calls == 1,
+        "#1400 EILSEQ means the filesystem rejects these bytes: skip, do not fail, with no retry"
+    );
+    for errno in [
+        libc::EACCES,
+        libc::ENOSPC,
+        libc::EROFS,
+        libc::EINVAL,
+        libc::ENOENT,
+    ] {
+        let mut calls = 0;
+        assert!(
+            matches!(
+                triage_probe(|| {
+                    calls += 1;
+                    Err(error(errno))
+                }),
+                NonUtf8Probe::Failed(_)
+            ) && calls == 1,
+            "#1400 errno {errno} is a real failure of the scratch, not a rejecting filesystem: it must fail closed, not skip, and must not be retried"
+        );
+    }
+    // #1672 (issue B): the fd limit is its own triage category, not a
+    // scratch failure whose panic message would blame the file name for a
+    // process-level condition.
+    for errno in [libc::EMFILE, libc::ENFILE] {
+        let mut calls = 0;
+        assert!(
+            matches!(
+                triage_probe(|| {
+                    calls += 1;
+                    Err(error(errno))
+                }),
+                NonUtf8Probe::FdLimit(_)
+            ) && calls == 2,
+            "#1400 errno {errno} is the process or system fd limit, not the scratch's own failure: it must reach its own retry arm, not the scratch-failure marker, retried exactly once"
+        );
+    }
+    // The retry is exactly one: an fd freed after the first EMFILE lets
+    // the second attempt through.
+    let mut calls = 0;
+    let outcome = triage_probe(|| {
+        calls += 1;
+        if calls == 1 {
+            Err(error(libc::EMFILE))
+        } else {
+            Ok(())
+        }
+    });
+    assert!(
+        matches!(outcome, NonUtf8Probe::Writable) && calls == 2,
+        "#1400 an EMFILE probe gets exactly one retry: a later-freed fd must let the second attempt through"
+    );
+    // Termination: a persistent limit is retried once and then stops —
+    // never a loop — landing in the fd-limit category.
+    let mut calls = 0;
+    let outcome = triage_probe(|| {
+        calls += 1;
+        Err(error(libc::EMFILE))
+    });
+    assert!(
+        matches!(outcome, NonUtf8Probe::FdLimit(_)) && calls == 2,
+        "#1400 the EMFILE retry is bounded: exactly one retry, then the fd-limit outcome, never a loop"
+    );
+    // The retried attempt's terminal errno wins: an EILSEQ seen after the
+    // fd-limit retry still skips — that host genuinely cannot host the
+    // fixture.
+    let mut calls = 0;
+    let outcome = triage_probe(|| {
+        calls += 1;
+        if calls == 1 {
+            Err(error(libc::EMFILE))
+        } else {
+            Err(error(libc::EILSEQ))
+        }
+    });
+    assert!(
+        matches!(outcome, NonUtf8Probe::RejectsName) && calls == 2,
+        "#1400 the retried attempt's errno wins: an EILSEQ seen after the fd-limit retry still skips"
+    );
+}
+
+/// #1672 (issue A): the fail-closed half of the triage contract, executed
+/// on every host with synthetic outcomes — the piece that used to live
+/// only at the call site, where no test could reach it (#1400 third-round
+/// review; three roles flagged it). A regression to `Err(_) => false`
+/// (any error skips) makes this test fail instead of silently deleting
+/// the `#1216` double-key guard from the suite.
+#[cfg(unix)]
+#[test]
+fn non_eilseq_probe_outcomes_fail_closed_at_the_skip_decision() {
+    let probed = Path::new("/nonexistent-probe");
+    assert!(
+        non_utf8_probe_skip(&NonUtf8Probe::Writable, probed),
+        "#1400 a writable probe must run the fixture, not skip it"
+    );
+    assert!(
+        !non_utf8_probe_skip(&NonUtf8Probe::RejectsName, probed),
+        "#1400 a name-rejecting filesystem must skip the fixture, not fail it"
+    );
+    for (probe, marker) in [
+        (
+            NonUtf8Probe::Failed(std::io::Error::from_raw_os_error(libc::EACCES)),
+            "failed for a reason other than the file name",
+        ),
+        (
+            NonUtf8Probe::FdLimit(std::io::Error::from_raw_os_error(libc::EMFILE)),
+            "hit the process fd limit",
+        ),
+    ] {
+        let payload = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            non_utf8_probe_skip(&probe, probed)
+        }))
+        .expect_err("#1400 a probe failure must fail closed (panic), not skip");
+        let text = payload
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .or_else(|| payload.downcast_ref::<&str>().copied())
+            .unwrap_or_default();
+        assert!(
+            text.contains("#1400") && text.contains(marker),
+            "#1400 the fail-closed panic must carry its own diagnosis ({marker}), got: {text}"
+        );
+    }
 }
 
 /// fix-r2 P2 + fix-r3 P2: an absolute pilot home and an absolute projectKey

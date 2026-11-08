@@ -7,6 +7,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
 from negative_suite import Case, run_cases
+from _negkit import non_head
 from _negative_common import mutate, check_mutations
 
 root = Path(__file__).resolve().parents[5]
@@ -47,5 +48,10 @@ test = 'runtime::turn::live::stream_tests::live_factory_pre_aborted'
 cases = [Case(n, source, o, v, test,
               ['#741k pre-cancel factory must return aborted', '#741k factory call must be lazy'])
          for n, o, v in mutations if not names or n in names]
-raise SystemExit(run_cases(root, cases, out, env, mutate,
-                           baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))
+# #1540: a green run against a pinned non-HEAD baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source, baseline, baseline_sha = non_head.gate(root)
+raise SystemExit(non_head.non_head_exit(
+    baseline_source, baseline_sha,
+    code=run_cases(root, cases, out, env, mutate, baseline=baseline),
+    evidence=out))

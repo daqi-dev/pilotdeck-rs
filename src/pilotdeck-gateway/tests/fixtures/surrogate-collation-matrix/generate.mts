@@ -19,6 +19,14 @@ assert.equal(process.version, 'v22.22.0');
 // instead of failing the byte comparison as a vague positive-control miss.
 assert.equal(process.versions.icu, '78.2',
   'BLOCKED: surrogate-collation-matrix requires ICU 78.2 (homebrew node@22 baseline, decision card 2026-10-31)');
+// #2248: libuv completes the pinned identity triple. process.versions.* are
+// compile-time constants of the node build, so the probe pins the triple the
+// binary was built against: a node rebuilt against another libuv is caught
+// here; a dylib-only swap under the unchanged binary is invisible to version
+// strings (it surfaces as a byte mismatch, not BLOCKED) — a loaded-object
+// probe is follow-up #2340.
+assert.equal(process.versions.uv, '1.52.1',
+  'BLOCKED: surrogate-collation-matrix requires libuv 1.52.1 (homebrew node@22 baseline, decision card 2026-10-31)');
 assert.ok(process.env.PDRS_BASELINE, 'PDRS_BASELINE must point at the PilotDeck checkout');
 const baseline = resolve(process.env.PDRS_BASELINE);
 const sources = ['src/gateway/dialog/modelCatalog.ts', 'src/gateway/server/GatewayWsConnection.ts',

@@ -4,6 +4,7 @@ import json, os, sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_suite import Case, bind_module_file, declares_test, run_cases
+from _negkit import non_head
 from _negative_common import mutate
 root=Path(__file__).resolve().parents[5]
 base=root/'src/pilotdeck-gateway/src/runtime/turn'
@@ -208,6 +209,10 @@ if sys.argv[2:] and sys.argv[2:] != ['--sample']:
     selected=[row for row in cases if row[0] in names]
 # Package cache contention is not test execution. Match the shared suite
 # build allowance; runtime progress/cleanup assertions retain their own bounds.
-raise SystemExit(run_cases(root,
+# #1540: a green run against a pinned non-HEAD baseline is NON-HOST EVIDENCE
+# (the host gate only trusts HEAD), so it exits 42 instead of 0.
+baseline_source,baseline,baseline_sha=non_head.gate(root)
+raise SystemExit(non_head.non_head_exit(baseline_source,baseline_sha,
+ code=run_cases(root,
     [Case(n,p,old,new,test,anchor,scope) for n,p,old,new,scope,test,anchor in selected],
-    out,env,mutate,timeout=900,baseline=env.get('PDRS_NEGATIVE_BASELINE') or 'HEAD'))
+    out,env,mutate,timeout=900,baseline=baseline),evidence=out))

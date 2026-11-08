@@ -6,7 +6,7 @@
 
 实测要点：孤立代理尾段（已赋值字符 < `\ud800` < `\ud801` < `\udc00` < `\udc01` < `�`）五个 locale 相同；已赋值字符的顺序随 locale 改变（en_US 下 `a < ä < Z < 中文`，sv_SE 下 `ä` 排到 `Z` 之后，zh_CN 下 `中文` 排最前，de_DE / ja_JP 下与 en_US 相同），这正是 `locale-control` 键类记录的内容——因此 de_DE 行的「locale 到达」只有 resolvedLocale 佐证，ja_JP 另在 mixed-uniform 上与 en_US 分歧（`中` 排到 `𠀀` 之前）。session 侧倒序输入 + `w<i>` 模型名编码胜者：若未来 native 比较器把所有孤立代理折成同一权重，稳定排序会保留倒序、胜者改变，夹具即失败——catalog 帧的稳定顺序本身检不出折叠，折叠由 session 胜者检出。
 
-生成（ICU 门：生成器与守卫都断言 `process.versions.icu == 78.2`，即本机 homebrew node@22 基线；不符即以 `BLOCKED` 报错，不用别的 Node 静默重录）：
+生成（身份门：生成器与守卫都断言 `process.versions.icu == 78.2` 与 `process.versions.uv == 1.52.1`，即本机 homebrew node@22 基线三元组；不符即以 `BLOCKED` 报错，不用别的 Node 静默重录）：
 
 ```sh
 export PDRS_BASELINE=/absolute/path/to/PilotDeck
@@ -17,6 +17,6 @@ node --import "$PDRS_BASELINE/node_modules/tsx/dist/loader.mjs" \
 
 父进程逐 locale spawn `--child` 子进程（剥离继承的 LANG/LC_*，注入单一 locale），子进程录制全部格后 stdout 单行 JSON，父进程校验 resolvedLocale 并汇总写 `oracle.json`（目录 recursive，wx 独占创建）。字节一致性：帧内 scratch 根替换为 `/fixture`，只记构造输入，不记目录树 / PID / 时钟。
 
-Rust 正控：`generator_provenance.rs` 的 `surrogate_collation_matrix_regenerates_identically`（#[ignore]，需 PDRS_BASELINE/tsx，先验 Node v22.22.0 与 ICU 78.2）与结构正控 `surrogate_collation_matrix_covers_locale_and_key_classes`（对全部 10 个键类断言精确 catalog 顺序或尾部/locale 事实，含 de/ja 与 en 相同的钉死）。负控 `negative_controls.py`（本目录）：新文件提交前跑不了，提交后由协调者在宿主跑；宿主 node ICU ≠ 78.2 时整套判 BLOCKED（退出码 3），不计 INVALID。
+Rust 正控：`generator_provenance.rs` 的 `surrogate_collation_matrix_regenerates_identically`（#[ignore]，需 PDRS_BASELINE/tsx，先验 Node v22.22.0 / ICU 78.2 / libuv 1.52.1）与结构正控 `surrogate_collation_matrix_covers_locale_and_key_classes`（对全部 10 个键类断言精确 catalog 顺序或尾部/locale 事实，含 de/ja 与 en 相同的钉死）。负控 `negative_controls.py`（本目录）：新文件提交前跑不了，提交后由协调者在宿主跑；宿主 node ICU ≠ 78.2 或 libuv ≠ 1.52.1 时整套判 BLOCKED（退出码 3），不计 INVALID。
 
 第二步（icu_collator 补丁 vs 自写等价比较）不在本夹具实现。

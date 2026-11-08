@@ -23,9 +23,9 @@ pub use migration::{MigrationInput, migrate_cron_stores};
 pub use paths::{CronPaths, resolve_cron_paths};
 pub use projection::{CRON_METHODS, dispatch, require_cron, response, wire_error_code};
 pub use schedule::{
-    CRON_SCHEDULE_COMPUTATION_VERSION, ComputedRunAt, CronCreateSchedule, DelayUnit,
-    InvalidTimeValue, compute_next_cron_run_at, compute_next_run_at, cron_day_fields_use_or,
-    delay_to_milliseconds, is_valid_cron_timezone, resolve_cron_timezone,
+    CRON_SCHEDULE_COMPUTATION_VERSION, ComputedRunAt, CronCreateSchedule, CronZoneResolverCache,
+    DelayUnit, InvalidTimeValue, compute_next_cron_run_at, compute_next_run_at,
+    cron_day_fields_use_or, delay_to_milliseconds, is_valid_cron_timezone, resolve_cron_timezone,
 };
 pub use store::CronTaskStore;
 

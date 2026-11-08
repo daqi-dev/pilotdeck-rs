@@ -83,7 +83,10 @@ class EnvironmentControls(unittest.TestCase):
         'test(=runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key) | '
         'test(=native_process::tests::non_utf8_home_and_sidecar_are_refused) | '
         'test(=storage::tests::temporary_create_failure_reports_the_transcript_not_the_staging_name) | '
-        'test(=storage::tests::transcript_open_failure_renders_node_eacces_with_the_supplied_path)')
+        'test(=storage::tests::transcript_open_failure_renders_node_eacces_with_the_supplied_path) | '
+        'test(=native_process::services_tests::direct_content_with_an_unopenable_path_stays_silent) | '
+        'test(=test_process::an_unreadable_stat_of_a_possible_child_fails_the_child_audit) | '
+        'test(=test_process::an_unreadable_holder_of_this_user_fails_the_data_dir_audit)')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -803,7 +806,8 @@ class EnvironmentControls(unittest.TestCase):
             self.fail('#1632 the fixture must define a literal mutations table')
 
         pinned = rows(source)
-        self.assertEqual(len(pinned), 13, '#1632/#1476 thirteen mutations cover the wire-up')
+        self.assertEqual(len(pinned), 14,
+                         '#1632/#1476/#1313 fourteen mutations cover the wire-up')
         # 只钉行数等于允许「换掉一条真变异、行数不变」：名字逐一钉死（GLM r7 sibling P2），
         # 换成一条平凡可杀的变异同样会红。
         self.assertEqual([ast.literal_eval(row)[0] for row in pinned],
@@ -816,16 +820,17 @@ class EnvironmentControls(unittest.TestCase):
                           'always-on-abort-copies-apply-message',
                           'always-on-rerun-copies-apply-message',
                           'always-on-apply-copies-abort-message',
-                          'always-on-code-not-capability-unavailable',
+                          'always-on-abort-skips-the-input-read',
+                          'always-on-envelope-code-rewritten',
                           'describe-advertises-always-on-apply',
                           'describe-drops-async-hook-result',
                           'describe-drops-delete-session'],
-                         '#1632/#1476 the thirteen mutations are exactly these, '
-                         'not merely thirteen rows')
+                         '#1632/#1476/#1313 the fourteen mutations are exactly these, '
+                         'not merely fourteen rows')
         dropped = ast.get_source_segment(source, pinned[0])
         mutant = source.replace(dropped + ',', '', 1)
         self.assertEqual(mutant.count(dropped), 0, '#1632 the mutant row really left the table')
-        self.assertEqual(len(rows(mutant)), 12,
+        self.assertEqual(len(rows(mutant)), 13,
                          '#1632 dropping a row must change the pinned count')
 
     def test_dispatch_case_table_cannot_shrink_silently(self):
@@ -2554,7 +2559,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = '41d5ada7c1c9f6c074653c0c49ad13369b03d018a6ef411eedd111a69d86394e'
+    SESSION_CONTROLS_SHA256 = '8d4fafbbb603c9ecce0150e1a21b9563bea5489e8ee1a86604a4150961887b07'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
@@ -4261,7 +4266,22 @@ self_check_controls_run | return | return problems
                 f'{relative}: a crate-root or bare-`mod` file reports a name that depends '
                 f'on the module nesting, not on the path. Run `cargo nextest list` and '
                 f'paste the exact name nextest prints.')
-        if parts[-1] != 'tests':
+        # #1461 r2: the trailing-`tests` append is only right when the file
+        # really nests its tests inside an inner `mod tests` (the mod.rs
+        # shape). A `_tests.rs` module file (services_tests.rs) declares its
+        # tests directly, so the old unconditional append derived a phantom
+        # segment nextest never reports (`native_process::services_tests::
+        # tests::<leaf>`) and the guard then demanded a name that selects
+        # nothing — the same silent hole this check exists to close. The
+        # measured names come from libtest `--exact` runs (the negctl
+        # receipts print them verbatim).
+        # #1461 r3 (DS boundary P2): only the *inline* `mod tests {` shape
+        # proves the file's own fns sit under `::tests::`. A file-level
+        # `mod tests;` declaration points at a separate tests.rs — fns in
+        # THAT file derive their own path — so a top-level test fn next to a
+        # `mod tests;` would regrow the phantom segment. Require the brace.
+        text = source.read_text(errors='replace')
+        if parts[-1] != 'tests' and re.search(r'^\s*mod tests\s*\{', text, re.M):
             parts.append('tests')
         return '::'.join([*parts, leaf])
 
@@ -4797,9 +4817,17 @@ self_check_controls_run | return | return problems
         self.assertEqual(
             self.nextest_visible_name(crate, crate / 'src/skills/tests.rs', 'leaf'),
             'skills::tests::leaf')
+        # #1461 r2: this example used a hypothetical `src/grep/mod.rs` that
+        # does not exist anywhere in the crate — it only passed because the
+        # old code appended `tests` without reading the file. The guarded
+        # append needs a real `mod tests {` carrier to prove the mapping;
+        # #1461 r3 (DS boundary P2): `src/channel/mod.rs` carries the
+        # semicolon form (`mod tests;`), which does NOT nest this file's own
+        # fns — the inline-brace carrier is `src/handle_path.rs:129`
+        # (measured, `grep -n 'mod tests {'`).
         self.assertEqual(
-            self.nextest_visible_name(crate, crate / 'src/grep/mod.rs', 'leaf'),
-            'grep::tests::leaf')
+            self.nextest_visible_name(crate, crate / 'src/handle_path.rs', 'leaf'),
+            'handle_path::tests::leaf')
         self.assertEqual(
             self.nextest_visible_name(crate, crate / 'tests/live_e2e.rs', 'leaf'),
             'leaf')

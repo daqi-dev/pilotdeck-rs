@@ -133,6 +133,35 @@ MUTATIONS = [
      '"expectedCaseCount": 22,',
      '"expectedCaseCount": 21,',
      'channel_matches_real_ts', '#1336 oracle case count matches its declaration'),
+    # #1941: the POST body cap. The anchor is the *use site*, never the
+    # constant: the oversize cell sizes its client from `MAX_BODY_BYTES` itself,
+    # so mutating the constant to INFINITY would make that test overflow
+    # (`cap + 64 MiB`) before it reaches any assertion, and the matrix would
+    # read INVALID instead of KILLED (DeepSeek sibling + boundary r1).
+    ('wecom-body-cap-disabled', source / 'mod.rs',
+     'Limited::new(request.into_body(), MAX_BODY_BYTES as usize)',
+     'Limited::new(request.into_body(), usize::MAX)',
+     'oversize_post_closes_at_the_cap_with_zero_bytes',
+     '#1941 an oversize POST ends at the cap instead of waiting for the '
+     'declared body'),
+    # The at-cap cell is a machine criterion too, so it needs its own mutant:
+    # lowering the limit by one byte must turn "exactly MAX_BODY_BYTES is still
+    # read" red. The declared assertion is the *reachable* one: at cap-1 the
+    # at-cap POST gets a zero-byte close, so `http_request` panics in
+    # `parse_raw_response` on its case marker before the row-level
+    # `negative_assert_eq!` ever runs (#1941 r2, GLM + DeepSeek).
+    ('wecom-body-cap-off-by-one', source / 'mod.rs',
+     'Limited::new(request.into_body(), MAX_BODY_BYTES as usize)',
+     'Limited::new(request.into_body(), MAX_BODY_BYTES as usize - 1)',
+     'post_up_to_the_cap_is_still_read',
+     '#1336 #1941 at-cap matches the TS oracle'),
+    # Answering instead of closing: A8.3-WECOM-CALLBACK-BODY-LIMIT-001 pins
+    # the ending as the webhook lane's zero-byte close, never a 413.
+    ('wecom-oversize-answers-413', source / 'mod.rs',
+     'Err(RouteError::PayloadTooLarge) => Err(io::Error::other("payload too large")),',
+     'Err(RouteError::PayloadTooLarge) => Ok(response(413, None, b"payload too large")),',
+     'oversize_post_closes_at_the_cap_with_zero_bytes',
+     '#1941 an oversize POST gets no response bytes (zero-byte close, not 413)'),
 ]
 
 
