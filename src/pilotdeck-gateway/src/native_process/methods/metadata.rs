@@ -23,7 +23,7 @@ impl Requests {
                 return session_model_get(self.options.home.clone(), self.env.clone(), params)
                     .await;
             }
-            if method == "list_projects" || method == "describe_project" {
+            if ["list_projects", "describe_project", "project_files_list", "project_file_read"].contains(&method.as_str()) {
                 return project_metadata(
                     self.options.home.clone(),
                     self.env.clone(),
@@ -151,6 +151,8 @@ async fn session_model_get(
 struct BoundedMetadataFiles {
     inner: crate::runtime::history::HistoryMarkerFiles,
     entries: std::cell::Cell<usize>,
+    directories: std::cell::RefCell<std::collections::HashMap<std::path::PathBuf, Vec<(String, bool)>>>,
+    summary_bytes: std::cell::Cell<usize>,
     bytes: std::cell::Cell<usize>,
     refused: std::cell::Cell<bool>,
 }
@@ -161,6 +163,8 @@ impl BoundedMetadataFiles {
         Self {
             inner: crate::runtime::history::HistoryMarkerFiles::for_model_selection(),
             entries: std::cell::Cell::new(0),
+            directories: std::cell::RefCell::new(std::collections::HashMap::new()),
+            summary_bytes: std::cell::Cell::new(0),
             bytes: std::cell::Cell::new(0),
             refused: std::cell::Cell::new(false),
         }
@@ -175,6 +179,8 @@ impl BoundedMetadataFiles {
 }
 impl crate::metadata::Files for BoundedMetadataFiles {
     fn entries(&self, path: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
+        if self.was_refused() { return Err(self.limit()); }
+        if let Some(entries) = self.directories.borrow().get(path) { return Ok(entries.clone()); }
         let mut entries = Vec::new();
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
@@ -186,15 +192,16 @@ impl crate::metadata::Files for BoundedMetadataFiles {
             entries.push((entry.file_name(), entry.file_type()?.is_dir()));
         }
         entries.sort_by(|a, b| a.0.as_encoded_bytes().cmp(b.0.as_encoded_bytes()));
-        Ok(entries
-            .into_iter()
-            .map(|(name, dir)| (name.to_string_lossy().into_owned(), dir))
-            .collect())
+        let entries: Vec<_> = entries.into_iter()
+            .map(|(name, dir)| (name.to_string_lossy().into_owned(), dir)).collect();
+        self.directories.borrow_mut().insert(path.to_path_buf(), entries.clone());
+        Ok(entries)
     }
     fn stat(&self, path: &std::path::Path) -> std::io::Result<crate::metadata::Stat> {
         crate::metadata::Files::stat(&crate::metadata::NativeFiles, path)
     }
     fn read(&self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        if self.was_refused() { return Err(self.limit()); }
         let bytes = crate::metadata::Files::read(&self.inner, path)?;
         let used = self.bytes.get().saturating_add(bytes.len());
         if used > Self::BYTE_LIMIT {
@@ -203,6 +210,57 @@ impl crate::metadata::Files for BoundedMetadataFiles {
         self.bytes.set(used);
         Ok(bytes)
     }
+    #[cfg(unix)]
+    fn session_summary(&self, path: &std::path::Path, _size: u64) -> Result<bool, ()> {
+        use std::os::unix::fs::OpenOptionsExt;
+        if self.was_refused() { return Ok(false); }
+        let file = match std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(path) {
+            Ok(file) => file,
+            Err(_) => return Ok(false),
+        };
+        let meta = match file.metadata() { Ok(meta) => meta, Err(_) => return Ok(false) };
+        if !meta.is_file() { let _ = self.limit(); return Ok(false); }
+        let mut bounded = SummaryReader { file, owner: self };
+        crate::metadata::summary_from_file(&mut bounded, meta.len())
+    }
+    fn canonical(&self, path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        crate::metadata::Files::canonical(&NativeFiles, path)
+    }
+    fn project_entries(&self, root: &std::path::Path, path: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
+        crate::metadata::Files::project_entries(&NativeFiles, root, path)
+    }
+    fn project_stat(&self, root: &std::path::Path, path: &std::path::Path) -> std::io::Result<(crate::metadata::Stat, bool)> {
+        crate::metadata::Files::project_stat(&NativeFiles, root, path)
+    }
+    fn project_read(&self, root: &std::path::Path, path: &std::path::Path, limit: usize) -> std::io::Result<Vec<u8>> {
+        crate::metadata::Files::project_read(&NativeFiles, root, path, limit)
+    }
+}
+
+// A separate streamed-summary budget permits one legal 50 MiB fallback scan
+// plus head/tail previews without charging transcript size as marker bytes.
+#[cfg(unix)]
+struct SummaryReader<'a> { file: std::fs::File, owner: &'a BoundedMetadataFiles }
+#[cfg(unix)]
+impl std::io::Read for SummaryReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        const LIMIT: usize = 50 * 1024 * 1024 + 2 * 65536;
+        if self.owner.was_refused() { return Err(self.owner.limit()); }
+        let remaining = LIMIT.saturating_sub(self.owner.summary_bytes.get());
+        if remaining == 0 {
+            let mut byte = [0u8; 1];
+            if std::io::Read::read(&mut self.file, &mut byte)? == 0 { return Ok(0); }
+            return Err(self.owner.limit());
+        }
+        let take = buf.len().min(remaining);
+        let count = std::io::Read::read(&mut self.file, &mut buf[..take])?;
+        self.owner.summary_bytes.set(self.owner.summary_bytes.get() + count);
+        Ok(count)
+    }
+}
+#[cfg(unix)]
+impl std::io::Seek for SummaryReader<'_> {
+    fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> { std::io::Seek::seek(&mut self.file, pos) }
 }
 fn metadata_route_result(
     route: crate::dispatch::Route,

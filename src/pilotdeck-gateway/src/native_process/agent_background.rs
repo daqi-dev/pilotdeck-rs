@@ -537,12 +537,7 @@ impl ForkApi {
                     // because maxConcurrent=1 has not released that slot yet.
                     held_permit = Some(match permit {
                         Some(permit) => permit,
-                        None => tokio::select! {
-                            biased;
-                            _=signal.cancelled()=>return Err(ToolError::aborted()),
-                            _=tokio::time::sleep_until(deadline)=>return Err(error("Subagent timed out before starting.")),
-                            permit=slots.acquire_owned()=>permit.map_err(|_|error("Native subagent capacity is closed."))?,
-                        },
+                        None => observer_slot(slots, &signal, deadline).await?,
                     });
                     let context = detached_context(fields, read, write, signal.clone());
                     let mut spec = request.definition;
@@ -599,6 +594,18 @@ impl ForkApi {
             &output_id,
             &task.task_id,
         ))
+    }
+}
+async fn observer_slot(
+    slots: Arc<Semaphore>,
+    signal: &crate::runtime::tools::ToolCancellation,
+    deadline: tokio::time::Instant,
+) -> Result<tokio::sync::OwnedSemaphorePermit, ToolError> {
+    tokio::select! {
+        biased;
+        _=signal.cancelled()=>Err(ToolError::aborted()),
+        _=tokio::time::sleep_until(deadline)=>Err(error("Subagent timed out before starting.")),
+        permit=slots.acquire_owned()=>permit.map_err(|_|error("Native subagent capacity is closed.")),
     }
 }
 fn detached_context(
@@ -887,5 +894,43 @@ mod owned_inbox_job_tests {
             .unwrap();
         owner.release_generation().await.unwrap();
         registry.dispose().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod observer_slot_tests {
+    use super::*;
+    use crate::runtime::tools::ToolCancellation;
+    use std::{future::Future,task::Poll,time::Duration};
+    #[tokio::test]
+    async fn one_slot_observer_waits_until_observed_fork_releases_its_permit() {
+        let slots=Arc::new(Semaphore::new(1));
+        let observed=slots.clone().acquire_owned().await.unwrap();
+        let signal=ToolCancellation::default();
+        let mut observer=Box::pin(observer_slot(slots.clone(),&signal,tokio::time::Instant::now()+Duration::from_secs(2)));
+        assert!(std::future::poll_fn(|cx|Poll::Ready(observer.as_mut().poll(cx).is_pending())).await);
+        assert_eq!(slots.available_permits(),0);
+        drop(observed);
+        let permit=tokio::time::timeout(Duration::from_secs(1),observer).await.unwrap().unwrap();
+        assert_eq!(slots.available_permits(),0);
+        drop(permit);
+        assert_eq!(slots.available_permits(),1);
+    }
+    #[tokio::test]
+    async fn blocked_one_slot_observer_cancellation_and_deadline_do_not_take_the_permit() {
+        let slots=Arc::new(Semaphore::new(1));
+        let observed=slots.clone().acquire_owned().await.unwrap();
+        let signal=ToolCancellation::default();
+        let mut observer=Box::pin(observer_slot(slots.clone(),&signal,tokio::time::Instant::now()+Duration::from_secs(2)));
+        assert!(std::future::poll_fn(|cx|Poll::Ready(observer.as_mut().poll(cx).is_pending())).await);
+        signal.abort();
+        let failure=tokio::time::timeout(Duration::from_secs(1),observer).await.unwrap().unwrap_err();
+        assert_eq!(failure.code,ToolError::aborted().code);
+        let signal=ToolCancellation::default();
+        let failure=tokio::time::timeout(Duration::from_secs(1),observer_slot(slots.clone(),&signal,tokio::time::Instant::now()+Duration::from_millis(10))).await.unwrap().unwrap_err();
+        assert_eq!(failure.message,"Subagent timed out before starting.".into());
+        assert_eq!(slots.available_permits(),0);
+        drop(observed);
+        assert_eq!(slots.available_permits(),1);
     }
 }

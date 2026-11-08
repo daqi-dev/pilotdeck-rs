@@ -317,33 +317,7 @@ impl Files for NativeFiles {
         let Ok(mut file) = fs::File::open(path) else {
             return Ok(false);
         };
-        let mut head = vec![0; size.min(LITE_BYTES as u64) as usize];
-        if file.read_exact(&mut head).is_err() {
-            return Ok(false);
-        }
-        let mut tail = head.clone();
-        if size > LITE_BYTES as u64 {
-            tail.resize(LITE_BYTES, 0);
-            if file
-                .seek(SeekFrom::Start(size - LITE_BYTES as u64))
-                .is_err()
-                || file.read_exact(&mut tail).is_err()
-            {
-                return Ok(false);
-            }
-        }
-        let (visible, fast) = summary_preview(&head, &tail, size > LITE_BYTES as u64)?;
-        if let Some(visible) = visible {
-            return Ok(visible);
-        }
-        if file.seek(SeekFrom::Start(0)).is_err() {
-            return Ok(fast);
-        }
-        let visible = fast || scan_metadata_summary(&mut file).unwrap_or(false);
-        if visible && !fast {
-            captured_field(&String::from_utf8_lossy(&head), "createdAt").map_err(|_| ())?;
-        }
-        Ok(visible)
+        summary_from_file(&mut file, size)
     }
     fn stat(&self, path: &Path) -> io::Result<Stat> {
         let stat = fs::metadata(path)?;
@@ -1129,6 +1103,36 @@ pub(crate) fn strict_metadata(line: &str) -> Option<JsValue> {
         }
     }
     Some(JsValue::Object(metadata))
+}
+
+pub(crate) fn summary_from_file(file: &mut (impl Read + Seek), size: u64) -> Result<bool, ()> {
+        let mut head = vec![0; size.min(LITE_BYTES as u64) as usize];
+        if file.read_exact(&mut head).is_err() {
+            return Ok(false);
+        }
+        let mut tail = head.clone();
+        if size > LITE_BYTES as u64 {
+            tail.resize(LITE_BYTES, 0);
+            if file
+                .seek(SeekFrom::Start(size - LITE_BYTES as u64))
+                .is_err()
+                || file.read_exact(&mut tail).is_err()
+            {
+                return Ok(false);
+            }
+        }
+        let (visible, fast) = summary_preview(&head, &tail, size > LITE_BYTES as u64)?;
+        if let Some(visible) = visible {
+            return Ok(visible);
+        }
+        if file.seek(SeekFrom::Start(0)).is_err() {
+            return Ok(fast);
+        }
+        let visible = fast || scan_metadata_summary(file).unwrap_or(false);
+        if visible && !fast {
+            captured_field(&String::from_utf8_lossy(&head), "createdAt").map_err(|_| ())?;
+        }
+        Ok(visible)
 }
 
 fn summary_preview(head: &[u8], tail: &[u8], large: bool) -> Result<(Option<bool>, bool), ()> {
