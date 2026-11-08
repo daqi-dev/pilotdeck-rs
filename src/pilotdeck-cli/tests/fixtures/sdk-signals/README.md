@@ -223,14 +223,14 @@ python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
 范围扩大、未登记条目、非数组放行三个边界变异。每个名单项独立绑定
 `signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics`
 与含完整格名的 `#1252 unordered close swap must pass: <ID>` 消息；其余完整绑定见脚本。
-该测试从 source 动态枚举全部 88 格，期望策略独立读取差异账本；逐格交换与字段损坏配对验证。
+该测试从 source 动态枚举全部 92 格（#1178 新增 4 个 abort-rst 格均为多关闭自然退出格），期望策略独立读取差异账本；逐格交换与字段损坏配对验证。
 `unordered_close_scope_equals_registration` 另核精确登记与固定分母，旧五格严格 / reason 集成测试仍保留。
 每项先正控、变异编译、负控、
 恢复、复跑正控，最后汇总全部结果。它使用共享 `mutating_sources/run_owned/wait_for_slot`，
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。
 
-`--check-anchors` 与兼容入口 `--check` 共用同一份 77 项目录校验。#1252 修复轮只调整下列绑定：
+`--check-anchors` 与兼容入口 `--check` 共用同一份 79 项目录校验。#1252 修复轮只调整下列绑定：
 
 | 变异体 | 完整测试名 | 专属失败消息 |
 |---|---|---|
