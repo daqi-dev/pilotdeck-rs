@@ -1001,7 +1001,29 @@ def _folded_string(node):
     ``sys.exit('PA' + 'SS')`` was not a status literal (GLM boundary r19 P1-2).
     Only fully constant expressions fold; anything with a runtime operand
     returns None and keeps its own verdict.
+
+    fix-r7 (DS sibling r6 P2 + MM boundary r6 P2 + DS concurrency r6 P2):
+    the fold itself must not be a way to crash the audit out of one input.
+    The recursion is post-order, so a thousand-deep ``+`` chain overflowed
+    the interpreter stack before any length cap saw it (``_literal_test_value``
+    got a RecursionError wrapper in fix-r6; this fold is also called
+    directly, outside that wrapper); ``'' * 10**100`` raises OverflowError
+    through the repetition branch; and an oversized ``%`` width spec
+    (``'%2000000000s' % 'x'``) asked the interpreter to materialise a
+    result far past the fold budget — MemoryError escapes an
+    ``except Exception`` that re-raises it, and on a big machine it simply
+    succeeds and hands a 2 GB string to the status-word membership test.
+    Every fold-level error now folds to None — the shape is not a known
+    literal — and the ``%`` branch is bounded *before* the interpreter is
+    asked to build anything.
     """
+    try:
+        return _folded_string_fold(node)
+    except (ArithmeticError, TypeError, ValueError, MemoryError, RecursionError):
+        return None
+
+
+def _folded_string_fold(node):
     if isinstance(node, ast.Constant):
         return node.value if isinstance(node.value, str) else None
     if isinstance(node, ast.JoinedStr):
@@ -1027,15 +1049,38 @@ def _folded_string(node):
                 return None
             return left + right
         if isinstance(node.op, ast.Mod) and left is not None and right is not None:
+            # fix-r7 (DS concurrency r6 P2): bound the format result before
+            # the interpreter is asked to build it.  Every conversion
+            # consumes at least two characters of the format string and
+            # inserts at most max(explicit width, len(right)); the count
+            # over ``%`` characters overestimates conversions (``%%``
+            # included), which only makes the bound tighter.
+            width = 0
+            for spec in left.split('%')[1:]:
+                digits = ''
+                for ch in spec:
+                    if ch in '-+ #0':
+                        continue
+                    if ch.isdigit():
+                        digits += ch
+                        continue
+                    break
+                if digits:
+                    width = max(width, int(digits))
+            if len(left) + left.count('%') * max(len(right), width) > _FOLD_MAX_ITEMS:
+                return None
             try:
                 return left % right
-            except (TypeError, ValueError):
+            except (TypeError, ValueError, MemoryError):
                 return None
         if (isinstance(node.op, ast.Mult) and left is not None
                 and isinstance(node.right, ast.Constant)
                 and isinstance(node.right.value, int)):
             # fix-r6 (DS sibling r5 P2-2): same cap for repetition, judged
-            # on the folded result's length.
+            # on the folded result's length.  fix-r7 (MM boundary r6 P2):
+            # ``len(left) == 0`` keeps the cap at zero while the repetition
+            # itself still raises OverflowError for an oversized count
+            # (``'' * 10**100``); the wrapper folds that to None.
             if len(left) * abs(node.right.value) > _FOLD_MAX_ITEMS:
                 return None
             return left * node.right.value
@@ -4716,12 +4761,32 @@ def _summary_slot_violations(summary, bindings, lineno):
     problems = []
     for key, value in _dict_pairs(summary):
         if key is None:
-            if _relays_status(value, bindings) or _calls_aggregate(value):
+            # fix-r7 (DS sibling r6 P1): ``**`` merges the operand's own
+            # entries into the summary, so a dict literal in unpack
+            # position is judged as the summary level it becomes — the
+            # arm-based exemption below would otherwise judge only the
+            # dict-as-a-whole and a dead shared call in one of *its* slots
+            # would still exempt the merged entry.
+            if isinstance(value, ast.Dict):
+                problems.extend(_summary_slot_violations(value, bindings, lineno))
+                continue
+            if _relays_status(value, bindings) or any(
+                    _calls_aggregate(arm) for arm in _exit_arms(value)):
                 continue
             problems.append(f'summary unpack {ast.unparse(value)[:60]} at line {lineno}')
             continue
         if _status_key(key):
-            if _relays_status(value, bindings) or _calls_aggregate(value):
+            # fix-r7 (DS sibling r6 P1, probe-verified — probe-before A1/A6):
+            # the shared-call exemption ran as a full-tree scan before the
+            # arms were computed, the exact shape fix-r6 closed for the
+            # nested layer.  A ``common.aggregate_status`` call in an operand
+            # the interpreter can never reach ('PASS' or <call>, or a dead
+            # arm behind an unresolvable pure-literal test) exempted the
+            # slot while the runtime always took the clean literal.  The
+            # exemption is now judged on the exit arms only, and an empty
+            # arm set certifies nothing.
+            if _relays_status(value, bindings) or any(
+                    _calls_aggregate(arm) for arm in _exit_arms(value)):
                 continue
             problems.append(f'status slot {ast.unparse(value)[:60]} at line {lineno}')
     return problems
@@ -5364,9 +5429,19 @@ def _exit_name_violation(name, bindings, function=None, module=None,
             # round already judged ``unbound``.  ``code = EXIT_OK; return code``
             # used to pass with no violation (MiniMax boundary r9 P0-1).
             return 'unbound'
-        if isinstance(value, (ast.IfExp, ast.BoolOp)) and any(
-                _constant_exit_zero(arm) for arm in _exit_arms(value)):
-            return 'conditional'
+        if isinstance(value, (ast.IfExp, ast.BoolOp)):
+            # fix-r7 (DS sibling r6 P2 + MM sibling r6 P1, both families,
+            # probe-verified — probe-before B2): an unresolvable
+            # pure-literal test certifies no arm, and for this fifth
+            # consumer of ``_exit_arms`` "no certified arm" is *not*
+            # "cannot exit zero" — ``code = 0 if 1.0 is 1.0 else 1`` takes
+            # the zero arm at runtime (CPython dedups equal constants in
+            # one code object) while the AST fold refuses to pick one.
+            # Fail closed as inline computation, exactly like the four
+            # presence-scan consumers fix-r6 already guards.
+            arms = _exit_arms(value)
+            if not arms or any(_constant_exit_zero(arm) for arm in arms):
+                return 'conditional'
         if _constant_exit_zero(value):
             if function is not None:
                 if owner not in sites:

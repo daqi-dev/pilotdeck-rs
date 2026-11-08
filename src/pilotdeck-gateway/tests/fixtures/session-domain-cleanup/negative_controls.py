@@ -795,6 +795,18 @@ def calibrate_exit_is_literal_bypass(rows):
         'passed=False')
 
 
+def calibrate_exit_name_is_literal_bypass(rows):
+    """#1652 fix-r7 (DS sibling r6 P2 + MM sibling r6 P1, both families,
+    probe-verified — probe-before B2): ``code = 0 if 1.0 is 1.0 else 1``
+    followed by ``sys.exit(code)`` is the same zero-arm-at-runtime exit
+    behind a name relay — the fifth ``_exit_arms`` consumer must treat "no
+    certified arm" as cannot-rule-out instead of walking past the name."""
+    return _controls_main_needle(
+        rows, 'inline exit code code at line',
+        'aggregation-audit: identity-literal exit relay flagged, '
+        'passed=False')
+
+
 def calibrate_return_exit_call(rows):
     """#892 r7: ``return sys.exit(0)`` leaves the process with 0
     (GLM r6 sibling P1-2)."""
@@ -1959,6 +1971,53 @@ def nested_shared_call_boolop_bypass(rows):
                   'flagged, passed=False')
 
 
+def summary_status_shared_call_bypass(rows):
+    """#1652 fix-r7 (DS sibling r6 P1, probe-verified — probe-before A1/A6):
+    the top-level status slot written as ``'PASS' or
+    common.aggregate_status(overall)`` is an unconditional clean status by
+    short-circuit semantics — the shared call in the dead operand never
+    runs, so its spelling may not exempt the slot the way a live relay
+    does.  fix-r6 closed this shape for the nested layer only; the
+    top-level slot scan kept the full-tree exemption."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "status slot 'PASS' or common.aggregate_status(overall)",
+        'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: top-level shared-call BoolOp bypass '
+                  'flagged, passed=False')
+
+
+def summary_unpack_shared_call_bypass(rows):
+    """#1652 fix-r7 (DS sibling r6 P1, probe-verified — probe-before A2): a
+    ``**`` unpack merges the operand's own entries into the summary, so
+    ``{**{'status': 'PASS' or common.aggregate_status(overall)}}`` *is* the
+    top-level status slot of the merged dict — the dead shared call inside
+    the unpacked dict may not exempt the merged entry, and an arm-based
+    judgement of the dict-as-a-whole would not see its slots at all."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "status slot 'PASS' or common.aggregate_status(overall)",
+        'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: unpack shared-call BoolOp bypass '
+                  'flagged, passed=False')
+
+
 def controls_nested_same_name(rows):
     """#892 r3: a nested ``def main`` must not shadow or duplicate the
     registered point name (MiniMax/DeepSeek boundary P2)."""
@@ -2246,6 +2305,20 @@ MUTATIONS = [
      "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
      "            for row in rounds) else 'FAIL'},\n",
      "        'cleanupAudit': {'status': 'PASS' or common.aggregate_status('PASS')},\n"),
+    # #1652 fix-r7 (DS sibling r6 P1, probe-verified — probe-before A1/A6):
+    # the same short-circuit reachability rule for the *top-level* summary
+    # slot: a shared-call operand the interpreter can never reach may not
+    # exempt the slot fix-r6 only closed at the nested layer.
+    ('summary-status-shared-call-bypass', SOURCE,
+     "        'status': overall,\n",
+     "        'status': 'PASS' or common.aggregate_status(overall),\n"),
+    # #1652 fix-r7 (DS sibling r6 P1, probe-verified — probe-before A2): a
+    # ``**`` unpack merges the operand's entries into the summary, so the
+    # unpacked dict's own status slot is judged as the top-level slot it
+    # becomes — a dead shared call inside it may not exempt the merged entry.
+    ('summary-unpack-shared-call-bypass', SOURCE,
+     "        'status': overall,\n",
+     "        **{'status': 'PASS' or common.aggregate_status(overall)},\n"),
     ('controls-nested-same-name', CONTROLS_SOURCE,
      "    report['cleanup'] = cleanup\n",
      "    def main():\n"
@@ -2363,6 +2436,14 @@ MUTATIONS = [
      CT_EXIT,
      "        if report.get('special'):\n"
      "            sys.exit(0 if 1.0 is 1.0 else 1)\n" + CT_EXIT),
+    # #1652 fix-r7 (DS sibling r6 P2 + MM sibling r6 P1, both families): the
+    # same identity spelling behind a name relay — the fifth ``_exit_arms``
+    # consumer must fail closed on the empty certified-arm set.
+    ('calibrate-exit-name-is-literal-bypass', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            code = 0 if 1.0 is 1.0 else 1\n"
+     "            sys.exit(code)\n" + CT_EXIT),
     ('calibrate-return-exit-call', CONTROLS_SOURCE,
      CT_EXIT,
      "        if report.get('special'):\n"
@@ -4636,8 +4717,10 @@ JUDGES = {
         'aggregation-audit', nested_is_literal_bypass, False, ()),
     'nested-shared-call-boolop-bypass': (
         'aggregation-audit', nested_shared_call_boolop_bypass, False, ()),
-    'calibrate-exit-is-literal-bypass': (
-        'aggregation-audit', calibrate_exit_is_literal_bypass, False, ()),
+    'summary-status-shared-call-bypass': (
+        'aggregation-audit', summary_status_shared_call_bypass, False, ()),
+    'summary-unpack-shared-call-bypass': (
+        'aggregation-audit', summary_unpack_shared_call_bypass, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
     'calibrate-shared-excuse': (
@@ -4684,6 +4767,8 @@ JUDGES = {
         'aggregation-audit', calibrate_exit_conditional, False, ()),
     'calibrate-exit-is-literal-bypass': (
         'aggregation-audit', calibrate_exit_is_literal_bypass, False, ()),
+    'calibrate-exit-name-is-literal-bypass': (
+        'aggregation-audit', calibrate_exit_name_is_literal_bypass, False, ()),
     'calibrate-return-exit-call': (
         'aggregation-audit', calibrate_return_exit_call, False, ()),
     'calibrate-ann-rebuilt': (

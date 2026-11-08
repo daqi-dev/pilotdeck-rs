@@ -3562,6 +3562,47 @@ class RetirementScoring(unittest.TestCase):
         self.assertEqual(report['rounds'][0]['status'], 'PASS',
                          f'#45 round status: {report["rounds"][0]!r}')
 
+    def test_executed_face_keys_survive_duplicate_labels(self):
+        # fix-r7 (DS r6 boundary P2 + MM r6 boundary P2, both families): a
+        # duplicated round label — and a real label shaped like another
+        # round's positional fallback (`round-01`) — used to overwrite the
+        # earlier round's executed entry: five measured rounds collapsed
+        # into one key with no failure signal.  Keys are collision-free
+        # now, so the executed face always carries one entry per round.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        report = self._report_for(row, expected)
+        self.assertEqual(len(report['executed']), 5,
+                         f'#47 duplicate-label executed keys: {sorted(report["executed"])!r}')
+        self.assertEqual(len(set(report['executed'])), 5)
+        self.assertTrue(all(key.startswith('round-01') for key in report['executed']),
+                        f'#47 duplicate-label executed keys: {sorted(report["executed"])!r}')
+        # A real label colliding with another round's positional fallback
+        # key is the same overwrite from the other side: round 1 unlabeled
+        # (fallback `round-01`) and round 2 carrying the literal label
+        # `round-01`.
+        unlabeled = self._stream_ok_round_row()
+        del unlabeled['label']
+        round_rows = iter([unlabeled, row, row, row, row])
+
+        def fake_round(*args, **kwargs):
+            return next(round_rows)
+
+        with patch.object(self.session, '_retirement_expected', return_value=(expected, [])), \
+                patch.object(self.session, '_retirement_baseline_revision', return_value='deadbeef'), \
+                patch.object(self.session, '_retirement_ports_available', return_value=True), \
+                patch.object(self.session, '_retirement_round', side_effect=fake_round), \
+                patch.object(self.session, '_retirement_entry_inventory',
+                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
+                patch.object(self.session, '_retirement_entry_inventory_aggregate',
+                             return_value={'status': 'PASS', 'unhit': [], 'gated': [], 'entries': []}), \
+                patch.object(self.session, '_retirement_js_host_census',
+                             return_value={'status': 'PASS'}):
+            report = self.session.retirement_report(Path('out'), Path('baseline'))
+        self.assertEqual(len(report['executed']), 5,
+                         f'#47 fallback-collision executed keys: {sorted(report["executed"])!r}')
+        self.assertEqual(len(set(report['executed'])), 5)
+
     def test_controls_skip_an_unhashable_victim_method(self):
         # fix-r5 (DS r4 sibling P1): the class 1/5/6 selectors require a str
         # method.  An ok outcome carrying an unhashable method with its
@@ -3896,6 +3937,45 @@ class RetirementScoring(unittest.TestCase):
              'declared': [4242], 'declaredAlive': True})
         self.assertEqual(verdict['status'], 'PASS')
         self.assertEqual(verdict['undeclared'], [])
+
+    def test_host_census_fails_closed_on_corrupt_row_pids(self):
+        # fix-r7 (DS sibling r6 P1, probe-verified — probe-before C1/C2):
+        # fix-r6 closed the *declared* side only — a corrupt row pid still
+        # matched a declared int under ``==`` (``True == 1``, ``7.0 == 7``),
+        # so a corrupted census read as fully established and PASS.  A row
+        # observation that is not a real pid is an undeclared observation,
+        # and a declared pid is only present when a real-pid row names it.
+        for census in ({'rows': [{'pid': True}], 'declared': [1], 'declaredAlive': True},
+                       {'rows': [{'pid': 7.0}], 'declared': [7], 'declaredAlive': True},
+                       {'rows': [{'pid': '4242'}], 'declared': [4242],
+                        'declaredAlive': True}):
+            verdict = self.session._retirement_census_verdict(census)
+            self.assertEqual(verdict['status'], 'FAIL', census)
+            self.assertEqual(len(verdict['undeclared']), 1, census)
+        # The healthy int shape stays a PASS (probe C3) and an honest
+        # undeclared int still fails (probe C4).
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 4242}], 'declared': [4242], 'declaredAlive': True})['status'],
+            'PASS')
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 99}], 'declared': [4242], 'declaredAlive': True})['status'],
+            'FAIL')
+
+    def test_host_census_declared_corrupt_elements_fail_closed(self):
+        # fix-r7 (DS boundary r6 P1 + MM boundary r6 P1 + MM sibling r6 P2,
+        # all three families, probe-verified — probe-before D1/D2): the
+        # untrustworthy-declared set ran on unprojected entries, so an
+        # unhashable element raised at the set comprehension and a mixed
+        # non-int pair raised at sorted() — the TypeError escaped the census
+        # face and the report wrapper collapsed every measured round into
+        # the ROUND_EVIDENCE stub.  Every corrupt shape now reads as the
+        # face's own FAIL, never as a crash.
+        for declared in ([None, '1'], [[1]], [None, True], ['7', 7.5], [True, 'x']):
+            verdict = self.session._retirement_census_verdict(
+                {'rows': [{'pid': 1}], 'declared': declared, 'declaredAlive': True})
+            self.assertEqual(verdict['status'], 'FAIL', declared)
+            self.assertTrue(any('not real pids' in problem
+                                for problem in verdict['problems']), verdict)
 
     def test_network_verdict_fails_closed_on_empty_unparsed_or_failed_samples(self):
         # R3: an empty, unparsed or failed lsof sample cannot prove loopback.

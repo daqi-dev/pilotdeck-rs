@@ -1726,6 +1726,20 @@ def _retirement_census_pid(row):
     return row.get('pid') if isinstance(row, dict) else None
 
 
+def _retirement_real_pid(value):
+    """True when *value* can be a pid at all (#1355 r1 fix-r7, DS sibling r6 P1).
+
+    fix-r6 closed the *declared* side (null/bool/float/str entries make the
+    declared set untrustworthy), but a corrupt row pid still matched a declared
+    int under ``==`` — ``{'rows': [{'pid': true}], 'declared': [1]}`` and
+    ``7.0``/``7`` both read as a fully established census and PASS.  An
+    observation that is not a real pid (a bool is an int under ``==``, a
+    float compares equal to its int) is an *undeclared* observation, exactly
+    like a row that names no pid.
+    """
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _retirement_hashable(value):
     """Set-safe projection of an observation value (#1588 r1 fix-r3, DS concurrency).
 
@@ -1782,16 +1796,29 @@ def _retirement_census_verdict(census):
     # undeclared, and a declared entry that is not a real pid (null, bool,
     # float, string) makes the declared set untrustworthy outright.
     undeclared = [row for row in rows
-                  if _retirement_census_pid(row) is None
+                  if not _retirement_real_pid(_retirement_census_pid(row))
                   or _retirement_census_pid(row) not in declared]
     # fix-r2 (anthropic boundary P2): membership by equality, not by a set —
     # a corrupt row carrying an unhashable pid must not turn the census face
-    # into a TypeError out of the report path.
+    # into a TypeError out of the report path.  fix-r7 (DS sibling r6 P1):
+    # a declared pid is only *present* when a row with a real pid names it —
+    # a bool/float row observation equals the int under ``==`` but proves
+    # nothing about the declared host set.
     missing_declared = [pid for pid in declared
-                        if not any(_retirement_census_pid(row) == pid for row in rows)]
+                        if not any(_retirement_real_pid(_retirement_census_pid(row))
+                                   and _retirement_census_pid(row) == pid
+                                   for row in rows)]
+    # fix-r7 (DS boundary r6 P1 + MM boundary r6 P1 + MM sibling r6 P2, all
+    # three families): the set/sort ran on unprojected declared entries, so an
+    # unhashable entry ([[1]]) raised at the set comprehension and two
+    # different non-int types ([None, '1']) raised at sorted() — the TypeError
+    # escaped the census face and the report wrapper collapsed every measured
+    # round into the ROUND_EVIDENCE stub.  Same projection as the control
+    # attributions (fix-r3), and a repr sort key so bool/str mixes stay
+    # orderable: the face reads FAIL, it never collapses.
     untrustworthy_declared = sorted(
-        {pid for pid in declared
-         if not isinstance(pid, int) or isinstance(pid, bool)})
+        {_retirement_hashable(pid) for pid in declared
+         if not isinstance(pid, int) or isinstance(pid, bool)}, key=repr)
     problems = []
     if undeclared:
         problems.append(f'{len(undeclared)} undeclared TS host rows: '
@@ -3115,6 +3142,26 @@ def _retirement_report(output, baseline):
                     'reason': 'pending #1354; explicit placeholder, never a silent skip'}
     overall = common.aggregate_status(coverage_status, inventory['status'], host_status,
                                       controls['status'], cold_restart['status'])[0]
+    # fix-r5 (DS boundary P2): a non-str round label (a corrupted driver
+    # artifact) is normalized to the positional fallback instead of
+    # crashing the dict-key construction and collapsing the report.
+    # fix-r7 (DS boundary r6 P2 + MM boundary r6 P2, both families): a
+    # duplicate label — or a real label shaped like another round's
+    # positional fallback (`round-01`) — silently overwrote the earlier
+    # round's executed evidence, one key short with no failure signal.
+    # Keys are now collision-free: the label when it is still free, otherwise
+    # the label with a `#2`-style positional suffix, so the number of executed
+    # entries always equals the number of rounds.
+    executed = {}
+    for index, verdict in enumerate(verdicts):
+        label = verdict.get('round')
+        base = label if isinstance(label, str) and label else f'round-{index + 1:02d}'
+        key, suffix = base, 2
+        while key in executed:
+            key = f'{base}#{suffix}'
+            suffix += 1
+        executed[key] = {'count': len(verdict.get('executed') or []),
+                         'methods': verdict.get('executed') or []}
     return {
         'status': overall,
         'reason': 'E1 retirement TS calibration slice (#1355): expected/executed collected from real '
@@ -3122,14 +3169,7 @@ def _retirement_report(output, baseline):
                   'hash re-registration is the coordinator receive step',
         'baseline': {'path': str(baseline), 'revision': revision},
         'expected': {'methods': expected, 'count': len(expected), 'provenance': provenance},
-        # fix-r5 (DS boundary P2): a non-str round label (a corrupted driver
-        # artifact) is normalized to the positional fallback instead of
-        # crashing the dict-key construction and collapsing the report.
-        'executed': {(verdict.get('round') if isinstance(verdict.get('round'), str)
-                      and verdict.get('round') else f'round-{index + 1:02d}'):
-                     {'count': len(verdict.get('executed') or []),
-                      'methods': verdict.get('executed') or []}
-                     for index, verdict in enumerate(verdicts)},
+        'executed': executed,
         'rounds': [{'round': verdict.get('round'), 'status': verdict.get('status'),
                     'rules': verdict.get('rules') or [],
                     'driverExitCode': verdict.get('driverExitCode'),
