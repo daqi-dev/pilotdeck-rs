@@ -291,7 +291,9 @@ def checked_evidence(raw, contract, evidence):
     checked['networkWitness']['complete'] = evidence['networkWitness']['complete'] is True and network_equal
     checked['transcriptWitness']['complete'] = (evidence['transcriptWitness']['complete'] is True
                                                 and transcript_equal)
-    checked['cleanup']['allStopped'] = evidence['cleanup'] == replay['cleanup']
+    # #2039: cleanup carries JSON booleans, so the replay comparison must not
+    # let ``True == 1`` satisfy it (#1372 same_json, deep defense).
+    checked['cleanup']['allStopped'] = same_json(evidence['cleanup'], replay['cleanup'])
     return checked
 
 
@@ -306,7 +308,9 @@ def load_capture(folder):
         need(sha(folder / name) == receipt[key], 'capture artifact changed: ' + name)
     contract = json.loads((folder / 'launch.json').read_text())
     prelaunch = json.loads((folder / 'prelaunch.json').read_text())
-    need({k: v for k, v in contract.items() if k != 'launcherPid'} == prelaunch,
+    # #2039: the prelaunch mirror holds JSON values, so a boolean that became a
+    # number (or the reverse) is a drift, not an accepted equality (#1372).
+    need(same_json({k: v for k, v in contract.items() if k != 'launcherPid'}, prelaunch),
          'launch contract changed after pre-registration')
     return raw, contract, json.loads((folder / 'evidence.json').read_text())
 
