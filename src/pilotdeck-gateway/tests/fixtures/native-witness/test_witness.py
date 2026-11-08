@@ -340,6 +340,39 @@ class WitnessTests(unittest.TestCase):
                             '#2396 the completed frame parses on the next poll')
         listener.close()
 
+    def test_receive_poll_partial_payload_frame_resumes(self):
+        # #2396 fix-r2: a frame cut INSIDE the payload (its head already
+        # consumed from the buffer) must resume on the next poll — not
+        # re-parse payload bytes as a new frame head and desynchronize the
+        # stream (DS boundary/concurrency P1).
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        listener.listen(1)
+        listener.settimeout(10)
+        client_side = socket.create_connection(('127.0.0.1', port))
+        connection, _ = listener.accept()
+        with connection, client_side:
+            client = c.WireClient.__new__(c.WireClient)
+            payload = json.dumps({'text': 'x' * 300}).encode()  # > 125: extended
+            header = b'\x81\x7e' + len(payload).to_bytes(2, 'big')  # unmasked, 16-bit
+            frame = header + payload
+            client.socket, client.buffer, client.rows = client_side, b'', []
+            client.deadline = time.monotonic() + 30
+            connection.sendall(frame[:8])  # head + extra + first payload bytes
+            time.sleep(0.05)
+            self.assertTrue(client.receive_poll(0.2) is None,
+                            '#2396 a payload cut returns None within the poll cap')
+            connection.sendall(frame[8:])
+            value = client.receive_poll(5)
+            self.assertTrue(value == json.loads(payload),
+                            '#2396 the resumed frame parses exactly once, uncorrupted')
+            self.assertTrue(all(row['direction'] == 'receive' for row in client.rows)
+                            and len(client.rows) == 1,
+                            '#2396 exactly one receive row is recorded')
+        listener.close()
+
     def test_recorder_rows_audit(self):
         # A real loopback WebSocket exchange: every observer row the frozen
         # audit consumes is produced by the real WireClient against a real

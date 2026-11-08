@@ -32,11 +32,20 @@ LOOP_BOUND_MS = 8000
 STORAGE_BOUND_MS = 8000
 MILESTONE_SECONDS = 1.5
 POLL_SECONDS = 0.02
-# The case budget must out-wait the product's own storage bound plus the
-# final top-up: with 8.0 == 8000 ms the budget raced the bound, so a barrier
-# whose bound expired was cut off before the self-release could be observed
-# (#2396 fix-r1, codex concurrency/DS boundary).
+# The per-barrier case budget must out-wait the product's own storage bound
+# plus the final top-up: with 8.0 == 8000 ms the budget raced the bound, so a
+# barrier whose bound expired was cut off before the self-release could be
+# observed (#2396 fix-r1, codex concurrency/DS boundary). Cases whose variant
+# appends twice stack two barrier lifetimes, so the budget counts each barrier
+# (#2396 fix-r2, DS boundary P2).
 CASE_BUDGET_SECONDS = STORAGE_BOUND_MS / 1000.0 + 2 * MILESTONE_SECONDS
+
+
+def case_budget_seconds(variant):
+    """The case budget, scaled by the number of storage barriers it stacks."""
+    barriers = 2 if (variant.get('slowAppend')
+                     and second_append_key(variant) is not None) else 1
+    return barriers * CASE_BUDGET_SECONDS
 
 PREFIX_TYPES = {'model': 'model_request_started', 'tool': 'tool_call_started'}
 
@@ -242,7 +251,7 @@ class StimulusDriver:
         state['prefixType'] = prefix_type
         started = time.monotonic()
         state['startedAt'] = started
-        end = min(deadline, started + CASE_BUDGET_SECONDS)
+        end = min(deadline, started + case_budget_seconds(plan.get('variant')))
         while time.monotonic() < end:
             self._ingest(client.receive_poll(POLL_SECONDS))
             self._scan()
@@ -294,7 +303,8 @@ class StimulusDriver:
         state['received'].append(frame)
         event = frame.get('event') if isinstance(frame, dict) else None
         kind = event.get('type') if isinstance(event, dict) else None
-        if state['prefixIndex'] is None and kind == state['prefixType']:
+        if (state['prefixIndex'] is None and kind == state['prefixType']
+                and frame.get('id') == state.get('requestId')):
             state['prefixIndex'] = len(state['received']) - 1
         if frame.get('id') == state.get('requestId') and frame.get('final'):
             state['final'] = frame
@@ -514,6 +524,7 @@ class StimulusDriver:
             and returns[0]['monotonic'] >= state['finalAt'])
         state['notes']['noTimeoutFrameBeforeFinal'] = not any(
             isinstance(frame, dict)
+            and frame.get('id') == state.get('requestId')
             and isinstance(frame.get('event'), dict)
             and (frame['event'].get('type') == 'agent_status'
                  and frame['event'].get('event') == 'turn_timeout'
