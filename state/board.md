@@ -5002,3 +5002,8 @@ r61 首编及 inbox/continuation/owned-jobs 各真实一项、agent/live/factory
 ### 2026-11-08 21:48 · CLI 恢复与读写检查全过、实际负控启动
 
 mbp2 r63 全10项返回0：全目标编译、真实parent发布回调/rollback、同文本ID queued slot隔离、模型读取/冷写/取消中writer reservation子进程、list/describe/catalog FIFO与预算、旧metadata cwd/归档矩阵、负控静态锚、agent、strict与四bin。原始logs/source/postfmt已回收，不以子进程ignore误报漏跑；四bin冻结后交audit真实续跑与Terra FIFO并发复验。当前本机检查点15634224d；格式化回收单独保全后将干净镜像固定此源执行7条真实注错，期间mirror不再同步。TCP监听与observer/后台SDK还在实现，未宣称完整CLI完成。
+
+
+### 2026-11-08 22:04 · CLI 实际注错与 TCP 接线保全
+
+r63七条实际负控六条KILLED，signal-exit-status因旧顶层hooks拒绝断言提前失败为INVALID，修产品fixture后单独重跑；mirror已恢复干净。r63真实FIFO八种RPC均及时返回且旁路RPC可用，SDK主PreToolUse/FileChanged async带非空context投递通过，ConfigChange按TS未知不登记。父continuable真probe定位host事件再次回流sidecar导致StreamIntegrity拒绝，最小修片待整合；TCP当前WIP保全未编译，接收/ledger/输出预算与timer/panic清理还在收尾。未标完整CLI完成；本机只源码和证据，Rust仍mbp2，无GitHub写。

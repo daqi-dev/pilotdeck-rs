@@ -1,4 +1,4 @@
-//! Native stdio entry point. stdout contains only Module2 NDJSON.
+//! Native stdio/TCP entry point. stdout contains only stdio Module2 NDJSON.
 use pilotdeck_protocol::admission::SidecarBinding;
 use pilotdeck_transport::default_factory::OriginalAgentFactory;
 use pilotdeck_transport::server::ExecutionServer;
@@ -23,15 +23,16 @@ fn main() -> ExitCode {
         eprintln!("Usage: pilotdeck-agent-loop-sidecar [--stdio | --version | <sidecar-path>]");
         return ExitCode::from(2);
     }
-    for option in [
-        "PILOTDECK_AGENT_LOOP_FACTORY",
-        "PILOTDECK_AGENT_LOOP_TCP_PORT",
-    ] {
-        if std::env::var_os(option).is_some_and(|value| !value.is_empty()) {
-            eprintln!("Rust candidate does not yet support the {option} deployment profile.");
-            return ExitCode::from(2);
-        }
+    if std::env::var_os("PILOTDECK_AGENT_LOOP_FACTORY").is_some_and(|value| !value.is_empty()) {
+        eprintln!("Rust sidecar cannot load a JavaScript PILOTDECK_AGENT_LOOP_FACTORY.");
+        return ExitCode::from(2);
     }
+    let port_value = std::env::var_os("PILOTDECK_AGENT_LOOP_TCP_PORT");
+    let port_text = port_value.as_ref().map(|value| value.to_string_lossy());
+    let tcp_port = match pilotdeck_transport::tcp::optional_port(port_text.as_deref()) {
+        Ok(port) => port,
+        Err(error) => { eprintln!("{error}"); return ExitCode::from(2); }
+    };
     // #1371: an armed controlled loop resolves and validates its plan before
     // the server advertises readiness, so an invalid control directory fails
     // closed here exactly like the gateway assembly.
@@ -90,6 +91,25 @@ fn main() -> ExitCode {
         clock: clock.clone(),
         process_cwd,
     });
+    if let Some(port) = tcp_port {
+        let host_value = std::env::var("PILOTDECK_AGENT_LOOP_TCP_HOST").ok();
+        let host = pilotdeck_transport::tcp::listen_host(host_value.as_deref());
+        let listener = match pilotdeck_transport::tcp::TcpExecutionServer::bind((host, port), binding, factory, clock) {
+            Ok(listener) => listener,
+            Err(error) => { eprintln!("Sidecar TCP initialization failed: {error}"); return ExitCode::from(2); }
+        };
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        #[cfg(unix)]
+        let _signals = match Signals::new(stop.clone()) {
+            Ok(signals) => signals,
+            Err(error) => { eprintln!("Sidecar signal initialization failed: {error}"); return ExitCode::from(2); }
+        };
+        // No readiness line on stdout: the protocol begins on accepted sockets.
+        return match listener.serve(stop, Duration::from_secs(5)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => { eprintln!("Sidecar TCP shutdown failed: {error}"); ExitCode::from(3) }
+        };
+    }
     let server = ExecutionServer::new(ConnectionOwner::new(binding, 64), factory, clock, 32);
     let report = server.serve(
         BufReader::new(io::stdin()),
@@ -109,8 +129,26 @@ fn main() -> ExitCode {
     }
 }
 
+#[cfg(unix)]
+struct Signals(Vec<signal_hook::SigId>);
+#[cfg(unix)]
+impl Signals {
+    fn new(stop: Arc<std::sync::atomic::AtomicBool>) -> io::Result<Self> {
+        let mut signals = Self(Vec::new());
+        for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+            signals.0.push(signal_hook::flag::register(signal, stop.clone())?);
+        }
+        Ok(signals)
+    }
+}
+#[cfg(unix)]
+impl Drop for Signals {
+    fn drop(&mut self) {
+        for signal in self.0.drain(..) { signal_hook::low_level::unregister(signal); }
+    }
+}
 // A single nonempty path is only a launch placeholder for the TS gateway;
-// it is ignored, and every accepted invocation uses stdio.
+// it is ignored. Environment selects TCP, otherwise the invocation uses stdio.
 fn accepts_launch_arguments(arguments: &[String]) -> bool {
     arguments.is_empty()
         || (arguments.len() == 1

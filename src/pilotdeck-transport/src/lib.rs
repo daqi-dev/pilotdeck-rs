@@ -18,6 +18,7 @@ mod notifications;
 pub mod server;
 pub mod stdio;
 pub mod system_clock;
+pub mod tcp;
 
 #[derive(Debug, Clone)]
 pub struct HostExchangeResponse {
