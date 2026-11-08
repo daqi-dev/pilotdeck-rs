@@ -130,8 +130,28 @@ fn validate_coercion(value: &JsValue) -> Result<(), ToStringError> {
                 }
                 pending.extend(items.iter().rev().map(|item| (item, depth + 1)));
             }
-            JsValue::Object(object) if object.get_property("toString").is_some() => {
-                return Err(ToStringError::NotPrimitive);
+            JsValue::Object(object) => {
+                // ToPrimitive throws when neither `valueOf` nor `toString` is
+                // usable. JSON cannot carry a callable, so any *visible*
+                // `toString` is a non-callable one that shadows the inherited
+                // method (the fix-r1 shape, including through the explicit
+                // prototype chain a config merge installs — `get_property`
+                // walks it). A chain that terminates at `null` (the
+                // `Object.create(null)` / `__proto__: null` shape, #2301
+                // fix-r3) finds neither method at all and throws the same
+                // TypeError; a missing explicit prototype is the *implicit*
+                // `Object.prototype` (both methods callable, no throw), and a
+                // non-object prototype value is ignored by JS the same way.
+                if object.get_property("toString").is_some() {
+                    return Err(ToStringError::NotPrimitive);
+                }
+                let mut prototype = object.prototype();
+                while let Some(JsValue::Object(inner)) = prototype {
+                    prototype = inner.prototype();
+                }
+                if matches!(prototype, Some(JsValue::Null)) {
+                    return Err(ToStringError::NotPrimitive);
+                }
             }
             _ => {}
         }
@@ -283,7 +303,9 @@ pub(crate) fn to_number(value: &JsValue) -> Result<f64, StackOverflow> {
 /// merge installed is visible to `get_property`. The loader mounts run this
 /// at construction, where the TS constructors' `Number(options.port ?? …)`
 /// throws and the loader's catch records the key and continues (#2301 fix-r1;
-/// fix-r2 review P1 #3 closed the array / prototype-chain gaps).
+/// fix-r2 review P1 #3 closed the array / prototype-chain gaps, fix-r3 review
+/// P1 #2 the `__proto__: null` / `Object.create(null)` family — a chain that
+/// terminates at null finds neither `valueOf` nor `toString` at all).
 pub(crate) fn number_conversion_error(value: &JsValue) -> Option<String> {
     validate_coercion(value)
         .err()
@@ -460,6 +482,10 @@ mod tests {
     /// `toString` — arrays join (so the element's toPrimitive fails), nesting
     /// recurses, and the prototype chain a config merge installed is visible
     /// to the lookup; a too-deep array reports V8's RangeError instead.
+    /// fix-r3 review P1 #2: a chain that terminates at `null`
+    /// (`Object.create(null)`, the merge's `__proto__: null` arm) finds
+    /// neither `valueOf` nor `toString` at all and throws the same TypeError;
+    /// a non-object prototype value is ignored by JS, so it does not throw.
     #[test]
     fn number_conversion_error_covers_arrays_and_prototypes() {
         let json = |text: &str| parse_json(text).unwrap();
@@ -492,6 +518,57 @@ mod tests {
             number_conversion_error(&JsValue::Object(port)),
             Some("TypeError: Cannot convert object to primitive value".to_owned())
         );
+        // The null-prototype family (fix-r3): a chain that terminates at
+        // `null` — directly, or after an intermediate object — finds neither
+        // coercion method and throws; an own non-callable `toString` on a
+        // null-prototype object shadows nothing and throws as well.
+        let null_proto = |own: &str| {
+            let mut port = pilotdeck_protocol::JsObject::new();
+            port.set_prototype(JsValue::Null);
+            if !own.is_empty() {
+                port.insert("toString".into(), json(own));
+            }
+            JsValue::Object(port)
+        };
+        assert_eq!(
+            number_conversion_error(&null_proto("")),
+            Some("TypeError: Cannot convert object to primitive value".to_owned())
+        );
+        assert_eq!(
+            number_conversion_error(&null_proto("5")),
+            Some("TypeError: Cannot convert object to primitive value".to_owned())
+        );
+        let mut middle = pilotdeck_protocol::JsObject::new();
+        middle.set_prototype(JsValue::Null);
+        let mut chained = pilotdeck_protocol::JsObject::new();
+        chained.set_prototype(JsValue::Object(middle));
+        assert_eq!(
+            number_conversion_error(&JsValue::Object(chained)),
+            Some("TypeError: Cannot convert object to primitive value".to_owned())
+        );
+        // A valueOf-only object with a null prototype: `valueOf` is present
+        // but not callable, `toString` is nowhere — still the TypeError.
+        let mut value_of_only = pilotdeck_protocol::JsObject::new();
+        value_of_only.set_prototype(JsValue::Null);
+        value_of_only.insert("valueOf".into(), JsValue::Null);
+        assert_eq!(
+            number_conversion_error(&JsValue::Object(value_of_only)),
+            Some("TypeError: Cannot convert object to primitive value".to_owned())
+        );
+        // A non-object prototype value is ignored (JS keeps the implicit
+        // Object.prototype), so neither of these throws.
+        let mut ignored = pilotdeck_protocol::JsObject::new();
+        ignored.set_prototype(JsValue::Number(5.0));
+        assert_eq!(number_conversion_error(&JsValue::Object(ignored)), None);
+        let mut ignored_array = pilotdeck_protocol::JsObject::new();
+        ignored_array.set_prototype(JsValue::Array(Vec::new()));
+        assert_eq!(
+            number_conversion_error(&JsValue::Object(ignored_array)),
+            None
+        );
+        // An own `valueOf: null` with the implicit prototype: the inherited
+        // `toString` is still callable, so `Number()` is NaN, not a throw.
+        assert_eq!(number_conversion_error(&json(r#"{"valueOf": null}"#)), None);
         // A too-deep array join reports V8's RangeError, not a Rust overflow.
         assert_eq!(
             number_conversion_error(&nested(MAX_ARRAY_DEPTH + 1)),
