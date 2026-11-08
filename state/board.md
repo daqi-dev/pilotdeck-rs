@@ -5069,3 +5069,8 @@ r67合main后Cron核心357、api-web119、native-http135、全CLI540个实际测
 ### 2026-11-08 23:36 · CLI 缓存、异步注册与会话路径收口中
 
 r71四bin与17项检查全0，真实后台SDK六格、observer执行/取消、continuable宿主重启已收原件，独立审查继续促出实际缺口。r73 SDK新inner-slot/精确Steer receipt、native原错误、50MiB边界和catalog通过；r76已编译四bin并过旧request/locale/project-files、manager及原生persistence FIFO/软链/超限，用新不可变bin实测Anthropic与cold/live同路径中。r76 transport有非法locale内部标签断言失配、relative-marker测试有macOS路径拼写问题、strict有新comparator类型别名/dead-code，均保失败原件并修，未标整轮绿。真实TS证实child PreToolUse async应登记parent实际活动run，窄修35661b326已本机提交待下一轮；native error前驱事件有界排空及同名负控重复站点已修待实测。证据主仓 `_tmp/20261108-cli-completion/verify-r{71,73,74,75,76}` 与对应独审/真实probe；cache依赖只增加现锁内两引用，无升级。本机当前本轮材料约1.56GiB、无Rust产物，仍仅mbp2构建/测试，本机提交，无GitHub写；完整CLI尚未收口，下一两小时交接00:41后继续。
+
+
+### 2026-11-09 00:41 · CLI 两小时接续（继续开发）
+
+r80编译/快照/submit/management/首次owned cwd/FIFO/strict/四bin及实际native-process十项全0，真实turn→snapshot list/get/restore通过；CJK19环境对照0差异。最终源码install/update已在mbp2真实Cargo完成，四bin同代切换、同PID新服务实例、旧代/外部技能保留及旧bin拒更均通过。全仓旧负控引用原47失配已本机86c8/ddb修，5802静态锚0错，实际KILLED尚待跑；full gateway5578测试和两家增量评审进行中。异常marker实跑额外发现共享TCP连续第二轮requestId=default碰撞，88f9已修逻辑执行身份并a328加三格真probe，未编译不报通过；snapshot消费点差异用例Sol继续。R3仅追加更正文案和真实manifest证据，旧账本与尺子不动。现场/持有人/会话/资源与接续见主仓 `_tmp/20261108-cli-completion/handoff-0041.md`；唯一正本和旧树快照保持，本机本轮约1.80GiB无Rust产物，只本机提交、Rust只mbp2、无GitHub写。完整CLI工程仍在收口，阶段D/真人签字未完成，02:41交接后继续。
