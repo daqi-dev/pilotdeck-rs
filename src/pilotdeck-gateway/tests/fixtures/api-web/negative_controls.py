@@ -49,6 +49,7 @@ switches = [
       'write_rejects_a_root_swapped_for_a_link',
       'write_rejects_a_leaf_swapped_inside_the_window',
       'write_rejects_a_missing_root_below_a_swapped_ancestor',
+      'write_rejects_a_component_swapped_to_an_outside_directory_leaf',
       'read_rejects_a_file_swapped_inside_the_window',
       'read_rejects_a_middle_component_swapped_inside_the_window',
       'read_tree_rejects_a_directory_swapped_inside_the_window'],
@@ -57,6 +58,9 @@ switches = [
       '#1675 mutated: the swapped root carried the write out of the workspace',
       '#1675 mutated: the race window carried the leaf write out of the workspace',
       '#1675 mutated: the swapped ancestor carried the created root out of the workspace',
+      # #2354 fix-r1: the outside leaf is a directory, so the leak assert
+      # still holds — the first failing assertion is the boundary match arm.
+      '#2354 a raced component to an outside directory answers workspace_boundary, not a write error',
       '#1675 mutated: a raced read served content from outside the workspace',
       '#1675 mutated: the race window resolved a middle component outside the workspace',
       '#1675 mutated: the race window listed outside the workspace']),
@@ -69,10 +73,14 @@ switches = [
     # parser's bare 400 + close.
     ('api-web-admission-off', NATIVE_HTTP, 'gate_bad_method_is_parser_bare_400',
      '#1765 the bad-method gate answers the parser bare 400 before the route group'),
-    # #1764 write refusal off: the root write falls back to the raw fs error
-    # (bare InvalidInput) instead of Node's EISDIR text with the target path.
-    ('api-web-node-write-refusal-off', FILES, 'write_to_the_project_root_answers_node_eisdir',
-     "#1764 the root write answers Node's EISDIR text with the target path"),
+    # #1764 write refusal off: the NUL path falls through to the write's own
+    # open, whose EINVAL diagnostic replaces Node's argument-validation text.
+    # #2354 fix-r1: the EISDIR shape moved out of the switch — the refusal now
+    # answers EISDIR from the write's own open, so turning the check off can no
+    # longer redden an EISDIR pin.
+    ('api-web-node-write-refusal-off', FILES,
+     'write_to_a_nul_path_answers_node_argument_validation',
+     "#1764 the NUL-path write answers Node's argument-validation text"),
 ]
 GUARDED = [ROUTER, FILES, NATIVE_HTTP, ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',

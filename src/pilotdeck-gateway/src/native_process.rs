@@ -62,35 +62,17 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     let env = options.environment(inherited);
     let (host, feishu_webhook, switch_handles) =
         assembly::start_with_webhook(options.clone(), env).await?;
-    // #2354: the `/api/web` route group (TS `handleWebApiRequest` over
-    // `options.gateway`) on the same listener, mounted between the webhook
-    // prefix check and the static fallback exactly like GatewayServer.ts. The
-    // catalog is the native metadata registry over the WS lane's home and an
-    // empty cwd (the lazy process-cwd spelling `metadata_request` uses), so
-    // the HTTP surface lists and describes the same bytes the WS RPCs do.
-    let api_web = crate::api_web::Config {
-        token: token.clone(),
-        catalog: std::sync::Arc::new(crate::api_web::NativeProjectCatalog::new(
-            options.home.clone(),
-            std::path::PathBuf::new(),
-        )),
-    };
-    let server = match crate::native_ws::NativeWsServer::bind(
-        options.listen,
-        host.clone(),
-        token,
-        env!("CARGO_PKG_VERSION").into(),
-    )
-    .await
-    {
-        // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
-        // registers it on the HTTP server, after `/auth/local-token`).
-        Ok(server) => server.with_webhook(feishu_webhook).with_api_web(api_web),
-        Err(error) => {
-            let _ = host.shutdown(options.drain_budget).await;
-            return Err(error);
-        }
-    };
+    let api_web = production_api_web(token.clone(), options.home.clone());
+    let server =
+        match production_listener(options.listen, host.clone(), token, feishu_webhook, api_web)
+            .await
+        {
+            Ok(server) => server,
+            Err(error) => {
+                let _ = host.shutdown(options.drain_budget).await;
+                return Err(error);
+            }
+        };
     #[cfg(unix)]
     let signals = (|| -> std::io::Result<_> {
         Ok((
@@ -172,6 +154,44 @@ fn capture_environment(
             )
         })
         .collect()
+}
+
+/// #2354: the `/api/web` route group's production inputs (TS
+/// `handleWebApiRequest` over `options.gateway`): the same bearer the WS
+/// lane checks, and the native metadata registry over the WS lane's home with
+/// an empty cwd (the lazy process-cwd spelling `metadata_request` uses), so
+/// the HTTP surface lists and describes the same bytes the WS RPCs do.
+/// Extracted from `run` so the assembly pin in `tests.rs` composes the exact
+/// production configuration instead of a test-local stand-in.
+fn production_api_web(token: String, home: PathBuf) -> crate::api_web::Config {
+    crate::api_web::Config {
+        token,
+        catalog: Arc::new(crate::api_web::NativeProjectCatalog::new(
+            home,
+            PathBuf::new(),
+        )),
+    }
+}
+
+/// #2354: the listener `run` serves — the same bind with the webhook prefix
+/// check and the `/api/web` route group mounted on it exactly like
+/// GatewayServer.ts (the webhook after `/auth/local-token`, api-web between
+/// the webhook prefix check and the static fallback). Extracted from `run`
+/// so the assembly has a test pin: deleting the `.with_api_web` mount answers
+/// the static 404 in the e2e test instead of the project list, instead of
+/// every listener test silently composing its own config.
+async fn production_listener(
+    listen: SocketAddr,
+    host: crate::runtime::turn::gateway::TurnGateway,
+    token: String,
+    feishu_webhook: crate::native_http::WebhookResolver,
+    api_web: crate::api_web::Config,
+) -> Result<crate::native_ws::NativeWsServer, ProxyError> {
+    crate::native_ws::NativeWsServer::bind(listen, host, token, env!("CARGO_PKG_VERSION").into())
+        .await
+        // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
+        // registers it on the HTTP server, after `/auth/local-token`).
+        .map(|server| server.with_webhook(feishu_webhook).with_api_web(api_web))
 }
 
 /// All authorities are explicit; native mode has no default home, project,

@@ -966,6 +966,111 @@ async fn production_profile_and_registration() {
         "#1071 unsupported module bindings refused"
     );
 }
+
+/// #2354: the production assembly's `/api/web` mount, held up end to end. `run`
+/// composes the listener's plain-HTTP faces through [`super::production_api_web`]
+/// and [`super::production_listener`]; this drives that exact composition —
+/// the native metadata catalog over the WS lane's home, the WS lane's own
+/// token — and gets the project list back through the real accept loop.
+/// Deleting the `.with_api_web` mount in `production_listener` answers the
+/// static 404 here instead of the project list, so the wiring cannot silently
+/// disappear from the listener every other test composes for itself.
+#[tokio::test]
+async fn production_listener_mounts_the_api_web_group() {
+    use crate::runtime::{
+        connection::{Call, RequestError},
+        turn::gateway::{self, GatewayRequests},
+    };
+    use pilotdeck_protocol::JsString;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpStream,
+        sync::oneshot,
+        time::timeout,
+    };
+    struct NoRequests;
+    impl GatewayRequests for NoRequests {
+        fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
+            Box::pin(async { Ok(JsValue::Null) })
+        }
+        fn request(&self, _: JsString, _: JsValue) -> Call<'_, Result<JsValue, RequestError>> {
+            Box::pin(async { Ok(JsValue::Null) })
+        }
+    }
+    let scratch = Scratch::new();
+    let server = super::production_listener(
+        "127.0.0.1:0"
+            .parse()
+            .expect("#2354 production listen address"),
+        gateway::tests::native_ws_fixture(Arc::new(NoRequests)),
+        "fixture-token".into(),
+        Arc::new(|| None),
+        super::production_api_web("fixture-token".into(), scratch.0.join("home")),
+    )
+    .await
+    .expect("#2354 bind the production listener");
+    let address = server
+        .local_addr()
+        .expect("#2354 production listener address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        std::time::Duration::from_secs(10),
+    ));
+    let mut stream = timeout(
+        std::time::Duration::from_secs(10),
+        TcpStream::connect(address),
+    )
+    .await
+    .expect("#2354 connect deadline")
+    .expect("#2354 connect to the production listener");
+    stream
+        .write_all(
+            b"GET /api/web/projects HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n",
+        )
+        .await
+        .expect("#2354 write the project list request");
+    let mut response = Vec::new();
+    let mut buffer = [0u8; 4096];
+    // The answer is a single chunked frame on a kept-alive connection, so the
+    // terminal chunk ends the capture (no EOF to wait for).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !response.ends_with(b"0\r\n\r\n") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "#2354 the production listener did not answer the project list"
+        );
+        let read = timeout(
+            std::time::Duration::from_millis(500),
+            stream.read(&mut buffer),
+        )
+        .await
+        .expect("#2354 response read deadline");
+        let read = read.expect("#2354 the production listener connection stays up");
+        assert!(
+            read > 0,
+            "#2354 the production listener closed before answering"
+        );
+        response.extend_from_slice(&buffer[..read]);
+    }
+    let text = String::from_utf8_lossy(&response);
+    assert!(
+        text.starts_with("HTTP/1.1 200"),
+        "#2354 the production listener serves the api-web group with the WS lane's token: {text:?}"
+    );
+    assert!(
+        text.contains("{\"projects\":[]}"),
+        "#2354 the native catalog answers the project list over the production mount: {text:?}"
+    );
+    stop.send(()).expect("#2354 stop the production listener");
+    timeout(std::time::Duration::from_secs(10), task)
+        .await
+        .expect("#2354 listener stop deadline")
+        .expect("#2354 listener task join")
+        .expect("#2354 the production listener drains cleanly");
+}
 #[test]
 fn tool_policy_and_turn_environment() {
     let lsp = Arc::new(families::DefaultLsp::default());
