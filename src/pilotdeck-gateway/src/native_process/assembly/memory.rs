@@ -619,9 +619,9 @@ mod tests {
         }
     }
     #[cfg(unix)]
-    #[test]
+    #[tokio::test]
     #[ignore = "run by bounded parent"]
-    fn native_memory_marker_fifo_child() {
+    async fn native_memory_marker_fifo_child() {
         let scratch = Scratch::new();
         let provider = Arc::new(FakeMemory::default());
         let project = registry(&scratch, &provider);
