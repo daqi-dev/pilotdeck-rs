@@ -2384,16 +2384,16 @@ async fn handler_execution_blocks_idle_close() {
         .await;
         release_tx.send_replace(true);
         read_response(&mut client, "handler-held health").await;
-        tokio::time::advance(Duration::from_millis(5_400)).await;
+        tokio::time::advance(Duration::from_millis(5_930)).await;
         probe_still_open(
             &mut client,
-            "the served connection after a held handler stays open at +5.46 s",
+            "the served connection after a held handler stays open at +5.99 s",
         )
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(700),
-            "the idle close lands 6 s after the held handler's response",
+            Duration::from_millis(40),
+            "the idle close lands at 6 s after the held handler's response, not any later",
         )
         .await;
         let served = task.await.expect("#1250 handler-held task join");
@@ -2481,16 +2481,16 @@ async fn idle_state_no_request_stays_open() {
             second.starts_with("HTTP/1.1 200 OK\r\n"),
             "#1250 the second request on the segmented-head connection is served: {second:?}"
         );
-        tokio::time::advance(Duration::from_millis(5_400)).await;
+        tokio::time::advance(Duration::from_millis(5_930)).await;
         probe_still_open(
             &mut client,
-            "the segmented-head connection stays open at +5.46 s after its second response",
+            "the segmented-head connection stays open at +5.99 s after its second response",
         )
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(700),
-            "the idle close lands 6 s after the segmented-head reuse response",
+            Duration::from_millis(40),
+            "the idle close lands at 6 s after the segmented-head reuse response, not any later",
         )
         .await;
         let served = task.await.expect("#1250 no-request task join");
@@ -2568,22 +2568,113 @@ async fn pipelined_request_during_body() {
             tail.contains("HTTP/1.1 200 OK") && tail.matches("part2").count() == 2,
             "#1250 the pipelined follow-up was served after the body ended: {tail:?}"
         );
-        tokio::time::advance(Duration::from_millis(5_400)).await;
+        tokio::time::advance(Duration::from_millis(5_930)).await;
         probe_still_open(
             &mut client,
-            "the pipelined connection stays open at +5.46 s after the second response",
+            "the pipelined connection stays open at +5.99 s after the second response",
         )
         .await;
         eof_after_idle_close(
             &mut client,
-            Duration::from_millis(700),
-            "the idle close lands 6 s after the second pipelined response",
+            Duration::from_millis(40),
+            "the idle close lands at 6 s after the second pipelined response, not any later",
         )
         .await;
         let served = task.await.expect("#1250 pipelined task join");
         assert!(
             served.is_ok(),
             "#1250 the pipelined connection future resolves Ok once the idle close ends it: {served:?}"
+        );
+    })
+    .await;
+}
+
+/// #1366 (matrix S4×E5, the sub-grid #1250 fix-r1 deferred): a client that
+/// half-closes while the response body is held mid-stream — the
+/// release-channel hold of `idle_close_waits_for_streaming_body` — ends the
+/// connection through the connection future itself: the still-readable
+/// half-closed client receives the rest of the released body, the connection
+/// future resolves `Ok` and joins without a single virtual advance (no timer
+/// is armed or consulted), and the in-flight slot the held body kept is gone
+/// with it — the terminator plus the EOF leave nothing pending on the socket.
+/// TS matrix note (Node v22.22.0 probe
+/// `_tmp/20261108-issue-1366-r1/probe-s4e5-held-body-halfclose.out`, bare
+/// `http.createServer` = the TS GatewayServer's configuration): Node destroys
+/// the server socket at the FIN itself (+14 ms, response truncated — the held
+/// bytes never reach the client), while this lane completes the held body to
+/// the still-reading half-closed peer before the EOF; the connection-future
+/// outcome both share — `Ok`, no hang, no residual timer — is what this cell
+/// pins (the byte-level truncation difference is recorded in #1366's RESULT,
+/// outside this test-only change's scope). Aligned cell; no dedicated
+/// mutant: a slot the held body's end does not release is not observable
+/// here — the connection future ends at the peer EOF regardless of the
+/// counter, and the per-connection `in_flight` dies with the task — while the
+/// S4×E2/E4 cell `idle_close_waits_for_streaming_body` (bound to
+/// `native-http-inflight-body-off`) is the one that fires on it (读码推断:
+/// `IdleBody::release` / `InFlightRequest::drop`, the `in_flight` `Arc` is
+/// created per connection).
+#[tokio::test(start_paused = true)]
+async fn client_close_during_held_body_resolves_without_timer() {
+    manual_clock(async {
+        let (server, mut client) = tokio::io::duplex(4096);
+        let (_stop, stop_rx) = watch::channel(false);
+        let (release_tx, release_rx) = watch::channel(false);
+        let task = tokio::spawn(http_proxy::serve_connection_native_with_shutdown(
+            server,
+            move |_request, _lease| {
+                let release = release_rx.clone();
+                async {
+                    hyper::Response::builder()
+                        .status(hyper::StatusCode::OK)
+                        .header(hyper::header::CONTENT_TYPE, "text/plain")
+                        .body(held_body("part1-", "part2", release))
+                        .map_err(std::io::Error::other)
+                }
+            },
+            stop_rx,
+            None,
+            None,
+        ));
+        client
+            .write_all(&latin1_bytes("GET /held HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"))
+            .await
+            .expect("#1366 write the held-body request");
+        let mut buffer = Vec::new();
+        read_until(&mut buffer, &mut client, "part1-", "#1366 held body first chunk").await;
+        client
+            .shutdown()
+            .await
+            .expect("#1366 half-close the connection during the held body");
+        release_tx.send_replace(true);
+        // No advance(): like the S5×E5 cell, the connection future must end
+        // without any timer — the body's completion plus the peer EOF alone.
+        let served = task.await.expect("#1366 held-body close task join");
+        assert!(
+            served.is_ok(),
+            "#1366 the held-body connection future resolves Ok once the half-closed peer ends it: {served:?}"
+        );
+        // The in-flight slot the held body kept is released on the body's own
+        // end, so drain the still-readable half-closed client to the EOF: the
+        // terminator proves the body ended (the path that drops the slot), the
+        // EOF that nothing is left pending on the socket. The 50 ms timeout is
+        // only the failure bound — the bytes are already buffered, so no
+        // virtual time moves.
+        let mut tail = Vec::new();
+        let mut chunk = [0u8; 256];
+        loop {
+            match timeout(Duration::from_millis(50), client.read(&mut chunk)).await {
+                Ok(Ok(0)) => break,
+                Ok(Ok(count)) => tail.extend_from_slice(&chunk[..count]),
+                Ok(Err(error)) => panic!("#1366 held-body tail read: {error}"),
+                Err(_) => panic!(
+                    "#1366 the half-closed client never reached EOF after the connection ended"
+                ),
+            }
+        }
+        let tail = latin1_string(&tail);
+        assert!(
+            tail.ends_with("part2\r\n0\r\n\r\n"),
+            "#1366 the held body completed to the half-closed client before the EOF: {tail:?}"
         );
     })
     .await;
