@@ -444,6 +444,76 @@ async fn cron_start_failure_fails_the_assembly() {
     );
 }
 
+/// #1959: a builder failure whose cleanup budget is exhausted mid-teardown
+/// (the channels stage) must still dispose the resources the cleanup never
+/// reached — per resource, not by entry. The one-shot gate used to be a single
+/// entry flag, so a budget cut after the teardown entered suppressed the
+/// fallback entirely and leaked both the session factory and the project
+/// registry.
+#[tokio::test]
+async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
+    let (_scratch, requests) =
+        std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1959 fixture setup");
+    let mut options = requests.options.clone();
+    // The short drain budget is the cut: the stalled channels observer below
+    // exhausts it mid-teardown.
+    options.drain_budget = std::time::Duration::from_millis(50);
+    let env = requests.env.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1959 dispose unused fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1959 shutdown unused fixture owner");
+    std::fs::write(options.home.join("pilotdeck.yaml"), CRON_CONFIG).expect("#1959 cron config");
+    std::fs::create_dir_all(options.home.join("cron/projects/broken/.cwd"))
+        .expect("#1959 unreadable project marker");
+
+    let order: Arc<Mutex<Vec<&'static str>>> = Arc::default();
+    let sink = order.clone();
+    let observer: crate::native_process::assembly::CleanupObserver =
+        Arc::new(move |name, _result| {
+            let sink = sink.clone();
+            Box::pin(async move {
+                sink.lock().expect("#1959 cleanup order lock").push(name);
+                // #1959 fixture: the budget dies here, mid-teardown, after the
+                // channels closed but before the session factory and the
+                // project registry are disposed — the fallback below must make
+                // up exactly the resources the cleanup never reached.
+                if name == "channels" {
+                    std::future::pending::<()>().await;
+                }
+                Ok(())
+            })
+        });
+    let failure = match crate::native_process::assembly::start_observed(
+        options.clone(),
+        env,
+        observer,
+        Arc::new(|_| {}),
+    )
+    .await
+    {
+        Err(failure) => failure,
+        Ok(_) => panic!("#1959 the cron start failure must fail the assembly"),
+    };
+    negative_assert!(
+        failure.to_string().contains(".cwd"),
+        "#1959 the failure surfaces the discovery error, not a swallowed start: {failure}"
+    );
+    let recorded = order.lock().expect("#1959 cleanup order lock").clone();
+    negative_assert_eq!(
+        recorded,
+        ["channels", "session", "project"],
+        "#1959 a budget cut mid-teardown must not skip the factory and project fallback disposals"
+    );
+}
+
 /// Issue #1326's "one scheduler, no re-execution across the switch": the
 /// TS-era store #1325's restart-unrecorded golden captures is seeded into
 /// the home before the native assembly boots — the boot itself is the

@@ -205,16 +205,22 @@ impl Clone for ReplacementCoordinator {
     ('cleanup-first-error', ASSEMBLY,
      'sessions.and(project)', 'project.and(sessions)',
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup returns first error'),
+    # #1959 (p2batch-a S2): the production cleanup now records per-resource
+    # completion between the dispose and the observer call, so the anchor
+    # follows the new block shape; the mutant still skips the project
+    # disposal after a session error, which the matrix's session-error /
+    # both-errors rows catch via the missing "project" observer record.
     ('cleanup-skips-project-after-error', ASSEMBLY,
-     '''let project = cleanup_observer(
-                    "project",
-                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
-                )
-                .await;''',
-     '''let project = if sessions.is_err() { Ok(()) } else { cleanup_observer(
-                    "project",
-                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
-                ).await };''',
+     '''let project = {
+                    let result = cleanup_project.dispose().await.map_err(|e| e.to_string());
+                    project_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    cleanup_observer("project", result).await
+                };''',
+     '''let project = if sessions.is_err() { Ok(()) } else {
+                    let result = cleanup_project.dispose().await.map_err(|e| e.to_string());
+                    project_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    cleanup_observer("project", result).await
+                };''',
      'native_process::tests::review::production_cleanup_matrix', '#1071 production cleanup attempts both resources'),
     ('cleanup-project-diagnostic', ASSEMBLY,
      'cleanup_diagnostic(error);', 'let _ = error;',

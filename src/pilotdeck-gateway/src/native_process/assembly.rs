@@ -774,8 +774,17 @@ async fn start_assembly(
     // inside this closure — and the fallback below arms only when the host
     // thread never started (runtime build or spawn failure), leaving the
     // future dropped unpolled.
-    let cleanup_ran: Arc<std::sync::atomic::AtomicBool> = Arc::default();
-    let cleanup_fallback_ran = cleanup_ran.clone();
+    //
+    // #1959: "one teardown" records *entry*, which is the wrong denomination
+    // for the fallback: a budget that expires mid-teardown (the channels
+    // close/flush stages never reaching factory or project) used to suppress
+    // the fallback too, so both leaked. The gate is now per resource — each
+    // flag flips when that disposal *completes* — and the fallback makes up
+    // exactly the resources the cleanup never finished, so a completed one is
+    // never disposed twice (#1746 r1's double-run fix, restated per resource).
+    let cleanup_entered: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let factory_disposed: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let project_disposed: Arc<std::sync::atomic::AtomicBool> = Arc::default();
     let build_factory = factory.clone();
     let build_project = project.clone();
     // #1328 A8.3: the channel assembly (ChannelAdapterBundle weixin subset
@@ -874,6 +883,11 @@ async fn start_assembly(
     };
     let cleanup_cron_slot = build_cron_slot.clone();
     let budget = options.drain_budget;
+    // #1959: the fallback's own read of the per-resource completion flags —
+    // the cleanup closure below moves the originals.
+    let fallback_factory_disposed = factory_disposed.clone();
+    let fallback_project_disposed = project_disposed.clone();
+    let fallback_observer = cleanup_observer.clone();
     let host = TurnGateway::start_with_cleanup_budget(
         TurnReplayOptions::new(),
         // #1746: the failure path waits out this embedding's own drain budget
@@ -1037,7 +1051,7 @@ async fn start_assembly(
             })
         },
         async move {
-            if cleanup_ran.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if cleanup_entered.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 return Ok(());
             }
             // #1746: the host awaits this future on its own failure path before
@@ -1078,16 +1092,19 @@ async fn start_assembly(
                 )
                 .await;
                 let channel_flush = cleanup_channels.flush().await;
-                let sessions = cleanup_observer(
-                    "session",
-                    cleanup_factory.dispose().await.map_err(|e| e.to_string()),
-                )
-                .await;
-                let project = cleanup_observer(
-                    "project",
-                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
-                )
-                .await;
+                // #1959: the completion flags flip before the observers run, so
+                // an observer that stalls cannot un-complete a finished
+                // resource (and the fallback below will not re-run it).
+                let sessions = {
+                    let result = cleanup_factory.dispose().await.map_err(|e| e.to_string());
+                    factory_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    cleanup_observer("session", result).await
+                };
+                let project = {
+                    let result = cleanup_project.dispose().await.map_err(|e| e.to_string());
+                    project_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    cleanup_observer("project", result).await
+                };
                 if let Err(error) = &project {
                     cleanup_diagnostic(error);
                 }
@@ -1125,12 +1142,23 @@ async fn start_assembly(
         Err(error) => {
             // #1746: the host disposes the coordinator and polls the cleanup
             // above before reporting a builder failure. This fallback owns the
-            // project/factory teardown only when the host thread never started
-            // — running it twice would dispose the same families twice.
-            if !cleanup_fallback_ran.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            // project/factory teardown the cleanup did not finish — #1959:
+            // per resource, not by entry. The host either never started (the
+            // future was dropped unpolled, both flags clear) or finished
+            // awaiting the cleanup (its inner budget never exceeds the
+            // host's bound, so the flags are settled by the time this reads
+            // them); a resource the cleanup completed is never disposed twice.
+            if !fallback_factory_disposed.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 let _ = tokio::time::timeout(budget, async {
-                    let _ = factory.dispose().await;
-                    project.dispose().await
+                    let result = factory.dispose().await.map_err(|e| e.to_string());
+                    let _ = fallback_observer("session", result).await;
+                })
+                .await;
+            }
+            if !fallback_project_disposed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let _ = tokio::time::timeout(budget, async {
+                    let result = project.dispose().await.map_err(|e| e.to_string());
+                    let _ = fallback_observer("project", result).await;
                 })
                 .await;
             }

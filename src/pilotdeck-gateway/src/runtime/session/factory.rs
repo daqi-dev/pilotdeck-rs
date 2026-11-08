@@ -1247,7 +1247,24 @@ impl LiveSession for OwnedSession {
         }))
     }
     fn snapshot(&self) -> JsValue {
-        self.adapter.snapshot()
+        // The TS AgentSession snapshot carries the session's cwd, and the
+        // submit-side workspace snapshot wiring reads it back for the
+        // snapshot input's workspace dir (runtime/turn/submit.rs) — without
+        // it, every turn over a snapshots-enabled assembly refuses with
+        // "Workspace snapshot cwd is unavailable." The native process pins
+        // each session to the project root its factory key resolved
+        // (`SubmitCwdService::set` refuses any other cwd), so the session's
+        // cwd is the storage root, not a per-turn value (#1431).
+        let mut value = self.adapter.snapshot();
+        if let JsValue::Object(object) = &mut value {
+            object.insert(
+                "cwd".into(),
+                JsValue::String(JsString::from(
+                    self.storage.cwd.to_string_lossy().into_owned(),
+                )),
+            );
+        }
+        value
     }
     fn reload_snapshot(&self) -> Result<ReloadSnapshot, RuntimeError> {
         self.adapter.reload_snapshot()
