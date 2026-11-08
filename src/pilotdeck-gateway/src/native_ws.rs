@@ -253,6 +253,7 @@ impl NativeWsServer {
             accept_error: None,
             drained: None,
             finished: None,
+            finish_started: false,
         }));
         // The steady-state loop: accept until `stop`, then drain the
         // connections. `drained()` observes its completion through the
@@ -309,6 +310,13 @@ struct PhasedInner {
     /// Once-only `finish()`: the death-march path after a halted machine
     /// calls it a second time and must observe the recorded result.
     finished: Option<Result<(), String>>,
+    /// #2363: the in-progress marker that makes once-only hold for a
+    /// cancelled first run too. `finish()` runs holding the inner mutex,
+    /// so a caller that acquires the lock and finds this set without a
+    /// recorded verdict knows the earlier run was dropped mid-body (the
+    /// owner backstop cancelling the S4 face), not that it is still
+    /// running — a running finish holds the lock this caller waited on.
+    finish_started: bool,
 }
 
 impl PhasedInner {
@@ -406,6 +414,19 @@ impl PhasedInner {
         if let Some(result) = self.finished.clone() {
             return result.map_err(ProxyError::from);
         }
+        if self.finish_started && !crate::mutants::on("native-ws-finish-rerun") {
+            // `native-ws-finish-rerun` (negative control, #2363): the
+            // in-progress marker deleted, so the revisit re-runs the whole
+            // half — another round of close frames, aborts and shutdowns.
+            // The marker set without a recorded verdict means the earlier
+            // finish() was cancelled mid-body (see the field's doc): S4 must
+            // not re-run. The interrupted verdict is recorded, so every
+            // later caller observes the same result.
+            let result = Err("native WS owner finish was interrupted".to_owned());
+            self.finished = Some(result.clone());
+            return result.map_err(ProxyError::from);
+        }
+        self.finish_started = true;
         // A5: the drain boundary notice — every surviving WS connection gets
         // an explicit close(1001, "server switching") and stops dispatching
         // new requests, before the strong abort takes them. Switch path
@@ -428,11 +449,21 @@ impl PhasedInner {
             self.connections.abort_all();
             while self.connections.join_next().await.is_some() {}
         }
-        self.host
-            .shutdown(self.drain_budget)
-            .await
-            .map_err(std::io::Error::other)?;
-        let result = if !self.drained.unwrap_or(false)
+        // #2363: the shutdown's own error folds into the verdict below — an
+        // early `?` return would skip the `finished` write, so a revisit (the
+        // death march after a halted machine) would re-run the whole half.
+        let shutdown = self.host.shutdown(self.drain_budget).await;
+        // `native-ws-finish-error-escape` (negative control, #2363): the
+        // pre-fix early escape restored — the shutdown error returns before
+        // the verdict is recorded.
+        if crate::mutants::on("native-ws-finish-error-escape")
+            && let Err(error) = shutdown
+        {
+            return Err(std::io::Error::other(error).into());
+        }
+        let result = if let Some(error) = shutdown.err().map(|error| error.to_string()) {
+            Err(error)
+        } else if !self.drained.unwrap_or(false)
             && !crate::mutants::on("native-ws-drain-false-success")
         {
             Err("native WS drain deadline exceeded".to_owned())
@@ -509,7 +540,9 @@ impl PhasedRun {
     }
 
     /// S4's WS half: close notice, abort, host shutdown, error reporting.
-    /// Idempotent — a second call observes the recorded result.
+    /// Idempotent — a second call observes the recorded result, and a first
+    /// call that was cancelled mid-run (the owner backstop dropping the S4
+    /// face) leaves its own recorded verdict instead of a re-run (#2363).
     pub async fn finish(&self) -> Result<(), ProxyError> {
         let mut guard = self.inner.lock().await;
         guard.finish().await
