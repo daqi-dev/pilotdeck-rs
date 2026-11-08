@@ -195,3 +195,24 @@ async fn failed_prepare_preserves_existing_branch_and_replaced_owned_directory()
     assert_eq!(std::fs::read(original.join("sentinel")).unwrap(), b"REPLACEMENT"); assert!(retained.exists());
     provider.close().await.unwrap(); fixture.registry.dispose().await.unwrap();
 }
+
+struct RemoveFailureRunner {commands:Arc<Mutex<Vec<String>>>}
+impl CommandRunner for RemoveFailureRunner {
+    fn run(&self,command:JsString,options:CommandOptions)->ToolFuture<CommandResult>{let commands=self.commands.clone();Box::pin(async move{let text=command.to_utf8().unwrap();commands.lock().unwrap().push(text.clone());if text.contains("'worktree' 'remove'"){return Err(crate::runtime::tools::ToolError::new("injected_remove_failure","owned remove failed"));}NativeOwnedShellCommandRunner.run(command,options).await})}
+}
+#[tokio::test]
+async fn rollback_attempts_the_real_branch_cas_even_after_owned_directory_cleanup_fails(){
+    use std::os::unix::fs::PermissionsExt;
+    let fixture=Fixture::new();let project=Path::new(&fixture.paths.project_key);fixture.initialize_git(project).await;let hook=project.join(".git/hooks/post-checkout");std::fs::write(&hook,"#!/bin/sh\nexit 19\n").unwrap();std::fs::set_permissions(&hook,std::fs::Permissions::from_mode(0o700)).unwrap();let commands=Arc::new(Mutex::new(Vec::new()));let provider=fixture.provider(Arc::new(RemoveFailureRunner{commands:commands.clone()}));let refused=provider.prepare("git-worktree","remove-failure".into(),"fixture".into(),None).await;let closed=provider.close().await;let drained=fixture.registry.dispose().await;
+    assert!(refused.is_err());assert!(closed.is_err());assert!(drained.is_ok());assert_ne!(fixture.git(project,&["show-ref","--verify","--quiet","refs/heads/always-on/remove-failure"]).await.exit_code,Some(0));let commands=commands.lock().unwrap();let remove=commands.iter().position(|c|c.contains("'worktree' 'remove'")).unwrap();let cas=commands.iter().position(|c|c.contains("'update-ref' '-d'")).unwrap();assert!(cas>remove,"independent cleanup must not short-circuit: {commands:?}");
+}
+struct OriginalReplacementRunner {original:PathBuf,entered:Arc<tokio::sync::Notify>,release:Arc<tokio::sync::Notify>}
+impl CommandRunner for OriginalReplacementRunner {
+    fn run(&self,command:JsString,options:CommandOptions)->ToolFuture<CommandResult>{let original=self.original.clone();let entered=self.entered.clone();let release=self.release.clone();Box::pin(async move{if command.to_utf8().unwrap().contains("'worktree' 'repair'"){assert!(!original.exists());entered.notify_one();release.notified().await;}NativeOwnedShellCommandRunner.run(command,options).await})}
+}
+#[tokio::test]
+async fn git_cleanup_barrier_preserves_a_replacement_at_the_original_path(){
+    let fixture=Fixture::new();let project=Path::new(&fixture.paths.project_key);fixture.initialize_git(project).await;let setup=fixture.provider(Arc::new(NativeOwnedShellCommandRunner));let handle=setup.prepare("git-worktree","rename-window".into(),"fixture".into(),None).await.unwrap();setup.close().await.unwrap();let original=native_path(&handle.cwd).unwrap();let entered=Arc::new(tokio::sync::Notify::new());let release=Arc::new(tokio::sync::Notify::new());let provider=fixture.provider(Arc::new(OriginalReplacementRunner{original:original.clone(),entered:entered.clone(),release:release.clone()}));let worker=provider.clone();let removal=tokio::spawn(async move{worker.dispose(handle,false).await});
+    let waiting=tokio::time::timeout(Duration::from_secs(10),entered.notified()).await;let replacement=if waiting.is_ok(){std::fs::create_dir(&original).and_then(|_|std::fs::write(original.join("foreign"),"FOREIGN"))}else{Err(io::Error::other("repair barrier was not reached"))};release.notify_one();let removed=tokio::time::timeout(Duration::from_secs(15),removal).await;let closed=provider.close().await;let drained=fixture.registry.dispose().await;
+    assert!(waiting.is_ok());replacement.unwrap();removed.unwrap().unwrap().unwrap();assert!(closed.is_ok());assert!(drained.is_ok());assert_eq!(std::fs::read(original.join("foreign")).unwrap(),b"FOREIGN");assert_ne!(fixture.git(project,&["show-ref","--verify","--quiet","refs/heads/always-on/rename-window"]).await.exit_code,Some(0));
+}

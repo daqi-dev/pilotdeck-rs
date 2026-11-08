@@ -5178,3 +5178,8 @@ r119固定5a409全目标check/native522/AO106/四个实际bin构建通过；stri
 ### 2026-11-09 07:22 · 知识工具注册错误传播
 
 r123唯一首编错误为非Result的turn装配误用?；已逐SHA接窄修，将knowledge注册错误保留到现有catalog_error真实执行闸门，构造失败仍由prepare传播，无expect或吞错。接r124完整相关测试及strict；SDK生命周期probe复核消除装置晚异常假PASS与清理漏落盘，产品仍待新固定bin实跑。所有Rust只mbp2、仅本机提交，CLI未完。
+
+
+### 2026-11-09 07:32 · 并发删除与完整 CLI 回归
+
+r124固定ba84df完整CLI546过/140条件忽略/0失败，AO112、SOP13、builtin136过；native538过2cleanup观察/TS额外阶段断言失败，已修temp fallback finished/observer与金样投影，strict仅2collapsible-if已机械修，待r125。已整合SDK owner.close_then持同key票据覆盖临时删除与SDK清理（真实barrier待编）；workspace真实fd+NOREPLACE隔离/独立branch CAS三源待编，OS实证保留。两家SDK四角色无P0/P1，P2集中处置：共享mode、线性去重、真实EditFile两格TS及消费者、并发删除；forward/close/notebook等待依据逐条列账。AO原boundary P1及4P2已第三谱系按真实损坏索引/双Git算法证据撤销；新P3不扩。SOP真实固定bin启动拒绝合法normalized snapshot，已整合原schema生成回归与guard修复待编，不能以13单测冒实际成功。仅本机提交，Rust仅mbp2，完整CLI未完。

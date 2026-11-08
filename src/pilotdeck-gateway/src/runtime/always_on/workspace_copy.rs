@@ -131,35 +131,91 @@ pub(super) fn snapshot(paths: &AlwaysOnPaths, project: &Arc<File>, run: &str, li
     if comparable.starts_with(&source) { return Err(io::Error::new(io::ErrorKind::InvalidInput, "Snapshot target is inside its source project.")); }
     let (target, destination) = new_target(paths, "snapshot-copy", run)?;
     if let Err(error) = walk_files(project, Some(&destination), limits) {
-        let parent = storage::directory(&storage::root_for(&paths.state_file), &base, false)?;
-        let expected = destination.metadata()?;
-        let actual = statat(&parent, run, AtFlags::SYMLINK_NOFOLLOW)?;
-        if actual.st_dev as u64 != expected.dev() || actual.st_ino as u64 != expected.ino() {
-            return Err(io::Error::other(format!("{error}; owned snapshot path changed before cleanup")));
-        }
-        let cleanup = crate::project_files::remove_tree_at(&parent, Path::new(run), &target);
+        let cleanup = remove_created(paths,"snapshot-copy",&target,&destination);
         return match cleanup { Ok(()) => Err(error), Err(cleanup) => Err(io::Error::other(format!("{error}; owned snapshot cleanup failed: {cleanup}"))) };
     }
     let mut metadata = JsObject::new(); metadata.insert("copyStrategy".into(), "fs.cp".into()); metadata.insert("baseSize".into(), size.to_string().as_str().into());
     Ok((target, metadata, destination))
 }
-pub(super) fn remove_owned(paths: &AlwaysOnPaths, strategy: &str, cwd: &Path) -> io::Result<()> {
-    let _pinned = owned_workspace(paths, strategy, cwd)?;
-    let base = base(paths, strategy)?; let parent = storage::directory(&storage::root_for(&paths.state_file), &base, false)?;
-    let canonical = cwd.canonicalize()?; let canonical_base = base.canonicalize()?;
-    let leaf = canonical.strip_prefix(canonical_base).map_err(|_| io::ErrorKind::PermissionDenied)?;
-    crate::project_files::remove_tree_at(&parent, leaf, cwd)
+/// Rename captures one directory entry atomically before checking which object
+/// moved. An inode check followed by pathname unlink is NOT an atomic CAS.
+pub(super) struct CapturedWorkspace {
+    pub path:PathBuf,
+    pub directory:Arc<File>,
+    parent:File,
+    container:File,
+    container_name:std::ffi::OsString,
 }
-
-/// Failure cleanup must refer to the actual descriptor returned by exclusive
-/// creation, not a newly admitted replacement at the same path.
-pub(super) fn remove_created(paths: &AlwaysOnPaths, strategy: &str, cwd: &Path, expected: &File) -> io::Result<()> {
-    let current = match owned_workspace(paths, strategy, cwd) { Ok(current) => current, Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()), Err(error) => return Err(error) };
-    let actual = current.metadata()?; let selected = expected.metadata()?;
-    if actual.dev() != selected.dev() || actual.ino() != selected.ino() {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Created workspace was replaced before cleanup."));
+fn same_directory(expected:&File,actual:&File)->io::Result<()> {
+    let expected=expected.metadata()?;let actual=actual.metadata()?;
+    if expected.dev()!=actual.dev()||expected.ino()!=actual.ino(){return Err(io::Error::new(io::ErrorKind::PermissionDenied,"Created workspace was replaced before cleanup."));}Ok(())
+}
+pub(super) fn capture_selected(paths:&AlwaysOnPaths,strategy:&str,cwd:&Path,expected:&File)->io::Result<Arc<CapturedWorkspace>>{
+    capture_with(paths,strategy,cwd,expected,||Ok(()))
+}
+fn capture_with(paths:&AlwaysOnPaths,strategy:&str,cwd:&Path,expected:&File,before_move:impl FnOnce()->io::Result<()>)->io::Result<Arc<CapturedWorkspace>>{
+    let current=owned_workspace(paths,strategy,cwd)?;same_directory(expected,&current)?;
+    let base=base(paths,strategy)?;let original=cwd.canonicalize()?;let canonical_base=base.canonicalize()?;
+    let leaf=original.strip_prefix(&canonical_base).map_err(|_|io::ErrorKind::PermissionDenied)?;
+    if leaf.components().count()!=1{return Err(io::ErrorKind::PermissionDenied.into());}
+    let parent=storage::directory(&storage::root_for(&paths.state_file),&base,false)?;
+    let name=std::ffi::OsString::from(format!(".cleanup-{}",uuid::Uuid::new_v4()));
+    mkdirat(&parent,&name,Mode::from_raw_mode(0o700))?;let container=directory(&parent,&name)?;
+    before_move()?;
+    if let Err(error)=rustix::fs::renameat_with(&parent,leaf,&container,"workspace",rustix::fs::RenameFlags::NOREPLACE){let _=rustix::fs::unlinkat(&parent,&name,AtFlags::REMOVEDIR);return Err(error.into());}
+    let captured=directory(&container,std::ffi::OsStr::new("workspace")).map_err(|error|io::Error::other(format!("{error}; captured workspace preserved at {}",base.join(&name).display())))?;
+    if let Err(error)=same_directory(expected,&captured){
+        // Restore without overwriting any object which appeared at the old
+        // path. If that cannot succeed, preserve everything and name the
+        // private recovery location in the error.
+        let restored=rustix::fs::renameat_with(&container,"workspace",&parent,leaf,rustix::fs::RenameFlags::NOREPLACE);
+        if restored.is_ok(){let _=rustix::fs::unlinkat(&parent,&name,AtFlags::REMOVEDIR);}
+        return Err(io::Error::other(format!("{error}; cleanup capture was not the selected object; restore={restored:?}; preserved at {}",base.join(&name).display())));
     }
-    remove_owned(paths, strategy, cwd)
+    let path=base.join(&name).join("workspace");
+    Ok(Arc::new(CapturedWorkspace{path,directory:Arc::new(captured),parent,container,container_name:name}))
+}
+impl CapturedWorkspace {
+    fn finish_container(&self)->io::Result<()> {
+        let named=directory(&self.parent,&self.container_name)?;same_directory(&self.container,&named)?;
+        // REMOVEDIR only removes an empty container. Never recursively reopen
+        // its path: an externally replaced nonempty container is preserved.
+        rustix::fs::unlinkat(&self.parent,&self.container_name,AtFlags::REMOVEDIR)?;Ok(())
+    }
+    pub fn remove(&self)->io::Result<()> {
+        let current=directory(&self.container,std::ffi::OsStr::new("workspace"))?;same_directory(&self.directory,&current)?;
+        let mut used=0;
+        for name in names(&self.directory,&mut used,CopyLimits::default().entries)? {
+            // All recursive traversal starts from the original captured fd,
+            // never from a newly admitted directory at the original run path.
+            crate::project_files::remove_tree_at(&self.directory,Path::new(&name),&self.path.join(&name))?;
+        }
+        let current=directory(&self.container,std::ffi::OsStr::new("workspace"))?;same_directory(&self.directory,&current)?;
+        rustix::fs::unlinkat(&self.container,"workspace",AtFlags::REMOVEDIR)?;self.finish_container()
+    }
+    pub fn finish_git_remove(&self)->io::Result<()> {
+        if !directory_gone(&self.directory,&self.path)?{return Err(io::Error::other(format!("Could not verify Git cleanup of selected capture; preserving {}",self.path.display())));}
+        self.finish_container()
+    }
+}
+// APFS keeps st_nlink and the last F_GETPATH string after rmdir. F_GETPATH
+// changes on rename, so reject a moved held object; only accept the removed
+// captured entry after successful owned git cleanup. This is an observed
+// postcondition, not an atomic unlink-by-inode guarantee.
+#[cfg(target_vendor="apple")]
+fn directory_gone(expected:&File,path:&Path)->io::Result<bool>{
+    let held=rustix::fs::getpath(expected)?;let parent=path.parent().ok_or(io::ErrorKind::InvalidInput)?.canonicalize()?;let path=parent.join(path.file_name().ok_or(io::ErrorKind::InvalidInput)?);
+    if Path::new(std::ffi::OsStr::from_bytes(held.to_bytes()))!=path{return Ok(false);}
+    match std::fs::symlink_metadata(path){Err(error) if error.kind()==io::ErrorKind::NotFound=>Ok(true),Ok(_)=>Ok(false),Err(error)=>Err(error)}
+}
+#[cfg(target_os="linux")]
+fn directory_gone(expected:&File,_path:&Path)->io::Result<bool>{Ok(expected.metadata()?.nlink()==0)}
+#[cfg(not(any(target_vendor="apple",target_os="linux")))]
+fn directory_gone(_expected:&File,_path:&Path)->io::Result<bool>{Ok(false)}
+/// A missing pathname only proves removal when the original held object is
+/// unlinked too; a renamed original remains an explicit uncertain cleanup.
+pub(super) fn remove_created(paths:&AlwaysOnPaths,strategy:&str,cwd:&Path,expected:&File)->io::Result<()> {
+    match capture_selected(paths,strategy,cwd,expected){Ok(captured)=>captured.remove(),Err(error) if error.kind()==io::ErrorKind::NotFound&&directory_gone(expected,cwd)?=>Ok(()),Err(error)=>Err(error)}
 }
 
 #[cfg(test)]
@@ -182,7 +238,7 @@ mod tests {
         std::fs::create_dir_all(source.join("nested/node_modules")).unwrap(); std::fs::write(source.join("nested/node_modules/kept"), "KEPT").unwrap();
         std::fs::write(root.0.join("external"), "EXTERNAL").unwrap();
         std::os::unix::fs::symlink("../external", source.join("link")).unwrap();
-        let (target, metadata, _) = snapshot(&paths, &project, "run", CopyLimits::default()).unwrap();
+        let (target, metadata, selected) = snapshot(&paths, &project, "run", CopyLimits::default()).unwrap();
         assert_eq!(std::fs::read(target.join("a.txt")).unwrap(), b"COPY-INPUT");
         assert!(!target.join("node_modules").exists());
         assert_eq!(std::fs::read(target.join("nested/node_modules/kept")).unwrap(), b"KEPT");
@@ -191,7 +247,7 @@ mod tests {
         assert!(owned_workspace(&paths, "snapshot-copy", &target).is_ok());
         assert!(owned_workspace(&paths, "snapshot-copy", source).is_err());
         let before = std::fs::read(root.0.join("external")).unwrap();
-        remove_owned(&paths, "snapshot-copy", &target).unwrap();
+        remove_created(&paths, "snapshot-copy", &target, &selected).unwrap();
         assert_eq!(std::fs::read(root.0.join("external")).unwrap(), before);
     }
     #[test]
@@ -215,5 +271,20 @@ mod tests {
         assert!(snapshot(&paths, &project, "depth", CopyLimits { bytes: 16, entries: 8, depth: 1, path_bytes: 64 }).is_err());
         assert!(snapshot(&paths, &project, "count", CopyLimits { bytes: 16, entries: 1, depth: 8, path_bytes: 64 }).is_err());
         assert!(!paths.snapshots_dir().join("extra").exists()); assert!(!paths.snapshots_dir().join("depth").exists()); assert!(!paths.snapshots_dir().join("count").exists());
+    }
+}
+
+#[cfg(test)]mod capture_tests {
+    use super::*;
+    fn fixture()->(std::path::PathBuf,AlwaysOnPaths){let root=std::env::temp_dir().join(format!("pdrs-workspace-capture-{}",uuid::Uuid::new_v4()));let project=root.join("project");std::fs::create_dir_all(&project).unwrap();let base=root.join("home/always-on/projects/project");let paths=AlwaysOnPaths{project_key:project.to_string_lossy().into_owned(),state_file:base.join("state.json"),plans_dir:base.join("plans"),plan_index_file:base.join("plans/index.json"),cycle_index_file:base.join("cycles/index.json"),reports_dir:base.join("reports"),discovery_lock_file:base.join("locks/discovery.lock")};(root,paths)}
+    #[test]
+    fn capture_detects_swap_inside_the_old_check_to_move_window_without_deleting_foreign_data(){
+        let(root,paths)=fixture();let(target,selected)=new_target(&paths,"snapshot-copy","run").unwrap();std::fs::write(target.join("owned"),"OWNED").unwrap();let moved=target.with_extension("kept");let path=target.clone();let kept=moved.clone();
+        let result=capture_with(&paths,"snapshot-copy",&target,&selected,move||{std::fs::rename(&path,&kept)?;std::fs::create_dir(&path)?;std::fs::write(path.join("foreign"),"FOREIGN")?;Ok(())});
+        assert!(result.is_err());assert_eq!(std::fs::read(target.join("foreign")).unwrap(),b"FOREIGN");assert_eq!(std::fs::read(moved.join("owned")).unwrap(),b"OWNED");std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn cleanup_uses_captured_object_when_a_new_original_path_appears(){
+        let(root,paths)=fixture();let(target,selected)=new_target(&paths,"snapshot-copy","run").unwrap();std::fs::write(target.join("owned"),"OWNED").unwrap();let capture=capture_selected(&paths,"snapshot-copy",&target,&selected).unwrap();std::fs::create_dir(&target).unwrap();std::fs::write(target.join("foreign"),"FOREIGN").unwrap();capture.remove().unwrap();assert_eq!(std::fs::read(target.join("foreign")).unwrap(),b"FOREIGN");assert!(!capture.path.exists());assert!(!capture.path.exists());std::fs::remove_dir_all(root).unwrap();
     }
 }

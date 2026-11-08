@@ -362,6 +362,9 @@ async fn production_cleanup_matrix() {
             },
             "#1071 production cleanup reports project failure"
         );
+        // The native temporary-storage cleanup is an extra owned phase;
+        // its failure case above has no synthetic row in the frozen TS probe.
+        if mode == "temporary sessions-error" { continue; }
         let fixture = oracle();
         let ts = fixture["observations"]["productionCleanup"]
             .as_array()
@@ -390,7 +393,7 @@ async fn production_cleanup_matrix() {
         let gateway_calls: Vec<&str> = actual_calls
             .iter()
             .copied()
-            .filter(|step| !["automation", "channels"].contains(step))
+            .filter(|step| !["automation", "channels", "temporary sessions"].contains(step))
             .collect();
         negative_assert_eq!(
             json!(gateway_calls),

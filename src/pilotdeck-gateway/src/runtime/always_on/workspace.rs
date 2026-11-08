@@ -6,6 +6,9 @@ use crate::runtime::{cleanup_task, project::RuntimeLease, tools::builtin::bash::
 use tokio::sync::{oneshot, watch};
 use super::{AlwaysOnPaths, storage, workspace_copy};
 
+fn cleanup_results(directory:Result<(),WorkspaceError>,branch:Result<(),WorkspaceError>)->Result<(),WorkspaceError>{
+    match(directory,branch){(Ok(()),Ok(()))=>Ok(()),(Err(error),Ok(()))|(Ok(()),Err(error))=>Err(error),(Err(directory),Err(branch))=>Err(WorkspaceError::new("workspace_cleanup_failed",format!("{}; branch cleanup also failed: {}",String::from_utf16_lossy(directory.message.units()),String::from_utf16_lossy(branch.message.units()))))}
+}
 const MAX_JOBS: usize = 4;
 const COMMAND_UNITS: usize = 8 * 1024 * 1024;
 const DIFF_UNITS: usize = 80_000;
@@ -189,31 +192,48 @@ impl NativeWorkspace {
         }
     }
     async fn rollback_git_prepare(&self, repository: &Arc<File>, repository_path: &Path, created: Option<(PathBuf, Arc<File>)>, branch_ref: &str, base_commit: &str) -> Result<(), WorkspaceError> {
-        let current = self.command(repository, repository_path, &["git", "rev-parse", "--verify", branch_ref], None).await?;
-        if current.exit_code != Some(0) || crate::metadata::js_trim(&current.stdout) != base_commit {
-            return Err(WorkspaceError::new("workspace_cleanup_failed", "Workspace branch changed after creation; preserving its assets."));
+        let directory=async {
+            let current=self.command(repository,repository_path,&["git","rev-parse","--verify",branch_ref],None).await?;
+            if current.exit_code!=Some(0)||crate::metadata::js_trim(&current.stdout)!=base_commit{return Err(WorkspaceError::new("workspace_cleanup_failed","Workspace branch changed after creation; preserving its directory."));}
+            if let Some((target,pinned))=created {self.remove_git_selected(repository,repository_path,target,pinned).await?;}
+            Ok(())
+        }.await;
+        // Independent compare-and-delete is attempted even when directory
+        // inspection, registration cleanup, or the child runner failed.
+        let branch=match self.command(repository,repository_path,&["git","update-ref","-d",branch_ref,base_commit],None).await {
+            Ok(result)=>expect_ok(&result,"git update-ref rollback workspace branch"),Err(error)=>Err(error),
+        };
+        cleanup_results(directory,branch)
+    }
+    async fn registered_worktree(&self,repository:&Arc<File>,repository_path:&Path,target:&Path)->Result<Option<Option<String>>,WorkspaceError>{
+        let listed=self.command(repository,repository_path,&["git","worktree","list","--porcelain","-z"],None).await?;expect_ok(&listed,"git worktree list")?;
+        let spelling=target.to_owned();let target=self.io(move||{let parent=spelling.parent().ok_or(io::ErrorKind::InvalidInput)?.canonicalize()?;Ok(parent.join(spelling.file_name().ok_or(io::ErrorKind::InvalidInput)?))}).await?;
+        let target=target.to_str().ok_or_else(||WorkspaceError::new("workspace_cleanup_failed","Workspace cleanup path is not representable."))?;
+        let mut selected=false;let mut result=None;
+        for field in listed.stdout.split('\0') {
+            if let Some(path)=field.strip_prefix("worktree "){if selected{break;}selected=path==target;if selected{result=Some(None);}}
+            else if selected&&let Some(branch)=field.strip_prefix("branch "){result=Some(Some(branch.to_owned()));}
         }
-        if let Some((target, pinned)) = created {
-            let selected = pinned.clone(); let path = target.clone();
-            // A replaced directory is foreign even under our run namespace.
-            let canonical = self.io(move || checked_command_path(&selected, &path)).await?;
-            let target_text = canonical.to_str().ok_or_else(|| WorkspaceError::new("workspace_cleanup_failed", "Workspace rollback path is not representable."))?;
-            let removed = self.command(repository, repository_path, &["git", "worktree", "remove", "--force", target_text], None).await?;
-            if removed.exit_code != Some(0) {
-                let paths = self.0.paths.clone(); let copy = target.clone();
-                self.io(move || workspace_copy::remove_created(&paths, "git-worktree", &copy, &pinned)).await?;
-                // No global prune: only this exact newly owned registration
-                // may be removed. Prove a failed remove left no registration.
-                let listed = self.command(repository, repository_path, &["git", "worktree", "list", "--porcelain", "-z"], None).await?;
-                expect_ok(&listed, "git worktree list")?;
-                if listed.stdout.split('\0').any(|entry| entry.strip_prefix("worktree ") == Some(target_text)) {
-                    return Err(WorkspaceError::new("workspace_cleanup_failed", "Created workspace registration remains after rollback."));
-                }
-            }
-        }
-        // Compare-and-delete cannot remove a branch changed by another actor.
-        let deleted = self.command(repository, repository_path, &["git", "update-ref", "-d", branch_ref, base_commit], None).await?;
-        expect_ok(&deleted, "git update-ref rollback workspace branch")
+        Ok(result)
+    }
+    async fn remove_git_selected(&self,repository:&Arc<File>,repository_path:&Path,target:PathBuf,pinned:Arc<File>)->Result<(),WorkspaceError>{
+        let registration=self.registered_worktree(repository,repository_path,&target).await?;
+        if registration.is_none(){let paths=self.0.paths.clone();return self.io(move||workspace_copy::remove_created(&paths,"git-worktree",&target,&pinned)).await.map_err(Into::into);}
+        let paths=self.0.paths.clone();let captured=self.io(move||workspace_copy::capture_selected(&paths,"git-worktree",&target,&pinned)).await?;
+        let recovery=captured.path.clone();
+        let removed:Result<(),WorkspaceError>=async {
+        // Never ask git to recursively remove the replaceable original run
+        // path. Its exact existing registration moves into our private capture.
+        let directory=captured.directory.clone();let selected_path=captured.path.clone();
+        let canonical=self.io(move||checked_command_path(&directory,&selected_path)).await?;
+        self.verify_git_project(&captured.directory,&canonical,None).await?;
+        let text=canonical.to_str().ok_or_else(||WorkspaceError::new("workspace_cleanup_failed","Captured worktree path is not representable."))?;
+        let repaired=self.command(repository,repository_path,&["git","worktree","repair",text],None).await?;expect_ok(&repaired,"git worktree repair owned capture")?;
+        if self.registered_worktree(repository,repository_path,&canonical).await?!=registration{return Err(WorkspaceError::new("workspace_cleanup_failed",format!("Captured worktree registration is uncertain; preserving {}",canonical.display())));}
+        let removed=self.command(repository,repository_path,&["git","worktree","remove","--force",text],None).await?;expect_ok(&removed,"git worktree remove owned capture")?;
+        self.io(move||captured.finish_git_remove()).await?;Ok(())
+        }.await;
+        removed.map_err(|error|WorkspaceError::new("workspace_cleanup_failed",format!("{}; captured workspace cleanup is uncertain at {}",String::from_utf16_lossy(error.message.units()),recovery.display())))
     }
     pub(crate) async fn authorize_cycle(&self, cycle: super::WorkCycleRecord) -> Result<WorkspaceHandle, WorkspaceError> {
         self.owned(move |owner| Box::pin(async move {
@@ -252,33 +272,21 @@ impl NativeWorkspace {
     pub(crate) async fn dispose(&self, handle: WorkspaceHandle, keep: bool) -> Result<(), WorkspaceError> {
         if keep { return Ok(()); }
         self.owned(move |owner| Box::pin(async move {
-            let cwd = native_path(&handle.cwd)?; let paths = owner.0.paths.clone(); let strategy = handle.strategy.clone(); let copy = cwd.clone();
-            let selected = handle.created_identity.clone();
-            let directory = owner.io(move || {
-                let directory = workspace_copy::owned_workspace(&paths, &strategy, &copy)?;
-                if let Some(selected) = selected { checked_directory_identity(&selected, &directory)?; }
-                Ok(directory)
-            }).await?;
-            if handle.strategy == "git-worktree" {
-                owner.verify_git_project(&directory, &cwd, None).await?;
-                let root = owner.0.project.clone(); let repository = owner.io(move || workspace_copy::pin_project(&root)).await?;
-                let cwd_text = cwd.to_string_lossy().into_owned();
-                let removed = owner.command(&repository, &owner.0.project, &["git", "worktree", "remove", "--force", &cwd_text], None).await?;
-                if removed.exit_code != Some(0) {
-                    let paths = owner.0.paths.clone(); let copy = cwd.clone(); owner.io(move || workspace_copy::remove_owned(&paths, "git-worktree", &copy)).await?;
-                    let _ = owner.command(&repository, &owner.0.project, &["git", "worktree", "prune"], None).await?;
-                }
-                if let Some(branch) = handle.metadata.get("branchName").and_then(JsValue::as_string) {
-                    let branch = branch.to_utf8().map_err(|_| WorkspaceError::new("invalid_workspace", "Workspace branch is not representable."))?;
-                    // Only the branch corresponding to this owned run may be
-                    // removed, never arbitrary persisted metadata commands.
-                    let run = cwd.file_name().and_then(|name| name.to_str()).unwrap_or("");
-                    if branch == format!("always-on/{run}") { let _ = owner.command(&repository, &owner.0.project, &["git", "branch", "-D", &branch], None).await?; }
-                }
-            } else {
-                let paths = owner.0.paths.clone(); owner.io(move || workspace_copy::remove_owned(&paths, "snapshot-copy", &cwd)).await?;
+            let cwd=native_path(&handle.cwd)?;let paths=owner.0.paths.clone();let strategy=handle.strategy.clone();let copy=cwd.clone();let selected=handle.created_identity.clone();
+            let directory=owner.io(move||{let current=workspace_copy::owned_workspace(&paths,&strategy,&copy)?;if let Some(selected)=selected{checked_directory_identity(&selected,&current)?;}Ok(current)}).await?;
+            if handle.strategy=="git-worktree" {
+                owner.verify_git_project(&directory,&cwd,None).await?;
+                let root=owner.0.project.clone();let repository=owner.io(move||workspace_copy::pin_project(&root)).await?;
+                let branch=handle.metadata.get("branchName").and_then(JsValue::as_string).map(|v|v.to_utf8().map_err(|_|WorkspaceError::new("invalid_workspace","Workspace branch is not representable."))).transpose()?;
+                let run=cwd.file_name().and_then(|name|name.to_str()).unwrap_or("");
+                let owned_branch=if let Some(branch)=branch.filter(|b|b==&format!("always-on/{run}")) {let branch_ref=format!("refs/heads/{branch}");let current=owner.command(&repository,&owner.0.project,&["git","rev-parse","--verify",&branch_ref],None).await?;expect_ok(&current,"git rev-parse owned workspace branch")?;Some((branch_ref,crate::metadata::js_trim(&current.stdout).to_owned()))}else{None};
+                let directory=owner.remove_git_selected(&repository,&owner.0.project,cwd,directory).await;
+                let branch=if let Some((branch_ref,expected))=owned_branch {match owner.command(&repository,&owner.0.project,&["git","update-ref","-d",&branch_ref,&expected],None).await {Ok(result)=>expect_ok(&result,"git update-ref dispose workspace branch"),Err(error)=>Err(error)}}else{Ok(())};
+                cleanup_results(directory,branch)
+            }else{
+                let paths=owner.0.paths.clone();let captured=owner.io(move||workspace_copy::capture_selected(&paths,"snapshot-copy",&cwd,&directory)).await?;
+                owner.io(move||captured.remove()).await?;Ok(())
             }
-            Ok(())
         })).await
     }
 

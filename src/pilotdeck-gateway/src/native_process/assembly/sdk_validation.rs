@@ -14,6 +14,22 @@ fn trim(s: &JsString) -> bool {
 fn text(v: &JsValue) -> bool {
     v.as_string().is_some_and(trim)
 }
+fn unique_skills(value: &JsValue) -> bool {
+    let JsValue::Array(values) = value else { return false; };
+    let mut seen = std::collections::HashSet::new();
+    !values.is_empty() && values.iter().all(|value| {
+        value.as_string().is_some_and(|name| trim(name) && seen.insert(name))
+    })
+}
+fn distinct_plugin_paths(value: &JsValue) -> bool {
+    let JsValue::Array(values) = value else { return false; };
+    let mut seen = std::collections::HashSet::new();
+    !values.is_empty() && values.iter().all(|plugin| {
+        plugin.get("type") == Some(&JsValue::from("local"))
+            && plugin.get("path").and_then(JsValue::as_string)
+                .is_some_and(|path| path.units().first() == Some(&47) && seen.insert(path))
+    })
+}
 fn keys(v: &JsObject, allowed: &[&str]) -> bool {
     v.own_entries()
         .iter()
@@ -339,14 +355,14 @@ pub(super) fn validate(config: &JsValue) -> Result<(), SubmitError> {
     }
     if let Some(v) = get(config, "skills")
         && !v.as_string().is_some_and(|s| s.equals_str("all"))
-        && !matches!(v,JsValue::Array(a)if !a.is_empty()&&a.iter().enumerate().all(|(i,s)|text(s)&&!a[..i].contains(s)))
+        && !unique_skills(v)
     {
         return Err(err(
             "skills must be all or a non-empty array of unique skill names.",
         ));
     }
     if let Some(v) = get(config, "plugins")
-        && !matches!(v,JsValue::Array(a)if !a.is_empty()&&a.iter().enumerate().all(|(i,p)|p.get("type")==Some(&"local".into())&&p.get("path").and_then(JsValue::as_string).is_some_and(|s|s.units().first()==Some(&47)&&!a[..i].iter().any(|p2|p2.get("path")==p.get("path")))))
+        && !distinct_plugin_paths(v)
     {
         return Err(err(
             "plugins must be a non-empty array of distinct absolute Gateway-local plugin paths.",

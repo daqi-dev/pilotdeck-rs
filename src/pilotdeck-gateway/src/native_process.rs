@@ -24,6 +24,8 @@ mod project_storage;
 mod projects;
 mod server_host;
 mod sop_control;
+#[cfg(test)]
+mod sop_profile_tests;
 mod sdk_tools;
 pub use local_host::{LocalHost, LocalHostOptions};
 pub use server_host::{

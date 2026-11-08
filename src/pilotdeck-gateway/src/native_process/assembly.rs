@@ -855,11 +855,11 @@ async fn start_assembly(
                 let input_admission = Arc::new(super::input_admission::InputAdmission::new(
                     &skill_lease.contributions.commands,
                 ));
-                if fork_scope.is_none(){
-                    if let Some(name)=&stored_style_name {
-                        if let Some(style)=skill_lease.contributions.output_styles.iter().find(|style|JsString::from(style.name.as_str())==*name){apply_output_style_content(&mut config,&style.content);}
-                    }
-                }
+                if fork_scope.is_none()
+                    && let Some(name) = &stored_style_name
+                    && let Some(style) = skill_lease.contributions.output_styles.iter()
+                        .find(|style| JsString::from(style.name.as_str()) == *name)
+                { apply_output_style_content(&mut config, &style.content); }
                 let plugin_hooks = skill_lease.contributions.hooks.clone();
                 let plugin_mcp_servers = skill_lease.contributions.mcp_servers.clone();
                 let native_skills = if skills_disabled {
@@ -1367,6 +1367,8 @@ async fn start_assembly(
     // before a later phase must not suppress that resource's failure fallback.
     let factory_finished: Arc<std::sync::atomic::AtomicBool> = Arc::default();
     let project_finished: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let temporary_finished: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let fallback_temporary_finished = temporary_finished.clone();
     let fallback_factory_finished = factory_finished.clone();
     let fallback_project_finished = project_finished.clone();
     let fallback_observer = cleanup_observer.clone();
@@ -1886,6 +1888,7 @@ async fn start_assembly(
                 factory_finished.store(true, std::sync::atomic::Ordering::Release);
                 let sessions = cleanup_observer("session", sessions).await;
                 let temporary=cleanup_ephemeral.close().await.map_err(|e|e.to_string());
+                temporary_finished.store(true, std::sync::atomic::Ordering::Release);
                 let temporary=cleanup_observer("temporary sessions",temporary).await;
                 if let Err(error) = &temporary { cleanup_diagnostic(error); }
                 let project = cleanup_project.dispose().await.map_err(|e| e.to_string());
@@ -1944,7 +1947,13 @@ async fn start_assembly(
                 })
                 .await;
             }
-            let _ = tokio::time::timeout(budget,fallback_ephemeral.close()).await;
+            if !fallback_temporary_finished.load(std::sync::atomic::Ordering::Acquire) {
+                let _ = tokio::time::timeout(budget, async {
+                    let result = fallback_ephemeral.close().await.map_err(|e| e.to_string());
+                    fallback_temporary_finished.store(true, std::sync::atomic::Ordering::Release);
+                    fallback_observer("temporary sessions", result).await
+                }).await;
+            }
             if !fallback_project_finished.load(std::sync::atomic::Ordering::Acquire) {
                 let _ = tokio::time::timeout(budget, async {
                     let result = project.dispose().await.map_err(|e| e.to_string());
@@ -2157,7 +2166,7 @@ fn supports_native_module_binding(name: &JsString, value: &JsValue) -> bool {
     if name.equals_str("sop") {
         // parseModulesConfig has already checked endpoints, paths and contract.
         // The selected generation now installs the real StaffDeck controller.
-        return fields.get("enabled") == Some(&JsValue::Bool(true))
+        return fields.get("enabled").is_none_or(|enabled| enabled == &JsValue::Bool(true))
             && (fields
                 .get("provider")
                 .and_then(JsValue::as_string)

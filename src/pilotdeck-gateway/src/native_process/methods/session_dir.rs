@@ -388,16 +388,43 @@ impl Requests {
     async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let project_root = resolve_project(self, params).await?;
         let key = require_session_key(params)?;
-        // Close the live session first so the writer drains before we delete.
-        self.owner
-            .close(&key)
-            .await
-            .map_err(|e| RequestError::new(e.to_string()))?;
-        if let Some(ephemeral)=&self.ephemeral
-            && ephemeral.delete(key.clone()).await.map_err(|e|RequestError::new(e.to_string()))? {
-            if let Some(clear)=&self.clear_sdk_state{clear(key.clone()).await?;}
-            self.mcp.config().clear_sdk_session_state(&JsValue::String(key.clone()));
-            self.session_overrides.clear_sdk_state(&key);
+        // SDK temp lookup, actual removal and SDK-state clearing are covered
+        // by the owner's same-key publication ticket, not merely the map gate.
+        let deleted = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if let Some(ephemeral) = self.ephemeral.clone() {
+            let deleted_result = deleted.clone();
+            let key = key.clone();
+            let clear = self.clear_sdk_state.clone();
+            let mcp = self.mcp.clone();
+            let overrides = self.session_overrides.clone();
+            self.owner
+                .close_then(&key.clone(), move || {
+                    Box::pin(async move {
+                        if ephemeral.delete(key.clone()).await? {
+                            if let Some(clear) = clear {
+                                clear(key.clone()).await.map_err(|error| {
+                                    crate::runtime::project::RuntimeError::new(
+                                        String::from_utf16_lossy(error.message.units()),
+                                    )
+                                })?;
+                            }
+                            mcp.config()
+                                .clear_sdk_session_state(&JsValue::String(key.clone()));
+                            overrides.clear_sdk_state(&key);
+                            deleted_result.store(true, std::sync::atomic::Ordering::Release);
+                        }
+                        Ok(())
+                    })
+                })
+                .await
+                .map_err(|error| RequestError::new(error.to_string()))?;
+        } else {
+            self.owner
+                .close(&key)
+                .await
+                .map_err(|error| RequestError::new(error.to_string()))?;
+        }
+        if deleted.load(std::sync::atomic::Ordering::Acquire) {
             return Ok(JsValue::Undefined);
         }
         let home = self.options.home.clone();
@@ -1581,13 +1608,42 @@ mod tests {
 #[path = "session_dir_bounded_tests.rs"]
 mod bounded_session_io_tests;
 
-#[cfg(test)]mod sdk_ephemeral_delete_tests {
+#[cfg(test)]
+mod sdk_ephemeral_delete_tests {
     use super::*;
     #[tokio::test]
-    async fn sdk_delete_removes_only_temporary_root_and_preserves_same_named_durable_transcript(){
-        let(_scratch,mut requests)=crate::native_process::management_tests::setup();let key:pilotdeck_protocol::JsString="same-key".into();
-        let(chat,_permit)=resolve_chat_dir(requests.options.home.clone(),requests.options.project.clone()).await.unwrap();std::fs::create_dir_all(&chat).unwrap();let durable=chat.join("same-key.jsonl");std::fs::write(&durable,"DURABLE-SENTINEL\n").unwrap();
-        let ephemeral=Arc::new(crate::native_process::sdk_ephemeral::EphemeralSessions::default());let root=ephemeral.acquire(key.clone()).await.unwrap();std::fs::write(root.path().join("same-key.jsonl"),"TEMPORARY\n").unwrap();requests.ephemeral=Some(ephemeral.clone());
-        requests.session_delete(&crate::metadata::object([("sessionKey",JsValue::String(key))])).await.unwrap();assert!(!root.path().exists());assert_eq!(std::fs::read(&durable).unwrap(),b"DURABLE-SENTINEL\n");ephemeral.close().await.unwrap();requests.owner.shutdown().await.unwrap();requests.project.dispose().await.unwrap();
+    async fn sdk_delete_removes_only_temporary_root_and_preserves_same_named_durable_transcript() {
+        let (_scratch, mut requests) = crate::native_process::management_tests::setup();
+        let key: pilotdeck_protocol::JsString = "same-key".into();
+        let (chat, _permit) = resolve_chat_dir(
+            requests.options.home.clone(),
+            requests.options.project.clone(),
+        )
+        .await
+        .unwrap();
+        std::fs::create_dir_all(&chat).unwrap();
+        let durable = chat.join("same-key.jsonl");
+        std::fs::write(&durable, "DURABLE-SENTINEL\n").unwrap();
+        let ephemeral =
+            Arc::new(crate::native_process::sdk_ephemeral::EphemeralSessions::default());
+        let root = ephemeral.acquire(key.clone()).await.unwrap();
+        std::fs::write(root.path().join("same-key.jsonl"), "TEMPORARY\n").unwrap();
+        requests.ephemeral = Some(ephemeral.clone());
+        requests
+            .session_delete(&crate::metadata::object([(
+                "sessionKey",
+                JsValue::String(key),
+            )]))
+            .await
+            .unwrap();
+        assert!(!root.path().exists());
+        assert_eq!(std::fs::read(&durable).unwrap(), b"DURABLE-SENTINEL\n");
+        ephemeral.close().await.unwrap();
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "session_dir_sdk_delete_tests.rs"]
+mod sdk_delete_concurrency_tests;

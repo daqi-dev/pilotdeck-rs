@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::watch;
+type CloseAfter = Box<dyn FnOnce() -> BoxFuture<RuntimeResult> + Send>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionContext {
@@ -324,11 +325,18 @@ impl SessionOwner {
 
     /// A host resource can await the real shutdown without retaining an
     /// owner -> factory -> host resource ownership cycle.
-    pub(crate) fn weak_shutdown(&self) -> impl Fn() -> BoxFuture<RuntimeResult> + Send + Sync + 'static {
+    pub(crate) fn weak_shutdown(
+        &self,
+    ) -> impl Fn() -> BoxFuture<RuntimeResult> + Send + Sync + 'static {
         let owner = Arc::downgrade(&self.0);
         move || {
-            let owner=owner.upgrade();
-            Box::pin(async move {match owner {Some(owner)=>SessionOwner(owner).shutdown().await,None=>Ok(())}})
+            let owner = owner.upgrade();
+            Box::pin(async move {
+                match owner {
+                    Some(owner) => SessionOwner(owner).shutdown().await,
+                    None => Ok(()),
+                }
+            })
         }
     }
 
@@ -1059,6 +1067,19 @@ impl SessionOwner {
     }
 
     pub fn close(&self, key: &JsString) -> BoxFuture<RuntimeResult> {
+        self.close_after(key, None)
+    }
+    /// Native storage cleanup is part of the same owned close operation. The
+    /// same-key publication ticket remains held through this callback, including
+    /// an absent cached record and cancellation of the public waiter.
+    pub(crate) fn close_then(
+        &self,
+        key: &JsString,
+        after: impl FnOnce() -> BoxFuture<RuntimeResult> + Send + 'static,
+    ) -> BoxFuture<RuntimeResult> {
+        self.close_after(key, Some(Box::new(after)))
+    }
+    fn close_after(&self, key: &JsString, after: Option<CloseAfter>) -> BoxFuture<RuntimeResult> {
         let mut state = self.0.state.lock().unwrap();
         // TS SessionRouter.close's else branch (SessionRouter.ts:327-338): a
         // key without a cached record — evicted by an in-flight close, idle
@@ -1067,11 +1088,17 @@ impl SessionOwner {
         // own result; no entry means `await undefined`: fulfilled. The
         // whole-shutdown aggregate stays shutdown()'s own answer
         // (A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001, #1245).
-        if let Some(closing) = unsettled_closing(&mut state, key) {
+        if after.is_none()
+            && let Some(closing) = unsettled_closing(&mut state, key)
+        {
             return Box::pin(wait_result(closing));
         }
         if state.shutdown.is_some() {
-            return Box::pin(async { Ok(()) });
+            return if after.is_some() {
+                Box::pin(async { Err(RuntimeError::new("Session router is shut down.")) })
+            } else {
+                Box::pin(async { Ok(()) })
+            };
         }
         let ticket = ticket(&mut state, key);
         let (done, completion) = watch::channel(None);
@@ -1125,6 +1152,13 @@ impl SessionOwner {
                     combine_pending_error(result, pending)
                 } else {
                     Ok(())
+                };
+                let outcome = match outcome {
+                    Ok(()) => match after {
+                        Some(after) => after().await,
+                        None => Ok(()),
+                    },
+                    Err(error) => Err(error),
                 };
                 closing.settle(outcome)
             },

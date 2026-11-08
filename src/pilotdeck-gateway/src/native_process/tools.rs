@@ -343,9 +343,7 @@ impl SessionTools {
         // the previous mode and the plan-round-trip stack below untouched.
         let (mut turn_context, permission_mode) = {
             let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {
-                self.config.get("nativeSdkPermissionMode").and_then(JsValue::as_string).filter(|mode|mode.equals_str("dontAsk")).map(|_|"default".into())
-            }).or_else(|| {
+            if let Some(mode) = permission::configured_permission_mode(&self.config).or_else(|| {
                 self.permission_mode_source
                     .as_ref()
                     .and_then(|source| source())
