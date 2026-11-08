@@ -536,7 +536,7 @@ impl ProxyConfig {
         Self::from_settings_lookup(settings, |key| std::env::var(key).ok())
     }
 
-    fn from_settings_lookup(
+    pub(crate) fn from_settings_lookup(
         settings: Option<&ProxySettings>,
         lookup: impl Fn(&str) -> Option<String>,
     ) -> Option<Self> {

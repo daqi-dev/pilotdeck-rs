@@ -90,12 +90,13 @@ pub(crate) fn response<F: Files>(
         .flatten()
         .map(String::into_bytes)
 }
-pub(crate) fn execute<F: Files>(
+/// Resolve the dialog project before selection validation, matching the
+/// Gateway session model bundle. The injected file port preserves caller
+/// policy for bounded marker reads.
+pub(crate) fn resolve_project<F: Files>(
     metadata: &Metadata<F>,
-    params: &JsValue,
-    env: &Env,
-) -> Result<JsValue, Error> {
-    let project = property(params, "projectKey")?;
+    project: &JsValue,
+) -> Result<String, Error> {
     let Some(project_string) = project.as_string() else {
         return Err(path_argument(project));
     };
@@ -132,6 +133,15 @@ pub(crate) fn execute<F: Files>(
             .map_err(crate::config::cwd_error)?
             .to_string_lossy()
             .into_owned();
+    Ok(project)
+}
+pub(crate) fn execute<F: Files>(
+    metadata: &Metadata<F>,
+    params: &JsValue,
+    env: &Env,
+) -> Result<JsValue, Error> {
+    let project = property(params, "projectKey")?;
+    let project = resolve_project(metadata, project)?;
     let session = field(params, "sessionKey");
     if matches!(session, JsValue::Undefined | JsValue::Null)
         || session.as_string().is_some_and(|s| {

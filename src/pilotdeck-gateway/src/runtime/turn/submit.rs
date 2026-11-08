@@ -273,6 +273,7 @@ pub struct TurnSubmission {
     receiver: mpsc::UnboundedReceiver<Message>,
     consumed: Option<oneshot::Sender<()>>,
     result: Option<oneshot::Receiver<Result<(), SubmitError>>>,
+    reliable_budget: Option<Duration>,
 }
 impl TurnSubmission {
     pub async fn next(&mut self) -> Result<Option<JsValue>, SubmitError> {
@@ -283,7 +284,14 @@ impl TurnSubmission {
                     let _ = consumed.send(());
                 }
                 if let Some(result) = self.result.take() {
-                    result.await.map_err(|_| {
+                    let settled = if let Some(budget) = self.reliable_budget {
+                        tokio::time::timeout(budget, result).await.map_err(|_| {
+                            SubmitError::new("result_unknown", "Turn completion could not be confirmed within the native abort budget.")
+                        })?
+                    } else {
+                        result.await
+                    };
+                    settled.map_err(|_| {
                         SubmitError::new("gateway_submit_failed", "Submit task stopped.")
                     })??;
                 }
@@ -297,18 +305,40 @@ impl TurnSubmitter {
         self.submit_observed(input, |_| {})
     }
 
+    /// Native consumers that must classify terminal failure reliably opt in.
+    /// This does not change the legacy live queue's close behavior.
+    pub fn submit_reliable(self: &Arc<Self>, input: JsValue) -> TurnSubmission {
+        self.submit_with_budget(
+            input,
+            |_| {},
+            Some(Duration::from_millis(
+                self.host.abort_turn_timeout_ms().max(1),
+            )),
+        )
+    }
+
     /// Observe only a real completion begin, never a rejected/preflight run.
     pub(super) fn submit_observed(
         self: &Arc<Self>,
         input: JsValue,
         admitted: impl FnOnce(&RunRef) + Send + 'static,
     ) -> TurnSubmission {
+        self.submit_with_budget(input, admitted, None)
+    }
+    fn submit_with_budget(
+        self: &Arc<Self>,
+        input: JsValue,
+        admitted: impl FnOnce(&RunRef) + Send + 'static,
+        reliable_budget: Option<Duration>,
+    ) -> TurnSubmission {
         let (send, receiver) = mpsc::unbounded_channel();
         let (consumed, barrier) = oneshot::channel();
         let (result, completion) = oneshot::channel();
         let submitter = self.clone();
         tokio::spawn(async move {
-            let outcome = submitter.run(input, &send, barrier, admitted).await;
+            let outcome = submitter
+                .run(input, &send, barrier, admitted, reliable_budget)
+                .await;
             let _ = send.send(Message::End);
             let _ = result.send(outcome);
         });
@@ -316,6 +346,7 @@ impl TurnSubmitter {
             receiver,
             consumed: Some(consumed),
             result: Some(completion),
+            reliable_budget,
         }
     }
 
@@ -325,6 +356,7 @@ impl TurnSubmitter {
         send: &mpsc::UnboundedSender<Message>,
         barrier: oneshot::Receiver<()>,
         admitted: impl FnOnce(&RunRef) + Send,
+        reliable_budget: Option<Duration>,
     ) -> Result<(), SubmitError> {
         // Gateway normalization precedes validation and durable acceptance.
         let early = self.host.normalize(&mut input).await?;
@@ -567,11 +599,16 @@ impl TurnSubmitter {
             .await;
             return Ok(());
         }
-        let publisher = Arc::new(TurnPublisher::start(
-            run.clone(),
-            self.registry.clone(),
-            self.coordinator.clone(),
-        ));
+        let publisher = Arc::new(if let Some(budget) = reliable_budget {
+            TurnPublisher::start_reliable(
+                run.clone(),
+                self.registry.clone(),
+                self.coordinator.clone(),
+                budget,
+            )
+        } else {
+            TurnPublisher::start(run.clone(), self.registry.clone(), self.coordinator.clone())
+        });
         let progress = Arc::new(Mutex::new(SnapshotProgress::default()));
         let timed_out = Arc::new(AtomicBool::new(false));
         let terminal = Arc::new(TerminalClaim::default());

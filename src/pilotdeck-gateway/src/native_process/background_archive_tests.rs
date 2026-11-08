@@ -471,3 +471,96 @@ fn archive_descendant_symlinks_still_refuse_without_writing_their_targets() {
         );
     }
 }
+
+#[tokio::test]
+async fn stale_unknown_view_cannot_take_over_dead_owners_final_record_and_fresh_handle_can_restore_it()
+ {
+    let root = fixture();
+    std::fs::write(root.0.join("gate.sh"),"printf STARTED > started\nwhile [ ! -f release ]; do sleep 0.01; done\nprintf OWNER_FINAL_OUTPUT\n").unwrap();
+    let archive = NativeArchive::open(&root.0).unwrap();
+    let a_store = archive.handle();
+    let a = runtime(&root.0, a_store.clone(), NativeTaskLimits::CLI);
+    let task = a.start(spec(&root.0, "sh gate.sh")).await.unwrap();
+    let id = task.task_id.to_utf8().unwrap();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    while !root.0.join("started").exists() && tokio::time::Instant::now() < deadline {
+        tokio::task::yield_now().await;
+    }
+    let started = root.0.join("started").exists();
+    let b_store = archive.handle();
+    let b = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime(&root.0, b_store.clone(), NativeTaskLimits::CLI)
+    }));
+    let b = match b {
+        Ok(b) => b,
+        Err(error) => {
+            let _ = a.dispose().await;
+            std::panic::resume_unwind(error)
+        }
+    };
+    let unknown = b.get(&task.task_id, None).map(|task| task.status);
+    let wait_unknown = b
+        .wait(&task.task_id, &JsValue::Number(1.0), None, None)
+        .await;
+    let stop_unknown = b
+        .stop(&task.task_id, &JsValue::Undefined, None)
+        .await
+        .err()
+        .map(|error| error.name);
+    let release = std::fs::write(root.0.join("release"), b"go");
+    let finished = wait(&a, &task.task_id).await;
+    let a_disposed = a.dispose().await;
+    drop(a);
+    drop(a_store);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        let alive = lock(&archive.state)
+            .records
+            .iter()
+            .find(|record| record.snapshot.task.task_id == id)
+            .and_then(|record| record.owner.as_ref())
+            .and_then(|owner| owner.token.upgrade())
+            .is_some();
+        if !alive || tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let owner_dead = lock(&archive.state)
+        .records
+        .iter()
+        .find(|record| record.snapshot.task.task_id == id)
+        .and_then(|record| record.owner.as_ref())
+        .and_then(|owner| owner.token.upgrade())
+        .is_none();
+    let b_disposed = b.dispose().await;
+    let record = lock(&archive.state)
+        .records
+        .iter()
+        .find(|record| record.snapshot.task.task_id == id)
+        .unwrap()
+        .snapshot
+        .clone();
+    let c_store = archive.handle();
+    let c = runtime(&root.0, c_store.clone(), NativeTaskLimits::CLI);
+    let fresh = c.get(&task.task_id, None).map(|task| task.status);
+    let c_disposed = c.dispose().await;
+    // All actual children and owners are settled before the assertions.
+    assert!(started);
+    assert!(release.is_ok());
+    assert_eq!(finished.unwrap(), TaskStatus::Completed);
+    assert!(a_disposed.is_ok());
+    assert!(b_disposed.is_ok());
+    assert!(c_disposed.is_ok());
+    assert_eq!(unknown, Some(TaskStatus::Unknown));
+    let observed_unknown = wait_unknown.unwrap().unwrap();
+    assert_eq!(observed_unknown.outcome, "unknown");
+    assert!(!observed_unknown.timed_out);
+    assert_eq!(observed_unknown.task.status, TaskStatus::Unknown);
+    assert_eq!(stop_unknown, Some("BackgroundTaskStateUnknownError"));
+    assert!(owner_dead);
+    assert!(lock(&b_store.readonly).contains(&id));
+    assert_eq!(record.task.status, "completed");
+    assert!(record.output.total_bytes > 0);
+    assert_eq!(fresh, Some(TaskStatus::Completed));
+}

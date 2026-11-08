@@ -111,122 +111,124 @@ impl ToolRuntime {
         self
     }
 
-    pub async fn execute_batch(
+    pub fn execute_batch(
         &self,
         calls: Vec<ToolCall>,
         context: ToolRunContext,
-    ) -> Result<Vec<JsObject>, HostError> {
-        let mut concurrent = Vec::new();
-        let mut sequential = Vec::new();
-        let mut transitions = Vec::new();
-        // Predicates are evaluated for the entire batch before any call starts.
-        // Single-call batches bypass the predicate, exactly like TS.
-        for (index, call) in calls.iter().enumerate() {
-            // Deliberate deviation (fixtures/tool-runtime/README.md): TS runs
-            // every concurrencySafe tool in the concurrent phase; here only
-            // those that are also read-only do, so a sibling error, which
-            // drops the concurrent batch, never cuts a write short. Other safe
-            // Ledger: specs/gateway-parity/accepted-diffs.md
-            // A6.5-TOOLS-SCHEDULE-001 (unapproved). Other safe
-            // tools (e.g. agent) run in the sequential phase. isReadOnly is
-            // asked only of concurrencySafe tools; a throw counts as false.
-            let tool = self.registry.get(&call.name);
-            let mode_tool = self.mode_owner.is_some()
-                && tool
-                    .as_ref()
-                    .is_some_and(|tool| tool.is_trusted_mode_transition());
-            if mode_tool {
-                transitions.push(index);
-                continue;
-            }
-            let safe = self.mode == SchedulerMode::Concurrent
-                && calls.len() > 1
-                && tool
-                    .as_ref()
-                    .map(|t| t.is_concurrency_safe(&call.input))
-                    .transpose()?
-                    .is_some_and(|v| truthy(&v))
-                && tool
-                    .and_then(|t| t.is_read_only(&call.input).ok())
-                    .is_some_and(|v| truthy(&v));
-            if safe {
-                concurrent.push(index);
-            } else {
-                sequential.push(index);
-            }
-        }
-        let mut slots = vec![None; calls.len()];
-        // Apply trusted mode transitions before admitting any sibling write.
-        for index in transitions {
-            let result = self
-                .execute(calls[index].clone(), self.fresh_mode(context.clone()))
-                .await?;
-            if let Some(owner) = &self.mode_owner {
-                owner.apply_mode_effect(&result);
-            }
-            slots[index] = Some(result);
-        }
-        // Owned futures, not JoinHandles: early error, host abort, timeout and
-        // Drop synchronously destroy every unfinished sibling future.
-        let mut pending: Vec<_> = concurrent
-            .into_iter()
-            .map(|index| {
-                (
-                    index,
-                    Some(Box::pin(self.execute(
-                        calls[index].clone(),
-                        self.fresh_mode(context.clone()),
-                    ))),
-                )
-            })
-            .collect();
-        // TS Promise.all rejects on the first error and lets the started
-        // siblings finish detached. Ledger: specs/gateway-parity/accepted-diffs.md
-        // A6.5-TOOLS-CANCEL-001 (unapproved). Deliberate deviation: the rejection is
-        // reported at the same moment, but the batch owns the siblings and
-        // drops them. Only read-only concurrency-safe tools run here (see the
-        // classification above), so no write is cut short, and a
-        // non-cooperative sibling cannot hold the error back. The pass that
-        // sees the error still polls every sibling once, as Promise.all's
-        // synchronous map runs each up to its first await.
-        poll_fn(|cx| {
-            let mut unfinished = false;
-            let mut first_error = None;
-            for (index, slot) in &mut pending {
-                let Some(future) = slot else {
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<JsObject>, HostError>> + Send + '_>> {
+        Box::pin(async move {
+            let mut concurrent = Vec::new();
+            let mut sequential = Vec::new();
+            let mut transitions = Vec::new();
+            // Predicates are evaluated for the entire batch before any call starts.
+            // Single-call batches bypass the predicate, exactly like TS.
+            for (index, call) in calls.iter().enumerate() {
+                // Deliberate deviation (fixtures/tool-runtime/README.md): TS runs
+                // every concurrencySafe tool in the concurrent phase; here only
+                // those that are also read-only do, so a sibling error, which
+                // drops the concurrent batch, never cuts a write short. Other safe
+                // Ledger: specs/gateway-parity/accepted-diffs.md
+                // A6.5-TOOLS-SCHEDULE-001 (unapproved). Other safe
+                // tools (e.g. agent) run in the sequential phase. isReadOnly is
+                // asked only of concurrencySafe tools; a throw counts as false.
+                let tool = self.registry.get(&call.name);
+                let mode_tool = self.mode_owner.is_some()
+                    && tool
+                        .as_ref()
+                        .is_some_and(|tool| tool.is_trusted_mode_transition());
+                if mode_tool {
+                    transitions.push(index);
                     continue;
-                };
-                match future.as_mut().poll(cx) {
-                    Poll::Ready(Ok(result)) => {
-                        slots[*index] = Some(result);
-                        *slot = None;
-                    }
-                    Poll::Ready(Err(error)) => {
-                        *slot = None;
-                        first_error.get_or_insert(error);
-                    }
-                    Poll::Pending => unfinished = true,
+                }
+                let safe = self.mode == SchedulerMode::Concurrent
+                    && calls.len() > 1
+                    && tool
+                        .as_ref()
+                        .map(|t| t.is_concurrency_safe(&call.input))
+                        .transpose()?
+                        .is_some_and(|v| truthy(&v))
+                    && tool
+                        .and_then(|t| t.is_read_only(&call.input).ok())
+                        .is_some_and(|v| truthy(&v));
+                if safe {
+                    concurrent.push(index);
+                } else {
+                    sequential.push(index);
                 }
             }
-            if let Some(error) = first_error {
-                Poll::Ready(Err(error))
-            } else if unfinished {
-                Poll::Pending
-            } else {
-                Poll::Ready(Ok(()))
+            let mut slots = vec![None; calls.len()];
+            // Apply trusted mode transitions before admitting any sibling write.
+            for index in transitions {
+                let result = self
+                    .execute(calls[index].clone(), self.fresh_mode(context.clone()))
+                    .await?;
+                if let Some(owner) = &self.mode_owner {
+                    owner.apply_mode_effect(&result);
+                }
+                slots[index] = Some(result);
             }
+            // Owned futures, not JoinHandles: early error, host abort, timeout and
+            // Drop synchronously destroy every unfinished sibling future.
+            let mut pending: Vec<_> = concurrent
+                .into_iter()
+                .map(|index| {
+                    (
+                        index,
+                        Some(Box::pin(self.execute(
+                            calls[index].clone(),
+                            self.fresh_mode(context.clone()),
+                        ))),
+                    )
+                })
+                .collect();
+            // TS Promise.all rejects on the first error and lets the started
+            // siblings finish detached. Ledger: specs/gateway-parity/accepted-diffs.md
+            // A6.5-TOOLS-CANCEL-001 (unapproved). Deliberate deviation: the rejection is
+            // reported at the same moment, but the batch owns the siblings and
+            // drops them. Only read-only concurrency-safe tools run here (see the
+            // classification above), so no write is cut short, and a
+            // non-cooperative sibling cannot hold the error back. The pass that
+            // sees the error still polls every sibling once, as Promise.all's
+            // synchronous map runs each up to its first await.
+            poll_fn(|cx| {
+                let mut unfinished = false;
+                let mut first_error = None;
+                for (index, slot) in &mut pending {
+                    let Some(future) = slot else {
+                        continue;
+                    };
+                    match future.as_mut().poll(cx) {
+                        Poll::Ready(Ok(result)) => {
+                            slots[*index] = Some(result);
+                            *slot = None;
+                        }
+                        Poll::Ready(Err(error)) => {
+                            *slot = None;
+                            first_error.get_or_insert(error);
+                        }
+                        Poll::Pending => unfinished = true,
+                    }
+                }
+                if let Some(error) = first_error {
+                    Poll::Ready(Err(error))
+                } else if unfinished {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Ok(()))
+                }
+            })
+            .await?;
+            for index in sequential {
+                slots[index] = Some(
+                    self.execute(calls[index].clone(), self.fresh_mode(context.clone()))
+                        .await?,
+                );
+            }
+            Ok(slots
+                .into_iter()
+                .map(|v| v.expect("every call has a result slot"))
+                .collect())
         })
-        .await?;
-        for index in sequential {
-            slots[index] = Some(
-                self.execute(calls[index].clone(), self.fresh_mode(context.clone()))
-                    .await?,
-            );
-        }
-        Ok(slots
-            .into_iter()
-            .map(|v| v.expect("every call has a result slot"))
-            .collect())
     }
     pub async fn execute(
         &self,
@@ -321,7 +323,7 @@ impl ToolRuntime {
             .zip(self.native_sandbox_provider.as_ref())
             .is_some_and(|(mode, provider)| {
                 mode.equals_str(provider.mode().as_str())
-                    && [
+                    && ([
                         "bash",
                         "write_file",
                         "edit_file",
@@ -331,6 +333,7 @@ impl ToolRuntime {
                     ]
                     .iter()
                     .any(|tool| name.equals_str(tool))
+                        || tool.enforces_native_sandbox(&context, provider))
             });
         #[cfg(not(unix))]
         let native_sandbox_enforced = false;
@@ -578,6 +581,33 @@ impl ToolRuntime {
                 .cloned()
                 .unwrap_or_else(|| call.input.clone());
             let mut execution = context.clone();
+            let runtime = self.clone();
+            let mut nested = context.clone();
+            nested.execute_tool = None;
+            nested.fields = nested
+                .fields
+                .entries()
+                .iter()
+                .filter(|(key, _)| {
+                    !key.equals_str("currentToolCallId")
+                        && !key.equals_str("currentPermissionDecision")
+                })
+                .fold(JsObject::new(), |mut fields, (key, value)| {
+                    fields.insert(key.clone(), value.clone());
+                    fields
+                });
+            execution.execute_tool = Some(Arc::new(move |call| {
+                let runtime = runtime.clone();
+                let context = nested.clone();
+                Box::pin(async move {
+                    runtime
+                        .execute_batch(vec![call], context)
+                        .await?
+                        .into_iter()
+                        .next()
+                        .ok_or_else(|| ModuleError::new("Nested tool result was missing.").into())
+                })
+            }));
             execution
                 .fields
                 .insert("currentToolCallId".into(), string(call.id.clone()));

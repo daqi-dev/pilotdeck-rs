@@ -236,6 +236,10 @@ struct State {
     failure_published: bool,
     finishing: bool,
     closed: bool,
+    reliable_budget: Option<Duration>,
+    closing_writes: HashSet<u64>,
+    close_expired: bool,
+    close_deadline: Option<tokio::time::Instant>,
 }
 struct Publication {
     state: Mutex<State>,
@@ -261,15 +265,16 @@ impl PublicationWrite {
         let publication = &self.publication;
         let write = self.write;
         let mut state = lock(&publication.state);
+        let visible = !state.closed || state.closing_writes.remove(&write);
         match result {
             Ok(()) => {
-                if !state.closed {
+                if visible {
                     state.queue.push_back(event);
                 }
             }
             Err(_) if !state.failure_published => {
                 state.failure_published = true;
-                if !state.closed {
+                if visible {
                     state
                         .queue
                         .push_back(persistence_failure(&publication.run.run_id, false));
@@ -388,8 +393,30 @@ impl TurnPublisher {
         registry: Option<Arc<dyn TurnRunRegistry>>,
         coordinator: Arc<TurnEventCoordinator>,
     ) -> Self {
+        Self::start_with_budget(run, registry, coordinator, None)
+    }
+    /// Native opt-in: events already submitted to durability at close remain
+    /// visible for at most the host's abort budget. Later pump events stay
+    /// durable-only, as in the default stream.
+    pub fn start_reliable(
+        run: RunRef,
+        registry: Option<Arc<dyn TurnRunRegistry>>,
+        coordinator: Arc<TurnEventCoordinator>,
+        budget: Duration,
+    ) -> Self {
+        Self::start_with_budget(run, registry, coordinator, Some(budget))
+    }
+    fn start_with_budget(
+        run: RunRef,
+        registry: Option<Arc<dyn TurnRunRegistry>>,
+        coordinator: Arc<TurnEventCoordinator>,
+        reliable_budget: Option<Duration>,
+    ) -> Self {
         let publication = Arc::new(Publication {
-            state: Mutex::new(State::default()),
+            state: Mutex::new(State {
+                reliable_budget,
+                ..State::default()
+            }),
             changed: Notify::new(),
             registry,
             run: run.clone(),
@@ -479,7 +506,16 @@ impl TurnPublisher {
     /// close cannot re-open live delivery. The owned pump drains separately.
     pub fn close_live(&self) {
         let _pump = lock(&self.pump);
-        lock(&self.publication.state).closed = true;
+        {
+            let mut state = lock(&self.publication.state);
+            if !state.closed && state.reliable_budget.is_some() {
+                state.closing_writes = state.pending.clone();
+                state.close_deadline = state
+                    .reliable_budget
+                    .map(|budget| tokio::time::Instant::now() + budget);
+            }
+            state.closed = true;
+        }
         self.publication.changed.notify_waiters();
     }
     pub async fn finish(&self) {
@@ -519,14 +555,42 @@ impl TurnPublisher {
                     return Some(event);
                 }
                 if state.closed {
-                    Some(state.pending.clone())
+                    let writes = if state.reliable_budget.is_some() {
+                        state.closing_writes.clone()
+                    } else {
+                        state.pending.clone()
+                    };
+                    Some((writes, state.close_deadline, state.close_expired))
                 } else {
                     None
                 }
             };
-            if let Some(writes) = trailing {
-                self.publication.wait_for(&writes).await;
+            if let Some((writes, deadline, expired)) = trailing {
+                if !expired {
+                    if let Some(deadline) = deadline {
+                        if tokio::time::timeout_at(deadline, self.publication.wait_for(&writes))
+                            .await
+                            .is_err()
+                        {
+                            let _pump = lock(&self.pump);
+                            let mut state = lock(&self.publication.state);
+                            state.close_expired = true;
+                            state.closing_writes.clear();
+                            state.queue.push_back(persistence_failure(
+                                &self.publication.run.run_id,
+                                false,
+                            ));
+                        }
+                    } else {
+                        self.publication.wait_for(&writes).await;
+                    }
+                }
                 let _pump = lock(&self.pump);
+                // Reliable writes may have populated the queue while next()
+                // awaited durability. Drain them before returning stream end.
+                if !lock(&self.publication.state).queue.is_empty() {
+                    continue;
+                }
                 self.coordinator.retain_terminal(
                     &self.publication.run.session_key,
                     &self.publication.run.run_id,

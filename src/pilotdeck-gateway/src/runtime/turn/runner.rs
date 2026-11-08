@@ -65,6 +65,7 @@ pub struct TurnRunner {
     turn: JsString,
     now: Arc<dyn Fn() -> JsString + Send + Sync>,
     phase: Phase,
+    subagent_descriptor: Option<JsObject>,
     messages: Vec<JsValue>,
     failure_status: bool,
     callback_error: Option<String>,
@@ -95,6 +96,7 @@ impl TurnRunner {
             turn,
             now: Arc::new(|| SystemExecutionClock.now_iso()),
             phase: Phase::New,
+            subagent_descriptor: None,
             messages: vec![],
             failure_status: false,
             callback_error: None,
@@ -107,6 +109,10 @@ impl TurnRunner {
             interaction_events: None,
             session_steer: None,
         }
+    }
+    pub(crate) fn with_subagent_descriptor(mut self, descriptor: Option<JsObject>) -> Self {
+        self.subagent_descriptor = descriptor;
+        self
     }
     pub(crate) fn with_interaction_events(
         mut self,
@@ -236,12 +242,19 @@ impl TurnRunner {
         self.messages = input.history;
         let listing_metadata = input.metadata.clone();
         let written = durable.clone();
+        let descriptor = self.subagent_descriptor.take();
         if let Err(error) = self
             .io(move |r, s, t| {
                 if crate::mutants::on("gates-skip-accept") {
                     let _ = (r, s, t, written, input.metadata);
                     Ok(())
                 } else {
+                    if let Some(descriptor) = descriptor {
+                        let mut draft = JsObject::new();
+                        draft.insert("type".into(), "subagent_descriptor".into());
+                        draft.insert("descriptor".into(), JsValue::Object(descriptor));
+                        r.writer().record_session_event_checked(s, t, draft)?;
+                    }
                     Ok(r.writer()
                         .record_accepted_input(s, t, written, input.metadata)?)
                 }

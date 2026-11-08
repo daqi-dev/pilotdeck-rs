@@ -107,6 +107,7 @@ fn options() -> InteractionTurnInput {
             timeout: Duration::from_millis(10),
         },
         hooks: vec![],
+        hook_options: None,
         contribution: None,
         base_env: None,
         signal: Cancellation::new(),

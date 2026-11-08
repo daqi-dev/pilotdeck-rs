@@ -55,7 +55,7 @@ fn actual_ts_read_render_and_available_skills_golden() {
                 "{id}"
             );
         } else {
-            let catalog = NativeSkills(skills(field(case, "skills")).into());
+            let catalog = NativeSkills(skills(field(case, "skills")).into(), true);
             let assembler = PromptAssembler::with_environment(
                 Arc::new(catalog),
                 "en-US".parse().unwrap(),
@@ -117,6 +117,7 @@ fn exact_skill_name_wins_before_suffix_and_both_follow_one_catalog() {
             },
         ]
         .into(),
+        true,
     );
     let result = catalog.read(&"demo".into());
     assert_eq!(

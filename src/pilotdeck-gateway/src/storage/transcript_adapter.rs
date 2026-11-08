@@ -1230,6 +1230,19 @@ impl TranscriptWriter {
             transcript_path: path,
         }
     }
+    /// Preserve the application-selected backend and namespace when the native
+    /// session factory adopts an independently fenced child sidechain writer.
+    pub(crate) fn sidechain_storage(
+        &self,
+        subagent_id: &JsString,
+    ) -> (Arc<dyn TranscriptStore>, TranscriptKey, String) {
+        let path = self.sidechain_path(subagent_id);
+        (
+            self.base.store.clone(),
+            self.base.key(&path),
+            self.relative_subagent_path(subagent_id),
+        )
+    }
     pub fn relative_subagent_path(&self, subagent_id: &JsString) -> String {
         relative(
             self.path.parent().unwrap_or(Path::new("/")),

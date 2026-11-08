@@ -75,6 +75,11 @@ impl RuntimeRecord {
         let file = open(&installation.root, true)?;
         rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
             .map_err(|_| failure("Another native service owns this installation."))?;
+        // Owning the locator does not make the preceding instance's address
+        // live again. Publish only after the replacement listener is ready.
+        file.set_len(0)
+            .and_then(|()| file.sync_all())
+            .map_err(failure)?;
         Ok(Self {
             file: Mutex::new(file),
             install_id: installation.policy.install_id.clone(),
@@ -121,6 +126,11 @@ pub fn discover(installation: &Installation) -> Result<RuntimeAddress, Error> {
         .map_err(failure)?;
     if bytes.len() > 4096 {
         return Err(failure("Native runtime locator is too large."));
+    }
+    if bytes.is_empty() {
+        return Err(failure(
+            "The native service is starting; no listener is published yet.",
+        ));
     }
     let value: RuntimeAddress = serde_json::from_slice(&bytes).map_err(failure)?;
     if value.install_id != installation.policy.install_id
@@ -175,6 +185,8 @@ mod tests {
         drop(record);
         assert!(discover(&install).is_err());
         let replacement = RuntimeRecord::lock(&install).unwrap();
+        assert!(std::fs::read(root.join("runtime.json")).unwrap().is_empty());
+        assert!(discover(&install).unwrap_err().message.contains("starting"));
         replacement
             .publish("127.0.0.1:32124".parse().unwrap())
             .unwrap();

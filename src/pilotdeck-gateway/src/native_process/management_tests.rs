@@ -2447,3 +2447,51 @@ async fn pending_memory_io_does_not_block_serial_host() {
         "#1322 pending memory IO must not block host"
     );
 }
+
+#[tokio::test]
+async fn production_style_reload_null_rejects_and_empty_project_reloads() {
+    let (_scratch, requests) = setup();
+    let options = requests.options.clone();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("dispose fixture registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("shutdown fixture owner");
+    let host = assembly::start(options.clone(), requests.env.clone())
+        .await
+        .expect("native host");
+    let text = Arc::new(Text::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection.receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string()).await.unwrap();
+    for (id, params) in [
+        ("null", json!(null)),
+        ("empty", json!({"projectKey":""})),
+        ("other", json!({"projectKey":"/not-the-served-project"})),
+    ] {
+        connection
+            .receive(
+                json!({"type":"request","id":id,"method":"reload_output_styles","params":params})
+                    .to_string(),
+            )
+            .await
+            .unwrap();
+    }
+    let frames = text.0.lock().unwrap().clone();
+    host.shutdown(options.drain_budget)
+        .await
+        .expect("native host shutdown");
+    let get = |id| frames.iter().find(|frame| frame["id"] == id).unwrap();
+    assert_eq!(get("null")["ok"], false, "{:?}", get("null"));
+    assert_eq!(
+        get("null")["error"]["message"],
+        "Cannot read properties of null (reading 'projectKey')"
+    );
+    assert_eq!(get("empty")["ok"], true, "{:?}", get("empty"));
+    assert_eq!(get("empty")["result"]["reloaded"], true);
+    assert_eq!(get("other")["ok"], false, "{:?}", get("other"));
+}

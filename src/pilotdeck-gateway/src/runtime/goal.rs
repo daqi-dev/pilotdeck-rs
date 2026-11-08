@@ -79,6 +79,10 @@ impl GoalSession {
                         "Goal snapshot revision must match the event revision.",
                     ));
                 }
+                // The writer validates the complete domain before append and
+                // on restore. Projection still selects the TS snapshot fields:
+                // preserve unknown bytes in the log, never expose them as state.
+                let goal = normalize_snapshot(goal);
                 Ok(GoalState {
                     goal,
                     revision: revision.unwrap(),
@@ -117,6 +121,30 @@ impl GoalSession {
             .map_err(|e| ToolError::failed(e.to_string()))?
         })
     }
+}
+
+fn normalize_snapshot(value: JsValue) -> JsValue {
+    let Some(source) = value.as_object() else {
+        return value;
+    };
+    let mut goal = JsObject::new();
+    for key in ["id", "revision", "objective", "phase"] {
+        if let Some(value) = source.get(key) {
+            goal.insert(key.into(), value.clone());
+        }
+    }
+    if let Some(value) = source.get("blockedReason")
+        && value.as_string().is_some_and(|s| !trim(s).is_empty())
+    {
+        goal.insert("blockedReason".into(), value.clone());
+    }
+    if let Some(value) = source
+        .get("maxGoalRounds")
+        .filter(|value| !value.is_undefined())
+    {
+        goal.insert("maxGoalRounds".into(), value.clone());
+    }
+    JsValue::Object(goal)
 }
 fn trim(value: &JsString) -> JsString {
     crate::model_catalog::trim(value)

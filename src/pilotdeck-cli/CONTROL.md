@@ -77,4 +77,4 @@ SIGINT/SIGTERM停止观察；正常最后stopped/exit0，阻塞输出无法交�
 
 `pilotdeck-control --url <ws-url> --token-file <file> connect` 接收逐行 JSON-RPC 2.0，请求需带 id；stdout 只有响应和通知。`initialize` 的 `protocolVersion` 为 `pilotdeck-connect/1`，返回实际 `describe_server` 与连接边界。`gateway.call` 的参数为 `{"method":"...","params":{...}}`；`run.submit`、`run.cancel`、`permission.respond` 分别接真实 `submit_turn`、`abort_turn`、`permission_decide`。其他交互与上传方法通过同连接 `gateway.call` 调用，避免权限应答丢失连接归属。
 
-流使用 `run.event` 通知（requestId、seq、final、event），最后再给对应请求响应；调用方必须检查 terminal.finishReason，取消不等同正常完成。至多64个未结请求、每行1MiB；无自动变更重放。EOF/中断关闭连接，沿用Gateway关闭可能取消活动turn的合同。断线后可显式新连接查询 `run_get`、`run_events`、历史与活动快照；本入口不提供 `/app/v1` 的默认detach或全局原子订阅语义。
+流使用 `run.event` 通知（requestId、seq、final、event），最后再给对应请求响应；仅 finishReason=completed 且全程无 error 返回 result，取消或其它未完成状态返回 -32003，并在 error.data 保留终态。至多64个未结请求、每行1MiB；无自动变更重放。EOF/中断关闭连接，沿用Gateway关闭可能取消活动turn的合同。断线后可显式新连接查询 `run_get`、`run_events`、历史与活动快照；本入口不提供 `/app/v1` 的默认detach或全局原子订阅语义。

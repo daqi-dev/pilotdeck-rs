@@ -363,3 +363,161 @@ fn scoped_migration_rejects_destination_belonging_to_excluded_project_before_sta
     assert!(calls.try_recv().is_err());
     manager.stop().unwrap();
 }
+
+// Every failure path releases the artificial finally gate; tests never leave
+// an indefinitely blocked worker or replace a real storage failure by a mock.
+struct ReleaseFinally(Arc<(Mutex<bool>, Condvar)>);
+impl Drop for ReleaseFinally {
+    fn drop(&mut self) {
+        *self.0.0.lock().unwrap() = true;
+        self.0.1.notify_all();
+    }
+}
+struct Finalizing {
+    manager: Arc<CronManager>,
+    paths: super::CronPaths,
+    gate: Arc<(Mutex<bool>, Condvar)>,
+}
+fn finalizing_manager(home: &Path) -> Finalizing {
+    let paths = seed(home, "/served", true);
+    let (manager, _calls) = manager(home, Arc::new(|| NOW));
+    let entered = Arc::new(AtomicBool::new(false));
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let observe_entered = entered.clone();
+    let observe_gate = gate.clone();
+    manager
+        .set_execution_callbacks(super::CronExecutionCallbacks {
+            on_phase_event: Some(Arc::new(move |event| {
+                if event
+                    .get("phase")
+                    .and_then(pilotdeck_protocol::JsValue::as_string)
+                    .is_some_and(|value| value.equals_str("cron_completed"))
+                {
+                    observe_entered.store(true, Ordering::SeqCst);
+                    let guard = observe_gate.0.lock().unwrap();
+                    let _guard = observe_gate
+                        .1
+                        .wait_timeout_while(guard, Duration::from_secs(3), |released| !*released)
+                        .unwrap();
+                }
+                Ok(())
+            })),
+            ..Default::default()
+        })
+        .unwrap();
+    manager.start().unwrap();
+    let end = Instant::now() + Duration::from_secs(4);
+    while !entered.load(Ordering::SeqCst) {
+        assert!(
+            Instant::now() < end,
+            "fire never reached its post-unregister finally"
+        );
+        thread::sleep(Duration::from_millis(2));
+    }
+    Finalizing {
+        manager,
+        paths,
+        gate,
+    }
+}
+#[test]
+fn native_stop_waits_for_finally_after_active_count_already_zero() {
+    let scratch = Scratch::new("cron-finally-drain");
+    let home = scratch.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let Finalizing {
+        manager,
+        paths,
+        gate,
+    } = finalizing_manager(&home);
+    let release = ReleaseFinally(gate);
+    assert_eq!(
+        manager
+            .loaded_runtime("/served")
+            .unwrap()
+            .active_run_count(),
+        0
+    );
+    let (send, receive) = mpsc::channel();
+    let stopping = Arc::new(AtomicBool::new(false));
+    let observed = stopping.clone();
+    let stopped = manager.clone();
+    let thread = thread::spawn(move || {
+        send.send(stopped.stop_and_drain(Duration::from_secs(2), || {
+            observed.store(true, Ordering::SeqCst)
+        }))
+        .unwrap();
+    });
+    let end = Instant::now() + Duration::from_secs(1);
+    while !stopping.load(Ordering::SeqCst) {
+        assert!(Instant::now() < end);
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        matches!(
+            receive.recv_timeout(Duration::from_millis(30)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ),
+        "a zero active count must not bypass finally writes"
+    );
+    drop(release);
+    receive
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap()
+        .unwrap();
+    thread.join().unwrap();
+    assert_eq!(manager.runtime_count(), 0);
+    let tasks: serde_json::Value =
+        serde_json::from_slice(&fs::read(&paths.tasks_file).unwrap()).unwrap();
+    assert_eq!(tasks["tasks"], serde_json::json!([]));
+    assert!(
+        fs::read_to_string(&paths.run_history_file)
+            .unwrap()
+            .contains("\"outcome\":\"completed\"")
+    );
+}
+#[test]
+fn native_stop_timeout_retains_world_and_repeated_handle_keeps_failure() {
+    let scratch = Scratch::new("cron-finally-timeout");
+    let home = scratch.path().join("home");
+    fs::create_dir(&home).unwrap();
+    let Finalizing {
+        manager,
+        paths,
+        gate,
+    } = finalizing_manager(&home);
+    let release = ReleaseFinally(gate);
+    let stops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let observed = stops.clone();
+    let handle = crate::switch::CronStopHandle::new_native(
+        manager.clone(),
+        Default::default(),
+        Duration::from_millis(20),
+        Arc::new(move || {
+            observed.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+    let start = Instant::now();
+    let failure = handle.stop_once().unwrap_err();
+    assert_eq!(failure.code(), Some("cron_shutdown_timeout"));
+    assert!(start.elapsed() < Duration::from_secs(1));
+    assert_eq!(
+        manager.runtime_count(),
+        1,
+        "uncertain fire world must remain retained"
+    );
+    assert_eq!(
+        handle.stop_once().unwrap_err().code(),
+        Some("cron_shutdown_timeout")
+    );
+    assert_eq!(stops.load(Ordering::SeqCst), 1);
+    drop(release);
+    // Test-only explicit recovery drains the released real worker. Production
+    // repeated handle calls do not silently retry or turn failure into success.
+    manager
+        .stop_and_drain(Duration::from_secs(2), || {})
+        .unwrap();
+    let tasks: serde_json::Value =
+        serde_json::from_slice(&fs::read(&paths.tasks_file).unwrap()).unwrap();
+    assert_eq!(tasks["tasks"], serde_json::json!([]));
+}

@@ -71,6 +71,7 @@ struct Run {
     options: PermissionTurnOptions,
     closed: AtomicBool,
     native_execution: AtomicBool,
+    prompt_session: std::sync::OnceLock<JsString>,
     mode_source: Mutex<Option<ModeSource>>,
     native_grants: Mutex<HashSet<[u8; 32]>>,
 }
@@ -141,6 +142,7 @@ impl InteractionPermission {
             options,
             closed: AtomicBool::new(false),
             native_execution: AtomicBool::new(false),
+            prompt_session: std::sync::OnceLock::new(),
             mode_source: Mutex::new(None),
             native_grants: Mutex::default(),
         });
@@ -212,6 +214,20 @@ pub struct TurnPermission {
     run: Arc<Run>,
 }
 impl TurnPermission {
+    /// Host-only routing: siblings keep separate run/grant identities while
+    /// permission questions are answered on their admitted parent connection.
+    pub(crate) fn bind_prompt_session(&self, session: JsString) -> Result<(), HostError> {
+        self.check(&lock(&self.state))?;
+        if self.run.native_execution.load(Ordering::SeqCst) || !lock(&self.run.requests).is_empty()
+        {
+            return Err(ModuleError::new("Permission prompt routing is already active.").into());
+        }
+        self.run
+            .prompt_session
+            .set(session)
+            .map_err(|_| ModuleError::new("Permission prompt routing is already bound.").into())
+    }
+
     pub(crate) fn bind_mode_source(
         &self,
         source: Arc<dyn Fn() -> Option<crate::config::permission::PermissionMode> + Send + Sync>,
@@ -414,7 +430,7 @@ impl TurnPermission {
                     .coordinator
                     .permission_bus()
                     .register(
-                        &turn.run.session,
+                        turn.run.prompt_session.get().unwrap_or(&turn.run.session),
                         PendingEntry {
                             request_id: request_id.clone(),
                             tool_call_id,

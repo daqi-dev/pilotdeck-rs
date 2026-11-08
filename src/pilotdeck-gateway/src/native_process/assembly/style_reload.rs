@@ -37,10 +37,17 @@ impl ReloadOutputStyles for NativeStyleReload {
                 .map_err(|_| {
                     SettingsError::plain("Error", "Output style reload is unavailable.")
                 })?;
+            if matches!(input, JsValue::Null) {
+                return Err(SettingsError::plain(
+                    "TypeError",
+                    "Cannot read properties of null (reading 'projectKey')",
+                ));
+            }
             if let Some(project) = input
                 .get("projectKey")
                 .and_then(JsValue::as_string)
                 .and_then(|s| s.to_utf8().ok())
+                && !project.is_empty()
                 && !this.options.serves_project(&project)
             {
                 return Err(SettingsError::gateway(

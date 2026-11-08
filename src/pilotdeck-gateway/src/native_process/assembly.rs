@@ -480,6 +480,9 @@ async fn start_assembly(
         )),
     });
     let prepare_sdk = sdk_port.clone();
+    let fork_registry = super::agent::NativeForkRegistry::new();
+    let prepare_forks = fork_registry.clone();
+    let storage_forks = fork_registry.clone();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
     let prepare_env = env.clone();
@@ -519,6 +522,7 @@ async fn start_assembly(
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, session_mcp_runtimes| {
             let project = prepare_project.clone();
+            let forks = prepare_forks.clone();
             let options = prepare_options.clone();
             let env = prepare_env.clone();
             let recorders = prepare_recorders.clone();
@@ -531,6 +535,7 @@ async fn start_assembly(
             let session_overrides = prepare_overrides.clone();
             let sdk = prepare_sdk.clone();
             Box::pin(async move {
+                let fork_scope = forks.scope(&context);
                 let lease = project.acquire(None)?;
                 let resources = lease
                     .runtime()
@@ -577,6 +582,10 @@ async fn start_assembly(
                     .as_any()
                     .downcast_ref::<crate::runtime::project::model::RouterResources>()
                     .ok_or_else(|| RuntimeError::new("Native router has the wrong type."))?;
+                let hook_proxy = snapshot
+                    .get("config")
+                    .and_then(|v| v.get("proxy"))
+                    .and_then(crate::runtime::model::http::ProxySettings::from_config);
                 let native_web = super::web::NativeWebTools::new(
                     router.router.clone(),
                     router.model_config.clone(),
@@ -635,6 +644,7 @@ async fn start_assembly(
                 {
                     config.insert("maxOutputTokens".into(), JsValue::Number(limit));
                 }
+                super::agent::apply_subagent_settings(&mut config);
                 config.insert("jsonSelfCorrect".into(), JsValue::Bool(true));
                 config.insert(
                     "cwd".into(),
@@ -660,6 +670,49 @@ async fn start_assembly(
                     stored_thinking.as_ref(),
                     stored_style_content.as_deref(),
                 );
+                // This ceiling comes from the actual project generation and is
+                // inherited even when a child receives a fresh session key.
+                let project_skills_disabled = snapshot
+                    .get("config")
+                    .and_then(|v| v.get("modules"))
+                    .and_then(|v| v.get("skills"))
+                    .and_then(|v| v.get("enabled"))
+                    == Some(&JsValue::Bool(false));
+                if let Some(scope) = &fork_scope {
+                    config = scope.compose();
+                    // A child route never inherits the parent's token caps.
+                    let caps = config
+                        .get("provider")
+                        .and_then(JsValue::as_string)
+                        .zip(config.get("model").and_then(JsValue::as_string))
+                        .and_then(|(p, m)| model.providers.get_capabilities(p, m).ok())
+                        .unwrap_or(JsValue::Undefined);
+                    for key in ["maxContextTokens", "maxOutputTokens"] {
+                        if config
+                            .get(key)
+                            .is_none_or(|value| matches!(value, JsValue::Undefined | JsValue::Null))
+                        {
+                            config.insert(
+                                key.into(),
+                                caps.get(key).cloned().unwrap_or(JsValue::Undefined),
+                            );
+                        }
+                    }
+                }
+                let skills_disabled = project_skills_disabled
+                    || config.get("nativeSkillsDisabled") == Some(&JsValue::Bool(true));
+                config.insert(
+                    "nativeSkillsDisabled".into(),
+                    JsValue::Bool(skills_disabled),
+                );
+                // Explicit host output budgets also cap a selected child route.
+                if let Some(limit) = env
+                    .get("PILOTDECK_MAX_OUTPUT_TOKENS")
+                    .map(|v| crate::js_value::string_to_number(v))
+                    .filter(|v| v.is_finite() && *v > 0.0 && v.fract() == 0.0)
+                {
+                    config.insert("maxOutputTokens".into(), JsValue::Number(limit));
+                }
                 // Both native read_skill and prompt assembly consume this one
                 // immutable plugin-generation catalog. Reload may retire it,
                 // but the session lease keeps its selected bytes alive.
@@ -680,9 +733,14 @@ async fn start_assembly(
                     .acquire_session_contributions(vec![])
                     .await
                     .map_err(|error| RuntimeError::new(error.to_string()))?;
-                let native_skills = super::skills::NativeSkills::from_contributions(
-                    &skill_lease.contributions.skills,
-                );
+                let plugin_hooks = skill_lease.contributions.hooks.clone();
+                let native_skills = if skills_disabled {
+                    super::skills::NativeSkills::disabled()
+                } else {
+                    super::skills::NativeSkills::from_contributions(
+                        &skill_lease.contributions.skills,
+                    )
+                };
                 let context_storage = staged
                     .resource(Resource::InstructionStorage)
                     .ok_or_else(|| RuntimeError::new("Native context storage is missing."))?;
@@ -714,7 +772,10 @@ async fn start_assembly(
                     })
                 });
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
-                let native_permission_rules = permission_lease.rules();
+                let native_permission_rules = fork_scope
+                    .as_ref()
+                    .map(|scope| scope.permission_rules.clone())
+                    .unwrap_or_else(|| permission_lease.rules());
                 // Sync MCP ask rules on acquire, mirroring
                 // ProjectRuntimeRegistry.ts:305-308 where the wiring layer
                 // calls `lease.rules().ask` via syncSdkMcpPermissionRules.
@@ -759,6 +820,7 @@ async fn start_assembly(
                             })?
                             .provider()
                             .clone();
+                        provider.preload_native_config().await?;
                         // #1433 fix-r1 (review P2#4): read the snapshot's
                         // already-normalized key — `config/snapshot.rs`
                         // normalizes it to a finite number with a floor of 1
@@ -802,8 +864,8 @@ async fn start_assembly(
                     // removes that side effect instead of leaving a
                     // non-comparable extra provider request in the recorded
                     // cells; an inert entry keeps the production request.
-                    auto_generate_title: !loop_planned,
-                    title_provider: (!loop_planned).then_some(title),
+                    auto_generate_title: !loop_planned && fork_scope.is_none(),
+                    title_provider: (!loop_planned && fork_scope.is_none()).then_some(title),
                     ..Default::default()
                 };
                 let session = context.session_key;
@@ -811,6 +873,9 @@ async fn start_assembly(
                     resources: retained,
                     tail,
                     host: Box::new(move |binding| {
+                        if let Some(scope) = &fork_scope {
+                            scope.seed_checkpoint(&binding.checkpoint)?;
+                        }
                         recorders
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
@@ -821,7 +886,14 @@ async fn start_assembly(
                         let permission_source = {
                             let session_overrides = session_overrides.clone();
                             let session = session.clone();
-                            Arc::new(move || session_overrides.permission_mode(&session))
+                            let child_mode = fork_scope
+                                .as_ref()
+                                .map(|scope| scope.permission_mode.clone());
+                            Arc::new(move || {
+                                child_mode
+                                    .clone()
+                                    .or_else(|| session_overrides.permission_mode(&session))
+                            })
                         };
                         let deployment = Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
@@ -841,8 +913,11 @@ async fn start_assembly(
                         .with_permission_mode_source(permission_source.clone())
                         .with_permission_rules(native_permission_rules)
                         .with_web(native_web)
+                        .with_plugin_hooks(plugin_hooks)
+                        .with_hook_proxy(hook_proxy)
                         .with_plan_files(plan_files)
-                        .with_skills(native_skills, native_context);
+                        .with_skills(native_skills, native_context)
+                        .with_forks(forks, fork_scope);
                         #[cfg(unix)]
                         let ports = ports
                             .with_background_tasks(background_tasks)
@@ -877,9 +952,18 @@ async fn start_assembly(
             })
         }),
         create_storage: Arc::new(move |context| {
+            let fork_scope = storage_forks.scope(&context);
             let project = storage_project.clone();
             let options = storage_options.clone();
             Box::pin(async move {
+                if let Some(scope) = fork_scope {
+                    return Ok(SessionStorage::Unlocked(
+                        crate::runtime::session::factory::FactoryStorage::new(
+                            scope.store.clone(),
+                            scope.key.clone(),
+                        ),
+                    ));
+                }
                 let lease = Arc::new(project.acquire(None)?);
                 let resource = lease
                     .runtime()
@@ -915,6 +999,7 @@ async fn start_assembly(
         })),
         diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
     }));
+    fork_registry.install_factory(&factory);
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file
         // registry is never opened and no run persistence happens at all.
@@ -1237,6 +1322,7 @@ async fn start_assembly(
                     submitter.clone(),
                     tokio::runtime::Handle::current(),
                 ));
+                let cron_shutdown = body.shutdown_signal();
                 // #1353 A7: the recording wrapper the switch machine's S1
                 // face reads. `CronManager::stop` aborts in-flight runs
                 // through the bound gateway and swallows every rejection
@@ -1263,9 +1349,11 @@ async fn start_assembly(
                 .map_err(cron::cron_io_error)?;
                 cron.start().map_err(cron::cron_io_error)?;
                 build_cron_slot
-                    .set(Arc::new(crate::switch::CronStopHandle::new(
+                    .set(Arc::new(crate::switch::CronStopHandle::new_native(
                         cron.clone(),
                         recording.failures(),
+                        std::time::Duration::from_secs(15),
+                        Arc::new(move || cron_shutdown.cancel()),
                     )))
                     .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
             }
@@ -1540,23 +1628,6 @@ async fn validate_profile_inner(
     env: &Env,
     _management: bool,
 ) -> Result<(), ProxyError> {
-    struct Captured<'a>(&'a Env, &'a std::path::Path);
-    impl crate::runtime::mcp::protocol::McpEnvironment for Captured<'_> {
-        fn env(&self, name: &JsString) -> Option<JsString> {
-            self.0.get(&name.to_utf8().ok()?).map(|v| v.as_str().into())
-        }
-        fn home(&self) -> JsString {
-            self.1.to_string_lossy().into_owned().into()
-        }
-    }
-    let mcp = crate::runtime::mcp::protocol::load_mcp_server_config(
-        &options.project,
-        &options.home,
-        &Captured(env, &options.home),
-    )?;
-    if !mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty() {
-        return Err("Native isolated profile does not yet support configured MCP servers.".into());
-    }
     // The native plugin generation independently rechecks this restricted
     // profile and never loads non-style families, closing the check/load race.
     let home = options.home.clone();
@@ -1595,39 +1666,25 @@ async fn validate_profile_inner(
         None,
     )
     .load(&options.project)?;
-    // The fixed config loader drops unknown top-level fields from config,
-    // so inspecting config.hooks alone silently misses the supplied YAML.
-    // Plugin hooks are refused above; SDK hooks are refused by workspace_id.
-    if snapshot
-        .get("diagnostics")
-        .and_then(|value| match value {
-            JsValue::Array(rows) => Some(rows),
-            _ => None,
-        })
-        .is_some_and(|rows| {
-            rows.iter()
-                .any(|row| row.get("path") == Some(&"hooks".into()))
-        })
-    {
-        return Err("Native isolated profile does not yet support configured hooks.".into());
-    }
+    // Unknown top-level hooks produce a TS diagnostic; only plugin and SDK
+    // contribution authorities may supply executable hooks.
     if snapshot
         .get("config")
         .and_then(|v| v.get("modules"))
         .and_then(JsValue::as_object)
-        .is_some_and(|modules| !modules.own_entries().is_empty())
+        .is_some_and(|modules| {
+            modules.own_entries().iter().any(|(name, value)| {
+                !(name.equals_str("skills") || name.equals_str("knowledge"))
+                    || value.get("enabled") != Some(&JsValue::Bool(false))
+                    || value
+                        .as_object()
+                        .is_none_or(|fields| fields.own_entries().len() != 1)
+            })
+        })
     {
         return Err(
             "Native isolated profile does not yet support configured module bindings.".into(),
         );
-    }
-    if snapshot
-        .get("config")
-        .and_then(|v| v.get("agent"))
-        .and_then(|v| v.get("subagents"))
-        .is_some_and(|v| !v.is_undefined())
-    {
-        return Err("Native isolated profile does not yet support configured subagents.".into());
     }
     Ok(())
 }

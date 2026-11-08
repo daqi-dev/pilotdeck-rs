@@ -208,7 +208,16 @@ impl GatewayRequests for Requests {
             // `projectKey` is refused as any other unserved key, and the
             // registered residual — a lossy form naming a configured path
             // that contains U+FFFD — is admitted on both layers alike.
-            if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())
+            // reloadOutputStylesForSdk uses a truthy projectKey filter; an
+            // empty string selects the configured project rather than escaping
+            // the single-project admission boundary.
+            if let Some(project) = params
+                .get("projectKey")
+                .filter(|v| !v.is_undefined())
+                .filter(|value| {
+                    !(method.equals_str("reload_output_styles")
+                        && value.as_string().is_some_and(JsString::is_empty))
+                })
                 && !project.as_string().is_some_and(|key| {
                     let lossy = String::from_utf16_lossy(key.units());
                     self.options.serves_project(&lossy)

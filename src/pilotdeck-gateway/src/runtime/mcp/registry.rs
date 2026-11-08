@@ -801,6 +801,60 @@ impl ProjectMcpRuntimeProvider {
         }
     }
 
+    /// Prepare a native session without blocking its async executor or opening
+    /// unchecked config files. The owned slot follows the blocking read if its
+    /// caller is cancelled. Existing non-native provider behavior is unchanged.
+    pub(crate) async fn preload_native_config(&self) -> Result<(), RuntimeError> {
+        if lock(&self.state).configured.is_some() {
+            return Ok(());
+        }
+        static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+        let permit = SLOTS
+            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| RuntimeError::new("Native MCP configuration executor unavailable."))?;
+        let provider = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let loaded = super::protocol::load_native_mcp_server_config(
+                Path::new(&provider.options.project_root),
+                Path::new(&provider.options.pilot_home),
+                provider.options.environment.as_ref(),
+            )
+            .map_err(RuntimeError::new)?;
+            for diagnostic in loaded.diagnostics {
+                if provider.options.on_diagnostic.is_some() {
+                    provider.diagnostic(
+                        format!(
+                            "Ignoring invalid MCP config {}: {}",
+                            diagnostic.path, diagnostic.message
+                        ),
+                        None,
+                    );
+                } else {
+                    // Parser diagnostics may quote credentials; emit only the
+                    // affected path and a bounded, content-free warning here.
+                    use std::io::Write;
+                    let path: String = diagnostic.path.chars().take(512).collect();
+                    let _ = writeln!(
+                        std::io::stderr().lock(),
+                        "Ignoring invalid MCP config {} (details omitted).",
+                        path
+                    );
+                }
+            }
+            let mut state = lock(&provider.state);
+            if state.configured.is_none() {
+                state.configured = Some(loaded.servers);
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| RuntimeError::new(error.to_string()))?
+    }
+
     /// `getConfiguredServers()`: loaded once.
     fn configured_servers(&self) -> Result<JsObject, RuntimeError> {
         if let Some(configured) = &lock(&self.state).configured {

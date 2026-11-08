@@ -1334,3 +1334,92 @@ async fn witnessed_job_fails_when_the_receipt_times_out() {
     assert!(matches!(error, RunRegistryError::Invalid(_)));
     let _ = std::fs::remove_dir_all(root);
 }
+
+// Native reliable-close cases deliberately gate actual FileRunRegistry writes;
+// all gates are released before each test ends, including the budget failure.
+#[tokio::test]
+async fn reliable_close_keeps_pending_timeout_and_failure_but_not_late_events() {
+    for fail in [false, true] {
+        let registry = ControlledRegistry::new(&json!({}));
+        registry.file.accept(&input()).unwrap();
+        let publisher = TurnPublisher::start_reliable(
+            run_ref(),
+            Some(registry.clone()),
+            Arc::new(TurnEventCoordinator::default()),
+            Duration::from_secs(1),
+        );
+        let terminal = js(&json!({"type":"error","code":"turn_timeout","message":"limit"}));
+        assert!(publisher.gateway_event(terminal.clone()));
+        publisher.close_live();
+        // Late pump activity must never turn a closed stream live again.
+        assert!(publisher.gateway_event(js(&json!({"type":"assistant_text_delta","text":"late"}))));
+        registry.release(0, fail).await;
+        let visible = tokio::time::timeout(Duration::from_secs(2), publisher.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            field(&visible, "code"),
+            &JsValue::from(if fail {
+                "result_unknown"
+            } else {
+                "turn_timeout"
+            })
+        );
+        if !fail {
+            assert_eq!(visible, terminal);
+        }
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), publisher.next())
+                .await
+                .unwrap(),
+            None
+        );
+        // The late write remains owned and is allowed to finish durably only.
+        registry.release(1, false).await;
+        assert_eq!(publisher.next().await, None);
+        publisher.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn reliable_close_bounds_unsettled_append_without_discarding_its_writer() {
+    let registry = ControlledRegistry::new(&json!({}));
+    registry.file.accept(&input()).unwrap();
+    let publisher = TurnPublisher::start_reliable(
+        run_ref(),
+        Some(registry.clone()),
+        Arc::new(TurnEventCoordinator::default()),
+        Duration::from_millis(20),
+    );
+    assert!(publisher.gateway_event(js(&json!({"type":"error","code":"turn_timeout"}))));
+    publisher.close_live();
+    let visible = tokio::time::timeout(Duration::from_secs(2), publisher.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(field(&visible, "code"), &JsValue::from("result_unknown"));
+    assert_eq!(publisher.next().await, None);
+    // Not a leaked/hung thread: the held real writer is still there and can
+    // settle once storage recovers. It must not reopen the exhausted stream.
+    registry.release(0, false).await;
+    publisher.finish().await;
+    assert_eq!(publisher.next().await, None);
+    assert_eq!(registry.durable.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn legacy_close_still_discards_pending_terminal_after_close() {
+    let registry = ControlledRegistry::new(&json!({}));
+    registry.file.accept(&input()).unwrap();
+    let publisher = TurnPublisher::start(
+        run_ref(),
+        Some(registry.clone()),
+        Arc::new(TurnEventCoordinator::default()),
+    );
+    publisher.gateway_event(js(&json!({"type":"error","code":"turn_timeout"})));
+    publisher.close_live();
+    registry.release(0, false).await;
+    assert_eq!(publisher.next().await, None);
+    publisher.finish().await;
+}

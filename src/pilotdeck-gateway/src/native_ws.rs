@@ -86,7 +86,9 @@ impl NativeWsServer {
         {
             return Err("native WS requires 127.0.0.1 and a high port (or 0)".into());
         }
-        if !crate::mutants::on("native-ws-token-policy") && token.trim().is_empty() {
+        if !crate::mutants::on("native-ws-token-policy")
+            && crate::metadata::js_trim(&token).is_empty()
+        {
             return Err("native WS requires an explicit nonempty token".into());
         }
         // The token route's loopback gate is derived from the bind address,

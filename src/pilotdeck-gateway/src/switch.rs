@@ -455,6 +455,7 @@ pub fn close_cron_management(manager: &Arc<CronManager>) {
 
 /// Where the recording cron gateway accumulates abort rejections.
 pub type AbortRecord = Arc<Mutex<Vec<String>>>;
+type NativeCronDrain = (std::time::Duration, Arc<dyn Fn() + Send + Sync>);
 
 fn cron_message(error: &CronError) -> String {
     String::from_utf16_lossy(error.message().units())
@@ -472,6 +473,8 @@ pub struct CronStopHandle {
     // repeat-call result policy after the first operation has actually returned.
     stop_serial: Mutex<()>,
     abort_failures: AbortRecord,
+    native_drain: Option<NativeCronDrain>,
+    native_result: Mutex<Option<Result<(), CronError>>>,
 }
 
 impl CronStopHandle {
@@ -481,7 +484,20 @@ impl CronStopHandle {
             stopped: AtomicBool::new(false),
             stop_serial: Mutex::new(()),
             abort_failures,
+            native_drain: None,
+            native_result: Mutex::new(None),
         }
+    }
+    /// Native host finalization; default library construction remains TS.
+    pub fn new_native(
+        manager: Arc<CronManager>,
+        abort_failures: AbortRecord,
+        budget: std::time::Duration,
+        stopping: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
+        let mut handle = Self::new(manager, abort_failures);
+        handle.native_drain = Some((budget, stopping));
+        handle
     }
 
     /// Stop once. A second call (the host teardown after a machine-driven
@@ -489,9 +505,28 @@ impl CronStopHandle {
     pub fn stop_once(&self) -> Result<(), CronError> {
         let _serial = self.stop_serial.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.swap(true, Ordering::SeqCst) {
+            if self.native_drain.is_some() {
+                return self
+                    .native_result
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+                    .unwrap_or_else(|| {
+                        Err(CronError::gateway(
+                            "cron_shutdown_failed",
+                            "Native cron stop result is unavailable.",
+                        ))
+                    });
+            }
             return Ok(());
         }
-        self.manager.stop()
+        if let Some((budget, stopping)) = &self.native_drain {
+            let result = self.manager.stop_and_drain(*budget, || stopping());
+            *self.native_result.lock().unwrap_or_else(|e| e.into_inner()) = Some(result.clone());
+            result
+        } else {
+            self.manager.stop()
+        }
     }
 
     /// Joining the scheduler/tick and synchronous store operations must not

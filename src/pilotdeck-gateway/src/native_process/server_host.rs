@@ -28,13 +28,20 @@ pub struct ServerOptions {
     pub ready: ReadyCallback,
 }
 
+/// Preserve GatewayServer's bind-host policy. A resolved IPv6 localhost is
+/// allowed, while an explicitly configured IPv6 literal still needs the
+/// explicit remote-host opt-in and token, as in the legacy CLI.
+pub fn legacy_local_bind_host(host: &str) -> bool {
+    matches!(host, "127.0.0.1" | "localhost")
+}
+
 pub async fn run_server(options: ServerOptions, env: Env) -> Result<HostExit, ProxyError> {
-    let loopback = matches!(options.bind_host.as_str(), "127.0.0.1" | "localhost");
+    let loopback = legacy_local_bind_host(&options.bind_host);
     if !loopback {
         if !options.allow_remote {
             return Err("GatewayServer remote binding requires allowRemoteHost=true.".into());
         }
-        if !options.explicit_token || options.token.trim().is_empty() {
+        if !options.explicit_token || crate::metadata::js_trim(&options.token).is_empty() {
             return Err("GatewayServer remote binding requires an explicit auth token.".into());
         }
     }
@@ -45,6 +52,7 @@ pub async fn run_server(options: ServerOptions, env: Env) -> Result<HostExit, Pr
     .await??
     .next()
     .ok_or("GatewayServer host did not resolve to an address.")?;
+    validate_loopback_resolution(loopback, address)?;
     let mut core = options.core.into_assembly_options()?;
     core.listen = address;
     run_embedding(
@@ -202,6 +210,73 @@ pub(super) async fn run_embedding(
                 crate::ProxyError::from(format!("{error}; teardown: {teardown}"))
             })?;
             Err(crate::ProxyError::from(error.to_string()))
+        }
+    }
+}
+
+// A hostname's spelling cannot authorize token discovery on its resolved
+// network interface. Keep the legacy localhost/v4 policy only after checking
+// the actual address; a poisoned resolver fails before host side effects.
+fn validate_loopback_resolution(loopback: bool, address: SocketAddr) -> Result<(), ProxyError> {
+    if loopback && !address.ip().is_loopback() {
+        return Err("GatewayServer loopback hostname resolved to a non-loopback address.".into());
+    }
+    Ok(())
+}
+#[cfg(test)]
+mod resolution_tests {
+    use super::*;
+    #[test]
+    fn local_token_policy_is_checked_against_the_resolved_interface() {
+        for address in ["127.0.0.1:0", "127.0.0.2:0", "[::1]:0"] {
+            assert!(validate_loopback_resolution(true, address.parse().unwrap()).is_ok());
+        }
+        for address in ["0.0.0.0:0", "192.0.2.1:0", "[::]:0", "[2001:db8::1]:0"] {
+            assert!(validate_loopback_resolution(true, address.parse().unwrap()).is_err());
+            assert!(validate_loopback_resolution(false, address.parse().unwrap()).is_ok());
+        }
+    }
+    #[test]
+    fn legacy_bind_policy_distinguishes_hostname_from_resolved_address() {
+        for host in ["localhost", "127.0.0.1"] {
+            assert!(legacy_local_bind_host(host));
+        }
+        for host in ["::1", "[::1]", "127.0.0.2", "LOCALHOST", "0.0.0.0"] {
+            assert!(!legacy_local_bind_host(host));
+        }
+        assert!(crate::metadata::js_trim("\u{feff} \n").is_empty());
+        assert!(!crate::metadata::js_trim("\u{0085}").is_empty());
+    }
+    #[tokio::test]
+    async fn direct_server_rejects_blank_remote_token_before_any_host_side_effect() {
+        for token in ["", " ", "\u{feff}", "\u{feff}\n"] {
+            let options = ServerOptions {
+                core: LocalHostOptions {
+                    home: PathBuf::new(),
+                    project: PathBuf::new(),
+                    sidecar: PathBuf::new(),
+                    sidecar_args: vec![],
+                    drain_budget: Duration::from_millis(1),
+                },
+                bind_host: "0.0.0.0".into(),
+                port: 0,
+                allow_remote: true,
+                explicit_token: true,
+                token: token.into(),
+                static_assets: None,
+                control: None,
+                restart: None,
+                ready: Arc::new(|_| {
+                    Box::pin(async { panic!("invalid token must not start a host") })
+                }),
+            };
+            assert_eq!(
+                run_server(options, Env::new())
+                    .await
+                    .unwrap_err()
+                    .to_string(),
+                "GatewayServer remote binding requires an explicit auth token."
+            );
         }
     }
 }

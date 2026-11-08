@@ -2574,6 +2574,14 @@ impl LiveSessionAdapter {
                     request.identity.session_id.clone(),
                     request.identity.turn_id.clone(),
                 )
+                .with_subagent_descriptor(
+                    request
+                        .payload
+                        .get("agent")
+                        .and_then(|agent| agent.get("subagentDescriptor"))
+                        .and_then(JsValue::as_object)
+                        .cloned(),
+                )
                 .with_session_steer(session_steer)
                 .with_interaction_events(interaction_events)
                 .with_prompt_hooks(if crate::mutants::on("prompt-wiring") {

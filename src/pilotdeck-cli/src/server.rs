@@ -26,7 +26,7 @@ fn string_flag<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty() && !v.starts_with("--"))
         .map(String::as_str)
 }
-fn integer_prefix(value: &str) -> Option<i64> {
+fn integer_prefix(value: &str) -> Option<f64> {
     let value = paths::js_trim(value);
     let digits = value
         .strip_prefix(['+', '-'])
@@ -38,8 +38,9 @@ fn integer_prefix(value: &str) -> Option<i64> {
         return None;
     }
     value[..digits + usize::from(value.starts_with(['+', '-']))]
-        .parse()
+        .parse::<f64>()
         .ok()
+        .filter(|value| value.is_finite())
 }
 fn port(args: &[String], env: &Env) -> Result<u16, Failure> {
     // The fixed CLI takes the first flag and JS parseInt's decimal prefix.
@@ -53,8 +54,14 @@ fn port(args: &[String], env: &Env) -> Result<u16, Failure> {
             env.string("PILOTDECK_GATEWAY_PORT")
                 .and_then(|v| integer_prefix(&v))
         })
-        .unwrap_or(18789);
-    u16::try_from(value).map_err(|_| fail(format!("Invalid Gateway port: {value}")))
+        .unwrap_or(18789.0);
+    if !value.is_finite() || !(0.0..=65535.0).contains(&value) {
+        return Err(fail(format!(
+            "Invalid Gateway port: {}",
+            pilotdeck_protocol::number::number_to_string(value)
+        )));
+    }
+    Ok(value as u16)
 }
 fn explicit_token(env: &Env) -> Option<String> {
     env.string("PILOTDECK_GATEWAY_TOKEN")
@@ -123,15 +130,9 @@ fn auth(env: &Env, cwd: &Path, create: bool) -> Result<(String, Option<PathBuf>)
     Ok((token, Some(path)))
 }
 
-pub fn run(args: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    let core = super::local_host_options(env, cwd)?;
-    super::config::check(env, cwd, &core.home)?;
-    let bind_host = string_flag(args, "--host")
-        .map(str::to_owned)
-        .or_else(|| env.string("PILOTDECK_GATEWAY_HOST"))
-        .unwrap_or_else(|| "127.0.0.1".into());
+fn remote_policy(bind_host: &str, env: &Env) -> Result<bool, Failure> {
     let allow_remote = env.string("PILOTDECK_GATEWAY_ALLOW_REMOTE").as_deref() == Some("1");
-    if !matches!(bind_host.as_str(), "127.0.0.1" | "localhost") {
+    if !pilotdeck_gateway::native_process::legacy_local_bind_host(bind_host) {
         if !allow_remote {
             return Err(fail(
                 "GatewayServer remote binding requires allowRemoteHost=true.",
@@ -143,6 +144,17 @@ pub fn run(args: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
             ));
         }
     }
+    Ok(allow_remote)
+}
+
+pub fn run(args: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
+    let core = super::local_host_options(env, cwd)?;
+    super::config::check(env, cwd, &core.home)?;
+    let bind_host = string_flag(args, "--host")
+        .map(str::to_owned)
+        .or_else(|| env.string("PILOTDECK_GATEWAY_HOST"))
+        .unwrap_or_else(|| "127.0.0.1".into());
+    let allow_remote = remote_policy(&bind_host, env)?;
     let (token, token_path) = auth(env, cwd, true)?;
     let (manager, restart) = match Installation::discover(&std::env::current_exe().map_err(fail)?) {
         Ok(installation) => {
@@ -253,9 +265,46 @@ mod tests {
         assert_eq!(port(&["--port".into(), "no".into()], &env).unwrap(), 25000);
         assert_eq!(port(&["--port".into(), "0".into()], &env).unwrap(), 0);
         assert!(port(&["--port".into(), "-1".into()], &env).is_err());
+        assert!(port(&["--port".into(), "99999999999999999999".into()], &env).is_err());
+        assert!(port(&["--port".into(), "65536".into()], &env).is_err());
+        assert_eq!(
+            port(&["--port".into(), "65535".into()], &env).unwrap(),
+            65535
+        );
+        assert_eq!(
+            port(&["--port".into(), "9".repeat(400)], &env).unwrap(),
+            25000
+        );
+        assert_eq!(port(&["--port".into(), "١٢٣".into()], &env).unwrap(), 25000);
+
         assert_eq!(
             string_flag(&["--host".into(), "--port".into()], "--host"),
             None
         );
+    }
+    #[test]
+    fn remote_bind_requires_exact_opt_in_and_an_explicit_nonblank_token() {
+        for flag in ["", "true", "0"] {
+            let env = Env::from_pairs(&[
+                ("PILOTDECK_GATEWAY_ALLOW_REMOTE", flag),
+                ("PILOTDECK_GATEWAY_TOKEN", "explicit"),
+            ]);
+            assert!(remote_policy("0.0.0.0", &env).is_err());
+        }
+        for token in ["", " ", "\u{feff}"] {
+            let env = Env::from_pairs(&[
+                ("PILOTDECK_GATEWAY_ALLOW_REMOTE", "1"),
+                ("PILOTDECK_GATEWAY_TOKEN", token),
+            ]);
+            assert!(remote_policy("0.0.0.0", &env).is_err());
+        }
+        let env = Env::from_pairs(&[
+            ("PILOTDECK_GATEWAY_ALLOW_REMOTE", "1"),
+            ("PILOTDECK_GATEWAY_TOKEN", "explicit"),
+        ]);
+        assert!(remote_policy("0.0.0.0", &env).unwrap());
+        let empty = Env::from_pairs(&[]);
+        assert!(!remote_policy("localhost", &empty).unwrap());
+        assert!(!remote_policy("127.0.0.1", &empty).unwrap());
     }
 }

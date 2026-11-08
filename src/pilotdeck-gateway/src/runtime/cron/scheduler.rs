@@ -70,6 +70,7 @@ struct SchedulerInner {
     deps: SchedulerDeps,
     state: Mutex<TickState>,
     signal: std::sync::Condvar,
+    fires: Mutex<Vec<thread::JoinHandle<()>>>,
 }
 
 /// `this.timer`/`this.running`/`this.stopped` (CronScheduler.ts:24-27).
@@ -93,6 +94,7 @@ impl CronScheduler {
                     thread: None,
                 }),
                 signal: std::sync::Condvar::new(),
+                fires: Mutex::new(Vec::new()),
             }),
         })
     }
@@ -178,6 +180,41 @@ impl CronScheduler {
         }
     }
 
+    /// Native-only finalization barrier. stop() first joins the tick, so
+    /// every admitted fire already has a seat. Timeout retains those worlds.
+    pub(super) fn drain_fires_until(&self, deadline: Instant) -> Result<(), CronError> {
+        loop {
+            {
+                let mut seats = lock(&self.inner.fires);
+                let mut index = 0;
+                while index < seats.len() {
+                    if seats[index].is_finished() {
+                        if seats.swap_remove(index).join().is_err() {
+                            return Err(CronError::gateway(
+                                "cron_shutdown_failed",
+                                "Cron fire worker panicked during shutdown.",
+                            ));
+                        }
+                    } else {
+                        index += 1;
+                    }
+                }
+                if seats.is_empty() {
+                    return Ok(());
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(CronError::gateway(
+                    "cron_shutdown_timeout",
+                    "Cron fire finalization did not settle within the native shutdown budget; its runtime remains retained.",
+                ));
+            }
+            thread::sleep(
+                Duration::from_millis(5).min(deadline.saturating_duration_since(Instant::now())),
+            );
+        }
+    }
+
     /// `poke` (CronScheduler.ts:55-64): the three gates, then re-arm at the
     /// 250ms floor — overwriting a later deadline, as `clearTimeout` +
     /// `scheduleNextTick(0)` does.
@@ -195,7 +232,7 @@ impl CronScheduler {
     /// `tickInProgress` — a tick run this way can overlap the thread's own
     /// tick exactly like the TS one.
     pub fn run_tick_once(&self) -> Result<(), CronError> {
-        tick(&self.inner.deps)
+        tick(&self.inner.deps, &self.inner.fires)
     }
 
     /// The observation surface for the armed timer ("Public for tests",
@@ -254,7 +291,7 @@ fn scheduler_thread(inner: Arc<SchedulerInner>) {
             // otherwise unwind this thread and leave `running` latched, so the
             // panic is caught and folded the same way — the next arm stands.
             let ticked = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                tick(&inner.deps)
+                tick(&inner.deps, &inner.fires)
             })) {
                 Ok(result) => result,
                 Err(panic) => Err(CronError::error(JsString::from(panic_message(&panic)))),
@@ -298,7 +335,19 @@ fn execution_allowed(deps: &SchedulerDeps) -> bool {
         .is_none_or(|runtime| runtime.execution_allowed())
 }
 
-fn tick(deps: &SchedulerDeps) -> Result<(), CronError> {
+fn tick(deps: &SchedulerDeps, fires: &Mutex<Vec<thread::JoinHandle<()>>>) -> Result<(), CronError> {
+    // Reap completed seats; never retain one handle per historical run.
+    {
+        let mut seats = lock(fires);
+        let mut index = 0;
+        while index < seats.len() {
+            if seats[index].is_finished() {
+                let _ = seats.swap_remove(index).join();
+            } else {
+                index += 1;
+            }
+        }
+    }
     if !execution_allowed(deps) {
         return Ok(());
     }
@@ -349,9 +398,12 @@ fn tick(deps: &SchedulerDeps) -> Result<(), CronError> {
                     logger.warn("cron fire failed", &meta);
                 }
             });
-        if let Err(error) = spawned {
-            runtime.unregister_active_run(&run_id);
-            return Err(CronError::error(JsString::from(error.to_string())));
+        match spawned {
+            Ok(handle) => lock(fires).push(handle),
+            Err(error) => {
+                runtime.unregister_active_run(&run_id);
+                return Err(CronError::error(JsString::from(error.to_string())));
+            }
         }
     }
     Ok(())
@@ -589,6 +641,6 @@ fn matches_task_snapshot(current: &JsValue, snapshot: &JsValue) -> bool {
 }
 
 /// Poisoned-lock recovery, the module's standing pattern.
-fn lock(state: &Mutex<TickState>) -> std::sync::MutexGuard<'_, TickState> {
+fn lock<T>(state: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     state.lock().unwrap_or_else(|e| e.into_inner())
 }

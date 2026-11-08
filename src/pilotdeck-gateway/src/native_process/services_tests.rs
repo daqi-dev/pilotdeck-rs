@@ -3345,3 +3345,121 @@ fn has_file_source(value: &JsValue) -> bool {
         _ => false,
     }
 }
+
+#[tokio::test]
+async fn real_native_model_selection_matches_fixed_ts_bundle_matrix() {
+    use crate::runtime::turn::submit_host::SubmitHostServices;
+    let (_scratch, requests) = super::management_tests::setup();
+    let options = requests.options.clone();
+    std::fs::write(options.home.join("pilotdeck.yaml"), "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: fixture-only\n      models: {mock: {}}\n").unwrap();
+    let services = super::services::Services {
+        options: options.clone(),
+        env: requests.env.clone(),
+        project: requests.project.clone(),
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unused",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
+    };
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/native-model-selection/oracle.json"
+    )))
+    .unwrap();
+    for row in oracle["rows"].as_array().unwrap() {
+        let mut input = row["input"].clone();
+        if input["projectKey"] == "<project>" {
+            input["projectKey"] =
+                serde_json::Value::String(options.project.to_string_lossy().into_owned());
+        }
+        let input = pilotdeck_protocol::parse_json(&input.to_string()).unwrap();
+        let result = services.resolve_model_selection(&input).await;
+        if let Some(expected) = row.get("error") {
+            let actual = result.expect_err(row["name"].as_str().unwrap());
+            assert_eq!(actual.code, expected["code"], "{}", row["name"]);
+            assert_eq!(actual.message, expected["message"], "{}", row["name"]);
+        } else {
+            let actual = result.expect(row["name"].as_str().unwrap());
+            let encoded = pilotdeck_protocol::stringify_json(&actual)
+                .unwrap()
+                .unwrap();
+            let actual: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(actual, row["result"], "{}", row["name"]);
+        }
+    }
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
+}
+#[cfg(unix)]
+#[tokio::test]
+async fn native_model_override_rejects_fifo_project_marker_without_hanging() {
+    use crate::runtime::turn::submit_host::SubmitHostServices;
+    let (_scratch, requests) = super::management_tests::setup();
+    let options = requests.options.clone();
+    let marker = options.home.join("projects/a8-main/.cwd");
+    std::fs::remove_file(&marker).unwrap();
+    assert!(
+        std::process::Command::new("/usr/bin/mkfifo")
+            .arg(&marker)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let services = super::services::Services {
+        options: options.clone(),
+        env: requests.env.clone(),
+        project: requests.project.clone(),
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_: &JsString| {
+                    Err(crate::upload::UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        "unused",
+                    ))
+                },
+                || Ok(vec![]),
+            ),
+        )),
+    };
+    let input = object([
+        (
+            "projectKey",
+            JsValue::from(options.project.to_string_lossy().as_ref()),
+        ),
+        ("sessionKey", "s".into()),
+        (
+            "modelOverride",
+            object([
+                ("mode", "model".into()),
+                ("provider", "fixture".into()),
+                ("model", "mock".into()),
+            ]),
+        ),
+    ]);
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        services.resolve_model_selection(&input),
+    )
+    .await
+    .expect("FIFO must not hang")
+    .unwrap_err();
+    assert!(
+        result.message.contains("Unsafe project marker"),
+        "{result:?}"
+    );
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
+}

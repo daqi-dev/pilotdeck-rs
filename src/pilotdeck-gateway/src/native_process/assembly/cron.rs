@@ -167,6 +167,7 @@ pub(super) struct NativeCronGatewayBody {
     owner: SessionOwner,
     submitter: Arc<TurnSubmitter>,
     runtime: tokio::runtime::Handle,
+    shutdown: crate::runtime::network::Cancellation,
 }
 
 impl NativeCronGatewayBody {
@@ -179,7 +180,11 @@ impl NativeCronGatewayBody {
             owner,
             submitter,
             runtime,
+            shutdown: crate::runtime::network::Cancellation::new(),
         }
+    }
+    pub(super) fn shutdown_signal(&self) -> crate::runtime::network::Cancellation {
+        self.shutdown.clone()
     }
 }
 
@@ -260,14 +265,48 @@ async fn drain_turn<S: CronTurnStream>(stream: &mut S) -> Result<(), CronError> 
     Ok(())
 }
 
+#[cfg(test)]
 async fn drain_observed_turn<S: CronTurnStream>(
     stream: &mut S,
     observe: &mut dyn FnMut(&JsValue) -> Result<(), CronError>,
+    abort: impl FnMut(),
+) -> Result<(), CronError> {
+    drain_observed_turn_with_shutdown(stream, observe, abort, None, || {}).await
+}
+async fn drain_observed_turn_with_shutdown<S: CronTurnStream>(
+    stream: &mut S,
+    observe: &mut dyn FnMut(&JsValue) -> Result<(), CronError>,
     mut abort: impl FnMut(),
+    shutdown: Option<&crate::runtime::network::Cancellation>,
+    mut stop: impl FnMut(),
 ) -> Result<(), CronError> {
     let mut failure = None;
+    let mut stopping = false;
+    let mut retry = tokio::time::interval(std::time::Duration::from_millis(25));
+    retry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    retry.tick().await;
     loop {
-        match stream.next_event().await {
+        // next_event/TurnSubmission::next owns a completion receiver while
+        // awaiting End settlement. Keep that very future pinned across retry
+        // ticks; canceling/recreating it would lose the settlement receiver.
+        let step = {
+            let next = stream.next_event();
+            tokio::pin!(next);
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = async { shutdown.expect("guarded shutdown signal").cancelled().await }, if shutdown.is_some() && !stopping => {
+                        stopping = true; stop();
+                    },
+                    _ = retry.tick(), if stopping => {
+                        // First abort may precede SessionOwner's live handle.
+                        stop();
+                    },
+                    step = &mut next => break step,
+                }
+            }
+        };
+        match step {
             Ok(Some(event)) => {
                 if failure.is_none()
                     && let Err(error) = observe(&event)
@@ -277,7 +316,11 @@ async fn drain_observed_turn<S: CronTurnStream>(
                 }
             }
             Ok(None) => break,
-            Err(error) => return Err(failure.unwrap_or_else(|| CronError::error(error.message))),
+            Err(error) => {
+                return Err(
+                    failure.unwrap_or_else(|| CronError::gateway(&error.code, error.message))
+                );
+            }
         }
     }
     failure.map_or(Ok(()), Err)
@@ -296,15 +339,34 @@ impl CronGatewayBody for NativeCronGatewayBody {
         }
         let submitter = self.submitter.clone();
         let owner = self.owner.clone();
+        let shutdown = self.shutdown.clone();
         self.runtime.block_on(async move {
-            let mut submission = submitter.submit(submit_input(input));
-            drain_observed_turn(&mut submission, observe, || {
-                let _ = owner.start_gateway_abort(
-                    &input.session_key,
-                    Some(&input.run_id),
-                    Some(&JsString::from("system:cron_event_failure")),
-                );
-            })
+            if shutdown.is_cancelled() {
+                return Err(CronError::gateway(
+                    "agent_aborted",
+                    "Cron stopped before turn admission.",
+                ));
+            }
+            let mut submission = submitter.submit_reliable(submit_input(input));
+            drain_observed_turn_with_shutdown(
+                &mut submission,
+                observe,
+                || {
+                    let _ = owner.start_gateway_abort(
+                        &input.session_key,
+                        Some(&input.run_id),
+                        Some(&JsString::from("system:cron_event_failure")),
+                    );
+                },
+                Some(&shutdown),
+                || {
+                    let _ = owner.start_gateway_abort(
+                        &input.session_key,
+                        Some(&input.run_id),
+                        Some(&JsString::from("system:cron_shutdown")),
+                    );
+                },
+            )
             .await
         })
     }

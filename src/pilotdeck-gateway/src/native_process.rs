@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+mod agent;
 mod assembly;
 #[cfg(unix)]
 mod background;
@@ -17,7 +18,8 @@ mod local_host;
 mod server_host;
 pub use local_host::{LocalHost, LocalHostOptions};
 pub use server_host::{
-    ControlHandler, ControlReply, ControlRequest, HostExit, ServerOptions, run_server,
+    ControlHandler, ControlReply, ControlRequest, HostExit, ServerOptions, legacy_local_bind_host,
+    run_server,
 };
 // The advertised capability table lived as a literal inside `requests.rs`
 // until #1352; it is its own module so the table, its exception list and the
@@ -67,7 +69,7 @@ pub use tools::{
 pub async fn run(options: Options) -> Result<(), ProxyError> {
     let token = std::fs::read_to_string(&options.token_file)?;
     let token = token.trim_end_matches(['\r', '\n']).to_owned();
-    if token.trim().is_empty() {
+    if crate::metadata::js_trim(&token).is_empty() {
         return Err("native token file must contain a nonempty token".into());
     }
     let inherited = capture_environment(std::env::vars_os());

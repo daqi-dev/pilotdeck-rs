@@ -2326,6 +2326,45 @@ impl CronManager {
         Ok(())
     }
 
+    /// Native opt-in finalization; legacy stop retains its original TS contract.
+    pub fn stop_and_drain(
+        &self,
+        budget: Duration,
+        stopping: impl FnOnce(),
+    ) -> Result<(), CronError> {
+        let deadline = std::time::Instant::now() + budget;
+        let runtimes = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.started = false;
+            state.runtimes.clone()
+        };
+        let mut failure = None;
+        for runtime in &runtimes {
+            if let Err(error) = runtime.stop()
+                && failure.is_none()
+            {
+                failure = Some(error);
+            }
+        }
+        // Mark every pre-registered run stopped before canceling a native body
+        // whose first submission may not have reached SessionOwner yet.
+        stopping();
+        for runtime in &runtimes {
+            if let Some(scheduler) = runtime.bound_scheduler() {
+                scheduler.drain_fires_until(deadline)?;
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .runtimes
+            .clear();
+        Ok(())
+    }
+
     /// `createTask` (CronManager.ts:115-119): requireProjectKey,
     /// ensureRuntime, then `{...input, projectKey}` — the spread replaces the
     /// projectKey value in place, keeping the caller's key order.

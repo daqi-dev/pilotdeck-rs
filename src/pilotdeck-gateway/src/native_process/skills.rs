@@ -17,8 +17,13 @@ pub(super) struct NativeSkill {
     path: JsString,
     content: JsString,
 }
-#[derive(Clone, Default)]
-pub(super) struct NativeSkills(Arc<[NativeSkill]>);
+#[derive(Clone)]
+pub(super) struct NativeSkills(Arc<[NativeSkill]>, bool);
+impl Default for NativeSkills {
+    fn default() -> Self {
+        Self(Arc::default(), true)
+    }
+}
 impl NativeSkills {
     pub(super) fn from_contributions(skills: &[PluginSkillContribution]) -> Self {
         Self(
@@ -31,9 +36,16 @@ impl NativeSkills {
                     content: skill.content.as_str().into(),
                 })
                 .collect(),
+            true,
         )
     }
+    pub(super) fn disabled() -> Self {
+        Self(Arc::default(), false)
+    }
     pub(super) fn register(&self, tools: &ToolRegistry) {
+        if !self.1 {
+            return;
+        }
         tools
             .register(Arc::new(ReadSkill::new(self.clone())))
             .expect("native read_skill name is unique");
@@ -211,3 +223,25 @@ fn render_skill_content(content: &JsString, path: &JsString) -> JsString {
 #[cfg(test)]
 #[path = "skills_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod disabled_tests {
+    use super::*;
+    #[test]
+    fn disabled_skills_remove_both_tool_and_prompt_contributions() {
+        let disabled = NativeSkills::disabled();
+        let registry = ToolRegistry::new(None, None);
+        disabled.register(&registry);
+        assert!(registry.list().unwrap().is_empty());
+        assert!(disabled.list_skills().is_empty());
+        let enabled = NativeSkills::default();
+        enabled.register(&registry);
+        assert!(
+            registry
+                .list()
+                .unwrap()
+                .iter()
+                .any(|tool| tool.fields().get("name") == Some(&"read_skill".into()))
+        );
+    }
+}

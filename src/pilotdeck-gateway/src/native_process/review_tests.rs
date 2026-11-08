@@ -5,6 +5,19 @@ use super::*;
 #[cfg(target_os = "linux")]
 use crate::test_process::{TransientAudit, TransientChildren, child_processes};
 
+#[tokio::test]
+async fn isolated_entry_rejects_js_blank_token_before_environment_or_host_start() {
+    let scratch = Scratch::new();
+    for token in ["\u{feff}", "\u{feff} \n", " \r\n"] {
+        let options = Options::parse(scratch.args()).unwrap();
+        std::fs::write(&options.token_file, token).unwrap();
+        assert_eq!(
+            super::run(options).await.unwrap_err().to_string(),
+            "native token file must contain a nonempty token"
+        );
+    }
+}
+
 #[test]
 fn production_turn_ports_share_cancellation() {
     use crate::host::modules::tool_context::HostToolCheckpoint;
@@ -385,7 +398,7 @@ async fn production_cleanup_matrix() {
 }
 
 #[tokio::test]
-async fn configured_hooks_are_refused() {
+async fn top_level_hooks_are_ignored_like_ts() {
     let scratch = Scratch::new();
     let options = Options::parse(scratch.args()).expect("#1071 hooks options");
     let env = options.environment(Env::new());
@@ -401,13 +414,9 @@ async fn configured_hooks_are_refused() {
         let path = base.join("pilotdeck.yaml");
         std::fs::write(&path, format!("{CONFIG}hooks:\n  PreToolUse:\n    - hooks: [{{type: command, command: must-not-run}}]\n"))
             .expect("#1071 configured hook fixture");
-        let error = crate::test_negative_receipt::expect_err(
-            assembly::validate_profile(&options, &env).await,
-            "#1071 configured hooks refused before readiness",
-        );
         negative_assert!(
-            error.to_string().contains("configured hooks"),
-            "#1071 configured hooks refusal is explicit"
+            assembly::validate_profile(&options, &env).await.is_ok(),
+            "#1071 unknown top-level hooks do not become persistent hooks"
         );
         std::fs::remove_file(path).expect("#1071 remove hook config fixture");
     }

@@ -48,6 +48,7 @@ pub struct InteractionTurnInput {
     pub permission: PermissionTurnOptions,
     /// Host-merged SDK/session contribution hooks, plus their owning lease.
     pub hooks: HooksSettings,
+    pub hook_options: Option<crate::runtime::hooks::HookRuntimeOptions>,
     pub contribution: Option<PluginSessionContributionLease>,
     pub base_env: Option<JsObject>,
     pub signal: Cancellation,
@@ -180,7 +181,7 @@ impl InteractionTurn {
         }
         if let Some(resource) = resource::<InteractionHooks>(&context, Resource::InteractionHooks)?
         {
-            turn.ports.hooks = Some(resource.bind_turn(
+            turn.ports.hooks = Some(resource.bind_with_options(
                 lifecycle::Binding {
                     session_id: identity.session_id.clone(),
                     turn_id: identity.turn_id.clone(),
@@ -193,6 +194,7 @@ impl InteractionTurn {
                 input.hooks,
                 turn.ports.permission.clone(),
                 router,
+                input.hook_options.unwrap_or_default(),
             )?);
         }
         if let Some(hooks) = &turn.ports.hooks {
@@ -323,7 +325,7 @@ impl InteractionTurn {
             async move {
                 // Start every cleanup even if an earlier one rejects.
                 let mut errors = Vec::new();
-                let (router, hooks, steer, session) = tokio::join!(
+                let (router, hooks, steer, session, native_children) = tokio::join!(
                     router.dispose(),
                     async {
                         if let Some(hooks) = ports.hooks {
@@ -345,9 +347,10 @@ impl InteractionTurn {
                         } else {
                             Ok(())
                         }
-                    }
+                    },
+                    router.capability.wait_closed()
                 );
-                for result in [router, hooks, steer, session] {
+                for result in [router, hooks, steer, session, native_children] {
                     if let Err(error) = result {
                         errors.push(error.to_string());
                     }
@@ -394,11 +397,15 @@ impl InteractionTurn {
 }
 impl HostHandler for InteractionTurn {
     fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
-        self.ports
+        let mut events = self
+            .ports
             .events
             .as_ref()
             .map(TurnEvents::drain)
-            .unwrap_or_else(|| Ok(Vec::new()))
+            .transpose()?
+            .unwrap_or_default();
+        events.extend(self.router.capability.drain_events()?);
+        Ok(events)
     }
     fn event(&self, event: JsValue) -> HostFuture<()> {
         let result = (|| {

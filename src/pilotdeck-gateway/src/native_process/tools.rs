@@ -62,6 +62,8 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    forks: Option<Arc<super::agent::NativeForkRegistry>>,
+    fork_scope: Option<Arc<super::agent::ForkScope>>,
     web: Option<super::web::NativeWebTools>,
     skills: super::skills::NativeSkills,
     context_runtime: Option<Arc<dyn crate::host::modules::context::ContextRuntime>>,
@@ -87,6 +89,9 @@ pub struct SessionTools {
     /// tool admission.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
     goal: crate::runtime::goal::GoalRuntime,
+    plugin_hooks: crate::hooks::protocol::HooksSettings,
+    hook_proxy: Option<crate::runtime::model::http::ProxySettings>,
+    hook_env: crate::config::Env,
     plan_files: Option<Arc<super::plan_todo::NativePlanFiles>>,
     plan_serial: Arc<tokio::sync::Mutex<()>>,
 }
@@ -113,7 +118,12 @@ impl SessionTools {
             binding.projection.clone(),
         );
         Ok(Self {
+            forks: None,
+            fork_scope: None,
             goal,
+            plugin_hooks: Vec::new(),
+            hook_proxy: None,
+            hook_env: env.clone(),
             plan_files: None,
             plan_serial: Arc::new(tokio::sync::Mutex::new(())),
             web: None,
@@ -138,6 +148,30 @@ impl SessionTools {
 
     pub(super) fn with_plan_files(mut self, files: Arc<super::plan_todo::NativePlanFiles>) -> Self {
         self.plan_files = Some(files);
+        self
+    }
+
+    pub(super) fn with_forks(
+        mut self,
+        forks: Arc<super::agent::NativeForkRegistry>,
+        scope: Option<Arc<super::agent::ForkScope>>,
+    ) -> Self {
+        self.forks = Some(forks);
+        self.fork_scope = scope;
+        self
+    }
+    pub(super) fn with_plugin_hooks(
+        mut self,
+        hooks: crate::hooks::protocol::HooksSettings,
+    ) -> Self {
+        self.plugin_hooks = hooks;
+        self
+    }
+    pub(super) fn with_hook_proxy(
+        mut self,
+        proxy: Option<crate::runtime::model::http::ProxySettings>,
+    ) -> Self {
+        self.hook_proxy = proxy;
         self
     }
 
@@ -296,6 +330,12 @@ impl SessionTools {
             self.lsp.clone(),
             &self.mcp,
         );
+        tools
+            .register(Arc::new(builtin::send_attachment::SendAttachmentTool::new(
+                self.binding.checkpoint.clone(),
+                self.env.clone(),
+            )))
+            .expect("native attachment tool name is unique");
         if self.plan_files.is_some() {
             for kind in [
                 builtin::plan_todo::Kind::Enter,
@@ -322,6 +362,27 @@ impl SessionTools {
                 tools.register(tool).expect("native task names are unique");
             }
         }
+        let mut config = self.config.clone();
+        config.insert("env".into(), JsValue::Object(self.env.clone()));
+        config.insert("permissionMode".into(), JsValue::String(permission_mode));
+        config.insert("permissionContext".into(), permission_context);
+        let fork_turn = self.forks.as_ref().map(|registry| {
+            super::agent::ForkTurn::new(
+                registry.clone(),
+                identity.clone(),
+                config.clone(),
+                recorder.clone(),
+                self.permission_rules.clone(),
+                authority.clone(),
+                self.fork_scope.as_deref(),
+                tools.clone(),
+                #[cfg(unix)]
+                self.native_sandbox.clone(),
+            )
+        });
+        if let Some(turn) = &fork_turn {
+            turn.register(&tools);
+        }
         let execution = ToolRuntime::new(
             tools,
             // Even a profile without an interaction resource keeps this turn's
@@ -342,16 +403,17 @@ impl SessionTools {
             execution
         };
         let execution = Arc::new(execution.with_mode_owner(self.permission.clone()));
-        let mut config = self.config.clone();
-        config.insert("env".into(), JsValue::Object(self.env.clone()));
-        config.insert("permissionMode".into(), JsValue::String(permission_mode));
-        config.insert("permissionContext".into(), permission_context);
+        let execution: Arc<dyn capability::ToolExecution> = if let Some(turn) = &fork_turn {
+            Arc::new(super::agent::ForkExecution::new(execution, turn.clone()))
+        } else {
+            execution
+        };
         let binding = TurnBinding {
             config: config.clone(),
             input: value([
                 ("sessionId", JsValue::String(identity.session_id.clone())),
                 ("turnId", JsValue::String(identity.turn_id.clone())),
-                ("canElicit", JsValue::Bool(true)),
+                ("canElicit", JsValue::Bool(self.fork_scope.is_none())),
             ]),
             checkpoint: self.binding.checkpoint.clone(),
             abort_signal: Some(Arc::new(signal.clone())),
@@ -391,6 +453,9 @@ impl SessionTools {
             })
         });
         let tool_ports = ToolContextPorts {
+            subagent: fork_turn.as_ref().map(|turn| {
+                Arc::new(super::agent::ForkPort(turn.clone())) as Arc<dyn OneShotSubagent>
+            }),
             plan_files: self
                 .plan_files
                 .clone()
@@ -418,7 +483,10 @@ impl SessionTools {
                     .get()
                     .is_some_and(|profile| profile.question_provider != "disabled")
             })),
-            elicitation: Some(Arc::new(elicitation)),
+            elicitation: self
+                .fork_scope
+                .is_none()
+                .then(|| Arc::new(elicitation) as capability::RuntimeContext),
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             ..Default::default()
         };
@@ -430,6 +498,7 @@ impl SessionTools {
         let message_sink = sink.clone();
         SessionPorts {
             model: RouterModelPortOptions {
+                is_main_agent: self.fork_scope.is_none(),
                 project_path: Some(self.options.project.to_string_lossy().into_owned().into()),
                 agent_model: self
                     .config
@@ -469,7 +538,24 @@ impl SessionTools {
                     emit: permission_emit,
                     timeout: Duration::from_secs(30),
                 },
-                hooks: vec![],
+                hooks: self.plugin_hooks.clone(),
+                hook_options: Some(crate::runtime::hooks::HookRuntimeOptions {
+                    #[cfg(unix)]
+                    shell: self.native_sandbox.as_ref().map(|sandbox| {
+                        Arc::new(crate::runtime::hooks::exec::SandboxedHookShell {
+                            sandbox: sandbox.clone(),
+                            workspace: self.options.project.to_string_lossy().as_ref().into(),
+                        })
+                            as Arc<dyn crate::runtime::hooks::exec::ShellPort>
+                    }),
+                    http: Some(
+                        crate::runtime::hooks::exec::HttpHookExecutor::with_native_proxy(
+                            self.hook_proxy.as_ref(),
+                            &self.hook_env,
+                        ),
+                    ),
+                    ..Default::default()
+                }),
                 contribution: None,
                 base_env: Some(self.env.clone()),
                 signal,
@@ -478,7 +564,7 @@ impl SessionTools {
                 messages: vec![],
                 switches: CompositionSwitches {
                     plan_todo: false,
-                    elicitation_available: Some(true),
+                    elicitation_available: Some(self.fork_scope.is_none()),
                 },
                 turn_ports: Default::default(),
             },
@@ -758,6 +844,8 @@ pub(super) fn native_tools(
         definitions.extend(builtin::write_tools());
         #[cfg(unix)]
         definitions.extend(builtin::shell_tools());
+        #[cfg(unix)]
+        definitions.push(Arc::new(builtin::execute_code::ExecuteCodeTool::new()));
         definitions
     })
 }
@@ -771,6 +859,9 @@ fn native_tools_with_sandbox(
 ) -> ToolRegistry {
     let mut definitions = builtin::read_only_tools();
     definitions.extend(builtin::write_tools());
+    definitions.push(Arc::new(
+        builtin::execute_code::ExecuteCodeTool::with_sandbox(Some(sandbox.clone())),
+    ));
     definitions.push(Arc::new(builtin::bash::BashTool::with_options(
         builtin::bash::BashToolOptions {
             runner: Some(Arc::new(

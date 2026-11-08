@@ -85,6 +85,18 @@ pub trait ToolExecution: ToolCatalog {
     ) -> Result<(), crate::host::HostError> {
         Ok(())
     }
+    /// Turn-owned native child work drains with this dispatcher, after callbacks.
+    fn dispose(&self) -> HostFuture<()> {
+        Box::pin(async { Ok(()) })
+    }
+    /// Owned native work must report its actual drain separately from the
+    /// TS-compatible ModuleRouter allSettled disposal result.
+    fn wait_closed(&self) -> HostFuture<()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        Ok(Vec::new())
+    }
     fn refresh(&self) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
@@ -145,6 +157,17 @@ impl Handler {
     pub fn with_plan_todo(mut self, handler: Arc<dyn PlanTodoHandler>) -> Self {
         self.plan_todo = Some(handler);
         self
+    }
+    pub(crate) fn wait_closed(&self) -> HostFuture<()> {
+        self.ports.as_ref().map_or_else(
+            || Box::pin(async { Ok(()) }) as HostFuture<()>,
+            |ports| ports.execution.wait_closed(),
+        )
+    }
+    pub(crate) fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        self.ports
+            .as_ref()
+            .map_or_else(|| Ok(Vec::new()), |ports| ports.execution.drain_events())
     }
     pub(crate) fn bind_turn_permission(
         &self,
@@ -280,8 +303,11 @@ impl Handler {
         })
     }
     pub fn dispose(&self) -> HostFuture<()> {
-        // These borrowed domain ports are not owned resources of the dispatcher.
-        Box::pin(async { Ok(()) })
+        if let Some(ports) = &self.ports {
+            ports.execution.dispose()
+        } else {
+            Box::pin(async { Ok(()) })
+        }
     }
 }
 

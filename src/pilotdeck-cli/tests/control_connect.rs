@@ -191,10 +191,8 @@ async fn actual_connection_initializes_streams_decides_and_aborts() {
     assert_eq!(child.line().await["params"]["final"], true);
     let final_result = child.line().await;
     assert_eq!(final_result["id"], "turn");
-    assert_eq!(
-        final_result["result"]["terminal"]["finishReason"],
-        "cancelled"
-    );
+    assert_eq!(final_result["error"]["data"]["finishReason"], "cancelled");
+    assert_eq!(final_result["error"]["code"], -32003);
     drop(child.child.stdin.take());
     assert!(child.exit().await.0);
     assert!(
@@ -268,4 +266,35 @@ async fn interrupt_closes_owned_connection_even_when_stdout_is_unread() {
     .unwrap();
     assert!(child.exit().await.0);
     assert!(started.elapsed() < Duration::from_secs(2));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn complete_and_incomplete_turns_have_distinct_rpc_results() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut child = Peer::start(
+        &format!("ws://{}/ws", listener.local_addr().unwrap()),
+        false,
+    );
+    let mut socket = attach(&listener).await;
+    for reason in ["completed", "max_tokens", "aborted"] {
+        child.write(rpc(
+            json!(reason),
+            "run.submit",
+            json!({"sessionKey":"s","runId":reason,"message":"fixture"}),
+        ));
+        let turn = frame(&mut socket).await;
+        send(&mut socket,json!({"type":"event","id":turn["id"],"seq":0,"final":true,"event":{"type":"turn_completed","finishReason":reason}})).await;
+        assert_eq!(child.line().await["method"], "run.event");
+        let response = child.line().await;
+        if reason == "completed" {
+            assert_eq!(response["result"]["terminal"]["finishReason"], reason);
+            assert!(response.get("error").is_none());
+        } else {
+            assert_eq!(response["error"]["code"], -32003);
+            assert_eq!(response["error"]["data"]["finishReason"], reason);
+            assert!(response.get("result").is_none());
+        }
+    }
+    drop(child.child.stdin.take());
+    assert!(child.exit().await.0);
 }

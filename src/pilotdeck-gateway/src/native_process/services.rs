@@ -1662,6 +1662,27 @@ impl SubmitHostServices for Services {
                 .map_err(|e| failure(e.to_string()))?;
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
+                let marker_files = crate::runtime::history::HistoryMarkerFiles::new();
+                let lookup = crate::metadata::Metadata {
+                    home: home.clone(),
+                    cwd: PathBuf::new(),
+                    files: marker_files,
+                };
+                let fallback = JsValue::from(project.to_string_lossy().as_ref());
+                let project_key = input
+                    .get("projectKey")
+                    .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                    .unwrap_or(&fallback);
+                let resolved = crate::session_model::resolve_project(&lookup, project_key);
+                if lookup.files.was_refused() {
+                    return Err(SubmitError::new(
+                        "gateway_request_failed",
+                        "Unsafe project marker.",
+                    ));
+                }
+                let _resolved = resolved.map_err(|error| {
+                    SubmitError::new(&error.code, String::from_utf16_lossy(error.message.units()))
+                })?;
                 let defined = |value: Option<&JsValue>| value.is_some_and(|v| !v.is_undefined());
                 let selected = input.get("modelSelection");
                 let override_model = input.get("modelOverride");
@@ -1712,6 +1733,13 @@ impl SubmitHostServices for Services {
                     super::methods::validate_selection_catalog(selection, &catalog).map_err(error)
                 };
                 if let Some(requested) = requested {
+                    if !defined(selected) && requested.get("mode") != Some(&JsValue::from("model"))
+                    {
+                        return Err(SubmitError::new(
+                            "INVALID_MODEL_OVERRIDE",
+                            "A model selection requires mode, provider, and model.",
+                        ));
+                    }
                     validate(requested)?;
                     let normalized = super::methods::normalize_selection(requested);
                     if normalized.get("mode") == Some(&JsValue::from("auto")) {
@@ -1724,7 +1752,9 @@ impl SubmitHostServices for Services {
                 }
                 let metadata = crate::metadata::Metadata {
                     home: home.clone(),
-                    cwd: project.clone(),
+                    // Relative .cwd markers use process.cwd(), like the public
+                    // metadata RPC; the served project is not a cwd override.
+                    cwd: PathBuf::new(),
                     files: crate::metadata::NativeFiles,
                 };
                 let params = object([

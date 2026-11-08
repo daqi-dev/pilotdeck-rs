@@ -81,6 +81,7 @@ pub use crate::runtime::network::Cancellation;
 pub enum HookOutcome {
     Success,
     Blocking,
+    NativeOutputLimit,
     NonBlockingError,
     Cancelled,
     Timeout,
@@ -89,7 +90,7 @@ impl HookOutcome {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Success => "success",
-            Self::Blocking => "blocking",
+            Self::Blocking | Self::NativeOutputLimit => "blocking",
             Self::NonBlockingError => "non_blocking_error",
             Self::Cancelled => "cancelled",
             Self::Timeout => "timeout",
@@ -496,7 +497,14 @@ pub struct ShellResult {
 pub type ShellFuture = Pin<Box<dyn Future<Output = Result<ShellResult, JsString>> + Send>>;
 pub trait ShellPort: Send + Sync {
     fn execute(&self, request: ShellRequest) -> ShellFuture;
+    fn native_output_guard(&self) -> bool {
+        false
+    }
 }
+const NATIVE_HOOK_OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
+const NATIVE_HOOK_OUTPUT_ERROR: &str =
+    "native_hook_output_limit: hook stdout or stderr exceeded 8 MiB";
+const NATIVE_HOOK_PREP_TIMEOUT: &str = "native_hook_prepare_timeout";
 
 /// The default local shell. `output_limit` is per stream and counts UTF-16
 /// units like the JS string it becomes; tests lower it so the V8-length path
@@ -525,7 +533,28 @@ impl LocalShellPort {
 impl ShellPort for LocalShellPort {
     fn execute(&self, request: ShellRequest) -> ShellFuture {
         let output_limit = self.output_limit;
-        Box::pin(async move { run_shell(request, output_limit).await })
+        Box::pin(async move { run_shell(request, output_limit, None).await })
+    }
+}
+
+/// Session-selected shell port: sandbox and workspace authority come from
+/// the host, never from the hook payload. Input, process-group cancellation,
+/// output budgets and deadline use the same implementation as LocalShellPort.
+#[cfg(unix)]
+#[derive(Clone)]
+pub struct SandboxedHookShell {
+    pub sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    pub workspace: JsString,
+}
+#[cfg(unix)]
+impl ShellPort for SandboxedHookShell {
+    fn native_output_guard(&self) -> bool {
+        true
+    }
+    fn execute(&self, mut request: ShellRequest) -> ShellFuture {
+        let sandbox = self.sandbox.clone();
+        request.cwd = self.workspace.clone();
+        Box::pin(async move { run_shell(request, NATIVE_HOOK_OUTPUT_LIMIT, Some(sandbox)).await })
     }
 }
 
@@ -696,13 +725,40 @@ async fn observe_leader_exit(group: rustix::process::Pid) {
     }
 }
 
-async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellResult, JsString> {
+async fn run_shell(
+    mut request: ShellRequest,
+    output_limit: usize,
+    sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+) -> Result<ShellResult, JsString> {
+    let prepare_started = tokio::time::Instant::now();
+    let native_output_guard = sandbox.is_some();
     let env = env_object(request.env.as_ref());
     let shell = resolve_shell(&env)?;
-    let mut command = Command::new(&shell);
+    let args = vec![JsString::from("-c"), request.command.clone()];
+    let (executable, args) = if let Some(sandbox) = sandbox {
+        let prepare = sandbox.prepare(JsString::from(shell.as_str()), args, &request.cwd, None);
+        let deadline = prepare_started + duration_ms(request.timeout_ms);
+        let result = if let Some(signal) = request.signal.as_ref() {
+            tokio::select! { _ = signal.cancelled() => return Err("Hook cancelled.".into()), result = tokio::time::timeout_at(deadline, prepare) => result }
+        } else {
+            tokio::time::timeout_at(deadline, prepare).await
+        };
+        let prepared = result
+            .map_err(|_| JsString::from(NATIVE_HOOK_PREP_TIMEOUT))?
+            .map_err(|error| error.message)?;
+        request.timeout_ms = deadline
+            .saturating_duration_since(tokio::time::Instant::now())
+            .as_secs_f64()
+            * 1000.0;
+        prepared
+    } else {
+        (JsString::from(shell.as_str()), args)
+    };
+    let mut command = Command::new(String::from_utf16_lossy(executable.units()));
+    for arg in args {
+        command.arg(String::from_utf16_lossy(arg.units()));
+    }
     command
-        .arg("-c")
-        .arg(String::from_utf16_lossy(request.command.units()))
         .current_dir(String::from_utf16_lossy(request.cwd.units()))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -750,8 +806,16 @@ async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellRe
     // pending: that is why the timers below outlive the leader. Each stream is
     // capped at `output_limit` UTF-16 units, like the bash tool's
     // `StreamText`; the rest of the stream is still drained and discarded.
-    let mut out_task = tokio::spawn(read_pipe(child.stdout.take(), output_limit));
-    let mut err_task = tokio::spawn(read_pipe(child.stderr.take(), output_limit));
+    let mut out_task = tokio::spawn(read_pipe_guarded(
+        child.stdout.take(),
+        output_limit,
+        native_output_guard,
+    ));
+    let mut err_task = tokio::spawn(read_pipe_guarded(
+        child.stderr.take(),
+        output_limit,
+        native_output_guard,
+    ));
     let mut out_done = false;
     let mut err_done = false;
     let mut stdout_pipe = PipeOutput::default();
@@ -793,6 +857,7 @@ async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellRe
     let mut kill_deadline: Option<tokio::time::Instant> = None;
     let mut force_sleep: Option<Pin<Box<Sleep>>> = None;
     let mut forced = false;
+    let mut native_overflow = false;
     loop {
         if leader_exited && out_done && err_done {
             break;
@@ -803,10 +868,28 @@ async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellRe
             }
             result = &mut out_task, if !out_done => {
                 stdout_pipe = result.unwrap_or_default();
+                if native_output_guard && stdout_pipe.truncated && !native_overflow {
+                    native_overflow = true;
+                    timed_or_cancelled = true;
+                    crate::process_group::kill(group, rustix::process::Signal::TERM);
+                    let deadline = tokio::time::Instant::now() + KILL_GRACE;
+                    kill_deadline = Some(deadline);
+                    kill_sleep = Some(Box::pin(sleep_until(deadline)));
+                    force_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + FORCE_RESOLVE)));
+                }
                 out_done = true;
             }
             result = &mut err_task, if !err_done => {
                 stderr_pipe = result.unwrap_or_default();
+                if native_output_guard && stderr_pipe.truncated && !native_overflow {
+                    native_overflow = true;
+                    timed_or_cancelled = true;
+                    crate::process_group::kill(group, rustix::process::Signal::TERM);
+                    let deadline = tokio::time::Instant::now() + KILL_GRACE;
+                    kill_deadline = Some(deadline);
+                    kill_sleep = Some(Box::pin(sleep_until(deadline)));
+                    force_sleep = Some(Box::pin(sleep_until(tokio::time::Instant::now() + FORCE_RESOLVE)));
+                }
                 err_done = true;
             }
             _ = &mut timeout_sleep, if !timed_or_cancelled => {
@@ -954,6 +1037,9 @@ async fn run_shell(request: ShellRequest, output_limit: usize) -> Result<ShellRe
     // RangeError is caught by an uncaughtException handler that keeps the
     // process alive.
     let blocking = exit_code == Some(2);
+    if native_overflow {
+        return Err(NATIVE_HOOK_OUTPUT_ERROR.into());
+    }
     if !timed_or_cancelled
         && !forced
         && !blocking
@@ -1067,9 +1153,17 @@ impl PipeOutput {
 /// appended, and the pipe keeps draining so the child never blocks on a full
 /// OS buffer. `limit` counts UTF-16 units, matching the JS string the TS
 /// shell runner builds.
+#[cfg(test)]
 async fn read_pipe(
     pipe: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
     limit: usize,
+) -> PipeOutput {
+    read_pipe_guarded(pipe, limit, false).await
+}
+async fn read_pipe_guarded(
+    pipe: Option<impl tokio::io::AsyncRead + Unpin + Send + 'static>,
+    limit: usize,
+    stop_on_limit: bool,
 ) -> PipeOutput {
     use tokio::io::AsyncReadExt;
 
@@ -1079,13 +1173,22 @@ async fn read_pipe(
     let mut output = PipeOutput::default();
     let mut decoder = Utf8Decoder::default();
     let mut chunk = vec![0u8; 64 * 1024];
+    let mut raw_bytes = 0usize;
     loop {
         let count = match pipe.read(&mut chunk).await {
             Ok(0) | Err(_) => break,
             Ok(count) => count,
         };
+        raw_bytes = raw_bytes.saturating_add(count);
+        if stop_on_limit && raw_bytes > limit {
+            output.truncated = true;
+            break;
+        }
         let text = decoder.decode(&chunk[..count]);
         output.append(limit, &text);
+        if stop_on_limit && output.truncated {
+            break;
+        }
     }
     let tail = decoder.flush();
     output.append(limit, &tail);
@@ -1190,7 +1293,18 @@ impl CommandHookExecutor {
                     .signal
                     .as_ref()
                     .is_some_and(Cancellation::is_aborted);
-                ExecutionResult::failure(message, cancelled)
+                let limited = self.shell.native_output_guard()
+                    && message.equals_str(NATIVE_HOOK_OUTPUT_ERROR);
+                let mut result = ExecutionResult::failure(message, cancelled);
+                if limited && !cancelled {
+                    result.outcome = HookOutcome::NativeOutputLimit;
+                } else if self.shell.native_output_guard()
+                    && result.stderr.equals_str(NATIVE_HOOK_PREP_TIMEOUT)
+                    && !cancelled
+                {
+                    result.outcome = HookOutcome::Timeout;
+                }
+                result
             }
         }
     }
@@ -1256,18 +1370,38 @@ impl HttpHookExecutor {
     pub fn with_connect_timeout(timeout: Duration) -> Self {
         Self::with_config_timeout(crate::runtime::model::http::webpki_client_config(), timeout)
     }
+    pub(crate) fn with_native_proxy(
+        settings: Option<&crate::runtime::model::http::ProxySettings>,
+        env: &crate::config::Env,
+    ) -> Self {
+        let proxy =
+            crate::runtime::model::http::ProxyConfig::from_settings_lookup(settings, |key| {
+                env.get(key).cloned()
+            });
+        Self::with_config_and_proxy(
+            crate::runtime::model::http::webpki_client_config(),
+            HOOK_CONNECT_TIMEOUT,
+            proxy,
+        )
+    }
     fn with_config(config: rustls::ClientConfig) -> Self {
         Self::with_config_timeout(config, HOOK_CONNECT_TIMEOUT)
     }
     fn with_config_timeout(config: rustls::ClientConfig, connect_timeout: Duration) -> Self {
-        // The model connector's TCP-only 10 s connect timeout stays as is;
-        // this hook-local wrapper adds undici's whole-connect deadline
-        // (TCP + TLS handshake) without changing the shared transport.
+        Self::with_config_and_proxy(
+            config,
+            connect_timeout,
+            crate::runtime::model::http::ProxyConfig::from_settings(None),
+        )
+    }
+    fn with_config_and_proxy(
+        config: rustls::ClientConfig,
+        connect_timeout: Duration,
+        proxy: Option<crate::runtime::model::http::ProxyConfig>,
+    ) -> Self {
+        // The hook-local deadline spans TCP and TLS setup.
         let connector = ConnectDeadline::new(
-            crate::runtime::model::http::proxy_https_connector(
-                config,
-                crate::runtime::model::http::ProxyConfig::from_settings(None),
-            ),
+            crate::runtime::model::http::proxy_https_connector(config, proxy),
             connect_timeout,
         );
         let client =

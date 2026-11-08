@@ -12,8 +12,18 @@ pub(super) static READ_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 /// Restrict only history's marker reads; existing project lookup semantics and
 /// other NativeFiles consumers remain unchanged. Refusals must not fall back
 /// to a different project's lexical identifier.
-struct HistoryMarkerFiles {
+pub(crate) struct HistoryMarkerFiles {
     refused: std::cell::Cell<bool>,
+}
+impl HistoryMarkerFiles {
+    pub(crate) fn new() -> Self {
+        Self {
+            refused: std::cell::Cell::new(false),
+        }
+    }
+    pub(crate) fn was_refused(&self) -> bool {
+        self.refused.get()
+    }
 }
 impl crate::metadata::Files for HistoryMarkerFiles {
     fn entries(&self, path: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {

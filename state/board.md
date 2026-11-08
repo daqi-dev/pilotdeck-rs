@@ -4926,6 +4926,15 @@ READY 本段改动：**新增 3 行（#2432/#2433/#2434）+ 增记 5 行（#1433
 
 统一 canonical 继续串行整合：后台任务复用持久 runtime，加同前缀输出检查点和写失败保持；已在 mbp2 真 CLI/sidecar 跑通创建、等待、服务重启恢复与跨会话拒读。补齐请求 permission mode 到宿主工具上下文、SDK flags/删除清理、headless/disabled 问题交互及真实样式重载；样式真实 probe 验证无变化/修改、超限与 FIFO 保留旧态、pending question 关闭后迟答拒收。r24 背景/权限/样式/严格 lint/四 bin 构建通过；management 最后一个旧诊断文本断言已修，r25 24过1忽略，CLI全套仍在跑（此前r20 533过140忽略）。真实源码首装四件同代成功，下一本机提交送入 mbp2 隔离 Git 验证 update/restart，不写 GitHub。证据主仓 `_tmp/20261108-cli-completion/verify-r{20,22,24,25}`，运行原件 mbp2 对应 runtime；Cron事件、skills、plan/todo、goal及子智能体能力继续，未标完整CLI/A或真人实效完成。原8e32与双方快照保留，下一交接18:40。
 
-### 2026-11-08 18:2x · CLI 原生工具与交付闭环检查点
+### 2026-11-08 18:17 · CLI 原生工具与交付闭环检查点
 
 本机62bbb65a已整合固定origin/main50711f88（只含已登记装置/状态，board保留两侧完整段）。mbp2真实源码安装→191秒编译update→同PID新实例重启成功，四程序同代、错误token/旧实例拒绝、旧代可留；原件主仓 `_tmp/20261108-cli-completion/source-install/actual-restart`。本轮串行整合Cron事件/持久状态/通道交付、skills真实发现与read_skill、durable goal CAS、计划审批/待办/进度和ask执行限制。r30 compile、goal、plan、114权限、ask、Cron事件、skills、management、strict lint及四bin全部通过；真实skills调用链及plan审批→待办→写入→宿主重启后恢复也已过（AI已实测待人签字）。本地检查点不代表独立终审或完整CLI完成；目标工具实跑、agent full fork、execute_code、配置边界和其余完整性审计继续。delivery已启动MiniMax/GLM非作者评审；DeepSeek401只记通道失败不计通过。全部Rust/运行探针仍mbp2，旧8e32未动，无GitHub写，下一交接18:40。
+
+### 2026-11-08 18:41 · CLI 两小时接续（继续开发）
+
+本机4268cdd2f与未提交增量保全，r33配置/生产profile/有界MCP/CLI server/双lint/四bin全过；MCP配置、goal、计划待办、skills、web raw/llm/search与代理reload已各有真实隔离宿主闭环。Cron timeout终态丢失已修并真跑通过，SIGTERM已启动任务仍在复测；agent full fork、execute_code、send_attachment和剩余扩展接线继续。GLM评审已修delivery地址/端口/锁边界，模型选择评审正对实际TS消费者纠偏；独立Anthropic在跑，DS401与MM思考耗尽不计通过。现场、持有人、证据与资源见主仓 `_tmp/20261108-cli-completion/handoff-1841.md`；下一交接20:41，不停止开发。唯一正本、旧8e32/双方快照、本机提交与mbp2编译约束维持，无GitHub写，未标完整CLI或真人实效完成。
+
+
+### 2026-11-08 19:26 · CLI 原生执行与子代理检查点（继续开发）
+
+本轮代码统一保存在 cli-gateway-setup/pilotdeck-rs；r42 已通过编译、agent/interaction/permissions/tool-runtime、execute_code、模型选择、样式、附件、后台只读恢复、Cron退出收尾、Hooks运行器、plugin loader及入口审计测试，CLI全套/strict lint/四bin仍在mbp2继续，不能外推为全过。真实execute_code r37已验证旧CLI stdin、同连接嵌套read/edit二次授权、plan/acceptEdits沙箱拒写与bypass写入、取消Python及孙进程回收（12观察PID全退出，无兜底强杀），原件mbp2 `_tmp/execute-code-host-sol-20261108-r37-contract`。delivery双谱系无P0/P1后补locator/EPIPE/响应上限与BOM修复，GLM增量及端口实证裁决在跑；证据主仓 `_tmp/20261108-cli-completion/review-delivery-r42`。此提交保全当前源再真合最新origin/main183d23ad7；SDK agent定义、fork-local MCP/后台续跑和普通工具Hook派发继续补接，不把配置可解析当完成。无GitHub写；所有Rust/产品探针仅mbp2；旧8e32与两边快照保留。

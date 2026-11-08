@@ -364,6 +364,7 @@ fn interaction(signal: Cancellation) -> InteractionTurnInput {
             timeout: Duration::from_millis(50),
         },
         hooks: vec![],
+        hook_options: None,
         contribution: None,
         base_env: None,
         signal,

@@ -184,3 +184,26 @@ fn goal_trim_preserves_utf16_identity_and_rejects_unsafe_round_count() {
             .unwrap();
     assert!(transition(&current, true, &invalid, || "unused".into()).is_err());
 }
+
+#[test]
+fn goal_projection_omits_unknown_fields_and_blank_reason_without_rewriting_history() {
+    let (scratch, _store, storage, session) = fixture();
+    let mut event = JsObject::new();
+    event.insert("type".into(), "goal_changed".into());
+    event.insert("revision".into(), JsValue::Number(1.0));
+    event.insert("goal".into(), pilotdeck_protocol::parse_json(r#"{"id":"fixture","revision":1,"objective":"retain raw history","phase":"active","blockedReason":"  ","unknownField":{"keep":"original"}}"#).unwrap());
+    storage
+        .recorder
+        .writer()
+        .record_session_event_checked(&"session".into(), &"turn".into(), event)
+        .unwrap();
+    let state = session.snapshot().unwrap();
+    assert_eq!(
+        wire(&state.goal),
+        serde_json::json!({"id":"fixture","revision":1,"objective":"retain raw history","phase":"active"})
+    );
+    let bytes = std::fs::read_to_string(scratch.0.join("session.jsonl")).unwrap();
+    assert!(bytes.contains("unknownField"));
+    assert!(bytes.contains("blockedReason"));
+    assert!(bytes.contains("original"));
+}

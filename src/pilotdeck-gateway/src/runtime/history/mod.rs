@@ -14,6 +14,7 @@ pub use entries::messages;
 pub use envelope::{Options as ProjectionOptions, project as project_history};
 pub use page::page;
 pub use project::{Context, ProjectionError, flatten_message};
+pub(crate) use reader::HistoryMarkerFiles;
 pub use reader::{HistoryFiles, NativeHistoryReader};
 pub use session::fallback;
 pub use usage::token_usage;

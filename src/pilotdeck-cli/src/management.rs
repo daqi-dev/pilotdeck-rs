@@ -31,11 +31,16 @@ struct Input {
     target_generation: String,
     instance_id: String,
 }
+const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 fn reply(status: u16, value: Value) -> ControlReply {
-    ControlReply {
-        status,
-        body: value.to_string(),
+    let body = value.to_string();
+    if body.len() > MAX_RESPONSE_BYTES {
+        return ControlReply {
+            status: 500,
+            body: r#"{"error":"management_response_too_large"}"#.into(),
+        };
     }
+    ControlReply { status, body }
 }
 impl RestartManager {
     pub fn new(
@@ -89,32 +94,41 @@ impl RestartManager {
         let instance = self.record.instance_id().to_owned();
         let result = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            let mut state = state.lock().map_err(|_| "management_unavailable")?;
-            if input.instance_id != instance
-                || input.install_id != state.install_id
-                || input.expected_generation != state.running
-                || input.target_generation == state.running
-            {
-                return Err("installation_mismatch");
-            }
-            if let Some((target, id)) = &state.accepted {
-                return if *target == input.target_generation {
-                    Ok((target.clone(), id.clone()))
-                } else {
-                    Err("restart_already_accepted")
-                };
-            }
+            let (root, running, install_id) = {
+                let state = state.lock().map_err(|_| "management_unavailable")?;
+                if input.instance_id != instance
+                    || input.install_id != state.install_id
+                    || input.expected_generation != state.running
+                    || input.target_generation == state.running
+                {
+                    return Err("installation_mismatch");
+                }
+                if let Some((target, id)) = &state.accepted {
+                    return if *target == input.target_generation {
+                        Ok((target.clone(), id.clone()))
+                    } else {
+                        Err("restart_already_accepted")
+                    };
+                }
+                (
+                    state.root.clone(),
+                    state.running.clone(),
+                    state.install_id.clone(),
+                )
+            };
+            // The admission permit serializes restarts. Release the state lock
+            // before hashing so /context cannot stall the async runtime on IO.
             // Reopen and hash the complete current generation before acknowledging.
             // The running generation remains fixed even after `current` switches.
-            let installed = Installation::open(&state.root, &state.running)
-                .map_err(|_| "installation_unconfirmed")?;
-            if installed.policy.install_id != state.install_id
+            let installed =
+                Installation::open(&root, &running).map_err(|_| "installation_unconfirmed")?;
+            if installed.policy.install_id != install_id
                 || installed.current.generation != input.target_generation
             {
                 return Err("target_generation_mismatch");
             }
             let accepted = (input.target_generation, uuid::Uuid::new_v4().to_string());
-            state.accepted = Some(accepted.clone());
+            state.lock().map_err(|_| "management_unavailable")?.accepted = Some(accepted.clone());
             Ok(accepted)
         })
         .await;
@@ -251,7 +265,7 @@ impl HttpRuntime {
                         )
                     })?;
                     if let Ok(data) = frame.into_data() {
-                        if data.len() > 16384_usize.saturating_sub(bytes.len()) {
+                        if data.len() > MAX_RESPONSE_BYTES.saturating_sub(bytes.len()) {
                             return Err(Error::new(
                                 "runtimeUnavailable",
                                 "Native service response exceeds the management limit.",
@@ -318,6 +332,16 @@ mod source_binding_tests {
         io::{Read, Write},
         net::TcpListener,
     };
+    #[test]
+    fn oversized_management_reply_remains_a_bounded_parseable_error() {
+        let response = reply(200, json!({"field":"x".repeat(MAX_RESPONSE_BYTES)}));
+        assert_eq!(response.status, 500);
+        assert!(response.body.len() <= MAX_RESPONSE_BYTES);
+        assert_eq!(
+            serde_json::from_str::<Value>(&response.body).unwrap()["error"],
+            "management_response_too_large"
+        );
+    }
     #[test]
     fn management_source_is_bound_to_the_selected_local_interface() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

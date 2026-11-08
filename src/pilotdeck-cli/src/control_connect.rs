@@ -212,7 +212,7 @@ async fn drive(
                 output.deliver(&notice("run.event",object(&[("requestId",state.id.clone()),("seq",JsValue::Number(state.next as f64)),("final",JsValue::Bool(final_frame)),("event",event.clone())]))).await?;
                 if string_is(&event,"type","error"){state.error=Some(event.clone());}
                 if final_frame {
-                    let response=if let Some(error)=state.error.take(){rpc_error(state.id.clone(),-32001,"Turn failed",Some(error))}else if string_is(&event,"type","turn_completed"){rpc_result(state.id.clone(),object(&[("terminal",event),("lastSeq",JsValue::Number(state.next as f64))]))}else{return Err(ControlError::new("protocol_error","Gateway terminal event is invalid."));};
+                    let response=if let Some(error)=state.error.take(){rpc_error(state.id.clone(),-32001,"Turn failed",Some(error))}else if string_is(&event,"type","turn_completed")&&string_is(&event,"finishReason","completed"){rpc_result(state.id.clone(),object(&[("terminal",event),("lastSeq",JsValue::Number(state.next as f64))]))}else if string_is(&event,"type","turn_completed"){rpc_error(state.id.clone(),-32003,"Turn incomplete",Some(event))}else{return Err(ControlError::new("protocol_error","Gateway terminal event is invalid."));};
                     output.deliver(&response).await?;pending.remove(&key);
                 }else{state.next+=1;}
             },

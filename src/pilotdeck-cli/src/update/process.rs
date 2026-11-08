@@ -308,6 +308,7 @@ impl Runner<'_> {
         let mut out_tail = Vec::new();
         let mut err_tail = Vec::new();
         let mut truncated = false;
+        let progress_failed = std::cell::Cell::new(false);
         let mut capture = |reader: &mut dyn Read, tail: &mut Vec<u8>| -> Result<(), String> {
             let mut buf = [0_u8; 8192];
             // One bounded batch per pipe per turn, even for infinite writers.
@@ -315,8 +316,12 @@ impl Runner<'_> {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        if let Some(progress) = &progress {
-                            progress.write(&buf[..n])?;
+                        if let Some(progress) = &progress
+                            && !progress_failed.get()
+                            && progress.write(&buf[..n]).is_err()
+                        {
+                            progress_failed.set(true);
+                            break;
                         }
                         if n >= self.output_limit {
                             truncated |= tail.len() + n > self.output_limit;
@@ -339,6 +344,9 @@ impl Runner<'_> {
         let interrupted = loop {
             capture(&mut stdout, &mut out_tail)?;
             capture(&mut stderr, &mut err_tail)?;
+            if progress_failed.get() {
+                break Some("Update was cancelled.");
+            }
             if exited(group)? {
                 break None;
             }
@@ -375,7 +383,9 @@ impl Runner<'_> {
         if let Some(progress) = &progress {
             progress.restore()?;
         }
-        if let Some(message) = interrupted {
+        if let Some(message) =
+            interrupted.or_else(|| progress_failed.get().then_some("Update was cancelled."))
+        {
             return Err(message.into());
         }
         Ok(output)
@@ -594,10 +604,15 @@ mod tests {
             == Err(rustix::io::Errno::SRCH);
         std::fs::write(root.join("result.tmp"),serde_json::to_vec(&serde_json::json!({"cancelled":result.err().as_deref()==Some("Update was cancelled."),"flagsRestored":before==after,"groupGone":gone})).unwrap()).unwrap();
         std::fs::rename(root.join("result.tmp"), root.join("result.json")).unwrap();
+        // This dedicated child must not ask libtest to write its final line
+        // after the parent deliberately closed the progress pipe.
+        if std::env::var_os("PDRS_UPDATE_CLOSED_PIPE").is_some() {
+            std::process::exit(0);
+        }
     }
     #[test]
     fn progress_does_not_block_on_an_unread_stdout_pipe() {
-        for whole in [false, true] {
+        for (whole, close_pipe) in [(false, false), (true, false), (false, true)] {
             let root =
                 std::env::temp_dir().join(format!("update-progress-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir(&root).unwrap();
@@ -620,6 +635,9 @@ mod tests {
             if whole {
                 command.env("PDRS_UPDATE_WHOLE_OUTPUT", "1");
             }
+            if close_pipe {
+                command.env("PDRS_UPDATE_CLOSED_PIPE", "1");
+            }
             let mut child = command.spawn().unwrap();
             let deadline = Instant::now() + Duration::from_secs(8);
             while !root.join("pid").exists() && Instant::now() < deadline {
@@ -632,8 +650,15 @@ mod tests {
             }
             // Deliberately do not drain stdout: fill the pipe before the real SIGINT.
             std::thread::sleep(Duration::from_millis(200));
-            rustix::process::kill_process(Pid::from_raw(child.id() as i32).unwrap(), Signal::INT)
+            if close_pipe {
+                drop(child.stdout.take());
+            } else {
+                rustix::process::kill_process(
+                    Pid::from_raw(child.id() as i32).unwrap(),
+                    Signal::INT,
+                )
                 .unwrap();
+            }
             while !root.join("result.json").exists() && Instant::now() < deadline {
                 std::thread::sleep(Duration::from_millis(10));
             }
@@ -646,12 +671,16 @@ mod tests {
                 serde_json::from_slice(&std::fs::read(root.join("result.json")).unwrap()).unwrap();
             // The helper has now proved Runner returned and flags were restored.
             // Drain nonblocking only now, allowing the test harness's final line.
-            let mut stdout = child.stdout.take().unwrap();
-            let flags = rustix::fs::fcntl_getfl(&stdout).unwrap();
-            rustix::fs::fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
+            let mut stdout = child.stdout.take();
+            if let Some(stdout) = &stdout {
+                let flags = rustix::fs::fcntl_getfl(stdout).unwrap();
+                rustix::fs::fcntl_setfl(stdout, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
+            }
             let mut bytes = [0_u8; 8192];
             let status = loop {
-                while matches!(stdout.read(&mut bytes),Ok(n)if n>0) {}
+                if let Some(stdout) = &mut stdout {
+                    while matches!(stdout.read(&mut bytes),Ok(n)if n>0) {}
+                }
                 if let Some(status) = child.try_wait().unwrap() {
                     break status;
                 }
