@@ -2727,6 +2727,351 @@
           "message": "Source path does not exist: <root>/absent"
         }
       }
+    },
+    {
+      "method": "hook_async_result",
+      "params": {},
+      "result": {
+        "error": {
+          "code": "INVALID_ASYNC_HOOK_RESULT",
+          "message": "sessionKey and invocationId are required."
+        }
+      }
+    },
+    {
+      "method": "hook_async_result",
+      "params": {
+        "sessionKey": "s"
+      },
+      "result": {
+        "error": {
+          "code": "INVALID_ASYNC_HOOK_RESULT",
+          "message": "sessionKey and invocationId are required."
+        }
+      }
+    },
+    {
+      "method": "hook_async_result",
+      "params": {
+        "sessionKey": " "
+      },
+      "result": {
+        "error": {
+          "code": "INVALID_ASYNC_HOOK_RESULT",
+          "message": "sessionKey and invocationId are required."
+        }
+      }
+    },
+    {
+      "method": "hook_async_result",
+      "params": {
+        "sessionKey": "　"
+      },
+      "result": {
+        "error": {
+          "code": "INVALID_ASYNC_HOOK_RESULT",
+          "message": "sessionKey and invocationId are required."
+        }
+      }
+    },
+    {
+      "method": "hook_async_result",
+      "params": {
+        "sessionKey": 5
+      },
+      "result": {
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "input.sessionKey?.trim is not a function"
+        }
+      }
+    },
+    {
+      "method": "hook_async_result",
+      "params": {
+        "sessionKey": "s",
+        "invocationId": 5
+      },
+      "result": {
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "input.invocationId?.trim is not a function"
+        }
+      }
+    },
+    {
+      "method": "hook_async_result",
+      "params": {
+        "sessionKey": "s",
+        "invocationId": "i"
+      },
+      "result": {
+        "ok": {
+          "invocationId": "i",
+          "status": "unknown"
+        }
+      }
+    },
+    {
+      "method": "hook_async_result",
+      "params": null,
+      "result": {
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "Cannot read properties of null (reading 'sessionKey')"
+        }
+      }
+    },
+    {
+      "method": "steer_turn",
+      "params": {},
+      "result": {
+        "ok": {
+          "accepted": false,
+          "reason": "no_active_turn"
+        }
+      }
+    },
+    {
+      "method": "steer_turn",
+      "params": {
+        "sessionKey": 5,
+        "runId": "r"
+      },
+      "result": {
+        "ok": {
+          "accepted": false,
+          "reason": "no_active_turn"
+        }
+      }
+    },
+    {
+      "method": "steer_turn",
+      "params": {
+        "sessionKey": "missing-session"
+      },
+      "result": {
+        "ok": {
+          "accepted": false,
+          "reason": "no_active_turn"
+        }
+      }
+    },
+    {
+      "method": "steer_turn",
+      "params": null,
+      "result": {
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "Cannot read properties of null (reading 'sessionKey')"
+        }
+      }
+    },
+    {
+      "method": "cancel_steer",
+      "params": {},
+      "result": {
+        "ok": {
+          "cancelled": false,
+          "reason": "no_active_turn"
+        }
+      }
+    },
+    {
+      "method": "cancel_steer",
+      "params": {
+        "sessionKey": 5
+      },
+      "result": {
+        "ok": {
+          "cancelled": false,
+          "reason": "no_active_turn"
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": {},
+      "result": {
+        "error": {
+          "code": "RUN_NOT_FOUND",
+          "message": "Run undefined is not registered."
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": {
+        "runId": 5
+      },
+      "result": {
+        "error": {
+          "code": "RUN_NOT_FOUND",
+          "message": "Run 5 is not registered."
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": {
+        "sessionKey": [
+          1,
+          2
+        ]
+      },
+      "result": {
+        "error": {
+          "code": "RUN_NOT_FOUND",
+          "message": "Run undefined is not registered."
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": {
+        "afterSeq": -1
+      },
+      "result": {
+        "error": {
+          "code": "INVALID_RUN_CURSOR",
+          "message": "afterSeq must be a non-negative safe integer."
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": {
+        "afterSeq": "3"
+      },
+      "result": {
+        "error": {
+          "code": "INVALID_RUN_CURSOR",
+          "message": "afterSeq must be a non-negative safe integer."
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": {
+        "limit": 0
+      },
+      "result": {
+        "error": {
+          "code": "INVALID_RUN_LIMIT",
+          "message": "limit must be an integer between 1 and 500."
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": {
+        "afterSeq": -1,
+        "runId": {
+          "toString": null
+        }
+      },
+      "result": {
+        "error": {
+          "code": "INVALID_RUN_CURSOR",
+          "message": "afterSeq must be a non-negative safe integer."
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": {
+        "runId": {
+          "toString": null
+        }
+      },
+      "result": {
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "Cannot convert object to primitive value"
+        }
+      }
+    },
+    {
+      "method": "run_events",
+      "params": null,
+      "result": {
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "Cannot read properties of null (reading 'afterSeq')"
+        }
+      }
+    },
+    {
+      "method": "active_turn_snapshot",
+      "params": {},
+      "result": {
+        "ok": {
+          "active": false,
+          "events": []
+        }
+      }
+    },
+    {
+      "method": "active_turn_snapshot",
+      "params": {
+        "sessionKey": null
+      },
+      "result": {
+        "ok": {
+          "active": false,
+          "sessionKey": null,
+          "events": []
+        }
+      }
+    },
+    {
+      "method": "active_turn_snapshot",
+      "params": {
+        "sessionKey": 5
+      },
+      "result": {
+        "ok": {
+          "active": false,
+          "sessionKey": 5,
+          "events": []
+        }
+      }
+    },
+    {
+      "method": "active_turn_snapshot",
+      "params": {
+        "sessionKey": " "
+      },
+      "result": {
+        "ok": {
+          "active": false,
+          "sessionKey": " ",
+          "events": []
+        }
+      }
+    },
+    {
+      "method": "active_turn_snapshot",
+      "params": {
+        "sessionKey": "missing-session"
+      },
+      "result": {
+        "ok": {
+          "active": false,
+          "sessionKey": "missing-session",
+          "events": []
+        }
+      }
+    },
+    {
+      "method": "active_turn_snapshot",
+      "params": null,
+      "result": {
+        "error": {
+          "code": "gateway_request_failed",
+          "message": "Cannot read properties of null (reading 'sessionKey')"
+        }
+      }
     }
   ],
   "pendingIo": {

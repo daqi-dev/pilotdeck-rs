@@ -4227,3 +4227,627 @@ async fn upload_part_validates_params_before_the_capability_gate() {
         .await
         .expect("#1441 order fixture project shutdown");
 }
+
+// ---------------------------------------------------------------------------
+// #1604 S2: the run / steer family reads its inputs exactly like the TS
+// property reads — TS has no input guard on these methods
+// (InProcessGateway.ts:1859-1893, 2479-2553). Every expectation below was
+// probed first (`_tmp/20261026-issue-1604/ts-probe/output.txt` s/c/h/r/a
+// cells; `output2.txt` q cells with the real FileRunRegistry, Node v22.22.0).
+
+#[tokio::test]
+async fn steer_family_dropped_guards_follow_the_ts_lookup_semantics() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1604 registry fixture setup");
+    // Nullish params: the `input.sessionKey` read itself throws (probes s9,
+    // c5) and the boundary serializes the TypeError with its own code.
+    for (params, reading) in [(JsValue::Null, "null"), (JsValue::Undefined, "undefined")] {
+        for method in ["steer_turn", "cancel_steer"] {
+            let error = requests
+                .request(method.into(), params.clone())
+                .await
+                .expect_err("#1604 nullish params must throw on the sessionKey read");
+            negative_assert_eq!(
+                error.code,
+                "gateway_request_failed",
+                "#1604 nullish params use the boundary code ({method})"
+            );
+            negative_assert_eq!(
+                error.message,
+                pilotdeck_protocol::JsString::from(format!(
+                    "Cannot read properties of {reading} (reading 'sessionKey')"
+                )),
+                "#1604 the property-read TypeError names the first field ({method})"
+            );
+        }
+    }
+    let steer_params = |session_key: JsValue, run_id: JsValue| {
+        crate::metadata::object([
+            ("sessionKey", session_key),
+            ("runId", run_id),
+            ("itemId", "i".into()),
+            ("message", "m".into()),
+        ])
+    };
+    // A non-string or blank session key is a Map miss exactly like an absent
+    // one: the TS lookup never errors (probes s1-s3, c1/c2).
+    for key in [JsValue::Number(5.0), " ".into(), JsValue::Bool(true)] {
+        let result = requests
+            .request("steer_turn".into(), steer_params(key.clone(), "r".into()))
+            .await
+            .expect("#1604 non-string session keys stay Ok on steer_turn");
+        negative_assert_eq!(
+            result.get("accepted"),
+            Some(&JsValue::Bool(false)),
+            "#1604 non-string session key is a no_active_turn miss"
+        );
+        negative_assert_eq!(
+            result.get("reason").and_then(JsValue::as_string),
+            Some(&pilotdeck_protocol::JsString::from("no_active_turn")),
+            "#1604 non-string session key reports no_active_turn, not an error"
+        );
+        let result = requests
+            .request("cancel_steer".into(), steer_params(key.clone(), "r".into()))
+            .await
+            .expect("#1604 non-string session keys stay Ok on cancel_steer");
+        negative_assert_eq!(
+            result.get("cancelled"),
+            Some(&JsValue::Bool(false)),
+            "#1604 non-string session key is a no_active_turn miss (cancel)"
+        );
+        negative_assert_eq!(
+            result.get("reason").and_then(JsValue::as_string),
+            Some(&pilotdeck_protocol::JsString::from("no_active_turn")),
+            "#1604 non-string session key reports no_active_turn (cancel)"
+        );
+    }
+    // Stage the state both gates require, then check the strict-equality
+    // branches: a non-string runId mismatches instead of erroring (probes
+    // s4, s10, c3).
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1604 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    for method in ["steer_turn", "cancel_steer"] {
+        let result = requests
+            .request(
+                method.into(),
+                steer_params("s".into(), JsValue::Number(5.0)),
+            )
+            .await
+            .expect("#1604 non-string runId stays Ok ({method})");
+        let field = if method == "steer_turn" {
+            "accepted"
+        } else {
+            "cancelled"
+        };
+        negative_assert_eq!(
+            result.get(field),
+            Some(&JsValue::Bool(false)),
+            "#1604 non-string runId takes the mismatch branch ({method})"
+        );
+        negative_assert_eq!(
+            result.get("reason").and_then(JsValue::as_string),
+            Some(&pilotdeck_protocol::JsString::from("turn_mismatch")),
+            "#1604 non-string runId reports turn_mismatch ({method})"
+        );
+    }
+    // A non-string session key stays a miss even with a live turn (probe s2).
+    let result = requests
+        .request(
+            "steer_turn".into(),
+            steer_params(JsValue::Number(5.0), "r".into()),
+        )
+        .await
+        .expect("#1604 non-string session key with a live turn stays Ok");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(false)),
+        "#1604 non-string session key misses the live turn too"
+    );
+    // Positive: with every field a matching string the steer is accepted and
+    // the same item can be cancelled again (m3-style round trip).
+    let result = requests
+        .request("steer_turn".into(), steer_params("s".into(), "r".into()))
+        .await
+        .expect("#1604 matching steer stays Ok");
+    negative_assert_eq!(
+        result.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 matching steer is accepted"
+    );
+    let result = requests
+        .request("cancel_steer".into(), steer_params("s".into(), "r".into()))
+        .await
+        .expect("#1604 matching cancel stays Ok");
+    negative_assert_eq!(
+        result.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the enqueued item is cancelled by its id"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1604 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1604 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
+    // Ledger A7.2-STEER-INPUT-001: TS `steerTurn` embeds `input.itemId`
+    // verbatim in the canonical message (probe s5/s8), but the Rust mailbox
+    // keys an item by a `JsString`, so a non-string id travels as its
+    // unchecked `String()` form. The response frame keeps parity (accepted,
+    // no self-invented error); the durable record and the mailbox identity
+    // carry the coerced text.
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1604 registry fixture setup");
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s".into(), &"r".into())
+        .expect("#1604 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, "s", "t", "r");
+    let steer_params = |item_id: JsValue| {
+        crate::metadata::object([
+            ("sessionKey", "s".into()),
+            ("runId", "r".into()),
+            ("itemId", item_id),
+            ("message", "m".into()),
+        ])
+    };
+    // Response-frame parity: number, array and `{toString: null}` item ids
+    // are all accepted (probe s5/s6/s8 — TS never errors on the item id).
+    for item_id in [
+        JsValue::Number(5.0),
+        JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0)]),
+        crate::metadata::object([("toString", JsValue::Null)]),
+    ] {
+        let result = requests
+            .request("steer_turn".into(), steer_params(item_id))
+            .await
+            .expect("#1604 non-string item ids stay Ok");
+        negative_assert_eq!(
+            result.get("accepted"),
+            Some(&JsValue::Bool(true)),
+            "#1604 non-string item id is accepted like TS"
+        );
+    }
+    // The mailbox identity and `queueItemId` are the coerced text
+    // (`String(5)`, `String([1,2])`, `String({toString:null})`).
+    let drained = steer
+        .mailbox_for_test(&"s".into())
+        .expect("#1604 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        3,
+        "#1604 all three non-string-id steers were enqueued"
+    );
+    for (message, coerced) in drained.iter().zip(["5", "1,2", "[object Object]"]) {
+        negative_assert_eq!(
+            message.item_id,
+            pilotdeck_protocol::JsString::from(coerced),
+            "#1604 the mailbox identity is the unchecked String() form"
+        );
+        let metadata = message
+            .message
+            .get("metadata")
+            .expect("#1604 canonical metadata");
+        negative_assert_eq!(
+            metadata.get("queueItemId"),
+            Some(&JsValue::String(pilotdeck_protocol::JsString::from(
+                coerced
+            ))),
+            "#1604 queueItemId carries the coerced text (A7.2-STEER-INPUT-001)"
+        );
+    }
+    // Registered divergence: a nesting depth whose `String()` throws in the
+    // checked converter reports the RangeError instead of TS's verbatim
+    // embed; the failure is the boundary's, not a self-invented guard.
+    let mut deep = JsValue::Number(7.0);
+    for _ in 0..=crate::js_value::MAX_ARRAY_DEPTH {
+        deep = JsValue::Array(vec![deep]);
+    }
+    let error = requests
+        .request("steer_turn".into(), steer_params(deep))
+        .await
+        .expect_err("#1604 a too-deep item id reports the join RangeError");
+    negative_assert_eq!(
+        error.code,
+        "gateway_request_failed",
+        "#1604 the deep-array item id uses the boundary code"
+    );
+    negative_assert_eq!(
+        error.message,
+        pilotdeck_protocol::JsString::from(crate::js_value::StackOverflow::MESSAGE),
+        "#1604 the deep-array item id reports the V8 RangeError text"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1604 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1604 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn hook_async_result_non_string_ids_take_the_optional_chain_type_error() {
+    // `require_text` three-layer shape (probes h4/h5/h10/h11): a non-string id
+    // is the boundary's `input.<key>?.trim is not a function` TypeError, and
+    // Unicode blank still folds to the TS domain error (h7/h8).
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1604 registry fixture setup");
+    for (key, field) in [
+        (JsValue::Number(5.0), "sessionKey"),
+        (JsValue::Bool(true), "sessionKey"),
+        (
+            crate::metadata::object([("toString", JsValue::Null)]),
+            "sessionKey",
+        ),
+        (JsValue::Number(5.0), "invocationId"),
+    ] {
+        let other = if field == "sessionKey" {
+            "invocationId"
+        } else {
+            "sessionKey"
+        };
+        let params = crate::metadata::object([(field, key.clone()), (other, "i".into())]);
+        let error = requests
+            .request("hook_async_result".into(), params)
+            .await
+            .expect_err("#1604 non-string ids must take the TypeError path");
+        negative_assert_eq!(
+            error.code,
+            "gateway_request_failed",
+            "#1604 non-string {field} uses the boundary code"
+        );
+        negative_assert_eq!(
+            error.message,
+            pilotdeck_protocol::JsString::from(format!("input.{field}?.trim is not a function")),
+            "#1604 non-string {field} echoes the optional-chain TypeError"
+        );
+    }
+    // Nullish params (h1/h2): the read itself throws, sessionKey first.
+    for (params, reading) in [(JsValue::Null, "null"), (JsValue::Undefined, "undefined")] {
+        let error = requests
+            .request("hook_async_result".into(), params)
+            .await
+            .expect_err("#1604 nullish params must throw on the sessionKey read");
+        negative_assert_eq!(
+            error.message,
+            pilotdeck_protocol::JsString::from(format!(
+                "Cannot read properties of {reading} (reading 'sessionKey')"
+            )),
+            "#1604 hook_async_result nullish params name the first field"
+        );
+    }
+    // Unicode blank (ideographic space, BOM) is the domain error (h7/h8) —
+    // the js_trim WhiteSpace set, wider than Rust `str::trim`.
+    for params in [
+        crate::metadata::object([("sessionKey", "　".into()), ("invocationId", "i".into())]),
+        crate::metadata::object([("sessionKey", "s".into()), ("invocationId", "﻿".into())]),
+    ] {
+        let error = requests
+            .request("hook_async_result".into(), params)
+            .await
+            .expect_err("#1604 Unicode blank ids are blank");
+        negative_assert_eq!(
+            error.code,
+            "INVALID_ASYNC_HOOK_RESULT",
+            "#1604 Unicode blank uses the TS domain code"
+        );
+        negative_assert_eq!(
+            error.message,
+            pilotdeck_protocol::JsString::from("sessionKey and invocationId are required."),
+            "#1604 Unicode blank keeps the TS message"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1604 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1604 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn run_family_reads_the_registry_key_like_the_ts_template() {
+    // The registry key template `` `${projectKey ?? ""}\0${sessionKey}
+    // \0${runId}` `` (RunRegistry.ts:70) coerces every field; TS validates
+    // only afterSeq/limit, and only after the capability gate. Seeded like
+    // probe2 (`output2.txt`): a record under the literal "undefined" strings
+    // plus one normal run.
+    use crate::runtime::turn::gateway::GatewayRequests;
+    use crate::runtime::turn::publish::TurnRunRegistry;
+    use crate::storage::{RunAcceptInput, RunRef};
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1604 registry fixture setup");
+    let registry = requests.runs.clone().expect("#1604 fixture run registry");
+    for run in [
+        RunRef {
+            project_key: None,
+            session_key: "undefined".into(),
+            run_id: "undefined".into(),
+        },
+        RunRef {
+            project_key: None,
+            session_key: "s".into(),
+            run_id: "r".into(),
+        },
+    ] {
+        TurnRunRegistry::accept(
+            &*registry,
+            &RunAcceptInput {
+                run,
+                request_material: "#1604 seed".into(),
+            },
+        )
+        .await
+        .expect("#1604 seed accept");
+    }
+    // q1: runGet({}) reads `\0undefined\0undefined` and hits the record —
+    // a missing field's template form is the literal text "undefined".
+    let result = requests
+        .request("run_get".into(), crate::metadata::object([]))
+        .await
+        .expect("#1604 run_get with all fields missing stays Ok");
+    negative_assert_eq!(
+        result.get("sessionKey").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("undefined")),
+        "#1604 missing sessionKey/runId read as the literal undefined text"
+    );
+    // q6: runEvents({}) reads the same record.
+    let result = requests
+        .request("run_events".into(), crate::metadata::object([]))
+        .await
+        .expect("#1604 run_events with all fields missing stays Ok");
+    negative_assert_eq!(
+        result.get("events"),
+        Some(&JsValue::Array(vec![])),
+        "#1604 run_events on the literal-undefined record returns no events"
+    );
+    negative_assert_eq!(
+        result.get("nextSeq"),
+        None,
+        "#1604 an empty page carries no nextSeq"
+    );
+    // r5: a miss reports the coerced runId text.
+    let error = requests
+        .request(
+            "run_events".into(),
+            crate::metadata::object([("sessionKey", "s".into()), ("runId", JsValue::Number(5.0))]),
+        )
+        .await
+        .expect_err("#1604 an unregistered run reports RUN_NOT_FOUND");
+    negative_assert_eq!(error.code, "RUN_NOT_FOUND", "#1604 run miss code");
+    negative_assert_eq!(
+        error.message,
+        pilotdeck_protocol::JsString::from("Run 5 is not registered."),
+        "#1604 the run id reports its coerced text"
+    );
+    // q3/q7: a `{toString: null}` field throws inside the template
+    // conversion — the boundary serializes the TypeError.
+    for method in ["run_get", "run_events"] {
+        let error = requests
+            .request(
+                method.into(),
+                crate::metadata::object([
+                    ("sessionKey", "s".into()),
+                    (
+                        "runId",
+                        crate::metadata::object([("toString", JsValue::Null)]),
+                    ),
+                ]),
+            )
+            .await
+            .expect_err("#1604 a non-primitive runId must throw ({method})");
+        negative_assert_eq!(
+            error.code,
+            "gateway_request_failed",
+            "#1604 ToPrimitive failure uses the boundary code ({method})"
+        );
+        negative_assert_eq!(
+            error.message,
+            pilotdeck_protocol::JsString::from("Cannot convert object to primitive value"),
+            "#1604 ToPrimitive failure keeps the V8 text ({method})"
+        );
+    }
+    // q8: arrays join into the key instead of throwing.
+    let result = requests
+        .request(
+            "run_get".into(),
+            crate::metadata::object([
+                (
+                    "sessionKey",
+                    JsValue::Array(vec![JsValue::Number(1.0), JsValue::Number(2.0)]),
+                ),
+                ("runId", "r".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 array sessionKey joins, no error");
+    negative_assert_eq!(
+        matches!(result, JsValue::Null),
+        true,
+        "#1604 the joined key misses and run_get answers null"
+    );
+    // r7: cursor validation precedes the key template reads.
+    let error = requests
+        .request(
+            "run_events".into(),
+            crate::metadata::object([
+                ("afterSeq", JsValue::Number(-1.0)),
+                (
+                    "sessionKey",
+                    crate::metadata::object([("toString", JsValue::Null)]),
+                ),
+                ("runId", "r".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1604 an invalid cursor wins over the coercion");
+    negative_assert_eq!(
+        error.code,
+        "INVALID_RUN_CURSOR",
+        "#1604 cursor validation precedes key coercion"
+    );
+    // r10/q4: nullish params throws at each method's own first field read.
+    let error = requests
+        .request("run_events".into(), JsValue::Null)
+        .await
+        .expect_err("#1604 run_events null params must throw on afterSeq");
+    negative_assert_eq!(
+        error.message,
+        pilotdeck_protocol::JsString::from("Cannot read properties of null (reading 'afterSeq')"),
+        "#1604 run_events reads afterSeq first"
+    );
+    let error = requests
+        .request("run_get".into(), JsValue::Null)
+        .await
+        .expect_err("#1604 run_get null params must throw on projectKey");
+    negative_assert_eq!(
+        error.message,
+        pilotdeck_protocol::JsString::from("Cannot read properties of null (reading 'projectKey')"),
+        "#1604 run_get reads projectKey first"
+    );
+    // r11/r12: the capability gate precedes every input read.
+    let mut no_registry = requests.clone();
+    no_registry.runs = None;
+    let error = no_registry
+        .request("run_get".into(), JsValue::Null)
+        .await
+        .expect_err("#1604 no registry must gate before any read");
+    negative_assert_eq!(
+        error.code,
+        "CAPABILITY_UNAVAILABLE",
+        "#1604 the capability gate precedes the field reads"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1604 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1604 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn active_turn_snapshot_misses_echo_the_raw_session_key() {
+    // getActiveTurnSnapshot → GatewayTurnReplayStore.snapshot
+    // (GatewayTurnReplayStore.ts:107-118): a non-string key is a Map miss
+    // answered with the input's own value; the sessionKey entry is dropped
+    // exactly when the field is absent (JSON.stringify drops undefined).
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1604 registry fixture setup");
+    // a4: nullish params throws on the sessionKey read.
+    for (params, reading) in [(JsValue::Null, "null"), (JsValue::Undefined, "undefined")] {
+        let error = requests
+            .request("active_turn_snapshot".into(), params)
+            .await
+            .expect_err("#1604 nullish params must throw on the sessionKey read");
+        negative_assert_eq!(
+            error.message,
+            pilotdeck_protocol::JsString::from(format!(
+                "Cannot read properties of {reading} (reading 'sessionKey')"
+            )),
+            "#1604 active_turn_snapshot names the first field"
+        );
+    }
+    // a1: an absent key drops the sessionKey entry from the miss object.
+    let result = requests
+        .request("active_turn_snapshot".into(), crate::metadata::object([]))
+        .await
+        .expect("#1604 the miss path stays Ok");
+    negative_assert_eq!(
+        result.get("active"),
+        Some(&JsValue::Bool(false)),
+        "#1604 the miss object reports inactive"
+    );
+    negative_assert_eq!(
+        result.get("sessionKey"),
+        None,
+        "#1604 an absent sessionKey is dropped like JSON.stringify drops undefined"
+    );
+    negative_assert_eq!(
+        result.get("events"),
+        Some(&JsValue::Array(vec![])),
+        "#1604 the miss object carries empty events"
+    );
+    // a2/a3/a5: any present key is echoed raw — number, blank string, null.
+    for key in [JsValue::Number(5.0), " ".into(), JsValue::Null] {
+        let result = requests
+            .request(
+                "active_turn_snapshot".into(),
+                crate::metadata::object([("sessionKey", key.clone())]),
+            )
+            .await
+            .expect("#1604 a raw sessionKey echo stays Ok");
+        negative_assert_eq!(
+            result.get("sessionKey"),
+            Some(&key),
+            "#1604 the miss object echoes the raw sessionKey"
+        );
+    }
+    // a6: positive — a live replay answers through the coordinator.
+    let _replay = requests.coordinator.start(&"s".into(), &"r".into(), |_| {});
+    let result = requests
+        .request(
+            "active_turn_snapshot".into(),
+            crate::metadata::object([("sessionKey", "s".into())]),
+        )
+        .await
+        .expect("#1604 the live path stays Ok");
+    negative_assert_eq!(
+        result.get("active"),
+        Some(&JsValue::Bool(true)),
+        "#1604 a live replay reports active"
+    );
+    negative_assert_eq!(
+        result.get("sessionKey").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("s")),
+        "#1604 the live path echoes the string key"
+    );
+    negative_assert_eq!(
+        result.get("runId").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("r")),
+        "#1604 the live path reports the run id"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1604 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1604 registry fixture project shutdown");
+}
