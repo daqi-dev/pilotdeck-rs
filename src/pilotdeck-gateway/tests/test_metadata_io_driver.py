@@ -7,6 +7,13 @@ import os
 from collections import Counter
 from pathlib import Path
 import re
+
+# #1718 (fix-r2, DS sibling P2): the function body is sliced by ast line
+# numbers, so the source must split the way the tokenizer counts lines —
+# ``str.splitlines`` also breaks on \f, \v, \x1c-\x1e, \x85 and U+2028/2029,
+# and one such character above the target shifts every index after it.
+# Same regex as scripts/check-frozen-delivery.py's ``_LINE_BREAK``.
+_LINE_BREAK = re.compile(r'\r\n|\r|\n')
 import shutil
 import stat
 import subprocess
@@ -3433,7 +3440,7 @@ self_check_controls_run | return | return problems
         """`write_source_atomic` 的函数体源码（#1692 §9 / #1903）。"""
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.FunctionDef) and node.name == 'write_source_atomic':
-                return '\n'.join(source.splitlines()[node.lineno - 1:node.end_lineno])
+                return '\n'.join(_LINE_BREAK.split(source)[node.lineno - 1:node.end_lineno])
         self.fail('#1692 §9 the module must define write_source_atomic()')
 
     @staticmethod

@@ -4193,13 +4193,34 @@ def _name_is_optimistic(name, bindings, lineno, seen=None):
             and _name_is_optimistic(value.id, bindings, lineno, seen))
 
 
+def _constant_ifexp(node):
+    """The taken arm of a constant conditional, or None when it is runtime.
+
+    ``ast.literal_eval`` only folds fully constant tests, so a name or a call
+    in the condition keeps both arms — the healthy data-driven shape
+    ``'PASS' if measured else 'FAIL'`` is untouched (#1652 fix-r2, anthropic
+    boundary P0: ``'PASS' if True else 'FAIL'`` can only ever produce the
+    clean arm, and the dead fail-closed arm no longer excuses it).
+    """
+    try:
+        taken = ast.literal_eval(node.test)
+    except (ValueError, TypeError, SyntaxError):
+        return None
+    return node.body if taken else node.orelse
+
+
 def _exit_arms(node):
     """Split a returned expression into the exit expressions it can produce.
 
     ``0 if cond else shared`` must be judged per arm: the shared call in the
-    other arm cannot excuse this one (DeepSeek P0-1).
+    other arm cannot excuse this one (DeepSeek P0-1).  A *constant*
+    condition is not a branch: only the arm the interpreter can take is an
+    exit the expression can produce (#1652 fix-r2, anthropic boundary P0).
     """
     if isinstance(node, ast.IfExp):
+        taken = _constant_ifexp(node)
+        if taken is not None:
+            return _exit_arms(taken)
         return [arm for sub in (node.body, node.orelse) for arm in _exit_arms(sub)]
     if isinstance(node, ast.BoolOp):
         return [arm for sub in node.values for arm in _exit_arms(sub)]
@@ -4423,11 +4444,22 @@ def _nested_status_slots(value):
         for element in value.elts:
             slots.extend(_nested_status_slots(element))
     elif isinstance(value, ast.IfExp):
+        # fix-r2 (anthropic boundary P0): a constant condition folds to its
+        # taken arm — a clean status living only in the dead arm is not a
+        # slot the report can produce, and the live arm is judged alone.
+        taken = _constant_ifexp(value)
+        if taken is not None:
+            return _nested_status_slots(taken)
         for arm in (value.body, value.orelse):
             slots.extend(_nested_status_slots(arm))
     elif isinstance(value, ast.BoolOp):
         for arm in value.values:
             slots.extend(_nested_status_slots(arm))
+    elif isinstance(value, ast.Starred):
+        # fix-r2 (DS boundary observation): ``[*[{'status': 'PASS'}]]`` spreads
+        # a literal the walk could not see; spreading a name stays opaque on
+        # purpose (the name rules own that layer).
+        slots.extend(_nested_status_slots(value.value))
     return slots
 
 
@@ -6689,7 +6721,15 @@ def aggregation_audit():
         "    return {'status': 'BLOCKED', 'face': "
         "{'status': 'PASS' if report.get('ok') else 'FAIL'}}\n"
         "def _nested_fail_closed_face(report):\n"
-        "    return {'status': 'BLOCKED', 'face': {'status': 'NOT_RUN'}}\n")
+        "    return {'status': 'BLOCKED', 'face': {'status': 'NOT_RUN'}}\n"
+        # #1652 fix-r2 (anthropic boundary P0): a constant condition is not a
+        # branch — the dead fail-closed arm must not excuse the live clean one.
+        "def _nested_constant_conditional_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': 'PASS' if True else 'FAIL'}}\n"
+        # #1652 fix-r2 (DS boundary observation): a starred literal spread.
+        "def _nested_starred_face(report):\n"
+        "    return {'status': 'BLOCKED', 'faces': [*[{'status': 'PASS'}]]}\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     # #892 r21: the key side of the r20 constant folding (GLM sibling r20
     # P1-1) and the function-scope trust withdrawal (GLM sibling r20 P1-2 /
@@ -6725,6 +6765,23 @@ def aggregation_audit():
     if not nested_fail_closed or unshared_status_slots(nested_fail_closed[1]):
         failures.append('#892 aggregation-audit: detector self-test rejected a '
                         'nested fail-closed status literal (#1652)')
+    # #1652 fix-r2 (anthropic boundary P0): the clean status behind a
+    # constant condition must be flagged — the dead 'FAIL' arm never runs.
+    nested_constant = probe892_found.get(('<self-test-892>', '_nested_constant_conditional_face'))
+    if (not nested_constant
+            or not any('nested status slot' in slot
+                       for slot in unshared_status_slots(nested_constant[1]))):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'clean status behind a constant condition (#1652)')
+    # #1652 fix-r2 (DS boundary observation): a starred literal spread is
+    # walked — the clean status inside ``[*[{'status': 'PASS'}]]`` must be
+    # flagged, while spreading a name stays opaque by design.
+    nested_starred = probe892_found.get(('<self-test-892>', '_nested_starred_face'))
+    if (not nested_starred
+            or not any('nested status slot' in slot
+                       for slot in unshared_status_slots(nested_starred[1]))):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'clean status inside a starred literal spread (#1652)')
 
     def _probe892_function(name):
         return next((node for node in probe892.body

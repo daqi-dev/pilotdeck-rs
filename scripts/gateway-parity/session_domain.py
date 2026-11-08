@@ -1736,11 +1736,22 @@ def _retirement_census_verdict(census):
     #1588 r1 §4: ``declaredAlive`` must be *proven* alive — a missing or null
     proof is the same "not proven alive" as an explicit False, never a pass.
     """
-    rows = census.get('rows') or []
-    declared = census.get('declared') or []
+    # #1588 r1 §1 (fix-r2, DS boundary P0): the sample lists are normalised to
+    # their declared shapes — a truthy non-list (an int, a string) is an
+    # unusable observation, not a TypeError out of the census face; and a
+    # census that recorded no rows or no declared owned pids has not
+    # established anything, so it is a non-PASS observation (the fake PASS on
+    # ``{'rows': [], 'declaredAlive': True}`` is exactly the hole this closes).
+    rows = census.get('rows')
+    rows = rows if isinstance(rows, list) else []
+    declared = census.get('declared')
+    declared = declared if isinstance(declared, list) else []
     undeclared = [row for row in rows if _retirement_census_pid(row) not in declared]
+    # fix-r2 (anthropic boundary P2): membership by equality, not by a set —
+    # a corrupt row carrying an unhashable pid must not turn the census face
+    # into a TypeError out of the report path.
     missing_declared = [pid for pid in declared
-                         if pid not in {_retirement_census_pid(row) for row in rows}]
+                        if not any(_retirement_census_pid(row) == pid for row in rows)]
     problems = []
     if undeclared:
         problems.append(f'{len(undeclared)} undeclared TS host rows: '
@@ -1748,6 +1759,9 @@ def _retirement_census_verdict(census):
     if missing_declared:
         problems.append(f'declared pids absent from the census rows: {missing_declared} '
                         f'(rows sampled: {len(rows)})')
+    if not declared or not rows:
+        problems.append('the census recorded no sampled rows or no declared owned pids; '
+                        'an unestablished census is not a clean host audit')
     if census.get('declaredAlive') is not True:
         problems.append(f'declared gateway pid was not proven alive at census time '
                         f'(declaredAlive={census.get("declaredAlive")!r})')
@@ -1767,7 +1781,14 @@ def _retirement_report_census(round_row):
     one, so it blocks instead of passing.
     """
     census = round_row.get('census')
-    if not isinstance(census, dict) or not isinstance(census.get('rows'), list):
+    # fix-r2 (DS boundary P0): the report face goes one notch further than the
+    # verdict — a census that recorded no rows or no declared owned pids never
+    # observed the host set, so the face reads BLOCKED (unobserved) instead of
+    # scoring the verdict's FAIL.  The controls class-2 path keeps calling the
+    # verdict directly and still sees its FAIL, so removing the gateway pid
+    # from a one-pid declared set keeps its expected attribution.
+    if (not isinstance(census, dict) or not isinstance(census.get('rows'), list)
+            or not (census.get('rows') or []) or not (census.get('declared') or [])):
         return {'status': 'BLOCKED', 'rule': 'HOST_CENSUS', 'undeclared': [],
                 'problems': ['the round recorded no process census; an unobserved census is '
                              'not an empty host set']}
@@ -1825,7 +1846,11 @@ def _retirement_network_verdict(connections):
     rows = connections.get('rows')
     rows = rows if isinstance(rows, list) else []
     unparsed = [row for row in rows if not isinstance(row, dict) or row.get('peer') is None]
-    unparsed += connections.get('unparsed') or []
+    # fix-r2 (DS concurrency P2): the unparsed tally is normalised to its
+    # declared shape — a truthy non-list must not turn the face into a
+    # TypeError (``unparsed += 5``).
+    raw_unparsed = connections.get('unparsed')
+    unparsed += raw_unparsed if isinstance(raw_unparsed, list) else []
     undeclared = [row.get('peer') for row in rows
                   if isinstance(row, dict) and _retirement_peer_is_undeclared(row.get('peer'))]
     # Observability is the shape of the observation (#1355 fix-r4f): a
@@ -1969,6 +1994,12 @@ def score_retirement_round(row, expected):
         return verdict
     executed, unknown, missing_fields = [], [], []
     for outcome_row in outcomes:
+        if not isinstance(outcome_row, dict):
+            # #1588 r1 §1 (fix-r2, DS sibling P1): a non-dict row carries no
+            # fields at all — record it as the missing-field shape and let the
+            # existing MISSING_FIELD rule fail the round fail-closed.
+            missing_fields.append({'field': 'row', 'row': outcome_row})
+            continue
         for field in ('method', 'outcome', 'shape'):
             if field not in outcome_row:
                 missing_fields.append({'field': field, 'row': outcome_row})
@@ -2000,7 +2031,8 @@ def score_retirement_round(row, expected):
         problems.append({'rule': 'COVERAGE', 'detail': {'missing': missing}})
     if extra:
         problems.append({'rule': 'COVERAGE', 'detail': {'unexpected': extra}})
-    if outcomes and all(outcome_row.get('outcome') == 'error'
+    if outcomes and all(isinstance(outcome_row, dict)
+                        and outcome_row.get('outcome') == 'error'
                         and outcome_row.get('errorCode') == 'CAPABILITY_UNAVAILABLE'
                         for outcome_row in outcomes):
         problems.append({'rule': 'UNIFORM_UNAVAILABLE',
@@ -2008,6 +2040,10 @@ def score_retirement_round(row, expected):
     sends, responses, events, final_events = _retirement_wire_backing(row.get('frames') or [])
     violations = []
     for outcome_row in outcomes:
+        if not isinstance(outcome_row, dict):
+            # fix-r2 (DS sibling P1): already recorded by MISSING_FIELD above;
+            # the wire-backing pass only walks rows that can name a method.
+            continue
         method = outcome_row.get('method')
         status = outcome_row.get('outcome')
         if status == 'timeout':
@@ -2056,11 +2092,17 @@ def _retirement_strip_wire(mutated, method):
     """Remove every wire frame of *method* while keeping its outcome row."""
     identifiers = set()
     for row in mutated.get('frames') or []:
+        if not isinstance(row, dict):
+            # #1588 r1 §1 (fix-r2, DS sibling P1): a non-dict row carries no
+            # frame to strip; the outcome's wire-backing rule fails closed.
+            continue
         frame = row.get('frame')
         if row.get('direction') == 'send' and isinstance(frame, dict) and frame.get('method') == method:
             identifiers.add(frame.get('id'))
     mutated['frames'] = [row for row in mutated.get('frames') or []
-                         if not (isinstance(row.get('frame'), dict) and row['frame'].get('id') in identifiers)]
+                         if not (isinstance(row, dict)
+                                 and isinstance(row.get('frame'), dict)
+                                 and row['frame'].get('id') in identifiers)]
     return mutated
 
 
@@ -2068,11 +2110,14 @@ def _retirement_strip_receive(mutated, method):
     """Remove every receive frame of *method*, keeping its send frame (R1)."""
     identifiers = set()
     for row in mutated.get('frames') or []:
+        if not isinstance(row, dict):
+            continue
         frame = row.get('frame')
         if row.get('direction') == 'send' and isinstance(frame, dict) and frame.get('method') == method:
             identifiers.add(frame.get('id'))
     mutated['frames'] = [row for row in mutated.get('frames') or []
-                         if not (row.get('direction') == 'receive'
+                         if not (isinstance(row, dict)
+                                 and row.get('direction') == 'receive'
                                  and isinstance(row.get('frame'), dict)
                                  and row['frame'].get('id') in identifiers)]
     return mutated
@@ -2148,7 +2193,7 @@ def _retirement_controls(round_row, expected, verdict=None):
     # 1. 故意偷偷回退 TS / 假 local 实透传: an executed method with no wire frame.
     mutated = copy.deepcopy(round_row)
     victim = next((row.get('method') for row in mutated.get('outcomes') or []
-                   if row.get('outcome') == 'ok' and row.get('method')), None)
+                   if isinstance(row, dict) and row.get('outcome') == 'ok' and row.get('method')), None)
     injection = 'executed method with every wire frame stripped while its ok outcome is kept'
     if victim is None:
         # P1 (#1355 fix-r4): same unestablishable-control rule as class 6 — a
@@ -2178,7 +2223,11 @@ def _retirement_controls(round_row, expected, verdict=None):
                                     if p['rule'] == 'EVIDENCE_BACKING'), None)},
                    require_pair=(victim, 'send frame missing'))
     # 2. 隐藏 TS 宿主: the census still shows the gateway pid, but it is undeclared.
-    census = round_row.get('census') or {}
+    # fix-r2 (DS sibling P2): same shape guard as _retirement_report_census —
+    # a truthy non-dict census is an unusable observation, and the class
+    # reports unestablished instead of raising AttributeError.
+    census = round_row.get('census')
+    census = census if isinstance(census, dict) else {}
     census_rows = census.get('rows') or []
     gateway_pid = _retirement_gateway_pid(round_row)
     if gateway_pid is None or not any(_retirement_census_pid(row) == gateway_pid
@@ -2199,7 +2248,8 @@ def _retirement_controls(round_row, expected, verdict=None):
         # already had (a failed launch attempt's process) would fail the class
         # on its own.  Remove only the gateway pid from the declared set and
         # attribute the verdict to that pid.
-        declared_original = census.get('declared') or []
+        declared_original = census.get('declared')
+        declared_original = declared_original if isinstance(declared_original, list) else []
         if gateway_pid not in declared_original:
             unavailable('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
                         'HOST_CENSUS',
@@ -2227,9 +2277,13 @@ def _retirement_controls(round_row, expected, verdict=None):
     # 3. 全走 unavailable: every outcome becomes CAPABILITY_UNAVAILABLE, wire kept consistent.
     mutated = copy.deepcopy(round_row)
     for outcome_row in mutated.get('outcomes') or []:
+        if not isinstance(outcome_row, dict):
+            continue
         outcome_row['outcome'] = 'error'
         outcome_row['errorCode'] = 'CAPABILITY_UNAVAILABLE'
     for row in mutated.get('frames') or []:
+        if not isinstance(row, dict):
+            continue
         frame = row.get('frame')
         if isinstance(frame, dict) and frame.get('type') == 'response' and frame.get('ok') is True:
             frame['ok'] = False
@@ -2313,7 +2367,7 @@ def _retirement_controls(round_row, expected, verdict=None):
     # — the pre-fix scorer passed exactly this shape.
     mutated = copy.deepcopy(round_row)
     stream_row = next((row for row in mutated.get('outcomes') or []
-                       if row.get('shape') == 'stream' and row.get('method')), None)
+                       if isinstance(row, dict) and row.get('shape') == 'stream' and row.get('method')), None)
     injection = ('stream method rewritten to error with every receive frame stripped while '
                  'keeping its send frame')
     if stream_row is None:
@@ -2347,8 +2401,8 @@ def _retirement_controls(round_row, expected, verdict=None):
     # EVIDENCE_BACKING — the pre-fix scorer passed exactly this shape.
     mutated = copy.deepcopy(round_row)
     stream_ok = next((row for row in mutated.get('outcomes') or []
-                      if row.get('shape') == 'stream' and row.get('outcome') == 'ok'
-                      and row.get('method')), None)
+                      if isinstance(row, dict) and row.get('shape') == 'stream'
+                      and row.get('outcome') == 'ok' and row.get('method')), None)
     injection = 'stream ok outcome whose terminal event frame is downgraded to final:false'
     if stream_ok is None:
         # P1 (#1355 fix-r4): a legal degraded round (the only stream method
@@ -2372,6 +2426,8 @@ def _retirement_controls(round_row, expected, verdict=None):
         else:
             flipped = 0
             for frame_row in mutated.get('frames') or []:
+                if not isinstance(frame_row, dict):
+                    continue
                 frame = frame_row.get('frame')
                 if (isinstance(frame, dict) and frame.get('type') == 'event'
                         and frame.get('final') is True and frame.get('id') == identifier):
@@ -2514,8 +2570,13 @@ def _retirement_entry_inventory(baseline, round_row):
     # Each probe is normalized to its (path, status) pair up front: a probe row
     # that is not a dict, or whose path is not a string, is an unusable probe
     # (an empty path matches no route), never an AttributeError.
+    # fix-r2 (DS boundary P2): the status side of the pair gets the same shape
+    # guard the path side already had — only a true int (never a bool, never a
+    # JSON string "404") is a usable probe status; anything else is an
+    # unusable probe (None → NO_HIT), not a HIT.
     probe_rows = [(probe.get('path') if isinstance(probe.get('path'), str) else '',
-                   probe.get('status'))
+                   probe.get('status') if isinstance(probe.get('status'), int)
+                   and not isinstance(probe.get('status'), bool) else None)
                   for probe in (round_row.get('http') or []) if isinstance(probe, dict)]
     executed = {row.get('method') for row in round_row.get('outcomes') or []
                 if isinstance(row, dict) and row.get('outcome') in ('ok', 'error')
@@ -2918,9 +2979,10 @@ def _retirement_report(output, baseline):
                   'hash re-registration is the coordinator receive step',
         'baseline': {'path': str(baseline), 'revision': revision},
         'expected': {'methods': expected, 'count': len(expected), 'provenance': provenance},
-        'executed': {verdict.get('round'): {'count': len(verdict.get('executed') or []),
-                                            'methods': verdict.get('executed') or []}
-                     for verdict in verdicts},
+        'executed': {(verdict.get('round') or f'round-{index + 1:02d}'):
+                     {'count': len(verdict.get('executed') or []),
+                      'methods': verdict.get('executed') or []}
+                     for index, verdict in enumerate(verdicts)},
         'rounds': [{'round': verdict.get('round'), 'status': verdict.get('status'),
                     'rules': verdict.get('rules') or [],
                     'driverExitCode': verdict.get('driverExitCode'),
@@ -3025,6 +3087,16 @@ def retirement_report(output, baseline):
         # collapse to dropped all 16 scoring faces, the exact shape this
         # wrapper's budget branch was fixed to remove.
         return _retirement_budget_blocked(baseline, error, rule=error.rule)
+    except (KeyError, TypeError, AttributeError, ValueError, OSError) as error:
+        # fix-r2 (DS concurrency P2 / boundary P2): a corrupted or truncated
+        # driver artifact (a half-written methods.json, a frames.jsonl line
+        # that is valid JSON but not an object) raised before any source
+        # guard and escaped to main's fallback, which wrote a FAIL skeleton
+        # with every scoring face missing — the exact collapse this PR removes.
+        # Any residual shape defect now reports the same full 16-face BLOCKED
+        # under ROUND_EVIDENCE; EvidenceError (a ValueError) is caught by the
+        # clause above and keeps its own rule.
+        return _retirement_budget_blocked(baseline, error, rule='ROUND_EVIDENCE')
 
 
 def main():

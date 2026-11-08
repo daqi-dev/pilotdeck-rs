@@ -1822,6 +1822,25 @@ def nested_status_slot_bypass(rows):
                   'passed=False')
 
 
+def nested_constant_conditional_bypass(rows):
+    """#1652 fix-r2 (anthropic boundary P0): the cleanupAudit face written as
+    ``'PASS' if True else 'FAIL'`` is an unconditional clean status — the dead
+    fail-closed arm never runs, so the recursive layer must flag the slot."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' if True else 'FAIL'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested constant-conditional bypass '
+                  'flagged, passed=False')
+
+
 def controls_nested_same_name(rows):
     """#892 r3: a nested ``def main`` must not shadow or duplicate the
     registered point name (MiniMax/DeepSeek boundary P2)."""
@@ -2064,6 +2083,13 @@ MUTATIONS = [
      "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
      "            for row in rounds) else 'FAIL'},\n",
      "        'cleanupAudit': {'status': 'PASS'},\n"),
+    # #1652 fix-r2 (anthropic boundary P0): a constant condition is not a
+    # branch — the dead 'FAIL' arm must not excuse the live clean one.
+    ('nested-constant-conditional-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' if True else 'FAIL'},\n"),
     ('controls-nested-same-name', CONTROLS_SOURCE,
      "    report['cleanup'] = cleanup\n",
      "    def main():\n"
@@ -4435,6 +4461,8 @@ JUDGES = {
         'aggregation-audit', retirement_duplicate_status_key, False, ()),
     'nested-status-slot-bypass': (
         'aggregation-audit', nested_status_slot_bypass, False, ()),
+    'nested-constant-conditional-bypass': (
+        'aggregation-audit', nested_constant_conditional_bypass, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
     'calibrate-shared-excuse': (

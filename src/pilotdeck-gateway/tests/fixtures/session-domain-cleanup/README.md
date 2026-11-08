@@ -1064,12 +1064,21 @@ keys in dict values (including `**` expansions), list/tuple/set elements,
 point, and judges them by the same provenance rules as the top level: a relay
 (`_relays_status` / `_calls_aggregate`) or any arm folding into a fail-closed
 literal (`BLOCKED`/`FAIL`/`NOT_RUN`/…) is legal, an unconditional clean literal
-is a `nested status slot` bypass.  Names, calls and comprehensions stay opaque
+is a `nested status slot` bypass.  A *constant* conditional is not a branch
+(fix-r2, anthropic boundary P0): `'PASS' if True else 'FAIL'` is judged by the
+arm the interpreter can take alone, in both `_exit_arms` and the nested walk —
+the dead fail-closed arm no longer excuses the live clean one.  A `Starred`
+literal spread (`[*[{'status': 'PASS'}]]`) is walked into its payload (fix-r2,
+DS boundary observation); spreading a name stays opaque.  Names, calls and
+comprehensions stay opaque
 to the recursion — a Name is resolved by the write families, a callee by the
 delegation registries, and a comprehension body is its own scope; walking them
-here would double-judge the shapes those families already own.  Four probes pin
+here would double-judge the shapes those families already own.  Six probes pin
 it: a clean status inside a returned face, one inside a list element of a
-returned face, and the legal pair — an `IfExp` face that keeps its fail-closed
-arm, and a bare fail-closed literal.  The `nested-status-slot-bypass` mutant
-(the retirement report's `cleanupAudit` face hard-written to `PASS`) pins the
+returned face, one behind a constant condition, one inside a starred literal
+spread, and the legal pair — an `IfExp` face that keeps its fail-closed
+arm, and a bare fail-closed literal.  The `nested-status-slot-bypass` and
+`nested-constant-conditional-bypass` mutants
+(the retirement report's `cleanupAudit` face hard-written to `PASS`, and the
+same face written as `'PASS' if True else 'FAIL'`) pin the
 detector from the mutation side.

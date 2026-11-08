@@ -3361,11 +3361,30 @@ class RetirementScoring(unittest.TestCase):
             ('census unproven alive', 'census',
              {'rows': [{'pid': 7}], 'declared': [7]},
              ('hostAudit', 'processCensus', 0, 'status'), 'FAIL'),
+            # fix-r2 (DS boundary P0): a census that recorded no rows or no
+            # declared owned pids never observed the host set — never a PASS.
+            ('census empty rows', 'census',
+             {'rows': [], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census empty rows and declared', 'census',
+             {'rows': [], 'declared': [], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census declared missing with rows', 'census',
+             {'rows': [{'pid': 7}], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census truthy non-dict', 'census', ['x'],
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
             ('connections', 'connections', KeyError, ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
             ('connections null', 'connections', None, ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
             ('connections null rows', 'connections',
              {'rows': None, 'commandStatus': 'ok'},
              ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            # fix-r2 (DS concurrency P2): a truthy non-list unparsed tally is
+            # an unusable observation, not a TypeError out of the face.
+            ('connections unparsed non-list', 'connections',
+             {'rows': [{'peer': '180.101.242.203:443', 'raw': 'x'}], 'unparsed': 5,
+              'commandStatus': 'ok'},
+             ('hostAudit', 'network', 0, 'status'), 'FAIL'),
             ('listeners', 'listeners', KeyError, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
             ('listeners null', 'listeners', None, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
             ('listeners null addresses', 'listeners',
@@ -3381,8 +3400,15 @@ class RetirementScoring(unittest.TestCase):
              ('cleanupAudit', 'status'), 'FAIL'),
             ('outcomes', 'outcomes', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('outcomes null', 'outcomes', None, ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r2 (DS sibling P1): a non-dict inner row is the same unusable
+            # observation — MISSING_FIELD fails the round, never an exception
+            # out of the scorer or the controls.
+            ('outcomes non-dict row', 'outcomes', [None],
+             ('rounds', 0, 'status'), 'FAIL'),
             ('frames', 'frames', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('frames null', 'frames', None, ('rounds', 0, 'status'), 'FAIL'),
+            ('frames non-dict rows', 'frames', [None, 123, 'x'],
+             ('rounds', 0, 'status'), 'FAIL'),
             ('http', 'http', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('http null', 'http', None, ('rounds', 0, 'status'), 'FAIL'),
             ('processes', 'processes', KeyError, ('rounds', 0, 'status'), 'FAIL'),
@@ -3414,6 +3440,77 @@ class RetirementScoring(unittest.TestCase):
                     self.assertNotEqual(report['hostAudit']['status'], 'PASS',
                                         f'#43 {tag} {key}')
 
+    def test_executed_face_keys_fall_back_to_the_round_index(self):
+        # fix-r2 (DS boundary P2): a round that recorded no label must not
+        # collapse the executed face — five label-less rounds used to merge
+        # into a single ``None`` key (each overwriting the last); every round
+        # keeps its own index-keyed entry instead.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        del row['label']
+        report = self._report_for(row, expected)
+        self.assertEqual(sorted(report['executed']),
+                         [f'round-{index:02d}' for index in range(1, 6)],
+                         f'#45 executed face keys: {sorted(report["executed"])!r}')
+
+    def test_shape_errors_keep_the_full_face_set(self):
+        # fix-r2 (DS concurrency P2 / boundary P2): a corrupted or truncated
+        # driver artifact (a half-written methods.json, a frames.jsonl line
+        # that is valid JSON but not an object) raised JSONDecodeError /
+        # KeyError / TypeError out of _retirement_report; the wrapper only
+        # caught timeouts and EvidenceError, so main's fallback wrote a FAIL
+        # skeleton with every scoring face missing — the exact collapse this
+        # PR exists to remove.  Any residual shape defect is a collection
+        # refusal: the full face set reports BLOCKED under ROUND_EVIDENCE.
+        # json comes through the session module: test_safety.py must not grow
+        # an import of its own — the #1140 verbatim bootstrap pins the import
+        # prefix, and an apparatus file that diverges from the shared block is
+        # itself the defect (caught live by test_a2 during fix-r2).
+        errors = (KeyError('methods'),
+                  TypeError("'NoneType' object is not subscriptable"),
+                  AttributeError("'str' object has no attribute 'get'"),
+                  self.session.json.JSONDecodeError('Expecting value', '{', 0),
+                  ValueError('corrupt artifact'),
+                  OSError('read failed'))
+        for error in errors:
+            with patch.object(self.session, '_retirement_report', side_effect=error):
+                report = self.session.retirement_report(Path('out'), Path('baseline'))
+            self.assertEqual(report['status'], 'BLOCKED',
+                             f'#46 {type(error).__name__} status: {report["status"]}')
+            self.assertEqual(report['executionStatus'], 'BLOCKED',
+                             f'#46 {type(error).__name__} executionStatus')
+            self.assertEqual(report['failure']['rule'], 'ROUND_EVIDENCE',
+                            f'#46 {type(error).__name__} failure: {report["failure"]}')
+            self.assertIn('could not collect round evidence', report['reason'],
+                          f'#46 {type(error).__name__} reason: {report["reason"]}')
+            for face in self.REPORT_FACES:
+                self.assertIn(face, report, f'#46 {type(error).__name__} lacks face {face}')
+
+    def test_entry_inventory_treats_a_non_int_status_as_unusable(self):
+        # fix-r2 (DS boundary P2): only a true int is a usable probe status —
+        # a JSON string ``"404"`` (or a boolean) is an unusable probe and must
+        # never be read as a HIT by the ``not in (None, 404)`` check.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = self._fake_baseline(root)
+            home = root / 'home'
+            home.mkdir()
+            (home / 'pilotdeck.yaml').write_text('schemaVersion: 1\n')
+
+            def round_row(label, health_status):
+                return {'label': label, 'http': [{'path': '/health', 'status': health_status}],
+                        'frames': self._frames(final=True),
+                        'outcomes': [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
+                        'runtime': {'pilotHome': str(home)}}
+
+            for tag, bad_status in (('json string', '404'), ('boolean', True)):
+                inventory = self.session._retirement_entry_inventory(
+                    baseline, round_row('round-01', bad_status))
+                health = next(entry for entry in inventory['entries']
+                              if entry['entry'] == '/health')
+                self.assertTrue(health['status'] == 'NO_HIT',
+                                f'#47 {tag} status is an unusable probe: {health}')
+                self.assertIn('/health', inventory['unhit'])
 
     def test_control_attribution_requires_the_injected_object(self):
         # P1 (#1355 fix-r4d): a control PASS must be attributed to the object
