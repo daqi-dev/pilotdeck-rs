@@ -16,6 +16,8 @@ from negative_suite import Case, classify, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process/management.rs'
+TURN_SUBMIT = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
+SESSION_FACTORY = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 # #1352: the advertised capability table moved out of `requests.rs`.
@@ -489,7 +491,19 @@ mutations.append(('snapshot-project-refusal-message-changed', SOURCE,
                   'native_process::management::bounded_snapshot_tests::native_snapshot_marker_fifo_child',
                   'native snapshot resolver preserves unsafe marker error'))
 
-EXPECTED_TOTAL = 99
+# Owned workspace access is verified both at its producer and at submit's
+# capture consumer, without extending the legacy M6 panic-anchor grammar.
+mutations.append(('workspace-cwd-from-public-snapshot', TURN_SUBMIT,
+                  'handle.workspace_cwd()',
+                  'handle.snapshot().get("cwd").and_then(JsValue::as_string).cloned()',
+                  'runtime::turn::submit::tests::workspace_capture_uses_owned_cwd_instead_of_public_snapshot',
+                  '#748 owned workspace capture uses owner cwd'))
+mutations.append(('owned-workspace-cwd-unavailable', SESSION_FACTORY,
+                  'self.storage.cwd.to_str().map(JsString::from)', 'None',
+                  'runtime::session::factory::tests::production_workspace_cwd_is_storage_owned_without_extending_public_snapshot',
+                  '#745 production owned workspace cwd'))
+
+EXPECTED_TOTAL = 101
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -590,6 +604,8 @@ EXPECTED_NAMES = (
     'mcp-status-disabled-spelling-flattened',
     'submit-workspace-id-refusal-dropped',
     'snapshot-project-refusal-message-changed',
+    'workspace-cwd-from-public-snapshot',
+    'owned-workspace-cwd-unavailable',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
@@ -685,6 +701,8 @@ def main():
                     ORACLE.with_name('generate.mts'), ORACLE.with_name('session.jsonl'),
                     METADATA,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/management_tests.rs',
+                    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit_tests.rs',
+                    ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.rs',
                     ASSEMBLY_MEMORY,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs']) as originals:
                 original = originals[case.path].decode()

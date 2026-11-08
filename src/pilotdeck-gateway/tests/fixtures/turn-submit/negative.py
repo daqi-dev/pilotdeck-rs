@@ -112,11 +112,8 @@ mutants = [
     # Paired negative control for the no-lease arm: acquiring a lease for
     # an attachment-free case must fail the absence assertion.
     ('always-acquire-lease', 'false => None,', 'false => Some(self.services.resolve_attachments(input).await?),', None, None, None),
-    ('workspace-cwd-from-public-snapshot', 'handle.workspace_cwd()', 'handle.snapshot().get("cwd").and_then(JsValue::as_string).cloned()', None, '#748 owned workspace capture uses owner cwd', None),
-    ('owned-workspace-cwd-unavailable', 'self.storage.cwd.to_str().map(JsString::from)', 'None', None, '#745 production owned workspace cwd', None),
 ]
-mutant_source = {'owned-workspace-cwd-unavailable': rust / 'pilotdeck-gateway/src/runtime/session/factory.rs',
-                 'guard-config-not-provided': host_source,
+mutant_source = {'guard-config-not-provided': host_source,
                  'host-lease-release-skipped': host_source,
                  'cwd-host-unavailable-ok': host_source,
                  'lease-poison-unwrap-finish': host_source,
@@ -141,13 +138,7 @@ mutant_test.update({
     'lease-acquisition-skipped': lease_order,
     'always-acquire-lease': lease_order,
 })
-mutant_test.update({
-    'workspace-cwd-from-public-snapshot': f'{test}::workspace_capture_uses_owned_cwd_instead_of_public_snapshot',
-    'owned-workspace-cwd-unavailable': 'runtime::session::factory::tests::production_workspace_cwd_is_storage_owned_without_extending_public_snapshot',
-})
 mutant_anchor = {
-    'workspace-cwd-from-public-snapshot': ('assertion', '#748 owned workspace capture uses owner cwd'),
-    'owned-workspace-cwd-unavailable': ('assertion', '#745 production owned workspace cwd'),
     # fix-r3 keeps the location anchors derived by ``unwrap_site``; fix-r4
     # only narrows the host-lease marker to the assertion's own message.
     'host-lease-release-skipped': ('message', 'a prepared lease must be released exactly once'),
