@@ -5074,3 +5074,8 @@ r71四bin与17项检查全0，真实后台SDK六格、observer执行/取消、co
 ### 2026-11-09 00:41 · CLI 两小时接续（继续开发）
 
 r80编译/快照/submit/management/首次owned cwd/FIFO/strict/四bin及实际native-process十项全0，真实turn→snapshot list/get/restore通过；CJK19环境对照0差异。最终源码install/update已在mbp2真实Cargo完成，四bin同代切换、同PID新服务实例、旧代/外部技能保留及旧bin拒更均通过。全仓旧负控引用原47失配已本机86c8/ddb修，5802静态锚0错，实际KILLED尚待跑；full gateway5578测试和两家增量评审进行中。异常marker实跑额外发现共享TCP连续第二轮requestId=default碰撞，88f9已修逻辑执行身份并a328加三格真probe，未编译不报通过；snapshot消费点差异用例Sol继续。R3仅追加更正文案和真实manifest证据，旧账本与尺子不动。现场/持有人/会话/资源与接续见主仓 `_tmp/20261108-cli-completion/handoff-0041.md`；唯一正本和旧树快照保持，本机本轮约1.80GiB无Rust产物，只本机提交、Rust只mbp2、无GitHub写。完整CLI工程仍在收口，阶段D/真人签字未完成，02:41交接后继续。
+
+
+### 2026-11-09 01:31 · CLI 真回归与最后入口收口
+
+r82完整CLI实际542通过、0失败、140忽略，四bin/strict通过；新增owned-cwd测试首次误将整个含孤立UTF16的oracle转serde，06365只转目标case后r83真实1PASS，plugin旧hooks拒绝断言也已实测修正并1PASS，精确marker父测试1PASS。TCP三格r82真两轮均完成，同driver旧r80仍第二轮身份冲突；正常probe与主动SIGTERM清理原件见主仓 `_tmp/20261108-cli-completion/tcp-r82/`。r80全Gateway被测试夹具资源累积拖至252FD/236KQUEUE后挂起，已保现场并SIGTERM，不报整轮通过；d9已有factory观察强环经b059清理，实际同173测试前后均PASS且FD峰197→25，r84同256limit全量5580重跑中。双谱系新审发现cron/TUI同源token读器遗漏，52c9已源码修并补真实PTY八格待mbp2编译；只新增R2范围，不回写旧差异。优先17个实际负控在独立validation副本串跑，完整负控计划153个控制待执行，不以5805静态锚0错代KILL。仅本机提交，Rust只mbp2；本机归属明确材料约1.82GiB、无target/_build。完整CLI工程及阶段D人签尚未完成，下个02:41交接后继续。

@@ -28,3 +28,9 @@ cmp src/pilotdeck-cli/tests/fixtures/cli-channel/boundary-oracle.json "$NEW_BOUN
 Unix 默认 channel 在 health 成功后复用 SDK 的同 fd 有界 reader：最多接受 65536 原始字节；FIFO 等特殊文件或超限明确退出 1，不转入 LocalHost，普通 IO/目录/空 token 保持原回退。非 Unix 保留旧读器，不计入此资源保证。范围及精确错误见 `specs/gateway-parity/diffs/D1-SDK-TOKEN-READ-BOUNDS-001-R1.md`，原 SDK 条目仍是历史 SDK 范围，原金样未改。
 
 进程回归 `default_channel_token_files_are_bounded_and_preserve_ordinary_wire` 实际先回 health 200，再核四个资源拒绝、两个固定 TS 普通 wire/stdout 正控和一个 SIGTERM 回收格；仅持有独占端口租约且 bind 成功才启动 CLI，不访问真实 home/服务。全部 Rust 由协调者在 mbp2 r82 验证，本文候选尚不计通过；此回归不新增 TS 异常文件时序或普通 IO 回退的进程实采。
+
+## cron/TUI 发现读器补充
+
+`cron` 与 TUI 的远端发现也复用 `sdk::token::read`：Unix 健康检查成功后遇特殊文件/超限 token 明确退出，不把资源拒绝吞作不可用；普通 IO/目录/空 token 仍按各入口原合同处理（cron 输出需要运行 server；TUI 回退 LocalHost）。server 的凭据创建/重用保留独立严格 raw-byte reader，目录与读取失败不得据此被吞掉并生成新凭据。范围见新增 `D1-SDK-TOKEN-READ-BOUNDS-001-R2`，原条目和 R1 不回写。
+
+`cron_and_tui_token_resources_fail_before_connection_or_local_fallback` 仅 macOS 运行八格真实进程：两入口各覆盖无 writer FIFO、持有 writer FIFO、65537 字节和 32 MiB 稀疏文件；TUI stdin 使用真实 PTY，stdout/stderr 独立 pipe。复用本册的端口租约、health 200、精确错误/退出、零 WS、配置/token 身份不变及无 LocalHost 状态检查，原默认七格和 oracle 不变。新回归尚待协调者 mbp2 执行，不能计通过；普通成功仍引用既有 cron 金样/TUI PTY，未重新采 TS 异常文件时序。
