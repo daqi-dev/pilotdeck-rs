@@ -471,10 +471,7 @@ mod tests {
     use super::super::leases::LeaseUpdate;
     use pilotdeck_protocol::stringify_json;
 
-    const GOLDEN: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/always-on-2294/oracle.json"
-    ));
+    const GOLDEN: &str = include_str!("../../../tests/fixtures/always-on-2294/oracle.json");
     const NOW_MS: f64 = 1_767_225_900_000.0;
 
     fn golden(id: &str) -> serde_json::Value {
@@ -819,7 +816,7 @@ mod tests {
         let gone = harness.project_root.parent().unwrap().join("gone");
         let mut config = AlwaysOnConfig::default_config();
         config.projects = vec![(gone.to_string_lossy().into_owned(), true)];
-        let scheduler = harness.scheduler_for(&gone.to_string_lossy().into_owned(), config, false);
+        let scheduler = harness.scheduler_for(&gone.to_string_lossy(), config, false);
         let result = scheduler.run_tick_once().await.expect("#2294 tick");
         let record = serde_json::json!({
             "result": tick_json(&result),

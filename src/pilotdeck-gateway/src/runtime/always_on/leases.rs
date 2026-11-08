@@ -2,10 +2,7 @@
 //! in-memory, process-bound channel lease registry. Adapters mutate it on
 //! connect/disconnect/submit/complete; the discovery scheduler reads it via
 //! `list_fresh`.
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use pilotdeck_transport::system_clock::parse_node22_date;
 
@@ -36,17 +33,22 @@ pub(crate) struct LeaseUpdate {
     pub written_at: Option<String>,
 }
 
-/// The registry (ChannelLeaseRegistry.ts:17-99): a map keyed by
-/// `projectKey \u0001 channelKey \u0001 writerId`, in insertion order.
+/// The registry (ChannelLeaseRegistry.ts:17-99): a `Map` keyed by
+/// `projectKey \u0001 channelKey \u0001 writerId`, in insertion order. The
+/// TS `Map` semantics the gate chain's lease pick depends on: `set` on a
+/// live key updates in place (keeping its position), delete + re-insert
+/// appends at the end, and `list`/`listFresh` iterate that order. A
+/// `HashMap` would lose all three — `storage/task_budget.rs:118` keeps the
+/// same `Vec` shape for the same reason.
 pub(crate) struct ChannelLeaseRegistry {
-    leases: Mutex<HashMap<String, ChannelLease>>,
+    leases: Mutex<Vec<(String, ChannelLease)>>,
     now: Arc<dyn Fn() -> f64 + Send + Sync>,
 }
 
 impl ChannelLeaseRegistry {
     pub(crate) fn new(now: Arc<dyn Fn() -> f64 + Send + Sync>) -> Self {
         Self {
-            leases: Mutex::new(HashMap::new()),
+            leases: Mutex::new(Vec::new()),
             now,
         }
     }
@@ -72,21 +74,26 @@ impl ChannelLeaseRegistry {
             last_user_msg_at: input.last_user_msg_at,
         };
         let key = Self::key(&lease.project_key, &lease.channel_key, &lease.writer_id);
-        self.leases
+        let mut leases = self
+            .leases
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .insert(key, lease.clone());
+            .unwrap_or_else(|error| error.into_inner());
+        match leases.iter_mut().find(|(existing, _)| existing == &key) {
+            Some(slot) => slot.1 = lease.clone(),
+            None => leases.push((key, lease.clone())),
+        }
         lease
     }
 
     /// `markBusy` (ChannelLeaseRegistry.ts:42-47): a missing lease is a no-op.
     pub(crate) fn mark_busy(&self, project_key: &str, channel_key: &str, writer_id: &str) {
         let key = Self::key(project_key, channel_key, writer_id);
-        if let Some(lease) = self
+        if let Some((_, lease)) = self
             .leases
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .get_mut(&key)
+            .iter_mut()
+            .find(|(existing, _)| existing == &key)
         {
             lease.agent_busy = true;
             lease.written_at = self.iso();
@@ -97,11 +104,12 @@ impl ChannelLeaseRegistry {
     /// message time, which is what the `recent_user_msg` gate reads.
     pub(crate) fn mark_idle(&self, project_key: &str, channel_key: &str, writer_id: &str) {
         let key = Self::key(project_key, channel_key, writer_id);
-        if let Some(lease) = self
+        if let Some((_, lease)) = self
             .leases
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .get_mut(&key)
+            .iter_mut()
+            .find(|(existing, _)| existing == &key)
         {
             lease.agent_busy = false;
             lease.last_user_msg_at = Some(self.iso());
@@ -111,10 +119,14 @@ impl ChannelLeaseRegistry {
 
     /// `remove` (ChannelLeaseRegistry.ts:58-60).
     pub(crate) fn remove(&self, project_key: &str, channel_key: &str, writer_id: &str) {
-        self.leases
+        let key = Self::key(project_key, channel_key, writer_id);
+        let mut leases = self
+            .leases
             .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .remove(&Self::key(project_key, channel_key, writer_id));
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(position) = leases.iter().position(|(existing, _)| existing == &key) {
+            leases.remove(position);
+        }
     }
 
     /// `removeByWriter` (ChannelLeaseRegistry.ts:62-67).
@@ -122,7 +134,7 @@ impl ChannelLeaseRegistry {
         self.leases
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .retain(|_, lease| lease.writer_id != writer_id);
+            .retain(|(_, lease)| lease.writer_id != writer_id);
     }
 
     /// `listFresh` (ChannelLeaseRegistry.ts:69-80): leases for one project
@@ -138,8 +150,8 @@ impl ChannelLeaseRegistry {
         self.leases
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .values()
-            .filter(|lease| {
+            .iter()
+            .filter(|(_, lease)| {
                 lease.project_key == project_key
                     && parse_node22_date(&pilotdeck_protocol::JsString::from(
                         lease.written_at.as_str(),
@@ -148,7 +160,7 @@ impl ChannelLeaseRegistry {
                     .flatten()
                     .is_some_and(|written| written >= cutoff)
             })
-            .cloned()
+            .map(|(_, lease)| lease.clone())
             .collect()
     }
 
@@ -157,8 +169,8 @@ impl ChannelLeaseRegistry {
         self.leases
             .lock()
             .unwrap_or_else(|error| error.into_inner())
-            .values()
-            .cloned()
+            .iter()
+            .map(|(_, lease)| lease.clone())
             .collect()
     }
 }
@@ -297,6 +309,35 @@ mod tests {
             defaulted.len(),
             1,
             "#2294 listFresh defaults to the registry clock"
+        );
+    }
+
+    // `list` keeps the TS `Map`'s insertion order (ChannelLeaseRegistry.ts:
+    // 17-99): `set` on a live key updates in place, delete + re-insert
+    // appends at the end. The gate chain's lease pick reads that order, so a
+    // hash-ordering registry would pick a random lease.
+    #[test]
+    fn list_keeps_insertion_order() {
+        let registry = registry();
+        registry.set(update("/proj/a", "web", "w1"));
+        registry.set(update("/proj/a", "cli", "w2"));
+        registry.set(update("/proj/a", "api", "w3"));
+        // A live key keeps its position on re-set.
+        registry.set(LeaseUpdate {
+            agent_busy: true,
+            ..update("/proj/a", "cli", "w2")
+        });
+        // Delete + re-insert appends at the end.
+        registry.remove("/proj/a", "web", "w1");
+        registry.set(update("/proj/a", "web", "w1"));
+        negative_assert_eq!(
+            registry
+                .list()
+                .iter()
+                .map(|lease| lease.writer_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["w2", "w3", "w1"],
+            "#2294 list keeps JS Map insertion order"
         );
     }
 

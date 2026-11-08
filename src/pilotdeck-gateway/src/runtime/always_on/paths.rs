@@ -110,7 +110,7 @@ fn sanitize_id(value: &JsString) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{negative_assert, negative_assert_eq};
+    use crate::negative_assert_eq;
     use pilotdeck_protocol::JsString;
 
     // AlwaysOnPaths.ts:44-77: the directory layout is

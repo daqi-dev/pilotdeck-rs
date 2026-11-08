@@ -730,10 +730,7 @@ mod tests {
     use crate::runtime::cron::CronError;
     use std::future::Future;
 
-    const GOLDEN: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/always-on-2294/oracle.json"
-    ));
+    const GOLDEN: &str = include_str!("../../../tests/fixtures/always-on-2294/oracle.json");
 
     fn golden(id: &str) -> serde_json::Value {
         let records: Vec<serde_json::Value> =

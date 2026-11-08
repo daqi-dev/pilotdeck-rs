@@ -26,8 +26,12 @@ use super::{AlwaysOnPaths, paths::plan_markdown_path};
 /// (branchName).
 #[derive(Clone, Debug)]
 pub(crate) struct WorkCycleWorkspace {
+    /// Wire-shape fields the apply prompt reads; the read side lands with
+    /// the fire seam (explicitly unported in this PR).
+    #[allow(dead_code)]
     pub strategy: String,
     pub cwd: String,
+    #[allow(dead_code)]
     pub metadata: JsObject,
 }
 
@@ -38,11 +42,18 @@ pub(crate) struct WorkCycleWorkspace {
 #[derive(Clone, Debug)]
 pub(crate) struct WorkCycleRecord {
     pub id: String,
+    /// Wire-shape fields the fire seam and its reports read; the read side
+    /// lands with the explicitly unported fire half.
+    #[allow(dead_code)]
     pub project_key: String,
     pub status: String,
     pub workspace: Option<WorkCycleWorkspace>,
     pub plan_ids: Vec<String>,
+    /// Wire-shape fields the fire seam and its reports read; the read side
+    /// lands with the explicitly unported fire half.
+    #[allow(dead_code)]
     pub created_at: String,
+    #[allow(dead_code)]
     pub created_by_run_id: String,
 }
 
@@ -66,7 +77,9 @@ fn js_string(value: Option<&JsValue>) -> Option<String> {
 /// 11-30): ENOENT and unparseable bodies read as the default; other io
 /// errors propagate like the TS rethrow; a body that is not an object with
 /// `schemaVersion === 1` and an array under `entries_key` reads as the
-/// default too.
+/// default too. The body decodes UTF-8 with replacement, like the Node
+/// `utf8` read — an invalid byte becomes U+FFFD, which fails `JSON.parse`
+/// and reads as the default, not an `InvalidData` error.
 fn read_index_object(file: &Path, entries_key: &str) -> io::Result<JsObject> {
     let default = || {
         let mut index = JsObject::new();
@@ -74,11 +87,12 @@ fn read_index_object(file: &Path, entries_key: &str) -> io::Result<JsObject> {
         index.insert(entries_key.into(), JsValue::Array(Vec::new()));
         index
     };
-    let raw = match std::fs::read_to_string(file) {
+    let raw = match std::fs::read(file) {
         Ok(raw) => raw,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(default()),
         Err(error) => return Err(error),
     };
+    let raw = String::from_utf8_lossy(&raw);
     let parsed = match parse_json(&raw) {
         Ok(parsed) => parsed,
         Err(_) => return Ok(default()),
@@ -366,6 +380,20 @@ mod tests {
                 "#2294 {tag} read leaves the file untouched"
             );
         }
+        // Invalid UTF-8 decodes with U+FFFD replacement like the Node
+        // `utf8` read, so the body stays unparseable and reads as the
+        // default instead of surfacing an io error.
+        let home = scratch("non-utf8");
+        let paths = paths(&home);
+        let file = &paths.cycle_index_file;
+        std::fs::create_dir_all(file.parent().expect("#2294 parent")).expect("#2294 mkdir");
+        std::fs::write(file, [0xff, b'{', b'}']).expect("#2294 non-utf8 cycle index");
+        let store = WorkCycleStore::new(paths.clone());
+        negative_assert_eq!(
+            store.get_record("c1").expect("#2294 read").is_none(),
+            true,
+            "#2294 non-utf8 cycle index reads as the default, not an error"
+        );
     }
 
     // The probe's `t10` record shape: `getRecord` matches by id and

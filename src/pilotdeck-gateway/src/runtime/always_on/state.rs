@@ -36,22 +36,6 @@ fn default_state(now_ms: f64) -> JsObject {
     state
 }
 
-/// The canonical `normalizeState` order (DiscoveryStateStore.ts:161-180).
-const CANONICAL_KEYS: [&str; 12] = [
-    "schemaVersion",
-    "lastFireStartedAt",
-    "lastFireCompletedAt",
-    "lastFireOutcome",
-    "lastPlanId",
-    "lastRunId",
-    "todayKey",
-    "todayRunCount",
-    "consecutiveFailures",
-    "dormant",
-    "activeWorkCycleId",
-    "currentWorkspace",
-];
-
 fn as_string(value: Option<&JsValue>) -> Option<JsString> {
     value.and_then(JsValue::as_string).cloned()
 }
@@ -215,14 +199,18 @@ impl DiscoveryStateStore {
 
     /// `read` (DiscoveryStateStore.ts:20-35): ENOENT and unparseable files
     /// read as the default; other io errors propagate, like the TS rethrow.
+    /// The body decodes UTF-8 with replacement, like the Node `utf8` read —
+    /// an invalid byte becomes U+FFFD, which fails `JSON.parse` and reads
+    /// as the default, not an `InvalidData` error (`read_to_string`).
     pub(crate) fn read(&self, now_ms: f64) -> io::Result<JsObject> {
-        let raw = match std::fs::read_to_string(&self.paths.state_file) {
+        let raw = match std::fs::read(&self.paths.state_file) {
             Ok(raw) => raw,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
                 return Ok(default_state(now_ms));
             }
             Err(error) => return Err(error),
         };
+        let raw = String::from_utf8_lossy(&raw);
         let mut state = match parse_json(&raw) {
             Ok(parsed) => normalize_state(&parsed, now_ms),
             Err(_) => default_state(now_ms),
@@ -368,10 +356,7 @@ mod tests {
     use crate::negative_assert_eq;
     use std::path::PathBuf;
 
-    const GOLDEN: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/always-on-2294/oracle.json"
-    ));
+    const GOLDEN: &str = include_str!("../../../tests/fixtures/always-on-2294/oracle.json");
 
     /// The golden record for one scenario id, as a serde value.
     fn golden(id: &str) -> serde_json::Value {
@@ -489,6 +474,15 @@ mod tests {
             compact(&store.read(NOW_MS).expect("#2294 read")),
             golden("s8-malformed"),
             "#2294 s8-malformed: an unparseable file reads as the default"
+        );
+        // Invalid UTF-8 decodes with U+FFFD replacement like the Node
+        // `utf8` read, so the body stays unparseable and reads as the
+        // default instead of surfacing an io error.
+        std::fs::write(&store.paths.state_file, [0xff, b'{', b'}']).expect("#2294 non-utf8");
+        negative_assert_eq!(
+            compact(&store.read(NOW_MS).expect("#2294 read")),
+            golden("s8-malformed"),
+            "#2294 s8b-non-utf8: invalid bytes read as the default, not an error"
         );
         write_json(
             &store.paths.state_file,
