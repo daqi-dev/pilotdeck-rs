@@ -5093,3 +5093,8 @@ d2c4已整合插件诊断/空hooks测试及token回退四格、TCP清理候选�
 ### 2026-11-09 02:41 · CLI 两小时接续（继续开发）
 
 r89 全CLI546过0失败140忽略，默认32技能catalog/read_skill、插件MCP/命令/UTF16上下文均实际通过；冻结bin真实三轮old/new/old命令与stdio MCP/模型请求闭环通过。多项目资源首轮真实reload失败，已定位ExecutionWorld family每代重建丢archive共享，Sol修产品；Terra按owner/replay来源隔离history，audit补每项目memory能力，不能以旧TS跨项目混用行为当安全标准。r90新loader测试两处不存在JsString方法首编失败，f5已源修，未计通过。r84全Gateway5327过4失败249忽略，四失败同bin/same256limit独立运行均过，但原低FD单进程累积问题仍未关闭；优先负控10KILL1INVALID+6在跑，旧manager INVALID待修后复验。现场/责任/证据见主仓 `_tmp/20261108-cli-completion/handoff-0241.md`；仅本机提交、Rust全mbp2，唯一正本与旧树快照保持。本机明确归属约1.89GiB无Rust产物，完整CLI/阶段D人签仍未完成，下个04:41交接后继续。
+
+
+### 2026-11-09 03:16 · 多项目消费接线与首轮实测修复
+
+本机正本已到f2da5c6b7，Requests/submit按同一选中项目固定上下文、owner、模型/存储代及replay；seed/style/上传/active快照补齐，旧publisher迟到写按实例身份隔离。r95（98e45f806，mbp2）all-target编译、memory6、style2、submit11、UTF1635、input2、context、native-plugin11/代际4、coordinator39通过；publish筛选命中0不计通过。5个management失败为真实装配memory能力期望过时、storage测试未append、upload get真bug（目录返回{projects:[...]}被误判顶层数组）及2项clippy已修，均等r96复验；r96固定f2da5c6b7正在扩跑native全模块、owner和正确publish模块。第二隔离镜像固定e79dbcdb7构建全CLI/库测试/实际bins，未记通过。双谱系loader增量复核在跑；scope/steer剩余入口与实际新代skills源码安装继续，旧17优先变异原件已回收（16KILLED/1INVALID不改写）。所有Rust仅mbp2，本机只源码/证据/提交，无GitHub写；完整CLI尚未完成，03:16后继续，下一交接04:41。
