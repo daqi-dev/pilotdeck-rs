@@ -139,6 +139,26 @@ python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输�
 负控守卫 / self_check 控件），`self_check` 的 lock 用例断言三份都在源码里——改常量只改两处
 当场红（r8）。
 
+正控机制（数据变异、断言「应当 PASS 的性质」，判 HELD / BROKEN / INVALID；rc 映射
+与负控同口径：checker rc=0 → 核断言，rc=1 → BROKEN，rc∉{0,1} → INVALID）保留在
+执行器与 `summary.json` 的 `positives` / `positiveCounts` 里，**当前注册数为 0**——
+A8.6-R1 的延期正控 PC1–PC2 已随 #2294 always-on 实现落地按反转条款撤回
+（`diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001-R2.md`，见汇总表「负控 N1–N17」行）；
+将来再登记正控时改 `EXPECTED_POSITIVE_IDS` 即可，任一条非 HELD 即整轮非零退出。
+
+**名册 / 分母断言（#2378）**：控件的分母是 `check_outcome_parity.py` 里登记的**字面
+ID 全集**（`EXPECTED_CONTROL_IDS` = N1–N17、`EXPECTED_POSITIVE_IDS` =
+空集），不是 `len(controls)`。条数拦不住改名（一条改名成已有 ID 后一重复一
+缺失、条数不变）；执行器在**构造后**与**汇总前**各核一次
+`sorted(实际 ids) == sorted(名册)`（排序后逐元素比对，重复条目同样不等），不符
+即 rc=2 拒跑并拒绝发布 summary——分母缩水是「拒绝」，不是「剩下的全绿」。判决
+词表外的值（含 None）在汇总前一律**折叠记 INVALID**（改在 record 本身上，原
+判决与原因保留在 reason 里可见），不静默不计数——否则 `SURVIVED == 0 and
+INVALID == 0` 会对词表外判决空真判 PASS。`status` 由 counts **整字典等于
+期望值**决定（`{KILLED: 17, SURVIVED: 0, INVALID: 0}`），不再是「两个零」的空真式
+判定；`self_check` 的 `check_negctl` 对 summary 做同一断言（整字典 + ID 名册），两端
+同源读 `check_outcome_parity` 的登记值。
+
 只做数据变异（内存改 + 写临时目录，**不改任何源码文本**）；逐条记
 `KILLED` / `SURVIVED` / `INVALID` + 原因，全部跑完再汇总，任一非 KILLED 即非零退出；
 `summary.json` 原子发布（先写 `*.tmp` 再 `rename`）。判据分三步：**先核各原始轮对金样
