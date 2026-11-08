@@ -640,7 +640,7 @@ def main():
 
     def passed(result, test, log):
         return (result.returncode == 0 and f'test {test} ... ok' in log
-                and '1 passed; 0 failed' in log)
+                and ' 1 passed; 0 failed' in log)
 
     def classify(result, test, assertion, log):
         if passed(result, test, log):

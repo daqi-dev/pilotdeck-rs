@@ -1262,6 +1262,64 @@ fn write_nul_path_with_a_boundary_fffd_answers_the_registered_residual() {
     let _ = fs::remove_dir_all(&parent);
 }
 
+/// #2450 fix-r2 (boundary#1), the residual-one nail on the actual wire: the
+/// JSON spelling `"a\ud83d\u0000b.txt"` rides the whole registered line —
+/// the body parser keeps the lone surrogate as a UTF-16 unit, the handler's
+/// JS-to-fs boundary (`from_utf16_lossy`) folds it to U+FFFD, the refusal
+/// renders through the units body encoder — so the response proves the
+/// residual's own bytes instead of feeding the post-fold spelling to the
+/// service directly. R3 registers this replica answering the FFFD byte where
+/// Node's validation inspects the raw JS string; the direct-call test above
+/// stays green if line 299 ever changes, this one does not.
+#[tokio::test]
+async fn write_nul_path_with_a_boundary_fffd_over_http_answers_the_registered_residual() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let body = r#"{"path":"a\ud83d\u0000b.txt","content":"x"}"#;
+    let request = format!(
+        "POST /api/web/projects/{}/files/write HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        percent_encode(&root_text),
+        body.len(),
+        body
+    );
+    let (raw, closed) = exchange(
+        replay_config(&root_text),
+        native_config(),
+        request.as_bytes(),
+        "write-nul-fffd-residual",
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 500"),
+        "#2450 fix-r2 the lone-surrogate NUL write answers the 500 on the wire: {response:?}"
+    );
+    // The residual's registered bytes: the boundary's U+FFFD as raw UTF-8
+    // (`efbfbd`) inside the inspected value, not Node's ASCII `\ud83d`
+    // escape — asserted on the wire bytes, both spellings of the fold. The
+    // NUL's `\x00` render arrives JSON-quoted, so the wire carries two
+    // backslashes before the x00.
+    let expected: Vec<u8> = format!("Received '{root_text}/a")
+        .into_bytes()
+        .into_iter()
+        .chain([0xef, 0xbf, 0xbd])
+        .chain(b"\\\\x00b.txt'".iter().copied())
+        .collect();
+    assert!(
+        raw.windows(expected.len()).any(|window| window == expected),
+        "#2450 fix-r2 the wire keeps the boundary's U+FFFD byte where R3 registers the residual: {response:?}"
+    );
+    assert!(
+        !raw.windows(6).any(|window| window == b"\\ud83d"),
+        "#2450 fix-r2 the residual's wire never spells the lone surrogate as the ASCII escape: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#2450 fix-r2 the residual 500 keeps the connection open like Node"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
 /// #2456 adjacent cell, the registered residual of
 /// `specs/gateway-parity/diffs/A8.4-API-WEB-002-R3.md`: with the root an
 /// existing regular file (the shape a missing-root `path: "."` write now
@@ -1278,9 +1336,13 @@ fn write_dot_on_a_file_root_answers_the_registered_enotdir_residual() {
         files::ProjectFileService::new(fresh.to_str().expect("#2456 the file root is UTF-8"));
     let result = service.write_file(".", &pilotdeck_protocol::JsString::from("y"), false);
     match result {
-        Err(files::FilesError::Message(message)) => assert!(
-            message.starts_with("ENOTDIR") && message.contains(&*fresh.to_string_lossy()),
-            "#2456 the file-root dot write keeps the registered root-open diagnostic: {message:?}"
+        Err(files::FilesError::Message(message)) => assert_eq!(
+            message,
+            format!(
+                "ENOTDIR: not a directory, open '{}'",
+                fresh.to_string_lossy()
+            ),
+            "#2456 the file-root dot write keeps the registered root-open diagnostic verbatim"
         ),
         Err(_) => panic!("#2456 a file root answers the root-open diagnostic"),
         Ok(()) => panic!("#2456 the file-root residual answers 500, not the TS overwrite"),
@@ -1290,6 +1352,47 @@ fn write_dot_on_a_file_root_answers_the_registered_enotdir_residual() {
         b"old",
         "#2456 the refused write leaves the file root's bytes alone"
     );
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #2450 fix-r2 (concurrency#1): the missing-root `path: "."` create pins
+/// its deepest-existing ancestor *after* the missing-root open failed, so a
+/// root built as a directory inside that window (a racing `mkdir`) leaves the
+/// create's tail empty. The write must then answer the same EISDIR
+/// `write_root_itself` gives an existing directory root — Node's own
+/// `writeFile` open refusal — instead of feeding the empty relative path to
+/// the leaf open and rendering `UNKNOWN: unknown error`, which Node never
+/// produces.
+#[cfg(unix)]
+#[test]
+fn write_dot_when_the_root_becomes_a_directory_inside_the_window_answers_eisdir() {
+    let (parent, _root) = fixture();
+    let fresh = parent.join("late-root");
+    let racing_root = fresh.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "create-root" {
+            fs::create_dir_all(&racing_root)
+                .expect("#2450 fix-r2 create the root directory inside the window");
+        }
+    });
+    let service = files::ProjectFileService::new(
+        fresh
+            .to_str()
+            .expect("#2450 fix-r2 the racing root is UTF-8"),
+    );
+    let result = service.write_file(".", &pilotdeck_protocol::JsString::from("y"), false);
+    match result {
+        Err(files::FilesError::Message(message)) => assert_eq!(
+            message,
+            format!(
+                "EISDIR: illegal operation on a directory, open '{}'",
+                fresh.to_string_lossy()
+            ),
+            "#2450 fix-r2 a root that became a directory inside the window answers Node's EISDIR, not the empty-path UNKNOWN: {message:?}"
+        ),
+        Err(_) => panic!("#2450 fix-r2 a racing directory root answers Node's EISDIR text"),
+        Ok(()) => panic!("#2450 fix-r2 a racing directory root must be refused"),
+    }
     let _ = fs::remove_dir_all(&parent);
 }
 
@@ -1794,6 +1897,52 @@ fn write_rejects_a_missing_root_below_an_ancestor_swapped_after_the_open() {
         ),
         Err(_) => panic!("#1675 a swapped ancestor answers workspace_boundary, not a write error"),
         Ok(()) => panic!("#1675 the pinned create must refuse a swapped ancestor"),
+    }
+}
+
+/// #2450 fix-r2 (concurrency#2 / boundary#4), the `path: "."` spelling of the
+/// swapped-ancestor probe above: the missing-root dot write reaches
+/// `create_root_file`'s own pin, whose deepest-existing NOFOLLOW walk must
+/// refuse an ancestor swapped for a link to outside the workspace inside the
+/// window — the boundary refusal on the `.` spelling, with the root file
+/// never landing outside.
+#[cfg(unix)]
+#[test]
+fn write_dot_rejects_a_missing_root_below_an_ancestor_swapped_after_the_open() {
+    let (parent, _root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(&outside).expect("#2450 fix-r2 create the directory outside the root");
+    let mid = parent.join("mid");
+    fs::create_dir_all(&mid).expect("#2450 fix-r2 create the in-root ancestor");
+    let fresh = mid.join("proj");
+    let link_mid = mid.clone();
+    let link_target = outside.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "create-root" {
+            fs::remove_dir(&link_mid).expect("#2450 fix-r2 remove the in-root ancestor");
+            std::os::unix::fs::symlink(&link_target, &link_mid)
+                .expect("#2450 fix-r2 install the racing ancestor symlink");
+        }
+    });
+    let service = files::ProjectFileService::new(
+        fresh
+            .to_str()
+            .expect("#2450 fix-r2 the fresh root is UTF-8"),
+    );
+    let result = service.write_file(".", &pilotdeck_protocol::JsString::from("pwned\n"), false);
+    assert!(
+        fs::read_to_string(outside.join("proj")).is_err(),
+        "#2450 fix-r2 the pinned create must not write the root file through a swapped ancestor"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, ".",
+            "#2450 fix-r2 the dot write's escaping path is reported verbatim"
+        ),
+        Err(_) => {
+            panic!("#2450 fix-r2 a swapped ancestor answers workspace_boundary, not a write error")
+        }
+        Ok(()) => panic!("#2450 fix-r2 the pinned create must refuse a swapped ancestor"),
     }
 }
 
