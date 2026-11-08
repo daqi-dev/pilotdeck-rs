@@ -5066,3 +5066,8 @@ Refs #2540。固定f04ecd0b新基线，只有board冲突保留上游+本轮记�
 以固定 f04 主线和已审 #2549 为基础，三方引入原 a9 本地接入源码，保留当前 coercion/HostError/consumer 纠正。Module2 与公共 SDK 正在独立拆 PR；产品 backend、入口与 BOOT 为依赖 Draft，未宣称新组合完整验收或默认切换。原源码/证据保留，具体清单见正式 integration 仓 docs/upstream-source-register.json。
 
 本轮接续（Refs #2571）：三方冲突逐块核对，保留 #2549 精确 coercion 与泛型 HostError，恢复 jsonrepair 深度回归；适配新主线 RuntimeError 与 live_e2e 工厂类型。CLI 原生 abort ACK 后真实本地 WS EOF/deadline/Completed 定向回归15通过/1原忽略，Unknown保持原run且退出1，不计真实Kernel组合验收。接下来升级固定43a历史事务优化，再合入独立Module2切片并复验。
+
+
+## 2026-11-09 #2549 controlled baseline upgrade
+
+Preserved reviewed 789 and archived its successful CI run42516196226. Rebased the seven extraction commits onto fixed main43a; src/.github binary patch is byte-identical. New-combination locked tests: three libraries + Protocol 58 passed/1 ignored; standalone consumer passed; gateway storage 178 passed/6 ignored; fmt passed. Old CI is not evidence for the new head; full new CI and new external review remain pending. No push or scope expansion.
