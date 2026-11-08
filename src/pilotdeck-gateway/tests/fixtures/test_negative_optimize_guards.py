@@ -80,6 +80,9 @@ SCRIPTS = (
     # #1354: same entry shape from the start (registered + select + Case rows
     # + claim_dir/missing_target/refuse_unusable_target + verdict_exit).
     ('mode-routing/negative_controls.py', (), ()),
+    # #2425: same entry shape after the CLI alignment from ``--case NAME`` to
+    # positional names (select + claim_dir + registered + verdict_exit).
+    ('same-json-surfaces/negative_controls.py', (), ('-I',)),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
@@ -89,7 +92,8 @@ SCRIPTS = (
 # `negative_process.target_environment` default the shared tree target when the
 # variable is *absent* (#1166) -- a present-but-blank value is refused by their
 # own `blank_target()` guard, so only `missing` is exempt -- and
-# `cli-parity-mock-gateway` never compiles Cargo, so all four modes are moot.
+# `cli-parity-mock-gateway` and `same-json-surfaces` never compile Cargo, so all
+# four modes are moot for them.
 MODES = ('missing', 'empty', 'blank', 'dot')
 TARGET_OPTIONAL = {
     'interaction-values/negative_controls.py':
@@ -99,6 +103,8 @@ TARGET_OPTIONAL = {
         ('target_environment defaults the shared tree target when the variable is absent (#1166)',
          'target_environment(', ('missing',)),
     'cli-parity-mock-gateway/negative_controls.py':
+        ('never compiles Cargo, so it has no target guard', None, MODES),
+    'same-json-surfaces/negative_controls.py':
         ('never compiles Cargo, so it has no target guard', None, MODES),
 }
 
@@ -461,7 +467,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The twenty-two entries migrated so far (twenty-one fixture directories;
+    The twenty-three entries migrated so far (twenty-two fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in
