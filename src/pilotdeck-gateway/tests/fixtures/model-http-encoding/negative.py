@@ -144,7 +144,7 @@ def main():
         try:
             with mutating_sources(root, [path]) as snapshots:
                 result, log, full = cargo(test, env, out, f'{name}-positive')
-                if result.returncode != 0 or '1 passed; 0 failed' not in log:
+                if result.returncode != 0 or ' 1 passed; 0 failed' not in log:
                     raise RuntimeError('pristine exact test failed or did not run')
                 original = snapshots[path].decode()
                 if original.count(before) != 1:
@@ -157,12 +157,12 @@ def main():
                 block = re.search(r'---- ' + re.escape(full) + r' stdout ----\n(.*?)(?=\n---- |\nfailures:|\Z)', log, re.S)
                 if result.returncode == 101 and f'{full} ... FAILED' in log and block and any(message in block[1] for message in MESSAGES[test]):
                     row.update(status='KILLED', reason='named regression assertion')
-                elif result.returncode == 0 and '1 passed; 0 failed' in log:
+                elif result.returncode == 0 and ' 1 passed; 0 failed' in log:
                     row.update(status='SURVIVED', reason='exact regression still passed')
                 else:
                     row.update(reason='compile, timeout, signal, or unrelated assertion')
             restored, log, _ = cargo(test, env, out, f'{name}-restored')
-            if restored.returncode != 0 or '1 passed; 0 failed' not in log:
+            if restored.returncode != 0 or ' 1 passed; 0 failed' not in log:
                 row.update(status='INVALID', reason='restored positive test failed')
         except Exception as error:
             row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')

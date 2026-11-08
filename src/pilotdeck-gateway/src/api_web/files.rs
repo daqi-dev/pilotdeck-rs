@@ -459,6 +459,15 @@ impl ProjectFileService {
             .root
             .strip_prefix(&ancestor)
             .map_err(|_| sys_error(&io::Error::from_raw_os_error(libc::EACCES), "open", literal))?;
+        // The root came to exist inside the window between the missing-root
+        // open above and the pin (the shape a racing `mkdir` leaves), so the
+        // write's target is the root itself again and `write_root_itself`
+        // decides — Node's EISDIR on a directory root, the boundary refusal
+        // on a link swapped in — instead of an empty relative path reaching
+        // the leaf open's `UNKNOWN` diagnostic.
+        if tail.as_os_str().is_empty() {
+            return self.write_root_itself(relative, literal, bytes);
+        }
         // `mkdir(dirname(target), {recursive: true})`: every component of
         // the missing tail except the root itself; the root is this write's
         // own leaf below.
