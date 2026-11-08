@@ -7,7 +7,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from check import LEDGER, ROOT, check, enumeration, key_literal_error, local_ref, read, unique
+from check import (LEDGER, ROOT, check, enumeration, key_literal_error, local_ref,
+                   literal_table_lines, read, split_lines, unique)
 BASELINE = ROOT / "resources/PilotDeck"
 
 
@@ -138,6 +139,60 @@ class CoverageControls(unittest.TestCase):
                           "specs/gateway-parity/diffs/A7.8-ALWAYS-ON-BACKGROUND-001.md:24")]:
             with self.subTest(key=key):
                 self.assertIsNone(key_literal_error(key, ref))
+
+    def test_literal_table_scan_tolerates_interior_comments_and_blanks(self):
+        # Review P0 (#2286 fix-r1): a comment or blank line inside the table
+        # used to break the strictly-consecutive member run and silently drop
+        # the whole table back to range-only validation.
+        clean = ['pub const T: &[&str] = &[', '    "a",', '    "b",', '];']
+        noisy = ['pub const T: &[&str] = &[', '    "a", // first', '    // note',
+                 '', '    "b",', '];']
+        aborted = ['pub const T: &[&str] = &[', '    "a",', '    compute(),',
+                   '    "b",', '];']
+        self.assertEqual(literal_table_lines(clean), {2, 3, 4})
+        self.assertEqual(literal_table_lines(noisy), {2, 5, 6})
+        # other code inside the block keeps the members seen so far
+        self.assertEqual(literal_table_lines(aborted), {2})
+        # a table whose `];` is the file's last line still closes (the EOF
+        # table is a table — review P2: range-only fallback is a false PASS)
+        self.assertEqual(literal_table_lines(['pub const T: &[&str] = &[', '    "a",', '];']),
+                         {2, 3})
+        # non-binding arrays (let locals, for-in iteration lists) stay out
+        self.assertEqual(literal_table_lines(['let xs = [', '    "a",', '];']), set())
+        self.assertEqual(
+            literal_table_lines(['for name in [', '    "a",', '] {']), set())
+
+    def test_channel_key_literal_drift_with_interior_comment_fails(self):
+        # The P0 negative control: the #2283-style adjacent-key drift on a
+        # table that now carries an interior comment line must still go red
+        # per entry (wecom lands on the closing `];`).
+        loader = "src/pilotdeck-gateway/src/channel/loader.rs"
+        path = (ROOT / loader).resolve()
+        noisy = split_lines(path.read_text())
+        noisy.insert(46, "    // churn")  # inside UNMIGRATED_CHANNEL_KEYS
+        tables = {path: (noisy, literal_table_lines(noisy))}
+        current = {row["id"]: int(row["evidence"].rsplit(":", 1)[1])
+                   for row in self.data["entries"]
+                   if row["id"] in ("gateway.channel:whatsapp", "gateway.channel:signal",
+                                    "gateway.channel:mattermost", "gateway.channel:matrix",
+                                    "gateway.channel:slack", "gateway.channel:discord",
+                                    "gateway.channel:telegram", "gateway.channel:qq",
+                                    "gateway.channel:wecom")}
+        for key, number in current.items():
+            with self.subTest(key=key, form="drifted"):
+                self.assertEqual(
+                    key_literal_error(key, f"{loader}:{number + 2}", tables),
+                    "evidence key literal mismatch: " + key)
+        for key, number in current.items():  # +1 (comment shift) restores green
+            with self.subTest(key=key, form="restored"):
+                self.assertIsNone(key_literal_error(key, f"{loader}:{number + 1}", tables))
+
+    def test_for_in_arrays_stay_range_only(self):
+        # Non-binding arrays (a for-in list) never trigger the assertion:
+        # pinning the P2 mitigation on the real http_proxy.rs block.
+        self.assertIsNone(key_literal_error(
+            "gateway.header:connection",
+            "src/pilotdeck-gateway/src/http_proxy.rs:1267"))
 
     def test_unknown_express_shapes_fail(self):
         subprocess.run(["node", str(Path(__file__).with_name("test_shapes.mjs"))], check=True, timeout=10)
