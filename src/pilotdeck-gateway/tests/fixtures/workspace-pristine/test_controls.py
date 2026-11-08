@@ -504,8 +504,13 @@ class WorkspacePristine(unittest.TestCase):
                 api._workspace_literal_inputs(self.root, 'HEAD')
             except api.SourceBaselineError as error:
                 failure = str(error)
-            self.assertTrue(failure is not None and 'conditional path attribute' in failure,
-                            '#132 metadata string paths must retain conditional rejection')
+            # #1249: a metadata literal path is treated as a file edge, not as
+            # a conditional path, so its rejection must say so and must not
+            # reuse the cfg_attr message.
+            self.assertTrue(failure is not None
+                            and 'literal path attribute treated as a file edge' in failure
+                            and 'conditional path attribute' not in failure,
+                            '#1249 metadata string paths must report their own rejection')
 
     def test_attribute_data_inputs_are_guarded(self):
         self.commit_source('#[doc = include_str!("../../../assets/doc.md")] fn documented() {}',
