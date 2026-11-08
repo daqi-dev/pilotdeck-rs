@@ -197,6 +197,7 @@ mod filesystem {
         remote: String,
         fail_build: bool,
         unconfirmed: bool,
+        bundled_skills: bool,
         builds: Vec<(PathBuf, String)>,
     }
     impl Builder for MockBuilder {
@@ -225,6 +226,10 @@ mod filesystem {
                 ["checkout", "--detach", sha] => {
                     if *sha == self.new {
                         fs::write(cwd.join(".new-source"), b"fixture").unwrap();
+                    }
+                    if self.bundled_skills {
+                        fs::create_dir_all(cwd.join("skills/example")).unwrap();
+                        fs::write(cwd.join("skills/example/SKILL.md"), sha).unwrap();
                     }
                     Ok(String::new())
                 }
@@ -273,6 +278,7 @@ mod filesystem {
             remote: "https://github.com/daqi-dev/pilotdeck-rs.git".into(),
             fail_build: false,
             unconfirmed: false,
+            bundled_skills: false,
             builds: Vec::new(),
         };
         let policy = InstallManifest {
@@ -440,9 +446,53 @@ mod filesystem {
         }
     }
     #[test]
+    fn bundled_skills_follow_the_published_generation_and_keep_old_bytes() {
+        let scratch = Scratch::new();
+        let (first, mut builder) = fixture(&scratch);
+        builder.bundled_skills = true;
+        let root = scratch.0.join("bundled-install");
+        let old_sha = builder.old.clone();
+        let installation = bootstrap(
+            &root,
+            first.policy,
+            &scratch.0.join("original-source"),
+            &old_sha,
+            &mut builder,
+        )
+        .unwrap();
+        let old_generation = installation.current.generation.clone();
+        let current_skill = root.join("current/skills/example/SKILL.md");
+        assert_eq!(fs::read_to_string(&current_skill).unwrap(), old_sha);
+        assert_eq!(
+            fs::canonicalize(root.join("current/bin/../skills")).unwrap(),
+            fs::canonicalize(root.join("current/source/skills")).unwrap()
+        );
+        let mut engine = Engine::new(installation, builder);
+        let target = engine.check().unwrap().latest.unwrap();
+        engine.apply(&target, &mut |_| {}).unwrap();
+        assert_eq!(
+            fs::read_to_string(&current_skill).unwrap(),
+            target.source_sha
+        );
+        assert_eq!(
+            fs::read_to_string(
+                root.join("generations")
+                    .join(old_generation)
+                    .join("skills/example/SKILL.md")
+            )
+            .unwrap(),
+            old_sha
+        );
+        assert_eq!(
+            fs::read_link(root.join("current/skills")).unwrap(),
+            Path::new("source/skills")
+        );
+    }
+    #[test]
     fn explicit_external_skills_survive_update_without_copying() {
         let scratch = Scratch::new();
         let (first, mut builder) = fixture(&scratch);
+        builder.bundled_skills = true;
         let original = scratch.0.join("original-source");
         let external = scratch.0.join("outside-skills");
         fs::create_dir(&external).unwrap();
@@ -469,6 +519,10 @@ mod filesystem {
             fs::read(link.join("example/SKILL.md")).unwrap(),
             b"self-written fixture"
         );
+        assert_eq!(
+            fs::read(root.join("current/skills/example/SKILL.md")).unwrap(),
+            b"self-written fixture"
+        );
         let mut engine = Engine::new(installation, builder);
         let target = engine.check().unwrap().latest.unwrap();
         engine.apply(&target, &mut |_| {}).unwrap();
@@ -480,6 +534,10 @@ mod filesystem {
             external.canonicalize().unwrap()
         );
         assert_eq!(fs::read(&skill).unwrap(), b"self-written fixture");
+        assert_eq!(
+            fs::read(root.join("current/skills/example/SKILL.md")).unwrap(),
+            b"self-written fixture"
+        );
         let bad_root = scratch.0.join("invalid-install");
         let result = bootstrap_with_external_skills(
             &bad_root,

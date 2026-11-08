@@ -64,6 +64,28 @@ fn mkdir(path: &Path) -> Result<(), Error> {
 fn sync_dir(path: &Path) -> Result<(), Error> {
     File::open(path).and_then(|f| f.sync_all()).map_err(io)
 }
+fn link_generation_skills(generation: &Path, external: bool) -> Result<(), Error> {
+    if external {
+        // The shared external root remains authoritative, including when it
+        // becomes unavailable. Never silently replace it with bundled assets.
+        symlink("../skills", generation.join("skills")).map_err(io)?;
+    } else {
+        match fs::symlink_metadata(generation.join("source/skills")) {
+            Ok(metadata) if metadata.is_dir() => {
+                symlink("source/skills", generation.join("skills")).map_err(io)?;
+            }
+            Ok(_) => {
+                return Err(Error::new(
+                    "invalidSkillsRoot",
+                    "Source skills must be a directory.",
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io(error)),
+        }
+    }
+    Ok(())
+}
 fn regular(path: &Path) -> Result<File, Error> {
     let f = OpenOptions::new()
         .read(true)
@@ -633,6 +655,13 @@ impl<B: Builder> Backend for Engine<B> {
                     "Build changed the source commit.",
                 ));
             }
+            let external_skills =
+                match fs::symlink_metadata(self.installation.root.join("generations/skills")) {
+                    Ok(_) => true,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                    Err(error) => return Err(io(error)),
+                };
+            link_generation_skills(&staging, external_skills)?;
             let manifest = Generation {
                 schema_version: 1,
                 generation: id.clone(),
@@ -897,6 +926,7 @@ fn bootstrap_with_confirmation_and_skills<
                 "Build changed the source commit.",
             ));
         }
+        link_generation_skills(&directory, skills.is_some())?;
         let generation = Generation {
             schema_version: 1,
             generation: id.clone(),
