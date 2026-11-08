@@ -221,10 +221,6 @@ fn thinking(
         }
     })
 }
-/// `thinking/registry.ts` budget-only Claude models. The TS regex has no `u`
-/// flag, so `\D` is "not an ASCII digit": `[^0-9]`, not Rust's Unicode `\D`.
-/// Shared by the count and stream request builders.
-
 fn anthropic_body(
     request: &JsValue,
     thinking: JsValue,
