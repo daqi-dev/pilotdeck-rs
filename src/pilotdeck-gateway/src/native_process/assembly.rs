@@ -580,6 +580,106 @@ async fn start_assembly(
                     stored_thinking.as_ref(),
                     stored_style_content.as_deref(),
                 );
+                // Preserve actual configured ports before the Kernel whitelist.
+                // Merely having an optional family installed is not activation.
+                let kernel_pricing = staged
+                    .resource(Resource::Router)
+                    .and_then(|resource| {
+                        resource
+                            .as_any()
+                            .downcast_ref::<crate::runtime::project::model::RouterResources>()
+                            .map(|router| router.router.config().stats.model_pricing.clone())
+                    })
+                    .flatten()
+                    .map(|pricing| {
+                        JsValue::Array(
+                            pricing
+                                .iter()
+                                .map(|(key, rate)| {
+                                    crate::metadata::object([
+                                        ("key", JsValue::from(key)),
+                                        (
+                                            "input",
+                                            rate.input
+                                                .map(JsValue::Number)
+                                                .unwrap_or(JsValue::Null),
+                                        ),
+                                        (
+                                            "output",
+                                            rate.output
+                                                .map(JsValue::Number)
+                                                .unwrap_or(JsValue::Null),
+                                        ),
+                                        (
+                                            "cacheRead",
+                                            rate.cache_read
+                                                .map(JsValue::Number)
+                                                .unwrap_or(JsValue::Null),
+                                        ),
+                                    ])
+                                })
+                                .collect(),
+                        )
+                    });
+                let memory_active = snapshot
+                    .get("config")
+                    .and_then(|config| config.get("memory"))
+                    .and_then(|memory| memory.get("enabled"))
+                    == Some(&JsValue::Bool(true));
+                let instruction = crate::runtime::context::InstructionDiscovery::new(
+                    options.project.clone(),
+                    options.project.clone(),
+                    options.home.clone(),
+                    env.get("PILOTDECK_MANAGED_CONFIG")
+                        .filter(|path| !path.is_empty())
+                        .map(PathBuf::from),
+                );
+                let plugins = staged
+                    .resource(Resource::PluginRuntime)
+                    .and_then(|resource| {
+                        resource
+                            .as_any()
+                            .downcast_ref::<PluginResources>()
+                            .map(|plugins| plugins.runtime.clone())
+                    });
+                // Run only after this session's immutable owner selects Kernel;
+                // a legacy preparation never executes or refreshes these ports.
+                let kernel_port_preflight: crate::runtime::refresh::BoxFuture<
+                    crate::runtime::project::RuntimeResult,
+                > = Box::pin(async move {
+                    if memory_active {
+                        return Err(crate::runtime::session::kernel_config::unavailable(
+                            "resolved product memory resolver",
+                        ));
+                    }
+                    let layers = tokio::task::spawn_blocking(move || instruction.discover())
+                        .await
+                        .map_err(|error| RuntimeError::new(error.to_string()))?
+                        .map_err(RuntimeError::new)?;
+                    if !layers.is_empty() {
+                        return Err(crate::runtime::session::kernel_config::unavailable(
+                            "discovered PILOTDECK.md/rules instructions",
+                        ));
+                    }
+                    if let Some(plugins) = plugins {
+                        let plugins = plugins
+                            .refresh()
+                            .await
+                            .map_err(|error| RuntimeError::new(error.to_string()))?;
+                        if plugins.iter().any(|plugin| {
+                            !plugin.commands.is_empty()
+                                || !plugin.skills.is_empty()
+                                || plugin.hooks_config.is_some()
+                                || plugin.mcp_servers.is_some()
+                                || plugin.lsp_servers.is_some()
+                        }) {
+                            return Err(crate::runtime::session::kernel_config::unavailable(
+                                "active product plugin contributions",
+                            ));
+                        }
+                    }
+                    Ok(())
+                });
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
@@ -674,10 +774,6 @@ async fn start_assembly(
                     resources: retained,
                     tail,
                     host: Box::new(move |binding| {
-                        recorders
-                            .lock()
-                            .unwrap_or_else(|e| e.into_inner())
-                            .insert(session.clone(), Arc::downgrade(&binding.recorder));
                         // #1864 (b): one source closure feeds both the session
                         // tools and the live adapter — the same store and key
                         // the prepare closure read back.
@@ -686,6 +782,48 @@ async fn start_assembly(
                             let session = session.clone();
                             Arc::new(move || session_overrides.permission_mode(&session))
                         };
+                        recorders
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(session.clone(), Arc::downgrade(&binding.recorder));
+                        #[cfg(unix)]
+                        if let crate::runtime::session::kernel::BackendOwner::Kernel(factory) =
+                            crate::runtime::session::kernel::KernelBackendFactory::select(
+                                &binding,
+                                &env,
+                                &options.project,
+                            )?
+                        {
+                            let allowed=binding.context.allowed_tools.clone();
+                            let denied=binding.context.disallowed_tools.clone();
+                            let kernel_port_preflight:crate::runtime::refresh::BoxFuture<crate::runtime::project::RuntimeResult>=Box::pin(async move {
+                                crate::runtime::session::kernel_config::session_tool_filters(allowed.as_deref(),denied.as_deref())?;
+                                kernel_port_preflight.await
+                            });
+                            let mut kernel_config = config.clone();
+                            kernel_config.insert(
+                                "modelPricingEntries".into(),
+                                kernel_pricing.unwrap_or(JsValue::Undefined),
+                            );
+                            return Ok(Box::new(
+                                factory
+                                    .with_port_preflight(kernel_port_preflight)
+                                    .with_interactions(interactions.clone())
+                                    .with_turn_preferences(
+                                        kernel_config,
+                                        permission_source.clone(),
+                                    ),
+                            ));
+                        }
+                        if options.sidecar.as_os_str().is_empty() {
+                            return Err(RuntimeError::new(
+                                "This session belongs to the legacy backend; configure --sidecar to open it.",
+                            ));
+                        }
+                        recorders
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .insert(session.clone(), Arc::downgrade(&binding.recorder));
                         let deployment = Deployment::Stdio {
                             command: options.sidecar.to_string_lossy().into_owned(),
                             args: options.sidecar_args.clone(),
@@ -702,25 +840,27 @@ async fn start_assembly(
                             session_mcp,
                         )?
                         .with_permission_mode_source(permission_source.clone());
-                        Ok(TurnHostFactory::new_with_signal(
-                            project,
-                            deployment,
-                            crate::host::Limits {
-                                close_timeout: options.drain_budget,
-                                ..Default::default()
-                            },
-                            Some("pilotdeck-agent-loop".into()),
-                            move |identity, recorder, signal| {
-                                turn_ports(&ports, identity, recorder, signal)
-                            },
-                        )
-                        .with_agent_config(config)
-                        // #1864 (b): TS re-reads the permission-mode override
-                        // on every run (InProcessGateway.ts:1443), so an
-                        // already-live session picks the change up without a
-                        // close. The source reads the same store the selector
-                        // method writes.
-                        .with_permission_mode_source(permission_source))
+                        Ok(Box::new(
+                            TurnHostFactory::new_with_signal(
+                                project,
+                                deployment,
+                                crate::host::Limits {
+                                    close_timeout: options.drain_budget,
+                                    ..Default::default()
+                                },
+                                Some("pilotdeck-agent-loop".into()),
+                                move |identity, recorder, signal| {
+                                    turn_ports(&ports, identity, recorder, signal)
+                                },
+                            )
+                            .with_agent_config(config)
+                            // #1864 (b): TS re-reads the permission-mode override
+                            // on every run (InProcessGateway.ts:1443), so an
+                            // already-live session picks the change up without a
+                            // close. The source reads the same store the selector
+                            // method writes.
+                            .with_permission_mode_source(permission_source),
+                        ))
                     }),
                 })
             })
@@ -951,6 +1091,8 @@ async fn start_assembly(
                 None,
             ));
             let admission = SubmitAdmissionOptions {
+                #[cfg(unix)]
+                compaction: Some(Arc::new(super::compaction::NativeCompactionRouter { owner:owner.clone(),options:options.clone() })),
                 interactions: interactions.clone(),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };

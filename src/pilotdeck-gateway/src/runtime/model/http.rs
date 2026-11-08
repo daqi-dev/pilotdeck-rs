@@ -79,15 +79,7 @@ pub(crate) fn js_round(value: f64) -> f64 {
     }
 }
 
-/// An `Error` instance as `normalizeModelError` sees it: own `message`, an
-/// optional own string `code`, and its `JSON.stringify` projection as `raw`.
-#[derive(Clone, Debug)]
-pub(crate) struct JsError {
-    pub message: JsString,
-    pub code: Option<JsString>,
-    pub network_code: Option<&'static str>,
-    pub raw: JsValue,
-}
+pub(crate) use pilotdeck_model_anthropic::errors::JsError;
 
 /// The `streamModel.ts` error classes that assign `this.name` and are
 /// always retryable stream errors.

@@ -203,6 +203,7 @@ enum QueryOutcome {
 struct InitializedTurn {
     request_id: String,
     run_id: String,
+    native_backend: bool,
 }
 
 fn read_prompt(argv: &[String], offset: usize) -> Result<String, Failure> {
@@ -228,9 +229,11 @@ async fn initialize_turn(
     prompt: &str,
     project: Option<&str>,
 ) -> Result<InitializedTurn, Failure> {
-    query
-        .request("resume_session", json!({"sessionKey": session}))
+    let resumed = query
+        .request("resume_session", json!({"sessionKey":session}))
         .await?;
+    let native_backend = string_field(&resumed, "backend").as_deref() == Some("kernel")
+        && string_field(&resumed, "abortSemantics").as_deref() == Some("observe_original_terminal");
     let model = match read_value(argv, "--model") {
         Some(model) => Some(resolve_model(query, project, model).await?),
         None => None,
@@ -286,7 +289,11 @@ async fn initialize_turn(
             },
         )
         .await?;
-    Ok(InitializedTurn { request_id, run_id })
+    Ok(InitializedTurn {
+        request_id,
+        run_id,
+        native_backend,
+    })
 }
 
 async fn stream_turn(
@@ -334,7 +341,13 @@ async fn stream_turn(
         let incoming = if let Some(deadline) = abort_deadline {
             match within_abort_deadline(deadline, async { Ok(next.await) }).await {
                 Ok(incoming) => incoming,
-                Err(error) => return QueryOutcome::FatalAbort(error),
+                Err(error) => {
+                    return if initialized.native_backend {
+                        QueryOutcome::Complete(Box::new(output))
+                    } else {
+                        QueryOutcome::FatalAbort(error)
+                    };
+                }
             }
         } else {
             next.await
@@ -342,6 +355,9 @@ async fn stream_turn(
         match incoming {
             QueryInput::Signal => {}
             QueryInput::Frame(Err(error)) => {
+                if initialized.native_backend && !abort_ids.is_empty() {
+                    return QueryOutcome::Complete(Box::new(output));
+                }
                 // #1178: with an abort in flight, the TS SDK's socket-close
                 // listener rejects both the pending abort and the stream queue
                 // with the same PilotDeckError, crashing the process with an
@@ -362,7 +378,11 @@ async fn stream_turn(
                 return QueryOutcome::FatalAbort(error);
             }
             QueryInput::Frame(Ok(QueryFrame::AbortReply(Ok(_)))) => {
-                return QueryOutcome::Closed(client_closed());
+                if !initialized.native_backend {
+                    return QueryOutcome::Closed(client_closed());
+                }
+                // Kernel cancellation acknowledgement is not a terminal
+                // effect outcome. Keep observing this same original stream.
             }
             QueryInput::Frame(Ok(QueryFrame::Event(event, final_frame))) => {
                 if let Err(error) = output.event(&event) {
@@ -384,7 +404,7 @@ async fn stream_turn(
                     signals::observe("terminal-consumed");
                 }
                 if final_frame {
-                    return if abort_ids.is_empty() {
+                    return if abort_ids.is_empty() || initialized.native_backend {
                         QueryOutcome::Complete(Box::new(output))
                     } else {
                         // Closing a naturally completed stream rejects the
@@ -394,7 +414,7 @@ async fn stream_turn(
                 }
             }
             QueryInput::Frame(Ok(QueryFrame::StreamDone)) => {
-                return if abort_ids.is_empty() {
+                return if abort_ids.is_empty() || initialized.native_backend {
                     QueryOutcome::Complete(Box::new(output))
                 } else {
                     QueryOutcome::Closed(client_closed())
@@ -625,6 +645,127 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn native_sigint_keeps_original_query_after_abort_ack_until_unknown_terminal() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::{accept_async, tungstenite::Message};
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let connection = Connection {
+            gateway_url: format!("ws://{}/ws", listener.local_addr().unwrap()),
+            auth_token: "fixture".into(),
+        };
+        let accept = async {
+            let (socket, _) = listener.accept().await.unwrap();
+            accept_async(socket).await.unwrap()
+        };
+        let (client, peer) = tokio::join!(Transport::open(&connection, true), accept);
+        let mut client = client.unwrap();
+        let mut peer = peer;
+        let server = async {
+            let request = peer.next().await.unwrap().unwrap();
+            let request: serde_json::Value =
+                serde_json::from_str(request.to_text().unwrap()).unwrap();
+            assert_eq!(request["method"], "abort_turn");
+            peer.send(Message::Text(
+                json!({"type":"response","id":request["id"],"ok":true,"result":{"accepted":true}})
+                    .to_string()
+                    .into(),
+            ))
+            .await
+            .unwrap();
+            // This committed native terminal arrives after the acknowledgement.
+            peer.send(Message::Text(json!({"type":"event","id":"stream","seq":0,"final":true,"event":{"type":"error","code":"result_unknown","nativeCode":"KERNEL_OUTCOME_UNKNOWN","runId":"original-run","details":{"executionId":"original-execution"}}}).to_string().into())).await.unwrap();
+        };
+        let initialized = InitializedTurn {
+            request_id: "stream".into(),
+            run_id: "original-run".into(),
+            native_backend: true,
+        };
+        let mut signals = Signals::interrupted_for_test();
+        let args = vec!["--json".into()];
+        let (outcome, ()) = tokio::join!(
+            stream_turn(
+                &mut client,
+                &args,
+                "original-session",
+                initialized,
+                &mut signals
+            ),
+            server
+        );
+        let QueryOutcome::Complete(output) = outcome else {
+            panic!(
+                "native abort must observe its original terminal rather than close at acknowledgement"
+            );
+        };
+        assert_eq!(output.finish().unwrap(), 1);
+        signals.remove();
+    }
+    // Real local WebSocket peers exercise the CLI adapter, not a Kernel host.
+    async fn native_abort_peer_outcome(mode: &str, expected_exit: u8) {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::{accept_async, tungstenite::Message};
+        tokio::time::timeout(std::time::Duration::from_secs(90), async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let connection = Connection {
+                gateway_url: format!("ws://{}/ws", listener.local_addr().unwrap()),
+                auth_token: "fixture".into(),
+            };
+            let accept = async {
+                let (socket, _) = listener.accept().await.unwrap();
+                accept_async(socket).await.unwrap()
+            };
+            let (client, peer) = tokio::join!(Transport::open(&connection, true), accept);
+            let mut client = client.unwrap();
+            let mut peer = peer;
+            let server = async move {
+                let request = peer.next().await.unwrap().unwrap();
+                let request: serde_json::Value = serde_json::from_str(request.to_text().unwrap()).unwrap();
+                assert_eq!(request["method"], "abort_turn");
+                assert_eq!(request["params"]["runId"], "original-run");
+                peer.send(Message::Text(json!({"type":"response","id":request["id"],"ok":true,"result":{"accepted":true}}).to_string().into())).await.unwrap();
+                match mode {
+                    "eof" => return, // Drop without a final event or close handshake.
+                    "completed" => peer.send(Message::Text(json!({"type":"event","id":"stream","seq":0,"final":true,"event":{"type":"turn_completed","runId":"original-run"}}).to_string().into())).await.unwrap(),
+                    "deadline" => {},
+                    _ => panic!("unknown peer test mode"),
+                }
+                // No new submit or second abort may be dispatched. Keep the
+                // original socket open until the client explicitly releases it.
+                let next = peer.next().await;
+                assert!(matches!(next, None | Some(Ok(Message::Close(_)))), "unexpected replay after abort: {next:?}");
+            };
+            let initialized = InitializedTurn { request_id: "stream".into(), run_id: "original-run".into(), native_backend: true };
+            let mut signals = Signals::interrupted_for_test();
+            let consumer = async {
+                let outcome = stream_turn(&mut client, &["--json".into()], "original-session", initialized, &mut signals).await;
+                let QueryOutcome::Complete(output) = outcome else { panic!("native peer {mode} must finish original output") };
+                assert!(output.run_id().equals_str("original-run"));
+                assert_eq!(output.finish().unwrap(), expected_exit, "peer mode {mode}");
+                client.close().await;
+            };
+            tokio::join!(consumer, server);
+            signals.remove();
+        }).await.expect("native abort peer test must be bounded");
+    }
+
+    #[tokio::test]
+    async fn native_abort_ack_then_transport_eof_keeps_original_unknown() {
+        native_abort_peer_outcome("eof", 1).await;
+    }
+
+    #[tokio::test]
+    async fn native_abort_ack_then_deadline_keeps_original_unknown() {
+        native_abort_peer_outcome("deadline", 1).await;
+    }
+
+    #[tokio::test]
+    async fn native_abort_ack_then_real_completed_keeps_original_success() {
+        native_abort_peer_outcome("completed", 0).await;
+    }
+
     #[tokio::test(start_paused = true)]
     async fn abort_ready_frames_cannot_starve_deadline() {
         use std::time::Duration;
@@ -815,6 +956,7 @@ mod tests {
             let initialized = InitializedTurn {
                 request_id: "stream".into(),
                 run_id: "run".into(),
+                native_backend: false,
             };
             let server = async {
                 let abort = peer

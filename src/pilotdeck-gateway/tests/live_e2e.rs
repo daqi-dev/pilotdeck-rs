@@ -1114,17 +1114,19 @@ async fn run_case_transport(scenario: &str, websocket: bool) {
                     host: Box::new(move |binding| {
                         *shared_recorder.lock().expect("#748 retain owned writer") =
                             Some(binding.recorder.clone());
-                        Ok(TurnHostFactory::new(
-                            project,
-                            deployment,
-                            pilotdeck_gateway::host::Limits {
-                                close_timeout: Duration::from_secs(5),
-                                ..Default::default()
-                            },
-                            Some("pilotdeck-agent-loop".into()),
-                            move |identity, _| ports(identity, &binding, &directory, gate),
-                        )
-                        .with_agent_config(config))
+                        Ok(Box::new(
+                            TurnHostFactory::new(
+                                project,
+                                deployment,
+                                pilotdeck_gateway::host::Limits {
+                                    close_timeout: Duration::from_secs(5),
+                                    ..Default::default()
+                                },
+                                Some("pilotdeck-agent-loop".into()),
+                                move |identity, _| ports(identity, &binding, &directory, gate),
+                            )
+                            .with_agent_config(config),
+                        ))
                     }),
                     tail: TailConfig {
                         collect_file_artifacts: false,

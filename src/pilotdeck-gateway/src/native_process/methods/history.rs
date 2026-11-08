@@ -2,7 +2,6 @@ use super::super::requests::Requests;
 use crate::runtime::{
     connection::{Call, RequestError},
     replacement::ReplacementError,
-    turn::read::{self, SessionHistoryReader},
 };
 use pilotdeck_protocol::JsValue;
 
@@ -27,16 +26,6 @@ fn replacement_error(error: ReplacementError) -> RequestError {
     }
 }
 
-fn unavailable(method: &str, label: &str) -> RequestError {
-    RequestError {
-        code: "CAPABILITY_UNAVAILABLE".into(),
-        message: format!("{label} is not configured. Wire `{method}` via createLocalGateway.")
-            .into(),
-        details: None,
-        validation: None,
-    }
-}
-
 impl Requests {
     pub(in crate::native_process) fn history_request(
         &self,
@@ -44,31 +33,10 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         let replacement = self.replacement.clone();
-        let coordinator = self.coordinator.clone();
         Box::pin(async move {
             match method.as_str() {
-                "export_session_transcript" => Err(unavailable(
-                    "exportSessionTranscript",
-                    "export_session_transcript",
-                )),
-                "restore_session_transcript" => Err(unavailable(
-                    "restoreSessionTranscript",
-                    "restore_session_transcript",
-                )),
-                "read_session_messages" => read::read_session_messages(
-                    &coordinator,
-                    None::<&dyn SessionHistoryReader>,
-                    &params,
-                )
-                .await
-                .map_err(|error| RequestError {
-                    code: error
-                        .code
-                        .unwrap_or_else(|| "gateway_request_failed".into()),
-                    message: error.message,
-                    details: None,
-                    validation: None,
-                }),
+                "export_session_transcript" | "restore_session_transcript" => self.transfer_history(&method,&params).await,
+                "read_session_messages" => self.read_history_messages(&params).await,
                 "read_subagent_messages" => Err(RequestError {
                     code: "gateway_request_failed".into(),
                     message: "read_subagent_messages is not configured. Wire `readSubagentMessages` via createLocalGateway.".into(),

@@ -50,6 +50,8 @@ pub struct RuntimeError {
     /// Boxed so `RuntimeError` stays small enough for the many existing
     /// `Result<_, RuntimeError>` signatures (clippy `result_large_err`).
     pub js_error: Option<Box<RuntimeJsError>>,
+    /// Original host failure or product creation reconciliation context, retained across display wrappers.
+    pub kernel_failure: Option<Box<serde_json::Value>>,
 }
 impl RuntimeError {
     pub fn new(message: impl Into<String>) -> Self {
@@ -57,6 +59,7 @@ impl RuntimeError {
             message: message.into(),
             causes: Vec::new(),
             js_error: None,
+            kernel_failure: None,
         }
     }
     /// Retain the original JS error alongside the display message.
@@ -67,6 +70,20 @@ impl RuntimeError {
     pub fn js_error(&self) -> Option<&RuntimeJsError> {
         self.js_error.as_deref()
     }
+    /// Explicit host uncertainty or product creation requiring reconciliation.
+    pub fn uncertain_kernel_failure(&self) -> Option<&serde_json::Value> {
+        self.kernel_failure
+            .as_deref()
+            .filter(|failure| {
+                matches!(
+                    failure["data"]["domain"].as_str(),
+                    Some("scheduler" | "session_creation" | "product_creation")
+                ) && (failure["data"]["reason"] == "OUTCOME_UNKNOWN"
+                    || failure["data"]["diagnostic"]["code"] == "OUTCOME_UNKNOWN"
+                    || failure["data"]["diagnostic"]["params"]["persistence_uncertain"] == true)
+            })
+            .or_else(|| self.causes.iter().find_map(Self::uncertain_kernel_failure))
+    }
     fn aggregate(message: &str, mut failures: Vec<Self>) -> RuntimeResult {
         match failures.len() {
             0 => Ok(()),
@@ -75,6 +92,7 @@ impl RuntimeError {
                 message: message.into(),
                 causes: failures,
                 js_error: None,
+                kernel_failure: None,
             }),
         }
     }

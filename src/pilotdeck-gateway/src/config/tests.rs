@@ -600,3 +600,51 @@ fn string_coercion_errors_keep_their_class() {
     );
     assert_eq!(string_coercible(&JsValue::from("1")), Ok(()));
 }
+
+#[test]
+fn kernel_model_inventory_keeps_keyless_route_without_materializing_a_product_secret() {
+    let root = std::env::temp_dir().join(format!("pd-inventory-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    let config = "schemaVersion: 1\nagent: {model: openai/default}\nmodel:\n  providers:\n    openai:\n      protocol: openai\n      url: https://api.openai.com/v1\n      models: {default: {}}\n";
+    std::fs::write(root.join("pilotdeck.yaml"), config).unwrap();
+    let mut env = Env::new();
+    env.insert("PILOTDECK_SESSION_BACKEND".into(), "kernel".into());
+    env.insert(
+        "PILOTDECK_KERNEL_SOCKET".into(),
+        "/tmp/kernel-inventory.sock".into(),
+    );
+    env.insert(
+        "OPENAI_API_KEY".into(),
+        "must-stay-in-kernel-environment".into(),
+    );
+    let snapshot = load_snapshot(&root, &root, &env, None, 1.0, "2026-11-08T00:00:00Z").unwrap();
+    let provider = field(field(field(&snapshot, "config"), "model"), "providers")
+        .get("openai")
+        .unwrap();
+    assert_eq!(
+        provider.get("credentialSource"),
+        Some(&JsValue::from("kernel"))
+    );
+    assert!(provider.get("apiKey").is_none());
+    assert!(!encode(&snapshot).contains("must-stay-in-kernel-environment"));
+    env.remove("PILOTDECK_SESSION_BACKEND");
+    env.remove("OPENAI_API_KEY");
+    assert!(load_snapshot(&root, &root, &env, None, 1.0, "now").is_err());
+    env.insert("PILOTDECK_SESSION_BACKEND".into(), "kernel".into());
+    env.insert("PILOTDECK_KERNEL_SOCKET".into(), "relative.sock".into());
+    assert!(load_snapshot(&root, &root, &env, None, 1.0, "now").is_err());
+    std::fs::write(
+        root.join("pilotdeck.yaml"),
+        config.replace(
+            "      models:",
+            "      apiKey: '${MISSING_EXPLICIT_KEY}'\n      models:",
+        ),
+    )
+    .unwrap();
+    env.insert(
+        "PILOTDECK_KERNEL_SOCKET".into(),
+        "/tmp/kernel-inventory.sock".into(),
+    );
+    assert!(load_snapshot(&root, &root, &env, None, 1.0, "now").is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}

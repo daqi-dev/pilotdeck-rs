@@ -83,6 +83,7 @@ struct Session {
     accepted: Gate,
     terminal: Gate,
     end: Gate,
+    observe_gate: Gate,
     /// Set by `abort`, so a stream can surface the pump error a takeover causes.
     aborted: AtomicBool,
     /// Holds the timeout's durable terminal write (#727 interleaving cell 1).
@@ -91,6 +92,13 @@ struct Session {
     pump_error_gate: Gate,
 }
 impl LiveSession for Arc<Session> {
+    fn backend_kind(&self) -> &'static str {
+        if self.setup["kernelBackend"] == true {
+            "kernel"
+        } else {
+            "legacy"
+        }
+    }
     fn snapshot(&self) -> JsValue {
         if self.setup["snapshotCwdUnavailable"] == true {
             object([])
@@ -183,6 +191,11 @@ impl LiveTurn for Stream {
                 if session.setup["pumpFailure"] == true {
                     return Err(RuntimeError::new("injected pump failure"));
                 }
+                if session.setup["kernelPanicAfterAbort"] == true
+                    && session.aborted.load(Ordering::SeqCst)
+                {
+                    panic!("injected Kernel worker panic after timeout");
+                }
                 // A live session aborted by the deadline surfaces as a pump
                 // error, exactly like the real sidecar exiting after the
                 // timeout cancel.
@@ -194,6 +207,12 @@ impl LiveTurn for Stream {
                         "timeout takeover aborted the live session",
                     ));
                 }
+            }
+            if session.setup["kernelFailureThenPanic"] == true && self.index >= 3 {
+                panic!("injected worker panic after nonterminal provider failure event");
+            }
+            if session.setup["kernelTerminalThenPanic"] == true && self.index >= self.native.len() {
+                panic!("injected worker panic after original Kernel terminal");
             }
             if let Some(event) = self.native.get(self.index) {
                 if event.get("type") == Some(&"turn_completed".into())
@@ -326,9 +345,17 @@ impl SubmitAdmission for Host {
     fn observe_event<'a>(
         &'a self,
         _: &'a JsValue,
-        _: &'a JsValue,
+        event: &'a JsValue,
     ) -> SubmitFuture<'a, Result<(), SubmitError>> {
-        Box::pin(async { Ok(()) })
+        Box::pin(async move {
+            if self.session.setup["kernelObserveGate"] == true
+                && is(event, "type", "permission_request")
+            {
+                self.session.log.host("kernel_observe_wait");
+                self.session.observe_gate.wait().await;
+            }
+            Ok(())
+        })
     }
     fn preflight<'a>(
         &'a self,
@@ -782,6 +809,7 @@ async fn replay_case(case: &Value) {
         accepted: Gate::new(),
         terminal: Gate::new(),
         end: Gate::new(),
+        observe_gate: Gate::new(),
         aborted: AtomicBool::new(false),
         failure_gate: Gate::new(),
         pump_error_gate: Gate::new(),
@@ -868,6 +896,7 @@ async fn replay_case(case: &Value) {
     let consumer = tokio::spawn(collect(stream, log.clone()));
     let mut abort = None;
     let mut close = None;
+    let mut replacement_completion = None;
     for (index, step) in case["steps"]
         .as_array()
         .expect("#748 submit fixture prerequisite")
@@ -978,7 +1007,19 @@ async fn replay_case(case: &Value) {
                 close = Some(tokio::spawn(owner.close(&"s".into())));
             }
             "supersede" => {
-                owner.begin_completion(&"s".into(), &"replacement".into());
+                replacement_completion =
+                    Some(owner.begin_completion(&"s".into(), &"replacement".into()));
+            }
+            "await-kernel-observe" => {
+                while host_count(&log, "kernel_observe_wait") == 0 {
+                    tokio::task::yield_now().await;
+                }
+            }
+            "kernel-drain-bound" => {
+                tokio::time::advance(Duration::from_millis(2001)).await;
+            }
+            "kernel-observe-release" => {
+                session.observe_gate.open();
             }
             "second" => {
                 let mut second = input.clone();
@@ -1048,6 +1089,57 @@ async fn replay_case(case: &Value) {
         }
     }
     consumer.await.expect("#748 submit fixture prerequisite");
+    if case["kernelStale"] == true {
+        let visible = log.visible.lock().unwrap();
+        assert!(
+            !visible
+                .iter()
+                .any(|event| event["type"] == "permission_request"
+                    || event["finishReason"] == "cancelled"),
+            "old run leaked after its completion was superseded: {visible:?}"
+        );
+        assert!(owner.is_current_completion(&"s".into(), replacement_completion.as_ref().unwrap()));
+    }
+    if let Some(outcome) = case["kernelOutcome"].as_str() {
+        let visible = log.visible.lock().unwrap();
+        assert!(
+            !visible.iter().any(|event| event["code"] == "turn_timeout"),
+            "Kernel timer cannot replace its actual outcome: {visible:?}"
+        );
+        if matches!(outcome, "panic" | "stream-error" | "failure-then-panic") {
+            assert!(
+                visible
+                    .iter()
+                    .any(|event| event["code"] == "result_unknown"),
+                "{visible:?}"
+            );
+            assert!(
+                !visible
+                    .iter()
+                    .any(|event| event["finishReason"] == "cancelled"),
+                "{visible:?}"
+            );
+        } else if outcome == "unknown" {
+            assert!(
+                visible.iter().any(|event| event["code"] == "result_unknown"
+                    && event["details"]["executionId"] == "original-kernel-call"),
+                "{visible:?}"
+            );
+        } else {
+            assert!(
+                !visible
+                    .iter()
+                    .any(|event| event["code"] == "result_unknown"),
+                "{visible:?}"
+            );
+            assert!(
+                visible.iter().any(|event| event["type"] == "turn_completed"
+                    && event["finishReason"] == "cancelled"),
+                "{visible:?}"
+            );
+        }
+    }
+
     if setup["statusRecordGate"] == true {
         let released = case["steps"]
             .as_array()
@@ -1507,4 +1599,48 @@ async fn context_budget_cancelled_wait_does_not_retain_admission() {
     tokio::time::timeout(Duration::from_secs(5), replay_case(&case))
         .await
         .expect("#748 cancelled status bounded turn");
+}
+
+#[tokio::test]
+async fn kernel_timeout_drains_original_authoritative_cancelled_and_unknown() {
+    for outcome in [
+        "cancelled",
+        "unknown",
+        "panic",
+        "stream-error",
+        "terminal-then-panic",
+        "failure-then-panic",
+    ] {
+        let mut native = vec![
+            json!({"type":"turn_started"}),
+            json!({"type":"input_accepted"}),
+        ];
+        if outcome == "unknown" {
+            native.push(json!({"type":"turn_failed","error":{"code":"result_unknown","nativeCode":"KERNEL_OUTCOME_UNKNOWN","details":{"executionId":"original-kernel-call"}}}));
+        }
+        if outcome == "failure-then-panic" {
+            native.push(json!({"type":"turn_failed","error":{"code":"PROVIDER_ERROR","message":"nonterminal provider event before original Kernel outcome"}}));
+        }
+        let cancelled = matches!(outcome, "cancelled" | "terminal-then-panic");
+        native.push(json!({"type":"turn_completed","executionId":"original-kernel-call","status":if cancelled {"cancelled"} else {"unknown"},
+            "result":{"type":if cancelled {"aborted"} else {"error"},"stopReason":if cancelled {"cancelled"} else {"kernel_outcome_unknown"},"usage":{}}}));
+        let case = json!({"name":format!("kernel-timeout-{outcome}"),"setup":{"kernelBackend":true,"kernelPanicAfterAbort":outcome == "panic", "abortPumpFailure":outcome == "stream-error", "kernelTerminalThenPanic":outcome == "terminal-then-panic", "kernelFailureThenPanic":outcome == "failure-then-panic", "workspace":"w", "snapshots":true,"input":{"timeoutMs":100}},
+            "steps":["observe","accept","timeout"],"native":native,"results":[],"orderOnly":true,"kernelOutcome":outcome});
+        tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn kernel_timeout_late_observer_cannot_publish_into_replacement_completion() {
+    let case = json!({"name":"kernel-timeout-late-observer", "orderOnly":true, "kernelStale":true,
+        "setup":{"kernelBackend":true,"kernelObserveGate":true,"workspace":"w","snapshots":true,"input":{"timeoutMs":100}},
+        "steps":["observe","accept","timeout","await-kernel-observe","kernel-drain-bound","fence-complete","supersede","kernel-observe-release"],"results":[],
+        "native":[{"type":"turn_started"},{"type":"input_accepted"},
+            {"type":"permission_request","requestId":"late-old-wait","executionId":"original-kernel-call"},
+            {"type":"turn_completed","status":"cancelled","executionId":"original-kernel-call","result":{"type":"aborted","stopReason":"cancelled","usage":{}}}]});
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .unwrap();
 }

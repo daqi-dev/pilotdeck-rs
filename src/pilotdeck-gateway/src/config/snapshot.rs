@@ -685,13 +685,18 @@ fn model(raw: &JsValue, providers: &[Provider], env: &Env) -> JsValue {
         let missing = undefined();
         let raw_key = p.get("apiKey").unwrap_or(&missing);
         let catalog_env = catalog_api_key_env(provider_id, &protocol, &url);
-        let (api_key, credential_source) =
-            provider_credential(provider_id, raw_key, env, catalog_env.as_deref());
+        let (api_key, credential_source) = if super::model::kernel_inventory(raw_key, env) {
+            (JsString::default(), "kernel".to_string())
+        } else {
+            provider_credential(provider_id, raw_key, env, catalog_env.as_deref())
+        };
         let mut out = obj();
         put(&mut out, "id", JsValue::String(provider_id.clone()));
         put(&mut out, "protocol", string(&protocol));
         put(&mut out, "url", JsValue::String(url.clone()));
-        put(&mut out, "apiKey", JsValue::String(api_key));
+        if credential_source != "kernel" {
+            put(&mut out, "apiKey", JsValue::String(api_key));
+        }
         put(&mut out, "credentialSource", string(&credential_source));
         put(
             &mut out,

@@ -60,3 +60,16 @@ impl FactoryPayloadDecoder for OriginalFactoryPayloadDecoder {
         crate::factory_payload::decode(execute, process_cwd)
     }
 }
+
+/// Native display provenance is an explicit composition choice, never enabled
+/// by an untrusted Module2 payload flag. All original domain policy is shared.
+pub struct NativeHistoryFactoryPayloadDecoder;
+impl FactoryPayloadDecoder for NativeHistoryFactoryPayloadDecoder {
+    fn decode(
+        &self,
+        execute: &JsValue,
+        process_cwd: &JsString,
+    ) -> Result<FactoryPayload, FactoryPayloadError> {
+        crate::factory_payload::decode_with_native_origins(execute, process_cwd)
+    }
+}

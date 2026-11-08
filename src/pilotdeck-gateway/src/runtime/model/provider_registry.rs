@@ -332,6 +332,7 @@ impl ModelInvocationProviderRegistry {
                 message: "Failed to dispose model invocation providers.".into(),
                 causes: failures,
                 js_error: None,
+                kernel_failure: None,
             }),
         }
     }
@@ -434,6 +435,12 @@ impl NativeModelInvocationProvider {
             transport,
         }
     }
+    fn kernel_inventory(&self) -> bool {
+        self.provider
+            .get("credentialSource")
+            .and_then(JsValue::as_string)
+            .is_some_and(|source| source.equals_str("kernel"))
+    }
     fn metadata(&self, model: &JsString, key: &str) -> Result<JsValue, ModuleError> {
         let model_config = self
             .provider
@@ -476,6 +483,14 @@ impl RouterModelInvocation for NativeModelInvocationProvider {
         true
     }
     fn complete(&self, request: JsValue, abort: Option<AbortFlag>) -> RouterFuture<JsValue> {
+        if self.kernel_inventory() {
+            return Box::pin(async {
+                Err(RouterInvokeError::request(
+                    "kernel_model_inventory_only",
+                    "This model route is authenticated and executed only by its owning Kernel backend.",
+                ))
+            });
+        }
         let transport = self.transport.clone();
         let config = self.config.clone();
         Box::pin(async move {
@@ -518,6 +533,11 @@ impl RouterModelInvocation for NativeModelInvocationProvider {
         options: &'a StreamOptions,
         sink: &'a mut (dyn FnMut(StreamOutput) + Send),
     ) -> RouterStreamFuture<'a> {
+        if self.kernel_inventory() {
+            return Box::pin(async {
+                Err(ModelStreamError::Request{code:"kernel_model_inventory_only".into(),message:"This model route is authenticated and executed only by its owning Kernel backend.".into(),details:None})
+            });
+        }
         Box::pin(http::stream_model(
             self.transport.as_ref(),
             request,
@@ -532,4 +552,45 @@ fn coded(code: &str, message: impl Into<JsString>) -> ModuleError {
     let mut error = ModuleError::new(message);
     error.code = Some(code.into());
     error
+}
+
+#[cfg(test)]
+mod kernel_inventory_tests {
+    use super::*;
+    struct NeverHttp;
+    impl ModelHttpTransport for NeverHttp {
+        fn send(
+            &self,
+            _: hyper::Request<http_body_util::Full<bytes::Bytes>>,
+        ) -> super::http::TransportFuture {
+            panic!("Kernel inventory must never open product HTTP");
+        }
+    }
+    #[tokio::test]
+    async fn kernel_model_inventory_preserves_metadata_and_rejects_all_direct_invocations_before_http()
+     {
+        let provider=NativeModelInvocationProvider::new(pilotdeck_protocol::parse_json(r#"{"id":"openai","protocol":"openai","url":"https://example.invalid/v1","credentialSource":"kernel","models":{"default":{"capabilities":{"supportsStreaming":true}}}}"#).unwrap(),Arc::new(NeverHttp));
+        assert_eq!(
+            provider
+                .get_capabilities(&"openai".into(), &"default".into())
+                .unwrap()
+                .get("supportsStreaming"),
+            Some(&JsValue::Bool(true))
+        );
+        let request = pilotdeck_protocol::parse_json(
+            r#"{"provider":"openai","model":"default","messages":[]}"#,
+        )
+        .unwrap();
+        let error = provider.complete(request.clone(), None).await.unwrap_err();
+        assert_eq!(error.code, Some("kernel_model_inventory_only".into()));
+        let error = provider
+            .stream(&request, &StreamOptions::default(), &mut |_| {
+                panic!("No stream event from inventory")
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error,ModelStreamError::Request{code,..} if code.equals_str("kernel_model_inventory_only"))
+        );
+    }
 }

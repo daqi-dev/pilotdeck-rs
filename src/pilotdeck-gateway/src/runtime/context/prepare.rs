@@ -483,22 +483,10 @@ impl DefaultContextRuntime {
                 .unwrap_or_else(|error| Err(error.to_string()));
             match result {
                 Ok(layers) => {
-                    if !layers.is_empty() {
-                        let blocks = layers
-                            .iter()
-                            .map(|layer| {
-                                format!(
-                                    "Contents of {}{}:\n\n{}",
-                                    layer.path,
-                                    layer.scope.description(),
-                                    layer.content
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n\n");
-                        parts.push(format!(
-                            "<project-instructions>\nProject instructions are shown below. Adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior.\n\n{blocks}\n</project-instructions>"
-                        ));
+                    if let Some(instructions) =
+                        pilotdeck_context::instructions::format_layers(&layers)
+                    {
+                        parts.push(instructions);
                     }
                     instruction_layers = Some(layers);
                 }

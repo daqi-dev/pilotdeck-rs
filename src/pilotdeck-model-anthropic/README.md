@@ -7,3 +7,5 @@
 `pilotdeck-protocol::coercion` 承载共用的原 ECMAScript 转换语义，gateway 和 Budget 使用同一实现。缺失值、undefined/null、UTF-16、数值和对象标签语义保留。
 
 本包继承仓库 workspace 元数据，仍需本 checkout 的 Protocol 等依赖；“可独立消费”表示不必构建 gateway 或 Kernel，不表示本轮已提供可搬移发行包。独立消费者示例位于 `../pilotdeck-context/examples/independent-consumer`。
+
+后续接入 Draft 增加纯错误归一化与请求 header 投影 API。调用方继续负责网络、凭据、实际模型会话生命周期与端点授权；库函数本身不授予这些能力。

@@ -147,6 +147,18 @@ impl<S: TranscriptSink> SessionOperationLedger<S> {
         }
         Ok(ledger)
     }
+    pub(crate) fn ensure_quiescent(&self) -> Result<()> {
+        if self
+            .records
+            .values()
+            .any(|record| !matches!(record.terminal, Some(Terminal::Known(_))))
+        {
+            return Err(invalid(
+                "History source has an incomplete or unknown AgentLoop operation.",
+            ));
+        }
+        Ok(())
+    }
     pub fn sink(&self) -> &S {
         &self.sink
     }

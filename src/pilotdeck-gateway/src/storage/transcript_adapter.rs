@@ -994,6 +994,74 @@ impl TranscriptWriter {
             Self::adapter_domain,
         )
     }
+    /// Atomically replace a rebuildable native Kernel UI cache while retaining
+    /// this session's writer fence. This is never an execution/history import.
+    /// Every record must identify the already persisted Kernel session owner.
+    pub(crate) fn replace_kernel_projection(
+        &self,
+        kernel_session: &str,
+        expected_sequence: u64,
+        entries: &[JsValue],
+    ) -> AdapterResult<()> {
+        self.check_retired()?;
+        if self.closed.load(Ordering::SeqCst) {
+            return Err(AdapterError::Closed(
+                "Kernel projection writer is closed.".into(),
+            ));
+        }
+        let mut owner_path = self.path.as_os_str().to_os_string();
+        owner_path.push(".backend.json");
+        let owner: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(PathBuf::from(owner_path)).map_err(|e| AdapterError::Store(e.into()))?,
+        )
+        .map_err(|e| AdapterError::Type(e.to_string()))?;
+        if owner["backend"] != "kernel" || owner["kernel_session_id"] != kernel_session {
+            return Err(AdapterError::Type(
+                "Projection owner does not match Kernel session.".into(),
+            ));
+        }
+        let mut inner = self.lock();
+        if inner.sequence != expected_sequence {
+            return Err(AdapterError::Type(
+                "Kernel UI metadata changed during projection; retry the read.".into(),
+            ));
+        }
+        let mut domain = DomainState::default();
+        validate_event_log(entries)?;
+        for entry in entries {
+            if !matches!(
+                field(entry, "type")
+                    .as_string()
+                    .and_then(|s| s.to_utf8().ok())
+                    .as_deref(),
+                Some("accepted_input" | "durable_message" | "session_metadata")
+            ) || field(field(entry, "kernelProjection"), "kernelSessionId")
+                .as_string()
+                .and_then(|s| s.to_utf8().ok())
+                .as_deref()
+                != Some(kernel_session)
+            {
+                return Err(AdapterError::Type(
+                    "Kernel UI cache cannot contain execution lifecycle records.".into(),
+                ));
+            }
+            domain = domain.next(entry)?;
+        }
+        let key = self.base.key(&self.path);
+        self.base
+            .store
+            .replace(&key, entries)
+            .ok_or_else(|| {
+                AdapterError::Type("Projection store cannot atomically replace its cache.".into())
+            })?
+            .map_err(AdapterError::Store)?;
+        let (state, ids) = validate_event_log(entries)?;
+        inner.sequence = state.sequence;
+        inner.last_entry_id = state.last_entry_id;
+        inner.entry_ids = ids;
+        inner.recorder_domain = domain;
+        Ok(())
+    }
     /// TS recordEntry → SessionRuntime.appendRecorded: the caller's envelope is
     /// kept and validated against the current state.
     pub fn record_entry(&self, entry: &JsValue) -> AdapterResult<()> {

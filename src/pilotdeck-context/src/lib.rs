@@ -1,5 +1,6 @@
 //! Pure fixed-baseline snip/micro compaction and tool-pair integrity.
 //! No model, filesystem, permission or session authority.
+pub mod instructions;
 mod micro;
 mod snip;
 pub mod tool_pair;
@@ -540,3 +541,6 @@ mod truthiness_boundary_tests {
         }
     }
 }
+
+pub mod orchestrator;
+pub mod prepare;

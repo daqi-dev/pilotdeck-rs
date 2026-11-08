@@ -1057,6 +1057,7 @@ dependencies = [
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "regex",
+ "uuid",
 ]
 
 [[package]]
@@ -1112,6 +1113,14 @@ version = "0.1.0"
 dependencies = [
  "pilotdeck-protocol",
  "regex",
+]
+
+[[package]]
+name = "pilotdeck-module2-host"
+version = "0.1.0"
+dependencies = [
+ "pilotdeck-protocol",
+ "serde_json",
 ]
 
 [[package]]

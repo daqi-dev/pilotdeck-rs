@@ -1107,6 +1107,7 @@ impl LiveTurnStream {
                 message: "Turn execution rejected.".into(),
                 causes: vec![RuntimeError::new(format!("{:?}", error))],
                 js_error: None,
+                kernel_failure: None,
             }),
             // A session-composition failure predates any host execution; the
             // composition boundary already carries the TS session-creation

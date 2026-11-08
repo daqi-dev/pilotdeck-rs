@@ -1,9 +1,19 @@
 //! Live session ownership, volatile admission and completion coordination.
 //! Transport routing and durable acceptance are assembled by later packages.
 mod admission;
+pub mod backend;
 mod completion;
 pub mod factory;
 mod handle;
+#[cfg(unix)]
+pub mod kernel;
+pub(crate) mod kernel_config;
+#[cfg(unix)]
+pub(crate) mod kernel_projection;
+#[cfg(unix)]
+mod kernel_archive;
+#[cfg(unix)]
+pub(crate) mod kernel_replay;
 mod owner;
 pub(crate) mod transcript_locks;
 

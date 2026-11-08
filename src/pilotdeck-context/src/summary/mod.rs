@@ -5,6 +5,7 @@ pub mod strip_multimedia;
 use crate::*;
 pub use pilotdeck_protocol::compaction::{SUMMARY_END, SUMMARY_PREFIX};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+use std::sync::{Arc, Mutex};
 #[derive(Clone, Debug)]
 pub struct SummaryError {
     pub message: String,
@@ -18,6 +19,14 @@ impl SummaryError {
 }
 type HostError = SummaryError;
 type ModuleError = SummaryError;
+pub trait SummaryModelPort: Send + Sync {
+    fn summarize(&self, request: JsValue) -> Result<(JsValue, Option<JsValue>), SummaryError>;
+    /// An explicitly composed host may carry verified opaque provenance through
+    /// summary text wrapping. The default preserves the original output exactly.
+    fn decorate_wrapped_summary(&self, _original: &JsValue, wrapped: JsValue) -> JsValue {
+        wrapped
+    }
+}
 pub mod port {
     pub struct CheckpointTruncation {
         pub messages: Vec<pilotdeck_protocol::JsValue>,
@@ -27,6 +36,487 @@ pub mod port {
 pub const COMPACT_MAX_OUTPUT_TOKENS: f64 = 4_000.0;
 pub const COMPACT_SYSTEM_PROMPT_DEFAULT: &str = "You are a conversation summarizer for a coding agent. Your summary will replace the early conversation history, so it MUST preserve all information the agent needs to continue working without repeating past steps.";
 
+pub trait CompactionLifecycle: Send + Sync {
+    fn dispatch(&self, event: &'static str, payload: JsValue) -> Result<(), SummaryError>;
+}
+pub type EstimateMessages = Arc<dyn Fn(&[JsValue]) -> Result<f64, HostError> + Send + Sync>;
+pub type EventEmitter = Arc<dyn Fn(JsValue) + Send + Sync>;
+
+#[derive(Clone)]
+pub struct CompactionEngineOptions {
+    pub model: Arc<dyn SummaryModelPort>,
+    pub provider: JsString,
+    pub model_id: JsString,
+    pub system_prompt: Option<JsString>,
+    pub max_output_tokens: Option<f64>,
+    pub protected_tool_names: Option<Vec<String>>,
+    pub estimate_messages: Option<EstimateMessages>,
+    pub lifecycle: Option<Arc<dyn CompactionLifecycle>>,
+    pub event_emitter: Option<EventEmitter>,
+    pub uuid: Option<Arc<dyn Fn() -> JsString + Send + Sync>>,
+    /// Clock for Date.now()'s failure cooldown; independent of marker dates.
+    pub clock_ms: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+}
+impl CompactionEngineOptions {
+    pub fn new(model: Arc<dyn SummaryModelPort>, provider: JsString, model_id: JsString) -> Self {
+        Self {
+            model,
+            provider,
+            model_id,
+            system_prompt: None,
+            max_output_tokens: None,
+            protected_tool_names: None,
+            estimate_messages: None,
+            lifecycle: None,
+            event_emitter: None,
+            uuid: None,
+            clock_ms: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub enum ProtectedTools {
+    #[default]
+    Default,
+    Names(Vec<String>),
+    Disabled,
+}
+
+#[derive(Clone)]
+pub struct CompactionInput {
+    pub trigger: JsString,
+    pub messages: Vec<JsValue>,
+    pub keep_tail_ratio: Option<f64>,
+    pub effective_context_tokens: Option<f64>,
+    pub target_post_tokens: Option<f64>,
+    pub protected_tool_names: ProtectedTools,
+    pub user_instruction: Option<JsString>,
+    pub max_output_tokens: Option<f64>,
+    pub cache_reset: Option<bool>,
+    pub attachments: Vec<JsValue>,
+    pub hook_results: Vec<JsValue>,
+    pub session_id: Option<JsString>,
+    pub turn_id: Option<JsString>,
+}
+impl CompactionInput {
+    pub fn new(trigger: impl Into<JsString>, messages: Vec<JsValue>) -> Self {
+        Self {
+            trigger: trigger.into(),
+            messages,
+            keep_tail_ratio: None,
+            effective_context_tokens: None,
+            target_post_tokens: None,
+            protected_tool_names: ProtectedTools::Default,
+            user_instruction: None,
+            max_output_tokens: None,
+            cache_reset: None,
+            attachments: Vec::new(),
+            hook_results: Vec::new(),
+            session_id: None,
+            turn_id: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct CompactionResult {
+    pub compaction_id: JsString,
+    pub trigger: JsString,
+    pub pre_tokens: f64,
+    pub post_tokens: Option<f64>,
+    pub messages_summarized: usize,
+    pub summary_message: Option<JsValue>,
+    pub boundary_marker: JsValue,
+    pub messages_to_keep: Vec<JsValue>,
+    pub stable_prefix: Vec<JsValue>,
+    pub cache_reset: bool,
+    pub target_post_tokens: Option<f64>,
+    pub summary_generated: bool,
+    pub checkpoint_merged: bool,
+    pub summary_usage: Option<JsValue>,
+    pub attachments: Vec<JsValue>,
+    pub hook_results: Vec<JsValue>,
+    pub diagnostics: Vec<JsValue>,
+    pub error: Option<JsString>,
+}
+impl CompactionResult {
+    /// Insertion order is the observable TS result-object order.
+    pub fn to_value(&self) -> JsValue {
+        let mut value = object([
+            ("compactionId", JsValue::String(self.compaction_id.clone())),
+            ("trigger", JsValue::String(self.trigger.clone())),
+            ("preTokens", JsValue::Number(self.pre_tokens)),
+            ("messagesSummarized", num(self.messages_summarized)),
+            (
+                "summaryMessage",
+                self.summary_message.clone().unwrap_or(JsValue::Undefined),
+            ),
+            ("boundaryMarker", self.boundary_marker.clone()),
+            (
+                "messagesToKeep",
+                JsValue::Array(self.messages_to_keep.clone()),
+            ),
+            ("stablePrefix", JsValue::Array(self.stable_prefix.clone())),
+            ("cacheReset", JsValue::Bool(self.cache_reset)),
+            (
+                "targetPostTokens",
+                self.target_post_tokens
+                    .map_or(JsValue::Undefined, JsValue::Number),
+            ),
+            ("summaryGenerated", JsValue::Bool(self.summary_generated)),
+            ("checkpointMerged", JsValue::Bool(self.checkpoint_merged)),
+            (
+                "summaryUsage",
+                self.summary_usage.clone().unwrap_or(JsValue::Undefined),
+            ),
+            ("attachments", JsValue::Array(self.attachments.clone())),
+            ("hookResults", JsValue::Array(self.hook_results.clone())),
+            ("diagnostics", JsValue::Array(self.diagnostics.clone())),
+            (
+                "error",
+                self.error
+                    .clone()
+                    .map_or(JsValue::Undefined, JsValue::String),
+            ),
+        ]);
+        if let Some(tokens) = self.post_tokens {
+            set(&mut value, "postTokens", JsValue::Number(tokens));
+        }
+        value
+    }
+}
+
+#[derive(Clone)]
+pub struct CompactionEngine {
+    options: CompactionEngineOptions,
+    protected: ProtectedNames,
+    cooldown: Arc<Mutex<Option<(f64, JsString)>>>,
+}
+impl CompactionEngine {
+    pub fn new(options: CompactionEngineOptions) -> Self {
+        Self {
+            protected: ProtectedNames::from_options(options.protected_tool_names.clone()),
+            options,
+            cooldown: Arc::new(Mutex::new(None)),
+        }
+    }
+    fn now(&self) -> f64 {
+        self.options.clock_ms.as_ref().map_or_else(
+            || {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs_f64()
+                    * 1000.0
+            },
+            |clock| clock(),
+        )
+    }
+    fn estimate(&self, messages: &[JsValue]) -> Result<f64, HostError> {
+        match &self.options.estimate_messages {
+            Some(estimate) => estimate(messages),
+            None => crate::estimate_messages_tokens(messages)
+                .map(|n| n as f64)
+                .map_err(|e| failure(&format!("{e:?}"))),
+        }
+    }
+    pub fn run(&self, input: CompactionInput) -> Result<CompactionResult, HostError> {
+        let id = self
+            .options
+            .uuid
+            .as_ref()
+            .map_or_else(|| uuid::Uuid::new_v4().to_string().into(), |uuid| uuid());
+        let prefix_len = checkpoint_prefix_len(&input.messages);
+        let previous: Vec<_> = input.messages[..prefix_len]
+            .iter()
+            .skip(1)
+            .step_by(2)
+            .cloned()
+            .collect();
+        let planning = &input.messages[prefix_len..];
+        let pre_tokens = self.estimate(&input.messages)?;
+        let checkpoint_merged = !previous.is_empty();
+        let cache_reset = input.cache_reset.unwrap_or(checkpoint_merged);
+        let reserve = positive(input.max_output_tokens)
+            .or_else(|| positive(self.options.max_output_tokens))
+            .unwrap_or(COMPACT_MAX_OUTPUT_TOKENS);
+        let target = positive(input.target_post_tokens);
+        let ratio = clamp(input.keep_tail_ratio.unwrap_or(0.35), 0.0, 1.0);
+        let tail_budget = target.map_or_else(
+            || js_max(1.0, (pre_tokens * ratio).floor()),
+            |target| js_max(1.0, target - reserve),
+        );
+        let protected = match &input.protected_tool_names {
+            ProtectedTools::Default => self.protected.clone(),
+            ProtectedTools::Names(names) => ProtectedNames::from_options(Some(names.clone())),
+            ProtectedTools::Disabled => ProtectedNames::empty(),
+        };
+        let (summarized, mut kept) = self.plan(
+            planning,
+            tail_budget,
+            &protected,
+            if matches!(input.protected_tool_names, ProtectedTools::Disabled) {
+                1
+            } else {
+                3
+            },
+        )?;
+        let projected = if self.estimate(&kept)? > tail_budget {
+            let (messages, changed) = projection::project_retained(
+                &kept,
+                &collect_tool_names_by_call_id(&input.messages),
+            );
+            kept = messages;
+            changed
+        } else {
+            false
+        };
+        self.lifecycle(
+            "PreCompact",
+            object([
+                ("trigger", JsValue::String(input.trigger.clone())),
+                ("preTokens", JsValue::Number(pre_tokens)),
+                ("messagesSummarized", num(summarized)),
+            ]),
+        )?;
+        self.emit(object([
+            ("type", text("compact_started")),
+            ("sessionId", text_opt(&input.session_id)),
+            ("turnId", text_opt(&input.turn_id)),
+            ("compactionId", JsValue::String(id.clone())),
+            ("trigger", JsValue::String(input.trigger.clone())),
+            ("preTokens", JsValue::Number(pre_tokens)),
+        ]));
+        let mut summary = None;
+        let mut error = None;
+        let mut usage = None;
+        if summarized > 0 || !previous.is_empty() {
+            let anchors = if matches!(input.protected_tool_names, ProtectedTools::Disabled) {
+                projection::protected_anchors(planning, &self.protected)?
+            } else {
+                None
+            };
+            let stable_anchors = projection::stable_anchors(planning)?;
+            let summary_input = projection::project_summary(planning);
+            let cooldown = self
+                .cooldown
+                .lock()
+                .unwrap()
+                .as_ref()
+                .filter(|(until, _)| *until > self.now())
+                .map(|(_, error)| error.clone());
+            if let Some(reason) = cooldown {
+                error = Some(reason);
+            } else {
+                match self.summarize(summary_input, &input, anchors, &previous) {
+                    Ok((message, summary_usage)) => {
+                        let wrapped = prompt::wrap_summary(message.clone(), stable_anchors);
+                        summary = Some(
+                            self.options
+                                .model
+                                .decorate_wrapped_summary(&message, wrapped),
+                        );
+                        usage = summary_usage;
+                        *self.cooldown.lock().unwrap() = None;
+                    }
+                    Err(reason) => {
+                        let reason = JsString::from(reason.message.clone());
+                        *self.cooldown.lock().unwrap() =
+                            Some((self.now() + 60_000.0, reason.clone()));
+                        error = Some(reason);
+                    }
+                }
+            }
+        }
+        let status = if summary.is_some() && error.is_none() {
+            "ok"
+        } else if summarized == 0 {
+            "no_content"
+        } else {
+            "summary_failed"
+        };
+        let pre_token_text = pilotdeck_protocol::number::number_to_string(pre_tokens);
+        let boundary = message("user", prompt::join(&[
+            "<compact-boundary trigger=\"".into(), input.trigger.clone(),
+            format!("\" preTokens=\"{pre_token_text}\" messagesSummarized=\"{summarized}\" status=\"{status}\" />").into(),
+        ], ""));
+        let mut diagnostics = if let Some(error) = error.as_ref().filter(|s| !s.is_empty()) {
+            vec![diagnostic("compact_summary_failed", error.clone())]
+        } else {
+            summary
+                .as_ref()
+                .map_or_else(Vec::new, prompt::validate_structure)
+        };
+        if projected {
+            diagnostics.push(diagnostic("compact_retained_tool_output_truncated",
+            "Oversized retained tool output was replaced with a bounded preview so the compacted context can fit the tail budget.".into()));
+        }
+        let mut result = CompactionResult {
+            compaction_id: id,
+            trigger: input.trigger.clone(),
+            pre_tokens,
+            post_tokens: None,
+            messages_summarized: summarized,
+            summary_generated: summary.is_some() && error.is_none(),
+            summary_message: summary,
+            boundary_marker: boundary,
+            messages_to_keep: kept,
+            stable_prefix: Vec::new(),
+            cache_reset,
+            target_post_tokens: target,
+            checkpoint_merged,
+            summary_usage: usage,
+            attachments: input.attachments.clone(),
+            hook_results: input.hook_results.clone(),
+            diagnostics,
+            error,
+        };
+        if result.summary_message.is_some() {
+            result.post_tokens = Some(self.estimate(&build_post_compact_messages(&result))?);
+        }
+        let status = if result.error.as_ref().is_some_and(|s| !s.is_empty()) {
+            "failed"
+        } else if result.summary_message.is_some() {
+            "success"
+        } else {
+            "skipped"
+        };
+        self.lifecycle(
+            "PostCompact",
+            object([
+                ("trigger", JsValue::String(input.trigger.clone())),
+                ("status", text(status)),
+                (
+                    "error",
+                    result
+                        .error
+                        .clone()
+                        .map_or(JsValue::Undefined, JsValue::String),
+                ),
+                ("preTokens", JsValue::Number(pre_tokens)),
+                (
+                    "postTokens",
+                    result
+                        .post_tokens
+                        .map_or(JsValue::Undefined, JsValue::Number),
+                ),
+                (
+                    "summaryUsage",
+                    result.summary_usage.clone().unwrap_or(JsValue::Undefined),
+                ),
+                ("cacheReset", JsValue::Bool(cache_reset)),
+            ]),
+        )?;
+        let missing_usage = JsValue::Undefined;
+        let summary_usage = result.summary_usage.as_ref().unwrap_or(&missing_usage);
+        self.emit(object([
+            ("type", text("compact_completed")),
+            ("sessionId", text_opt(&input.session_id)),
+            ("turnId", text_opt(&input.turn_id)),
+            (
+                "compactionId",
+                JsValue::String(result.compaction_id.clone()),
+            ),
+            ("trigger", JsValue::String(input.trigger)),
+            ("status", text(status)),
+            ("preTokens", JsValue::Number(pre_tokens)),
+            (
+                "postTokens",
+                result
+                    .post_tokens
+                    .map_or(JsValue::Undefined, JsValue::Number),
+            ),
+            ("messagesSummarized", num(summarized)),
+            ("cacheReset", JsValue::Bool(cache_reset)),
+            (
+                "cacheReadTokens",
+                field(summary_usage, "cacheReadTokens").clone(),
+            ),
+            (
+                "cacheWriteTokens",
+                field(summary_usage, "cacheWriteTokens").clone(),
+            ),
+        ]));
+        Ok(result)
+    }
+    fn lifecycle(&self, event: &'static str, payload: JsValue) -> Result<(), HostError> {
+        if let Some(lifecycle) = &self.options.lifecycle {
+            lifecycle.dispatch(event, payload)?;
+        }
+        Ok(())
+    }
+    fn emit(&self, event: JsValue) {
+        if let Some(emit) = &self.options.event_emitter {
+            emit(event);
+        }
+    }
+    fn summarize(
+        &self,
+        mut messages: Vec<JsValue>,
+        input: &CompactionInput,
+        anchors: Option<JsString>,
+        previous: &[JsValue],
+    ) -> Result<(JsValue, Option<JsValue>), HostError> {
+        let mut control = message(
+            "user",
+            prompt::user_prompt(input.user_instruction.as_ref(), anchors.as_ref(), previous),
+        );
+        set(
+            &mut control,
+            "metadata",
+            object([
+                ("synthetic", JsValue::Bool(true)),
+                ("purpose", text("context-summary-control")),
+            ]),
+        );
+        messages.push(control);
+        let request = object([
+            ("provider", JsValue::String(self.options.provider.clone())),
+            ("model", JsValue::String(self.options.model_id.clone())),
+            ("messages", JsValue::Array(messages)),
+            (
+                "systemPrompt",
+                JsValue::String(prompt::system_prompt(self.options.system_prompt.as_ref())),
+            ),
+            (
+                "maxOutputTokens",
+                JsValue::Number(
+                    input
+                        .max_output_tokens
+                        .or(self.options.max_output_tokens)
+                        .unwrap_or(COMPACT_MAX_OUTPUT_TOKENS),
+                ),
+            ),
+            ("stream", JsValue::Bool(true)),
+            ("thinking", object([("enabled", JsValue::Bool(false))])),
+            ("cacheBreakpoints", JsValue::Array(Vec::new())),
+        ]);
+        self.options.model.summarize(request)
+    }
+
+    fn plan(
+        &self,
+        messages: &[JsValue],
+        budget: f64,
+        protected: &ProtectedNames,
+        floor: usize,
+    ) -> Result<(usize, Vec<JsValue>), SummaryError> {
+        plan_messages(messages, budget, protected, floor, &|messages| {
+            self.estimate(messages)
+        })
+    }
+}
+
+pub fn build_post_compact_messages(result: &CompactionResult) -> Vec<JsValue> {
+    let mut out = result.stable_prefix.clone();
+    out.push(result.boundary_marker.clone());
+    out.extend(result.summary_message.clone());
+    out.extend_from_slice(&result.messages_to_keep);
+    out.extend_from_slice(&result.attachments);
+    out.extend_from_slice(&result.hook_results);
+    ensure_trailing_user_message(out)
+}
 pub fn truncate_head(messages: &[JsValue], keep_ratio: f64) -> Vec<JsValue> {
     let keep = ((messages.len() as f64 * clamp(keep_ratio, 0.05, 1.0)).floor() as usize).max(1);
     messages[messages.len().saturating_sub(keep)..].to_vec()
@@ -123,6 +613,9 @@ pub fn checkpoint_prefix_len(messages: &[JsValue]) -> usize {
     }
     i
 }
+fn positive(value: Option<f64>) -> Option<f64> {
+    value.filter(|n| n.is_finite() && *n > 0.0).map(f64::floor)
+}
 fn clamp(value: f64, min: f64, max: f64) -> f64 {
     if value.is_nan() {
         min
@@ -138,6 +631,9 @@ fn message(role: &str, value: JsString) -> JsValue {
 }
 fn text(value: &str) -> JsValue {
     JsValue::String(value.into())
+}
+fn text_opt(value: &Option<JsString>) -> JsValue {
+    JsValue::String(value.clone().unwrap_or_default())
 }
 fn num(value: usize) -> JsValue {
     JsValue::Number(value as f64)
