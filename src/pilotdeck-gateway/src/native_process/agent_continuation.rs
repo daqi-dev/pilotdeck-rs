@@ -1131,11 +1131,6 @@ impl ParentPump {
                 item.item_id,
             )
             .map_err(|error_| error(error_.to_string()))?;
-        let owner = self
-            .binding
-            .owner
-            .upgrade()
-            .ok_or_else(ToolError::aborted)?;
         let mut failure = None;
         let mut terminal = false;
         loop {
@@ -1164,13 +1159,10 @@ impl ParentPump {
                     {
                         terminal = true
                     }
-                    if failure.is_none()
-                        && let Some(event) = event.as_object()
-                        && let Err(error_) = owner.push_raw(event.clone(), None)
-                    {
-                        let _ = self.handle.abort(&"parent_followup_delivery_failed".into());
-                        failure = Some(error_);
-                    }
+                    // AgentHandle.runQueuedPump consumes the iterator without
+                    // creating a second result stream. These events already
+                    // crossed the recorder/host boundary; rebuffering them in
+                    // ToolExecution would echo them back into the sidecar.
                 }
             }
         }
@@ -1401,5 +1393,104 @@ mod tests {
             tool.is_read_only(&JsValue::Null).unwrap(),
             JsValue::Bool(false)
         );
+    }
+    #[tokio::test]
+    async fn parent_followup_drains_host_events_without_refeeding_the_sidecar_buffer() {
+        use crate::runtime::project::{DisposeFuture, ProjectRuntimeRegistry, ResourceBundle};
+        use crate::runtime::session::{LiveSession, LiveTurn, SessionNext};
+        use std::collections::VecDeque;
+        struct Session {
+            steps: Arc<AtomicUsize>,
+        }
+        struct Stream {
+            events: VecDeque<JsValue>,
+            steps: Arc<AtomicUsize>,
+        }
+        impl LiveTurn for Stream {
+            fn next(&mut self) -> SessionNext<'_> {
+                self.steps.fetch_add(1, Ordering::SeqCst);
+                let event = self.events.pop_front();
+                Box::pin(async move { Ok(event) })
+            }
+        }
+        impl LiveSession for Session {
+            fn snapshot(&self) -> JsValue {
+                JsValue::Null
+            }
+            fn abort(&self, _: &JsString) -> RuntimeResult {
+                Ok(())
+            }
+            fn dispose(&self) -> DisposeFuture<'_> {
+                Box::pin(async { Ok(()) })
+            }
+            fn submit_queued(
+                &self,
+                _: JsValue,
+                _: JsValue,
+                _: Option<TurnInteractionAuthority>,
+                _: JsString,
+            ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+                let events = [
+                    "turn_started",
+                    "input_accepted",
+                    "model_request_started",
+                    "turn_completed",
+                    "session_ended",
+                ]
+                .into_iter()
+                .map(|kind| object([("type", kind.into())]))
+                .collect();
+                Ok(Box::new(Stream {
+                    events,
+                    steps: self.steps.clone(),
+                }))
+            }
+        }
+        let resources = ProjectRuntimeRegistry::new(
+            "/fixture-parent-followup-drain",
+            Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+        );
+        let owner = NativeForkOwner::new(resources.acquire(None).unwrap());
+        let registry = NativeForkRegistry::new();
+        let steps = Arc::new(AtomicUsize::new(0));
+        let handle = LiveSessionHandle::new(
+            Arc::new(Session {
+                steps: steps.clone(),
+            }),
+            None,
+        );
+        let pump = ParentPump {
+            session: "parent".into(),
+            handle: handle.clone(),
+            binding: Binding {
+                recorder: Weak::new(),
+                projection: Weak::new(),
+                owner: Arc::downgrade(&owner),
+                resume_authority: Arc::new(|_| Box::pin(async { Ok(None) })),
+            },
+            registry: registry.clone(),
+            gate: registry.gate(&"parent".into()),
+            seed_authority: None,
+            closing: AtomicBool::new(false),
+            done: watch::channel(None).0,
+        };
+        pump.drive(
+            queued("self-written settlement".into()),
+            &Cancellation::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            steps.load(Ordering::SeqCst),
+            6,
+            "host SessionEnd and EOF must actually drain"
+        );
+        assert!(
+            owner.drain_raw().is_empty(),
+            "followup host events must never enter the sidecar tool event buffer"
+        );
+        handle.dispose("test".into()).await.unwrap();
+        owner.release_generation().await.unwrap();
+        resources.dispose().await.unwrap();
     }
 }

@@ -123,17 +123,48 @@ impl TcpExecutionServer {
         );
         let serving = server.clone();
         // An output failure must interrupt the independent blocking reader too.
-        let worker = thread::spawn(move || {
+        let worker = match thread::Builder::new().name("sidecar-tcp".into()).spawn(move || {
             let watcher = serving.clone();
-            let closer = thread::spawn(move || {
+            let closer = match thread::Builder::new().name("sidecar-tcp-close".into()).spawn(move || {
                 while !watcher.is_retired() { thread::sleep(Duration::from_millis(5)); }
                 let _ = shutdown.shutdown(Shutdown::Both);
-            });
-            let report = serving.serve(BufReader::new(input), output, grace);
+            }) {
+                Ok(closer) => closer,
+                Err(_) => { serving.retire(); return false; }
+            };
+            let report = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+                serving.serve(BufReader::new(input), output, grace)));
             serving.retire();
-            let _ = closer.join();
-            report.complete()
-        });
+            let closed = closer.join().is_ok();
+            closed && report.is_ok_and(|report| report.complete())
+        }) {
+            Ok(worker) => worker,
+            Err(error) => {
+                server.retire();
+                let _ = socket.shutdown(Shutdown::Both);
+                return Err(error);
+            }
+        };
         Ok(ConnectionTask { socket, server, worker })
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn env_port_matches_fixed_typescript_number_cases() {
+        for (value, expected) in [("4321", 4321), ("04321", 4321), ("0x10e1", 4321),
+            ("4.321e3", 4321), ("\u{a0}4321\u{a0}", 4321), ("0b1", 1), ("0o10", 8)] {
+            assert_eq!(optional_port(Some(value)), Ok(Some(expected)), "{value:?}");
+        }
+        for value in ["0", "65536", "1.5", "Infinity", "0x", "-1", "\u{85}4321"] {
+            assert!(optional_port(Some(value)).is_err(), "{value:?}");
+        }
+        assert_eq!(optional_port(None), Ok(None));
+        assert_eq!(optional_port(Some("\u{feff} ")), Ok(None));
+        assert_eq!(listen_host(Some("\u{a0} localhost ")), "localhost");
+        assert_eq!(listen_host(Some(" ")), "127.0.0.1");
     }
 }

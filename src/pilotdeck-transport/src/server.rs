@@ -15,6 +15,43 @@ use std::sync::{Arc, Mutex, mpsc, atomic::{AtomicUsize, Ordering}};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// A process-wide TCP limit: deadline timers own one OS thread each.
+const TCP_TIMER_LIMIT: usize = 32;
+#[derive(Default)]
+struct TimerBudget(AtomicUsize);
+struct TimerLease(Arc<TimerBudget>);
+impl TimerBudget {
+    fn acquire(self: &Arc<Self>) -> Option<TimerLease> {
+        let mut current = self.0.load(Ordering::SeqCst);
+        loop {
+            if current >= TCP_TIMER_LIMIT { return None; }
+            match self.0.compare_exchange_weak(current, current + 1, Ordering::SeqCst, Ordering::SeqCst) {
+                Ok(_) => return Some(TimerLease(self.clone())),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+impl Drop for TimerLease {
+    fn drop(&mut self) { self.0.0.fetch_sub(1, Ordering::SeqCst); }
+}
+static TCP_TIMERS: std::sync::LazyLock<Arc<TimerBudget>> =
+    std::sync::LazyLock::new(|| Arc::new(TimerBudget::default()));
+
+fn spawn_deadline_timer(
+    deadline: Instant,
+    cancellation: Cancellation,
+    lease: Option<TimerLease>,
+    spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> io::Result<thread::JoinHandle<()>>,
+) -> io::Result<thread::JoinHandle<()>> {
+    spawn(Box::new(move || {
+        let _lease = lease;
+        if matches!(cancellation.wait_until(deadline), Some(CancelCause::Deadline)) {
+            cancellation.cancel(CancelCause::Deadline);
+        }
+    }))
+}
+
 const TCP_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const TCP_LEDGER_BYTES: usize = 64 * 1024 * 1024;
 struct IncomingQuota { used: Arc<AtomicUsize>, held: usize }
@@ -333,6 +370,18 @@ pub struct ExecutionServer {
     clock: Arc<dyn ExecutionClock>,
     queue_capacity: usize,
 }
+/// Every serving thread retires its owner and publishes completion even if
+/// its body panics. The report still records the panic as an incomplete join.
+struct ServeThreadGuard {
+    server: Arc<ExecutionServer>,
+    done: mpsc::Sender<()>,
+}
+impl Drop for ServeThreadGuard {
+    fn drop(&mut self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.server.retire()));
+        let _ = self.done.send(());
+    }
+}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShutdownReport {
     pub reader_joined: bool,
@@ -624,19 +673,26 @@ impl ExecutionServer {
             .and_then(|ms| Instant::now().checked_add(execution_deadline_delay(ms - now)));
         let timer = if expired {
             None
-        } else {
-            deadline.map(|deadline| {
-                let cancellation = cancellation.clone();
-                thread::spawn(move || {
-                    if matches!(
-                        cancellation.wait_until(deadline),
-                        Some(CancelCause::Deadline)
-                    ) {
-                        cancellation.cancel(CancelCause::Deadline);
+        } else if let Some(deadline) = deadline {
+            let timer_lease = if self.operation_limit.is_some() {
+                match TCP_TIMERS.acquire() {
+                    Some(lease) => Some(lease),
+                    None => {
+                        drop(state);
+                        return self.reject(request, "EXECUTION_TIMER_LIMIT", false);
                     }
-                })
-            })
-        };
+                }
+            } else { None };
+            let cancellation = cancellation.clone();
+            match spawn_deadline_timer(deadline, cancellation, timer_lease,
+                |job| thread::Builder::new().spawn(job)) {
+                Ok(timer) => Some(timer),
+                Err(_) => {
+                    drop(state);
+                    return self.reject(request, "EXECUTION_TIMER_UNAVAILABLE", false);
+                }
+            }
+        } else { None };
         let accepted = JsValue::Object(accepted);
         if self.operation_limit.is_some() {
             // Account for the retained request plus worker/context clones, and
@@ -905,6 +961,22 @@ impl ExecutionServer {
     /// interruptible IO implementation before treating incomplete shutdown as safe.
     pub fn serve(
         self: &Arc<Self>,
+        input: impl BufRead + Send + 'static,
+        output: impl Write + Send + 'static,
+        grace: Duration,
+    ) -> ShutdownReport {
+        // OS thread creation can fail. No partially spawned owner may be
+        // reported as reusable even if Rust's thread::spawn panics.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.serve_inner(input, output, grace))) {
+            Ok(report) => report,
+            Err(_) => {
+                self.retire();
+                ShutdownReport { reader_joined: false, writer_joined: false, worker_joined: false }
+            }
+        }
+    }
+    fn serve_inner(
+        self: &Arc<Self>,
         mut input: impl BufRead + Send + 'static,
         output: impl Write + Send + 'static,
         grace: Duration,
@@ -913,6 +985,7 @@ impl ExecutionServer {
         let reader_server = self.clone();
         let reader_done = done_tx.clone();
         let reader = thread::spawn(move || {
+            let _completion = ServeThreadGuard { server: reader_server.clone(), done: reader_done };
             while !reader_server.owner.is_closed() {
                 // Drop the allocation and its quota together after each frame.
                 let mut quota = reader_server.incoming.clone().map(IncomingQuota::new);
@@ -945,20 +1018,17 @@ impl ExecutionServer {
                     break;
                 }
             }
-            reader_server.retire();
-            let _ = reader_done.send(());
         });
         let writer_server = self.clone();
         let writer_done = done_tx.clone();
         let writer = thread::spawn(move || {
+            let _completion = ServeThreadGuard { server: writer_server.clone(), done: writer_done };
             let _ = writer_server.owner.drive_writer(output);
-            writer_server.retire();
-            let _ = writer_done.send(());
         });
         let worker_server = self.clone();
         let worker = thread::spawn(move || {
+            let _completion = ServeThreadGuard { server: worker_server.clone(), done: done_tx };
             worker_server.worker();
-            let _ = done_tx.send(());
         });
         let _ = done_rx.recv();
         self.retire();
@@ -970,21 +1040,11 @@ impl ExecutionServer {
         {
             thread::sleep(Duration::from_millis(5));
         }
-        let report = ShutdownReport {
-            reader_joined: reader.is_finished(),
-            writer_joined: writer.is_finished(),
-            worker_joined: worker.is_finished(),
-        };
-        if report.reader_joined {
-            let _ = reader.join();
+        ShutdownReport {
+            reader_joined: reader.is_finished() && reader.join().is_ok(),
+            writer_joined: writer.is_finished() && writer.join().is_ok(),
+            worker_joined: worker.is_finished() && worker.join().is_ok(),
         }
-        if report.writer_joined {
-            let _ = writer.join();
-        }
-        if report.worker_joined {
-            let _ = worker.join();
-        }
-        report
     }
     fn response(&self, request: RequestRef<'_>, ok: bool) -> JsObject {
         let mut response = object([
@@ -1195,6 +1255,69 @@ fn execution_deadline_delay(remaining_ms: f64) -> Duration {
         Duration::from_millis(pilotdeck_protocol::timer_delay_ms(
             remaining_ms.min(2_147_483_647.0),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tcp_liveness_tests {
+    use super::*;
+    use pilotdeck_protocol::admission::SidecarBinding;
+
+    #[test]
+    fn tcp_timer_limit_is_shared_and_releases_on_drop() {
+        let budget = Arc::new(TimerBudget::default());
+        let mut leases: Vec<_> = (0..TCP_TIMER_LIMIT).map(|_| budget.acquire().unwrap()).collect();
+        assert!(budget.acquire().is_none());
+        drop(leases.pop());
+        assert!(budget.acquire().is_some());
+        drop(leases);
+        assert_eq!(budget.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn timer_spawn_failure_releases_slot() {
+        let budget = Arc::new(TimerBudget::default());
+        let lease = budget.acquire().unwrap();
+        let result = spawn_deadline_timer(
+            Instant::now(), Cancellation::default(), Some(lease),
+            |_| Err(io::Error::other("injected thread spawn failure")),
+        );
+        assert!(result.is_err());
+        assert_eq!(budget.0.load(Ordering::SeqCst), 0);
+    }
+
+    struct BrokenInput;
+    impl std::io::Read for BrokenInput {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> { panic!("injected reader panic") }
+    }
+    impl BufRead for BrokenInput {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> { panic!("injected reader panic") }
+        fn consume(&mut self, _: usize) {}
+    }
+    struct UnusedFactory;
+    impl ExecutionFactory for UnusedFactory {
+        fn execute(&self, _: &ExecuteRequest, _: &mut ExecutionContext) -> PortResult<ExecutionTerminal> {
+            unreachable!("reader panics before execute")
+        }
+    }
+    struct Clock;
+    impl ExecutionClock for Clock {
+        fn now_epoch_ms(&self) -> f64 { 0.0 }
+        fn now_iso(&self) -> JsString { "1970-01-01T00:00:00.000Z".into() }
+        fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> { Ok(None) }
+    }
+    #[test]
+    fn reader_panic_retires_and_reports_incomplete_without_hanging() {
+        let owner = ConnectionOwner::new(SidecarBinding {
+            module_id: "m".into(), module_instance_id: "i".into(),
+            connection_generation: "g".into(), capabilities_version: "1".into(),
+        }, 8);
+        let server = ExecutionServer::new(owner, Arc::new(UnusedFactory), Arc::new(Clock), 8);
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || { let _ = tx.send(server.serve(BrokenInput, io::sink(), Duration::from_secs(2))); });
+        let report = rx.recv_timeout(Duration::from_secs(4)).expect("reader panic stranded server");
+        assert!(!report.reader_joined);
+        assert!(report.writer_joined && report.worker_joined);
     }
 }
 

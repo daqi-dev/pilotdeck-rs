@@ -89,8 +89,8 @@ fn executable_native_and_a4() {
         "#1071 executable clean signal exit"
     );
     negative_assert!(
-        assertion != Some("#1071 refreshed hooks refused"),
-        "#1071 executable refreshed hooks refused"
+        assertion != Some("#1071 refreshed unknown top-level hooks ignored"),
+        "#1071 executable refreshed unknown top-level hooks ignored"
     );
     negative_assert!(
         assertion != Some("#1131 readiness reports the kernel-assigned port"),

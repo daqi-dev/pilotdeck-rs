@@ -26,7 +26,6 @@ pub enum DispatchPhase {
 }
 #[derive(Debug, Clone)]
 pub struct CallRecord {
-    budgets: Vec<Arc<crate::server::TransportLease>>,
     pub identity: ExecutionIdentity,
     pub effect: CallEffect,
     /// Exact bytes retained before dispatch; never reconstructed for retry.
@@ -48,12 +47,13 @@ pub struct CallRecord {
     /// The execution's deadline abort listener already rejected this call.
     /// A late ACK is diagnostic only and cannot release its uncertainty fence.
     deadline_rejected: bool,
+    budgets: Vec<Arc<crate::server::TransportLease>>,
 }
 #[derive(Debug)]
 struct Packet {
-    _budget: Option<Arc<crate::server::TransportLease>>,
     pending: Option<JsString>,
     line: String,
+    _budget: Option<Arc<crate::server::TransportLease>>,
 }
 #[derive(Debug, Default)]
 struct State {
@@ -977,6 +977,29 @@ mod reconciliation_tests {
     use pilotdeck_agent::ports::{CancelCause, Cancellation};
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn tcp_outbound_budget_is_shared_and_released_after_last_record_owner() {
+        let budget = Arc::new(crate::server::TransportBudget::default());
+        let binding = SidecarBinding {
+            module_id: "test".into(), module_instance_id: "instance".into(),
+            connection_generation: "generation".into(), capabilities_version: "1".into(),
+        };
+        let a = ConnectionOwner::with_budget(binding.clone(), 64, budget.clone());
+        let b = ConnectionOwner::with_budget(binding, 64, budget);
+        let payload = JsValue::from("x".repeat(1024 * 1024));
+        let mut holds = Vec::new();
+        // UTF-16 payload and retained-object charge leave fewer than eight leases.
+        for _ in 0..7 { holds.push(a.charge(&payload).unwrap().unwrap()); }
+        assert!(b.charge(&payload).is_err(), "one connection cannot evade the shared budget");
+        let last = holds[0].clone();
+        holds.remove(0);
+        assert!(b.charge(&payload).is_err(), "a retained call still owns its lease");
+        drop(last);
+        assert!(b.charge(&payload).is_ok(), "last owner releases capacity");
+        drop(holds);
+        for _ in 0..16 { assert!(a.charge(&payload).is_ok()); }
+    }
 
     struct Recorder {
         bytes: Vec<u8>,

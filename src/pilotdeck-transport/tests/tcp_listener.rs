@@ -68,7 +68,10 @@ impl Drop for Harness {
     fn drop(&mut self) {
         self.factory.release.store(true, Ordering::SeqCst);
         self.stop.store(true, Ordering::SeqCst);
-        if let Some(worker) = self.worker.take() { assert!(worker.join().unwrap().is_ok()); }
+        if let Some(worker) = self.worker.take() {
+            let result = worker.join();
+            if !thread::panicking() { assert!(result.unwrap().is_ok()); }
+        }
     }
 }
 fn send(socket: &mut TcpStream, text: &str) { writeln!(socket, "{text}").unwrap(); }
