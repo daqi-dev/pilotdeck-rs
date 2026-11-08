@@ -274,20 +274,22 @@ mutations = [
      '        )?;',
      DIR + 'close_project_sessions_blank_project_key_is_the_domain_error',
      '#1604 the blank projectKey keeps the domain message'),
-    # #2083: a lone-surrogate `projectKey` passes the trim gate and reaches
-    # the configured-project check (TS runs it to completion; the baseline
-    # gate is only `?.trim()`). Re-adding the pre-#2083 UTF-8 rejection must
-    # turn the gate-order test red. r1: renamed off the #1455
-    # `session-dir-surrogate-rejected` (METHODS_MOD) — this runner keys its
-    # evidence files on the mutation name alone, so two rows sharing a name
-    # overwrite each other's logs.
+    # #2083: a surviving lone surrogate must not become U+FFFD and alias
+    # a filesystem project. Keep the registered nonce and kill on the actual
+    # native project identity boundary.
     ('session-dir-project-key-surrogate-rejected', SESSION_DIR,
-     '        let project_key_str = String::from_utf16_lossy(project_key.units());',
-     '        let project_key_str = project_key\n'
-     '            .to_utf8()\n'
-     '            .map_err(|_| RequestError::new("projectKey is required."))?;',
+     '        let selected = super::super::project_scope::resolve(&project_key)?;',
+     '        let project_key = JsString::from(String::from_utf16_lossy(project_key.units()).as_str());\n'
+     '        let selected = super::super::project_scope::resolve(&project_key)?;',
      DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
      '#2083 the surrogate projectKey reaches the capability gate'),
+    ('session-dir-unknown-project-write', SESSION_DIR,
+     '    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n'
+     '        let project_root = resolve_project(self, params).await?;',
+     '    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n'
+     '        let project_root = self.options.project.clone();',
+     DIR + 'unregistered_project_never_creates_session_storage',
+     '#2090 unknown project cannot create session storage'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -430,6 +432,7 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
     (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
+    (SESSION_DIR, '#2090 unknown project cannot create session storage'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),

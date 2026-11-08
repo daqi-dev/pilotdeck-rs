@@ -44,21 +44,27 @@ fn gateway_error(code: &'static str, message: impl Into<String>) -> RequestError
     }
 }
 
-/// Resolves `projectKey` from params, falling back to the configured project.
-/// Returns the resolved path string.
-fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
-    let project = params
-        .get("projectKey")
-        .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .unwrap_or_else(|| requests.options.project.to_string_lossy().into_owned());
-    if !requests.options.serves_project(&project) {
-        return Err(gateway_error(
-            "CAPABILITY_UNAVAILABLE",
-            "The isolated native process serves only its configured project.",
-        ));
-    }
-    Ok(project)
+/// Resolve the real registered project before touching session storage.
+/// Nullish keys use the selected native request view; all other JS values,
+/// including raw UTF-16, reach the same path/type validation as TS.
+async fn resolve_project(
+    requests: &Requests,
+    params: &JsValue,
+) -> Result<std::path::PathBuf, RequestError> {
+    let home = requests.options.home.clone();
+    let project = match params.get("projectKey") {
+        None | Some(JsValue::Null | JsValue::Undefined) => JsValue::String(JsString::from(
+            requests.options.project.to_string_lossy().as_ref(),
+        )),
+        Some(value) => value.clone(),
+    };
+    let permit = session_io_permit().await?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        super::super::project_scope::registered(&home, &project)
+    })
+    .await
+    .map_err(|_| RequestError::new("Native session project reader stopped unexpectedly."))?
 }
 
 /// Validates that `sessionKey` is present and non-blank (TS `?.trim()` check).
@@ -237,7 +243,7 @@ impl Requests {
     ///
     /// Cursor is a base-10 integer offset string (`GatewaySessionCatalog.ts:24-25`).
     async fn session_list(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let project_root = resolve_project(self, params)?;
+        let project_root = resolve_project(self, params).await?;
         let limit = params
             .get("limit")
             .and_then(JsValue::as_number)
@@ -252,14 +258,13 @@ impl Requests {
             .unwrap_or(0.0);
         let home = self.options.home.clone();
         let input = SessionCatalogListInput {
-            project_root: project_root.clone().into(),
+            project_root: project_root.clone(),
             pilot_home: home.clone(),
             limit,
             offset: Some(offset),
             include_internal: false,
         };
-        let (chat_dir, permit) =
-            resolve_chat_dir(home, std::path::PathBuf::from(project_root.as_str())).await?;
+        let (chat_dir, permit) = resolve_chat_dir(home, project_root).await?;
         let mut sessions = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let catalog = Arc::new(TranscriptSessionCatalog::new_bounded(
@@ -359,8 +364,8 @@ impl Requests {
     /// `createLocalGateway.deleteSession` → close live owner, delete transcript +
     /// file history + tool results + subagents directories.
     async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {
+        let project_root = resolve_project(self, params).await?;
         let key = require_session_key(params)?;
-        let project_root: std::path::PathBuf = resolve_project(self, params)?.into();
         // Close the live session first so the writer drains before we delete.
         self.owner
             .close(&key)
@@ -439,6 +444,7 @@ impl Requests {
         params: &JsValue,
         is_tag: bool,
     ) -> Result<JsValue, RequestError> {
+        let project_root = resolve_project(self, params).await?;
         let key = require_session_key(params)?;
         if self.owner.has_active_turn(&key) {
             let verb = if is_tag { "tag" } else { "rename" };
@@ -447,7 +453,6 @@ impl Requests {
                 format!("Cannot {verb} an active session."),
             ));
         }
-        let project_root: std::path::PathBuf = resolve_project(self, params)?.into();
         // #1457 fix-r1: same single-writer fence the config family uses; two
         // fresh writers that both restore the tail and append `sequence + 1`
         // leave the transcript unloadable.
@@ -575,22 +580,10 @@ impl Requests {
             "gateway_request_failed",
             "projectKey is required.",
         )?;
-        // #2083: the TS baseline runs a lone-surrogate `projectKey` to
-        // completion (`closeProjectSessions` answers `{sessionKeys: []}`;
-        // real-entry probe `_tmp/20261107-issue-2083/worker-r1/probe.out`), so the only
-        // gate is the `?.trim()` shape above. The key converts lossily for the
-        // configured-project comparison, like TS's own path handling; the raw
-        // UTF-16 key still reaches the owner, so a session created under the
-        // same spelling closes like any other project. Residual, accepted with
-        // #2083: a key whose lossy form names the configured project (a real
-        // path containing U+FFFD) is served.
-        let project_key_str = String::from_utf16_lossy(project_key.units());
-        if !self.options.serves_project(&project_key_str) {
-            return Err(gateway_error(
-                "CAPABILITY_UNAVAILABLE",
-                "The isolated native process serves only its configured project.",
-            ));
-        }
+        // Normalize as raw UTF-16 before mapping to a host path. An
+        // unrepresentable remaining surrogate cannot alias a U+FFFD path.
+        let selected = super::super::project_scope::resolve(&project_key)?;
+        let project_key = JsString::from(selected.to_string_lossy().as_ref());
         if params.get("resume") == Some(&JsValue::Bool(true)) {
             self.owner.resume_project(&project_key);
             return Ok(object([("sessionKeys", JsValue::Array(vec![]))]));
@@ -624,6 +617,7 @@ impl Requests {
             .cloned()
             .ok_or_else(|| RequestError::new("turnId must be a string."))?;
         let status = params.get("status").cloned().unwrap_or(JsValue::Undefined);
+        let project_root = resolve_project(self, params).await?;
 
         // #1457 fix-r2: take the fence before deciding who writes. The lookup
         // and the append then see one state — either a live writer exists and
@@ -632,7 +626,7 @@ impl Requests {
         // window where a concurrent close retired it between lookup and append,
         // and the retired writer's no-op append reported `recorded: true`.
         let (chat_dir, permit) =
-            resolve_chat_dir(self.options.home.clone(), self.options.project.clone()).await?;
+            resolve_chat_dir(self.options.home.clone(), project_root.clone()).await?;
         let fence_path = chat_dir.join(format!(
             "{}.jsonl",
             crate::storage::sanitize_session_id(&session_key)
@@ -669,7 +663,6 @@ impl Requests {
         // session writer lease so a concurrent hydrate cannot restore the same
         // tail and publish a recorder beside this append.
         let home = self.options.home.clone();
-        let project_root = self.options.project.clone();
         let recorded = tokio::task::spawn_blocking(move || {
             // The fence must outlive a cancelled request, so it moves into the
             // blocking closure instead of dropping with this future.
@@ -1061,43 +1054,23 @@ mod tests {
         r.project.dispose().await.expect("#1310 dispose");
     }
 
-    // #2090: request-level gate order for the session_dir family, measured on
-    // both sides (`_tmp/20261107-issue-2090/`). Two gates can answer a bad or
-    // absent key: the request-level isolated-project admission
-    // (`native_process/requests.rs:311-320`) and this family's
-    // `require_session_key` (`:180` / `:215` / `:232` / `:301`). Admission runs
-    // before the method dispatch, so a `projectKey` the process does not serve
-    // is answered as `gateway_request_failed` even when `sessionKey` is blank;
-    // with the project admitted (or omitted, which falls back to the configured
-    // one) the missing or blank key answers `INVALID_SESSION_KEY`. An explicit
-    // `projectKey: null` counts as "not served" here — `requests.rs:311-320`
-    // only skips `undefined` — while TS reads null as nullish and falls back to
-    // its project root. That shape, and the resume/close divergence, are
-    // registered in
-    // `specs/gateway-parity/diffs/A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R9.md`.
+    // #2090: R9's real TS provider resolves a registered project before
+    // validating the session key for delete/rename/tag. Resume/close still use
+    // the previously documented native key gate. Null follows fallback.
     const BLANK_KEY_MESSAGE: &str = "sessionKey is required.";
-    const ISOLATED_PROJECT_MESSAGE: &str =
-        "The isolated native process serves only its configured project.";
-
     async fn blank_key_gate_order(method: &str) {
         let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#2090 fixture");
-        // A path no `createLocalGateway` registry can resolve, so the two
-        // mechanisms that reject it (TS registry vs this process's admission)
-        // are both forced to answer.
-        const UNSERVED_PROJECT: &str = "/nonexistent/pdrs-2090";
-        // (1) No `projectKey`: the fallback is the configured project, so the
-        // family's own sessionKey gate answers — for an absent key and for a
-        // blank one alike.
-        for (label, params) in [
-            ("missing", object([])),
-            ("blank", object([("sessionKey", "   ".into())])),
+        const UNKNOWN: &str = "/nonexistent/pdrs-2090";
+        for params in [
+            object([]),
+            object([("sessionKey", "   ".into())]),
+            object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]),
         ] {
-            let expected = format!("#2090 a {label} sessionKey is rejected");
             let error =
                 crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
                     .await
-                    .expect_err(&expected);
+                    .expect_err("#2090 blank key");
             negative_assert_eq!(
                 error.code.as_str(),
                 "INVALID_SESSION_KEY",
@@ -1109,59 +1082,55 @@ mod tests {
                 "#2090 the gate message matches the TS provider gate"
             );
         }
-
-        // (2) Project outside the configured one: request admission answers
-        // before the method dispatch, so the first code is the admission one.
-        // The valid-key control answering identically is what proves admission
-        // — not the key — decides here; the `null` cells are the registered
-        // shape where Rust and TS part ways (`projectKey: null` is nullish for
-        // TS, "not served" for this admission).
-        for (label, params) in [
-            (
-                "blank key + unserved project",
-                object([
-                    ("sessionKey", "   ".into()),
-                    ("projectKey", UNSERVED_PROJECT.into()),
-                ]),
-            ),
-            (
-                "valid key + unserved project",
-                object([
-                    ("sessionKey", "pdrs-2090-control".into()),
-                    ("projectKey", UNSERVED_PROJECT.into()),
-                ]),
-            ),
-            (
-                "blank key + null project",
-                object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]),
-            ),
-            (
-                "valid key + null project",
-                object([
-                    ("sessionKey", "pdrs-2090-control".into()),
-                    ("projectKey", JsValue::Null),
-                ]),
-            ),
-        ] {
-            let expected = format!("#2090 admission refuses {label}");
-            let error =
+        for key in ["   ", "pdrs-2090-control"] {
+            let params = object([("sessionKey", key.into()), ("projectKey", UNKNOWN.into())]);
+            let result =
                 crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
-                    .await
-                    .expect_err(&expected);
-            negative_assert_eq!(
-                error.code.as_str(),
-                "gateway_request_failed",
-                "#2090 admission answers an unserved project before the sessionKey gate"
-            );
-            negative_assert_eq!(
-                key_message(&error),
-                ISOLATED_PROJECT_MESSAGE,
-                "#2090 the admission message is the isolated-project one"
-            );
+                    .await;
+            if matches!(method, "delete_session" | "rename_session" | "tag_session") {
+                let error = result.expect_err("#2090 unknown project before key");
+                negative_assert_eq!(
+                    error.code.as_str(),
+                    "PROJECT_NOT_FOUND",
+                    "#2090 unregistered project is rejected before key validation"
+                );
+                assert_eq!(
+                    key_message(&error),
+                    format!("Unknown projectKey: {UNKNOWN}")
+                );
+            } else if key.trim().is_empty() {
+                let error = result.expect_err("#2090 native resume/close key gate retained");
+                negative_assert_eq!(
+                    error.code.as_str(),
+                    "INVALID_SESSION_KEY",
+                    "#2090 native resume/close blank key"
+                );
+            } else {
+                assert!(result.is_ok(), "#2090 resume/close do not resolve project");
+            }
         }
-
-        r.owner.shutdown().await.expect("#2090 shutdown");
-        r.project.dispose().await.expect("#2090 dispose");
+        let params = object([
+            ("sessionKey", "pdrs-2090-control".into()),
+            ("projectKey", JsValue::Null),
+        ]);
+        let result =
+            crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                .await;
+        match method {
+            "delete_session" => negative_assert_eq!(
+                result.unwrap_err().code.as_str(),
+                "SESSION_NOT_FOUND",
+                "#2090 null project uses registered fallback"
+            ),
+            "rename_session" | "tag_session" => negative_assert_eq!(
+                result.unwrap().get("updated"),
+                Some(&JsValue::Bool(true)),
+                "#2090 null project uses registered fallback"
+            ),
+            _ => assert!(result.is_ok(), "#2090 null project uses fallback"),
+        }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
     }
 
     #[tokio::test]
@@ -1318,110 +1287,159 @@ mod tests {
         r.project.dispose().await.expect("#1310 dispose");
     }
 
-    // #2083: a lone-surrogate `projectKey` is a non-blank key, and the TS
-    // baseline runs it to completion (`closeProjectSessions` answers
-    // `{sessionKeys: []}` on both branches — real-entry probe
-    // `_tmp/20261107-issue-2083/worker-r1/probe.out`). It therefore passes the trim gate
-    // and reaches the same configured-project check every other foreign key
-    // fails, on both the close and the resume branch, instead of being
-    // answered the missing-key domain error.
+    // #2083 raw UTF-16 cannot alias a U+FFFD filesystem path (native
+    // project-identity safety difference). Keep the historical nonce used by
+    // the registered negative control while pinning the new specific outcome.
     #[tokio::test]
     async fn close_project_sessions_surrogate_project_key_reaches_the_capability_gate() {
-        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
-            .expect("#1310 fixture");
-        for (label, resume) in [("close", false), ("resume", true)] {
+        let (_s, r) = crate::native_process::management_tests::setup();
+        for resume in [false, true] {
+            let raw = JsString::from_utf16(vec![0xd800]);
             let error = r
                 .session_dir_request(
                     "close_project_sessions".into(),
                     object([
-                        (
-                            "projectKey",
-                            JsValue::String(JsString::from_utf16(vec![0xd800])),
-                        ),
+                        ("projectKey", JsValue::String(raw.clone())),
                         ("resume", JsValue::Bool(resume)),
                     ]),
                 )
                 .await
-                .expect_err("#2083 the surrogate projectKey is not a missing key");
-            assert_eq!(
-                "CAPABILITY_UNAVAILABLE", error.code,
-                "#2083 the surrogate projectKey reaches the capability gate ({label} branch)"
+                .unwrap_err();
+            negative_assert_eq!(
+                error.code.as_str(),
+                "PROJECT_NOT_FOUND",
+                "#2083 the surrogate projectKey reaches the capability gate"
             );
-            assert_eq!(
-                "The isolated native process serves only its configured project.",
-                key_message(&error),
-                "#2083 the surrogate projectKey keeps the capability message ({label} branch)"
+            assert!(
+                error.message.units().ends_with(raw.units()),
+                "raw surrogate retained"
             );
         }
-        r.owner.shutdown().await.expect("#1310 shutdown");
-        r.project.dispose().await.expect("#1310 dispose");
+        r.owner.shutdown().await.unwrap();
+        r.project.dispose().await.unwrap();
     }
 
-    // #2083 r1 (DS sibling#1): the admission gate in `GatewayRequests::request`
-    // is the same source as the handler's configured-project check above, so
-    // it converts the key lossily too. Through the real entry an unserved
-    // surrogate is answered by the admission gate itself (`gateway_request_failed`
-    // + the isolation message, like every foreign key), and the registered
-    // residual — a key whose lossy form names a configured project path
-    // containing U+FFFD — is admitted and served on both layers alike
-    // (`resume` arm: the gate sits before the branch).
     #[tokio::test]
     async fn close_project_sessions_surrogate_project_key_meets_the_same_lossy_gate_at_the_entry() {
-        let (_s, mut r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
-            .expect("#1310 fixture");
-        let error = crate::runtime::turn::gateway::GatewayRequests::request(
-            &r,
-            "close_project_sessions".into(),
-            object([
-                (
-                    "projectKey",
-                    JsValue::String(JsString::from_utf16(vec![0xd800])),
-                ),
-                ("resume", JsValue::Bool(true)),
-            ]),
-        )
-        .await
-        .expect_err("#2083 an unserved surrogate projectKey is refused at the entry");
-        assert_eq!(
-            "gateway_request_failed", error.code,
-            "#2083 the entry answers the admission refusal for the surrogate projectKey"
+        let (_s, mut r) = crate::native_process::management_tests::setup();
+        let replacement = format!("{}-pd-\u{fffd}", r.options.project.to_string_lossy());
+        r.options.project = std::path::PathBuf::from(&replacement);
+        let raw = JsString::from_utf16(
+            replacement
+                .encode_utf16()
+                .map(|unit| if unit == 0xfffd { 0xd800 } else { unit })
+                .collect(),
         );
-        assert_eq!(
-            "The isolated native process serves only its configured project.",
-            key_message(&error),
-            "#2083 the entry keeps the isolation message for the surrogate projectKey"
-        );
-        let residual = format!("{}-pd-\u{FFFD}", r.options.project.to_string_lossy());
-        r.options.project = std::path::PathBuf::from(&residual);
-        let residual_units: Vec<u16> = residual
-            .encode_utf16()
-            .map(|unit| if unit == 0xFFFD { 0xD800 } else { unit })
-            .collect();
-        let served = crate::runtime::turn::gateway::GatewayRequests::request(
-            &r,
-            "close_project_sessions".into(),
-            object([
-                (
-                    "projectKey",
-                    JsValue::String(JsString::from_utf16(residual_units)),
-                ),
+        for direct in [false, true] {
+            let params = object([
+                ("projectKey", JsValue::String(raw.clone())),
                 ("resume", JsValue::Bool(true)),
-            ]),
-        )
-        .await
-        .expect("#2083 the residual lossy form of the configured project is served at the entry");
-        match served.get("sessionKeys") {
-            Some(JsValue::Array(keys)) => assert!(
-                keys.is_empty(),
-                "#2083 the residual project has no sessions to close"
-            ),
-            other => {
-                panic!("#2083 the resume arm must answer the sessionKeys array, got {other:?}")
-            }
+            ]);
+            let error = if direct {
+                r.session_dir_request("close_project_sessions".into(), params)
+                    .await
+                    .unwrap_err()
+            } else {
+                crate::runtime::turn::gateway::GatewayRequests::request(
+                    &r,
+                    "close_project_sessions".into(),
+                    params,
+                )
+                .await
+                .unwrap_err()
+            };
+            assert_eq!(error.code, "PROJECT_NOT_FOUND");
+            assert!(
+                error.message.units().ends_with(raw.units()),
+                "no lossy alias"
+            );
         }
-        r.owner.shutdown().await.expect("#1310 shutdown");
-        r.project.dispose().await.expect("#1310 dispose");
+        r.owner.shutdown().await.unwrap();
+        r.project.dispose().await.unwrap();
     }
+
+    #[tokio::test]
+    async fn registered_project_lexical_alias_is_resolved_before_session_write() {
+        let (_s, r) = crate::native_process::management_tests::setup();
+        let alias = format!("{}/./", r.options.project.display());
+        let response = crate::runtime::turn::gateway::GatewayRequests::request(
+            &r,
+            "rename_session".into(),
+            object([
+                ("projectKey", alias.as_str().into()),
+                ("sessionKey", "alias-session".into()),
+                ("value", "ALIAS_TITLE".into()),
+            ]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(response.get("updated"), Some(&JsValue::Bool(true)));
+        let chat = bounded_chat_dir(&r.options.home, &r.options.project).unwrap();
+        let text = std::fs::read_to_string(chat.join("alias-session.jsonl")).unwrap();
+        assert!(text.contains("ALIAS_TITLE"), "{text}");
+        r.owner.shutdown().await.unwrap();
+        r.project.dispose().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn unregistered_project_never_creates_session_storage() {
+        let (_s, r) = crate::native_process::management_tests::setup();
+        let unknown = r
+            .options
+            .project
+            .parent()
+            .unwrap()
+            .join("unregistered-project");
+        std::fs::create_dir_all(&unknown).unwrap();
+        let before: std::collections::BTreeSet<_> =
+            std::fs::read_dir(r.options.home.join("projects"))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+        for method in [
+            "list_sessions",
+            "delete_session",
+            "rename_session",
+            "tag_session",
+            "record_agent_status_message",
+        ] {
+            let params = object([
+                (
+                    "projectKey",
+                    JsValue::String(JsString::from(unknown.to_string_lossy().as_ref())),
+                ),
+                ("sessionKey", "probe".into()),
+                ("turnId", "turn".into()),
+                ("value", "x".into()),
+                ("status", "x".into()),
+            ]);
+            let error =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await
+                    .unwrap_err();
+            negative_assert_eq!(
+                error.code.as_str(),
+                "PROJECT_NOT_FOUND",
+                "#2090 unknown project cannot create session storage"
+            );
+            assert!(
+                !unknown.join(".pilotdeck").exists(),
+                "{method} created project storage"
+            );
+        }
+        let after: std::collections::BTreeSet<_> =
+            std::fs::read_dir(r.options.home.join("projects"))
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect();
+        assert_eq!(
+            before, after,
+            "unknown project must not create home storage"
+        );
+        r.owner.shutdown().await.unwrap();
+        r.project.dispose().await.unwrap();
+    }
+
     #[tokio::test]
     async fn delete_clears_sdk_state_only_after_durable_storage_removal() {
         let (_scratch, mut requests) = crate::native_process::management_tests::setup();
