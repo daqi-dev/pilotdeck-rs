@@ -2015,6 +2015,23 @@ mod tests {
         let mut supplied = parse_execute_request(&input, &explicit, vec![]).unwrap().0;
         assign_tcp_request_id(&mut supplied, &explicit, true);
         assert_eq!(supplied.identity.request_id, JsString::from("default"));
+        // The legacy parser treats nonstrings as missing, but retains every
+        // explicit string. Reusing an explicit identity is governed by the
+        // sidecar replay contract, not silently converted into a new request.
+        let empty = parse_json(r#"{"sessionId":"same","turnId":"turn","requestId":""}"#).unwrap();
+        let mut supplied_empty = parse_execute_request(&input, &empty, vec![]).unwrap().0;
+        assign_tcp_request_id(&mut supplied_empty, &empty, true);
+        assert_eq!(supplied_empty.identity.request_id, JsString::from(""));
+        for raw in [
+            r#"{"sessionId":"same","turnId":"turn","requestId":42}"#,
+            r#"{"sessionId":"same","turnId":"turn","requestId":null}"#,
+        ] {
+            let implicit = parse_json(raw).unwrap();
+            let mut request = parse_execute_request(&input, &implicit, vec![]).unwrap().0;
+            assign_tcp_request_id(&mut request, &implicit, true);
+            assert!(!request.identity.request_id.is_empty());
+            assert_ne!(request.identity.request_id, JsString::from("default"));
+        }
         let mut stdio = parse_execute_request(&input, &options, vec![]).unwrap().0;
         assign_tcp_request_id(&mut stdio, &options, false);
         assert_eq!(stdio.identity.request_id, JsString::from("default"));
