@@ -79,27 +79,49 @@ def local_ref(ref):
 
 
 def literal_member(text):
-    return re.fullmatch(r'"[^"\\]*",?', text.strip()) is not None
+    return re.fullmatch(r'"[^"\\]*",?(?:\s*//.*)?', text.strip()) is not None
 
 
 def literal_table_lines(lines):
     # 1-based line numbers inside Rust string-literal tables (e.g.
     # UNMIGRATED_CHANNEL_KEYS): every member line plus the closing bracket
     # line. Opening lines stay out — sidecar:* entries legitimately anchor
-    # a whole guarded block at its `for option in [` header.
+    # a whole guarded block at its `for option in [` header. A table opens
+    # at a line that ends with '[' and declares a const/static binding; blank
+    # and //-comment lines inside are transparent (a comment added mid-table
+    # must not silently drop the whole table back to range-only — #2286
+    # review P0); any other code line aborts the block, keeping the members
+    # collected so far. Non-binding arrays (`let xs = [`, `for x in [`) are
+    # not key tables and stay out entirely. A table that ends at the last
+    # line of the file still closes (the EOF table is a table).
     inside = set()
     index = 0
     while index < len(lines):
-        if literal_member(lines[index]):
-            end = index
-            while end + 1 < len(lines) and literal_member(lines[end + 1]):
-                end += 1
-            if index > 0 and lines[index - 1].rstrip().endswith("[") \
-                    and end + 1 < len(lines) and lines[end + 1].lstrip().startswith("]"):
-                inside.update(range(index + 1, end + 3))
-            index = end + 1
-        else:
+        line = lines[index]
+        if not line.rstrip().endswith("[") or not re.search(r"\b(?:const|static)\b", line):
             index += 1
+            continue
+        members = []
+        end = index + 1
+        closed = False
+        while end < len(lines):
+            stripped = lines[end].strip()
+            if not stripped or stripped.startswith("//"):
+                end += 1
+                continue
+            if stripped.startswith("]"):
+                closed = True
+                end += 1
+                break
+            if literal_member(lines[end]):
+                members.append(end)
+                end += 1
+                continue
+            break
+        inside.update(member + 1 for member in members)
+        if closed:
+            inside.add(end)  # 1-based closing line
+        index = end if end > index else index + 1
     return inside
 
 
@@ -114,6 +136,8 @@ def key_literal_error(key, ref, tables=None):
     # anchors, non-bare key segments, literals with escapes) and stays
     # range-only. `tables` optionally caches {path: (lines, table lines)}
     # across one check() pass.
+    if not isinstance(key, str):
+        return None
     if not isinstance(ref, str):
         return None
     file, _, fragment = ref.partition("#")
