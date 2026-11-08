@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 237 mutants:
+`JUDGES`, keyed by the same names. The current table has 238 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -1177,3 +1177,30 @@ wrapper as `_literal_test_value` — any `ArithmeticError`, `TypeError`,
 of collapsing the audit — plus a width pre-check on `%` formatting, because
 `'%2000000000s' % 'x'` *succeeds* at runtime by allocating ~2 GB rather
 than raising.
+
+fix-r8 (DS + MiniMax r7, both families, probe-verified) closed the round
+after.  First, the relay family — `_name_relays` / `_container_relays` — had
+kept the full-tree `_calls_aggregate` exemption that fix-r7 closed for the
+direct spellings: a name bound to `'PASS' or common.aggregate_status(…)`
+still read as shared-derived and exempted the slot it relayed into
+(`summary-name-relay-shared-call-bypass` pins the spelling; a container's
+dict binding is now judged by its own status slots, slot by slot, because an
+arm split cannot see inside a dict literal).  Second, `_retirement_real_pid`
+accepted `0`, negative and oversized ints — `{'rows': [{'pid': 0}],
+'declared': [0]}` read as a fully established census — so it now requires
+`0 < pid <= 2**31 - 1`, the controls' class-2 row-side and gateway-pid reads
+go through the same predicate, and `_retirement_hashable` projects a bool to
+its repr so `{True} | {1}` cannot collapse in the control attributions.
+Third, the format folds: the fix-r7 width scan ate digit zeros as flag
+characters (`'%100000000s'` read width 1), and `_literal_test_value_fold`
+had no `%` bound at all (explicit width, `'%*s'` star width and
+`'%.500000000e'` precision all materialised the result first); both folds
+now accumulate every digit run of each spec into one max, resolve a star
+width from the int elements of the tuple, and check the bound before the
+interpreter is asked to build anything.  Fourth, int `Add`/`Sub` gained the
+result-size cap every other int op already kept — at-cap operands chained
+by `+` summed past `_FOLD_MAX_BITS` — and `_literal_test_value`'s wrapper
+joined the five-exception family `_folded_string` got in fix-r7 (its
+container-literal branches have no `try` of their own).  The in-file
+aggregation-audit self-tests pin every one of these shapes, bounded
+formats included.
