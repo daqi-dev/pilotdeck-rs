@@ -418,6 +418,16 @@ struct Services {
     scoped: bool,
 }
 impl SubmitHostServices for Services {
+    fn bound_project_key(&self) -> Option<JsString> {
+        self.scoped
+            .then(|| {
+                self.session.setup["boundProjectKey"]
+                    .as_str()
+                    .map(JsString::from)
+            })
+            .flatten()
+    }
+
     fn bind_project<'a>(
         &'a self,
         _input: &'a mut JsValue,
@@ -923,6 +933,12 @@ async fn replay_case(case: &Value) {
             input[key] = value.clone();
         }
     }
+    if setup["omitProjectKey"] == true {
+        input
+            .as_object_mut()
+            .expect("submit input object")
+            .remove("projectKey");
+    }
     let stream = submitter.submit(js(&input));
     let consumer = tokio::spawn(collect(stream, log.clone()));
     let mut abort = None;
@@ -1065,6 +1081,31 @@ async fn replay_case(case: &Value) {
             other => panic!("unknown fixture step: {other}"),
         }
         settle(&registry).await;
+        if let Some(project) = setup["boundProjectKey"].as_str()
+            && step == "accept"
+        {
+            let replay_input = super::super::replay::ActiveTurnSnapshotInput::new("s".into());
+            let snapshot = submitter
+                .coordinator
+                .snapshot_for_project(&replay_input, &project.into())
+                .expect("bound project replay must remain visible with omitted/aliased raw key");
+            assert!(snapshot.active, "input-accept barrier retains active run");
+            for kind in ["turn_started", "input_accepted", "assistant_text_delta"] {
+                assert!(
+                    snapshot.events.iter().any(|event| event
+                        .get("type")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|name| name.equals_str(kind))),
+                    "{name}: missing active replay {kind}"
+                );
+            }
+            assert!(
+                submitter
+                    .coordinator
+                    .snapshot_for_project(&replay_input, &"/different/project".into())
+                    .is_none()
+            );
+        }
         let expected = &case["results"][index];
         // Dirty is observed via a real recreation below, independently of the
         // SDK setter's return. Do not mirror the implementation in its mock.
@@ -1708,4 +1749,35 @@ fn bound_submitter_views_share_workspace_exclusion() {
     first.release(&"workspace".into(), &a);
     assert!(second.reserve(&"workspace".into(), &b));
     second.release(&"workspace".into(), &b);
+}
+
+#[tokio::test]
+async fn scoped_submit_omitted_and_aliased_project_keep_canonical_active_replay() {
+    let oracle = parse_json(ORACLE).unwrap();
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("submit cases");
+    };
+    let original = cases
+        .iter()
+        .find(|case| {
+            case.get("name")
+                .and_then(JsValue::as_string)
+                .is_some_and(|name| name.equals_str("durable-accept-and-session-end"))
+        })
+        .unwrap();
+    for omitted in [true, false] {
+        let mut case = json(original);
+        case["name"] = format!("canonical-active-replay-omitted-{omitted}").into();
+        case["orderOnly"] = true.into();
+        case["setup"]["bindProject"] = true.into();
+        case["setup"]["boundProjectKey"] = "/owned/project-B".into();
+        if omitted {
+            case["setup"]["omitProjectKey"] = true.into();
+        } else {
+            case["setup"]["input"]["projectKey"] = "/owned/project-B/./".into();
+        }
+        tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+            .await
+            .expect("canonical project replay bounded completion");
+    }
 }

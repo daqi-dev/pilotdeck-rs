@@ -64,9 +64,15 @@ pub(super) fn select(
     scoped.project = reservation
         .as_ref()
         .map(|scope| {
-            scope.project_key().to_utf8().map(PathBuf::from).map_err(|_| {
-                RequestError::new("Session project identity cannot be represented by this host.")
-            })
+            scope
+                .project_key()
+                .to_utf8()
+                .map(PathBuf::from)
+                .map_err(|_| {
+                    RequestError::new(
+                        "Session project identity cannot be represented by this host.",
+                    )
+                })
         })
         .transpose()?
         .or(requested)
@@ -146,7 +152,10 @@ mod tests {
             .unwrap()
             .join("unregistered-B");
         let raw = object([
-            ("projectKey", JsValue::String(b.to_string_lossy().into_owned().into())),
+            (
+                "projectKey",
+                JsValue::String(b.to_string_lossy().into_owned().into()),
+            ),
             ("sessionKey", "same".into()),
         ]);
         let selected = select(&requests.owner, &requests.options, &raw, false).unwrap();
@@ -166,12 +175,14 @@ mod tests {
         let conflicting = object([
             (
                 "projectKey",
-                JsValue::String(requests
-                    .options
-                    .project
-                    .to_string_lossy()
-                    .into_owned()
-                    .into()),
+                JsValue::String(
+                    requests
+                        .options
+                        .project
+                        .to_string_lossy()
+                        .into_owned()
+                        .into(),
+                ),
             ),
             ("sessionKey", "same".into()),
         ]);
@@ -213,7 +224,10 @@ mod tests {
             upload_store: upload_store(requests.options.home.clone()),
         };
         let mut input = object([
-            ("projectKey", JsValue::String(b.to_string_lossy().into_owned().into())),
+            (
+                "projectKey",
+                JsValue::String(b.to_string_lossy().into_owned().into()),
+            ),
             ("sessionKey", "services".into()),
             (
                 "modelSelection",
@@ -306,6 +320,68 @@ mod tests {
         );
         assert!(!unknown.exists());
         drop(store);
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+    }
+    #[tokio::test]
+    async fn native_workspace_identity_folds_surrogate_segment_before_utf8_boundary() {
+        use crate::runtime::turn::submit_host::SubmitHostServices;
+        let (_scratch, requests) = super::super::management_tests::setup();
+        let root = requests.options.project.clone();
+        let mut units = root
+            .parent()
+            .unwrap()
+            .to_string_lossy()
+            .encode_utf16()
+            .collect::<Vec<_>>();
+        units.extend("/".encode_utf16());
+        units.push(0xd800);
+        units.extend("/../".encode_utf16());
+        units.extend(root.file_name().unwrap().to_string_lossy().encode_utf16());
+        let input = object([
+            ("projectKey", JsValue::String(JsString::from_utf16(units))),
+            ("sessionKey", "workspace-alias".into()),
+        ]);
+        let scoped = select(&requests.owner, &requests.options, &input, false).unwrap();
+        assert_eq!(scoped.options.project, root);
+        let services = super::super::services::Services {
+            options: scoped.options,
+            project: requests.project.clone(),
+            env: requests.env.clone(),
+            recorders: requests.recorders.clone(),
+            owner: requests.owner.clone(),
+            snapshot_recorder: Some(std::sync::Arc::new(
+                crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(
+                    crate::storage::resolve_workspace_snapshot_config(|key| {
+                        (key == "PILOTDECK_STORAGE_ROOT").then(|| {
+                            root.parent()
+                                .unwrap()
+                                .join("snapshots")
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                    })
+                    .unwrap()
+                    .unwrap(),
+                ),
+            )),
+            upload_store: upload_store(requests.options.home.clone()),
+        };
+        let canonical = object([("projectKey", JsValue::from(root.to_string_lossy().as_ref()))]);
+        assert_eq!(
+            services.workspace_id(&canonical).unwrap(),
+            Some("a8-main".into())
+        );
+        assert_eq!(
+            services.workspace_id(&input).unwrap(),
+            Some("a8-main".into())
+        );
+        let malformed = object([(
+            "projectKey",
+            JsValue::String(JsString::from_utf16(vec![0xd800])),
+        )]);
+        assert!(services.workspace_id(&malformed).is_err());
+        drop(scoped.reservation);
         requests.owner.shutdown().await.unwrap();
         requests.project.dispose().await.unwrap();
     }

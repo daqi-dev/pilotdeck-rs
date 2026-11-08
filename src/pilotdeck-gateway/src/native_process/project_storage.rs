@@ -109,6 +109,12 @@ mod tests {
         assert_ne!(plan.transcript_path, a_dir.join("same.jsonl"));
         let opened = (plan.open)().unwrap();
         assert!(opened.is_persistent());
+        // Opening an empty recording is lazy; its first append creates JSONL.
+        opened
+            .recorder
+            .start_turn(&"same".into(), &"owned-B".into())
+            .unwrap();
+        assert_eq!(opened.read().unwrap().entries.len(), 1);
         assert!(plan.transcript_path.exists());
         assert!(!a_dir.join("same.jsonl").exists());
         drop(opened);

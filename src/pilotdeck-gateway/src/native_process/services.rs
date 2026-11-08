@@ -1427,9 +1427,11 @@ impl SubmitHostServices for Services {
 
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
         if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {
-            let project = project
+            let key = project
                 .as_string()
-                .and_then(|s| s.to_utf8().ok())
+                .ok_or_else(|| failure("projectKey must be a valid path string."))?;
+            let project = crate::metadata::resolve_process_identity(Path::new(""), key)
+                .map_err(|error| failure(error.to_string()))?
                 .ok_or_else(|| failure("projectKey must be a valid path string."))?;
             if !self.options.serves_project(&project) {
                 return Err(unavailable(
