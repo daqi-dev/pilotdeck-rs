@@ -16,9 +16,7 @@ use crate::{
 fn failure(message: impl Into<JsString>) -> HostError {
     ModuleError::new(message).into()
 }
-use super::super::assembly::sdk_hooks::{
-    HookProjectionBudget, NativeAsyncRegistration, NativeHookProjection,
-};
+use super::super::assembly::sdk_hooks::{HookProjectionBudget, NativeHookProjection};
 
 pub(super) struct DetachedHookSource {
     settings: HooksSettings,
@@ -49,16 +47,26 @@ impl AsyncHookRegistrationHandler for DynamicRegistration {
             .ok_or_else(|| failure("Native background hook registry is closed."))?;
         // TS registers against the session's active external run at marker time.
         // Idle is deliberately a no-op. Once captured, delivery never moves runs.
-        let turn = registry.capture_async_turn(&self.session, self.steer.clone());
-        NativeAsyncRegistration {
-            session: self.session.clone(),
-            include_events: self.include_events,
-            registry: self.async_registry.clone(),
-            steer: self.steer.clone(),
-            current_turn: None,
-            native_turn: Some(turn),
-        }
-        .handle(registration)
+        let Some(turn) = registry.capture_async_turn(&self.session, self.steer.clone()) else {
+            return Ok(());
+        };
+        let async_registry = self
+            .async_registry
+            .get()
+            .and_then(Option::as_ref)
+            .ok_or_else(|| failure("SDK async hook registry is unavailable."))?;
+        async_registry.register_pinned(
+            crate::runtime::async_hooks::AsyncHookRegistration {
+                session_key: self.session.clone(),
+                invocation_id: registration.invocation_id,
+                hook_name: registration.hook_name,
+                hook_event: registration.hook_event,
+                timeout_ms: registration.timeout_ms,
+                include_hook_events: self.include_events,
+            },
+            turn.turn,
+            turn.guard,
+        )
     }
 }
 impl ForkTurn {

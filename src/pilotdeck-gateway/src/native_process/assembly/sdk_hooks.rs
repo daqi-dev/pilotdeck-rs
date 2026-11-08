@@ -248,6 +248,11 @@ impl crate::runtime::hooks::runtime::AsyncHookRegistrationHandler for NativeAsyn
             })?;
         if let Some(native) = &self.native_turn {
             let Some(native) = native else { return Ok(()) };
+            let slot = self.current_turn.clone().ok_or_else(|| {
+                crate::host::ModuleError::new("SDK async hook has no admission guard.")
+            })?;
+            let completion = native.guard.clone();
+            let guard = std::sync::Arc::new(move || slot() && completion());
             return registry.register_pinned(
                 crate::runtime::async_hooks::AsyncHookRegistration {
                     session_key: self.session.clone(),
@@ -258,7 +263,7 @@ impl crate::runtime::hooks::runtime::AsyncHookRegistrationHandler for NativeAsyn
                     include_hook_events: self.include_events,
                 },
                 native.turn.clone(),
-                native.guard.clone(),
+                guard,
             );
         }
         let info = self
@@ -647,6 +652,95 @@ mod tests {
                     timeout_ms: None
                 })
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn native_completion_capture_still_obeys_the_inner_handle_slot_guard() {
+        use crate::runtime::{
+            async_hooks::{
+                AsyncHookRegistry, AsyncHookStatus, AsyncHookTurn, AsyncHookTurnHandle,
+                TokioHookClock,
+            },
+            hooks::runtime::{AsyncHookRegistration, AsyncHookRegistrationHandler},
+            steer::{EnqueueResult, SteerMessage},
+        };
+        use std::sync::{
+            Arc, OnceLock,
+            atomic::{AtomicBool, AtomicUsize, Ordering},
+        };
+        struct Turn {
+            run: JsString,
+            identity: Arc<()>,
+            calls: Arc<AtomicUsize>,
+        }
+        impl AsyncHookTurnHandle for Turn {
+            fn run_id(&self) -> &JsString {
+                &self.run
+            }
+            fn identity(&self) -> &Arc<()> {
+                &self.identity
+            }
+            fn is_live(&self) -> bool {
+                true
+            }
+            fn enqueue(&self, _: SteerMessage) -> crate::host::HostFuture<EnqueueResult> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async {
+                    Ok(EnqueueResult {
+                        accepted: true,
+                        reason: None,
+                    })
+                })
+            }
+        }
+        let registry = Arc::new(AsyncHookRegistry::new(
+            Arc::new(TokioHookClock),
+            |_| None,
+            |_, _| {},
+        ));
+        let slot = Arc::new(OnceLock::new());
+        assert!(slot.set(Some(registry.clone())).is_ok());
+        let inner = Arc::new(AtomicBool::new(true));
+        let guard = inner.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let capture = crate::runtime::session::CapturedAsyncTurn {
+            turn: AsyncHookTurn::new(Turn {
+                run: "same".into(),
+                identity: Arc::new(()),
+                calls: calls.clone(),
+            }),
+            guard: Arc::new(|| true),
+            bind_steer: Arc::new(|_| Ok(())),
+        };
+        let bridge = NativeAsyncRegistration {
+            session: "session".into(),
+            include_events: false,
+            registry: slot,
+            steer: None,
+            current_turn: Some(Arc::new(move || guard.load(Ordering::SeqCst))),
+            native_turn: Some(Some(capture)),
+        };
+        bridge
+            .handle(AsyncHookRegistration {
+                hook_name: "fixture".into(),
+                hook_event: "SubagentStart".into(),
+                invocation_id: "invocation".into(),
+                timeout_ms: Some(30_000.0),
+            })
+            .unwrap();
+        // The outer Gateway run remains admitted while inner turn cleanup runs.
+        inner.store(false, Ordering::SeqCst);
+        let output=pilotdeck_protocol::parse_json(r#"{"hookSpecificOutput":{"hookEventName":"SubagentStart","additionalContext":"must-not-enqueue"}}"#).unwrap();
+        let result = registry
+            .submit("session".into(), "invocation".into(), output)
+            .await
+            .unwrap();
+        assert_eq!(result.status, AsyncHookStatus::Expired);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            0,
+            "closed inner slot cannot enqueue through still-live Gateway completion"
         );
     }
     #[test]
