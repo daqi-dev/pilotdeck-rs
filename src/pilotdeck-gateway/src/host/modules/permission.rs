@@ -11,6 +11,12 @@ pub trait PermissionContext: Send + Sync {
     fn prepare(&self, value: JsValue) -> HostFuture<RuntimeContext>;
 }
 pub trait PermissionDecision: Send + Sync {
+    /// Trusted host state; wire payloads never provide this authority.
+    fn current_mode(&self) -> Option<crate::config::permission::PermissionMode> {
+        None
+    }
+    fn apply_mode_effect(&self, _result: &JsObject) {}
+    fn set_trusted_mode(&self, _mode: crate::config::permission::PermissionMode) {}
     fn decide(
         &self,
         tool: Arc<dyn ToolDefinition>,

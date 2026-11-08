@@ -37,6 +37,25 @@ impl Elicitation {
         metadata: Option<JsValue>,
         context: &ToolRunContext,
     ) -> Result<JsValue, ToolError> {
+        self.ask_custom(
+            tool_call_id,
+            "ask_user_question",
+            None,
+            questions,
+            metadata,
+            context,
+        )
+        .await
+    }
+    pub async fn ask_custom(
+        &self,
+        tool_call_id: JsString,
+        tool_name: &'static str,
+        preview_format: Option<&'static str>,
+        questions: JsValue,
+        metadata: Option<JsValue>,
+        context: &ToolRunContext,
+    ) -> Result<JsValue, ToolError> {
         let profile = self.profile.get().ok_or_else(|| {
             ToolError::new("tool_execution_failed", "Interaction profile is not bound.")
         })?;
@@ -87,7 +106,7 @@ impl Elicitation {
         let entry = PendingEntry {
             request_id: request_id.clone(),
             tool_call_id: tool_call_id.clone(),
-            tool_name: "ask_user_question".into(),
+            tool_name: tool_name.into(),
             resolve: Arc::new(move |answer| {
                 if let Some(tx) = on_answer.lock().unwrap().take() {
                     let _ = tx.send(Ok(answer));
@@ -101,7 +120,10 @@ impl Elicitation {
         };
         let mut payload = JsObject::new();
         payload.insert("toolCallId".into(), JsValue::String(tool_call_id));
-        payload.insert("toolName".into(), "ask_user_question".into());
+        payload.insert("toolName".into(), tool_name.into());
+        if let Some(format) = preview_format {
+            payload.insert("previewFormat".into(), format.into());
+        }
         payload.insert("questions".into(), questions);
         if let Some(metadata) = metadata {
             payload.insert("metadata".into(), metadata);

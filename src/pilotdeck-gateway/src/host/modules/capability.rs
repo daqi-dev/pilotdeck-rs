@@ -8,6 +8,10 @@ use std::{any::Any, sync::Arc};
 /// predicate is represented by Err and serialized as false, like TS safely().
 pub trait ToolDefinition: Send + Sync {
     fn fields(&self) -> &JsObject;
+    /// Only host-installed plan tools may change trusted permission mode.
+    fn is_trusted_mode_transition(&self) -> bool {
+        false
+    }
     fn is_read_only(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
     }
@@ -63,6 +67,9 @@ pub trait ToolContext: Send + Sync {
 
 /// Port implementations must return promptly and do I/O asynchronously.
 pub trait ToolExecution: ToolCatalog {
+    fn applies_mode_effects(&self) -> bool {
+        false
+    }
     /// Host-only binding after the actual generation's permission resource is
     /// installed. Remote descriptors cannot set or replace this authority.
     fn bind_turn_permission(
@@ -89,10 +96,18 @@ pub trait ToolExecution: ToolCatalog {
 }
 pub trait CapabilityResultObserver: Send + Sync {
     fn on_capability_results(&self, results: Vec<JsObject>) -> HostFuture<()>;
+    fn on_results_after_mode_effects(&self, results: Vec<JsObject>) -> HostFuture<()> {
+        self.on_capability_results(results)
+    }
 }
 pub trait PlanTodoHandler: Send + Sync {
     fn call(&self, call: JsValue) -> HostFuture<JsObject>;
+    fn blocking_message(&self, _tool: JsString, _read_only: bool) -> HostFuture<Option<JsString>> {
+        Box::pin(async { Ok(None) })
+    }
 }
+/// Host-only type-erased plan authority; never populated from wire fields.
+pub struct PlanTodoContext(pub Arc<dyn PlanTodoHandler>);
 
 #[derive(Clone)]
 struct Ports {
@@ -227,10 +242,17 @@ impl Handler {
                     )
                     .into());
                 }
-                ports
-                    .observer
-                    .on_capability_results(results.clone())
-                    .await?;
+                if ports.execution.applies_mode_effects() {
+                    ports
+                        .observer
+                        .on_results_after_mode_effects(results.clone())
+                        .await?;
+                } else {
+                    ports
+                        .observer
+                        .on_capability_results(results.clone())
+                        .await?;
+                }
                 let mut response = JsObject::new();
                 response.insert(
                     "results".into(),
@@ -242,10 +264,17 @@ impl Handler {
                     .into_iter()
                     .next()
                     .ok_or_else(|| ModuleError::new("Capability port returned no result."))?;
-                ports
-                    .observer
-                    .on_capability_results(vec![result.clone()])
-                    .await?;
+                if ports.execution.applies_mode_effects() {
+                    ports
+                        .observer
+                        .on_results_after_mode_effects(vec![result.clone()])
+                        .await?;
+                } else {
+                    ports
+                        .observer
+                        .on_capability_results(vec![result.clone()])
+                        .await?;
+                }
                 Ok(result)
             }
         })

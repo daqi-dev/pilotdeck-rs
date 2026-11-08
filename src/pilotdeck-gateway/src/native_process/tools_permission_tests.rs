@@ -452,3 +452,114 @@ fn admitted_mode_reaches_host_permission_and_remembers_plan_base() {
         }
     }
 }
+
+#[path = "skills_permission_tests.rs"]
+mod skills_permission_tests;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn plan_enter_blocks_a_sibling_write_in_the_same_batch() {
+    let (scratch, mut tools, _, identity) =
+        make_tools(JsObject::new(), Arc::default(), RuleSetHandle::empty());
+    let project = scratch.0.join("project");
+    let key = crate::storage::TranscriptKey {
+        project_root: project.clone(),
+        pilot_home: scratch.0.join("home"),
+        session_id: identity.session_id.clone(),
+        transcript_path: scratch.0.join("plan-test.jsonl"),
+    };
+    let storage = crate::runtime::session::factory::FactoryStorage::new(
+        Arc::new(crate::storage::JsonlTranscriptStore::new()),
+        key,
+    );
+    let mut started = JsObject::new();
+    started.insert("type".into(), "turn_started".into());
+    storage
+        .recorder
+        .writer()
+        .record_session_event_checked(&identity.session_id, &identity.turn_id, started)
+        .unwrap();
+    tools.binding.recorder = storage.recorder.clone();
+    tools.binding.projection = storage.projection.clone();
+    tools.goal = crate::runtime::goal::GoalRuntime::new(
+        identity.session_id.clone(),
+        storage.recorder.clone(),
+        storage.projection.clone(),
+    );
+    let recorder = storage.recorder.clone();
+    let files = super::super::plan_todo::NativePlanFiles::prepare(project.clone())
+        .await
+        .unwrap();
+    let tools = tools.with_plan_files(Arc::new(files));
+    let ports = tools.turn_with_authority(
+        &identity,
+        recorder,
+        Cancellation::new(),
+        Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
+            sdk_permission_mode: None,
+            can_prompt: Some(true),
+            policy_can_prompt: None,
+            emit: Arc::new(|_| true),
+        }),
+    );
+    let resource = InteractionPermission::default();
+    let mut router = crate::host::modules::ModuleRouter::default();
+    let catalog: Arc<dyn ToolCatalog> = ports.tool_execution.clone();
+    let permission = resource
+        .bind_turn(
+            identity.session_id.clone(),
+            identity.run_id.clone(),
+            ports.interaction.permission,
+            catalog,
+            &mut router,
+        )
+        .unwrap();
+    ports
+        .tool_execution
+        .bind_turn_permission(permission.clone())
+        .unwrap();
+    let invocation = ports
+        .tool_context
+        .prepare(JsValue::Undefined)
+        .await
+        .unwrap();
+    let results = ports
+        .tool_execution
+        .execute_all(
+            vec![
+                ToolCall {
+                    id: "enter".into(),
+                    name: "enter_plan_mode".into(),
+                    input: crate::metadata::object([]),
+                },
+                ToolCall {
+                    id: "write".into(),
+                    name: "write_file".into(),
+                    input: crate::metadata::object([
+                        ("file_path", "outside-plan.txt".into()),
+                        ("content", "must not be written".into()),
+                    ]),
+                },
+            ],
+            invocation,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        results[0].get("type"),
+        Some(&"success".into()),
+        "{results:?}"
+    );
+    assert_ne!(
+        results[1].get("type"),
+        Some(&"success".into()),
+        "{results:?}"
+    );
+    assert!(!project.join("outside-plan.txt").exists());
+    permission.close();
+}
+
+#[path = "ask_mode_native_tests.rs"]
+mod ask_mode_native_tests;

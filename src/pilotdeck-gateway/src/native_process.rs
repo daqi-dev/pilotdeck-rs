@@ -30,6 +30,8 @@ pub(crate) mod elicitation;
 mod families;
 mod management;
 mod methods;
+pub(crate) mod plan_todo;
+mod skills;
 pub use methods::registered_methods;
 // #1320 fix-r2 F10: re-exported one hop up so the runtime-side single-source
 // binding test (`runtime/settings/gateway_tests`) can see the family table.

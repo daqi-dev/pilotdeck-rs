@@ -1,0 +1,1012 @@
+{
+  "node": "v22.22.0",
+  "results": [
+    {
+      "name": "enter",
+      "input": {},
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Plan mode activated. You are now in a read-only exploration and planning phase.\n\n## Plan Directory\nCreate your plan as a markdown file under: <PROJECT>/.pilotdeck/plans\nYou may name the file yourself, but it must live under this directory.\n\n## What To Do\n1. Explore the codebase using read_file, grep, glob to understand existing patterns and structure\n2. Identify the key files, functions, and data flows relevant to the task\n3. Design your implementation approach — consider trade-offs between alternatives\n4. Create and refine your own markdown plan file under the plan directory above\n5. When your plan is ready, call exit_plan_mode with the plan_file_path you want to submit\n\n## Rules\n- DO NOT call bash with write commands for any reason; use write_file/edit_file only for markdown plan files under the designated plan directory\n- You MAY use ask_user_question to clarify requirements or choose between approaches\n- Focus on understanding before proposing — read first, plan second"
+            }
+          ],
+          "data": {
+            "requestedMode": "plan"
+          }
+        }
+      },
+      "snapshot": {
+        "requiresInitialization": false,
+        "toolCallsSinceLastTodoWrite": 0,
+        "todos": [],
+        "activeTodos": [],
+        "todoHistory": [],
+        "todoDiagnostics": {
+          "writeCount": 0,
+          "todoCount": 0,
+          "activeCount": 0,
+          "completedCount": 0,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0
+        }
+      }
+    },
+    {
+      "name": "enter",
+      "input": {},
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "code": "tool_execution_failed",
+          "message": "Plan mode is already active.\n\nYour plan directory is: <PROJECT>/.pilotdeck/plans\nContinue refining markdown plan files under that directory, then submit one explicitly with exit_plan_mode(plan_file_path).\n\nStay in read-only exploration/planning until you are ready to call exit_plan_mode."
+        }
+      },
+      "snapshot": {
+        "requiresInitialization": false,
+        "toolCallsSinceLastTodoWrite": 0,
+        "todos": [],
+        "activeTodos": [],
+        "todoHistory": [],
+        "todoDiagnostics": {
+          "writeCount": 0,
+          "todoCount": 0,
+          "activeCount": 0,
+          "completedCount": 0,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0
+        }
+      }
+    },
+    {
+      "name": "exit",
+      "input": {
+        "plan_file_path": "<PROJECT>/outside.md"
+      },
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "code": "invalid_tool_input",
+          "message": "plan_file_path must point to a markdown file under the current project's .pilotdeck/plans directory."
+        }
+      },
+      "snapshot": {
+        "requiresInitialization": false,
+        "toolCallsSinceLastTodoWrite": 0,
+        "todos": [],
+        "activeTodos": [],
+        "todoHistory": [],
+        "todoDiagnostics": {
+          "writeCount": 0,
+          "todoCount": 0,
+          "activeCount": 0,
+          "completedCount": 0,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0
+        }
+      }
+    },
+    {
+      "name": "exit",
+      "input": {
+        "plan_file_path": "<PROJECT>/.pilotdeck/plans/missing.md"
+      },
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "code": "invalid_tool_input",
+          "message": "Plan file does not exist or could not be read: <PROJECT>/.pilotdeck/plans/missing.md"
+        }
+      },
+      "snapshot": {
+        "requiresInitialization": false,
+        "toolCallsSinceLastTodoWrite": 0,
+        "todos": [],
+        "activeTodos": [],
+        "todoHistory": [],
+        "todoDiagnostics": {
+          "writeCount": 0,
+          "todoCount": 0,
+          "activeCount": 0,
+          "completedCount": 0,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0
+        }
+      }
+    },
+    {
+      "name": "exit",
+      "input": {
+        "plan_file_path": "<PROJECT>/.pilotdeck/plans/sample.md"
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has approved your plan. You can now start coding.\nDo NOT output any confirmation text like \"Plan approved, starting implementation\" — the user already knows. Proceed directly with todo_write and implementation.\nBefore using any non-read-only tool, you MUST call todo_write with a markdown checklist derived from the approved plan.\nAfter each completed implementation step, call todo_write again to refresh the checklist and mark completed items with `- [x]`.\n\nSubmitted plan file: <PROJECT>/.pilotdeck/plans/sample.md\nYou can refer back to it during implementation if needed.\n\n## Approved Plan\n# Small plan\n\nFirst step\nSecond step"
+            }
+          ],
+          "data": {
+            "plan": "# Small plan\n\nFirst step\nSecond step",
+            "action": "execute_plan",
+            "requestedMode": "default",
+            "planFilePath": "<PROJECT>/.pilotdeck/plans/sample.md",
+            "planTitle": "Small plan",
+            "planSummary": "First step\nSecond step"
+          }
+        }
+      },
+      "snapshot": {
+        "requiresInitialization": true,
+        "toolCallsSinceLastTodoWrite": 0,
+        "todos": [],
+        "activeTodos": [],
+        "todoHistory": [],
+        "todoDiagnostics": {
+          "writeCount": 0,
+          "todoCount": 0,
+          "activeCount": 0,
+          "completedCount": 0,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0
+        },
+        "approvedPlan": "# Small plan\n\nFirst step\nSecond step"
+      }
+    },
+    {
+      "name": "todo",
+      "input": {},
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Todo list read:\nmode=read merge=false count=0\nNo todos are currently recorded.\n\nDiagnostics:\n{\"writeCount\":0,\"todoCount\":0,\"activeCount\":0,\"completedCount\":0,\"cancelledCount\":0,\"largeRewriteCount\":0,\"deletedOpenItemCount\":0,\"completedWithoutActiveCount\":0}"
+            }
+          ],
+          "data": {
+            "todos": [],
+            "mode": "read",
+            "merge": false,
+            "diagnostics": {
+              "writeCount": 0,
+              "todoCount": 0,
+              "activeCount": 0,
+              "completedCount": 0,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0
+            }
+          },
+          "metadata": {
+            "todoCount": 0,
+            "mode": "read",
+            "diagnostics": {
+              "writeCount": 0,
+              "todoCount": 0,
+              "activeCount": 0,
+              "completedCount": 0,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0
+            }
+          }
+        }
+      },
+      "snapshot": {
+        "requiresInitialization": true,
+        "toolCallsSinceLastTodoWrite": 0,
+        "todos": [],
+        "activeTodos": [],
+        "todoHistory": [],
+        "todoDiagnostics": {
+          "writeCount": 0,
+          "todoCount": 0,
+          "activeCount": 0,
+          "completedCount": 0,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0
+        },
+        "approvedPlan": "# Small plan\n\nFirst step\nSecond step"
+      }
+    },
+    {
+      "name": "todo",
+      "input": {
+        "markdown": "- [ ] first\n- [x] second\n- [ ] third"
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Todo list updated:\nmode=markdown merge=false count=3\n- [in_progress] id=todo-1 first\n- [completed] id=todo-2 second\n- [pending] id=todo-3 third\n\nDiagnostics:\n{\"writeCount\":1,\"todoCount\":3,\"activeCount\":2,\"completedCount\":1,\"cancelledCount\":0,\"largeRewriteCount\":0,\"deletedOpenItemCount\":0,\"completedWithoutActiveCount\":0,\"lastWrite\":{\"mode\":\"markdown\",\"merge\":false,\"addedCount\":3,\"removedCount\":0,\"changedCount\":0,\"deletedOpenItemCount\":0,\"largeRewrite\":false,\"allCompleted\":false}}"
+            }
+          ],
+          "data": {
+            "markdown": "- [ ] first\n- [x] second\n- [ ] third",
+            "todos": [
+              {
+                "id": "todo-1",
+                "content": "first",
+                "status": "in_progress"
+              },
+              {
+                "id": "todo-2",
+                "content": "second",
+                "status": "completed"
+              },
+              {
+                "id": "todo-3",
+                "content": "third",
+                "status": "pending"
+              }
+            ],
+            "mode": "markdown",
+            "merge": false,
+            "diagnostics": {
+              "writeCount": 1,
+              "todoCount": 3,
+              "activeCount": 2,
+              "completedCount": 1,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "markdown",
+                "merge": false,
+                "addedCount": 3,
+                "removedCount": 0,
+                "changedCount": 0,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          },
+          "metadata": {
+            "todoCount": 3,
+            "mode": "markdown",
+            "diagnostics": {
+              "writeCount": 1,
+              "todoCount": 3,
+              "activeCount": 2,
+              "completedCount": 1,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "markdown",
+                "merge": false,
+                "addedCount": 3,
+                "removedCount": 0,
+                "changedCount": 0,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          }
+        }
+      },
+      "snapshot": {
+        "approvedPlan": "# Small plan\n\nFirst step\nSecond step",
+        "requiresInitialization": false,
+        "toolCallsSinceLastTodoWrite": 0,
+        "lastMarkdown": "- [ ] first\n- [x] second\n- [ ] third",
+        "todos": [
+          {
+            "id": "todo-1",
+            "content": "first",
+            "status": "in_progress"
+          },
+          {
+            "id": "todo-2",
+            "content": "second",
+            "status": "completed"
+          },
+          {
+            "id": "todo-3",
+            "content": "third",
+            "status": "pending"
+          }
+        ],
+        "activeTodos": [
+          {
+            "id": "todo-1",
+            "content": "first",
+            "status": "in_progress"
+          },
+          {
+            "id": "todo-3",
+            "content": "third",
+            "status": "pending"
+          }
+        ],
+        "todoHistory": [
+          {
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "mode": "markdown",
+            "merge": false,
+            "markdown": "- [ ] first\n- [x] second\n- [ ] third",
+            "todos": [
+              {
+                "id": "todo-1",
+                "content": "first",
+                "status": "in_progress"
+              },
+              {
+                "id": "todo-2",
+                "content": "second",
+                "status": "completed"
+              },
+              {
+                "id": "todo-3",
+                "content": "third",
+                "status": "pending"
+              }
+            ],
+            "diagnostics": {
+              "writeCount": 1,
+              "todoCount": 3,
+              "activeCount": 2,
+              "completedCount": 1,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "markdown",
+                "merge": false,
+                "addedCount": 3,
+                "removedCount": 0,
+                "changedCount": 0,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          }
+        ],
+        "todoDiagnostics": {
+          "writeCount": 1,
+          "todoCount": 3,
+          "activeCount": 2,
+          "completedCount": 1,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0,
+          "lastWrite": {
+            "mode": "markdown",
+            "merge": false,
+            "addedCount": 3,
+            "removedCount": 0,
+            "changedCount": 0,
+            "deletedOpenItemCount": 0,
+            "largeRewrite": false,
+            "allCompleted": false
+          }
+        }
+      }
+    },
+    {
+      "name": "todo",
+      "input": {
+        "todos": [
+          {
+            "id": "todo-1",
+            "status": "completed"
+          },
+          {
+            "id": "new",
+            "content": " fourth ",
+            "status": "in_progress"
+          }
+        ],
+        "merge": true,
+        "reason": " update "
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Todo list updated:\nmode=structured merge=true count=4\nreason: update\n- [completed] id=todo-1 first\n- [completed] id=todo-2 second\n- [pending] id=todo-3 third\n- [in_progress] id=new fourth\n\nDiagnostics:\n{\"writeCount\":2,\"todoCount\":4,\"activeCount\":2,\"completedCount\":2,\"cancelledCount\":0,\"largeRewriteCount\":0,\"deletedOpenItemCount\":0,\"completedWithoutActiveCount\":0,\"lastWrite\":{\"mode\":\"structured\",\"merge\":true,\"reason\":\"update\",\"addedCount\":1,\"removedCount\":0,\"changedCount\":1,\"deletedOpenItemCount\":0,\"largeRewrite\":false,\"allCompleted\":false}}"
+            }
+          ],
+          "data": {
+            "todos": [
+              {
+                "id": "todo-1",
+                "content": "first",
+                "status": "completed"
+              },
+              {
+                "id": "todo-2",
+                "content": "second",
+                "status": "completed"
+              },
+              {
+                "id": "todo-3",
+                "content": "third",
+                "status": "pending"
+              },
+              {
+                "id": "new",
+                "content": "fourth",
+                "status": "in_progress"
+              }
+            ],
+            "mode": "structured",
+            "merge": true,
+            "reason": "update",
+            "diagnostics": {
+              "writeCount": 2,
+              "todoCount": 4,
+              "activeCount": 2,
+              "completedCount": 2,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "structured",
+                "merge": true,
+                "reason": "update",
+                "addedCount": 1,
+                "removedCount": 0,
+                "changedCount": 1,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          },
+          "metadata": {
+            "todoCount": 4,
+            "mode": "structured",
+            "diagnostics": {
+              "writeCount": 2,
+              "todoCount": 4,
+              "activeCount": 2,
+              "completedCount": 2,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "structured",
+                "merge": true,
+                "reason": "update",
+                "addedCount": 1,
+                "removedCount": 0,
+                "changedCount": 1,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          }
+        }
+      },
+      "snapshot": {
+        "approvedPlan": "# Small plan\n\nFirst step\nSecond step",
+        "requiresInitialization": false,
+        "toolCallsSinceLastTodoWrite": 0,
+        "todos": [
+          {
+            "id": "todo-1",
+            "content": "first",
+            "status": "completed"
+          },
+          {
+            "id": "todo-2",
+            "content": "second",
+            "status": "completed"
+          },
+          {
+            "id": "todo-3",
+            "content": "third",
+            "status": "pending"
+          },
+          {
+            "id": "new",
+            "content": "fourth",
+            "status": "in_progress"
+          }
+        ],
+        "activeTodos": [
+          {
+            "id": "todo-3",
+            "content": "third",
+            "status": "pending"
+          },
+          {
+            "id": "new",
+            "content": "fourth",
+            "status": "in_progress"
+          }
+        ],
+        "todoHistory": [
+          {
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "mode": "markdown",
+            "merge": false,
+            "markdown": "- [ ] first\n- [x] second\n- [ ] third",
+            "todos": [
+              {
+                "id": "todo-1",
+                "content": "first",
+                "status": "in_progress"
+              },
+              {
+                "id": "todo-2",
+                "content": "second",
+                "status": "completed"
+              },
+              {
+                "id": "todo-3",
+                "content": "third",
+                "status": "pending"
+              }
+            ],
+            "diagnostics": {
+              "writeCount": 1,
+              "todoCount": 3,
+              "activeCount": 2,
+              "completedCount": 1,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "markdown",
+                "merge": false,
+                "addedCount": 3,
+                "removedCount": 0,
+                "changedCount": 0,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          },
+          {
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "mode": "structured",
+            "merge": true,
+            "reason": "update",
+            "todos": [
+              {
+                "id": "todo-1",
+                "content": "first",
+                "status": "completed"
+              },
+              {
+                "id": "todo-2",
+                "content": "second",
+                "status": "completed"
+              },
+              {
+                "id": "todo-3",
+                "content": "third",
+                "status": "pending"
+              },
+              {
+                "id": "new",
+                "content": "fourth",
+                "status": "in_progress"
+              }
+            ],
+            "diagnostics": {
+              "writeCount": 2,
+              "todoCount": 4,
+              "activeCount": 2,
+              "completedCount": 2,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "structured",
+                "merge": true,
+                "reason": "update",
+                "addedCount": 1,
+                "removedCount": 0,
+                "changedCount": 1,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          }
+        ],
+        "todoDiagnostics": {
+          "writeCount": 2,
+          "todoCount": 4,
+          "activeCount": 2,
+          "completedCount": 2,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0,
+          "lastWrite": {
+            "mode": "structured",
+            "merge": true,
+            "reason": "update",
+            "addedCount": 1,
+            "removedCount": 0,
+            "changedCount": 1,
+            "deletedOpenItemCount": 0,
+            "largeRewrite": false,
+            "allCompleted": false
+          }
+        }
+      }
+    },
+    {
+      "name": "todo",
+      "input": {},
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Todo list read:\nmode=read merge=false count=4\n- [completed] id=todo-1 first\n- [completed] id=todo-2 second\n- [pending] id=todo-3 third\n- [in_progress] id=new fourth\n\nDiagnostics:\n{\"writeCount\":2,\"todoCount\":4,\"activeCount\":2,\"completedCount\":2,\"cancelledCount\":0,\"largeRewriteCount\":0,\"deletedOpenItemCount\":0,\"completedWithoutActiveCount\":0,\"lastWrite\":{\"mode\":\"structured\",\"merge\":true,\"reason\":\"update\",\"addedCount\":1,\"removedCount\":0,\"changedCount\":1,\"deletedOpenItemCount\":0,\"largeRewrite\":false,\"allCompleted\":false}}"
+            }
+          ],
+          "data": {
+            "todos": [
+              {
+                "id": "todo-1",
+                "content": "first",
+                "status": "completed"
+              },
+              {
+                "id": "todo-2",
+                "content": "second",
+                "status": "completed"
+              },
+              {
+                "id": "todo-3",
+                "content": "third",
+                "status": "pending"
+              },
+              {
+                "id": "new",
+                "content": "fourth",
+                "status": "in_progress"
+              }
+            ],
+            "mode": "read",
+            "merge": false,
+            "diagnostics": {
+              "writeCount": 2,
+              "todoCount": 4,
+              "activeCount": 2,
+              "completedCount": 2,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "structured",
+                "merge": true,
+                "reason": "update",
+                "addedCount": 1,
+                "removedCount": 0,
+                "changedCount": 1,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          },
+          "metadata": {
+            "todoCount": 4,
+            "mode": "read",
+            "diagnostics": {
+              "writeCount": 2,
+              "todoCount": 4,
+              "activeCount": 2,
+              "completedCount": 2,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "structured",
+                "merge": true,
+                "reason": "update",
+                "addedCount": 1,
+                "removedCount": 0,
+                "changedCount": 1,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          }
+        }
+      },
+      "snapshot": {
+        "approvedPlan": "# Small plan\n\nFirst step\nSecond step",
+        "requiresInitialization": false,
+        "toolCallsSinceLastTodoWrite": 1,
+        "todos": [
+          {
+            "id": "todo-1",
+            "content": "first",
+            "status": "completed"
+          },
+          {
+            "id": "todo-2",
+            "content": "second",
+            "status": "completed"
+          },
+          {
+            "id": "todo-3",
+            "content": "third",
+            "status": "pending"
+          },
+          {
+            "id": "new",
+            "content": "fourth",
+            "status": "in_progress"
+          }
+        ],
+        "activeTodos": [
+          {
+            "id": "todo-3",
+            "content": "third",
+            "status": "pending"
+          },
+          {
+            "id": "new",
+            "content": "fourth",
+            "status": "in_progress"
+          }
+        ],
+        "todoHistory": [
+          {
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "mode": "markdown",
+            "merge": false,
+            "markdown": "- [ ] first\n- [x] second\n- [ ] third",
+            "todos": [
+              {
+                "id": "todo-1",
+                "content": "first",
+                "status": "in_progress"
+              },
+              {
+                "id": "todo-2",
+                "content": "second",
+                "status": "completed"
+              },
+              {
+                "id": "todo-3",
+                "content": "third",
+                "status": "pending"
+              }
+            ],
+            "diagnostics": {
+              "writeCount": 1,
+              "todoCount": 3,
+              "activeCount": 2,
+              "completedCount": 1,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "markdown",
+                "merge": false,
+                "addedCount": 3,
+                "removedCount": 0,
+                "changedCount": 0,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          },
+          {
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "mode": "structured",
+            "merge": true,
+            "reason": "update",
+            "todos": [
+              {
+                "id": "todo-1",
+                "content": "first",
+                "status": "completed"
+              },
+              {
+                "id": "todo-2",
+                "content": "second",
+                "status": "completed"
+              },
+              {
+                "id": "todo-3",
+                "content": "third",
+                "status": "pending"
+              },
+              {
+                "id": "new",
+                "content": "fourth",
+                "status": "in_progress"
+              }
+            ],
+            "diagnostics": {
+              "writeCount": 2,
+              "todoCount": 4,
+              "activeCount": 2,
+              "completedCount": 2,
+              "cancelledCount": 0,
+              "largeRewriteCount": 0,
+              "deletedOpenItemCount": 0,
+              "completedWithoutActiveCount": 0,
+              "lastWrite": {
+                "mode": "structured",
+                "merge": true,
+                "reason": "update",
+                "addedCount": 1,
+                "removedCount": 0,
+                "changedCount": 1,
+                "deletedOpenItemCount": 0,
+                "largeRewrite": false,
+                "allCompleted": false
+              }
+            }
+          }
+        ],
+        "todoDiagnostics": {
+          "writeCount": 2,
+          "todoCount": 4,
+          "activeCount": 2,
+          "completedCount": 2,
+          "cancelledCount": 0,
+          "largeRewriteCount": 0,
+          "deletedOpenItemCount": 0,
+          "completedWithoutActiveCount": 0,
+          "lastWrite": {
+            "mode": "structured",
+            "merge": true,
+            "reason": "update",
+            "addedCount": 1,
+            "removedCount": 0,
+            "changedCount": 1,
+            "deletedOpenItemCount": 0,
+            "largeRewrite": false,
+            "allCompleted": false
+          }
+        }
+      }
+    }
+  ],
+  "questions": [
+    {
+      "toolCallId": "turn",
+      "toolName": "exit_plan_mode",
+      "previewFormat": "markdown",
+      "questions": [
+        {
+          "question": "What should happen next?",
+          "header": "Plan",
+          "options": [
+            {
+              "label": "continue_planning",
+              "description": "Keep planning and update the plan before any implementation starts."
+            },
+            {
+              "label": "execute_plan",
+              "description": "Leave plan mode and let the agent execute this plan."
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "source": "exit_plan_mode",
+        "plan": "# Small plan\n\nFirst step\nSecond step",
+        "planFilePath": "<PROJECT>/.pilotdeck/plans/sample.md"
+      }
+    }
+  ],
+  "events": [
+    {
+      "type": "plan_todo_plan_changed",
+      "plan": "# Small plan\n\nFirst step\nSecond step",
+      "sessionId": "session",
+      "turnId": "turn",
+      "createdAt": "2026-01-02T03:04:05.678Z",
+      "seq": 0
+    },
+    {
+      "type": "plan_todo_written",
+      "mode": "markdown",
+      "merge": false,
+      "markdown": "- [ ] first\n- [x] second\n- [ ] third",
+      "todos": [
+        {
+          "id": "todo-1",
+          "content": "first",
+          "status": "in_progress"
+        },
+        {
+          "id": "todo-2",
+          "content": "second",
+          "status": "completed"
+        },
+        {
+          "id": "todo-3",
+          "content": "third",
+          "status": "pending"
+        }
+      ],
+      "sessionId": "session",
+      "turnId": "turn",
+      "createdAt": "2026-01-02T03:04:05.678Z",
+      "seq": 1
+    },
+    {
+      "type": "plan_todo_written",
+      "mode": "structured",
+      "merge": true,
+      "reason": "update",
+      "todos": [
+        {
+          "id": "todo-1",
+          "content": "first",
+          "status": "completed"
+        },
+        {
+          "id": "todo-2",
+          "content": "second",
+          "status": "completed"
+        },
+        {
+          "id": "todo-3",
+          "content": "third",
+          "status": "pending"
+        },
+        {
+          "id": "new",
+          "content": "fourth",
+          "status": "in_progress"
+        }
+      ],
+      "sessionId": "session",
+      "turnId": "turn",
+      "createdAt": "2026-01-02T03:04:05.678Z",
+      "seq": 2
+    },
+    {
+      "type": "plan_todo_progressed",
+      "toolName": "write_file",
+      "sessionId": "session",
+      "turnId": "turn",
+      "createdAt": "2026-01-02T03:04:05.678Z",
+      "seq": 3
+    }
+  ]
+}

@@ -63,6 +63,8 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 
 pub struct SessionTools {
     web: Option<super::web::NativeWebTools>,
+    skills: super::skills::NativeSkills,
+    context_runtime: Option<Arc<dyn crate::host::modules::context::ContextRuntime>>,
     options: Options,
     env: JsObject,
     binding: SessionBinding,
@@ -84,6 +86,9 @@ pub struct SessionTools {
     /// same turn never runs one mode for the sidecar and another for native
     /// tool admission.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    goal: crate::runtime::goal::GoalRuntime,
+    plan_files: Option<Arc<super::plan_todo::NativePlanFiles>>,
+    plan_serial: Arc<tokio::sync::Mutex<()>>,
 }
 impl SessionTools {
     pub fn new(
@@ -102,8 +107,18 @@ impl SessionTools {
                 bypass_available: Some(true),
                 ..Default::default()
             });
+        let goal = crate::runtime::goal::GoalRuntime::new(
+            binding.context.session_key.clone(),
+            binding.recorder.clone(),
+            binding.projection.clone(),
+        );
         Ok(Self {
+            goal,
+            plan_files: None,
+            plan_serial: Arc::new(tokio::sync::Mutex::new(())),
             web: None,
+            skills: Default::default(),
+            context_runtime: None,
             options: options.clone(),
             env: env_object(env),
             binding,
@@ -119,6 +134,21 @@ impl SessionTools {
             #[cfg(unix)]
             native_sandbox: None,
         })
+    }
+
+    pub(super) fn with_plan_files(mut self, files: Arc<super::plan_todo::NativePlanFiles>) -> Self {
+        self.plan_files = Some(files);
+        self
+    }
+
+    pub(super) fn with_skills(
+        mut self,
+        skills: super::skills::NativeSkills,
+        context: Arc<dyn crate::host::modules::context::ContextRuntime>,
+    ) -> Self {
+        self.skills = skills;
+        self.context_runtime = Some(context);
+        self
     }
 
     pub(super) fn with_web(mut self, web: super::web::NativeWebTools) -> Self {
@@ -234,6 +264,9 @@ impl SessionTools {
             && !sdk_mode.is_some_and(|m| m.equals_str("dontAsk"));
         turn_context.policy_can_prompt = policy_disabled.then_some(false);
         turn_context.rules = self.permission_rules.snapshot();
+        if let Some(files) = &self.plan_files {
+            turn_context.plan_directory_path = Some(files.directory_string());
+        }
         let permission_context = turn_context.to_value();
         let permission_emit = authority
             .as_ref()
@@ -263,6 +296,18 @@ impl SessionTools {
             self.lsp.clone(),
             &self.mcp,
         );
+        if self.plan_files.is_some() {
+            for kind in [
+                builtin::plan_todo::Kind::Enter,
+                builtin::plan_todo::Kind::Exit,
+                builtin::plan_todo::Kind::Todo,
+            ] {
+                tools
+                    .register(Arc::new(builtin::plan_todo::Tool::new(kind)))
+                    .expect("native plan tool names are unique");
+            }
+        }
+        self.skills.register(&tools);
         if let Some(web) = &self.web {
             web.register(&tools, identity)
                 .expect("native web tool names are unique");
@@ -296,7 +341,7 @@ impl SessionTools {
         } else {
             execution
         };
-        let execution = Arc::new(execution);
+        let execution = Arc::new(execution.with_mode_owner(self.permission.clone()));
         let mut config = self.config.clone();
         config.insert("env".into(), JsValue::Object(self.env.clone()));
         config.insert("permissionMode".into(), JsValue::String(permission_mode));
@@ -335,7 +380,34 @@ impl SessionTools {
         };
         let profile_for_bind = question_profile.clone();
         let profile_for_presence = question_profile;
+        let mode_owner = self.permission.clone();
+        let plan_todo = self.plan_files.as_ref().map(|_| {
+            Arc::new(super::plan_todo::PlanTodo {
+                session: identity.session_id.clone(),
+                turn: identity.turn_id.clone(),
+                projection: self.binding.projection.clone(),
+                recorder: self.binding.recorder.clone(),
+                serial: self.plan_serial.clone(),
+            })
+        });
         let tool_ports = ToolContextPorts {
+            plan_files: self
+                .plan_files
+                .clone()
+                .map(|v| v as Arc<dyn crate::host::modules::tool_context::PlanFiles>),
+            permission_mode: Some(Arc::new(move || {
+                Some(
+                    mode_owner
+                        .0
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0
+                        .mode
+                        .as_js_string()
+                        .clone(),
+                )
+            })),
+            goal: Some(Arc::new(self.goal.clone())),
             bind_interaction_profile: Some(Arc::new(move |profile| {
                 profile_for_bind.set(profile).map_err(|_| {
                     crate::host::ModuleError::new("Interaction profile is already bound.").into()
@@ -370,16 +442,19 @@ impl SessionTools {
             },
             recorder: None,
             tool_results_dir: session_tool_results_dir(&self.options.project, &identity.session_id),
-            context_runtime: None,
+            context_runtime: self.context_runtime.clone(),
             context_identity: ContextRequestIdentity::new(binding.clone(), tool_ports.clone()),
             context_config: config,
             tool_execution: execution,
             tool_context: Arc::new(CapabilityContext {
                 builder: ToolContextBuilder::new(binding, tool_ports, true),
-                plan_todo: None,
+                plan_todo: plan_todo
+                    .clone()
+                    .map(|v| v as Arc<dyn crate::host::modules::tool_context::SessionService>),
             }),
             tool_observer: self.permission.clone(),
-            plan_todo: None,
+            plan_todo: plan_todo
+                .map(|v| v as Arc<dyn crate::host::modules::capability::PlanTodoHandler>),
             turn: Default::default(),
             interaction: InteractionTurnInput {
                 permission: PermissionTurnOptions {
@@ -556,6 +631,22 @@ impl PermissionTool for Tool {
     }
 }
 impl PermissionDecision for Permissions {
+    fn current_mode(&self) -> Option<crate::config::permission::PermissionMode> {
+        Some(
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .0
+                .mode
+                .clone(),
+        )
+    }
+    fn apply_mode_effect(&self, result: &JsObject) {
+        self.apply_result(result);
+    }
+    fn set_trusted_mode(&self, mode: crate::config::permission::PermissionMode) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).0.mode = mode;
+    }
     fn decide(
         &self,
         tool: Arc<dyn capability::ToolDefinition>,
@@ -580,34 +671,41 @@ impl PermissionDecision for Permissions {
         )
     }
 }
+impl Permissions {
+    fn apply_result(&self, result: &JsObject) {
+        if result.get("type") != Some(&"success".into()) {
+            return;
+        }
+        let Some(mode) = result
+            .get("data")
+            .and_then(|v| v.get("requestedMode"))
+            .filter(|v| permission::is_permission_mode(v))
+            .and_then(JsValue::as_string)
+        else {
+            return;
+        };
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut mode = crate::config::permission::PermissionMode::from(mode.clone());
+        if mode.as_js_string().equals_str("plan") && !state.0.mode.as_js_string().equals_str("plan")
+        {
+            state.1 = Some(state.0.mode.clone());
+        } else if state.0.mode.as_js_string().equals_str("plan")
+            && !mode.as_js_string().equals_str("plan")
+            && let Some(previous) = state.1.take()
+        {
+            mode = previous;
+        }
+        state.0.mode = mode;
+    }
+}
 impl capability::CapabilityResultObserver for Permissions {
     fn on_capability_results(&self, results: Vec<JsObject>) -> HostFuture<()> {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        for result in results {
-            if result.get("type") != Some(&"success".into()) {
-                continue;
-            }
-            let Some(mode) = result
-                .get("data")
-                .and_then(|v| v.get("requestedMode"))
-                .filter(|v| permission::is_permission_mode(v))
-                .and_then(JsValue::as_string)
-            else {
-                continue;
-            };
-            let mut mode = crate::config::permission::PermissionMode::from(mode.clone());
-            if mode.as_js_string().equals_str("plan")
-                && !state.0.mode.as_js_string().equals_str("plan")
-            {
-                state.1 = Some(state.0.mode.clone());
-            } else if state.0.mode.as_js_string().equals_str("plan")
-                && !mode.as_js_string().equals_str("plan")
-                && let Some(previous) = state.1.take()
-            {
-                mode = previous;
-            }
-            state.0.mode = mode;
+        for result in &results {
+            self.apply_result(result);
         }
+        Box::pin(async { Ok(()) })
+    }
+    fn on_results_after_mode_effects(&self, _results: Vec<JsObject>) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
 }
@@ -706,6 +804,11 @@ fn native_tools_with_definitions(
         tools
             .register(tool)
             .expect("native builtin names are unique");
+    }
+    for tool in builtin::goal::tools() {
+        tools
+            .register(tool)
+            .expect("native goal tool names are unique");
     }
     tools
         .register(Arc::new(

@@ -139,6 +139,19 @@ impl Default for SessionProjection {
     }
 }
 impl SessionProjection {
+    /// Pure domain projection over borrowed durable events. Reducers must not
+    /// perform I/O, append, or acquire other session locks while this lock is held.
+    pub(crate) fn fold_domain<T>(
+        &self,
+        initial: T,
+        reduce: impl FnMut(T, &JsValue) -> Result<T, RuntimeError>,
+    ) -> Result<T, RuntimeError> {
+        let entries = lock(&self.entries);
+        if self.disposed.load(Ordering::SeqCst) {
+            return Err(RuntimeError::new("Session projection driver is disposed."));
+        }
+        entries.iter().try_fold(initial, reduce)
+    }
     pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {
         if self.disposed.load(Ordering::SeqCst) {
             return Err(RuntimeError::new("Session projection driver is disposed."));

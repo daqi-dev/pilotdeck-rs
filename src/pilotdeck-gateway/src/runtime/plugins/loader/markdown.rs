@@ -220,6 +220,36 @@ pub fn load_standalone_skill(
     load_markdown_source(&read_checked_skill(directory, &file)?, &file, name.into())
 }
 
+/// Native standalone skill scan shares the checked file reader and explicit
+/// generation budget. Sibling scripts/assets are never opened by discovery.
+pub(super) fn load_standalone_skill_bounded(
+    name: &str,
+    directory: &Path,
+    budget: &mut super::StyleBudget,
+) -> Result<LoadedPluginCommand, PluginRuntimeError> {
+    let file = markdown_entries(directory, &mut Some(&mut *budget))?
+        .into_iter()
+        .find(|path| is_skill(path))
+        .ok_or_else(|| {
+            PluginRuntimeError::new(format!("Standalone skill '{name}' has no SKILL.md."))
+        })?;
+    #[cfg(unix)]
+    {
+        load_markdown_source(
+            &read_checked_skill_inner(directory, &file, Some(budget))?,
+            &file,
+            name.into(),
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        Err(PluginRuntimeError::new(
+            "Bounded native skill loading requires Unix.",
+        ))
+    }
+}
+
 /// #594: resolve the discovered SKILL.md beneath the skill directory and read it
 /// with `read_markdown` (shared with the plugin-command traversal). A standalone
 /// skill is a single file, so there is nothing to skip past: a refused read
@@ -229,6 +259,15 @@ pub fn load_standalone_skill(
 /// real ENOENT from `read_markdown`, matching TS readFile.
 #[cfg(unix)]
 fn read_checked_skill(directory: &Path, file: &Path) -> Result<String, PluginRuntimeError> {
+    read_checked_skill_inner(directory, file, None)
+}
+
+#[cfg(unix)]
+fn read_checked_skill_inner(
+    directory: &Path,
+    file: &Path,
+    budget: Option<&mut super::StyleBudget>,
+) -> Result<String, PluginRuntimeError> {
     let refused = || {
         super::io_error(
             "open",
@@ -259,7 +298,7 @@ fn read_checked_skill(directory: &Path, file: &Path) -> Result<String, PluginRun
         file,
         file_identity(&metadata),
         true,
-        None,
+        budget,
     )?
     .ok_or_else(refused)
 }

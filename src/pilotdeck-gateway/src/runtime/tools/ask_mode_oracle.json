@@ -1,0 +1,91 @@
+{
+  "cases": [
+    {
+      "id": "read",
+      "name": "read_file",
+      "readOnly": true,
+      "allowed": true
+    },
+    {
+      "id": "write",
+      "name": "write_file",
+      "readOnly": false,
+      "allowed": false,
+      "violation": "[ASK_MODE_VIOLATION] Tool \"write_file\" is BLOCKED in ask mode.\n\nAsk mode is read-only. Tools may inspect files, search, ask questions, fetch/read external content, or launch read-only subagents, but they cannot modify files or create side effects.\n\nDo NOT retry this tool. It will fail again while ask mode is active."
+    },
+    {
+      "id": "bash-safe",
+      "name": "bash",
+      "readOnly": true,
+      "input": {
+        "command": "pwd"
+      },
+      "allowed": true
+    },
+    {
+      "id": "bash-write",
+      "name": "bash",
+      "readOnly": false,
+      "input": {
+        "command": "printf fixture > refused.txt"
+      },
+      "allowed": true,
+      "violation": "[ASK_MODE_VIOLATION] bash command \"printf fixture > refused.txt\" is BLOCKED because it is not read-only.\n\nIn ask mode, bash is restricted to read-only commands only (pwd, ls, cat, head, wc, git status, git diff, git log, git show, find without write actions, etc.)."
+    },
+    {
+      "id": "bash-empty",
+      "name": "bash",
+      "readOnly": false,
+      "input": {},
+      "allowed": true,
+      "violation": "[ASK_MODE_VIOLATION] bash command \"\" is BLOCKED because it is not read-only.\n\nIn ask mode, bash is restricted to read-only commands only (pwd, ls, cat, head, wc, git status, git diff, git log, git show, find without write actions, etc.)."
+    },
+    {
+      "id": "agent",
+      "name": "agent",
+      "readOnly": false,
+      "allowed": true
+    },
+    {
+      "id": "mcp-read",
+      "name": "mcp_fixture",
+      "kind": "mcp",
+      "readOnly": true,
+      "allowed": true
+    },
+    {
+      "id": "mcp-write",
+      "name": "mcp_fixture",
+      "kind": "mcp",
+      "readOnly": false,
+      "allowed": false,
+      "violation": "[ASK_MODE_VIOLATION] Tool \"mcp_fixture\" is BLOCKED in ask mode.\n\nAsk mode is read-only. Tools may inspect files, search, ask questions, fetch/read external content, or launch read-only subagents, but they cannot modify files or create side effects.\n\nDo NOT retry this tool. It will fail again while ask mode is active."
+    },
+    {
+      "id": "custom-read",
+      "name": "fixture_custom",
+      "readOnly": true,
+      "allowed": false,
+      "violation": "[ASK_MODE_VIOLATION] Tool \"fixture_custom\" is BLOCKED in ask mode.\n\nAsk mode is read-only. Tools may inspect files, search, ask questions, fetch/read external content, or launch read-only subagents, but they cannot modify files or create side effects.\n\nDo NOT retry this tool. It will fail again while ask mode is active."
+    },
+    {
+      "id": "task-create",
+      "name": "task_create",
+      "readOnly": false,
+      "allowed": false,
+      "violation": "[ASK_MODE_VIOLATION] Tool \"task_create\" is BLOCKED in ask mode.\n\nAsk mode is read-only. Tools may inspect files, search, ask questions, fetch/read external content, or launch read-only subagents, but they cannot modify files or create side effects.\n\nDo NOT retry this tool. It will fail again while ask mode is active."
+    },
+    {
+      "id": "task-list",
+      "name": "task_list",
+      "readOnly": true,
+      "allowed": true
+    },
+    {
+      "id": "skill",
+      "name": "read_skill",
+      "readOnly": true,
+      "allowed": true
+    }
+  ]
+}

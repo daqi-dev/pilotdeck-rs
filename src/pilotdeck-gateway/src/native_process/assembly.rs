@@ -660,8 +660,59 @@ async fn start_assembly(
                     stored_thinking.as_ref(),
                     stored_style_content.as_deref(),
                 );
+                // Both native read_skill and prompt assembly consume this one
+                // immutable plugin-generation catalog. Reload may retire it,
+                // but the session lease keeps its selected bytes alive.
+                let plugin_resource = staged
+                    .resource(Resource::PluginRuntime)
+                    .ok_or_else(|| RuntimeError::new("Native skill runtime is missing."))?;
+                let plugin_runtime = plugin_resource
+                    .as_any()
+                    .downcast_ref::<PluginResources>()
+                    .ok_or_else(|| RuntimeError::new("Native skill runtime has the wrong type."))?
+                    .runtime
+                    .clone();
+                plugin_runtime
+                    .refresh()
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?;
+                let mut skill_lease = plugin_runtime
+                    .acquire_session_contributions(vec![])
+                    .await
+                    .map_err(|error| RuntimeError::new(error.to_string()))?;
+                let native_skills = super::skills::NativeSkills::from_contributions(
+                    &skill_lease.contributions.skills,
+                );
+                let context_storage = staged
+                    .resource(Resource::InstructionStorage)
+                    .ok_or_else(|| RuntimeError::new("Native context storage is missing."))?;
+                let context_storage = context_storage.as_any()
+                    .downcast_ref::<crate::runtime::project::context_storage::ContextStorageResources>()
+                    .ok_or_else(|| RuntimeError::new("Native context storage has the wrong type."))?;
+                let native_context = Arc::new(
+                    context_storage
+                        .create_session_with_options(
+                            super::tools::session_tool_results_dir(
+                                &options.project,
+                                &context.session_key,
+                            ),
+                            crate::runtime::project::context_storage::SessionContextOptions {
+                                extension: Some(Arc::new(native_skills.clone())),
+                                ..Default::default()
+                            },
+                        )?
+                        .context_runtime,
+                );
                 let mut retained = PreparedResources::default();
                 retained.retain_lease(lease);
+                retained.push(move || {
+                    Box::pin(async move {
+                        skill_lease
+                            .release()
+                            .await
+                            .map_err(|error| RuntimeError::new(error.to_string()))
+                    })
+                });
                 let permission_lease = permission_rule_sets.acquire(&context.session_key, None);
                 let native_permission_rules = permission_lease.rules();
                 // Sync MCP ask rules on acquire, mirroring
@@ -738,6 +789,11 @@ async fn start_assembly(
                     ),
                 };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
+                let plan_files = Arc::new(
+                    super::plan_todo::NativePlanFiles::prepare(options.project.clone())
+                        .await
+                        .map_err(|error| RuntimeError::new(error.to_string()))?,
+                );
                 let tail = TailConfig {
                     cwd: Some(options.project.clone()),
                     // #1371: the controlled loop emits no assistant text, so
@@ -784,7 +840,9 @@ async fn start_assembly(
                         )?
                         .with_permission_mode_source(permission_source.clone())
                         .with_permission_rules(native_permission_rules)
-                        .with_web(native_web);
+                        .with_web(native_web)
+                        .with_plan_files(plan_files)
+                        .with_skills(native_skills, native_context);
                         #[cfg(unix)]
                         let ports = ports
                             .with_background_tasks(background_tasks)
@@ -1197,6 +1255,12 @@ async fn start_assembly(
                     execution_options.serves_project(project)
                 }))
                 .map_err(cron::cron_io_error)?;
+                cron::bind_callbacks(
+                    cron,
+                    build_channels.server().clone(),
+                    tokio::runtime::Handle::current(),
+                )
+                .map_err(cron::cron_io_error)?;
                 cron.start().map_err(cron::cron_io_error)?;
                 build_cron_slot
                     .set(Arc::new(crate::switch::CronStopHandle::new(
@@ -1474,7 +1538,7 @@ pub(super) async fn validate_profile(options: &Options, env: &Env) -> Result<(),
 async fn validate_profile_inner(
     options: &Options,
     env: &Env,
-    management: bool,
+    _management: bool,
 ) -> Result<(), ProxyError> {
     struct Captured<'a>(&'a Env, &'a std::path::Path);
     impl crate::runtime::mcp::protocol::McpEnvironment for Captured<'_> {
@@ -1519,22 +1583,6 @@ async fn validate_profile_inner(
             &mut budget,
         )
         .map_err(|error| error.to_string())?;
-        if !management {
-            for directory in [paths.global_skills_dir, paths.project_skills_dir] {
-                match std::fs::read_dir(directory) {
-                    Ok(mut entries) => {
-                        if entries.next().is_some() {
-                            return Err(
-                                "Native isolated profile does not yet support configured skills."
-                                    .into(),
-                            );
-                        }
-                    }
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error.to_string()),
-                }
-            }
-        }
         Ok::<(), String>(())
     })
     .await
@@ -1606,6 +1654,21 @@ pub(super) fn turn_ports(
     ports.turn(identity, recorder, signal)
 }
 
+pub(super) fn explicit_builtin_skills_root(options: &Options, env: &Env) -> Option<PathBuf> {
+    let configured = env
+        .get("PILOTDECK_BUNDLED_SKILLS_DIR")
+        .filter(|value| !value.is_empty())?;
+    let resolved = crate::runtime::tools::builtin::join(
+        &options.project.to_string_lossy().into_owned().into(),
+        &configured.as_str().into(),
+    );
+    Some(PathBuf::from(
+        resolved
+            .to_utf8()
+            .expect("captured filesystem paths are UTF-8"),
+    ))
+}
+
 pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRuntimeRegistry> {
     Arc::new(ProjectRuntimeRegistry::new(
         options.project.clone(),
@@ -1614,7 +1677,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             cwd: options.project.clone(),
             env: env.clone(),
             homedir: Some(options.home.clone()),
-            builtin_skills_root: None,
+            builtin_skills_root: explicit_builtin_skills_root(options, env),
             now: Arc::new(SystemTime::now),
             telemetry: None,
             config_version: None,
@@ -1631,7 +1694,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             .with_native_style_plugins(crate::runtime::plugins::PluginRuntimeOptions {
                 project_root: options.project.clone(),
                 pilot_home: options.home.clone(),
-                builtin_skills_root: None,
+                builtin_skills_root: explicit_builtin_skills_root(options, env),
                 builtin_plugins: vec![],
                 builtin_plugins_enabled: HashMap::new(),
             })

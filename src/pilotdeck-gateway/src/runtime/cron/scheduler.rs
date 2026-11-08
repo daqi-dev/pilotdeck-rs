@@ -385,13 +385,12 @@ fn is_due(task: &JsValue, now_ms: f64) -> bool {
 /// not the injected seam — a byte-exact 60s written to the store.
 fn delay_task(deps: &SchedulerDeps, task: &JsValue, now_ms: f64) -> Result<(), CronError> {
     let Some(task_id) = task_id_text(task) else {
-        // A lone-surrogate taskId never matches a stored task (`===` over a
-        // lossy-UTF-8 round-trip), so the TS matcher is a no-op too.
+        // A non-string task id is outside normalized stored tasks.
         return Ok(());
     };
     let next_run_at = iso_from_epoch_ms(now_ms + DEFAULT_IDLE_POLL_MS as f64);
     deps.store
-        .update_task(&task_id, |current| {
+        .update_task_js(&task_id, |current| {
             if !matches_task_snapshot(current, task)
                 || !current
                     .get("status")
@@ -562,7 +561,7 @@ fn update_or_delete(
         return Ok(());
     };
     deps.store
-        .update_task(&task_id, matcher)
+        .update_task_js(&task_id, matcher)
         .map_err(CronError::from)?;
     Ok(())
 }

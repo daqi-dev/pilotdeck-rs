@@ -42,6 +42,7 @@ pub enum SchedulerMode {
 pub struct ToolRuntime {
     pub registry: ToolRegistry,
     permission: Arc<dyn PermissionDecision>,
+    mode_owner: Option<Arc<dyn PermissionDecision>>,
     turn_permission:
         Arc<std::sync::OnceLock<crate::runtime::project::interaction_permission::TurnPermission>>,
     turn_hooks: Arc<std::sync::OnceLock<crate::runtime::project::interaction_hooks::TurnHooks>>,
@@ -59,6 +60,7 @@ impl ToolRuntime {
         Self {
             registry,
             permission,
+            mode_owner: None,
             turn_permission: Arc::default(),
             turn_hooks: Arc::default(),
             mode,
@@ -66,6 +68,32 @@ impl ToolRuntime {
             #[cfg(unix)]
             native_sandbox_provider: None,
         }
+    }
+    pub(crate) fn with_mode_owner(mut self, owner: Arc<dyn PermissionDecision>) -> Self {
+        self.mode_owner = Some(owner);
+        self
+    }
+    fn fresh_mode(&self, mut context: ToolRunContext) -> ToolRunContext {
+        if let Some(mode) = self
+            .mode_owner
+            .as_ref()
+            .and_then(|owner| owner.current_mode())
+        {
+            let mode = JsValue::String(mode.as_js_string().clone());
+            context.fields.insert("permissionMode".into(), mode.clone());
+            if let Some(mut permissions) = context
+                .fields
+                .get("permissionContext")
+                .and_then(JsValue::as_object)
+                .cloned()
+            {
+                permissions.insert("mode".into(), mode);
+                context
+                    .fields
+                    .insert("permissionContext".into(), JsValue::Object(permissions));
+            }
+        }
+        context
     }
     /// Explicit native fallback until an execution-world sandbox provider is
     /// installed. Never silently execute a restricted profile unrestricted.
@@ -90,6 +118,7 @@ impl ToolRuntime {
     ) -> Result<Vec<JsObject>, HostError> {
         let mut concurrent = Vec::new();
         let mut sequential = Vec::new();
+        let mut transitions = Vec::new();
         // Predicates are evaluated for the entire batch before any call starts.
         // Single-call batches bypass the predicate, exactly like TS.
         for (index, call) in calls.iter().enumerate() {
@@ -102,6 +131,14 @@ impl ToolRuntime {
             // tools (e.g. agent) run in the sequential phase. isReadOnly is
             // asked only of concurrencySafe tools; a throw counts as false.
             let tool = self.registry.get(&call.name);
+            let mode_tool = self.mode_owner.is_some()
+                && tool
+                    .as_ref()
+                    .is_some_and(|tool| tool.is_trusted_mode_transition());
+            if mode_tool {
+                transitions.push(index);
+                continue;
+            }
             let safe = self.mode == SchedulerMode::Concurrent
                 && calls.len() > 1
                 && tool
@@ -119,6 +156,16 @@ impl ToolRuntime {
             }
         }
         let mut slots = vec![None; calls.len()];
+        // Apply trusted mode transitions before admitting any sibling write.
+        for index in transitions {
+            let result = self
+                .execute(calls[index].clone(), self.fresh_mode(context.clone()))
+                .await?;
+            if let Some(owner) = &self.mode_owner {
+                owner.apply_mode_effect(&result);
+            }
+            slots[index] = Some(result);
+        }
         // Owned futures, not JoinHandles: early error, host abort, timeout and
         // Drop synchronously destroy every unfinished sibling future.
         let mut pending: Vec<_> = concurrent
@@ -126,9 +173,10 @@ impl ToolRuntime {
             .map(|index| {
                 (
                     index,
-                    Some(Box::pin(
-                        self.execute(calls[index].clone(), context.clone()),
-                    )),
+                    Some(Box::pin(self.execute(
+                        calls[index].clone(),
+                        self.fresh_mode(context.clone()),
+                    ))),
                 )
             })
             .collect();
@@ -170,7 +218,10 @@ impl ToolRuntime {
         })
         .await?;
         for index in sequential {
-            slots[index] = Some(self.execute(calls[index].clone(), context.clone()).await?);
+            slots[index] = Some(
+                self.execute(calls[index].clone(), self.fresh_mode(context.clone()))
+                    .await?,
+            );
         }
         Ok(slots
             .into_iter()
@@ -253,6 +304,16 @@ impl ToolRuntime {
                 ),
             );
         };
+        // Ask policy is enforced before permission, including bypass mode.
+        if context
+            .fields
+            .get("runMode")
+            .and_then(JsValue::as_string)
+            .is_some_and(|mode| mode.equals_str("ask"))
+            && let Some(message) = super::ask_mode::violation(tool.as_ref(), &call.input)
+        {
+            return fail(&name, ToolError::new("ask_mode_violation", message));
+        }
         #[cfg(unix)]
         let native_sandbox_enforced = self
             .native_sandbox
@@ -337,6 +398,21 @@ impl ToolRuntime {
                     return fail(&name, validation_error(&name, issues, &context)?);
                 }
                 Ok(None) => {}
+            }
+            if let Some(plan) = context.host.plan_todo.as_ref().and_then(|value| {
+                value.downcast_ref::<crate::host::modules::capability::PlanTodoContext>()
+            }) {
+                let read_only = matches!(tool.is_read_only(&call.input), Ok(JsValue::Bool(true)));
+                if let Some(message) = plan.0.blocking_message(name.clone(), read_only).await? {
+                    return fail(&name, ToolError::new("tool_execution_failed", message));
+                }
+            }
+            if let Some(mode) = self
+                .mode_owner
+                .as_ref()
+                .and_then(|owner| owner.current_mode())
+            {
+                self.permission.set_trusted_mode(mode);
             }
             let definition: Arc<dyn ToolDefinition> = tool.clone();
             let mut decision = if let Some(permission) = self.turn_permission.get() {
@@ -518,6 +594,8 @@ impl ToolRuntime {
                     string(provider.temporary_root().to_string_lossy().as_ref()),
                 );
             }
+            let track_progress =
+                !name.equals_str("todo_write") && !truthy(&tool.is_read_only(&input)?);
             match tool.execute(input, execution).await {
                 Err(error) => fail(&name, error),
                 Ok(output) => {
@@ -538,6 +616,20 @@ impl ToolRuntime {
                         metadata
                             .get_or_insert_with(JsObject::new)
                             .insert("previewLimit".into(), JsValue::Object(limit));
+                    }
+                    if track_progress
+                        && let Some(service) = context.host.plan_todo.as_ref()
+                            .and_then(|value| value.downcast_ref::<crate::host::modules::capability::PlanTodoContext>())
+                    {
+                        let payload = object([
+                            ("sessionId", context.fields.get("sessionId").cloned().unwrap_or(JsValue::Undefined)),
+                            ("turnId", context.fields.get("turnId").cloned().unwrap_or(JsValue::Undefined)),
+                            ("method", "mark_tool_progress".into()),
+                            ("toolName", string(name.clone())),
+                        ]);
+                        if let Err(error) = service.0.call(JsValue::Object(object([("payload", JsValue::Object(payload))]))).await {
+                            return fail(&name, ToolError::failed(error.message));
+                        }
                     }
                     Ok(object([
                         ("type", "success".into()),
@@ -581,11 +673,18 @@ impl ToolCatalog for ToolRuntime {
     }
 }
 impl ToolExecution for ToolRuntime {
+    fn applies_mode_effects(&self) -> bool {
+        self.mode_owner.is_some()
+    }
     fn bind_turn_permission(
         &self,
         permission: crate::runtime::project::interaction_permission::TurnPermission,
     ) -> Result<(), HostError> {
         permission.enable_native_execution()?;
+        if let Some(owner) = &self.mode_owner {
+            let owner = owner.clone();
+            permission.bind_mode_source(Arc::new(move || owner.current_mode()))?;
+        }
         self.turn_permission
             .set(permission)
             .map_err(|_| ModuleError::new("Tool execution is already bound to a turn.").into())

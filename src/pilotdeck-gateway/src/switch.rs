@@ -558,6 +558,13 @@ impl RecordingCronGateway {
 }
 
 impl CronAgentGateway for RecordingCronGateway {
+    fn submit_turn_observed(
+        &self,
+        input: &CronTurnSubmit,
+        observe: &mut dyn FnMut(&pilotdeck_protocol::JsValue) -> Result<(), CronError>,
+    ) -> Result<(), CronError> {
+        self.inner.submit_turn_observed(input, observe)
+    }
     fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
         self.inner.submit_turn(input)
     }

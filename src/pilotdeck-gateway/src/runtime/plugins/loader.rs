@@ -284,6 +284,12 @@ pub(crate) struct StyleBudget {
     remaining_entries: usize,
 }
 impl StyleBudget {
+    fn native_skills() -> Self {
+        Self {
+            remaining_bytes: 8 * 1024 * 1024,
+            remaining_entries: 2_048,
+        }
+    }
     pub(crate) fn new() -> Self {
         Self {
             remaining_bytes: 64 * 1024 * 1024,
@@ -520,9 +526,9 @@ pub(crate) fn validate_native_style_paths(
 pub(crate) fn stage_native_style_plugins(
     options: &PluginRuntimeOptions,
 ) -> Result<LoadFromDiskResult, PluginRuntimeError> {
-    if !options.builtin_plugins.is_empty() || options.builtin_skills_root.is_some() {
+    if !options.builtin_plugins.is_empty() {
         return Err(PluginRuntimeError::new(
-            "Native style-only plugin family cannot load builtins.",
+            "Native restricted plugin family cannot load programmatic builtins.",
         ));
     }
     let paths = PilotExtensionPaths::resolve(&options.project_root, &options.pilot_home);
@@ -550,9 +556,83 @@ pub(crate) fn stage_native_style_plugins(
             dispose: None,
         }));
     }
+    let skills = stage_native_standalone_skills(options)?;
+    plugins.extend(skills.plugins);
     Ok(LoadFromDiskResult {
         plugins,
-        staged_failures: vec![],
+        staged_failures: skills.staged_failures,
+    })
+}
+
+/// Standalone skills are inert markdown: no plugin manifests, hooks, MCP,
+/// command directories, scripts, or assets are read by this selective loader.
+/// Native-only bound: 8 MiB source bytes and 2,048 directory entries total.
+fn stage_native_standalone_skills(
+    options: &PluginRuntimeOptions,
+) -> Result<LoadFromDiskResult, PluginRuntimeError> {
+    let paths = PilotExtensionPaths::resolve(&options.project_root, &options.pilot_home);
+    let mut directories = Vec::new();
+    if let Some(root) = &options.builtin_skills_root {
+        directories.push((root.clone(), PluginSource::Builtin));
+    }
+    directories.extend([
+        (paths.global_skills_dir, PluginSource::Global),
+        (paths.project_skills_dir, PluginSource::Project),
+    ]);
+    let mut budget = StyleBudget::native_skills();
+    let mut plugins = Vec::new();
+    let mut staged_failures = Vec::new();
+    for (directory, source) in directories {
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(io_error("scandir", &directory, &error)),
+        };
+        let mut names = Vec::new();
+        for entry in entries {
+            budget.entry()?;
+            names.push(
+                entry
+                    .map_err(|error| io_error("scandir", &directory, &error))?
+                    .file_name(),
+            );
+        }
+        names.sort();
+        for name in names {
+            let path = directory.join(name);
+            if !fs::metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+                continue;
+            }
+            match markdown::load_standalone_skill_bounded(&basename(&path), &path, &mut budget) {
+                Ok(skill) => plugins.push(Arc::new(LoadedPlugin {
+                    name: basename(&path),
+                    path,
+                    source,
+                    skills: vec![skill],
+                    commands: vec![],
+                    output_styles: vec![],
+                    hooks_config: None,
+                    mcp_servers: None,
+                    lsp_servers: None,
+                    dispose: None,
+                })),
+                Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => {
+                    return Err(PluginRuntimeError::gateway(
+                        "NATIVE_SKILL_LIMIT",
+                        "Native skill source budget exceeded.",
+                    ));
+                }
+                Err(_) => staged_failures.push(PluginRefreshFailure {
+                    path,
+                    source,
+                    kind: PluginKind::Skill,
+                }),
+            }
+        }
+    }
+    Ok(LoadFromDiskResult {
+        plugins,
+        staged_failures,
     })
 }
 

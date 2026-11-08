@@ -716,8 +716,8 @@ async fn production_host_management_and_restart() {
         negative_assert!(
             assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
                 .await
-                .is_err_and(|e| e.to_string().contains("configured skills")),
-            "#1231 skill management does not enable execution"
+                .is_ok(),
+            "#1231 imported standalone skills are supported by the native profile"
         );
         host.shutdown(options.drain_budget)
             .await

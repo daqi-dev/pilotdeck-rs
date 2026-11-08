@@ -1,0 +1,763 @@
+{
+  "node": "v22.22.0",
+  "rows": [
+    {
+      "name": "get_goal",
+      "input": {},
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": null
+            }
+          ],
+          "data": null,
+          "metadata": {
+            "operation": "get",
+            "revision": null
+          }
+        }
+      },
+      "snapshot": {
+        "goal": null,
+        "revision": 0
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "clear"
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": null
+            }
+          ],
+          "data": null,
+          "metadata": {
+            "operation": "update",
+            "revision": null
+          }
+        }
+      },
+      "snapshot": {
+        "goal": null,
+        "revision": 0
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "pause"
+      },
+      "result": {
+        "error": {
+          "name": "Error",
+          "message": "No goal exists for this session."
+        }
+      },
+      "snapshot": {
+        "goal": null,
+        "revision": 0
+      }
+    },
+    {
+      "name": "create_goal",
+      "input": {
+        "objective": "  "
+      },
+      "result": {
+        "error": {
+          "name": "Error",
+          "message": "Goal objective must not be empty."
+        }
+      },
+      "snapshot": {
+        "goal": null,
+        "revision": 0
+      }
+    },
+    {
+      "name": "create_goal",
+      "input": {
+        "objective": "Do work",
+        "max_goal_rounds": 0
+      },
+      "result": {
+        "error": {
+          "name": "Error",
+          "message": "maxGoalRounds must be a positive integer."
+        }
+      },
+      "snapshot": {
+        "goal": null,
+        "revision": 0
+      }
+    },
+    {
+      "name": "create_goal",
+      "input": {
+        "objective": "  Deliver CLI  ",
+        "max_goal_rounds": 3,
+        "id": "  stable-id  "
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "stable-id",
+                "revision": 1,
+                "objective": "Deliver CLI",
+                "phase": "active",
+                "maxGoalRounds": 3
+              }
+            }
+          ],
+          "data": {
+            "id": "stable-id",
+            "revision": 1,
+            "objective": "Deliver CLI",
+            "phase": "active",
+            "maxGoalRounds": 3
+          },
+          "metadata": {
+            "operation": "create",
+            "revision": 1
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 1,
+          "objective": "Deliver CLI",
+          "phase": "active",
+          "maxGoalRounds": 3
+        },
+        "revision": 1
+      }
+    },
+    {
+      "name": "create_goal",
+      "input": {
+        "objective": "duplicate"
+      },
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "code": "tool_execution_failed",
+          "message": "A goal already exists; update or clear it before creating another.",
+          "details": {
+            "actualRevision": 1
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 1,
+          "objective": "Deliver CLI",
+          "phase": "active",
+          "maxGoalRounds": 3
+        },
+        "revision": 1
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "edit",
+        "expected_revision": 0
+      },
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "code": "tool_execution_failed",
+          "message": "Goal revision conflict: expected 0, current is 1.",
+          "details": {
+            "expectedRevision": 0,
+            "actualRevision": 1
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 1,
+          "objective": "Deliver CLI",
+          "phase": "active",
+          "maxGoalRounds": 3
+        },
+        "revision": 1
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "pause",
+        "expected_revision": 1
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "stable-id",
+                "revision": 2,
+                "objective": "Deliver CLI",
+                "phase": "paused",
+                "maxGoalRounds": 3
+              }
+            }
+          ],
+          "data": {
+            "id": "stable-id",
+            "revision": 2,
+            "objective": "Deliver CLI",
+            "phase": "paused",
+            "maxGoalRounds": 3
+          },
+          "metadata": {
+            "operation": "update",
+            "revision": 2
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 2,
+          "objective": "Deliver CLI",
+          "phase": "paused",
+          "maxGoalRounds": 3
+        },
+        "revision": 2
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "resume"
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "stable-id",
+                "revision": 3,
+                "objective": "Deliver CLI",
+                "phase": "active",
+                "maxGoalRounds": 3
+              }
+            }
+          ],
+          "data": {
+            "id": "stable-id",
+            "revision": 3,
+            "objective": "Deliver CLI",
+            "phase": "active",
+            "maxGoalRounds": 3
+          },
+          "metadata": {
+            "operation": "update",
+            "revision": 3
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 3,
+          "objective": "Deliver CLI",
+          "phase": "active",
+          "maxGoalRounds": 3
+        },
+        "revision": 3
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "block"
+      },
+      "result": {
+        "error": {
+          "name": "TypeError",
+          "message": "Blocked goals require a reason."
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 3,
+          "objective": "Deliver CLI",
+          "phase": "active",
+          "maxGoalRounds": 3
+        },
+        "revision": 3
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "block",
+        "blocked_reason": "  waiting  "
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "stable-id",
+                "revision": 4,
+                "objective": "Deliver CLI",
+                "phase": "blocked",
+                "maxGoalRounds": 3,
+                "blockedReason": "waiting"
+              }
+            }
+          ],
+          "data": {
+            "id": "stable-id",
+            "revision": 4,
+            "objective": "Deliver CLI",
+            "phase": "blocked",
+            "maxGoalRounds": 3,
+            "blockedReason": "waiting"
+          },
+          "metadata": {
+            "operation": "update",
+            "revision": 4
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 4,
+          "objective": "Deliver CLI",
+          "phase": "blocked",
+          "blockedReason": "waiting",
+          "maxGoalRounds": 3
+        },
+        "revision": 4
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "edit",
+        "objective": " ",
+        "blocked_reason": " "
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "stable-id",
+                "revision": 5,
+                "objective": "Deliver CLI",
+                "phase": "blocked",
+                "blockedReason": "waiting",
+                "maxGoalRounds": 3
+              }
+            }
+          ],
+          "data": {
+            "id": "stable-id",
+            "revision": 5,
+            "objective": "Deliver CLI",
+            "phase": "blocked",
+            "blockedReason": "waiting",
+            "maxGoalRounds": 3
+          },
+          "metadata": {
+            "operation": "update",
+            "revision": 5
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 5,
+          "objective": "Deliver CLI",
+          "phase": "blocked",
+          "blockedReason": "waiting",
+          "maxGoalRounds": 3
+        },
+        "revision": 5
+      }
+    },
+    {
+      "name": "get_goal",
+      "input": {},
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "stable-id",
+                "revision": 5,
+                "objective": "Deliver CLI",
+                "phase": "blocked",
+                "blockedReason": "waiting",
+                "maxGoalRounds": 3
+              }
+            }
+          ],
+          "data": {
+            "id": "stable-id",
+            "revision": 5,
+            "objective": "Deliver CLI",
+            "phase": "blocked",
+            "blockedReason": "waiting",
+            "maxGoalRounds": 3
+          },
+          "metadata": {
+            "operation": "get",
+            "revision": 5
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 5,
+          "objective": "Deliver CLI",
+          "phase": "blocked",
+          "blockedReason": "waiting",
+          "maxGoalRounds": 3
+        },
+        "revision": 5
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "complete"
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "stable-id",
+                "revision": 6,
+                "objective": "Deliver CLI",
+                "phase": "complete",
+                "maxGoalRounds": 3
+              }
+            }
+          ],
+          "data": {
+            "id": "stable-id",
+            "revision": 6,
+            "objective": "Deliver CLI",
+            "phase": "complete",
+            "maxGoalRounds": 3
+          },
+          "metadata": {
+            "operation": "update",
+            "revision": 6
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 6,
+          "objective": "Deliver CLI",
+          "phase": "complete",
+          "maxGoalRounds": 3
+        },
+        "revision": 6
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "clear"
+      },
+      "result": {
+        "error": {
+          "name": "Error",
+          "message": "injected durable append failure"
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 6,
+          "objective": "Deliver CLI",
+          "phase": "complete",
+          "maxGoalRounds": 3
+        },
+        "revision": 6
+      }
+    },
+    {
+      "name": "get_goal",
+      "input": {},
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "stable-id",
+                "revision": 6,
+                "objective": "Deliver CLI",
+                "phase": "complete",
+                "maxGoalRounds": 3
+              }
+            }
+          ],
+          "data": {
+            "id": "stable-id",
+            "revision": 6,
+            "objective": "Deliver CLI",
+            "phase": "complete",
+            "maxGoalRounds": 3
+          },
+          "metadata": {
+            "operation": "get",
+            "revision": 6
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "stable-id",
+          "revision": 6,
+          "objective": "Deliver CLI",
+          "phase": "complete",
+          "maxGoalRounds": 3
+        },
+        "revision": 6
+      }
+    },
+    {
+      "name": "update_goal",
+      "input": {
+        "action": "clear"
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": null
+            }
+          ],
+          "data": null,
+          "metadata": {
+            "operation": "update",
+            "revision": null
+          }
+        }
+      },
+      "snapshot": {
+        "goal": null,
+        "revision": 7
+      }
+    },
+    {
+      "name": "create_goal",
+      "input": {
+        "objective": "next"
+      },
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "goal-fixed-uuid",
+                "revision": 8,
+                "objective": "next",
+                "phase": "active"
+              }
+            }
+          ],
+          "data": {
+            "id": "goal-fixed-uuid",
+            "revision": 8,
+            "objective": "next",
+            "phase": "active"
+          },
+          "metadata": {
+            "operation": "create",
+            "revision": 8
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "goal-fixed-uuid",
+          "revision": 8,
+          "objective": "next",
+          "phase": "active"
+        },
+        "revision": 8
+      }
+    },
+    {
+      "name": "get_goal",
+      "input": {},
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "json",
+              "value": {
+                "id": "goal-fixed-uuid",
+                "revision": 8,
+                "objective": "next",
+                "phase": "active"
+              }
+            }
+          ],
+          "data": {
+            "id": "goal-fixed-uuid",
+            "revision": 8,
+            "objective": "next",
+            "phase": "active"
+          },
+          "metadata": {
+            "operation": "get",
+            "revision": 8
+          }
+        }
+      },
+      "snapshot": {
+        "goal": {
+          "id": "goal-fixed-uuid",
+          "revision": 8,
+          "objective": "next",
+          "phase": "active"
+        },
+        "revision": 8
+      }
+    }
+  ],
+  "events": [
+    {
+      "type": "goal_changed",
+      "goal": {
+        "id": "stable-id",
+        "revision": 1,
+        "objective": "Deliver CLI",
+        "phase": "active",
+        "maxGoalRounds": 3
+      },
+      "revision": 1,
+      "sessionId": "session",
+      "turnId": "turn"
+    },
+    {
+      "type": "goal_changed",
+      "goal": {
+        "id": "stable-id",
+        "revision": 2,
+        "objective": "Deliver CLI",
+        "phase": "paused",
+        "maxGoalRounds": 3
+      },
+      "revision": 2,
+      "sessionId": "session",
+      "turnId": "turn"
+    },
+    {
+      "type": "goal_changed",
+      "goal": {
+        "id": "stable-id",
+        "revision": 3,
+        "objective": "Deliver CLI",
+        "phase": "active",
+        "maxGoalRounds": 3
+      },
+      "revision": 3,
+      "sessionId": "session",
+      "turnId": "turn"
+    },
+    {
+      "type": "goal_changed",
+      "goal": {
+        "id": "stable-id",
+        "revision": 4,
+        "objective": "Deliver CLI",
+        "phase": "blocked",
+        "maxGoalRounds": 3,
+        "blockedReason": "waiting"
+      },
+      "revision": 4,
+      "sessionId": "session",
+      "turnId": "turn"
+    },
+    {
+      "type": "goal_changed",
+      "goal": {
+        "id": "stable-id",
+        "revision": 5,
+        "objective": "Deliver CLI",
+        "phase": "blocked",
+        "blockedReason": "waiting",
+        "maxGoalRounds": 3
+      },
+      "revision": 5,
+      "sessionId": "session",
+      "turnId": "turn"
+    },
+    {
+      "type": "goal_changed",
+      "goal": {
+        "id": "stable-id",
+        "revision": 6,
+        "objective": "Deliver CLI",
+        "phase": "complete",
+        "maxGoalRounds": 3
+      },
+      "revision": 6,
+      "sessionId": "session",
+      "turnId": "turn"
+    },
+    {
+      "type": "goal_changed",
+      "goal": null,
+      "revision": 7,
+      "sessionId": "session",
+      "turnId": "turn"
+    },
+    {
+      "type": "goal_changed",
+      "goal": {
+        "id": "goal-fixed-uuid",
+        "revision": 8,
+        "objective": "next",
+        "phase": "active"
+      },
+      "revision": 8,
+      "sessionId": "session",
+      "turnId": "turn"
+    }
+  ],
+  "ownership": {
+    "name": "Error",
+    "message": "Goal runtime belongs to session, not other."
+  }
+}

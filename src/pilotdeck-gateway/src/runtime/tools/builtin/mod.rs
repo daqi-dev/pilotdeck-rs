@@ -8,6 +8,7 @@ pub mod bash;
 pub mod edit_file;
 pub mod edit_notebook;
 pub mod glob;
+pub mod goal;
 pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
@@ -1446,3 +1447,5 @@ pub(super) fn native_sandbox_write_path(
         .check_write(&os_path(&root), &os_path(path))
         .map(|_| path.clone())
 }
+
+pub mod plan_todo;

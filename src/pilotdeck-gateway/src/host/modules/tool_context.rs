@@ -274,6 +274,7 @@ pub type InteractionProfileBinder =
 pub struct ToolContextPorts {
     pub model: Option<Arc<dyn TurnModel>>,
     pub elicitation: Option<RuntimeContext>,
+    pub permission_mode: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
     pub bind_interaction_profile: Option<InteractionProfileBinder>,
     pub elicitation_enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     pub user_dialog: Option<RuntimeContext>,
@@ -366,7 +367,15 @@ impl ToolContextBuilder {
         let base = config.get("permissionContext").and_then(JsValue::as_object);
         let mut result = base.cloned().unwrap_or_default();
         result.insert("cwd".into(), get(config, "cwd"));
-        result.insert("mode".into(), get(config, "permissionMode"));
+        result.insert(
+            "mode".into(),
+            self.ports
+                .permission_mode
+                .as_ref()
+                .and_then(|read| read())
+                .map(JsValue::String)
+                .unwrap_or_else(|| get(config, "permissionMode")),
+        );
         result.insert(
             "canPrompt".into(),
             self.binding
@@ -432,8 +441,14 @@ impl ToolContextBuilder {
                 fields.insert(key.into(), value.clone());
             }
         }
-        fields.insert("permissionMode".into(), get(config, "permissionMode"));
         let mut permission = self.permission_context();
+        fields.insert(
+            "permissionMode".into(),
+            permission
+                .get("mode")
+                .cloned()
+                .unwrap_or(JsValue::Undefined),
+        );
         if let Some(path) = &directory {
             permission.insert("planDirectoryPath".into(), JsValue::String(path.clone()));
         }

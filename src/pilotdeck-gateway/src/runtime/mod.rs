@@ -8,6 +8,7 @@ mod cleanup_task;
 pub mod connection;
 pub mod context;
 pub mod cron;
+pub(crate) mod goal;
 pub mod history;
 pub mod hooks;
 pub mod interaction;

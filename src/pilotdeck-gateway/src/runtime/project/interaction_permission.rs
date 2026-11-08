@@ -62,6 +62,7 @@ struct State {
     turns: HashMap<JsString, Arc<Run>>,
     notices: Vec<DiscardNotice>,
 }
+type ModeSource = Arc<dyn Fn() -> Option<crate::config::permission::PermissionMode> + Send + Sync>;
 struct Run {
     session: JsString,
     run_id: JsString,
@@ -70,6 +71,7 @@ struct Run {
     options: PermissionTurnOptions,
     closed: AtomicBool,
     native_execution: AtomicBool,
+    mode_source: Mutex<Option<ModeSource>>,
     native_grants: Mutex<HashSet<[u8; 32]>>,
 }
 impl Run {
@@ -139,6 +141,7 @@ impl InteractionPermission {
             options,
             closed: AtomicBool::new(false),
             native_execution: AtomicBool::new(false),
+            mode_source: Mutex::new(None),
             native_grants: Mutex::default(),
         });
         if let Some(previous) = state.turns.insert(session, run.clone())
@@ -209,6 +212,18 @@ pub struct TurnPermission {
     run: Arc<Run>,
 }
 impl TurnPermission {
+    pub(crate) fn bind_mode_source(
+        &self,
+        source: Arc<dyn Fn() -> Option<crate::config::permission::PermissionMode> + Send + Sync>,
+    ) -> Result<(), HostError> {
+        self.check(&lock(&self.state))?;
+        let mut slot = lock(&self.run.mode_source);
+        if slot.is_some() {
+            return Err(ModuleError::new("Permission mode is already bound.").into());
+        }
+        *slot = Some(source);
+        Ok(())
+    }
     pub(crate) fn enable_native_execution(&self) -> Result<(), HostError> {
         self.check(&lock(&self.state))?;
         self.run.native_execution.store(true, Ordering::SeqCst);
@@ -551,6 +566,12 @@ impl port::PermissionDecision for TurnPermission {
             }
             turn.check(&lock(&turn.state))?;
             let mut context = turn.run.options.context.clone();
+            if let Some(mode) = lock(&turn.run.mode_source)
+                .as_ref()
+                .and_then(|source| source())
+            {
+                context.mode = mode;
+            }
             context.rules = turn.run.options.rules.snapshot();
             let name = tool
                 .fields()

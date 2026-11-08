@@ -17,7 +17,11 @@ mod schedule;
 mod scheduler;
 mod store;
 
-pub use fire::{CronFire, CronFireDeps, CronFirePort, CronRunOutcome};
+pub use fire::{
+    CronExecutionCallbacks, CronFire, CronFireDeps, CronFirePort, CronPhaseEventHandler,
+    CronResultDeliveryHandler, CronRunOutcome, CronTurnEventHandler,
+    NATIVE_CRON_MAX_ASSISTANT_TEXT_UNITS,
+};
 pub use manager::{
     CronActiveRun, CronAgentGateway, CronError, CronExecutionProjectFilter, CronGatewayBody,
     CronLogger, CronManager, CronManagerConfig, CronManagerOptions, CronRuntime, CronTurnSubmit,
@@ -35,6 +39,8 @@ pub use schedule::{
 pub use scheduler::{CronScheduler, DEFAULT_IDLE_POLL_MS, SchedulerDeps};
 pub use store::CronTaskStore;
 
+#[cfg(test)]
+mod fire_event_tests;
 #[cfg(test)]
 mod host_integration_tests;
 #[cfg(test)]

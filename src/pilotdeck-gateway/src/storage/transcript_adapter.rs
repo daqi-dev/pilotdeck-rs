@@ -886,6 +886,23 @@ impl TranscriptWriter {
     ) -> AdapterResult<()> {
         self.append(session_id, turn_id, draft)
     }
+    /// Tool/request append: a retired or closing writer must not report a
+    /// durable mutation as successful after silently dropping the event.
+    pub(crate) fn record_session_event_checked(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: JsObject,
+    ) -> AdapterResult<()> {
+        self.append_with_policy(
+            session_id,
+            turn_id,
+            draft,
+            true,
+            || self.sources(),
+            Self::adapter_domain,
+        )
+    }
     pub fn record_accepted_input(
         &self,
         session_id: &JsString,

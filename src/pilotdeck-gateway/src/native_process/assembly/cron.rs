@@ -78,6 +78,56 @@ pub(super) fn build(
     Ok(Some(manager))
 }
 
+pub(super) fn bind_callbacks(
+    manager: &CronManager,
+    server: crate::channel::server::ChannelServer,
+    runtime: tokio::runtime::Handle,
+) -> Result<(), CronError> {
+    let callbacks = crate::runtime::cron::CronExecutionCallbacks {
+        assistant_text_limit_units: Some(
+            crate::runtime::cron::NATIVE_CRON_MAX_ASSISTANT_TEXT_UNITS,
+        ),
+        on_result_delivery: Some(Arc::new(move |value| {
+            let required = |key: &str| {
+                value
+                    .get(key)
+                    .and_then(JsValue::as_string)
+                    .cloned()
+                    .ok_or_else(|| CronError::error(format!("Cron delivery missing {key}.")))
+            };
+            let delivery = crate::channel::im_cron::CronResultDelivery {
+                task_id: required("taskId")?,
+                run_id: required("runId")?,
+                session_key: required("sessionKey")?,
+                channel_key: crate::channel::protocol::ChannelKey::new(required("channelKey")?),
+                origin_session_key: value
+                    .get("originSessionKey")
+                    .and_then(JsValue::as_string)
+                    .cloned(),
+                origin_channel_key: value
+                    .get("originChannelKey")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+                    .map(crate::channel::protocol::ChannelKey::new),
+                text: required("text")?,
+            };
+            let server = server.clone();
+            std::mem::drop(runtime.spawn(async move {
+                let task = String::from_utf16_lossy(delivery.task_id.units());
+                let run = String::from_utf16_lossy(delivery.run_id.units());
+                match tokio::time::timeout(std::time::Duration::from_secs(30), server.deliver_cron_result(delivery)).await {
+                    Ok(true) => {},
+                    Ok(false) => eprintln!("[cron] result delivery was not handled task={task} run={run}"),
+                    Err(_) => eprintln!("[cron] result delivery failed native delivery timed out task={task} run={run}"),
+                }
+            }));
+            Ok(())
+        })),
+        ..Default::default()
+    };
+    manager.set_execution_callbacks(callbacks)
+}
+
 /// `submitTurn`'s input exactly as CronFire.ts:80-88 builds it — the seven
 /// fields the port's `CronTurnSubmit` carries; a task without a projectKey
 /// omits the key, which reads as `undefined` to the submitter like TS.
@@ -210,7 +260,54 @@ async fn drain_turn<S: CronTurnStream>(stream: &mut S) -> Result<(), CronError> 
     Ok(())
 }
 
+async fn drain_observed_turn<S: CronTurnStream>(
+    stream: &mut S,
+    observe: &mut dyn FnMut(&JsValue) -> Result<(), CronError>,
+    mut abort: impl FnMut(),
+) -> Result<(), CronError> {
+    let mut failure = None;
+    loop {
+        match stream.next_event().await {
+            Ok(Some(event)) => {
+                if failure.is_none()
+                    && let Err(error) = observe(&event)
+                {
+                    failure = Some(error);
+                    abort();
+                }
+            }
+            Ok(None) => break,
+            Err(error) => return Err(failure.unwrap_or_else(|| CronError::error(error.message))),
+        }
+    }
+    failure.map_or(Ok(()), Err)
+}
+
 impl CronGatewayBody for NativeCronGatewayBody {
+    fn run_turn_observed(
+        &self,
+        input: &CronTurnSubmit,
+        observe: &mut dyn FnMut(&JsValue) -> Result<(), CronError>,
+    ) -> Result<(), CronError> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return Err(CronError::error(
+                "Cron run_turn cannot execute on the gateway runtime thread; the scheduler must call it from its own thread.",
+            ));
+        }
+        let submitter = self.submitter.clone();
+        let owner = self.owner.clone();
+        self.runtime.block_on(async move {
+            let mut submission = submitter.submit(submit_input(input));
+            drain_observed_turn(&mut submission, observe, || {
+                let _ = owner.start_gateway_abort(
+                    &input.session_key,
+                    Some(&input.run_id),
+                    Some(&JsString::from("system:cron_event_failure")),
+                );
+            })
+            .await
+        })
+    }
     fn run_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
         // Blocking a worker of the gateway's (current-thread) runtime would
         // deadlock the drain below, which only that runtime can advance.
@@ -266,3 +363,6 @@ impl CronGatewayBody for NativeCronGatewayBody {
 
 #[cfg(test)]
 mod cron_wiring_tests;
+
+#[cfg(test)]
+mod observed_drain_tests;
