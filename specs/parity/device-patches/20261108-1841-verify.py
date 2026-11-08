@@ -47,8 +47,11 @@ overwritten, the run writes <name>.attempt-N.<ext> instead. Neither --out nor
 --manifest may sit inside or resolve inside the --evidence tree — as a
 symlink, in a directory that itself sits inside it, or by resolve() target
 (asserted at entry, fix-r3; the symlink and parent-directory readings are
-fix-r4): criterion 0 pins the exact file set, so a file written there would
-make the next recompute report it as unexpected and FAIL.
+fix-r4), or by filesystem identity: two spellings of one directory on a
+case-insensitive volume are one directory, judged by os.path.samefile over the
+nearest existing ancestor chain (the identity reading is fix-r5): criterion 0
+pins the exact file set, so a file written there would make the next recompute
+report it as unexpected and FAIL.
 
 Criteria (registration 20261108-1841.md):
   0. evidence anchoring: corpus manifest (per-file sha256, exact file set)
@@ -890,6 +893,42 @@ def write_result_exclusive(path: Path, text: str) -> Path:
             attempt += 1
 
 
+def _sits_in_evidence(path: Path, evidence: Path) -> bool:
+    """Identity, not spelling (fix-r5, review #2372 r4 P1 — MiniMax sibling#2 +
+    boundary#1 + DS boundary#1, one cluster, coordinator-reproduced): the three
+    lexical checks below compare strings, and on a case-insensitive volume
+    (darwin's default APFS) two spellings of one directory make all of them
+    False while the write still lands inside the evidence tree. os.path
+    .samefile compares by filesystem identity, so the nearest existing
+    ancestor chain of `path` is walked level by level: a `--out` file that does
+    not exist yet (or sits under directories that do not exist yet — main()
+    only mkdirs its parent at write time) climbs until a level exists, and any
+    existing level that IS the evidence tree means the write lands inside it,
+    at any depth (EvD/evidence/sub/out.json matches only two levels up).
+    A level that still cannot be compared for any other reason (ELOOP, EACCES,
+    ...) counts as inside — fail-closed, the same identity-not-spelling
+    discipline as the sys.path check above (#1033)."""
+    q = path
+    while True:
+        try:
+            if os.path.samefile(q, evidence):
+                return True
+        except FileNotFoundError:
+            # This spelling does not exist yet: step up one level towards the
+            # nearest existing ancestor. The lexical checks still cover the
+            # exactly-spelled inside-the-tree case, so stepping up cannot let
+            # a poisoner through (the level that exists decides the identity).
+            if q.parent == q:
+                return True  # nothing existing to compare against — fail-closed
+            q = q.parent
+            continue
+        except OSError:
+            return True  # cannot compare (ELOOP/EACCES/...) — fail-closed
+        if q.parent == q:
+            return False
+        q = q.parent
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--baseline", required=True, type=Path)
@@ -925,14 +964,29 @@ def main() -> None:
     # shape itself (is_symlink() is False for a nonexistent path, never
     # raises), and the resolve() target (kept from fix-r3). The --manifest
     # default branch is already resolved; walking the same guard is harmless.
+    # fix-r5, P1 + P2 (review #2372 r4, MiniMax sibling#2 + boundary#1 + DS
+    # boundary#1 same cluster, coordinator-reproduced): those three checks are
+    # all LEXICAL (spelling) comparisons — on a case-insensitive volume (darwin
+    # default APFS) two spellings of one directory make them all False while
+    # the write lands inside the evidence tree. A fourth check compares
+    # FILESYSTEM IDENTITY (_sits_in_evidence: samefile over the nearest
+    # existing ancestor chain), and the whole judgement is fail-closed: any
+    # OSError it raises (e.g. resolve() over a symlink loop, on the Python
+    # versions where it raises) dies at entry, never a bare traceback.
     # Asserted at entry, before any pin or criterion runs, never narrated
     # only in the README.
     for name, path in (("--out", args.out), ("--manifest", manifest)):
-        if path is not None and (
-            path.is_symlink()
-            or path.resolve().is_relative_to(args.evidence)
-            or path.parent.resolve().is_relative_to(args.evidence)
-        ):
+        try:
+            inside = path is not None and (
+                path.is_symlink()
+                or path.resolve().is_relative_to(args.evidence)
+                or path.parent.resolve().is_relative_to(args.evidence)
+                or _sits_in_evidence(path, args.evidence)
+            )
+        except OSError as error:
+            die(f"{name} placement guard could not resolve {path}: {error!r} — treating it "
+                f"as inside (fail-closed; criterion 0 pins the exact file set)")
+        if inside:
             die(f"{name} must not sit inside or resolve inside the --evidence tree: {path} "
                 f"(criterion 0 pins the exact file set)")
 
