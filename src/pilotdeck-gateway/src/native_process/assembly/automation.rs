@@ -1008,7 +1008,7 @@ mod tests {
             }
             fn tools(&self) -> Vec<JsString> { vec![] }
         }
-        let log = Arc::default();
+        let log: Arc<Mutex<Vec<String>>> = Arc::default();
         let entered = Arc::new(tokio::sync::Notify::new());
         let (release, receiver) = tokio::sync::oneshot::channel();
         let first = Arc::new(PausedStop { log: log.clone(), entered: entered.clone(),

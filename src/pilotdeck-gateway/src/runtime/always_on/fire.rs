@@ -138,6 +138,11 @@ pub(crate) struct ApplyPhaseResult {
 /// makes `stop` wait for an in-flight fire instead of aborting it — and so
 /// test fakes can block on their own schedule.
 pub(crate) trait DiscoveryFirePort: Send + Sync {
+    /// Drain phase-owned jobs and release the project generation.
+    fn close<'a>(&'a self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn run<'a>(
         &'a self,
         input: FireRunInput<'a>,

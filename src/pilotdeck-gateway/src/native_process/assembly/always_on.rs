@@ -283,10 +283,7 @@ impl ProjectAutomationProvider for NativeAlwaysOnProvider {
 
     fn stop(self: Arc<Self>) -> AutomationFuture {
         let manager = self.manager.clone();
-        Box::pin(async move {
-            manager.stop().await;
-            Ok(())
-        })
+        Box::pin(async move { manager.stop().await.map_err(|error| error.to_string()) })
     }
 
     /// TS composes the manager's tool definitions into `extraTools`

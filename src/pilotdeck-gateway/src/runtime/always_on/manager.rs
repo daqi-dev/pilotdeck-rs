@@ -314,6 +314,7 @@ struct RuntimeShared {
     stopping: AtomicBool,
     stop_started: AtomicBool,
     stop_finished: tokio::sync::watch::Sender<bool>,
+    stop_error: Mutex<Option<String>>,
     active_control_runs: Mutex<HashMap<String, ActiveControlRun>>,
 }
 
@@ -417,6 +418,7 @@ impl AlwaysOnRuntime {
                 stopping: AtomicBool::new(false),
                 stop_started: AtomicBool::new(false),
                 stop_finished,
+                stop_error: Mutex::new(None),
                 active_control_runs: Mutex::new(HashMap::new()),
             }),
         })
@@ -518,7 +520,9 @@ impl AlwaysOnRuntime {
     /// idempotency, the drain, and the project-scoped context sweep. An
     /// in-flight control run is waited out — its rejection is dropped without
     /// a log, the `allSettled` shape; nothing is ever aborted.
-    pub(crate) async fn stop(&self) {
+    pub(crate) async fn stop(&self) { let _ = self.stop_checked().await; }
+
+    pub(crate) async fn stop_checked(&self) -> io::Result<()> {
         if self.shared.stop_started.swap(true, Ordering::SeqCst) {
             let mut finished = self.shared.stop_finished.subscribe();
             while !*finished.borrow_and_update() {
@@ -526,7 +530,8 @@ impl AlwaysOnRuntime {
                     break;
                 }
             }
-            return;
+            return self.shared.stop_error.lock().unwrap_or_else(|e| e.into_inner())
+                .as_ref().map_or(Ok(()), |message| Err(io::Error::other(message.clone())));
         }
         self.shared.stopping.store(true, Ordering::SeqCst);
         // The guard is a temporary of the `if let` condition, which would
@@ -558,10 +563,13 @@ impl AlwaysOnRuntime {
                 }
             }
         }
-        *self.shared.fire.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let fire = self.shared.fire.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let error = if let Some(fire) = fire { fire.close().await.err().map(|e| e.to_string()) } else { None };
         self.run_contexts.unregister_project(&self.project_key);
         self.log_info("always-on runtime stopped");
-        let _ = self.shared.stop_finished.send(true);
+        *self.shared.stop_error.lock().unwrap_or_else(|e| e.into_inner()) = error.clone();
+        self.shared.stop_finished.send_replace(true);
+        error.map_or(Ok(()), |message| Err(io::Error::other(message)))
     }
 
     /// `rerunPlan` (AlwaysOnRuntime.ts:317-331).
@@ -912,10 +920,12 @@ impl AlwaysOnManager {
     }
 
     /// `stop` (AlwaysOnManager.ts:179-183).
-    pub(crate) async fn stop(&self) {
+    pub(crate) async fn stop(&self) -> io::Result<()> {
+        let mut first = None;
         for runtime in &self.runtimes {
-            runtime.stop().await;
+            if let Err(error) = runtime.stop_checked().await && first.is_none() { first = Some(error); }
         }
+        first.map_or(Ok(()), Err)
     }
 
     fn runtime_for(&self, project_key: &str) -> Option<&Arc<AlwaysOnRuntime>> {
@@ -1450,7 +1460,7 @@ mod tests {
                     .expect("#2294 rerun")
             ),
         });
-        manager.stop().await;
+        manager.stop().await.expect("manager stop");
         negative_assert_eq!(
             results,
             golden("r9-manager-project-not-found"),
@@ -1520,6 +1530,25 @@ mod tests {
         runtime.stop().await;
     }
 
+    #[tokio::test]
+    async fn fire_close_failure_is_reported_on_repeated_stop() {
+        struct FailedClose;
+        impl DiscoveryFirePort for FailedClose {
+            fn close<'a>(&'a self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+                Box::pin(async { Err(io::Error::other("workspace close failed")) })
+            }
+            fn run<'a>(&'a self, _: super::super::fire::FireRunInput<'a>) -> Pin<Box<dyn Future<Output = Result<super::super::fire::FireOutcome, super::super::AlwaysOnError>> + Send + 'a>> { Box::pin(async { unreachable!() }) }
+            fn rerun_plan<'a>(&'a self, _: super::super::fire::RerunFireInput<'a>) -> Pin<Box<dyn Future<Output = io::Result<super::super::fire::RerunFireResult>> + Send + 'a>> { Box::pin(async { unreachable!() }) }
+            fn run_apply_phase<'a>(&'a self, _: super::super::fire::ApplyPhaseInput<'a>) -> Pin<Box<dyn Future<Output = io::Result<super::super::fire::ApplyPhaseResult>> + Send + 'a>> { Box::pin(async { unreachable!() }) }
+        }
+        let home = scratch("close-failure"); let key = home.join("proj").to_string_lossy().into_owned();
+        let runtime = AlwaysOnRuntime::new(config(&key), &home, &key, None, None, None, None, None).unwrap();
+        runtime.swap_fire_for_test(Arc::new(FailedClose));
+        assert!(runtime.stop_checked().await.unwrap_err().to_string().contains("workspace close failed"));
+        let repeated = tokio::time::timeout(std::time::Duration::from_secs(1), runtime.stop_checked()).await.expect("repeat must not hang");
+        assert!(repeated.unwrap_err().to_string().contains("workspace close failed"));
+    }
+
     // Matrix §三 r3 / AlwaysOnRuntime.ts:296-315: stop waits out an in-flight
     // control run without aborting it. The run is a rerun parked inside its
     // fire await; stop resolves only after the fire releases, and the abort
@@ -1532,8 +1561,16 @@ mod tests {
         struct BlockingFire {
             release: Arc<tokio::sync::Notify>,
             entered: Arc<AtomicBool>,
+            closed: Arc<AtomicBool>,
         }
         impl DiscoveryFirePort for BlockingFire {
+            fn close<'a>(&'a self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+                Box::pin(async move {
+                    assert!(!self.entered.load(Ordering::SeqCst), "close follows control-run drain");
+                    self.closed.store(true, Ordering::SeqCst);
+                    Ok(())
+                })
+            }
             fn run<'a>(
                 &'a self,
                 _input: super::super::fire::FireRunInput<'a>,
@@ -1565,6 +1602,7 @@ mod tests {
                 Box::pin(async move {
                     entered.store(true, Ordering::SeqCst);
                     release.notified().await;
+                    entered.store(false, Ordering::SeqCst);
                     Ok(super::super::fire::RerunFireResult {
                         run_id: input.run_id.into(),
                         error: None,
@@ -1605,9 +1643,9 @@ mod tests {
             .bind_agent_gateway(gateway, None)
             .expect("#2294 bind");
         let entered = Arc::new(AtomicBool::new(false));
+        let closed = Arc::new(AtomicBool::new(false));
         runtime.swap_fire_for_test(Arc::new(BlockingFire {
-            release: release.clone(),
-            entered: entered.clone(),
+            release: release.clone(), entered: entered.clone(), closed: closed.clone(),
         }));
 
         // Park a rerun inside its fire await.
@@ -1690,5 +1728,6 @@ mod tests {
             "#2294 the in-flight control run was waited out, not aborted"
         );
         stopping.await.expect("#2294 stop completes");
+        assert!(closed.load(Ordering::SeqCst), "fire close completed before stop returned");
     }
 }
