@@ -95,9 +95,15 @@ of ``neg-for-diff.sh`` itself and no anchor can fix it.
 Run from this directory, no cargo and no tree lock::
 
     python3 -B -m unittest -v test_negative_discovery_anchors
+
+Known limit: the sweep reads the live tree without a lock, so this gate must
+run serially with a host negative control in the same tree — a concurrent
+truncating rewrite can hand ``sweep`` half a file. CI jobs each check out
+their own copy, so the exposure is local-only (r25, review P2c-1).
 """
 import ast
 import fnmatch
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -2297,7 +2303,7 @@ def _joined_tail(node):
 _FILESYSTEM_JOIN_CALLS = _STDLIB_JOIN_CALLS | {'os.sep.join'}
 
 
-def _filesystem_join_text(node, constants):
+def _filesystem_join_text(node, constants, aliases=None):
     """The text a join of string literals builds, or None.
 
     ``os.path.join('sms', 'mod.rs')`` produces ``sms/mod.rs`` from pieces the
@@ -2305,6 +2311,12 @@ def _filesystem_join_text(node, constants):
     file, so the discovery loop never schedules the table when the file
     changes. Returning the joined text lets the caller key it and demand an
     anchor, which is what ``Path('sms') / 'mod.rs'`` already gets.
+
+    The spelling is resolved through the import map, so ``import os as o``
+    reaches the same calls (``o.path.join(...)``), and so does
+    ``from os.path import join as j`` — a bare name whose alias carries the
+    dotted target. Without that, an aliased join was neither keyed nor
+    reported while every plain spelling was (r25, review P2a).
 
     Two kinds of join count, and they do **not** share reset semantics.
     ``os.path.join`` / ``posixpath.join`` / ``ntpath.join`` are filesystem
@@ -2328,9 +2340,12 @@ def _filesystem_join_text(node, constants):
     if not isinstance(node, ast.Call):
         return None
     func = node.func
-    if not isinstance(func, ast.Attribute) or func.attr != 'join':
+    if isinstance(func, ast.Attribute):
+        if func.attr != 'join':
+            return None
+    elif not isinstance(func, ast.Name):
         return None
-    spelling = _dotted_spelling(func)
+    spelling = _qualified_spelling(func, aliases)
     if spelling in _STDLIB_JOIN_CALLS:
         resets = True
     elif spelling == 'os.sep.join':
@@ -2379,7 +2394,7 @@ def _resets_join(value):
     return _is_drive_prefixed(value)
 
 
-def _relative_path_segments(node, constants):
+def _relative_path_segments(node, constants, aliases=None):
     """Segments of a repository path spelled with relative literals only.
 
     The host runs tables from the repository root, so a path assembled with
@@ -2389,7 +2404,7 @@ def _relative_path_segments(node, constants):
     element. Anything that only exists at runtime returns None: it is neither
     keyed nor guessed.
     """
-    text = _filesystem_join_text(node, constants)
+    text = _filesystem_join_text(node, constants, aliases)
     if not text or _resets_join(text):
         return None
     if any(_is_drive_segment(part) or part.startswith('\\')
@@ -2564,14 +2579,9 @@ def _carries_a_directory_literal(value, constants, changes_directory=False,
     aliases = aliases or {}
     text = _string_value(value, constants)
     if text is None:
-        text = _filesystem_join_text(value, constants)
+        text = _filesystem_join_text(value, constants, aliases)
     if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
-        spelling = _dotted_spelling(value.func)
-        if spelling is not None:
-            head, _, rest = spelling.rpartition('.')
-            if head:
-                spelling = f'{aliases.get(head, head)}.{rest}'
-        if spelling in _FILESYSTEM_JOIN_CALLS:
+        if _qualified_spelling(value.func, aliases) in _FILESYSTEM_JOIN_CALLS:
             # ``sys.path.insert(0, os.path.join(ROOT, 'src/…'))``: the joined
             # text is not a literal of its own, but a repository directory
             # among the pieces is the same insertion.
@@ -2661,34 +2671,45 @@ def _enumerates_a_directory(func, aliases):
     return module in FS_MODULES and name in ENUMERATION_NAMES
 
 
-def _bare_tail(node, constants, seen=()):
+def _bare_tail(node, constants, seen=(), aliases=None):
     """Whether the last path component comes from a bare file-name literal.
 
     ``SMS / 'mod.rs'`` and ``SOURCE.with_name('oracle.json')`` both end in a
     name the discovery loop cannot derive from the file text; ``SOURCE /
     'runtime/memory/gateway.rs'`` spells its directory inline and is already
-    findable, so it needs no anchor.
+    findable, so it needs no anchor. Join spellings are resolved through the
+    import map so ``o.path.join(...)`` reads like ``os.path.join(...)``
+    (r25, review P2a).
     """
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return _is_bare_component(node.value)
     if isinstance(node, ast.Name):
         if node.id in seen or node.id not in constants:
             return False
-        return _bare_tail(constants[node.id], constants, seen + (node.id,))
+        return _bare_tail(constants[node.id], constants, seen + (node.id,), aliases)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-        return _bare_tail(node.right, constants, seen)
+        return _bare_tail(node.right, constants, seen, aliases)
     if isinstance(node, ast.Call):
         func = node.func
-        if isinstance(func, ast.Name) and func.id == 'Path':
-            return bool(node.args) and _bare_tail(node.args[-1], constants, seen)
+        if isinstance(func, ast.Name):
+            if func.id == 'Path':
+                return bool(node.args) and _bare_tail(node.args[-1], constants, seen,
+                                                     aliases)
+            if _qualified_spelling(func, aliases) in _STDLIB_JOIN_CALLS:
+                # ``from os.path import join as j``: the bare name is the same
+                # call as the dotted spelling, so its tail is judged the same.
+                tail = _joined_tail(node) if node.args else None
+                return tail is not None and _bare_tail(tail, constants, seen, aliases)
         if isinstance(func, ast.Attribute):
             if func.attr in ('joinpath', 'with_name'):
-                return bool(node.args) and _bare_tail(node.args[-1], constants, seen)
-            if func.attr == 'join' and _dotted_spelling(func) in _FILESYSTEM_JOIN_CALLS:
+                return bool(node.args) and _bare_tail(node.args[-1], constants, seen,
+                                                     aliases)
+            if (func.attr == 'join'
+                    and _qualified_spelling(func, aliases) in _FILESYSTEM_JOIN_CALLS):
                 tail = _joined_tail(node)
-                return tail is not None and _bare_tail(tail, constants, seen)
+                return tail is not None and _bare_tail(tail, constants, seen, aliases)
             if func.attr in PATH_CALL_ATTRS:
-                return _bare_tail(func.value, constants, seen)
+                return _bare_tail(func.value, constants, seen, aliases)
     return False
 
 
@@ -2778,7 +2799,7 @@ def _key_contains_whitespace(node, constants, self_path=(), aliases=None):
     rooted = _is_repo_rooted(node, constants)
     segments = _segments(node, constants, self_path)
     if segments is None:
-        segments = _relative_path_segments(node, constants)
+        segments = _relative_path_segments(node, constants, aliases)
     if segments is None:
         if not rooted:
             return False
@@ -2814,21 +2835,28 @@ def _is_path_shape(node, constants, aliases=None):
         return True
     if isinstance(node, ast.BinOp):
         if isinstance(node.op, ast.Div):
-            return _bare_tail(node, constants)
+            return _bare_tail(node, constants, aliases=aliases)
         return _joins_a_path_string(node, constants)   # ``+`` / ``%`` with a path literal
     if isinstance(node, ast.JoinedStr):
         return _joins_a_path_string(node, constants)
     if isinstance(node, ast.Call):
         func = node.func
         if isinstance(func, ast.Name):
-            return (_qualified_spelling(func, aliases) in ('Path', 'pathlib.Path')
-                    and bool(node.args) and _bare_tail(node, constants))
+            qualified = _qualified_spelling(func, aliases)
+            if qualified in ('Path', 'pathlib.Path'):
+                return bool(node.args) and _bare_tail(node, constants, aliases=aliases)
+            if qualified in _STDLIB_JOIN_CALLS:
+                # ``from os.path import join as j``: a bare name is the same
+                # filesystem join as the dotted spelling (r25, review P2a).
+                tail = _joined_tail(node) if node.args else None
+                return tail is not None and _bare_tail(tail, constants, aliases=aliases)
+            return False
         if isinstance(func, ast.Attribute):
             if func.attr in PATH_CALL_ATTRS:
-                return _bare_tail(node, constants)
+                return _bare_tail(node, constants, aliases=aliases)
             if func.attr == 'join':
                 tail = _joined_tail(node) if node.args else None
-                return tail is not None and _bare_tail(tail, constants)
+                return tail is not None and _bare_tail(tail, constants, aliases=aliases)
             if func.attr in ('format', 'format_map'):
                 value = _string_value(func.value, constants)
                 return value is not None and _path_literal_ending_in_file(value)
@@ -3081,13 +3109,17 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         if not isinstance(node, ast.Call):
             return False
         func = node.func
-        if not (isinstance(func, ast.Attribute) and func.attr == 'join'
-                and _string_value(func.value, constants) is None):
+        if isinstance(func, ast.Attribute):
+            if not (func.attr == 'join'
+                    and _string_value(func.value, constants) is None):
+                return False
+        elif not (isinstance(func, ast.Name)
+                  and _qualified_spelling(func, aliases) in _STDLIB_JOIN_CALLS):
             return False
         elements = _joined_elements(node)
         if len(elements) < 2:
             return False
-        if _dotted_spelling(func) in _STDLIB_JOIN_CALLS:
+        if _qualified_spelling(func, aliases) in _STDLIB_JOIN_CALLS:
             for element in elements:
                 value = _string_value(element, constants)
                 if value is not None and value.startswith('/'):
@@ -3108,7 +3140,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         # appears in the expression.
         segments = _segments(node, constants, self_path)
         if segments is None:
-            segments = _relative_path_segments(node, constants)
+            segments = _relative_path_segments(node, constants, aliases)
         # One component is a label, not a repository path the discovery loop
         # could ever key: ``Path(MODES['fast']) / name`` names a mode, and the
         # guard has always stayed silent on it. Only a spelled-out ``dir/…``
@@ -3184,7 +3216,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     def resolve(node, expression):
         segments = _segments(node, constants, self_path)
         if segments is None:
-            segments = _relative_path_segments(node, constants)
+            segments = _relative_path_segments(node, constants, aliases)
         if segments is None:
             if _key_contains_whitespace(node, constants, self_path, aliases):
                 # ``os.path.join(ROOT, '…/my file.rs')``: the join spelling is
@@ -3207,7 +3239,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             # dropped as "no discovery key" while nothing was reported.
             report_unresolvable(expression)
             return False
-        if not _bare_tail(node, constants):
+        if not _bare_tail(node, constants, aliases=aliases):
             # The directory is spelled inline, so the key is findable in the
             # file text — unless the key itself carries whitespace, in which
             # case the host can never schedule it (see ``record``).
@@ -3272,11 +3304,13 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             # the ``pathlib`` methods above, and ``_is_path_shape`` only looks at
             # ``join`` calls ending in a bare literal — so a runtime file name
             # here produced no key and no report at all, while every sibling
-            # spelling of ``SMS / name`` was caught.
+            # spelling of ``SMS / name`` was caught. The spelling goes through
+            # the import map so ``o.path.join(SMS, name)`` is the same call
+            # (r25, review P2a).
             elements = _joined_elements(node)
             if len(elements) < 2:
                 return
-            if _dotted_spelling(func) in _STDLIB_JOIN_CALLS:
+            if _qualified_spelling(func, aliases) in _STDLIB_JOIN_CALLS:
                 for element in elements:
                     value = _string_value(element, constants)
                     if value is not None and value.startswith('/'):
@@ -3785,6 +3819,30 @@ def _unbacked_register_rows(blind, unresolvable, register=None):
             if rel not in blind and rel not in unresolvable]
 
 
+def _duplicate_test_names(source):
+    """``{class name: [duplicated ``def test_`` names]}`` for one module.
+
+    A class body that defines the same test name twice keeps only the last
+    definition, so the earlier one is dead code no run ever executes — that is
+    how a control silently stops existing. The whole file is parsed here so the
+    check below can re-read this very module.
+    """
+    duplicates = {}
+    for node in ast.parse(source).body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        seen, repeated = set(), []
+        for child in node.body:
+            if (isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and child.name.startswith('test_')):
+                if child.name in seen and child.name not in repeated:
+                    repeated.append(child.name)
+                seen.add(child.name)
+        if repeated:
+            duplicates[node.name] = repeated
+    return duplicates
+
+
 class DiscoveryAnchorTests(unittest.TestCase):
     def test_the_registry_is_not_empty(self):
         """An empty or gutted TABLES list must not turn every check vacuous."""
@@ -4030,6 +4088,87 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertEqual(line, expected,
                          'the summary line above KNOWN_BLIND is stale; re-run the sweep and '
                          'rewrite it (see the r6 regeneration script in _tmp)')
+
+    def test_every_test_method_name_is_unique_within_its_class(self):
+        """A duplicated ``def test_`` name silently shadows the earlier one.
+
+        Python keeps the last definition in a class body, so the earlier test
+        becomes dead code and the control it was supposed to carry never runs —
+        the direct subcontainer-alias write spent rounds in exactly that state
+        (r25, review P1). Re-parsing this very module catches the next one
+        before it can hide.
+        """
+        source = (FIXTURES / 'test_negative_discovery_anchors.py').read_text(encoding='utf-8')
+        duplicates = _duplicate_test_names(source)
+        self.assertTrue(duplicates == {},
+                        '#25-P1 a duplicated test method name shadows the '
+                        'earlier definition; rename one of them: '
+                        + repr(duplicates))
+        # The check must itself be falsifiable: a constructed duplicate has to
+        # be flagged, or the green above proves nothing.
+        synthetic = (
+            'class T(unittest.TestCase):\n'
+            '    def test_a(self):\n        pass\n'
+            '    def test_b(self):\n        pass\n'
+            '    def test_a(self):\n        pass\n'
+        )
+        flagged = _duplicate_test_names(synthetic)
+        self.assertTrue(flagged == {'T': ['test_a']},
+                        '#25-P1 the duplicate-name scan did not flag the '
+                        'constructed duplicate: ' + repr(flagged))
+
+    def test_the_readme_followup_numbers_match_the_scan(self):
+        """The README's follow-up paragraph is a numeric copy of the register.
+
+        The summary line above ``KNOWN_BLIND`` is already re-measured, but the
+        README's 跟进清单 paragraph quotes the same numbers in prose and no
+        test read it — a regeneration that rewrote the register but not the
+        README would leave the copy stale (r25, review P2a). The parse is
+        pinned to this phrasing on purpose: rewording the paragraph means
+        rewriting this test, and that binding is the point.
+        """
+        blind, unresolvable = sweep()
+        measured = set(blind) | set(unresolvable)
+        total_keys = sum(len(keys) for keys in blind.values())
+        import_keys = sum(1 for keys in blind.values() for rows in keys.values()
+                          if rows == [IMPORTED_HELPER_REASON])
+        expected = {
+            'registered files': (len(measured),),
+            'two-set split': (
+                sum(1 for rel in measured
+                    if blind.get(rel) and not unresolvable.get(rel)),
+                sum(1 for rel in measured
+                    if unresolvable.get(rel) and not blind.get(rel)),
+                sum(1 for rel in measured
+                    if blind.get(rel) and unresolvable.get(rel))),
+            'gap totals': (len(blind), len(unresolvable)),
+            'keys total and import': (total_keys, import_keys),
+            'bare keys': (total_keys - import_keys,),
+            'unresolvable files and places': (
+                len(unresolvable),
+                sum(len(rows) for rows in unresolvable.values())),
+        }
+        patterns = {
+            'registered files': r'KNOWN_BLIND` 登记 \*\*(\d+) 个文件\*\*',
+            'two-set split': (r'\*\*(\d+) 个仅缺键 \+ (\d+) 个仅含不可解形状'
+                              r' \+ (\d+) 个两者都有\*\*'),
+            'gap totals': r'合计 (\d+) 个文件存在字面缺失、(\d+) 个文件含不可解形状',
+            'keys total and import': (r'字面缺失合计 \*\*(\d+) 条键\*\*'
+                                      r'（其中 \*\*(\d+) 条是共享助手 import 键\*\*'),
+            'bare keys': r'余下 (\d+) 条是裸文件名拼接',
+            'unresolvable files and places': (r'\*\*(\d+) 个文件\*\*含 \*\*(\d+) 处\*\*'
+                                              r'解析器跟不下去的路径形状'),
+        }
+        text = (FIXTURES / 'README.md').read_text(encoding='utf-8')
+        for label, pattern in patterns.items():
+            with self.subTest(number=label):
+                found = [tuple(int(digit) for digit in match.groups())
+                         for match in re.finditer(pattern, text)]
+                self.assertTrue(found == [expected[label]],
+                                '#25-P2a the README follow-up paragraph does '
+                                f'not carry the measured {label} (expected '
+                                f'{expected[label]}, found {found}); rewording '
+                                'the paragraph means rewriting this parse')
 
     def test_tables_declare_their_discovery_anchors(self):
         for name in TABLES:
@@ -4280,6 +4419,29 @@ class DiscoveryAnchorTests(unittest.TestCase):
             problems = violations(synthetic, 'example/negative_controls.py')
             self.assertTrue(any('unresolvable repository path' in p for p in problems),
                             (spelling, problems))
+
+    def test_an_import_aliased_join_with_a_runtime_file_name_fails_closed(self):
+        """``o.path.join(SMS, name)`` is the same hole as ``os.path.join``.
+
+        The alias must reach the *reporting* nets too, not only the keying one:
+        ``o.path.join(SMS, name)`` and ``o.sep.join((str(SMS), name))`` were
+        neither keyed nor reported, while the plain spellings have reported
+        since r15 (r25, review P2a).
+        """
+        for spelling in ("o.path.join(SMS, name)",
+                         "o.sep.join((str(SMS), name))"):
+            synthetic = (
+                "import os as o\n"
+                "ROOT = Path(__file__).resolve().parents[5]\n"
+                "SMS = ROOT / 'src/example/x'\n"
+                "DISCOVERY_ANCHORS = ()\n"
+                "def row(name):\n"
+                f"    return {spelling}\n"
+            )
+            problems = violations(synthetic, 'example/negative_controls.py')
+            self.assertTrue(any('unresolvable repository path' in p for p in problems),
+                            '#25-P2a the aliased join hid the runtime file '
+                            f'name: {spelling}: {problems}')
 
     def test_a_local_rebound_by_a_loop_target_fails_closed(self):
         """Assign-then-``for`` is the same ambiguity as assign-then-assign.
@@ -4945,6 +5107,50 @@ class DiscoveryAnchorTests(unittest.TestCase):
                     any('missing anchor: sms/mod.rs' in problem for problem in problems),
                     problems)
 
+    def test_an_import_aliased_filesystem_join_is_keyed_like_the_plain_spelling(self):
+        """``import os as o`` reaches the same joins as ``import os``.
+
+        ``o.path.join('…/sms', 'mod.rs')`` and ``o.sep.join((...))`` built the
+        same ``sms/mod.rs`` as the plain spellings, yet the join resolvers read
+        only the dotted spelling, so an aliased join was neither keyed nor
+        reported — the table looked self-contained while the discovery loop
+        could never schedule it (r25, review P2a). The bare-name alias
+        ``from os.path import join as j`` and ``from os import sep`` are the
+        same hole with the import spelled differently.
+        """
+        shapes = {
+            'o.path.join': "import os as o\nrows = [o.path.join('sms', 'mod.rs')]",
+            'o.sep.join': "import os as o\nrows = [o.sep.join(('sms', 'mod.rs'))]",
+            'join as j': "from os.path import join as j\nrows = [j('sms', 'mod.rs')]",
+            'sep by name': "from os import sep\nrows = [sep.join(('sms', 'mod.rs'))]",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body + "\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('missing anchor: sms/mod.rs' in problem for problem in problems),
+                    '#25-P2a the aliased join was not keyed: ' + repr(problems))
+
+    def test_a_non_path_call_through_a_module_alias_stays_silent(self):
+        """The reverse control: ``o.getenv(...)`` is not a path build.
+
+        Resolving the alias must widen only the join family, not turn every
+        ``o.<attr>`` call into a suspect: a module alias used for something
+        other than a path build stays silent.
+        """
+        synthetic = (
+            "import os as o\n"
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [o.getenv('HOME')]\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
     def test_string_joins_that_are_not_paths_stay_silent(self):
         """The same shape builds labels and argument lists, so it stays out.
 
@@ -4973,12 +5179,15 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 )
                 self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
-    def test_a_write_through_a_nested_alias_invalidates_the_container(self):
+    def test_a_write_through_a_direct_subcontainer_alias_invalidates_the_container(self):
         """``ALIAS = CH['a']`` names the *same* inner dictionary.
 
         ``ALIAS['b'] = ...`` therefore rewrites what ``CH['a']['b']`` reads.
         Pairing the names is what closes the hole: without it the stale
-        literal was keyed while the runtime used the new one.
+        literal was keyed while the runtime used the new one. (Named
+        ``..._nested_alias_...`` until r25, when that name turned out to be
+        shadowed by the two-hop-chain test below — the definition here was
+        dead code no run ever executed.)
         """
         synthetic = (
             "ROOT = Path(__file__).resolve().parents[5]\n"
@@ -5108,15 +5317,27 @@ class DiscoveryAnchorTests(unittest.TestCase):
 
         Joining the pieces verbatim demanded an anchor for ``tmp/mod.rs``, a
         repository key the code never builds — the reset is what makes the call
-        name nothing the discovery loop can key.
+        name nothing the discovery loop can key. The module alias resets the
+        same way (r25): before the alias-aware spelling, ``o.path.join('sms',
+        '/tmp', 'mod.rs')`` was *reported* while the plain spelling stayed
+        silent — over-reporting, but two spellings of one call disagreeing is
+        a drift of its own.
         """
-        synthetic = (
-            "import os\n"
-            "from pathlib import Path\n"
-            "DISCOVERY_ANCHORS = ()\n"
-            "rows = [os.path.join('sms', '/tmp', 'mod.rs')]\n"
-        )
-        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+        shapes = {
+            'plain': "import os\nrows = [os.path.join('sms', '/tmp', 'mod.rs')]",
+            'module alias': "import os as o\nrows = [o.path.join('sms', '/tmp', 'mod.rs')]",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body + "\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(problems == [],
+                                '#25-P2a the aliased absolute reset disagreed '
+                                'with the plain spelling: ' + repr(problems))
 
     def test_a_drive_prefixed_join_argument_is_reported(self):
         """``C:/tmp`` is absolute on Windows and relative on POSIX.
@@ -6283,17 +6504,56 @@ class DiscoveryAnchorTests(unittest.TestCase):
             problems)
 
     def test_a_relative_join_after_chdir_is_reported(self):
-        """The same premise break applies to a spelled-out relative join."""
+        """The same premise break applies to a spelled-out relative join.
+
+        The join spelling goes through the import map (r25): ``o.chdir`` used
+        to invalidate the working directory, yet the *relative join* after it
+        still had to be spelled ``os.path.join`` or it was keyed from a
+        directory the runtime had left.
+        """
+        shapes = {
+            'plain': ("import os\n"
+                      "os.chdir('src/pilotdeck-gateway/src/channel')\n"
+                      "rows = [os.path.join('sms', 'mod.rs')]\n"),
+            'module alias': ("import os as o\n"
+                             "o.chdir('src/pilotdeck-gateway/src/channel')\n"
+                             "rows = [o.path.join('sms', 'mod.rs')]\n"),
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n"
+                    + body
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem for problem in problems),
+                    '#25-P2a the aliased relative join after chdir was keyed '
+                    f'or silent: {label}: {problems}')
+
+    def test_an_aliased_join_in_a_sys_path_insertion_is_reported(self):
+        """``s.path.insert(0, o.path.join(ROOT, 'src/…'))`` inserts a repo dir.
+
+        The directory literal arrives through the join, and the join is
+        spelled through a module alias: neither the old string read nor the
+        old manual head resolution followed ``o.path.join``, so the insertion
+        was silent while ``os.path.join`` spelled the same one red (r25,
+        review P2a).
+        """
         synthetic = (
-            "import os\n"
+            "import os as o\n"
+            "import sys as s\n"
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
             "DISCOVERY_ANCHORS = ()\n"
-            "os.chdir('src/pilotdeck-gateway/src/channel')\n"
-            "rows = [os.path.join('sms', 'mod.rs')]\n"
+            "s.path.insert(0, o.path.join(ROOT, 'src/pilotdeck-gateway/src/channel'))\n"
         )
         problems = violations(synthetic, 'example/negative_controls.py')
         self.assertTrue(
-            any('unresolvable repository path' in problem for problem in problems),
-            problems)
+            any('unsupported sys.path insertion' in problem for problem in problems),
+            '#25-P2a the aliased join hid the inserted repository directory: '
+            + repr(problems))
 
     def test_a_chdir_alias_makes_the_working_directory_unknowable(self):
         """``from os import chdir as cd`` reaches the same call.
