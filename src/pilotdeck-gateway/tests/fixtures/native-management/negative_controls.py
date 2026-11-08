@@ -57,7 +57,7 @@ mutations = [
     ('limit-fraction-truncated', SOURCE, 'n.fract() == 0.0 && (1.0..=100.0).contains(n)', '(1.0..=100.0).contains(n)', TEST, '#1231 method wire result'),
     ('missing-project-defaulted', SOURCE, 'validate_command_project(params)?;', 'if false { validate_command_project(params)?; }', TEST, '#1231 method wire result'),
     ('host-boundary-leaked', SOURCE, 'if e.requires_host {\n        return unavailable();\n    }', 'if false && e.requires_host {\n        return unavailable();\n    }', ADMISSION, '#1231 host-dependent skill rejected'),
-    ('surrogate-target-accepted', SOURCE, 'metadata.resolve_dialog_project(&JsString::from_utf16(project_key.to_vec()))', 'metadata.resolve_dialog_project(&JsString::from(String::from_utf16_lossy(project_key)))', 'native_process::management_tests::snapshot_restore_uses_registered_target_project_without_touching_its_files', '#1231 surrogate restore target admission'),
+    ('surrogate-target-accepted', SOURCE, 'let project = metadata.resolve_dialog_project(&JsString::from_utf16(project_key.to_vec()));', 'let project = metadata.resolve_dialog_project(&JsString::from(String::from_utf16_lossy(project_key)));', 'native_process::management_tests::snapshot_restore_uses_registered_target_project_without_touching_its_files', '#1231 surrogate restore target admission'),
     ('capability-invented-always_on_apply', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in }',
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "always_on_apply", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'),
