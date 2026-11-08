@@ -4797,3 +4797,7 @@ SDK文件回退已在Unix接O_NONBLOCK同fd普通文件检查及65536+1有界读
 ### 2026-11-08 · TUI 输入编辑与有界粘贴（Codex/Terra，仅本机）
 
 字素编辑、64KiB粘贴边界、拆包控制序列及信号恢复已实现；旧回归发现等待/new时批量草稿丢失，改为独立TextBatch保留编辑、仍阻止提前提交。mbp2 r5严格clippy/35库测试/build、26输入+18信号+18旧交互全PASS，399源码/原件哈希匹配，独立复核无确认P0/P1；Darwin全F_GETFL假失败已有纯PTY写正控，原始失败均保留主仓 `_tmp/20261108-cli-tui/input-implementation/`。新D4差异待人复核，不等同完整D4/native权限/history/local fallback或真人实效。HOME首片已在Sol树本地提交、setup延迟解析继续；刚fetch上游ee138b9ee的装配生命周期未改变，#1959未提交清理仍与LocalHost重叠，继续独立产品接线。无GitHub写、本机无Rust编译。
+
+### 2026-11-08 · HOME 未设账户回退首片（Codex，候选冻结）
+
+CLI路径与skills migrate现区分真实进程环境/注入环境，HOME未设时仅同real/effective UID的UTF8系统账户安全回退；既存HOME含空/相对值保持，synthetic测试只读注入fake home。mbp2 r1 fmt/严格clippy、paths10普通+实际ignored字符串探针1、skills_migrate14与build全PASS；只比较OS home字符串，不在其路径做任何fs IO。3源hash与bin73de92635ee689a5786697fa5da20946424666eb0bd4b2e01716669e66a2c24b见fixture README；Python3.9 driver首轮hashlib接口错误原件保留，兼容修复后r2实际exit0/Rust1passed/scratchEntries=[]，root非作者独审无确认P0/P1，不冒称两家formal gate/人签字。setup/bare~空相对/cwd分别后续片，SDK保持冻结，未新增冻结豁免、未标完整CLI完成。仅本机交付、无GitHub写入。

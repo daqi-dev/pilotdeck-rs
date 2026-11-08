@@ -59,3 +59,14 @@
 - 建议与决定：**AI代批，待人复核**采用65536原始字节上限，FIFO/其他已打开特殊文件和超限明确退出1；目录/EACCES等普通IO仍旧token-required。空flag不是空env：真实readValue过滤空flag而回退env；空env不回退，argv/env空白原样、文件UTF8 lossy与trim不变。
 - 原则与断言：读器必须绑定已打开fd，不能以路径预检假称安全；实际增长/替换FIFO barrier、64KiB边界、19格整TS+真实Rust CLI/15命令族资源组合核原件/零连接。延迟3秒writer正控仅TS实际执行，Rustactive pipe不消费不是时序对拍；不以null stdin声称开放stdin等待顺序。
 - 边界：只修SDK文件来源，不称cron/default remote等已保护；旧serializer继续，不扩D1字节顺序判据。故障FS内核IO和跨写者事务不在保证内，真实provider/认证服务和真人签字待验；全部Rust仅mbp2、本机只编辑/离线实采，不推GitHub。
+
+
+## 2026-11-08 · HOME 未设的首片范围
+
+- 卡在哪：CLI 私有 homedir 在 HOME absent 时直接 TODO，固定 TS/Node 则查询系统账户；技能迁移还直接要求 HOME，单改 tilde 展开不足以接通。
+- 谁受影响：Unix 真实进程 HOME absent 的普通账户、现有路径展开及 skills migrate；HOME 存在包括空/相对继续原值，bare `~` 的既有额外 resolve、setup 独立目录计算与 cwd 启动先后另片串行。SDK 文件读器已经冻结，不修改。
+- 能否撤回：可以，只增加已有 TODO 的原生实现，无格式迁移；不改 Gateway API、默认写目标规则或冻结装置。
+- 选项与后果：直接用 std fallback 处理注入 Env 会把真实宿主 home 混入隔离测试；新增 libc unsafe 被工作区禁止；复制 Gateway 的失败后 `/` fallback 无 TS 成功依据。采用标明来源的 Env 与 HOME-only 延迟输入，synthetic 只用注入 fallback，真实 process 才调用安全标准库。
+- 建议与决定：**AI 代批，待人复核**。协调者明确允许 CLI manifest 加 rustix process。只有 snapshot 与实际进程均 HOME absent、real/effective UID 相同且查询前后未变化时才用 std::env::home_dir；UTF8 账户 home 成功返回，缺账户/非UTF8/不同UID/环境变化明确 TODO，未实测不得伪造空值或根路径。非 Unix 保持未实现，不宣称平台运行已验。
+- 原则与断言：可注入环境不能悄悄读取宿主环境；真实账户 home 仅取字符串做与固定 Node 的比对，不执行其路径的任何 fs 操作。普通单测以隔离 fake account 覆盖优先级和完整迁移 report；真实 HOME-unset 只运行路径专用 ignored probe，禁止生产技能扫描。
+- 批准与验证：这是恢复固定 TS 的普通账户语义，不新增已接受差异或冻结豁免；异常账户未支持仍据实列出。所有 Rust runtime 由协调者在 mbp2 执行，未完成不报通过。后续 setup 与裸 tilde 另片审查，不扩大本片修复声明。
