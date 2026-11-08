@@ -47,6 +47,9 @@ impl AlwaysOnRunContextRegistry {
 struct PhaseTool { fields: JsObject, name: &'static str, read_only: bool, entry: Arc<PhaseHandlerEntry> }
 impl ToolDefinition for PhaseTool {
     fn fields(&self) -> &JsObject { &self.fields }
+    fn required_runtime_capabilities(&self) -> Option<Vec<JsString>> {
+        Some(vec!["always_on_run_context".into()])
+    }
     fn is_read_only(&self, _: &JsValue) -> Result<JsValue, HostError> { Ok(JsValue::Bool(self.read_only)) }
     fn is_concurrency_safe(&self, _: &JsValue) -> Result<JsValue, HostError> { Ok(JsValue::Bool(self.read_only)) }
 }
@@ -125,6 +128,9 @@ mod tests {
         let handles = register_tools(&registry, contexts.clone(), &session).unwrap();
         assert_eq!(handles.len(), 4);
         let report = registry.get(&"always_on_report".into()).expect("report registered");
+        let descriptor = crate::host::modules::capability::serialize_tool_descriptor(report.as_ref());
+        assert_eq!(descriptor.get("requiredRuntimeCapabilities"),
+            Some(&JsValue::Array(vec!["always_on_run_context".into()])));
         report.execute(JsValue::Object(JsObject::new()), context()).await.unwrap();
         assert_eq!(*handler.0.lock().unwrap(), ["always_on_report"]);
         contexts.unregister(&session.to_utf8().unwrap());
