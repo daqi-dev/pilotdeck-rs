@@ -39,8 +39,8 @@ const SNIP_BOUNDARY_TEXT_PREFIX: &str = "<snip-boundary";
 pub fn create_snip_boundary(turns_snipped: usize, head_turns: f64, tail_turns: f64) -> JsValue {
     let text = format!(
         "{SNIP_BOUNDARY_TEXT_PREFIX} turnsSnipped=\"{turns_snipped}\" headTurns=\"{}\" tailTurns=\"{}\" />",
-        crate::js_value::number_string(head_turns),
-        crate::js_value::number_string(tail_turns)
+        pilotdeck_protocol::number::number_to_string(head_turns),
+        pilotdeck_protocol::number::number_to_string(tail_turns)
     );
     object([
         ("role", JsValue::String("user".into())),

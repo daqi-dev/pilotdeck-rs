@@ -17,7 +17,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[5]
 text = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/text.rs'
 storage = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/storage.rs'
-js_value = root / 'src/pilotdeck-gateway/src/js_value.rs'
+js_value = root / 'src/pilotdeck-protocol/src/coercion.rs'
 
 GENERIC = 'heartbeat_helpers_match_ts'
 DEPTH = 'kv_detail_depth_error_is_reported_not_panicking'
@@ -26,8 +26,8 @@ DEPTH = 'kv_detail_depth_error_is_reported_not_panicking'
 mutations = [
     # 10. The shared depth bound stops rejecting 2001 containers.
     ('kv-depth-bound', js_value,
-     'pub(crate) const MAX_ARRAY_DEPTH: usize = 2000;',
-     'pub(crate) const MAX_ARRAY_DEPTH: usize = 3001;',
+     'pub const MAX_ARRAY_DEPTH: usize = 2000;',
+     'pub const MAX_ARRAY_DEPTH: usize = 3001;',
      DEPTH, "Rust's shared 2000-container bound rejects 2001"),
     # 11. Heartbeat still uses the shared truthiness helper.
     ('shared-truthy', storage,
