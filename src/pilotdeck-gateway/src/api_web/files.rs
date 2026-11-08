@@ -10,7 +10,8 @@
 //! A4-FILE-TOCTOU-001 NOFOLLOW descriptor walk once the realpath gate passes,
 //! so a component swapped inside the window fails closed instead of carrying
 //! the request out of the workspace. Registered in
-//! `specs/gateway-parity/diffs/A8.4-API-WEB-002.md`.
+//! `specs/gateway-parity/diffs/A8.4-API-WEB-002.md` (approved by its R1
+//! correction, `A8.4-API-WEB-002-R1`).
 use base64::Engine;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -84,24 +85,7 @@ impl ProjectFileService {
         #[cfg(test)]
         test_hook::notify("tree");
         let mut rows = self.tree_rows(relative, &target)?;
-        let collator =
-            crate::project_files::node_collator(&crate::node_locale::node_locale(|key| {
-                std::env::var(key).ok()
-            }))
-            .map_err(|_| FilesError::Message("Collation data unavailable.".to_owned()))?;
-        rows.sort_by(|(left_dir, left_name, _), (right_dir, right_name, _)| {
-            match (left_dir, right_dir) {
-                (true, false) => Ordering::Less,
-                (false, true) => Ordering::Greater,
-                // localeCompare keeps unpaired-surrogate order through the
-                // shared comparator's unit remap.
-                _ => crate::project_files::node_compare_utf16(
-                    &collator,
-                    &JsString::from(left_name.as_str()),
-                    &JsString::from(right_name.as_str()),
-                ),
-            }
-        });
+        sort_tree_rows(&mut rows)?;
         let entries = rows
             .into_iter()
             .map(|(_, _, entry)| JsValue::Object(entry))
@@ -194,6 +178,10 @@ impl ProjectFileService {
         // have run, so a test may replace a component before the write.
         #[cfg(test)]
         test_hook::notify("write");
+        // #1764: Node's own write-path refusals, in TS order.
+        if !crate::mutants::on("api-web-node-write-refusal-off") {
+            node_write_refusal(&target)?;
+        }
         self.write_bytes(relative, &target, &bytes)
     }
 
@@ -217,9 +205,14 @@ impl ProjectFileService {
         entry.insert("type".into(), JsValue::from(kind.name()));
         if let Some((size, mtime)) = stats {
             entry.insert("size".into(), JsValue::Number(size as f64));
+            // #1691: `Date#toISOString` of the stat mtime is the transport's
+            // shared `format_epoch_iso` (Node v22.22.0-equivalent for the
+            // whole epoch domain, extended years included — the local copy
+            // this file used to carry is deleted; the equivalence is pinned
+            // in the transport's own tests and below).
             entry.insert(
                 "modifiedAt".into(),
-                JsValue::from(to_iso_string(mtime).as_str()),
+                JsValue::from(pilotdeck_transport::system_clock::format_epoch_iso(mtime).as_str()),
             );
         }
         (kind == EntryKind::Directory, name.to_owned(), entry)
@@ -696,39 +689,42 @@ fn node_relative(from: &Path, to: &Path) -> String {
     parts.join("/")
 }
 
-/// `Date#toISOString` of a stat mtime: UTC, milliseconds always three
-/// digits, the nanosecond stat truncated to whole milliseconds.
-fn to_iso_string(ms: i64) -> String {
-    let seconds = ms.div_euclid(1000);
-    let millis = ms.rem_euclid(1000);
-    let days = seconds.div_euclid(86_400);
-    let day_seconds = seconds.rem_euclid(86_400);
-    // Howard Hinnant's civil-from-days, the standard days-to-ymd form.
-    let shifted = days + 719_468;
-    let era = if shifted >= 0 {
-        shifted
-    } else {
-        shifted - 146_096
-    } / 146_097;
-    let day_of_era = shifted - era * 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let year = year_of_era + era * 400;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_shift = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_shift + 2) / 5 + 1;
-    let month = if month_shift < 10 {
-        month_shift + 3
-    } else {
-        month_shift - 9
-    };
-    let year = if month <= 2 { year + 1 } else { year };
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}.{millis:03}Z",
-        day_seconds / 3600,
-        (day_seconds % 3600) / 60,
-        day_seconds % 60
-    )
+/// `name.localeCompare` ordering of the tree rows: directories first, then
+/// the shared comparator's unit remap. #1740: the locale-resolved collator is
+/// cached per thread per locale — `node_collator`'s value holds only baked
+/// `'static` ICU data, so it stashes whole in a thread-local map. The locale
+/// itself is still resolved from the environment on every call, so a `LANG`
+/// change takes effect on the next tree; the sort answers are unchanged, only
+/// the per-request rebuild goes away.
+fn sort_tree_rows(rows: &mut [(bool, String, JsObject)]) -> Result<(), FilesError> {
+    thread_local! {
+        static COLLATORS: std::cell::RefCell<
+            std::collections::HashMap<icu_locale_core::Locale, icu_collator::CollatorBorrowed<'static>>,
+        > = std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    COLLATORS.with_borrow_mut(|cache| {
+        let locale = crate::node_locale::node_locale(|key| std::env::var(key).ok());
+        if !cache.contains_key(&locale) {
+            let collator = crate::project_files::node_collator(&locale)
+                .map_err(|_| FilesError::Message("Collation data unavailable.".to_owned()))?;
+            cache.insert(locale.clone(), collator);
+        }
+        let collator = cache.get(&locale).expect("the locale was just inserted");
+        rows.sort_by(|(left_dir, left_name, _), (right_dir, right_name, _)| {
+            match (left_dir, right_dir) {
+                (true, false) => Ordering::Less,
+                (false, true) => Ordering::Greater,
+                // localeCompare keeps unpaired-surrogate order through the
+                // shared comparator's unit remap.
+                _ => crate::project_files::node_compare_utf16(
+                    collator,
+                    &JsString::from(left_name.as_str()),
+                    &JsString::from(right_name.as_str()),
+                ),
+            }
+        });
+        Ok(())
+    })
 }
 
 fn mtime_ms(stats: &fs::Metadata) -> i64 {
@@ -808,6 +804,89 @@ fn sys_error(error: &io::Error, syscall: &str, path: &Path) -> FilesError {
     FilesError::Message(
         crate::node_io::diagnostic_or_unknown(error, syscall, Some(&path.to_string_lossy())).1,
     )
+}
+
+/// #1764: the two refusals Node's write path answers before this replica's
+/// walk runs, in TS order. TS writes run `mkdir(dirname(target), {recursive:
+/// true})` first and `writeFile(target)` second, and both calls validate their
+/// own path argument (no NUL bytes) before any syscall; the write's open then
+/// refuses a directory target with EISDIR. Measured against node v22.22.0
+/// (`_tmp/20261026-issue-2354/ts-probe/probe-output.txt`): `path: "."` and a
+/// `path: "sub"` naming an existing directory answer `EISDIR: illegal
+/// operation on a directory, open '<root>'` / `'<root>/sub'`, and a NUL in the
+/// path answers Node's argument-validation text with the received value
+/// rendered by `util.inspect`. The old replica answered a bare InvalidInput
+/// for the root itself and an EINVAL for a NUL.
+fn node_write_refusal(target: &Path) -> Result<(), FilesError> {
+    // The mkdir's argument is checked first: a NUL in a directory component
+    // of the target is refused with the parent path as received.
+    if let Some(parent) = target.parent() {
+        let parent = parent.to_string_lossy();
+        if parent.contains('\0') {
+            return Err(null_byte_refusal(&parent));
+        }
+    }
+    let text = target.to_string_lossy();
+    if text.contains('\0') {
+        return Err(null_byte_refusal(&text));
+    }
+    // The write's open on a directory target (the root itself for `.`).
+    if fs::metadata(target).is_ok_and(|stats| stats.is_dir()) {
+        return Err(sys_error(
+            &io::Error::from_raw_os_error(libc::EISDIR),
+            "open",
+            target,
+        ));
+    }
+    Ok(())
+}
+
+/// Node's ERR_INVALID_ARG_VALUE text for a NUL-bearing path argument: the
+/// received value in `util.inspect`'s string form.
+fn null_byte_refusal(path: &str) -> FilesError {
+    FilesError::Message(format!(
+        "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}",
+        node_inspect(path)
+    ))
+}
+
+/// `util.inspect`'s string quoting of the received path (node v22.22.0,
+/// measured `_tmp/20261026-issue-2354/ts-probe/node-nul-render*.txt`): double
+/// quotes only when the value contains a single quote and no double quote;
+/// the backslash and the active quote escape (`\b` `\t` `\n` `\f` `\r` by
+/// name, `\v` renders `\x0B`); every other character below 0x20 plus the
+/// 0x7F–0xA0 range render `\xHH` with uppercase hex letters; everything else
+/// — NBSP and the replacement character the JS-to-fs boundary already
+/// substituted for lone surrogates included — is verbatim.
+fn node_inspect(value: &str) -> String {
+    let quote = if value.contains('\'') && !value.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push(quote);
+    for character in value.chars() {
+        let code = character as u32;
+        match character {
+            '\\' => out.push_str("\\\\"),
+            _ if character == quote => {
+                out.push('\\');
+                out.push(character);
+            }
+            '\u{08}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            _ if code < 0x20 || (0x7f..0xa0).contains(&code) => {
+                out.push_str(&format!("\\x{code:02X}"));
+            }
+            _ => out.push(character),
+        }
+    }
+    out.push(quote);
+    out
 }
 
 #[cfg(test)]

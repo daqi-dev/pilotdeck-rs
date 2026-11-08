@@ -2,10 +2,10 @@
 """#1348 compiled controls: compile every switch once, then run the selected
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
-mutates exactly one api-web route or file-service gate and is killed by the
-replay cell or boundary probe that pins that gate (7 switches). Run one sample
-in the authoring session; the coordinator runs the complete list after the
-patch is committed.
+mutates exactly one api-web route, file-service gate or #2354 dispatch seam
+and is killed by the replay cell or boundary probe that pins that gate
+(10 switches). Run one sample in the authoring session; the coordinator runs
+the complete list after the patch is committed.
 """
 import argparse
 import os
@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = ROOT / 'src/pilotdeck-gateway/tests/fixtures'
 ROUTER = ROOT / 'src/pilotdeck-gateway/src/api_web.rs'
 FILES = ROOT / 'src/pilotdeck-gateway/src/api_web/files.rs'
+NATIVE_HTTP = ROOT / 'src/pilotdeck-gateway/src/native_http.rs'
 PREFIX = 'api_web::tests::'
 switches = [
     # bearer gate off: the missing-authorization cell is served the project
@@ -59,11 +60,26 @@ switches = [
       '#1675 mutated: a raced read served content from outside the workspace',
       '#1675 mutated: the race window resolved a middle component outside the workspace',
       '#1675 mutated: the race window listed outside the workspace']),
+    # #2354 dispatch off: the whole `/api/web/` branch in the native HTTP
+    # entry declines, so the hit cell falls through to the static 404 instead
+    # of the project list.
+    ('native-http-api-web-off', NATIVE_HTTP, 'projects_ok', '#1348 cell projects-ok normalized response'),
+    # #1765 admission off: the branch runs without the llhttp-equivalent
+    # gates, so the bad-method cell reaches the router's 404 instead of the
+    # parser's bare 400 + close.
+    ('api-web-admission-off', NATIVE_HTTP, 'gate_bad_method_is_parser_bare_400',
+     '#1765 the bad-method gate answers the parser bare 400 before the route group'),
+    # #1764 write refusal off: the root write falls back to the raw fs error
+    # (bare InvalidInput) instead of Node's EISDIR text with the target path.
+    ('api-web-node-write-refusal-off', FILES, 'write_to_the_project_root_answers_node_eisdir',
+     "#1764 the root write answers Node's EISDIR text with the target path"),
 ]
-GUARDED = [ROUTER, FILES, ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
+GUARDED = [ROUTER, FILES, NATIVE_HTTP, ROOT / 'src/pilotdeck-gateway/src/api_web/tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/native_http/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
+    ROOT / 'src/pilotdeck-gateway/tests/common/replay_normalize.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml', ROOT / 'src/Cargo.toml', ROOT / 'src/Cargo.lock',
     FIXTURES / '_shared/mutant_switch.py', FIXTURES / 'negative_suite.py', FIXTURES / 'negative_process.py',
     Path(__file__), Path(__file__).with_name('oracle.json'),

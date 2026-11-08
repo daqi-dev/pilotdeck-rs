@@ -6,6 +6,9 @@ stdin 六格挂起，动态 UUID 仍按字面比较；
 #1151 已批准严格的业务行后 Node 尾段归一化及四格 4003 close reason 差异。
 #1164 选 B 已批准八格未处理 rejection 的 stderr 差异，精确范围见
 `specs/gateway-parity/diffs/D1-SDK-SIGNAL-UNHANDLED-REJECTION-001.md`。产品变异负控独立于数据负控。
+上述第 5 行的字面 UUID 比较差异（`{run,resume}--unknown-cleanup` 两格的
+`recovery.runId`）已登记为 `specs/gateway-parity/diffs/D1-SDK-SIGNAL-RUNID-LITERAL-001.md`
+（#2165 人拍 2，登记正文见本文件下文）。
 
 ## 矩阵与原件
 
