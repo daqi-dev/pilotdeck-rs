@@ -182,7 +182,10 @@ struct StopFlagRestore {
 
 impl Drop for StopFlagRestore {
     fn drop(&mut self) {
-        self.inner.state.lock().unwrap().stopped = self.stopped;
+        // Poison-recovering lock (MM r3 full-range concurrency#2): a Drop
+        // must not panic — .unwrap() on a poisoned state mutex would turn a
+        // setup() unwind into a double panic / process abort.
+        crate::runtime::cleanup_task::lock(&self.inner.state).stopped = self.stopped;
     }
 }
 
