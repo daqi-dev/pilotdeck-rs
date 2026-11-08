@@ -13,3 +13,7 @@ CARGO_TARGET_DIR="$PWD/_build/cargo-target" cargo run --locked --manifest-path s
 ```
 
 示例仍依赖本 checkout 的 workspace 元数据、LICENSE 和 Protocol，验证链接和边界，不表示可搬移发行、Kernel 宿主映射完成或产品端到端验收。不要在示例内生成深层 target。
+
+路由以原 Module2 的 `payload.operation` 为权威；顶层同名扩展缺失、冲突或错型均不改变它。已接收的 module_call 成功和拒绝均返回携带原 `inReplyTo`、`requestId` 的 response；拒绝保留 code/message/retryability，不转成流级 error。
+
+无损入口只完成原协议验证并返回值，不直接执行 HostExchange；serde interop 路由仍受前述 UTF16 表示范围限制。UTC 秒级辅助函数不等同于 transport 毫秒事件时钟，也不承担生命周期时间权威。独立消费者的持续 CI 覆盖归跟进 #2560，当前仅声明已实际执行的 locked 验证。

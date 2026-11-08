@@ -2,7 +2,7 @@
 use serde_json::{Map, Value};
 
 /// Module Protocol 版本（与 sidecar 握手声明的版本一致）。
-pub const MODULE_PROTOCOL_VERSION: &str = "2.0";
+pub use pilotdeck_protocol::MODULE_PROTOCOL_VERSION;
 
 /// 帧错误：`code` 与 sidecar 的 `ValidationError::code` 同名。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,6 +144,7 @@ pub struct RequestFrame {
 /// 一个响应帧（`kind=response`）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResponseFrame {
+    pub request_id: Option<String>,
     pub message_id: String,
     pub in_reply_to: String,
     pub ok: bool,
@@ -159,6 +160,7 @@ impl ResponseFrame {
     /// 构造一个"已受理"响应（host → sidecar）。
     pub fn accepted(message_id: impl Into<String>, in_reply_to: impl Into<String>) -> Self {
         Self {
+            request_id: None,
             message_id: message_id.into(),
             in_reply_to: in_reply_to.into(),
             ok: true,
@@ -178,6 +180,7 @@ impl ResponseFrame {
         code: impl Into<String>,
     ) -> Self {
         Self {
+            request_id: None,
             message_id: message_id.into(),
             in_reply_to: in_reply_to.into(),
             ok: false,
@@ -315,6 +318,7 @@ fn project(raw: Value) -> Result<Frame, FrameError> {
             raw,
         })),
         Some("response") => Ok(Frame::Response(ResponseFrame {
+            request_id: optional_string(map, "requestId"),
             message_id: required(map, "messageId")?,
             in_reply_to: required(map, "inReplyTo")?,
             ok: map
@@ -380,6 +384,9 @@ fn response_value(response: &ResponseFrame) -> Value {
         "inReplyTo".to_string(),
         Value::from(response.in_reply_to.clone()),
     );
+    if let Some(request_id) = &response.request_id {
+        object.insert("requestId".into(), Value::from(request_id.clone()));
+    }
     object.insert("ok".to_string(), Value::from(response.ok));
     if response.final_field {
         object.insert("final".to_string(), Value::from(true));

@@ -20,7 +20,8 @@ fn every_public_host_method_routes_once_and_preserves_correlation_and_payload() 
     assert_eq!(HOST_METHODS.len(), 24);
     for (index, method) in HOST_METHODS.iter().enumerate() {
         let id = format!("request-{index}");
-        let payload = json!({"nullable":null,"extension":{"value":[1,"a"]}});
+        let payload =
+            json!({"operation":method.method,"nullable":null,"extension":{"value":[1,"a"]}});
         let raw = json!({"kind":"request","messageId":id,"method":"module_call","runId":"original-run","operationId":"original-operation","requestId":"original-request","module":method.module,"operation":method.method,"payload":payload}).to_string();
         let Frame::Request(request) = decode_line(&raw).unwrap() else {
             panic!("request expected")
@@ -63,7 +64,7 @@ fn validation_errors_are_owned_by_the_original_protocol() {
 fn unknown_operation_and_lifecycle_cannot_invoke_the_exchange() {
     let exchange = Echo::default();
     for raw in [
-        r#"{"kind":"request","messageId":"m","method":"module_call","runId":"r","operationId":"o","requestId":"q","module":"model","operation":"not-installed","payload":{}}"#,
+        r#"{"kind":"request","messageId":"m","method":"module_call","runId":"r","operationId":"o","requestId":"q","module":"model","payload":{"operation":"not-installed"}}"#,
         r#"{"kind":"request","messageId":"m","method":"hello","payload":{}}"#,
     ] {
         let Frame::Request(request) = decode_line(raw).unwrap() else {
@@ -76,7 +77,14 @@ fn unknown_operation_and_lifecycle_cannot_invoke_the_exchange() {
             Frame::Response(reply) => {
                 assert_eq!(reply.in_reply_to, "m");
                 assert!(!reply.ok);
-                assert_eq!(reply.code.as_deref(), Some("HOST_LIFECYCLE_UNSUPPORTED"));
+                assert_eq!(
+                    reply.code.as_deref(),
+                    Some(if request.method == "module_call" {
+                        "HOST_METHOD_UNSUPPORTED"
+                    } else {
+                        "HOST_LIFECYCLE_UNSUPPORTED"
+                    })
+                );
             }
             Frame::Error(error) => {
                 assert_eq!(error.message_id, "response");

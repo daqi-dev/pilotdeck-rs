@@ -10,7 +10,7 @@
 use serde_json::Value;
 
 use crate::host_methods::host_method;
-use crate::protocol::{ErrorFrame, Frame, RequestFrame, ResponseFrame, Retryability};
+use crate::protocol::{Frame, RequestFrame, ResponseFrame, Retryability};
 
 /// 一次宿主调用（`module_call` 的 module/method/payload）。
 #[derive(Clone, Debug, PartialEq)]
@@ -83,33 +83,37 @@ fn dispatch_module_call(
     response_id: String,
 ) -> Frame {
     let Some(target) = request.module else {
-        return Frame::Error(ErrorFrame::new(
+        return rejected(
+            request,
             response_id,
-            "HOST_CALL_INVALID",
-            "module_call is missing a valid module target",
-            Retryability::Unsafe,
-        ));
+            HostError::invalid("module_call is missing a valid module target"),
+        );
     };
-    // `module_call` 的宿主操作名在**顶层 `operation`**（与 `module` 同级），不在 payload 里。
+    // 原 Module2 dispatcher 以 payload.operation 为权威；顶层扩展不参与路由。
     let Some(method) = request
-        .operation
-        .clone()
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("operation"))
+        .and_then(Value::as_str)
         .filter(|method| !method.is_empty())
     else {
-        return Frame::Error(ErrorFrame::new(
+        return rejected(
+            request,
             response_id,
-            "HOST_CALL_INVALID",
-            "module_call is missing `operation`",
-            Retryability::Unsafe,
-        ));
+            HostError::invalid("module_call is missing payload.operation"),
+        );
     };
+    let method = method.to_owned();
     if host_method(target.as_str(), &method).is_none() {
-        return Frame::Error(ErrorFrame::new(
+        return rejected(
+            request,
             response_id,
-            "HOST_METHOD_UNSUPPORTED",
-            format!("host method is not bridged: {}.{}", target.as_str(), method),
-            Retryability::Unsafe,
-        ));
+            HostError {
+                code: "HOST_METHOD_UNSUPPORTED".into(),
+                message: format!("host method is not bridged: {}.{}", target.as_str(), method),
+                retryability: Retryability::Unsafe,
+            },
+        );
     }
     let call = HostCall {
         module: target.as_str().to_string(),
@@ -119,26 +123,28 @@ fn dispatch_module_call(
     match exchange.call(&call) {
         Ok(payload) => {
             let mut response = ResponseFrame::accepted(response_id, request.message_id.clone());
+            response.request_id = request.request_id.clone();
             response.payload = Some(payload);
             Frame::Response(response)
         }
-        Err(error) => {
-            let mut response =
-                ResponseFrame::failed(response_id, request.message_id.clone(), error.code.clone());
-            if matches!(
-                error.code.as_str(),
-                "HOST_RESULT_UNKNOWN" | "CHILD_OUTCOME_UNKNOWN"
-            ) {
-                response.outcome = Some("result_unknown".into());
-            }
-            response.error = Some(serde_json::json!({
-                "code": error.code,
-                "message": error.message,
-                "retryability": error.retryability.as_str(),
-            }));
-            Frame::Response(response)
-        }
+        Err(error) => rejected(request, response_id, error),
     }
+}
+
+fn rejected(request: &RequestFrame, response_id: String, error: HostError) -> Frame {
+    let mut response =
+        ResponseFrame::failed(response_id, request.message_id.clone(), error.code.clone());
+    response.request_id = request.request_id.clone();
+    if matches!(
+        error.code.as_str(),
+        "HOST_RESULT_UNKNOWN" | "CHILD_OUTCOME_UNKNOWN"
+    ) {
+        response.outcome = Some("result_unknown".into());
+    }
+    response.error = Some(
+        serde_json::json!({"code":error.code,"message":error.message,"retryability":error.retryability.as_str()}),
+    );
+    Frame::Response(response)
 }
 
 #[cfg(test)]
@@ -160,7 +166,7 @@ mod tests {
 
     fn module_call_request(module: &str, method: &str) -> RequestFrame {
         let line = format!(
-            r#"{{"kind":"request","messageId":"m1","method":"module_call","runId":"r","operationId":"o","requestId":"q","module":"{module}","operation":"{method}","payload":{{}}}}"#
+            r#"{{"kind":"request","messageId":"m1","method":"module_call","runId":"r","operationId":"o","requestId":"q","module":"{module}","payload":{{"operation":"{method}"}}}}"#
         );
         match decode_line(&line).expect("decode") {
             Frame::Request(request) => request,
@@ -213,6 +219,11 @@ mod tests {
                 panic!("expected response")
             };
             assert_eq!(response.in_reply_to, "m1");
+            assert_eq!(response.request_id.as_deref(), Some("q"));
+            assert_eq!(
+                response.error.as_ref().unwrap()["message"],
+                "original acceptance unresolved"
+            );
             assert_eq!(
                 response.outcome.as_deref(),
                 Some(if code == "POLICY_DENIED" {
@@ -229,11 +240,11 @@ mod tests {
     fn rejects_unknown_host_method_explicitly() {
         let exchange = EchoExchange;
         let request = module_call_request("capability", "bogus");
-        let Frame::Error(error) = dispatch(&exchange, &request, || "err-1".to_string()) else {
-            panic!("expected error frame")
+        let Frame::Response(error) = dispatch(&exchange, &request, || "err-1".to_string()) else {
+            panic!("expected response frame")
         };
-        assert_eq!(error.code, "HOST_METHOD_UNSUPPORTED");
-        assert_eq!(error.retryability, Retryability::Unsafe);
+        assert_eq!(error.code.as_deref(), Some("HOST_METHOD_UNSUPPORTED"));
+        assert_eq!(error.in_reply_to, "m1");
     }
 
     #[test]
