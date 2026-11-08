@@ -12,6 +12,8 @@ use crate::{
 };
 use pilotdeck_protocol::{JsObject, JsValue};
 use std::sync::Arc;
+#[path = "control_failure.rs"]
+mod failures;
 pub(super) const CONTROL: &str = "submit_step_result";
 pub(super) struct Tools {
     pub base: Arc<dyn ToolExecution>,
@@ -205,10 +207,18 @@ fn result_base(call: &ToolCall, kind: &str) -> JsObject {
     out
 }
 fn control_error(call: &ToolCall, message: &str, code: &str, details: Option<JsValue>) -> JsObject {
+    control_error_text(call, message.into(), code, details)
+}
+fn control_error_text(
+    call: &ToolCall,
+    message: pilotdeck_protocol::JsString,
+    code: &str,
+    details: Option<JsValue>,
+) -> JsObject {
     let mut out = result_base(call, "error");
     let mut fields = JsObject::new();
     fields.insert("code".into(), code.into());
-    fields.insert("message".into(), message.into());
+    fields.insert("message".into(), JsValue::String(message.clone()));
     if let Some(details) = details {
         fields.insert("details".into(), details);
     }
@@ -217,7 +227,7 @@ fn control_error(call: &ToolCall, message: &str, code: &str, details: Option<JsV
         "content".into(),
         JsValue::Array(vec![crate::metadata::object([
             ("type", "text".into()),
-            ("text", message.into()),
+            ("text", JsValue::String(message)),
         ])]),
     );
     out
@@ -336,7 +346,7 @@ async fn submit(binding: &StepBinding, call: &ToolCall) -> JsObject {
         );
     };
     let run = &binding.run;
-    let attempted:Result<JsObject,HostError>=async {
+    let attempted:Result<JsObject,failures::ControlFailure>=async {
  let current=run.store.load_or_create(&run.session,run.bundle.clone(),run.selected.clone()).await.map_err(store_error)?;let state=field(&current,"state");let step=binding.step();
  if field(&step,"nodeId")==field(state,"active_step_id"){
   let fields=strings(field(&step,"expectedUserInfo"));let slots=field(state,"slots_json");let updates=field(&proposal,"slotUpdates");
@@ -361,7 +371,7 @@ async fn submit(binding: &StepBinding, call: &ToolCall) -> JsObject {
  if field(&proposal,"status")==&JsValue::from("completed")&&field(field(&step,"node"),"type")==&JsValue::from("knowledge_query")&&!successful.iter().any(|s|s.equals_str("knowledge_query")){return Ok(control_error(call,"REQUIRED_CAPABILITY_NOT_INVOKED: the current knowledge node requires a successful knowledge_query receipt before completion.","invalid_tool_input",None));}
  let context=crate::metadata::object([("runId",JsValue::String(run.identity.run_id.clone())),("operationId",JsValue::String(run.identity.operation_id.clone())),("requestId",format!("sop.submit:{}",String::from_utf16_lossy(call.id.units())).as_str().into()),("sessionId",JsValue::String(run.session.clone())),("turnId",JsValue::String(run.identity.turn_id.clone())),("idempotencyKey",JsValue::String(call.id.clone())),("deadlineAt",run.deadline.clone().map(JsValue::String).unwrap_or(JsValue::Undefined)),("expectedRevision",field(&current,"revision").clone())]);
  let signal=crate::runtime::network::Cancellation::new();
- let submitted=tokio::select!{biased;_=run.signal.cancelled()=>{signal.abort();return Err(cancelled());},v=run.client.submit(field(&current,"bundle").clone(),state.clone(),proposal,successful,Some(&context),&signal)=>v.map_err(client_error)?};
+ let submitted=tokio::select!{biased;_=run.signal.cancelled()=>{signal.abort();return Err(cancelled().into());},v=run.client.submit(field(&current,"bundle").clone(),state.clone(),proposal,successful,Some(&context),&signal)=>v.map_err(failures::ControlFailure::client)?};
  let next_state=field(&submitted,"state");let result=field(&submitted,"result").clone();
  run.store.commit_submission(&run.session,field(&current,"bundle").clone(),next_state.clone(),field(&current,"revision").as_number().unwrap_or(0.0),run.identity.turn_id.clone(),result.clone()).await.map_err(store_error)?;
  if active(next_state){run.store.clear_reply_delivery(&run.session,run.identity.turn_id.clone()).await.map_err(store_error)?;}else{*run.submission.lock().unwrap_or_else(|e|e.into_inner())=Some(result.clone());}
@@ -369,40 +379,7 @@ async fn submit(binding: &StepBinding, call: &ToolCall) -> JsObject {
  }.await;
     match attempted {
         Ok(result) => result,
-        Err(e) => {
-            let code = e
-                .module_error
-                .as_ref()
-                .and_then(|m| m.code.as_ref())
-                .map(|s| String::from_utf16_lossy(s.units()))
-                .unwrap_or_else(|| "SOP_RUNTIME_REJECTED".into());
-            let details = crate::metadata::object([(
-                "sopRuntime",
-                crate::metadata::object([
-                    ("code", code.as_str().into()),
-                    ("message", e.message.as_str().into()),
-                    ("retryability", "unsafe".into()),
-                    (
-                        "details",
-                        e.module_error
-                            .as_ref()
-                            .and_then(|m| m.canonical.clone())
-                            .map(JsValue::Object)
-                            .unwrap_or_else(|| JsValue::Object(JsObject::new())),
-                    ),
-                ]),
-            )]);
-            control_error(
-                call,
-                &format!("[{code}] {}", e.message),
-                if code == "SOP_RUNTIME_CANCELLED" {
-                    "tool_aborted"
-                } else {
-                    "tool_execution_failed"
-                },
-                Some(details),
-            )
-        }
+        Err(e) => failure_result(call, e),
     }
 }
 fn claims_wait(reply: &str) -> bool {
@@ -410,4 +387,18 @@ fn claims_wait(reply: &str) -> bool {
         regex::Regex::new(r"(?i)(?:^|[。！？.!?\n])\s*(?:(?:由于)?(?:我|目前|当前|本步骤|此步骤|SOP).{0,80}(?:卡在|无法(?:继续|推进|完成|生成)|缺少.{0,30}(?:信息|资料|上下文))|请(?:您|你)?(?:提供|补充)|(?:I|we|this step|the SOP)\s+(?:(?:am|are|is)\s+)?(?:stuck|blocked|cannot|can't|lack|need more information)|(?:please|could you)\s+(?:provide|supply))").expect("SOP wait wording regex")
     });
     RE.is_match(reply)
+}
+
+fn failure_result(call: &ToolCall, error: failures::ControlFailure) -> JsObject {
+    let description = error.describe();
+    let mut message = vec![91];
+    message.extend_from_slice(description.code.units());
+    message.extend("] ".encode_utf16());
+    message.extend_from_slice(description.message.units());
+    control_error_text(
+        call,
+        pilotdeck_protocol::JsString::from_utf16(message),
+        description.tool_code,
+        Some(description.details),
+    )
 }

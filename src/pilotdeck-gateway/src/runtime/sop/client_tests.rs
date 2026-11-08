@@ -188,7 +188,7 @@ async fn actual_portable_owner_client_matches_thirty_real_ts_cases_thirty_two_ou
                     outcome.insert("code".into(), JsValue::String(error.code));
                     outcome.insert("message".into(), JsValue::String(error.message));
                     if let Some(details) = error.details {
-                        outcome.insert("details".into(), details);
+                        outcome.insert("details".into(), *details);
                     }
                     if let Some(retry) = error.retryability {
                         outcome.insert("retryability".into(), JsValue::String(retry));

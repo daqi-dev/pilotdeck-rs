@@ -396,13 +396,13 @@ mod tests {
             } else {
                 let actual = result.unwrap_err();
                 assert_eq!(
-                    JsValue::from(actual.code),
+                    JsValue::String(actual.code.into()),
                     expected.get("code").unwrap().clone(),
                     "{:?}",
                     case.get("name")
                 );
                 assert_eq!(
-                    JsValue::from(actual.message),
+                    JsValue::String(actual.message.into()),
                     expected.get("message").unwrap().clone(),
                     "{:?}",
                     case.get("name")

@@ -11,7 +11,7 @@ use std::{sync::Arc, time::Duration};
 pub(crate) struct ClientError {
     pub code: JsString,
     pub message: JsString,
-    pub details: Option<JsValue>,
+    pub details: Option<Box<JsValue>>,
     pub retryability: Option<JsString>,
 }
 impl ClientError {
@@ -168,7 +168,11 @@ impl SopClient {
                     .as_string()
                     .expect("validated error message")
                     .clone(),
-                details: error.get("details").filter(|v| !v.is_undefined()).cloned(),
+                details: error
+                    .get("details")
+                    .filter(|v| !v.is_undefined())
+                    .cloned()
+                    .map(Box::new),
                 retryability: field(error, "retryability").as_string().cloned(),
             });
         }

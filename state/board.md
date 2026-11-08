@@ -5158,3 +5158,8 @@ r119固定5a409全目标check/native522/AO106/四个实际bin构建通过；stri
 ### 2026-11-09 07:07 · SDK 临时存储与中央校验整合
 
 已逐hash整合ephemeral 16源（两个shared clean三方）与central intake五源：临时JSONL/sidechain/spill复用原writer，owner真shutdown后清理；完整57格TS intake、未知键/数组语义、settings源fallback真实model authority均待r121。r120 check过；native531过1新增外部Read权限真实缺口、AO111过1新损坏索引夹具未制造write失败（已补只读父目录保证真实失败），SDK24/permission8/schema8/live231过。audit优先修ReadFile缺check_permissions导致外部路径默认allow，不放松测试；workspace P2继续。r119固定bin 23次本地假provider请求、11个真实CLI闭环检查全过（含预算计费停止/持久结算/下一次模型前拦截），证据native-sdk-completion/passed-r119；不能据此称settings/ephemeral新片已过。全部Rust仅mbp2，仅本机提交，完整CLI尚未完成。
+
+
+### 2026-11-09 07:17 · SOP 错误与指令协议整合
+
+已逐SHA导入SOP typed错误投影六源与完整render/prepare五源，保retryability/details/UTF16、完整终端纠正与双换行前缀；实采8错误/12render/6context原件，待r122。r121首编仅两处新测试String转换失败，根已机械修，尚无运行证据；r120外部Read权限缺口audit正在修且不放松测试。固定0fd全Gateway分组前七组host136等实际通过但host探针PID身份变化触发保守停机，保留失败原件；api_web三例同bin短TMP已全部通过，仍不称原全量通过。新knowledge真实消费者与SDK生命周期实际入口联调并行准备；所有Rust仅mbp2，仅本机提交，CLI未完。

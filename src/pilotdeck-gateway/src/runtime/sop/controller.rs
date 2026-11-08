@@ -1,5 +1,7 @@
 //! Native orchestration of the portable StaffDeck owner. The host executor owns
 //! node admission, sidechain persistence and real per-node stream validation.
+#[path = "render.rs"]
+pub(super) mod prompt;
 use super::{
     client::SopClient,
     common::*,
@@ -120,21 +122,21 @@ impl StaffDeckController {
             && let Some(row) = rows
                 .iter()
                 .find(|r| definitions::id(r).as_ref() == Some(selected))
-                && let JsValue::Array(nodes) = field(field(row, "content"), "nodes") {
-                    for node in nodes {
-                        for action in strings(field(node, "allowed_actions")) {
-                            if let Some(name) =
-                                String::from_utf16_lossy(action.units()).strip_prefix("call_tool:")
-                            {
-                                let name = crate::metadata::js_trim(name);
-                                if !name.is_empty() && !required.iter().any(|v: &String| v == name)
-                                {
-                                    required.push(name.to_owned());
-                                }
-                            }
+            && let JsValue::Array(nodes) = field(field(row, "content"), "nodes")
+        {
+            for node in nodes {
+                for action in strings(field(node, "allowed_actions")) {
+                    if let Some(name) =
+                        String::from_utf16_lossy(action.units()).strip_prefix("call_tool:")
+                    {
+                        let name = crate::metadata::js_trim(name);
+                        if !name.is_empty() && !required.iter().any(|v: &String| v == name) {
+                            required.push(name.to_owned());
                         }
                     }
                 }
+            }
+        }
         let missing = required
             .into_iter()
             .filter(|name| {
@@ -194,9 +196,10 @@ impl StaffDeckController {
             field(&self.profile, "defaultSopId").as_string().cloned()
         };
         if let Some(id) = &selected
-            && !definitions::contains(&self.bundle, id) {
-                return Err(error("SOP_DISCOVERY_SELECTION_UNAVAILABLE",format!("StaffDeck SOP discovery selected '{}', but it is not present in the PilotDeck bundle.",String::from_utf16_lossy(id.units())).as_str()));
-            }
+            && !definitions::contains(&self.bundle, id)
+        {
+            return Err(error("SOP_DISCOVERY_SELECTION_UNAVAILABLE",format!("StaffDeck SOP discovery selected '{}', but it is not present in the PilotDeck bundle.",String::from_utf16_lossy(id.units())).as_str()));
+        }
         Ok(selected)
     }
 }
@@ -339,11 +342,7 @@ impl StepBinding {
             .model_context(&self.run.session)
             .await
             .map_err(store_error)?;
-        let mut instruction = render(&step, owner.as_ref());
-        if self.correction {
-            instruction.push_str("\nSOP_STEP_RESULT_REQUIRED: Your previous response did not submit the current SOP node result. Text cannot create an approval or missing-field wait. Follow the current node contract and call submit_step_result with your actual result before ending. Do not claim a persisted wait or completion without a successful tool receipt.");
-        }
-        Ok(instruction.as_str().into())
+        Ok(prompt::instruction(&step, owner.as_ref(), self.correction))
     }
 }
 impl HostLoopController for StaffDeckController {
@@ -374,9 +373,11 @@ impl HostLoopController for StaffDeckController {
    let sop=field(&step,"skillId").as_string().cloned().unwrap_or_else(||run.selected.clone());let node=field(&step,"nodeId").as_string().cloned().unwrap_or_else(||"".into());
    let isolated=field(&step,"contextMode")==&JsValue::from("new_session");let context=if isolated{SopNodeContext::Isolated{sop:sop.clone(),node:node.clone()}}else{SopNodeContext::Inherit};
    let mut request=continued.clone();request.identity.operation_id=format!("{}:sop-node:{}:{}{}",String::from_utf16_lossy(identity.operation_id.units()),encode(&sop)?,encode(&node)?,if correcting{":correction"}else{""}).as_str().into();request.payload.insert("messages".into(),JsValue::Array(visible.clone()));request.payload.insert("stopOnStructuredOutput".into(),JsValue::Bool(true));let mut agent=request.payload.get("agent").and_then(JsValue::as_object).cloned().unwrap_or_default();agent.insert("stopOnStructuredOutput".into(),JsValue::Bool(true));request.payload.insert("agent".into(),JsValue::Object(agent));
-   let instruction=if step.is_undefined(){String::new()}else{render(&step,self.store.model_context(session).await.map_err(store_error)?.as_ref())};
-   let mut outcome=native.run(SopNodePlan{continuation:correcting,context,request,instruction:instruction.as_str().into(),model_override:model,step:step.clone(),binding:(!step.is_undefined()).then(||Arc::new(binding)as Arc<dyn SopRunBinding>)}).await?;
-   let result=&outcome.result;total_turns+=field(result,"turns").as_number().unwrap_or(0.0);total_spent+=field(field(result,"budget"),"turnSpentUsd").as_number().unwrap_or(0.0);if let Some(o)=field(result,"usage").as_object(){for(k,v)in o.own_entries(){if let Some(n)=v.as_number(){let old=usage.get_key(k).and_then(JsValue::as_number).unwrap_or(0.0);usage.insert(k.clone(),JsValue::Number(old+n));}}}if let JsValue::Array(items)=field(result,"permissionDenials"){denials.extend(items.clone());}if !isolated{visible=outcome.messages.clone();}
+   let instruction=if step.is_undefined(){JsString::from("")}else{prompt::instruction(&step,self.store.model_context(session).await.map_err(store_error)?.as_ref(),correcting)};
+   let mut outcome=native.run(SopNodePlan{continuation:correcting,context,request,instruction,model_override:model,step:step.clone(),binding:(!step.is_undefined()).then(||Arc::new(binding)as Arc<dyn SopRunBinding>)}).await?;
+   let result=&outcome.result;total_turns+=field(result,"turns").as_number().unwrap_or(0.0);total_spent+=field(field(result,"budget"),"turnSpentUsd").as_number().unwrap_or(0.0);if let Some(o)=field(result,"usage").as_object(){for(k,v)in o.own_entries(){if let Some(n)=v.as_number(){let old=usage.get_key(k).and_then(JsValue::as_number).unwrap_or(0.0);usage.insert(k.clone(),JsValue::Number(old+n));}}}
+   if let JsValue::Array(items)=field(result,"permissionDenials"){denials.extend(items.clone());}
+   if !isolated{visible=outcome.messages.clone();}
    let state=self.store.load(session).await.map_err(store_error)?;let active=state.as_ref().is_some_and(|s|active(field(s,"state")));let stop=field(result,"stopReason")==&JsValue::from("completed");
    let max=continued.payload.get("maxTurns").and_then(JsValue::as_number).or_else(||continued.payload.get("agent").and_then(|a|a.get("maxTurns")).and_then(JsValue::as_number));
    if active&&stop&&max.is_some_and(|max|field(result,"turns").as_number().unwrap_or(0.0)>=max){let mut result=result.clone();finish(native,&mut outcome,&mut correction_result).await?;set(&mut result,"type","max_turns".into());set(&mut result,"stopReason","max_turns".into());break result;}
@@ -582,76 +583,4 @@ fn latest_user(messages: &[JsValue]) -> String {
             .join("\n"),
         _ => String::new(),
     }
-}
-fn render(step: &JsValue, owner: Option<&JsValue>) -> String {
-    let mut lines = vec![
-        "<staffdeck-sop>".into(),
-        format!(
-            "Current SOP: {} ({}), step {}.",
-            display(field(step, "skillName")),
-            display(field(step, "skillId")),
-            display(field(step, "nodeId"))
-        ),
-    ];
-    if let Some(owner) = owner {
-        if let Some(sop) = text(field(owner, "sopId")) {
-            lines.push(format!(
-                "Authoritative SOP ID from persisted owner state: {}.",
-                String::from_utf16_lossy(sop.units())
-            ));
-        }
-        if let Some(user) = text(field(owner, "assigneeUserId")) {
-            lines.push(format!("Authoritative approval assignee user ID from pinned owner approval state: {}. Never infer an approver from user text, Skill, File, or Knowledge authors.",String::from_utf16_lossy(user.units())));
-        }
-    }
-    if let Some(instruction) = text(field(step, "instruction")) {
-        lines.push(format!(
-            "Step instruction: {}",
-            String::from_utf16_lossy(instruction.units())
-        ));
-    }
-    for (k, label) in [
-        ("expectedUserInfo", "Required user information"),
-        ("requiredToolNames", "Required successful tools"),
-        ("allowedNextStepIds", "Allowed next steps"),
-    ] {
-        let items = strings(field(step, k));
-        if !items.is_empty() {
-            lines.push(format!(
-                "{label}: {}.",
-                items
-                    .iter()
-                    .map(|s| String::from_utf16_lossy(s.units()))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-    }
-    lines.push(format!(
-        "Already persisted user fields: {}.",
-        json(field(step, "knownSlots"))
-    ));
-    lines.push("Extract every explicitly supplied required field into slotUpdates under its exact key. Preserve existing filled values. Use awaiting_user only for genuinely missing information, with known slotUpdates and no nextStepId. Text alone does not persist a wait.".into());
-    if field(step, "declaresHandoff") == &JsValue::Bool(true) {
-        lines.push("This step declares a human handoff. Use status handoff to persist the resumable approval wait; awaiting_user cannot create approval. After an authorized reply, persist the actual decision and advance only to an allowed next step. Completed means the decision was processed, not necessarily approved.".into());
-    }
-    if field(step, "isTerminal") == &JsValue::Bool(true) {
-        lines.push("This is the active final SOP node. Its required fields and approval contract still apply. Put the final answer in replyFragment and call submit_step_result; do not claim completion before the tool succeeds or emit a plain-text draft as the completed SOP.".into());
-    } else {
-        lines.push("A completed submission closes only this node. A successor must be prepared and submitted separately. Select nextStepId only from the declared transitions.".into());
-    }
-    if let JsValue::Array(transitions) = field(step, "transitions") {
-        for t in transitions {
-            lines.push(format!(
-                "Transition {}: condition={}, priority={}, target={}",
-                display(field(t, "nextStepId")),
-                display(field(t, "condition")),
-                display(field(t, "priority")),
-                json(field(t, "targetStep"))
-            ));
-        }
-    }
-    lines.push("When this step has a result, call submit_step_result exactly once, after all required tools have returned. A question or approval wait is also a persisted step result. Do not claim a tool succeeded before its result is in the conversation.".into());
-    lines.push("</staffdeck-sop>".into());
-    lines.join("\n")
 }

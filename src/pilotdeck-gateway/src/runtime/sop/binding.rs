@@ -56,14 +56,15 @@ fn project(request: &mut JsObject, step: &JsValue) {
         },
     );
     if strings(field(step, "requiredToolNames")).is_empty()
-        && let Some(JsValue::Array(tools)) = request.get("tools") {
-            let filtered = tools
-                .iter()
-                .filter(|t| field(t, "name") == &JsValue::from(tool::CONTROL))
-                .cloned()
-                .collect();
-            request.insert("tools".into(), JsValue::Array(filtered));
-        }
+        && let Some(JsValue::Array(tools)) = request.get("tools")
+    {
+        let filtered = tools
+            .iter()
+            .filter(|t| field(t, "name") == &JsValue::from(tool::CONTROL))
+            .cloned()
+            .collect();
+        request.insert("tools".into(), JsValue::Array(filtered));
+    }
 }
 struct Model {
     base: Arc<dyn model::ModelExecution>,
@@ -112,20 +113,16 @@ impl context::ContextRuntime for Context {
             let instruction = binding
                 .instruction(input.fields.get("stepId").unwrap_or(&JsValue::Undefined))
                 .await?;
-            let mut units = input
-                .fields
-                .get("appendSystemPrompt")
-                .and_then(JsValue::as_string)
-                .map(|s| s.units().to_vec())
-                .unwrap_or_default();
-            if !units.is_empty() {
-                units.push(10);
-            }
-            units.extend_from_slice(instruction.units());
-            input.fields.insert(
-                "appendSystemPrompt".into(),
-                JsValue::String(pilotdeck_protocol::JsString::from_utf16(units)),
+            let prompt = super::controller::prompt::with_existing(
+                input
+                    .fields
+                    .get("appendSystemPrompt")
+                    .and_then(JsValue::as_string),
+                instruction,
             );
+            input
+                .fields
+                .insert("appendSystemPrompt".into(), JsValue::String(prompt));
             base.prepare_for_model(input).await
         })
     }
