@@ -20,7 +20,7 @@ fn object(value: &JsValue) -> &JsObject {
     value.as_object().unwrap()
 }
 fn text(value: &JsValue) -> String {
-    value.as_string().unwrap().to_string_lossy()
+    value.as_string().unwrap().to_utf8().unwrap()
 }
 fn array(value: &JsValue) -> &[JsValue] {
     let JsValue::Array(values) = value else {
@@ -79,7 +79,7 @@ fn native_declarations_replay_fixed_ts_loader_oracle() {
             fs::write(path, text(field(file, "content"))).unwrap();
         }
         for (name, target) in object(field(case, "links")).entries() {
-            std::os::unix::fs::symlink(text(target), plugin.join(name.to_string_lossy())).unwrap();
+            std::os::unix::fs::symlink(text(target), plugin.join(name.to_utf8().unwrap())).unwrap();
         }
         let expected = field(case, "expectedNative");
         let actual = load_plugin(&plugin, PluginSource::Project, &mut StyleBudget::new());

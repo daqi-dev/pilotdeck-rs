@@ -484,9 +484,16 @@ mod filesystem {
             (&scratch.0, ".pilotdeck-install-"),
             (&engine.installation.root, ".prepare-"),
         ] {
-            assert!(fs::read_dir(parent).unwrap().all(|entry| {
-                !entry.unwrap().file_name().to_string_lossy().starts_with(prefix)
-            }), "failed skills validation left staging files");
+            assert!(
+                fs::read_dir(parent).unwrap().all(|entry| {
+                    !entry
+                        .unwrap()
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(prefix)
+                }),
+                "failed skills validation left staging files"
+            );
         }
     }
     #[test]

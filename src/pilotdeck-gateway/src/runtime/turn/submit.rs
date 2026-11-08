@@ -1373,7 +1373,7 @@ pub(super) fn is(value: &JsValue, key: &str, text: &str) -> bool {
         .as_string()
         .is_some_and(|value| value.equals_str(text))
 }
-pub(super) fn truthy(value: &JsValue) -> bool {
+pub(crate) fn truthy(value: &JsValue) -> bool {
     match value {
         JsValue::Undefined | JsValue::Null => false,
         JsValue::Bool(v) => *v,
