@@ -23,6 +23,8 @@
 // rest of the unported surface (paths, mutators, tick entries).
 #![allow(dead_code)]
 mod chat_tool;
+mod workspace_tool;
+mod phase_tools;
 mod tools;
 pub(crate) use tools::register_tools;
 pub(crate) mod event_sink;

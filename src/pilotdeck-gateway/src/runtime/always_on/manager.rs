@@ -189,7 +189,7 @@ impl AlwaysOnRunContextRegistry {
         contexts.remove(session_key);
         let mut handlers = self.tool_handlers.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(entry) = handlers.remove(&JsString::from(session_key)) {
-            entry.active.store(false, Ordering::Release);
+            *entry.active.lock().unwrap_or_else(|e| e.into_inner()) = false;
         }
     }
 
@@ -210,7 +210,7 @@ impl AlwaysOnRunContextRegistry {
         let mut handlers = self.tool_handlers.lock().unwrap_or_else(|e| e.into_inner());
         for session in sessions {
             if let Some(entry) = handlers.remove(&session) {
-                entry.active.store(false, Ordering::Release);
+                *entry.active.lock().unwrap_or_else(|e| e.into_inner()) = false;
             }
         }
     }

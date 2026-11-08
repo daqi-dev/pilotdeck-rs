@@ -10,12 +10,16 @@ const MAX_JOBS: usize = 4;
 const COMMAND_UNITS: usize = 8 * 1024 * 1024;
 const DIFF_UNITS: usize = 80_000;
 #[derive(Clone, Debug)]
-pub(crate) struct WorkspaceError { pub code: String, pub message: JsString }
+pub(crate) struct WorkspaceError { pub code: String, pub message: JsString, missing: bool }
 impl WorkspaceError {
-    fn new(code: &str, message: impl Into<JsString>) -> Self { Self { code: code.into(), message: message.into() } }
+    pub(crate) fn new(code: &str, message: impl Into<JsString>) -> Self { Self { code: code.into(), message: message.into(), missing: false } }
+    pub(crate) fn is_missing(&self) -> bool { self.missing }
 }
 impl From<io::Error> for WorkspaceError {
-    fn from(error: io::Error) -> Self { Self::new("workspace_prepare_failed", error.to_string()) }
+    fn from(error: io::Error) -> Self {
+        let missing = error.kind() == io::ErrorKind::NotFound;
+        Self { code: "workspace_prepare_failed".into(), message: error.to_string().into(), missing }
+    }
 }
 #[derive(Clone, Debug)]
 pub(crate) struct WorkspaceHandle {
@@ -111,7 +115,7 @@ impl NativeWorkspace {
         let top = if strategy == "auto" || strategy == "git-worktree" {
             let top = self.command(&project, &["git", "rev-parse", "--show-toplevel"], signal.clone()).await?;
             let head = self.command(&project, &["git", "rev-parse", "HEAD"], signal.clone()).await?;
-            (top.exit_code == Some(0) && head.exit_code == Some(0)).then_some(top.stdout.trim().to_owned())
+            (top.exit_code == Some(0) && head.exit_code == Some(0)).then_some(crate::metadata::js_trim(&top.stdout).to_owned())
         } else { None };
         let selected = if strategy == "auto" { if top.is_some() { "git-worktree" } else { "snapshot-copy" } } else { strategy };
         let (cwd, metadata) = match selected {
@@ -137,14 +141,14 @@ impl NativeWorkspace {
         }).await?;
         let status = self.command(&repository, &["git", "status", "--porcelain"], signal.clone()).await?;
         expect_ok(&status, "git status --porcelain")?;
-        if !status.stdout.trim().is_empty() {
+        if !crate::metadata::js_trim(&status.stdout).is_empty() {
             expect_ok(&self.command(&repository, &["git", "add", "-A"], signal.clone()).await?, "git add -A")?;
-            let title = String::from_utf16_lossy(title.units()).split_whitespace().collect::<Vec<_>>().join(" ");
+            let title = String::from_utf16_lossy(title.units()).split(crate::metadata::js_space).filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ");
             let message = format!("chore(always-on): checkpoint before executing {}", if title.is_empty() { "untitled plan" } else { &title });
             expect_ok(&self.command(&repository, &["git", "commit", "-m", &message], signal.clone()).await?, "git commit")?;
             let clean = self.command(&repository, &["git", "status", "--porcelain"], signal.clone()).await?;
             expect_ok(&clean, "git status --porcelain")?;
-            if !clean.stdout.trim().is_empty() { return Err(WorkspaceError::new("workspace_prepare_failed", "git worktree remained dirty after the Always-On checkpoint commit.")); }
+            if !crate::metadata::js_trim(&clean.stdout).is_empty() { return Err(WorkspaceError::new("workspace_prepare_failed", "git worktree remained dirty after the Always-On checkpoint commit.")); }
         }
         let branch = self.command(&repository, &["git", "rev-parse", "--abbrev-ref", "HEAD"], signal.clone()).await?;
         expect_ok(&branch, "git rev-parse --abbrev-ref HEAD")?;
@@ -154,14 +158,14 @@ impl NativeWorkspace {
         let (target, _pinned_target) = self.io(move || workspace_copy::new_target(&paths, "git-worktree", &run)).await?;
         let branch_name = format!("always-on/{id}");
         let target_text = target.to_str().ok_or_else(|| WorkspaceError::new("workspace_prepare_failed", "Always-On worktree path is not representable."))?;
-        let result = self.command(&repository, &["git", "worktree", "add", "-b", &branch_name, target_text, commit.stdout.trim()], signal).await?;
+        let result = self.command(&repository, &["git", "worktree", "add", "-b", &branch_name, target_text, crate::metadata::js_trim(&commit.stdout)], signal).await?;
         expect_ok(&result, "git worktree add")?;
         // Revalidate the result using this generation's expected base. It is
         // also the admission used by persisted cycles after a host restart.
         let paths = self.0.paths.clone(); let target_copy = target.clone();
         self.io(move || workspace_copy::owned_workspace(&paths, "git-worktree", &target_copy)).await?;
         let mut metadata = JsObject::new();
-        for (key, value) in [("repoRoot", top), ("baseBranch", branch.stdout.trim()), ("baseCommit", commit.stdout.trim()), ("branchName", branch_name.as_str())] { metadata.insert(key.into(), value.into()); }
+        for (key, value) in [("repoRoot", top), ("baseBranch", crate::metadata::js_trim(&branch.stdout)), ("baseCommit", crate::metadata::js_trim(&commit.stdout)), ("branchName", branch_name.as_str())] { metadata.insert(key.into(), value.into()); }
         let _ = project; // project fd remains held through the entire prepare.
         Ok((target, metadata))
     }
@@ -176,11 +180,27 @@ impl NativeWorkspace {
                 Ok(())
             }).await?;
             let workspace = cycle.workspace.ok_or_else(|| WorkspaceError::new("missing_workspace", "Cycle has no associated workspace to apply"))?;
-            let path = native_path(&workspace.cwd)?; let paths = owner.0.paths.clone(); let strategy = workspace.strategy.clone();
-            let directory = owner.io(move || workspace_copy::owned_workspace(&paths, &strategy, &path)).await?;
-            if workspace.strategy == "git-worktree" { owner.verify_git_project(&directory, None).await?; }
-            Ok(WorkspaceHandle { run_id: cycle.created_by_run_id, project_key: cycle.project_key, strategy: workspace.strategy, cwd: workspace.cwd, metadata: workspace.metadata })
+            owner.authorize_handle(WorkspaceHandle { run_id: cycle.created_by_run_id, project_key: cycle.project_key, strategy: workspace.strategy, cwd: workspace.cwd, metadata: workspace.metadata }).await
         })).await
+    }
+
+    /// Distinct ensureActiveWorkCycle currentWorkspace branch: validate the
+    /// existing reference but do not migrate plans or create/write a cycle.
+    pub(crate) async fn authorize_legacy(&self, workspace: JsObject) -> Result<WorkspaceHandle, WorkspaceError> {
+        self.owned(move |owner| Box::pin(async move {
+            let required = |field: &str| workspace.get(field).and_then(JsValue::as_string).cloned()
+                .ok_or_else(|| WorkspaceError::new("invalid_workspace", format!("Legacy workspace {field} must be a string.")));
+            let strategy = required("strategy")?.to_utf8().map_err(|_| WorkspaceError::new("invalid_workspace", "Legacy workspace strategy is not representable."))?;
+            let handle = WorkspaceHandle { run_id: required("runId")?, project_key: owner.0.paths.project_key.as_str().into(), strategy,
+                cwd: required("cwd")?, metadata: workspace.get("metadata").and_then(JsValue::as_object).cloned().unwrap_or_default() };
+            owner.authorize_handle(handle).await
+        })).await
+    }
+    async fn authorize_handle(&self, handle: WorkspaceHandle) -> Result<WorkspaceHandle, WorkspaceError> {
+        let path = native_path(&handle.cwd)?; let paths = self.0.paths.clone(); let strategy = handle.strategy.clone();
+        let directory = self.io(move || workspace_copy::owned_workspace(&paths, &strategy, &path)).await?;
+        if handle.strategy == "git-worktree" { self.verify_git_project(&directory, None).await?; }
+        Ok(handle)
     }
 
     pub(crate) async fn dispose(&self, handle: WorkspaceHandle, keep: bool) -> Result<(), WorkspaceError> {
@@ -216,7 +236,7 @@ impl NativeWorkspace {
         let selected = self.command(workspace, &["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], signal.clone()).await?;
         let expected = self.command(&project, &["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], signal).await?;
         expect_ok(&selected, "git rev-parse --git-common-dir")?; expect_ok(&expected, "git rev-parse --git-common-dir")?;
-        let selected = PathBuf::from(selected.stdout.trim()); let expected = PathBuf::from(expected.stdout.trim());
+        let selected = PathBuf::from(crate::metadata::js_trim(&selected.stdout)); let expected = PathBuf::from(crate::metadata::js_trim(&expected.stdout));
         self.io(move || {
             let selected = std::fs::metadata(selected.canonicalize()?)?; let expected = std::fs::metadata(expected.canonicalize()?)?;
             use std::os::unix::fs::MetadataExt;
@@ -251,7 +271,7 @@ impl NativeWorkspace {
             let count = result.stdout.lines().filter(|line| line.starts_with("diff ")).count();
             (result.stdout, count)
         };
-        if text.trim().is_empty() { return Ok(NativeWorkspaceDiff { text: "".into(), file_count: count, truncated: false }); }
+        if crate::metadata::js_trim(&text).is_empty() { return Ok(NativeWorkspaceDiff { text: "".into(), file_count: count, truncated: false }); }
         let units: Vec<_> = text.encode_utf16().collect(); let truncated = units.len() > DIFF_UNITS;
         Ok(NativeWorkspaceDiff { text: JsString::from_utf16(units.into_iter().take(DIFF_UNITS).collect()), file_count: count, truncated })
     }
@@ -290,3 +310,7 @@ fn expect_ok(result: &CommandResult, label: &str) -> Result<(), WorkspaceError> 
     if result.exit_code == Some(0) { Ok(()) } else { Err(WorkspaceError::new("workspace_prepare_failed", format!("{label} failed: {}", if result.stderr.is_empty() { &result.stdout } else { &result.stderr }))) }
 }
 fn empty_diff() -> NativeWorkspaceDiff { NativeWorkspaceDiff { text: "".into(), file_count: 0, truncated: false } }
+
+#[cfg(test)]
+#[path = "workspace_tests.rs"]
+mod tests;

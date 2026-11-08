@@ -129,6 +129,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("pdrs-always-on-plan-{}", uuid::Uuid::new_v4()));
         let metadata = crate::metadata::Metadata { home: root.clone(), cwd: Default::default(), files: crate::metadata::NativeFiles };
         let paths = super::super::paths::resolve_always_on_paths(&root, "/fixture/project", &metadata).unwrap();
+        let project_dir = paths.project_dir();
         let state = Arc::new(tokio::sync::Mutex::new(PlanState::default()));
         let handler = PlanHandler { run_id: "run".into(), store: DiscoveryPlanStore::new(paths),
             state: state.clone(), pending: Arc::default() };
@@ -150,7 +151,8 @@ mod tests {
         assert!(record.id.equals_str("p1"));
         assert!(markdown.to_utf8().unwrap().contains("## Verification"));
         let path = record.raw.get("planFilePath").and_then(JsValue::as_string).unwrap().to_utf8().unwrap();
-        assert!(std::fs::read_to_string(path).unwrap().contains("## Verification"));
+        assert!(!std::path::Path::new(&path).is_absolute());
+        assert!(std::fs::read_to_string(project_dir.join(path)).unwrap().contains("## Verification"));
         drop(state);
         handler.pending.drain().await;
         std::fs::remove_dir_all(root).unwrap();

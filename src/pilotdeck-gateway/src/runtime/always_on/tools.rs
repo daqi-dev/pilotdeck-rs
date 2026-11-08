@@ -1,5 +1,5 @@
 //! Phase-scoped registration of the four Always-On tools.
-use std::sync::{Arc, Weak, atomic::{AtomicBool, Ordering}};
+use std::sync::{Arc, Mutex, Weak};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use crate::{host::{HostError, ModuleError}, host::modules::capability::ToolDefinition,
     runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRegistration, ToolRegistry, ToolRunContext}};
@@ -11,7 +11,7 @@ pub(crate) trait PhaseToolHandler: Send + Sync {
     fn execute(&self, name: &'static str, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput>;
 }
 pub(crate) struct PhaseHandlerEntry {
-    pub active: Arc<AtomicBool>,
+    pub active: Mutex<bool>,
     pub handler: Arc<dyn PhaseToolHandler>,
 }
 pub(crate) struct PhaseHandlerLease {
@@ -21,12 +21,14 @@ pub(crate) struct PhaseHandlerLease {
 }
 impl Drop for PhaseHandlerLease {
     fn drop(&mut self) {
-        self.entry.active.store(false, Ordering::Release);
         if let Some(registry) = self.registry.upgrade() {
             let mut entries = registry.tool_handlers.lock().unwrap_or_else(|e| e.into_inner());
+            *self.entry.active.lock().unwrap_or_else(|e| e.into_inner()) = false;
             if entries.get(&self.session).is_some_and(|entry| Arc::ptr_eq(entry, &self.entry)) {
                 entries.remove(&self.session);
             }
+        } else {
+            *self.entry.active.lock().unwrap_or_else(|e| e.into_inner()) = false;
         }
     }
 }
@@ -38,7 +40,7 @@ impl AlwaysOnRunContextRegistry {
         if !contexts.contains_key(&key) { return Err(ModuleError::new("Always-On run context is not registered").into()); }
         let mut entries = self.tool_handlers.lock().unwrap_or_else(|e| e.into_inner());
         if entries.contains_key(&session) { return Err(ModuleError::new("Always-On phase handler already installed").into()); }
-        let entry = Arc::new(PhaseHandlerEntry { active: Arc::new(AtomicBool::new(true)), handler });
+        let entry = Arc::new(PhaseHandlerEntry { active: Mutex::new(true), handler });
         entries.insert(session.clone(), entry.clone());
         Ok(PhaseHandlerLease { registry: Arc::downgrade(self), session, entry })
     }
@@ -57,9 +59,19 @@ impl ExecutableTool for PhaseTool {
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
         let entry = self.entry.clone(); let name = self.name;
         Box::pin(async move {
-            if !entry.active.load(Ordering::Acquire) { return Err(ToolError::failed("Always-On phase is no longer active")); }
             if context.is_aborted() { return Err(ToolError::aborted()); }
-            entry.handler.execute(name, input, context).await
+            // Synchronous admission runs under this lock and must not re-enter
+            // the registry. Awaiting never holds it.
+            let work = {
+                let active = entry.active.lock().unwrap_or_else(|e| e.into_inner());
+                if !*active { return Err(ToolError::failed("Always-On phase is no longer active")); }
+                entry.handler.execute(name, input, context)
+            };
+            let result = work.await;
+            if !*entry.active.lock().unwrap_or_else(|e| e.into_inner()) {
+                return Err(ToolError::failed("Always-On phase is no longer active"));
+            }
+            result
         })
     }
 }
@@ -68,7 +80,7 @@ pub(crate) fn register_tools(registry: &ToolRegistry, contexts: Arc<AlwaysOnRunC
     session: &JsString) -> Result<Vec<ToolRegistration>, HostError> {
     let entry = contexts.tool_handlers.lock().unwrap_or_else(|e| e.into_inner())
         .get(session).cloned().ok_or_else(|| ModuleError::new("Always-On phase handler is not installed"))?;
-    if !entry.active.load(Ordering::Acquire) { return Err(ModuleError::new("Always-On phase is no longer active").into()); }
+    if !*entry.active.lock().unwrap_or_else(|e| e.into_inner()) { return Err(ModuleError::new("Always-On phase is no longer active").into()); }
     let definitions = [
         ("always_on_discovery_plan", "AlwaysOnDiscoveryPlan", false, "Save the single validated plan for this discovery run.", r#"{"type":"object","required":["title","summary","rationale","dedupeKey","content"],"additionalProperties":false,"properties":{"title":{"type":"string"},"summary":{"type":"string"},"rationale":{"type":"string"},"dedupeKey":{"type":"string"},"content":{"type":"string"}}}"#),
         ("always_on_prepare_workspace", "AlwaysOnPrepareWorkspace", false, "Create an isolated workspace for the plan using the chosen strategy.", r#"{"type":"object","required":["strategy"],"additionalProperties":false,"properties":{"strategy":{"type":"string","enum":["git-worktree","snapshot-copy","auto"]}}}"#),
@@ -113,6 +125,34 @@ mod tests {
             now: None, progress: None, subagent: None, plan_todo: None,
             goal: None, plan_directory: None,
         }))
+    }
+    struct Delayed {
+        admitted: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+    }
+    impl PhaseToolHandler for Delayed {
+        fn execute(&self, _: &'static str, _: JsValue, _: ToolRunContext) -> ToolFuture<ToolOutput> {
+            if let Some(tx) = self.admitted.lock().unwrap().take() { let _ = tx.send(()); }
+            let rx = self.release.lock().unwrap().take().expect("one call");
+            Box::pin(async move { let _ = rx.await; Ok(ToolOutput::default()) })
+        }
+    }
+    #[tokio::test]
+    async fn revoked_phase_does_not_deliver_late_tool_result() {
+        let contexts = Arc::new(AlwaysOnRunContextRegistry::new());
+        let session: JsString = "phase".into();
+        contexts.register(super::super::manager::AlwaysOnRunContext {
+            session_key: "phase".into(), run_id: "r".into(), project_key: "/p".into(),
+        }).unwrap();
+        let (admit_tx, admit_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let handler = Arc::new(Delayed { admitted: Mutex::new(Some(admit_tx)), release: Mutex::new(Some(release_rx)) });
+        let _lease = contexts.install_tool_handler(session.clone(), handler).unwrap();
+        let registry = ToolRegistry::default(); register_tools(&registry, contexts.clone(), &session).unwrap();
+        let tool = registry.get(&"always_on_report".into()).unwrap();
+        let work = tokio::spawn(async move { tool.execute(JsValue::Object(JsObject::new()), context()).await });
+        admit_rx.await.unwrap(); contexts.unregister("phase"); release_tx.send(()).unwrap();
+        assert!(work.await.unwrap().is_err());
     }
     #[tokio::test]
     async fn registered_tool_dispatches_to_exact_live_phase_then_revokes() {
