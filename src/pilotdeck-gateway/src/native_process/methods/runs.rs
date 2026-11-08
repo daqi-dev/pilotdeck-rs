@@ -30,10 +30,7 @@ impl Requests {
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
             let run = RunRef {
-                project_key: params
-                    .get("projectKey")
-                    .and_then(JsValue::as_string)
-                    .cloned(),
+                project_key: Some(self.options.project.to_string_lossy().as_ref().into()),
                 session_key: string(&params, "sessionKey")?,
                 run_id: string(&params, "runId")?,
             };
@@ -66,5 +63,55 @@ impl Requests {
                     .map_err(read_error)
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata::object;
+    use crate::runtime::turn::{gateway::GatewayRequests, publish::TurnRunRegistry};
+    use crate::storage::RunAcceptInput;
+    use pilotdeck_protocol::JsString;
+
+    #[tokio::test]
+    async fn durable_run_reads_share_canonical_submit_identity_for_omitted_and_aliased_projects() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let a = requests.options.project.clone();
+        let b = a.parent().unwrap().join("durable-B");
+        std::fs::create_dir_all(&b).unwrap();
+        let mut b_options = requests.options.clone();
+        b_options.project = b.clone();
+        crate::native_process::assembly::register_project(&b_options).unwrap();
+        let registry = requests.runs.as_ref().unwrap();
+        for (root, marker) in [(&a, "only-A"), (&b, "only-B")] {
+            let run = RunRef { project_key: Some(root.to_string_lossy().as_ref().into()),
+                session_key: "same".into(), run_id: "same-run".into() };
+            registry.accept(&RunAcceptInput { run: run.clone(), request_material: marker.into() }).await.unwrap();
+            registry.append(&run, &object([("type", "agent_status".into()),
+                ("runId", "same-run".into()), ("text", marker.into())])).await.unwrap();
+        }
+        for (project, expected, marker, foreign) in [
+            (None, &a, "only-A", "only-B"),
+            (Some(a.join("child/..")), &a, "only-A", "only-B"),
+            (Some(b.join("child/..")), &b, "only-B", "only-A"),
+        ] {
+            let mut params = object([("sessionKey", "same".into()), ("runId", "same-run".into())]);
+            if let Some(project) = project {
+                if let JsValue::Object(values) = &mut params {
+                    values.insert("projectKey".into(), JsValue::String(project.to_string_lossy().as_ref().into()));
+                }
+            }
+            for method in ["run_get", "run_reattach"] {
+                let result = requests.request(method.into(), params.clone()).await.unwrap();
+                assert_eq!(result.get("projectKey"), Some(&JsValue::String(JsString::from(expected.to_string_lossy().as_ref()))),
+                    "durable run read must use selected canonical project");
+            }
+            let events = requests.request("run_events".into(), params).await.unwrap();
+            let text = pilotdeck_protocol::stringify_json(&events).unwrap().unwrap();
+            assert!(text.contains(marker) && !text.contains(foreign), "durable run events must be project-scoped: {text}");
+        }
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
     }
 }
