@@ -113,6 +113,18 @@ fn config_error(error: config::Error) -> RequestError {
 
 /// A RuntimeError keeps its JS error code when it carries one; the fallback
 /// is the bare-Error wire shape.
+fn sdk_selection_error(error: crate::runtime::sdk_session::SdkSessionError) -> RequestError {
+    RequestError {
+        code: if error.code.is_empty() {
+            "gateway_request_failed".into()
+        } else {
+            error.code
+        },
+        message: error.message.into(),
+        details: None,
+        validation: None,
+    }
+}
 fn runtime_error(error: RuntimeError) -> RequestError {
     match error.js_error() {
         Some(js_error) => RequestError {
@@ -560,7 +572,12 @@ impl Requests {
     /// runtime and lists the project's (plus session's) style contributions.
     async fn output_styles_list(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let project = lexical_project(self, params)?;
-        let styles = self.plugin_styles(&project).await?;
+        let styles = self
+            .plugin_styles(
+                &project,
+                params.get("sessionKey").and_then(JsValue::as_string),
+            )
+            .await?;
         let mut style_values = Vec::with_capacity(styles.len());
         for style in &styles {
             let mut entry = pilotdeck_protocol::JsObject::new();
@@ -586,7 +603,11 @@ impl Requests {
         // stored selection from `sdkSessionConfigs`: the field appears only
         // when a sessionKey was given and a selection is stored.
         if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
-            && let Some(selected) = self.session_overrides.output_style(key)
+            && let Some(selected) = self
+                .session_overrides
+                .effective_output_style(key)
+                .await
+                .map_err(sdk_selection_error)?
         {
             result.insert("selected".into(), JsValue::String(selected));
         }
@@ -628,20 +649,32 @@ impl Requests {
             }
         };
         let project = lexical_project(self, params)?;
-        let styles = self.plugin_styles(&project).await?;
+        let styles = self
+            .plugin_styles(
+                &project,
+                params.get("sessionKey").and_then(JsValue::as_string),
+            )
+            .await?;
         if let Some(name) = &name
-            && !styles.iter().any(|style| JsString::from(style.name.as_str()) == *name)
+            && !styles
+                .iter()
+                .any(|style| JsString::from(style.name.as_str()) == *name)
         {
             let mut units: Vec<u16> = "Unknown output style: ".encode_utf16().collect();
             units.extend_from_slice(name.units());
-            return Err(gateway_error("OUTPUT_STYLE_NOT_FOUND", JsString::from_utf16(units)));
+            return Err(gateway_error(
+                "OUTPUT_STYLE_NOT_FOUND",
+                JsString::from_utf16(units),
+            ));
         }
-        match &name {
-            Some(name) => self
-                .session_overrides
-                .set_output_style(&session_key, name.clone()),
-            None => self.session_overrides.clear_output_style(&session_key),
-        }
+        self.session_overrides
+            .select_output_style(
+                &session_key,
+                &JsString::from(project.to_string_lossy().into_owned()),
+                name.clone(),
+            )
+            .await
+            .map_err(sdk_selection_error)?;
         // The TS callback closes with `sdk_output_style_changed` so the next
         // session composes the style's appendSystemPrompt.
         self.owner
@@ -662,9 +695,18 @@ impl Requests {
     async fn plugin_styles(
         &self,
         root: &std::path::Path,
+        session: Option<&JsString>,
     ) -> Result<Vec<crate::runtime::plugins::PluginOutputStyleContribution>, RequestError> {
         // Acquire may read configuration synchronously (management.rs:118-125),
         // so the blocking job stays off the async executor.
+        let additional = match session {
+            Some(session) => self
+                .session_overrides
+                .output_style_plugins(session)
+                .await
+                .map_err(sdk_selection_error)?,
+            None => vec![],
+        };
         let project = self.project.clone();
         let root = root.to_path_buf();
         let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&root)))
@@ -691,7 +733,7 @@ impl Requests {
             .await
             .map_err(|e| RequestError::new(e.to_string()))?;
         Ok(plugin_runtime
-            .create_view(vec![])
+            .create_view(additional)
             .await
             .list_output_styles())
     }

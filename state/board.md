@@ -5148,3 +5148,8 @@ r118固定6a802全目标check和native519通过，其余套件在跑；已合SDK
 ### 2026-11-09 06:56 · 严格检查修复与真实 SDK 链路
 
 r119固定5a409全目标check/native522/AO106/四个实际bin构建通过；strict报63项，已从mbp2 rustfix逐hash+三方真合机械片，另明确修type/无用参数/构造返回/测试模块布局，SOP largeErr等仍待Sol，未报strict通过。AO两家r118评审收敛到无P0但有P1：3个同源多drain已补enable+notify_waiters及并发回归，boundary引用解析诊断争议新增真实损坏JSON/未知schema回归待编译仲裁；workspace两P2由audit接续。真实CLI/sidecar/provider SDK已有deferred/aliases/schema/managedTools/plugin/suggestion/progress七项实际通过，预算按真实usage.cost停机+下一轮preflight继续验证，前几次探针参数/断言失败原件全保。第二mbp2镜像固定0fd820d已编好全Gateway bin，分组+FD曲线正在跑；不等同解决旧单进程累积。所有Rust仅mbp2、仅本机提交，完整CLI仍未完成。
+
+
+### 2026-11-09 06:58 · SDK 设置源与输出样式真实消费
+
+已逐SHA整合Sol十源 settings/settingSources/outputStyle：同fd限额reader、持原项目代解析模型/limits/thinking/subagents、SDK与RPC共享style选择，native PILOT_HOME锁定隔离--home；首编待r120。完整central intake与settingSources fallback进入per-turn model authority尚需增量，ephemeral与knowledge仍实施。fullGateway固定0fd首组api_web 115过3失败1忽略、峰35FD/12KQUEUE；失败为测试长期假定短TMP路径，当前隔离长路径触发Node错误文本截断，待同bin短TMP复验，不计通过。只本机提交、Rust只mbp2，完整CLI未完成。

@@ -69,12 +69,13 @@ mod cron;
 pub(super) mod dialog_recovery;
 mod mcp;
 mod memory;
-mod sdk_adapter;
-mod sdk_plugins;
 mod prompt_suggestion;
+mod sdk_adapter;
 mod sdk_dispatch;
 pub(super) mod sdk_hooks;
 mod sdk_model;
+mod sdk_plugins;
+mod sdk_settings;
 pub(crate) mod snapshot;
 mod steer;
 mod style_reload;
@@ -520,19 +521,38 @@ async fn start_assembly(
     let budget_ledger = task_budget::NativeBudgetLedger::new(options.home.clone());
     let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
     let normalize_mcp_config = prepare_mcp_config.clone();
+    let style_projection = Arc::downgrade(&session_overrides);
     let sdk_options = crate::runtime::sdk_session::SdkSessionOptions::new(
         options.project.clone(),
         options.project.clone(),
-        env.clone(),
+        sdk_settings::source_environment(&env, &options.home),
         Arc::new(sdk_adapter::NativeSdkResolver {
             project: project.clone(),
         }),
     )
     .with_homedir(options.home.clone())
-    .with_plugin_loader(Arc::new(sdk_plugins::NativeSdkPluginLoader))
-    .with_agent_normalizer(Arc::new(move |registry, session, config, runtime, skills| {
-        sdk_adapter::resolve_native_agents(registry, session, config, runtime, skills, normalize_mcp_config.get())
+    .with_setting_source_reader(Arc::new(sdk_settings::NativeSettingSourceReader))
+    .with_output_style_projection(Arc::new(move |key, style| {
+        if let Some(owner) = style_projection.upgrade() {
+            match style {
+                Some(name) => owner.set_output_style(key, name),
+                None => owner.clear_output_style(key),
+            }
+        }
     }))
+    .with_plugin_loader(Arc::new(sdk_plugins::NativeSdkPluginLoader))
+    .with_agent_normalizer(Arc::new(
+        move |registry, session, config, runtime, skills| {
+            sdk_adapter::resolve_native_agents(
+                registry,
+                session,
+                config,
+                runtime,
+                skills,
+                normalize_mcp_config.get(),
+            )
+        },
+    ))
     .with_projects(sdk_projects.clone())
     .with_task_budget(budget_ledger.clone());
     let sdk_registry = crate::runtime::sdk_session::SdkSessionRegistry::new(sdk_options)
@@ -543,6 +563,8 @@ async fn start_assembly(
         async_hooks: sdk_async_hooks.clone(),
         registry: tokio::sync::Mutex::new(sdk_registry),
     });
+    let style_port: Arc<dyn super::session_overrides::SdkOutputStylePort> = sdk_port.clone();
+    session_overrides.bind_sdk_styles(Arc::downgrade(&style_port));
     let prepare_sdk = sdk_port.clone();
     let fork_registry = super::agent::NativeForkRegistry::new();
     let prepare_forks = fork_registry.clone();
@@ -686,10 +708,10 @@ async fn start_assembly(
                     .and_then(|v| v.get("agent"))
                     .cloned()
                     .unwrap_or(JsValue::Undefined);
+                let effective_sdk=sdk.resolved_prompt_config(&context.session_key,resources).await.map_err(|error|RuntimeError::new(error.message))?;
+                let agent=sdk_settings::compose_agent(&agent,effective_sdk.as_ref(),&snapshot);
                 let mut config = agent.as_object().cloned().unwrap_or_default();
-                if let Some(sdk) = sdk.prompt_config(&context.session_key).await {
-                    sdk_adapter::apply_prompt_config(&mut config, &sdk);
-                }
+                if let Some(sdk) = &effective_sdk { sdk_adapter::apply_prompt_config(&mut config,sdk); }
 
                 let selected = agent.get("model").cloned().unwrap_or(JsValue::Undefined);
                 for key in ["provider", "model"] {
@@ -747,16 +769,12 @@ async fn start_assembly(
                 let stored_permission_mode =
                     session_overrides.permission_mode(&context.session_key);
                 let stored_thinking = session_overrides.thinking(&context.session_key);
-                let stored_style_content =
-                    match session_overrides.output_style(&context.session_key) {
-                        Some(name) => output_style_content(&staged, &name).await,
-                        None => None,
-                    };
+                let stored_style_name=session_overrides.effective_output_style(&context.session_key).await.map_err(|error|RuntimeError::new(error.message))?;
                 apply_session_overrides(
                     &mut config,
                     stored_permission_mode.as_ref(),
                     stored_thinking.as_ref(),
-                    stored_style_content.as_deref(),
+                    None,
                 );
                 // This ceiling comes from the actual project generation and is
                 // inherited even when a child receives a fresh session key.
@@ -832,6 +850,11 @@ async fn start_assembly(
                 let input_admission = Arc::new(super::input_admission::InputAdmission::new(
                     &skill_lease.contributions.commands,
                 ));
+                if fork_scope.is_none(){
+                    if let Some(name)=&stored_style_name {
+                        if let Some(style)=skill_lease.contributions.output_styles.iter().find(|style|JsString::from(style.name.as_str())==*name){apply_output_style_content(&mut config,&style.content);}
+                    }
+                }
                 let plugin_hooks = skill_lease.contributions.hooks.clone();
                 let plugin_mcp_servers = skill_lease.contributions.mcp_servers.clone();
                 let native_skills = if skills_disabled {
@@ -1932,57 +1955,42 @@ pub(super) fn apply_session_overrides(
         config.insert("thinking".into(), thinking.clone());
     }
     if let Some(content) = style_content {
-        let existing = config
-            .get("appendSystemPrompt")
-            .and_then(JsValue::as_string);
-        let mut parts = Vec::new();
-        if let Some(existing) = existing {
-            let units = crate::runtime::memory::js_trim_units(existing.units());
-            if !units.is_empty() {
-                parts.push(existing.clone());
-            }
-        }
-        if !crate::metadata::js_trim(content).is_empty() {
-            parts.push(JsString::from(content));
-        }
-        let mut joined = Vec::new();
-        for (index, part) in parts.iter().enumerate() {
-            if index != 0 {
-                joined.extend("\n\n".encode_utf16());
-            }
-            joined.extend_from_slice(part.units());
-        }
-        config.insert(
-            "appendSystemPrompt".into(),
-            if joined.is_empty() {
-                JsValue::Undefined
-            } else {
-                JsValue::String(JsString::from_utf16(joined))
-            },
-        );
+        apply_output_style_content(config, content);
     }
 }
 
-/// #1864: the stored output style's content through the same view
-/// `output_styles_list` lists (ProjectResources → PluginRuntime →
-/// PluginResources.runtime). Like ProjectRuntimeRegistry's
-/// getSdkOutputStyleContent the view is read without a refresh and a
-/// missing style is not an error: `None` leaves the field alone.
-async fn output_style_content(staged: &StageContext, name: &JsString) -> Option<String> {
-    let plugin_runtime = staged
-        .resource(Resource::PluginRuntime)?
-        .as_any()
-        .downcast_ref::<PluginResources>()?
-        .runtime
-        .clone();
-    plugin_runtime
-        .create_view(vec![])
-        .await
-        .list_output_styles()
-        .into_iter()
-        .find(|style| JsString::from(style.name.as_str()) == *name)
-        .map(|style| style.content)
+/// Join style text without rewriting permission/thinking choices twice.
+fn apply_output_style_content(config: &mut JsObject, content: &str) {
+    let existing = config
+        .get("appendSystemPrompt")
+        .and_then(JsValue::as_string);
+    let mut parts = Vec::new();
+    if let Some(existing) = existing {
+        let units = crate::runtime::memory::js_trim_units(existing.units());
+        if !units.is_empty() {
+            parts.push(existing.clone());
+        }
+    }
+    if !crate::metadata::js_trim(content).is_empty() {
+        parts.push(JsString::from(content));
+    }
+    let mut joined = Vec::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index != 0 {
+            joined.extend("\n\n".encode_utf16());
+        }
+        joined.extend_from_slice(part.units());
+    }
+    config.insert(
+        "appendSystemPrompt".into(),
+        if joined.is_empty() {
+            JsValue::Undefined
+        } else {
+            JsValue::String(JsString::from_utf16(joined))
+        },
+    );
 }
+
 pub(super) fn register_project(options: &Options) -> Result<(), ProxyError> {
     // resolve_process_path reads current_dir only for a relative marker.
     register_project_at(options, std::path::Path::new(""))
@@ -2117,9 +2125,12 @@ fn supports_native_module_binding(name: &JsString, value: &JsValue) -> bool {
         // parseModulesConfig has already checked endpoints, paths and contract.
         // The selected generation now installs the real StaffDeck controller.
         return fields.get("enabled") == Some(&JsValue::Bool(true))
-            && (fields.get("provider").and_then(JsValue::as_string).is_some_and(|p|p.equals_str("staffdeck"))
-                || (fields.get("contract")==Some(&JsValue::from("sop.lifecycle/v2"))
-                    && fields.get("transport")==Some(&JsValue::from("sop-http-v2"))));
+            && (fields
+                .get("provider")
+                .and_then(JsValue::as_string)
+                .is_some_and(|p| p.equals_str("staffdeck"))
+                || (fields.get("contract") == Some(&JsValue::from("sop.lifecycle/v2"))
+                    && fields.get("transport") == Some(&JsValue::from("sop-http-v2"))));
     }
     if (name.equals_str("skills") || name.equals_str("knowledge"))
         && fields.own_entries().len() == 1

@@ -554,26 +554,45 @@ pub(super) fn read_failure_message(error: &std::io::Error, path: &Path) -> Strin
         .unwrap_or_else(|| error.to_string())
 }
 
+/// Optional host IO policy. The settings parser, source order and precedence
+/// remain owned by this module; native callers can bound descriptor reads.
+pub enum SdkSettingSourceReadError {
+    Io(std::io::Error),
+    Refused(SdkSessionError),
+}
+pub trait SdkSettingSourceReader: Send + Sync {
+    fn read(
+        &self,
+        source: SettingSource,
+        path: &Path,
+    ) -> Result<Vec<u8>, SdkSettingSourceReadError>;
+}
 fn read_source_settings(
     source: SettingSource,
     project_root: &Path,
     env: &Env,
     cwd: &Path,
     homedir: Option<&Path>,
+    reader: Option<&dyn SdkSettingSourceReader>,
 ) -> Result<Option<JsValue>, SdkSessionError> {
     let path = source_path(source, project_root, env, cwd, homedir);
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = std::fs::read(&path).map_err(|error| {
-        settings_error(
+    let bytes = match reader {
+        Some(reader) => reader.read(source, &path),
+        None => std::fs::read(&path).map_err(SdkSettingSourceReadError::Io),
+    }
+    .map_err(|error| match error {
+        SdkSettingSourceReadError::Refused(error) => error,
+        SdkSettingSourceReadError::Io(error) => settings_error(
             "SDK_SETTING_SOURCE_READ_FAILED",
             format!(
                 "Unable to read {} settings source: {}",
                 source.as_str(),
                 read_failure_message(&error, &path)
             ),
-        )
+        ),
     })?;
     let content = JsString::from(String::from_utf8_lossy(&bytes).into_owned());
     let document = pilotdeck_yaml::parse_document(
@@ -646,6 +665,12 @@ pub struct ResolveSettingsOptions<'a> {
 pub fn resolve_session_settings(
     options: ResolveSettingsOptions<'_>,
 ) -> Result<Option<JsValue>, SdkSessionError> {
+    resolve_session_settings_with_reader(options, None)
+}
+pub fn resolve_session_settings_with_reader(
+    options: ResolveSettingsOptions<'_>,
+    reader: Option<&dyn SdkSettingSourceReader>,
+) -> Result<Option<JsValue>, SdkSessionError> {
     let sources = merge_sources(options.host_setting_sources, options.setting_sources)?;
     let mut resolved = merge_settings(
         None,
@@ -661,6 +686,7 @@ pub fn resolve_session_settings(
                 options.env,
                 options.cwd,
                 options.homedir,
+                reader,
             )?,
         };
         resolved = merge_settings(resolved, source_settings);

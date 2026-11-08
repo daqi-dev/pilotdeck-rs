@@ -4,6 +4,7 @@ mod binding;
 mod bounded;
 pub(crate) use bounded::load_project_bounded_lazy;
 pub(crate) use bounded::project_binding_target_bounded;
+pub(crate) use bounded::{BoundedSourceReadError, read_setting_source_bounded};
 pub use bounded::{load_project_bounded, load_snapshot_bounded};
 pub mod changes;
 mod graph;

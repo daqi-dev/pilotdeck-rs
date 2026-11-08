@@ -5,8 +5,8 @@ use super::{
     array, assert_managed_model_allowed, assert_organization_setting_sources_allowed, field,
     is_null, is_organization_model_allowed, js_object, json_text, map_settings_error, nullish,
     number, number_text, organization_provider_policy_rejection, own, path_js, primitive_type,
-    resolve_configured_model, resolve_session_settings, set_property, truthy,
-    validate_managed_permissions, validate_selector_policy, validate_setting_sources,
+    resolve_configured_model, set_property, truthy, validate_managed_permissions,
+    validate_selector_policy, validate_setting_sources,
 };
 use crate::{
     config::{Env, session_overrides::SessionConfigOverrides, session_value::SessionValue},
@@ -188,6 +188,7 @@ pub type SdkAgentNormalizer = Arc<
         + Sync,
 >;
 
+pub type OutputStyleProjection = Arc<dyn Fn(&JsString, Option<JsString>) + Send + Sync>;
 pub struct SdkSessionOptions {
     pub fallback_project_root: PathBuf,
     pub cwd: PathBuf,
@@ -203,6 +204,8 @@ pub struct SdkSessionOptions {
     pub plugin_loader: Option<Arc<dyn SdkPluginLoader>>,
     pub agent_normalizer: Option<SdkAgentNormalizer>,
     pub task_budget: Option<Arc<dyn SdkTaskBudget>>,
+    pub setting_source_reader: Option<Arc<dyn super::SdkSettingSourceReader>>,
+    pub output_style_projection: Option<OutputStyleProjection>,
     pub clock: Arc<dyn Fn() -> f64 + Send + Sync>,
 }
 
@@ -224,6 +227,8 @@ impl SdkSessionOptions {
             plugin_loader: Some(Arc::new(DiskSdkPluginLoader)),
             agent_normalizer: None,
             task_budget: None,
+            setting_source_reader: None,
+            output_style_projection: None,
             clock: Arc::new(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -231,6 +236,17 @@ impl SdkSessionOptions {
                     .unwrap_or(0.0)
             }),
         }
+    }
+    pub fn with_setting_source_reader(
+        mut self,
+        reader: Arc<dyn super::SdkSettingSourceReader>,
+    ) -> Self {
+        self.setting_source_reader = Some(reader);
+        self
+    }
+    pub fn with_output_style_projection(mut self, observer: OutputStyleProjection) -> Self {
+        self.output_style_projection = Some(observer);
+        self
     }
     pub fn with_organization_policy(mut self, policy: Option<OrganizationPolicy>) -> Self {
         self.organization_policy = policy;
@@ -373,14 +389,56 @@ impl SdkSessionRegistry {
     }
 
     fn set_config(&mut self, session_key: &JsString, config: JsValue) {
+        let selected = config
+            .get("outputStyle")
+            .and_then(JsValue::as_string)
+            .cloned();
         match self.configs.iter_mut().find(|(key, _)| key == session_key) {
-            Some((_, value)) => *value = config,
+            Some((_, stored)) => *stored = config,
             None => self.configs.push((session_key.clone(), config)),
+        }
+        if let Some(observer) = &self.options.output_style_projection {
+            observer(session_key, selected);
         }
     }
 
+    /// The existing native style RPC edits one field of the same committed
+    /// SDK configuration; it must not replace other permissions/prompts.
+    pub fn set_output_style_for_native(
+        &mut self,
+        session: &JsString,
+        project: PathBuf,
+        name: Option<JsString>,
+    ) {
+        let mut next = pilotdeck_protocol::JsObject::new();
+        if let Some(previous) = self.session_config(session) {
+            match previous {
+                JsValue::Object(object) => {
+                    for (k, v) in object.own_entries() {
+                        if !k.equals_str("outputStyle") {
+                            next.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+                JsValue::Array(items) => {
+                    for (index, value) in items.iter().enumerate() {
+                        next.insert(index.to_string().as_str().into(), value.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(name) = name {
+            next.insert("outputStyle".into(), JsValue::String(name));
+        }
+        self.set_config(session, JsValue::Object(next));
+        self.set_project(session, project);
+    }
     fn delete_config(&mut self, session_key: &JsString) {
         self.configs.retain(|(key, _)| key != session_key);
+        if let Some(observer) = &self.options.output_style_projection {
+            observer(session_key, None);
+        }
     }
 
     fn set_plugins(&mut self, session_key: &JsString, plugins: Vec<Arc<LoadedPlugin>>) {
@@ -424,21 +482,106 @@ impl SdkSessionRegistry {
             .organization_policy
             .as_ref()
             .and_then(|policy| policy.settings.as_ref());
-        resolve_session_settings(ResolveSettingsOptions {
-            project_root: &runtime.project_root,
-            cwd: &self.options.cwd,
-            env: &self.options.env,
-            homedir: self.options.homedir.as_deref(),
-            host_defaults: settings.and_then(|value| value.session_defaults.as_ref()),
-            host_managed_settings: settings
-                .and_then(|value| value.managed_session_settings.as_ref()),
-            host_setting_sources: settings.and_then(|value| value.session_default_sources.as_ref()),
-            settings: own(config, "settings"),
-            setting_sources: own(config, "settingSources"),
-            host_enforced_settings: settings
-                .and_then(|value| value.enforced_session_settings.as_ref()),
-        })
+        super::resolve_session_settings_with_reader(
+            ResolveSettingsOptions {
+                project_root: &runtime.project_root,
+                cwd: &self.options.cwd,
+                env: &self.options.env,
+                homedir: self.options.homedir.as_deref(),
+                host_defaults: settings.and_then(|value| value.session_defaults.as_ref()),
+                host_managed_settings: settings
+                    .and_then(|value| value.managed_session_settings.as_ref()),
+                host_setting_sources: settings
+                    .and_then(|value| value.session_default_sources.as_ref()),
+                settings: own(config, "settings"),
+                setting_sources: own(config, "settingSources"),
+                host_enforced_settings: settings
+                    .and_then(|value| value.enforced_session_settings.as_ref()),
+            },
+            self.options.setting_source_reader.as_deref(),
+        )
         .map_err(map_settings_error)
+    }
+
+    fn resolve_settings_job(
+        &self,
+        runtime: &ResolvedSdkRuntime,
+        config: &JsValue,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, SdkSessionError>> + Send + 'static>>
+    {
+        let Some(reader) = self.options.setting_source_reader.clone() else {
+            let result = self.resolve_settings(runtime, config);
+            return Box::pin(async move { result });
+        };
+        let root = runtime.project_root.clone();
+        let cwd = self.options.cwd.clone();
+        let env = self.options.env.clone();
+        let home = self.options.homedir.clone();
+        let policy = self
+            .options
+            .organization_policy
+            .as_ref()
+            .and_then(|p| p.settings.clone());
+        let config = config.clone();
+        Box::pin(async move {
+            static IO: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+                std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+            let permit = IO.clone().acquire_owned().await.map_err(|_| {
+                SdkSessionError::new(
+                    "SDK_SETTING_SOURCE_READ_FAILED",
+                    "SDK setting source IO is unavailable.",
+                )
+            })?;
+            tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                let settings = policy.as_ref();
+                super::resolve_session_settings_with_reader(
+                    ResolveSettingsOptions {
+                        project_root: &root,
+                        cwd: &cwd,
+                        env: &env,
+                        homedir: home.as_deref(),
+                        host_defaults: settings.and_then(|s| s.session_defaults.as_ref()),
+                        host_managed_settings: settings
+                            .and_then(|s| s.managed_session_settings.as_ref()),
+                        host_setting_sources: settings
+                            .and_then(|s| s.session_default_sources.as_ref()),
+                        settings: own(&config, "settings"),
+                        setting_sources: own(&config, "settingSources"),
+                        host_enforced_settings: settings
+                            .and_then(|s| s.enforced_session_settings.as_ref()),
+                    },
+                    Some(reader.as_ref()),
+                )
+                .map_err(map_settings_error)
+            })
+            .await
+            .map_err(|error| {
+                SdkSessionError::new("SDK_SETTING_SOURCE_READ_FAILED", error.to_string())
+            })?
+        })
+    }
+
+    /// Own the selected inputs before returning a future. Native callers can
+    /// drop the registry mutex while the bounded disk worker keeps its permit.
+    pub fn resolve_session_config_async(
+        &self,
+        session: &JsString,
+        runtime: &ResolvedSdkRuntime,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<JsValue>, SdkSessionError>> + Send + 'static>>
+    {
+        let Some(mut config) = self.session_config(session).cloned() else {
+            return Box::pin(async { Ok(None) });
+        };
+        let settings = self.resolve_settings_job(runtime, &config);
+        Box::pin(async move {
+            set_property(
+                &mut config,
+                "settings",
+                settings.await?.unwrap_or(JsValue::Undefined),
+            );
+            Ok(Some(config))
+        })
     }
 
     pub(crate) fn assert_organization_model_allowed(
@@ -930,7 +1073,7 @@ impl SdkSessionRegistry {
         )?;
         let previous = self.session_config(session_key).cloned();
         let runtime = self.options.resolver.resolve(project_key)?;
-        let resolved_settings = self.resolve_settings(&runtime, &next)?;
+        let resolved_settings = self.resolve_settings_job(&runtime, &next).await?;
         for (requested, field) in [
             (
                 resolved_settings

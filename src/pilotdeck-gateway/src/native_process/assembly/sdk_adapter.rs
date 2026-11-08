@@ -1,5 +1,5 @@
-//! Incremental native SDK session adapter. Only permissionMode is enabled until
-//! each additional SDK setting has a native consumer; unknown fields fail closed.
+//! Native SDK session adapter; session registry and retained project resources
+//! remain the configuration and lifetime owners.
 use std::sync::Arc;
 
 use pilotdeck_protocol::{JsString, JsValue};
@@ -91,6 +91,44 @@ impl NativeSdkPort {
     /// when the current request did not supply a new SDK config.
     pub async fn prompt_config(&self, session: &JsString) -> Option<JsValue> {
         self.registry.lock().await.session_config(session).cloned()
+    }
+    /// A borrowed view of the exact generation that prepared this session;
+    /// the caller retains its lease, so resolving settings never reacquires.
+    pub async fn resolved_prompt_config(
+        &self,
+        session: &JsString,
+        resources: &ProjectResources,
+    ) -> Result<Option<JsValue>, SdkSessionError> {
+        let staged = resources.context();
+        let plugin = staged
+            .resource(Resource::PluginRuntime)
+            .ok_or_else(|| SdkSessionError::raw("Error", "Native plugin runtime is missing."))?;
+        let plugin_runtime = plugin
+            .as_any()
+            .downcast_ref::<PluginResources>()
+            .ok_or_else(|| {
+                SdkSessionError::raw("Error", "Native plugin runtime has the wrong type.")
+            })?
+            .runtime
+            .clone();
+        let runtime = ResolvedSdkRuntime {
+            project_root: staged.project_root(),
+            snapshot: staged.snapshot().as_ref().clone(),
+            plugin_runtime,
+            lease: None,
+        };
+        let job = self
+            .registry
+            .lock()
+            .await
+            .resolve_session_config_async(session, &runtime);
+        job.await
+    }
+    pub async fn session_plugins(
+        &self,
+        session: &JsString,
+    ) -> Vec<Arc<crate::runtime::plugins::LoadedPlugin>> {
+        self.registry.lock().await.session_plugins(session).to_vec()
     }
     pub async fn permission_mode(&self, session: &JsString) -> Option<JsString> {
         self.registry
@@ -357,6 +395,9 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
             "agentProgressSummaries",
             "forwardSubagentText",
             "plugins",
+            "settings",
+            "settingSources",
+            "outputStyle",
             "permissionMode",
             "managedPermissions",
             "additionalWorkingDirectories",
@@ -921,5 +962,55 @@ mod user_dialog_config_tests {
         let value =
             pilotdeck_protocol::parse_json("[{\"type\":\"local\",\"path\":\"/a\"}]").unwrap();
         assert!(validate_supported_config(&object([("plugins", value)])).is_ok());
+    }
+}
+
+impl super::super::session_overrides::SdkOutputStylePort for NativeSdkPort {
+    fn get<'a>(
+        &'a self,
+        key: &'a JsString,
+    ) -> super::super::session_overrides::SdkStyleFuture<'a, Option<JsString>> {
+        Box::pin(async move {
+            Ok(self
+                .registry
+                .lock()
+                .await
+                .session_config(key)
+                .and_then(|v| v.get("outputStyle"))
+                .and_then(JsValue::as_string)
+                .cloned())
+        })
+    }
+    fn plugins<'a>(
+        &'a self,
+        key: &'a JsString,
+    ) -> super::super::session_overrides::SdkStyleFuture<
+        'a,
+        Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+    > {
+        Box::pin(async move { Ok(self.session_plugins(key).await) })
+    }
+    fn set<'a>(
+        &'a self,
+        key: &'a JsString,
+        project: &'a JsString,
+        name: Option<JsString>,
+    ) -> super::super::session_overrides::SdkStyleFuture<'a, ()> {
+        Box::pin(async move {
+            let root = project
+                .to_utf8()
+                .map(std::path::PathBuf::from)
+                .map_err(|_| {
+                    SdkSessionError::raw(
+                        "Error",
+                        "Project identity is not representable by this host.",
+                    )
+                })?;
+            self.registry
+                .lock()
+                .await
+                .set_output_style_for_native(key, root, name);
+            Ok(())
+        })
     }
 }

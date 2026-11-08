@@ -29,6 +29,26 @@ pub(crate) fn project_binding_target_bounded(
         ))
     }
 }
+pub(crate) enum BoundedSourceReadError {
+    Io(std::io::Error),
+    Resource(Error),
+}
+/// Reuse the configuration descriptor policy for SDK setting sources. Directory
+/// IO retains Node's EISDIR contract instead of becoming a resource rejection.
+pub(crate) fn read_setting_source_bounded(path: &Path) -> Result<Vec<u8>, BoundedSourceReadError> {
+    #[cfg(unix)]
+    {
+        unix::read_setting_source(path)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Err(BoundedSourceReadError::Resource(Error::new(
+            "CONFIG_BOUNDED_UNSUPPORTED",
+            "Bounded configuration loading requires Unix file descriptors.",
+        )))
+    }
+}
 /// Load through the existing configuration pipeline with Unix nonblocking,
 /// same-descriptor regular-file reads: 8 MiB per file, 32 MiB per invocation.
 pub fn load_project_bounded(
@@ -122,6 +142,15 @@ mod unix {
             None => result,
         }
     }
+    pub(super) fn read_setting_source(path: &Path) -> Result<Vec<u8>, BoundedSourceReadError> {
+        let mut files = BoundedFiles::new(FILE_LIMIT, TOTAL_LIMIT);
+        files.directory_as_io = true;
+        let result = files.read(path);
+        match files.error() {
+            Some(error) => Err(BoundedSourceReadError::Resource(error)),
+            None => result.map_err(BoundedSourceReadError::Io),
+        }
+    }
     #[derive(Clone, Copy)]
     enum Fault {
         NonRegular,
@@ -134,6 +163,7 @@ mod unix {
         fault: Cell<Option<Fault>>,
         file_limit: usize,
         total_limit: usize,
+        directory_as_io: bool,
     }
     impl BoundedFiles {
         fn new(file_limit: usize, total_limit: usize) -> Self {
@@ -143,6 +173,7 @@ mod unix {
                 fault: Cell::new(None),
                 file_limit,
                 total_limit,
+                directory_as_io: false,
             }
         }
         fn refusal(&self, fault: Fault) -> io::Error {
@@ -209,6 +240,9 @@ mod unix {
             let metadata = file
                 .metadata()
                 .map_err(|error| crate::node_io::descriptor_error(error, "fstat"))?;
+            if self.directory_as_io && metadata.is_dir() {
+                return Err(io::Error::from_raw_os_error(libc::EISDIR));
+            }
             if !metadata.is_file() {
                 return Err(self.refusal(Fault::NonRegular));
             }
