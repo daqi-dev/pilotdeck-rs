@@ -192,16 +192,19 @@ fn limits() -> Limits {
         handshake_timeout: Duration::from_secs(60),
         execution_timeout: Some(Duration::from_secs(60)),
         close_timeout: Duration::from_secs(1),
+        // fix-r1 (#1891 review): `io_timeout` covers the flush-side write wait
+        // on the same real child (`connection.rs`), the exact path the #978
+        // loaded-host reddening ran through, so it joins the same margin
+        // instead of inheriting the 5 s default.
+        io_timeout: Duration::from_secs(60),
         ..Limits::default()
     }
 }
 // Protocol assertions should not race Python startup/IO on a loaded CI worker.
-// #1891: same-source sibling of `limits()` above, so its handshake/execution
-// clocks carry the same margin; `close_timeout` stays at its #542-era 5 s.
+// #1891: same-source sibling of `limits()` above, so its clocks carry the same
+// margins; `close_timeout` is the only field that differs (#542-era 5 s).
 fn protocol_limits() -> Limits {
     Limits {
-        handshake_timeout: Duration::from_secs(60),
-        execution_timeout: Some(Duration::from_secs(60)),
         close_timeout: Duration::from_secs(5),
         ..limits()
     }
@@ -227,7 +230,11 @@ impl Drop for ManualClock {
     }
 }
 async fn wait_for_event(label: &str, ready: impl Fn() -> bool) {
-    let watchdog = std::time::Instant::now() + Duration::from_secs(10);
+    // #1891 fix-r1: the waited-on conditions are fixture-file writes and other
+    // real-peer progress, so the anti-hang bound must not become a tighter
+    // ceiling than the liveness margins the callers grant (a loaded host that
+    // legitimately takes tens of seconds to publish must still pass).
+    let watchdog = std::time::Instant::now() + Duration::from_secs(60);
     while !ready() {
         assert!(
             std::time::Instant::now() < watchdog,
@@ -343,23 +350,29 @@ async fn handshake_execute_ack_and_terminal() {
         "cleanup-hang",
     ] {
         let started = Instant::now();
-        let result = run(mode).await.unwrap_or_else(|error| {
-            // #1891: receipt-wired run failure; the failure point and the
-            // pass/fail condition are unchanged — the label only makes the
-            // negative-control shrink mutant observable by name.
-            crate::test_negative_receipt::record_failure("#1891 host fixture run failed");
-            panic!("#1891 host fixture run failed: {mode}: {error}")
-        });
+        // #1891: receipt-wired run failure; the failure point and the
+        // pass/fail condition are unchanged — the label only makes the
+        // negative-control shrink mutant observable by name.
+        let result = crate::test_negative_receipt::expect_ok(
+            run(mode).await,
+            &format!("#1891 host fixture run failed: {mode}"),
+        );
         assert_eq!(
             matches!(result, ExecuteResult::Rejected(_)),
             mode == "rejected"
         );
         // Protocol semantics, not a timing race: the bound only guards the
-        // unbounded-cleanup regression (the peer's own hang is a 60 s sleep).
-        // The elapsed span covers Python startup and the peer round trips, so
-        // it must tolerate a loaded CI worker instead of racing it (#308).
+        // unbounded-cleanup regression (the peer's own hang is a 60 s sleep,
+        // `fixture.py` cleanup-hang). The elapsed span covers Python startup
+        // and the peer round trips, so it must tolerate a loaded CI worker
+        // instead of racing it (#308/#978) — but it must also stay strictly
+        // below that 60 s hang, or the regression it exists to catch would
+        // complete inside the bound. 30 s is 5x the worst loaded startup ever
+        // recorded (6 s, the #1080 gates incident) with half the hang to
+        // spare. fix-r1: was 10 s, which re-tightened the #1891 margins to a
+        // wall-clock bet on the very scheduling the relaxation tolerates.
         assert!(
-            started.elapsed() < Duration::from_secs(10),
+            started.elapsed() < Duration::from_secs(30),
             "unbounded cleanup: {mode}"
         );
         println!("HOST_PASS {mode}");
@@ -519,7 +532,9 @@ async fn unknown_fixture_mode_fails_immediately() {
     let _stdin = child.stdin.take().unwrap();
     // The watchdog only prevents a hang; the fixture must merely start Python
     // and exit before reading hello, which is machine-speed dependent (#308).
-    let output = timeout(Duration::from_secs(5), child.wait_with_output())
+    // fix-r1 (#1891): a cold interpreter start is exactly the loaded-host
+    // stall the liveness margins cover, so it gets the same 60 s headroom.
+    let output = timeout(Duration::from_secs(60), child.wait_with_output())
         .await
         .unwrap()
         .unwrap();
@@ -684,8 +699,9 @@ async fn callbacks_do_not_block_input_or_run_twice() {
     assert_eq!(error.kind, HostErrorKind::Disconnected);
     // The kind above is the oracle (an execution timeout would surface as
     // Timeout); this wall bound only guards gross hangs, so it must not race
-    // Python startup on a loaded CI worker (#308).
-    assert!(error.accepted && started.elapsed() < Duration::from_secs(5));
+    // Python startup on a loaded CI worker (#308). fix-r1 (#1891): kept
+    // strictly looser than the `limits()` margins the same spawn grants.
+    assert!(error.accepted && started.elapsed() < Duration::from_secs(70));
     println!("HOST_REJECT callback-disconnect: {error}");
 }
 #[tokio::test]
@@ -733,9 +749,20 @@ async fn default_execution_timeout_is_unbounded_past_former_watchdog() {
     let mode = "gated-event";
     let handler = Handler::new(mode);
     let (mut command, receipt) = peer("positive");
-    let client = HostClient::spawn(&mut command, None, Limits::default())
-        .await
-        .unwrap();
+    // #1891 fix-r1: the peer is the real `fixture.py`, so the startup-side
+    // clocks get the liveness margin; `execution_timeout` stays `None` because
+    // the unbounded default is the very behavior under test.
+    let client = HostClient::spawn(
+        &mut command,
+        None,
+        Limits {
+            handshake_timeout: Duration::from_secs(60),
+            io_timeout: Duration::from_secs(60),
+            ..Limits::default()
+        },
+    )
+    .await
+    .unwrap();
     let clock = ManualClock::start();
     let task = tokio::spawn(client.execute(request(), handler.clone()));
     wait_for_event("first event blocked in handler", || {
@@ -754,7 +781,9 @@ async fn default_execution_timeout_is_unbounded_past_former_watchdog() {
     );
     handler.event_gate.notify_one();
     drop(clock);
-    let result = timeout(Duration::from_secs(10), task)
+    // #1891 fix-r1: strictly looser than the 60 s liveness margins granted
+    // above, so a loaded host decides the result, not this watchdog.
+    let result = timeout(Duration::from_secs(70), task)
         .await
         .expect("unbounded execution did not resume after releasing the event")
         .unwrap()
@@ -782,7 +811,14 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
         ),
     ] {
         let (mut command, receipt) = peer(mode);
-        let limits = Limits::default();
+        // #1891 fix-r1: same real-`fixture.py` spawn as the siblings above,
+        // so the startup-side clocks get the margin; the post-cancel deadline
+        // under test is virtual-clock driven and unaffected.
+        let limits = Limits {
+            handshake_timeout: Duration::from_secs(60),
+            io_timeout: Duration::from_secs(60),
+            ..Limits::default()
+        };
         let deadline = POST_CANCEL_EXIT_TIMEOUT;
         let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
         let pid = client.connection.pid().expect("owned peer pid");
@@ -838,7 +874,9 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
         .await;
         std::fs::write(receipt.0.with_extension("close-release"), b"release").unwrap();
         drop(clock);
-        let error = timeout(Duration::from_secs(10), task)
+        // #1891 fix-r1: strictly looser than the 60 s margins granted above;
+        // the settle spans the peer's close handshake on a loaded host.
+        let error = timeout(Duration::from_secs(70), task)
             .await
             .unwrap_or_else(|_| panic!("{mode}: cancellation waited past its bounded exit"))
             .unwrap()
@@ -866,9 +904,19 @@ async fn cancellation_without_terminal_exits_within_post_cancel_deadline() {
 async fn late_terminal_after_cancel_wins_over_post_cancel_deadline() {
     let mode = "host-cancel-late-terminal";
     let (mut command, receipt) = peer(mode);
-    let client = HostClient::spawn(&mut command, None, Limits::default())
-        .await
-        .unwrap();
+    // #1891 fix-r1: real `fixture.py` peer — the startup-side clocks get the
+    // liveness margin, the post-cancel deadline under test is virtual.
+    let client = HostClient::spawn(
+        &mut command,
+        None,
+        Limits {
+            handshake_timeout: Duration::from_secs(60),
+            io_timeout: Duration::from_secs(60),
+            ..Limits::default()
+        },
+    )
+    .await
+    .unwrap();
     let cancellation = Cancellation::default();
     let handler = Handler::new(mode);
     let clock = ManualClock::start();
@@ -896,24 +944,26 @@ async fn late_terminal_after_cancel_wins_over_post_cancel_deadline() {
     );
     std::fs::write(receipt.0.with_extension("release"), b"release\n").unwrap();
     // If the bound is too short, the cancelled execute returns Timeout before
-    // the peer's 3 s terminal can be applied. Poll briefly, then resume the
-    // clock (child shutdown needs it) and report the actual settle result
-    // instead of a bare watchdog.
-    let watchdog = std::time::Instant::now() + Duration::from_secs(5);
+    // the peer's 3 s terminal can be applied. Poll first (the peer has to
+    // notice the release file, a real round trip — #1891 fix-r1 gives it the
+    // liveness margin), then resume the clock (child shutdown needs it) and
+    // report the actual settle result instead of a bare watchdog.
+    let watchdog = std::time::Instant::now() + Duration::from_secs(60);
     while handler.applied_events.load(Ordering::SeqCst) != 2 && std::time::Instant::now() < watchdog
     {
         tokio::task::yield_now().await;
     }
     drop(clock);
     if handler.applied_events.load(Ordering::SeqCst) != 2 {
-        let outcome = timeout(Duration::from_secs(10), task)
+        let outcome = timeout(Duration::from_secs(70), task)
             .await
             .expect("cancelled execute did not settle after the late terminal");
         panic!(
             "{mode}: cancelled execute settled as {outcome:?} instead of applying the 3 s terminal"
         );
     }
-    let result = timeout(Duration::from_secs(10), task)
+    // #1891 fix-r1: strictly looser than the 60 s margins granted above.
+    let result = timeout(Duration::from_secs(70), task)
         .await
         .expect("late terminal did not win over the post-cancel exit deadline")
         .unwrap()
@@ -998,7 +1048,10 @@ async fn dropped_execute_reaps_child_and_aborts_callback() {
     let task = tokio::spawn(client.execute(request(), handler.clone()));
     // The callback start is a round trip through the Python peer, so it is
     // machine-speed dependent; the watchdog must not race CI load (#308).
-    timeout(Duration::from_secs(5), async {
+    // fix-r1 (#1891): given the same 60 s liveness shape as the first-byte
+    // class — the bound below, by contrast, waits only on the aborted task's
+    // in-process Drop, which is pure scheduler work.
+    timeout(Duration::from_secs(60), async {
         while handler.active_calls.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
@@ -1184,13 +1237,15 @@ async fn unbounded_execution_and_maximum_terminal_drain_do_not_panic() {
         let client = HostClient::spawn(&mut command, None, bounded)
             .await
             .unwrap();
-        // The watchdog must stay strictly looser than the limits this test
-        // grants: variant 2 still allows a legal 60 s execution (#1891),
-        // and a peer using that time would otherwise be cut off by the outer
-        // bound with an ambiguous timeout instead of the limit under test
-        // (#308).
+        // The watchdog must stay strictly looser than the clocks this test
+        // grants: both variants keep `limits()`' 60 s handshake, and variant 2
+        // a legal 60 s execution (#1891), so a peer spending both legitimately
+        // must not be cut off with an ambiguous timeout instead of the limit
+        // under test (#308). The unbounded fields under test (None / MAX) are
+        // covered by the fixture's own self-termination, not by this bound.
+        // fix-r1: 70 s covered only one of the two 60 s clocks.
         let result = timeout(
-            Duration::from_secs(70),
+            Duration::from_secs(130),
             client.execute(request(), Handler::new("positive")),
         )
         .await

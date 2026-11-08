@@ -203,8 +203,10 @@ async fn drive_until<F: std::future::Future>(
 ) -> Option<F::Output> {
     // Real-time watchdog: a paused virtual clock cannot bound cleanup that
     // waits on a timer, and a fixture that dies without its marker must not
-    // hang the test forever.
-    let watchdog = std::time::Instant::now() + Duration::from_secs(20);
+    // hang the test forever. #1891 fix-r1: the conditions wait on the real
+    // cancel peer's marker files, so the bound stays strictly looser than the
+    // 60 s liveness margins those spawns are granted below.
+    let watchdog = std::time::Instant::now() + Duration::from_secs(70);
     while !ready() {
         assert!(
             std::time::Instant::now() < watchdog,
@@ -223,9 +225,20 @@ async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadlin
     for before in [true, false] {
         for mode in ["pending-hello", "pending-resume", "silent-resume"] {
             let (command, receipt) = cancel_peer(mode);
-            let mut client = HostClient::spawn_resumable(command, None, Limits::default())
-                .await
-                .unwrap();
+            // #1891 fix-r1: the cancel peer is a real Python process, so the
+            // startup-side clocks get the liveness margin; the post-cancel
+            // deadline under test is virtual-clock driven and unaffected.
+            let mut client = HostClient::spawn_resumable(
+                command,
+                None,
+                Limits {
+                    handshake_timeout: Duration::from_secs(60),
+                    io_timeout: Duration::from_secs(60),
+                    ..Limits::default()
+                },
+            )
+            .await
+            .unwrap();
             let original_pid = client.connection.pid().expect("owned original peer");
             client.test_signals.reconnect_gate = Some(Arc::new(Notify::new()));
             let signals = client.test_signals.clone();
@@ -288,7 +301,11 @@ async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadlin
             assert!(!task.is_finished(), "close was not gated");
             release(&receipt, "close-release");
             drop(clock);
-            let error = timeout(Duration::from_secs(10), task)
+            // #1891 fix-r1: the settle spans the peer's close handshake and
+            // teardown on a loaded host; `close_timeout` is granted at its
+            // default (5 s per grace phase), so the outer bound stays a
+            // multiple of that, not a race against it.
+            let error = timeout(Duration::from_secs(20), task)
                 .await
                 .expect("cleanup stuck")
                 .unwrap()
@@ -384,9 +401,13 @@ async fn cancellation_bounds_pending_terminal_application_and_preserves_known_te
     ] {
         let (mut command, receipt) = cancel_peer(mode);
         // Force the cancel bound, rather than the shorter terminal drain, to
-        // stop a pending module after final application as well.
+        // stop a pending module after final application as well. #1891 fix-r1:
+        // the startup-side clocks get the liveness margin like the sibling
+        // spawns in this file; the drain value is the behavior under test.
         let limits = Limits {
             terminal_drain_timeout: Duration::from_secs(60),
+            handshake_timeout: Duration::from_secs(60),
+            io_timeout: Duration::from_secs(60),
             ..Limits::default()
         };
         let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
@@ -434,7 +455,9 @@ async fn cancellation_bounds_pending_terminal_application_and_preserves_known_te
         );
         release(&receipt, "close-release");
         drop(clock);
-        let result = timeout(Duration::from_secs(10), task)
+        // #1891 fix-r1: settle spans the peer's close handshake on a loaded
+        // host — a multiple of the granted 5 s close grace, not a race.
+        let result = timeout(Duration::from_secs(20), task)
             .await
             .expect("cleanup stuck")
             .unwrap()
@@ -470,9 +493,19 @@ async fn cancellation_bounds_pending_terminal_application_and_preserves_known_te
 async fn cancellation_terminal_application_released_inside_bound_finishes_normally() {
     for mode in ["terminal-first-stall", "terminal-final-stall"] {
         let (mut command, receipt) = cancel_peer(mode);
-        let client = HostClient::spawn(&mut command, None, Limits::default())
-            .await
-            .unwrap();
+        // #1891 fix-r1: real cancel peer — the startup-side clocks get the
+        // liveness margin, the virtual-clock bound under test is unaffected.
+        let client = HostClient::spawn(
+            &mut command,
+            None,
+            Limits {
+                handshake_timeout: Duration::from_secs(60),
+                io_timeout: Duration::from_secs(60),
+                ..Limits::default()
+            },
+        )
+        .await
+        .unwrap();
         let signals = client.test_signals.clone();
         let handler = ApplicationHandler::new(mode);
         let cancellation = Cancellation::default();
@@ -500,7 +533,9 @@ async fn cancellation_terminal_application_released_inside_bound_finishes_normal
         marker(&receipt, "closing").await;
         release(&receipt, "close-release");
         drop(clock);
-        let result = timeout(Duration::from_secs(10), task)
+        // #1891 fix-r1: settle spans the peer's close handshake on a loaded
+        // host — a multiple of the granted 5 s close grace, not a race.
+        let result = timeout(Duration::from_secs(20), task)
             .await
             .unwrap()
             .unwrap()
@@ -524,8 +559,12 @@ async fn completed_application_is_collected_before_the_deadline_exit() {
     // set: the biased select must collect it (ACK sequence 1) before the
     // cancel-exit arm drops the queue at the same expired deadline.
     let (mut command, receipt) = cancel_peer("terminal-ack-stall");
+    // #1891 fix-r1: same liveness margin on the startup-side clocks; the
+    // drain value is the behavior under test (see the sibling block above).
     let limits = Limits {
         terminal_drain_timeout: Duration::from_secs(60),
+        handshake_timeout: Duration::from_secs(60),
+        io_timeout: Duration::from_secs(60),
         ..Limits::default()
     };
     let client = HostClient::spawn(&mut command, None, limits).await.unwrap();
@@ -577,7 +616,9 @@ async fn completed_application_is_collected_before_the_deadline_exit() {
     );
     release(&receipt, "close-release");
     drop(clock);
-    let result = timeout(Duration::from_secs(10), async move {
+    // #1891 fix-r1: settle spans the peer's close handshake on a loaded host
+    // — a multiple of the granted 5 s close grace, not a race against it.
+    let result = timeout(Duration::from_secs(20), async move {
         loop {
             if let Some(value) = poll_once(&mut run).await {
                 break value;

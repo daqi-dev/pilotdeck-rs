@@ -3,16 +3,20 @@
 #1891 把九个同源测试位点的活性看门狗放宽到 #1851 的 60 s 形态（首字节
 `FIRST_BYTE`、`bounded_liveness`/`bounded`/`next` 看门狗、真实 peer 的
 `Limits` 余量）。本目录证明放宽没有把看门狗变成建议：每行把一个放宽后的
-窗口缩到 `Duration::from_nanos(1)`——任何健康 fixture 都不可能在 1 ns 内
-完成，因此判死不需要任何环境负载，杀招全部落在位点自己的稳定 oracle 文本
-上（这些断言在 #1891 同一改动里接上了 `negative_receipt` 协议；无
-`PDRS_NEGATIVE_RECEIPTS` 环境时行为与原先逐字节等价）。
+窗口缩到任何健康 fixture 都不可能完成的值，因此判死不需要任何环境负载，
+杀招全部落在位点自己的稳定 oracle 文本上（这些断言在 #1891 同一改动里接
+上了 `negative_receipt` 协议；无 `PDRS_NEGATIVE_RECEIPTS` 环境时行为与
+原先逐字节等价）。A 组（fix-r1）缩到 `Duration::ZERO`：`elapsed() < ZERO`
+恒假、捕获环必不进入，判死不依赖任何时钟粒度假设——原先的 1 ns 留了一个
+「响应已躺在 socket 缓冲里、恰好在 1 ns 窗口内读到」的竞态。B 组缩到
+`from_nanos(1)`：各行被包 future 的首个 peer 依赖 await 可证 pending
+（等待的事件/握手需要一次尚未发生的 Python 往返），超时必然先赢。
 
 ## 行表
 
 | 行 | 变异（缩窗） | 绑定测试 | kill 断言 |
 |---|---|---|---|
-| api-web-first-byte-shrunk | `FIRST_BYTE` 60 s→1 ns | `api_web::tests::projects_ok` | `#1348 cell projects-ok produced no bytes and stayed open` |
+| api-web-first-byte-shrunk | `FIRST_BYTE` 60 s→`ZERO` | `api_web::tests::projects_ok` | `#1348 cell projects-ok produced no bytes and stayed open` |
 | approvals-first-byte-shrunk | 同上 | `module_host::approvals::tests::auth_missing` | `#1350 cell auth-missing …` |
 | native-http-first-byte-shrunk | 同上 | `native_http::tests::health_get` | `#1209 cell health-get …` |
 | native-ws-first-byte-shrunk | 同上 | `native_ws::tests::upgrade_budget_boundary_matches_ts` | `#1351 every boundary cell produced bytes or closed` |
@@ -37,7 +41,9 @@ python3 -I .../negative_controls.py --check   # 只验锚（过期即报错退�
 
 任何一行不是 KILLED（含锚过期、编译失败、还原失败）→ 退出码非零。
 运行时读入（写守卫集合的一部分）：`tests/fixtures/live-session/peer.py`、
-`scripts/a6-host/fixture.py`、`scripts/a6-host/lifetime.py`。
+`scripts/a6-host/fixture.py`、`scripts/a6-host/lifetime.py`、
+`scripts/a6-host/resume_fixture.py`（fix-r1 补：resume 绑定行跑 `reconnect-*`
+模式，`fixture.py` 经 runpy 执行它）。
 
 ## 范围与诚实声明
 

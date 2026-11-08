@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
 """#1891: the relaxed liveness margins must stay load-bearing, not advisory.
 
-Every row shrinks one #1891 watchdog to ``from_nanos(1)`` — a window no
-healthy fixture can ever fit inside, so the kill is deterministic without any
-ambient load. What each row proves is the direction the relaxation could have
-silently broken: the first-byte capture loops must still notice a peer that
-produced no bytes and stayed open, the ``bounded_liveness``/``bounded``/
-``next`` watchdogs must still fire when the peer never progresses, and the
-``Limits`` margins must still be enforced (an execution deadline of 1 ns must
-fail the happy path, a handshake deadline of 1 ns must fail the spawn). The
-kill assertion of every row is the site's own stable oracle text (receipt-
-wired in the same #1891 change; without the receipt environment the helpers
-behave exactly as before).
+Every row shrinks one #1891 watchdog to a window no healthy fixture can ever
+fit inside, so the kill is deterministic without any ambient load. The A-group
+rows shrink ``FIRST_BYTE`` to ``Duration::ZERO`` — ``elapsed() < ZERO`` is
+always false, so the capture loop never runs and the empty capture must die on
+the cell's own oracle (fix-r1: ``from_nanos(1)`` left a clock-granularity
+race — a response already sitting in the socket buffer could be read inside
+the 1 ns window and the row would not kill). The B-group rows shrink their
+watchdog's timeout argument to ``from_nanos(1)``: the first peer-dependent
+await inside each wrapped future is provably pending (the event or spawn it
+waits on requires a Python round trip that has not started), so the elapsed
+timer always wins the race. What each row proves is the direction the
+relaxation could have silently broken: the first-byte capture loops must still
+notice a peer that produced no bytes and stayed open, the
+``bounded_liveness``/``bounded``/``next`` watchdogs must still fire when the
+peer never progresses, and the ``Limits`` margins must still be enforced (an
+execution deadline of 1 ns must fail the happy path, a handshake deadline of
+1 ns must fail the spawn). The kill assertion of every row is the site's own
+stable oracle text (receipt-wired in the same #1891 change; without the
+receipt environment the helpers behave exactly as before).
 
 Rows run the bound test only (exact mode, one target each); the positive and
 restored phases pin that the un-mutated bytes pass the same test. The table is
@@ -40,26 +48,27 @@ RESUME = GATEWAY / 'host/tests/resume.rs'
 HOST_TESTS = GATEWAY / 'host/tests.rs'
 
 MUTATIONS = [
-    # A-group first-byte capture loops: 60 s margin shrunk below any possible
-    # response, so the loop exits with no bytes and the cell oracle must fire.
+    # A-group first-byte capture loops: the margin shrinks to ZERO, so the
+    # loop condition is never true, the loop exits with no bytes and the cell
+    # oracle must fire (fix-r1: no clock-granularity assumption at all).
     ('api-web-first-byte-shrunk', API_WEB,
      'const FIRST_BYTE: Duration = Duration::from_secs(60);',
-     'const FIRST_BYTE: Duration = Duration::from_nanos(1);',
+     'const FIRST_BYTE: Duration = Duration::ZERO;',
      [('api_web::tests::projects_ok',
        '#1348 cell projects-ok produced no bytes and stayed open')]),
     ('approvals-first-byte-shrunk', APPROVALS,
      'const FIRST_BYTE: Duration = Duration::from_secs(60);',
-     'const FIRST_BYTE: Duration = Duration::from_nanos(1);',
+     'const FIRST_BYTE: Duration = Duration::ZERO;',
      [('module_host::approvals::tests::auth_missing',
        '#1350 cell auth-missing produced no bytes and stayed open')]),
     ('native-http-first-byte-shrunk', NATIVE_HTTP,
      'const FIRST_BYTE: Duration = Duration::from_secs(60);',
-     'const FIRST_BYTE: Duration = Duration::from_nanos(1);',
+     'const FIRST_BYTE: Duration = Duration::ZERO;',
      [('native_http::tests::health_get',
        '#1209 cell health-get produced no bytes and stayed open')]),
     ('native-ws-first-byte-shrunk', NATIVE_WS,
      'const FIRST_BYTE: Duration = Duration::from_secs(60);',
-     'const FIRST_BYTE: Duration = Duration::from_nanos(1);',
+     'const FIRST_BYTE: Duration = Duration::ZERO;',
      [('native_ws::tests::upgrade_budget_boundary_matches_ts',
        '#1351 every boundary cell produced bytes or closed')]),
     # B-group watchdog helpers: the timeout argument itself shrinks, so the
@@ -113,7 +122,10 @@ def main():
     # Runtime-read inputs of the bound rows: every B-group test spawns the
     # real `peer.py` (live-session fixture) or `scripts/a6-host/fixture.py`,
     # and fixture.py imports `lifetime.py` unconditionally at its top (the
-    # #2228 r13 precedent), so all three belong in the write-guard set.
+    # #2228 r13 precedent). fix-r1 (sibling P1, #2228 r11/r12 precedent):
+    # the resume-bound row runs `reconnect-*` modes, which fixture.py hands
+    # to `resume_fixture.py` via runpy — a spawned input of this fixture's
+    # bound rows, so it belongs in the write-guard set like its two siblings.
     return matrix_main(ROOT, __file__, '', MUTATIONS,
                        passed_count=1, child_count=0,
                        paths=[API_WEB, APPROVALS, NATIVE_HTTP, NATIVE_WS,
@@ -122,7 +134,8 @@ def main():
                               ROOT / 'src/pilotdeck-gateway/tests/fixtures/'
                                      'live-session/peer.py',
                               ROOT / 'scripts/a6-host/fixture.py',
-                              ROOT / 'scripts/a6-host/lifetime.py'],
+                              ROOT / 'scripts/a6-host/lifetime.py',
+                              ROOT / 'scripts/a6-host/resume_fixture.py'],
                        exact=True)
 
 
