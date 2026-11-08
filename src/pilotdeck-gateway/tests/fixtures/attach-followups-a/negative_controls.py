@@ -222,9 +222,18 @@ mutations = [
      '        for spelling in [&attachment.resolved] {',
      'native_process::services_tests::dual_registration_dedups_the_set_across_spellings',
      '#1446 the Set must keep one entry per spelling'),
+    # #2495 re-anchored: the note pass now reads `entries` (the TS composer's
+    # membership domain) and normalizes the per-entry lexical spelling, so the
+    # row can no longer swap `attachment.lexical`/`attachment.resolved`. The
+    # same kill — the note line printing the physical spelling instead of the
+    # registered link spelling — is rebuilt as a canonicalize override on the
+    # per-entry lexical, the post-#2495 shape of that bug.
     ('dual-registration-note-uses-realpath', SERVICES,
-     '        let normalized = attachment.lexical.to_string_lossy().into_owned();',
-     '        let normalized = attachment.resolved.to_string_lossy().into_owned();',
+     '        let normalized = lexical.to_string_lossy().into_owned();',
+     '''        let mut normalized = lexical.to_string_lossy().into_owned();
+        if let Ok(canonical) = fs::canonicalize(&lexical) {
+            normalized = canonical.to_string_lossy().into_owned();
+        }''',
      'native_process::services_tests::dual_registration_carries_both_spellings',
      '#1446 the note line must carry the link spelling'),
     # #1448 fix-r2 收编三行（PR #1418 的负控产物不在本机，按

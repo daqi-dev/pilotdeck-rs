@@ -479,6 +479,264 @@ fn dual_registration_dedups_the_set_across_spellings() {
     );
 }
 
+/// #2495 — `application/vnd.openxmlformats-officedocument
+/// .wordprocessingml.document`: a binary-container extension, so the entry
+/// is NOT read_file-inspectable (composer :163).
+const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.\
+                         wordprocessingml.document";
+
+#[test]
+fn note_dedup_keeps_second_entry_inspectable() {
+    let scratch = Scratch::new();
+    // #2495 — the same lexical spelling twice, the first entry not
+    // read_file-inspectable (.docx) and the second inspectable (mime
+    // text/plain): the note line dedups to the first entry (#1446,
+    // composer :105) but `hasInspectableAttachment` is a separate
+    // `attachments.some(...)` over the whole attachment list (composer
+    // :142-151), so the skipped second entry still selects the read_file
+    // guidance form (ts-probe `_tmp/20261026-issue-2495/probe/probe.out`
+    // scenario A).
+    let path = scratch.lease("same.docx");
+    std::fs::write(&path, b"body").expect("#2495 dedupe fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&path, DOCX_MIME),
+            attachment(&path, "text/plain"),
+        ],
+    )
+    .expect("#2495 duplicate attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.lines().filter(|line| line.starts_with("- ")).count() == 1,
+        "#2495 the duplicate spelling must keep exactly one note line, got: {note}"
+    );
+    negative_assert!(
+        note.contains(&format!("- same.docx: {path}")),
+        "#2495 the surviving note line must be the first entry's spelling, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the deduped second entry's inspectable must still select the read_file form, got: {note}"
+    );
+}
+
+#[test]
+fn note_dedup_first_inspectable_order_control() {
+    let scratch = Scratch::new();
+    // #2495 order control (probe scenario A2): with the first entry
+    // inspectable the read_file form holds without the second entry —
+    // the accumulation is an OR, never a replacement.
+    let path = scratch.lease("order.docx");
+    std::fs::write(&path, b"body").expect("#2495 order fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&path, "text/plain"),
+            attachment(&path, DOCX_MIME),
+        ],
+    )
+    .expect("#2495 reversed duplicates compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.lines().filter(|line| line.starts_with("- ")).count() == 1,
+        "#2495 the reversed duplicate must keep exactly one note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the first entry's inspectable must select the read_file form, got: {note}"
+    );
+}
+
+#[test]
+fn note_dedup_both_non_inspectable_keeps_conversion_form() {
+    let scratch = Scratch::new();
+    // #2495 negative control (probe scenario C): both entries
+    // non-inspectable → the conversion form; the accumulation must not
+    // flip to true on its own.
+    let path = scratch.lease("none.docx");
+    std::fs::write(&path, b"body").expect("#2495 conversion fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&path, DOCX_MIME),
+            attachment(&path, "application/octet-stream"),
+        ],
+    )
+    .expect("#2495 non-inspectable duplicates compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. These registered files are not \
+             directly inspectable with read_file; ask for a supported export or convert \
+             them before inspection."
+        ),
+        "#2495 two non-inspectable entries must keep the conversion form, got: {note}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn dual_spelling_accumulates_inspectable_per_entry() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #2495 — the double spelling with differing inspectable (probe
+    // scenario B): the link entry is not inspectable, the physical entry
+    // is. Each spelling keeps its own note line and its allowedReadFiles
+    // entry (#1446), and the physical entry's inspectable selects the
+    // read_file form — the note pass and the collection pass dedup
+    // independently of the hasInspectable accumulation.
+    let leases = scratch.0.join(".tmp").join("chat-upload-leases");
+    std::fs::write(leases.join("u1").join("b.docx"), b"body").expect("#2495 dual-spelling fixture");
+    symlink("u1", leases.join("u1-link")).expect("#2495 lease dir link");
+    let via_link = leases
+        .join("u1-link")
+        .join("b.docx")
+        .to_str()
+        .expect("#2495 link spelling UTF-8")
+        .to_owned();
+    let physical = leases
+        .join("u1")
+        .join("b.docx")
+        .to_str()
+        .expect("#2495 physical spelling UTF-8")
+        .to_owned();
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&via_link, DOCX_MIME),
+            attachment(&physical, "text/plain"),
+        ],
+    )
+    .expect("#2495 dual-spelling attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed
+            == vec![
+                JsValue::from(via_link.as_str()),
+                JsValue::from(physical.as_str()),
+            ],
+        "#2495 the dual spelling must register both spellings, got: {allowed:?}"
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- b.docx: {via_link}"))
+            && note.contains(&format!("- b.docx: {physical}")),
+        "#2495 each spelling must keep its own note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the physical entry's inspectable must select the read_file form, got: {note}"
+    );
+}
+
+#[test]
+fn unregistered_colliding_spelling_counts_for_guidance() {
+    let scratch = Scratch::new();
+    // #2495 — TS gates `hasInspectableAttachment` only on the
+    // allowedReadFiles membership test (composer :144), never on the
+    // entry's own registration: an uploaded (channelKey-less) entry whose
+    // spelling collides with a registered one still counts (probe
+    // scenario D). The note line is still deduped on the shared spelling.
+    let path = scratch.lease("collide.docx");
+    std::fs::write(&path, b"body").expect("#2495 collision fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&path, DOCX_MIME),
+            upload_attachment(&path, "text/plain"),
+        ],
+    )
+    .expect("#2495 colliding attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.lines().filter(|line| line.starts_with("- ")).count() == 1,
+        "#2495 the colliding spelling must keep exactly one note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the unregistered colliding entry's inspectable must still select the read_file form, got: {note}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unregistered_colliding_spelling_gets_note_line() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #2495 — the note lines use the same membership test (composer :103):
+    // an uploaded entry naming the registered attachment's realpath
+    // spelling gets its own line (probe scenario E).
+    let leases = scratch.0.join(".tmp").join("chat-upload-leases");
+    std::fs::write(leases.join("u1").join("e.docx"), b"body").expect("#2495 note-domain fixture");
+    symlink("u1", leases.join("e-link")).expect("#2495 lease dir link");
+    let via_link = leases
+        .join("e-link")
+        .join("e.docx")
+        .to_str()
+        .expect("#2495 link spelling UTF-8")
+        .to_owned();
+    let physical = leases
+        .join("u1")
+        .join("e.docx")
+        .to_str()
+        .expect("#2495 physical spelling UTF-8")
+        .to_owned();
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&via_link, DOCX_MIME),
+            upload_attachment(&physical, "text/plain"),
+        ],
+    )
+    .expect("#2495 note-domain attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- e.docx: {via_link}"))
+            && note.contains(&format!("- e.docx: {physical}")),
+        "#2495 the unregistered entry naming the registered realpath spelling must get its own note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the unregistered colliding entry's inspectable must select the read_file form, got: {note}"
+    );
+}
+
 #[test]
 fn lease_parent_dotdot_softens_to_not_found() {
     let scratch = Scratch::new();
