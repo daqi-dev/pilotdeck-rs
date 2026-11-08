@@ -5,7 +5,7 @@ use crate::ports::{
     PermissionMode, PortError, PortResult, Route, ToolDescriptor,
 };
 use crate::request::{
-    PreparedRequestIntent, RequestAssemblyInput, RequestAssemblyOptions,
+    CacheCollation, PreparedRequestIntent, RequestAssemblyInput, RequestAssemblyOptions,
     RequestPreparationObserver, RequestPreparationState,
 };
 use crate::turn::{RunMode, TurnInput, TurnRuntimeConfig};
@@ -173,7 +173,7 @@ pub fn cache_plan_with_collation(
     prepared: &JsValue,
     messages: &[JsValue],
     route: &Route,
-    compare: &dyn Fn(&JsString, &JsString) -> std::cmp::Ordering,
+    compare: &CacheCollation<'_>,
 ) -> PortResult<JsValue> {
     build_cache_plan(prepared, messages, route, Some(compare))
 }
@@ -181,7 +181,7 @@ fn build_cache_plan(
     prepared: &JsValue,
     messages: &[JsValue],
     route: &Route,
-    compare: Option<&dyn Fn(&JsString, &JsString) -> std::cmp::Ordering>,
+    compare: Option<&CacheCollation<'_>>,
 ) -> PortResult<JsValue> {
     let mut selected = vec![];
     for (index, message) in messages.iter().enumerate() {
@@ -1004,7 +1004,7 @@ pub fn assemble_with_collation(
     parameters: RequestAssemblyInput<'_>,
     options: RequestAssemblyOptions,
     observer: &mut dyn RequestPreparationObserver,
-    compare: Option<&dyn Fn(&JsString, &JsString) -> std::cmp::Ordering>,
+    compare: Option<&CacheCollation<'_>>,
 ) -> PortResult<PreparedRequestIntent> {
     let RequestAssemblyInput {
         control,

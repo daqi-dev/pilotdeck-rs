@@ -7,6 +7,10 @@ use crate::ports::{
 use crate::turn::{TurnInput, TurnRuntimeConfig};
 use pilotdeck_protocol::JsString;
 use pilotdeck_protocol::model::BoundarySnapshot;
+
+/// A borrowed native locale ordering; the assembler owns no locale state.
+pub type CacheCollation<'a> = dyn Fn(&JsString, &JsString) -> std::cmp::Ordering + 'a;
+
 #[derive(Debug, Clone)]
 pub struct RequestPreparationState {
     pub tools: Vec<ToolDescriptor>,
@@ -90,7 +94,7 @@ impl OriginalRequestAssembler {
         parameters: RequestAssemblyInput<'_>,
         options: RequestAssemblyOptions,
         observer: &mut dyn RequestPreparationObserver,
-        compare: &dyn Fn(&JsString, &JsString) -> std::cmp::Ordering,
+        compare: &CacheCollation<'_>,
     ) -> PortResult<PreparedRequestIntent> {
         crate::request_assembly::assemble_with_collation(
             state,
