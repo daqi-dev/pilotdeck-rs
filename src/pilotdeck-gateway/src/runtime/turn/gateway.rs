@@ -451,13 +451,22 @@ impl TurnGateway {
                     }
                     if crate::mutants::on("native-ws-error-skips-cleanup") && error.is_some() { return error.map_or(Ok(()), Err); }
                     // One failed job must not skip embedding-owned disposals.
-                    if !crate::mutants::on("native-ws-skip-host-cleanup") && let Some(cleanup) = cleanup && let Err(failure) = cleanup.await { error.get_or_insert(failure); }
+                    // #1942: the drain polls the same third-party cleanup the
+                    // failed-initialization teardown does, so a panic in it must
+                    // not skip the coordinator and interaction disposals below
+                    // either — the drain twin of the guard `dispose_initialization`
+                    // uses.
+                    if !crate::mutants::on("native-ws-skip-host-cleanup") && let Some(cleanup) = cleanup && let Err(failure) = caught_cleanup(cleanup, crate::mutants::on("native-ws-drain-cleanup-panic-uncaught")).await { error.get_or_insert(failure); }
                     error.map_or(Ok(()), Err)
                 };
                 // Preserve the original implicit-drop drain. Only an explicit
                 // embedding shutdown opts into a deadline.
-                let result = match budget {
-                    Some(budget) => tokio::time::timeout(budget, drain).await.unwrap_or_else(|_| Err("gateway host drain deadline exceeded".into())),
+                // #1949: the same clock bound the initialization teardown got —
+                // a bound too large for the clock is equivalent to none, so an
+                // embedding that declared MAX explicitly waived the deadline
+                // instead of overflowing the host thread into an opaque hang.
+                let result = match budget.and_then(|budget| tokio::time::Instant::now().checked_add(budget)) {
+                    Some(deadline) => tokio::time::timeout_at(deadline, drain).await.unwrap_or_else(|_| Err("gateway host drain deadline exceeded".into())),
                     None => drain.await,
                 };
                 running.abort_all();
@@ -698,12 +707,15 @@ async fn dispose_initialization(
         // is equivalent to none, so the cleanup is awaited without one — the
         // embedding that declared MAX explicitly waived #1746's no-hang
         // guarantee, which only covers bounded budgets.
+        let uncaught = crate::mutants::on("native-ws-initialization-cleanup-panic-uncaught");
         match tokio::time::Instant::now().checked_add(cleanup_bound) {
             Some(cleanup_deadline) => {
-                let _ = tokio::time::timeout_at(cleanup_deadline, caught_cleanup(cleanup)).await;
+                let _ =
+                    tokio::time::timeout_at(cleanup_deadline, caught_cleanup(cleanup, uncaught))
+                        .await;
             }
             None => {
-                let _ = caught_cleanup(cleanup).await;
+                let _ = caught_cleanup(cleanup, uncaught).await;
             }
         }
     }
@@ -721,16 +733,21 @@ async fn dispose_initialization(
 /// disposals behind it — the same shape `runtime::replacement` gives its
 /// port calls. Every poll (not just the synchronous prefix) is caught, and a
 /// caught panic becomes an `Err` the callers already ignore, letting the
-/// teardown finish. The `native-ws-initialization-cleanup-panic-uncaught`
-/// switch restores the original unguarded poll for the negative control.
+/// teardown finish. Both poll sites use it — the failed-initialization
+/// teardown and the shutdown drain — and each call site reads its own
+/// fixture-only switch (`crate::mutants::on`) at exactly one compiled site,
+/// restoring the original unguarded poll at that site for the negative
+/// control: `native-ws-initialization-cleanup-panic-uncaught` and
+/// `native-ws-drain-cleanup-panic-uncaught`.
 fn caught_cleanup(
     mut cleanup: Call<'static, Result<(), String>>,
+    uncaught: bool,
 ) -> impl Future<Output = Result<(), String>> {
     std::future::poll_fn(move |cx| {
         match catch_unwind(AssertUnwindSafe(|| cleanup.as_mut().poll(cx))) {
             Ok(poll) => poll,
             Err(payload) => {
-                if crate::mutants::on("native-ws-initialization-cleanup-panic-uncaught") {
+                if uncaught {
                     std::panic::resume_unwind(payload);
                 }
                 let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())
