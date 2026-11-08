@@ -50,7 +50,7 @@ cases = [
      'WorkspacePristine.test_module_path_metadata_is_not_a_file_edge',
      '#132 module path metadata must preserve source discovery'),
     ('string-path-edge-dropped', SCANNER,
-     '            visit(tokens, index);', '            if false { visit(tokens, index); }',
+     '            visit(tokens, index, file_attribute);', '            if false { visit(tokens, index, file_attribute); }',
      'WorkspacePristine.test_string_path_attributes_remain_file_edges',
      '#132 string path attributes must retain the exact file edge'),
     ('conditional-path-context-dropped', SCANNER,
@@ -62,7 +62,24 @@ cases = [
      'if plain_string_value(value).is_some()))',
      'if false && plain_string_value(value).is_some()))',
      'WorkspacePristine.test_metadata_string_paths_remain_rejected',
-     '#132 metadata string paths must retain conditional rejection'),
+     '#1249 metadata string paths must report their own rejection'),
+    # #1249: a metadata literal path and a cfg_attr conditional path are two
+    # different rejections, and the bound test must be able to tell them
+    # apart from the failure text alone. The first row swaps the metadata
+    # arm back to the conditional message (the pre-#1249 copy-paste slip the
+    # issue was filed for); the second drops the fail-closed assert entirely,
+    # so the metadata edge resolves to the decoy file and no rejection
+    # reaches the bound test at all.
+    ('metadata-path-message-merged-back', SCANNER,
+     'PathKeyKind::MetadataLiteral => {\n                        "#1249 literal path attribute treated as a file edge"\n                    }',
+     'PathKeyKind::MetadataLiteral => {\n                        "#1166 conditional path attribute cannot be resolved statically"\n                    }',
+     'WorkspacePristine.test_metadata_string_paths_remain_rejected',
+     '#1249 metadata string paths must report their own rejection'),
+    ('metadata-path-rejection-accepted', SCANNER,
+     'if self.workspace\n            && let Some(kind) = attribute_path_key_kind(tokens)\n        {',
+     'if false && self.workspace\n            && let Some(kind) = attribute_path_key_kind(tokens)\n        {',
+     'WorkspacePristine.test_metadata_string_paths_remain_rejected',
+     '#1249 metadata string paths must report their own rejection'),
     ('model-factory-cargo-env-omitted', MODEL_FACTORY,
      'cwd=root, env=env, timeout=100', 'cwd=root, timeout=100',
      'RunnerTargets.test_model_factory_target_admission', '#1166 model-factory runner shares the admissible target'),
