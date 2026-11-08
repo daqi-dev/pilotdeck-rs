@@ -31,6 +31,7 @@ mod capabilities;
 // directly, in the channel subtree rather than this one.
 pub(crate) mod channels;
 pub(crate) mod elicitation;
+mod extensions;
 mod families;
 pub(crate) mod input_admission;
 mod management;

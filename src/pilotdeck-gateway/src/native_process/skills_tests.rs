@@ -100,8 +100,12 @@ fn actual_ts_read_render_and_available_skills_golden() {
             let blocks: Vec<JsValue> = result
                 .parts
                 .iter()
-                .filter(|part| part.starts_with("<available-skills>"))
-                .map(|part| JsValue::String(part.as_str().into()))
+                .filter(|part| {
+                    part.units()
+                        .starts_with(&"<available-skills>".encode_utf16().collect::<Vec<_>>())
+                })
+                .cloned()
+                .map(JsValue::String)
                 .collect();
             assert_eq!(
                 &JsValue::Array(blocks),

@@ -419,15 +419,22 @@ impl DefaultContextRuntime {
         )?;
         let mut parts = if has_complete_contribution {
             contributed_sections
+                .into_iter()
+                .map(|part| JsString::from(part.as_str()))
+                .collect()
         } else {
             let mut parts = prompt.parts;
-            parts.extend(contributed_sections);
+            parts.extend(
+                contributed_sections
+                    .iter()
+                    .map(|part| JsString::from(part.as_str())),
+            );
             parts
         };
 
         if input.surface == RuntimeContextSurface::SystemPrompt {
             for context in &registered_runtime_contexts {
-                parts.push(context.text.clone());
+                parts.push(context.text.as_str().into());
             }
         }
         let mut runtime_contexts = vec![(
@@ -465,7 +472,7 @@ impl DefaultContextRuntime {
             .await;
             if let Some(text) = attachment {
                 if input.surface == RuntimeContextSurface::SystemPrompt {
-                    parts.push(text.clone());
+                    parts.push(text.as_str().into());
                 }
                 runtime_contexts.push(("pilotdeck:memory:0:0".into(), text));
             }
@@ -499,9 +506,9 @@ impl DefaultContextRuntime {
                             })
                             .collect::<Vec<_>>()
                             .join("\n\n");
-                        parts.push(format!(
+                        parts.push(JsString::from(format!(
                             "<project-instructions>\nProject instructions are shown below. Adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior.\n\n{blocks}\n</project-instructions>"
-                        ));
+                        ).as_str()));
                     }
                     instruction_layers = Some(layers);
                 }
@@ -512,7 +519,7 @@ impl DefaultContextRuntime {
                 }),
             }
         }
-        let joined = parts.join("\n\n");
+        let joined = super::prompt::join_utf16(&parts, "\n\n");
         let runtime_context_messages =
             build_runtime_context_messages(&runtime_contexts, input.surface);
         let projected_messages =
@@ -609,15 +616,10 @@ impl DefaultContextRuntime {
         let tool_count = effective_tools.len();
         let mut result = object(vec![
             ("messages", JsValue::Array(projected_messages)),
-            ("systemPrompt", JsValue::String(joined.into())),
+            ("systemPrompt", JsValue::String(joined)),
             (
                 "systemPromptParts",
-                JsValue::Array(
-                    parts
-                        .into_iter()
-                        .map(|part| JsValue::String(part.into()))
-                        .collect(),
-                ),
+                JsValue::Array(parts.into_iter().map(JsValue::String).collect()),
             ),
             ("tools", JsValue::Array(effective_tools)),
             (

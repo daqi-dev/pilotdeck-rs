@@ -175,7 +175,7 @@ pub(crate) fn cache_plan_identity(
 pub struct CachePlanInput<'a> {
     pub provider: &'a JsValue,
     pub model: &'a JsValue,
-    pub system_prompt: &'a str,
+    pub system_prompt: &'a JsString,
     pub tools: &'a [JsValue],
     pub messages: &'a [JsValue],
     pub enabled: bool,
@@ -239,7 +239,7 @@ impl PromptCacheCoordinator {
             &self.locale,
             input.provider,
             input.model,
-            &JsValue::String(input.system_prompt.into()),
+            &JsValue::String(input.system_prompt.clone()),
             input.tools,
             input.messages,
             // The runtime entry keeps its pre-merge depth behavior: the
@@ -445,7 +445,7 @@ mod tests {
                 CachePlanInput {
                     provider: &JsValue::String("p".into()),
                     model: &JsValue::String("m".into()),
-                    system_prompt: "preview prompt",
+                    system_prompt: &"preview prompt".into(),
                     tools: &deep_tool(schema.clone()),
                     messages: &probe_messages(),
                     enabled: true,

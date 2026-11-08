@@ -801,6 +801,11 @@ async fn start_assembly(
                     )
                 };
                 let native_skills = native_skills.select(config.get("nativeSkillSelection"))?;
+                let native_extensions = super::extensions::NativeExtensions::new(
+                    native_skills.clone(),
+                    &skill_lease.contributions.commands,
+                    &skill_lease.contributions.mcp_instructions,
+                );
                 let context_storage = staged
                     .resource(Resource::InstructionStorage)
                     .ok_or_else(|| RuntimeError::new("Native context storage is missing."))?;
@@ -815,7 +820,7 @@ async fn start_assembly(
                                 &context.session_key,
                             ),
                             crate::runtime::project::context_storage::SessionContextOptions {
-                                extension: Some(Arc::new(native_skills.clone())),
+                                extension: Some(Arc::new(native_extensions)),
                                 memory_disabled: config.get("nativeMemoryDisabled")
                                     == Some(&JsValue::Bool(true)),
                                 ..Default::default()
