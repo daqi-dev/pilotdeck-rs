@@ -1409,8 +1409,12 @@ class WitnessTests(unittest.TestCase):
                         '#1140 an unanswered run key stays inapplicable with an empty record')
 
     def test_case_plan_and_ordering_variants(self):
-        # Legacy transport budgets remain stable while #1368 independently
-        # declares and gates the actual registry/phase/fault/order stimuli.
+        # #2396: the controlled loop (#1371) owns turn timing, so no case
+        # delays the provider any more. The two release-first orders keep the
+        # slow timer (their timer.clear edge needs an unfired timer); every
+        # timeout-first family — including after-complete and K-P, whose TS
+        # counterpart fires the timer by hand during a held return/outcome —
+        # uses the real 400 ms timer.
         manifest = c.session_manifest()
         variants = {case.split('/')[1] for case in manifest}
         self.assertTrue(set(c.SESSION_ORDERING_VARIANTS) <= variants,
@@ -1418,12 +1422,12 @@ class WitnessTests(unittest.TestCase):
         for case in manifest:
             plan = c.case_plan(case)
             transport = {key: plan[key] for key in ('timeoutMs', 'delay')}
-            if case.split('/')[1] in c.SESSION_ORDERING_VARIANTS:
+            if case.split('/')[1] in ('unknown-first', 'known-final-first'):
                 self.assertTrue(transport == {'timeoutMs': c.SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0},
-                                '#1368 legacy ordering transport budget: ' + case)
+                                '#2396 release-first transport budget: ' + case)
             else:
-                self.assertTrue(transport == {'timeoutMs': c.SESSION_TIMEOUT_MS, 'delay': c.SESSION_PROVIDER_DELAY},
-                                '#1368 legacy timeout transport budget: ' + case)
+                self.assertTrue(transport == {'timeoutMs': c.SESSION_TIMEOUT_MS, 'delay': 0.0},
+                                '#2396 real-timer transport budget: ' + case)
 
     def test_bind_contract_rejects_preregistered(self):
         # The mirror of the frozen loader's rejection: a contract that already
