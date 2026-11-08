@@ -53,7 +53,15 @@ JsValue::Null)`（`native_process/requests.rs:212-223`，现行 `requests.rs` sh
 `projectKey: null` 按「未提供」处理，回退本进程配置项目，与 handler 侧
 `resolve_project`（`session_dir.rs` 的 `unwrap_or_else`）与
 `fill_default_project_key`（`native_archive.rs`）的 nullish 口径统一。R9「Rust
-行为」末段登记的「同一进程内对 null 的两种解释并存」这一事实基础随收敛消除。
+行为」末段登记的「同一进程内对 null 的两种解释并存」这一事实基础随收敛消除——
+该事实基础的比较层是请求级准入（`requests.rs`）对 handler 侧读者
+（`fill_default_project_key` / `resolve_project`），R9 原文登记的也仅这两层。
+submit 侧入口（`SubmitHostServices::workspace_id`，`services.rs:1442`，现行
+sha256 `fecc98b93e29bd8469d43b6bc6b716565317049fa2a390e88b148d075b21a291`；
+`submit_turn` 由连接层直派不经 `Requests::request`）的 projectKey 门仍是
+`!v.is_undefined()` 旧形状（显式 null 答 `projectKey must be a valid path
+string.`），不在 R9 该条事实基础的比较层内，已开 #2562 跟踪（前置于 #2272
+关单收口），本件不重复登记、不改其状态。
 
 收敛后逐格（`session_dir.rs` 入库用例钉住的现状，源 sha256
 `eb1212e1200b6925c5433be7050c9553e2a128873a0a775fe7ea31f558ba5f6e`）：
@@ -71,7 +79,10 @@ JsValue::Null)`（`native_process/requests.rs:212-223`，现行 `requests.rs` sh
   登记保留）；
 - fix-r1 补钉的共享 config 线路：`mcp_server_status` 对 `{"projectKey":null}`
   与未给同答 `{"servers":[]}`（非字符串 `projectKey` 仍被准入拒，见「机器
-  判据」的用例与 #1432 登记）。
+  判据」的用例与 #1432 登记）。该用例的文档注释（`mcp_status_tests.rs:585`
+  附近）仍引回收前路径 `_tmp/20261108-issue-2272-fix1/ts-probe/probe-null.out`，
+  现址为上文归档路径；注释属存量测试字节，本件零字节约束下不动，修字开
+  #2614 跟进（前置于 #2563 关单收口）。
 
 R9 五条差异的其余四条（① `resume/close` 上 Rust 多出的 `sessionKey` 门、③
 不受服务项目的码与报文形状、④ Rust 回退恒为配置项目无场景 B 可测，及
@@ -87,7 +98,9 @@ R9 五条差异的其余四条（① `resume/close` 上 Rust 多出的 `sessionK
 `ERR_INVALID_ARG_TYPE`（R7 已登记）、`config.rs` 族门序（#2199）、
 `deleteEphemeralSession` 钩子命中路径。本件零产码零测试：不动
 `session_dir.rs` / `requests.rs` / `mcp_status_tests.rs` / 任何 fixture 的字节，
-不动 `state/board.md`。
+不动 `state/board.md`。他家条目引 #2272 收敛前 `requests.rs` 形状的（如
+`A7.8-ALWAYS-ON-DEFERRED-001-R1.md:66-83` 以其合入基线 `e22b4ffb7` 为锚的
+实读快照——该件已自证快照性质），其刷新走该家自身的更正程序，不随本件。
 
 ## 机器判据
 
