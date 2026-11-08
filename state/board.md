@@ -5055,3 +5055,7 @@ Refs #2540。139127 两家四角色正式审查已收齐，7类P2本轮处置：
 Refs #2540。#2549 CI 的 gateway strict Clippy 抓到原budget-only helper迁出后孤立doc空行；删误贴注释。checkpoint_prefix_len逐字等价副本改由Context提供同一纯helper，gateway原调用委托；仅这两处生产修复。此前新包strict Clippy不覆盖gateway，正在补gateway all-targets严格检查及原rolling-checkpoint/context回归。另4fixture旧截断写按#2550跟进，不扩大本轮。
 
 补记：gateway all-targets strictClippy实际覆盖后再抓到本PR故障测试2处clone_on_copy，去冗余clone不改断言；首失败保留，修后全target -D warnings exit0。
+
+### 2026-11-09 能力包 PR 新main组合（Codex）
+
+Refs #2540。固定f04ecd0b新基线，只有board冲突保留上游+本轮记录，原4834保独立ref及全部证据。重基前后src/.github提取补丁SHA256完全相同（725201c4…），不把旧CI冒充新组合通过。CI真实发现独立smoke/probe锁缺3包：仅补3本地包与gateway边，无外部依赖版本/校验和变化；正在跑实际--locked probe及新版HTTP1.0/脚本/原能力回归。未push，不改冻结oracle。
