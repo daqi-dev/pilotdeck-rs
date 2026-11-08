@@ -295,6 +295,39 @@ pub async fn read_session_messages(
     history: Option<&dyn SessionHistoryReader>,
     input: &JsValue,
 ) -> Result<JsValue, TurnReadError> {
+    read_session_messages_with_snapshot(history, input, |request| coordinator.snapshot(request))
+        .await
+}
+
+/// Native multi-project reads must never merge another project's replay.
+/// The replay store checks provenance under the same lock as its snapshot;
+/// missing, unbound and foreign replays are projected as an empty stream.
+pub(crate) async fn read_session_messages_for_project(
+    coordinator: &TurnEventCoordinator,
+    history: Option<&dyn SessionHistoryReader>,
+    input: &JsValue,
+    project: &JsString,
+) -> Result<JsValue, TurnReadError> {
+    read_session_messages_with_snapshot(history, input, |request| {
+        coordinator
+            .snapshot_for_project(request, project)
+            .unwrap_or_else(|| ActiveTurnSnapshot {
+                active: false,
+                session_key: request.session_key.clone(),
+                run_id: None,
+                events: Vec::new(),
+                truncated: false,
+                terminal: false,
+            })
+    })
+    .await
+}
+
+async fn read_session_messages_with_snapshot(
+    history: Option<&dyn SessionHistoryReader>,
+    input: &JsValue,
+    snapshot: impl Fn(&ActiveTurnSnapshotInput) -> ActiveTurnSnapshot,
+) -> Result<JsValue, TurnReadError> {
     let Some(history) = history else {
         return Err(TurnReadError::plain(
             "read_session_messages is not configured. Wire `readSessionMessages` via createLocalGateway.",
@@ -306,10 +339,9 @@ pub async fn read_session_messages(
         .cloned()
         .unwrap_or_default();
     for _ in 0..HISTORY_EPOCH_ATTEMPTS {
-        let before = coordinator
-            .snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()).without_events());
+        let before = snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()).without_events());
         let history = history.read(input).await?;
-        let stream = coordinator.snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()));
+        let stream = snapshot(&ActiveTurnSnapshotInput::new(session_key.clone()));
         if !same_turn_epoch(&before, &stream) {
             continue;
         }

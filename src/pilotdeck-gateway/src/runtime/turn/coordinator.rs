@@ -203,6 +203,30 @@ impl TurnEventCoordinator {
     where
         S: Fn(&JsValue) + Send + Sync + 'static,
     {
+        self.start_bound(session_key, run_id, None, sink)
+    }
+    pub fn start_for_project<S>(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        project_key: &JsString,
+        sink: S,
+    ) -> TurnSinkRegistration
+    where
+        S: Fn(&JsValue) + Send + Sync + 'static,
+    {
+        self.start_bound(session_key, run_id, Some(project_key), sink)
+    }
+    fn start_bound<S>(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        project_key: Option<&JsString>,
+        sink: S,
+    ) -> TurnSinkRegistration
+    where
+        S: Fn(&JsValue) + Send + Sync + 'static,
+    {
         let registration = Arc::new(SinkRegistration {
             sink: Arc::new(sink),
         });
@@ -211,8 +235,9 @@ impl TurnEventCoordinator {
         // panic surfaces at the call site like a throwing TS call, but the
         // guard is dropped first so it cannot poison the composite-state
         // lock for every session.
-        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
-            self.replay.start(session_key, run_id);
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| match project_key {
+            Some(project) => self.replay.start_for_project(session_key, run_id, project),
+            None => self.replay.start(session_key, run_id),
         })) {
             drop(state);
             resume_unwind(panic);
@@ -369,6 +394,13 @@ impl TurnEventCoordinator {
     }
     pub fn snapshot(&self, input: &ActiveTurnSnapshotInput) -> ActiveTurnSnapshot {
         self.replay.snapshot(input)
+    }
+    pub fn snapshot_for_project(
+        &self,
+        input: &ActiveTurnSnapshotInput,
+        project_key: &JsString,
+    ) -> Option<ActiveTurnSnapshot> {
+        self.replay.snapshot_for_project(input, project_key)
     }
     pub fn dispose(&self) {
         let mut state = lock(&self.state);

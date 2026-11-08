@@ -425,11 +425,17 @@ impl TurnPublisher {
             predecessor_waiting: Notify::new(),
         });
         let weak = Arc::downgrade(&publication);
-        let registration = coordinator.start(&run.session_key, &run.run_id, move |event| {
+        let sink = move |event: &JsValue| {
             if let Some(publication) = weak.upgrade() {
                 publication.enqueue(event.clone());
             }
-        });
+        };
+        let registration = match run.project_key.as_ref() {
+            Some(project) => {
+                coordinator.start_for_project(&run.session_key, &run.run_id, project, sink)
+            }
+            None => coordinator.start(&run.session_key, &run.run_id, sink),
+        };
         Self {
             publication,
             coordinator,

@@ -71,10 +71,14 @@ impl Requests {
                         },
                         project_runtime,
                     };
-                    read::read_session_messages(
+                    let project = pilotdeck_protocol::JsString::from(
+                        options.project.to_string_lossy().as_ref(),
+                    );
+                    read::read_session_messages_for_project(
                         &coordinator,
                         Some(&history as &dyn SessionHistoryReader),
                         &params,
+                        &project,
                     )
                     .await
                     .map_err(|error| RequestError {
