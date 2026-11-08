@@ -935,6 +935,15 @@ mod tests {
                 "#[cfg_attr(all(), databake(path = \"x.rs\"), path = \"source_inputs.rs\")] mod renamed;",
                 "#1166 conditional path attribute cannot be resolved statically",
             ),
+            // #1249 r3: the same mixed shape with the visit order reversed -
+            // attribute-level path key first, metadata literal second - must
+            // still report the conditional reason, so the precedence cannot be
+            // an artifact of which key the walker happens to reach first or
+            // last.
+            (
+                "#[cfg_attr(all(), path = \"child.rs\", databake(path = \"x.rs\"))] mod renamed;",
+                "#1166 conditional path attribute cannot be resolved statically",
+            ),
         ] {
             let tokens = lex_source(source).expect("#1249 rejection fixture must lex");
             let mut scanner = EdgeScanner {
