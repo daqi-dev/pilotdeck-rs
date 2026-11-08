@@ -962,18 +962,23 @@ def _expectation_structure(row):
 
 
 def _expectation_diff_surfaces(ts, rust):
-    """Surfaces on which the registered rust expectation differs from the ts one."""
+    """Surfaces on which the registered rust expectation differs from the ts one.
+
+    #2039: these are JSON values, so the comparisons go through the strict
+    ``same_json`` walk (#1372), never Python's ``==``: a boolean that drifted
+    into a number must surface as a difference instead of passing silently.
+    """
     surfaces = []
-    if ts['frames'] != rust['frames']:
+    if not native_evidence.same_json(ts['frames'], rust['frames']):
         surfaces.append('frames')
-    if ts['durableStatus'] != rust['durableStatus']:
+    if not native_evidence.same_json(ts['durableStatus'], rust['durableStatus']):
         surfaces.append('durableStatus')
     expected, registered = ts['registry'], rust['registry']
-    if expected.get('applicable') != registered.get('applicable'):
+    if not native_evidence.same_json(expected.get('applicable'), registered.get('applicable')):
         surfaces.append('registry.applicable')
     elif expected.get('applicable'):
         for field in ('events', 'state', 'result'):
-            if expected.get(field) != registered.get(field):
+            if not native_evidence.same_json(expected.get(field), registered.get(field)):
                 surfaces.append('registry.' + field)
     return surfaces
 

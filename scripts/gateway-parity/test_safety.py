@@ -2432,6 +2432,129 @@ class WsProjection(unittest.TestCase):
             self.project(self.envelope(0, event, final='no'))
 
 
+class SameJsonSurfaces(unittest.TestCase):
+    """#2039: registered expectations and replay ledgers are JSON values, so
+    their comparisons go through the strict ``same_json`` walk (#1372), never
+    Python's ``==``/``!=``: a boolean that drifted into a number must surface
+    as a difference instead of passing silently.  These pin the surface list
+    the A19 scope gate and the per-case verdict consume, plus the native
+    cleanup and prelaunch replay comparisons; chain-level behaviour stays in
+    ``controls/session_domain.py``.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.native = _load('native_evidence', common.SCRIPT / 'native_evidence.py')
+        cls.session = _load('session_domain', common.SCRIPT / 'session_domain.py')
+
+    @staticmethod
+    def _expectation(frames=('turn_completed:stop',), durable=('turn_timeout',),
+                     registry=None):
+        return {'frames': list(frames), 'durableStatus': list(durable),
+                'registry': registry if registry is not None else {'applicable': False}}
+
+    def _surfaces(self, ts, rust):
+        return self.session._expectation_diff_surfaces(ts, rust)
+
+    def test_label_strings_keep_the_registered_verdict(self):
+        # Real data is label strings and JSON booleans: equal values of equal
+        # type keep the empty surface list, so the #1372 train's registered
+        # expectations (a19DiffCases etc.) are unchanged by this fix.
+        registry = {'applicable': True, 'events': ['4:turn_completed:stop'],
+                    'state': 'failed', 'result': 'turn_timeout:timeout'}
+        self.assertTrue(self._surfaces(self._expectation(registry=registry),
+                                       self._expectation(registry=dict(registry))) == [],
+                        '#2039 equal-type expectations keep the empty surface list')
+
+    def test_boolean_drift_surfaces_on_frames(self):
+        # Python's ``!=`` made ``True == 1``, so a rust expectation whose JSON
+        # boolean drifted into a number passed as identical and the A19 scope
+        # gate (validate_expectations) never saw the surface.
+        ts = self._expectation(frames=[True])
+        rust = self._expectation(frames=[1])
+        self.assertTrue(self._surfaces(ts, rust) == ['frames'],
+                        '#2039 boolean drift must surface on frames')
+
+    def test_boolean_drift_surfaces_on_durable_status(self):
+        ts = self._expectation(durable=[False])
+        rust = self._expectation(durable=[0])
+        self.assertTrue(self._surfaces(ts, rust) == ['durableStatus'],
+                        '#2039 boolean drift must surface on durableStatus')
+
+    def test_applicable_drift_surfaces_before_the_field_guards(self):
+        # A drifted ``applicable`` used to fall through to the field guards,
+        # which then compared the sub-registry as if it applied.
+        ts = self._expectation(registry={'applicable': True})
+        rust = self._expectation(registry={'applicable': 1})
+        self.assertTrue(self._surfaces(ts, rust) == ['registry.applicable'],
+                        '#2039 registry.applicable boolean drift must surface')
+
+    def test_registry_field_drift_surfaces(self):
+        # The guarded ``registry.events``/``state``/``result`` comparisons sit
+        # behind ``applicable``; their boolean drifts must surface too.
+        registry = {'applicable': True, 'state': 'failed', 'result': 'turn_timeout:timeout'}
+        ts = self._expectation(registry=dict(registry, events=[True]))
+        rust = self._expectation(registry=dict(registry, events=[1]))
+        self.assertTrue(self._surfaces(ts, rust) == ['registry.events'],
+                        '#2039 registry.events boolean drift must surface')
+        ts = self._expectation(registry=dict(registry, events=['4:turn_completed:stop'], result=True))
+        rust = self._expectation(registry=dict(registry, events=['4:turn_completed:stop'], result=1))
+        self.assertTrue(self._surfaces(ts, rust) == ['registry.result'],
+                        '#2039 registry.result boolean drift must surface')
+
+    def test_cleanup_replay_drift_is_not_coerced(self):
+        # ``checked_evidence`` re-derives the ledger from the raw trace;
+        # ``True == 1`` used to certify a replay whose cleanup flag had
+        # drifted into a number.  parse_trace is patched because a real
+        # strace round is the chain fixture's job, not this unit pin's.
+        ledger = {'processes': [], 'execWitness': {'complete': True},
+                  'networkWitness': {'complete': True},
+                  'transcriptWitness': {'complete': True},
+                  'cleanup': {'allStopped': 1}}
+        replay = {'processes': [], 'execWitness': {'complete': True},
+                  'networkWitness': {'complete': True},
+                  'transcriptWitness': {'complete': True},
+                  'cleanup': {'allStopped': True}}
+        with patch.object(self.native, 'parse_trace', return_value=replay):
+            checked = self.native.checked_evidence('raw', {}, ledger)
+        self.assertTrue(checked['cleanup']['allStopped'] is False,
+                        '#2039 cleanup allStopped=1 must not coerce to True')
+        with patch.object(self.native, 'parse_trace', return_value=replay):
+            checked = self.native.checked_evidence('raw', {}, dict(ledger, cleanup={'allStopped': True}))
+        self.assertTrue(checked['cleanup']['allStopped'] is True,
+                        '#2039 cleanup allStopped stays True on equal type')
+
+    def test_prelaunch_drift_is_not_coerced(self):
+        # ``load_capture`` re-checks the launch contract against the prelaunch
+        # mirror; a boolean that became a number used to satisfy ``==``.
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            contract = {'launcherPid': 42, 'execTrace': True, 'binaries': {}}
+
+            def capture(prelaunch):
+                (folder / 'trace.log').write_text('1 +++ exited with 0 ++++\n')
+                (folder / 'launch.json').write_text(json.dumps(contract))
+                (folder / 'prelaunch.json').write_text(json.dumps(prelaunch))
+                (folder / 'evidence.json').write_text('{}')
+                # dict() spelling, not a literal: this is fixture data, not a
+                # status computation, so it must not read as an aggregation
+                # point to the #991/#164 audit (whose registry is shared).
+                receipt = dict(status='WITNESS_CAPTURED', tracerExitCode=0)
+                for name, key in self.native.receipt_artifacts('capture').items():
+                    receipt[key] = self.native.sha(folder / name)
+                (folder / 'receipt.json').write_text(json.dumps(receipt))
+                return folder
+
+            loaded = self.native.load_capture(capture({'execTrace': True, 'binaries': {}}))
+            self.assertTrue(loaded[1] == contract, '#2039 equal-type prelaunch contract loads')
+            try:
+                self.native.load_capture(capture({'execTrace': 1, 'binaries': {}}))
+                rejected = False
+            except self.native.Incomplete:
+                rejected = True
+            self.assertTrue(rejected, '#2039 boolean drift in the prelaunch mirror is rejected')
+
+
 class RetirementScoring(unittest.TestCase):
     """#1355 fix-r2/r3: E1 retirement scoring rules (R1/R3/R6/R7/R9 + timeout
     + ①final-frame/②budget/④every-round inventory).
