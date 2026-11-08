@@ -342,10 +342,12 @@ def _assert_run_positive_tail(source):
     ``run_positive`` 函数体的**最后两条**：只证「出现在区间里」的裸子串锚抓不住
     「两行被挪进 rc==1 分支 / 只丢 return / 整块被删」的形态，也会被合法重排假红；
     ast.unparse 归一化后比对，改格式不红、改语义（挪分支、丢行、改名）必红。
-    第三面是**可达性**（anthropic p1fix boundary P1）：末两行前若已有顶层裸
-    return/raise，锚两行成死代码——形状逐字匹配但永不执行，同样是「校验的不是
-    生效的那份」；if/except 分支里的 return 是 If/Try 的子节点、不在函数体层，
-    不误伤正常源（现有 6 处 return 全在分支内）。
+    第三面是**可达性**（anthropic p1fix / p1fix2 boundary P1）：末两行前若有必然执行的
+    return/raise（含必执行复合语句体内的——with / async with 体、try / except* 语句的
+    body 与 finalbody、常量真值 if / while 体），锚两行成死代码——形状逐字匹配但永不
+    执行，同样是「校验的不是生效的那份」；条件路径（if / except handler / for / match /
+    非常量 while / 循环 else）豁免，不误伤正常源。常量折叠病态（如 ``while 1+1:``）
+    不折叠、超出本面（见函数体内声明边界）。
     """
     import ast  # 局部导入：仅本守卫需要，模块头保持原导入面
     try:
@@ -367,13 +369,36 @@ def _assert_run_positive_tail(source):
         raise CheckFailure('run_positive 尾部 HELD/BROKEN 落判缺失（#2397 rebase 丢行类源码锚点：'
                             '函数体末两条语句应为 record.update(verdict=...) 与 return record，'
                             f'实际 {ast.unparse(node.body[-2:])!r}）')
-    # 可达性：锚两行必须是函数体顶层控制流的出口。末两行之前若有裸 return/raise
-    # （函数体直接子语句），锚两行即死代码——形状逐字匹配但永不执行。
-    early = next((stmt for stmt in node.body[:-2]
+    # 可达性：锚两行必须是函数体控制流的**必经出口**。之前的语句里若有必然执行的
+    # return/raise，锚两行即死代码——形状逐字匹配但永不执行。扫描不只看函数体直接
+    # 子语句，还下钻「必执行」复合语句体：with / async with 体、try / except* 语句的
+    # body 与 finalbody、常量真值 if / while 体（anthropic p1fix2 boundary P1）；条件
+    # 路径（if / except handler / for / match / 非常量 while / 循环 else）豁免，不误伤
+    # 正常源（现有 return 全在 if / except 条件分支内）。
+    # 声明边界：`while 1+1:` 类常量折叠病态不折叠（test 非字面常量即不视为必执行）；
+    # for / while 的 else 仅无 break 时必执行，同样不视为必经——两类形态超出本面。
+    try_types = tuple(t for t in (getattr(ast, 'Try', None),
+                                  getattr(ast, 'TryStar', None)) if t is not None)
+
+    def const_true(test):
+        return isinstance(test, ast.Constant) and bool(test.value)
+
+    def must_execute(stmts):
+        for stmt in stmts:
+            yield stmt
+            if isinstance(stmt, (ast.With, ast.AsyncWith)):
+                yield from must_execute(stmt.body)
+            elif isinstance(stmt, try_types):
+                yield from must_execute(stmt.body)
+                yield from must_execute(stmt.finalbody)
+            elif isinstance(stmt, (ast.If, ast.While)) and const_true(stmt.test):
+                yield from must_execute(stmt.body)
+
+    early = next((stmt for stmt in must_execute(node.body[:-2])
                   if isinstance(stmt, (ast.Return, ast.Raise))), None)
     if early is not None:
-        raise CheckFailure(f'run_positive 末尾锚两行不可达：函数体第 {early.lineno} 行的顶层 '
-                           f'{type(early).__name__} 截断控制流，锚两行成死代码'
+        raise CheckFailure(f'run_positive 末尾锚两行不可达：第 {early.lineno} 行的必执行路径上 '
+                           f'有 {type(early).__name__} 截断控制流，锚两行成死代码'
                            '（形状匹配但永不执行，#2397 源码锚点拒收）')
     return
 
