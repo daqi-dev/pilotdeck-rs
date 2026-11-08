@@ -1,7 +1,7 @@
 //! First installation from an explicitly approved local source checkout.
 use pilotdeck_cli::update::{self, Builder, InstallManifest, NativeBuilder};
 use std::{collections::HashMap, path::PathBuf};
-pub(super) const HELP: &str = "pilotdeck-control install --root <new-private-directory> --source <clean-checkout> --remote <approved-git-remote> [--ref refs/heads/main]\n\nBuilds all four native programs from one fixed source commit on this machine.\nNo prebuilt download is used. The root must not exist; existing installations use pilotdeck update.\nWrites one JSON result to stdout; errors, including an unconfirmed publication, go to stderr.";
+pub(super) const HELP: &str = "pilotdeck-control install --root <new-private-directory> --source <clean-checkout> --remote <approved-git-remote> [--ref refs/heads/main] [--bundled-skills-root <existing-directory>]\n\nBuilds all four native programs from one fixed source commit on this machine.\nNo prebuilt download is used. The root must not exist; existing installations use pilotdeck update.\nWrites one JSON result to stdout; errors, including an unconfirmed publication, go to stderr.";
 pub(super) fn run(
     args: impl IntoIterator<Item = std::ffi::OsString>,
 ) -> Result<serde_json::Value, update::Error> {
@@ -10,7 +10,7 @@ pub(super) fn run(
     let mut values = HashMap::new();
     while let Some(key) = args.next() {
         let key = key.into_string().map_err(|_| invalid())?;
-        if !["--root", "--source", "--remote", "--ref"].contains(&key.as_str()) {
+        if !["--root", "--source", "--remote", "--ref", "--bundled-skills-root"].contains(&key.as_str()) {
             return Err(invalid());
         }
         let value = args
@@ -38,7 +38,10 @@ pub(super) fn run(
         approved_remote: remote,
         approved_ref: reference,
     };
-    let installation = update::bootstrap(&root, policy, &source, &sha, &mut builder)?;
+    let skills = values.remove("--bundled-skills-root").map(PathBuf::from);
+    let installation = update::bootstrap_with_external_skills(
+        &root, policy, &source, &sha, &mut builder, skills.as_deref()
+    )?;
     Ok(
         serde_json::json!({"version":"pilotdeck-control/1","ok":true,"root":installation.root,"installId":installation.policy.install_id,"generation":installation.current.generation,"sourceSha":installation.current.source_sha,"binaries":update::BINARIES}),
     )

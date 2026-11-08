@@ -439,4 +439,39 @@ mod filesystem {
             assert_eq!(retry.reason, "alreadyInstalled");
         }
     }
+    #[test]
+    fn explicit_external_skills_survive_update_without_copying() {
+        let scratch = Scratch::new();
+        let (first, mut builder) = fixture(&scratch);
+        let original = scratch.0.join("original-source");
+        let external = scratch.0.join("outside-skills");
+        fs::create_dir(&external).unwrap();
+        fs::create_dir(external.join("example")).unwrap();
+        let skill = external.join("example/SKILL.md");
+        fs::write(&skill, b"self-written fixture").unwrap();
+        let root = scratch.0.join("with-skills");
+        let old = builder.old.clone();
+        let installation = bootstrap_with_external_skills(
+            &root, first.policy.clone(), &original, &old, &mut builder, Some(&external)
+        ).unwrap();
+        let link = root.join("generations/skills");
+        assert_eq!(fs::read_link(&link).unwrap(), external.canonicalize().unwrap());
+        assert_eq!(fs::read(link.join("example/SKILL.md")).unwrap(), b"self-written fixture");
+        let mut engine = Engine::new(installation, builder);
+        let target = engine.check().unwrap().latest.unwrap();
+        engine.apply(&target, &mut |_| {}).unwrap();
+        let generation = engine.target_generation().unwrap();
+        let actual = Installation::open(&root, generation).unwrap();
+        let bin = actual.root.join("generations").join(generation).join("bin");
+        assert_eq!(fs::canonicalize(bin.join("../../skills")).unwrap(), external.canonicalize().unwrap());
+        assert_eq!(fs::read(&skill).unwrap(), b"self-written fixture");
+        let bad_root = scratch.0.join("invalid-install");
+        let result = bootstrap_with_external_skills(
+            &bad_root, first.policy, &original, &old, &mut engine.builder,
+            Some(&scratch.0.join("does-not-exist")),
+        );
+        assert!(result.is_err());
+        assert!(!bad_root.exists());
+    }
+
 }

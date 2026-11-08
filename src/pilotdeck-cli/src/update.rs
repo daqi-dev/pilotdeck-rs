@@ -8,7 +8,7 @@ mod install;
 mod process;
 #[cfg(unix)]
 pub use install::{
-    BINARIES, Builder, Engine, Generation, InstallManifest, Installation, NativeBuilder, bootstrap,
+    BINARIES, Builder, Engine, Generation, InstallManifest, Installation, NativeBuilder, bootstrap, bootstrap_with_external_skills,
 };
 use serde::{Deserialize, Serialize};
 
