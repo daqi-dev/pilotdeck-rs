@@ -2554,6 +2554,113 @@ class SameJsonSurfaces(unittest.TestCase):
                 rejected = True
             self.assertTrue(rejected, '#2039 boolean drift in the prelaunch mirror is rejected')
 
+    def test_tracer_exit_code_drift_is_not_coerced(self):
+        # receipt.json is a retained JSON original whose bytes are not
+        # sha-pinned (receipt_artifacts covers the other four artifacts), so
+        # a tracerExitCode that drifted into a boolean must not satisfy == 0.
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            contract = {'launcherPid': 42, 'execTrace': True, 'binaries': {}}
+
+            def capture(tracer_exit_code):
+                (folder / 'trace.log').write_text('1 +++ exited with 0 ++++\n')
+                (folder / 'launch.json').write_text(json.dumps(contract))
+                (folder / 'prelaunch.json').write_text(json.dumps({'execTrace': True, 'binaries': {}}))
+                (folder / 'evidence.json').write_text('{}')
+                receipt = dict(status='WITNESS_CAPTURED', tracerExitCode=tracer_exit_code)
+                for name, key in self.native.receipt_artifacts('capture').items():
+                    receipt[key] = self.native.sha(folder / name)
+                (folder / 'receipt.json').write_text(json.dumps(receipt))
+                return folder
+
+            loaded = self.native.load_capture(capture(0))
+            self.assertTrue(loaded[1] == contract, '#2039 equal-type tracer exit code loads')
+            try:
+                self.native.load_capture(capture(False))
+                rejected = False
+            except self.native.Incomplete:
+                rejected = True
+            self.assertTrue(rejected, '#2039 tracer exit code boolean drift is rejected')
+
+    def test_ws_profile_opcode_drift_is_not_coerced(self):
+        # ws_profile gates observer JSONL wire records; a boolean that drifted
+        # into a number used to satisfy ``==`` and pass as a complete text
+        # frame without RSV, the same coercion the six batch comparisons fix.
+        def rejected(wire):
+            try:
+                self.native.ws_profile('send', wire)
+                return False
+            except self.native.Incomplete:
+                return True
+        self.assertTrue(rejected({'opcode': True, 'fin': True, 'rsv': 0, 'masked': True}),
+                        '#2039 ws profile opcode boolean drift is rejected')
+        self.assertTrue(rejected({'opcode': 1, 'fin': True, 'rsv': False, 'masked': True}),
+                        '#2039 ws profile rsv boolean drift is rejected')
+        self.assertTrue(not rejected({'opcode': 1, 'fin': True, 'rsv': 0, 'masked': True}),
+                        '#2039 equal-type wire record passes the ws profile')
+
+    def test_session_profile_connections_drift_is_not_coerced(self):
+        # session_profile audits the launch contract, a JSON original on the
+        # live audit path: a connections boolean must not satisfy == 1.
+        argv = ['bin', '--listen', '127.0.0.1:28999', '--home', '/h', '--project', '/h']
+        contract = {'cases': ['demo/session'], 'processRoles': ['host', 'sidecar'],
+                    'binaries': {'host': {'argv': argv}, 'sidecar': {}},
+                    'connections': 1, 'externalEndpoints': ['127.0.0.1:29000'],
+                    'capabilities': {'provider': 'loopback-mock', 'tools': []},
+                    'project': '/h'}
+        self.assertTrue(self.native.session_profile(contract, ['demo/session'])
+                        == ('/h', '127.0.0.1:29000'), '#2039 equal-type session profile loads')
+        try:
+            self.native.session_profile(dict(contract, connections=True), ['demo/session'])
+            rejected = False
+        except self.native.Incomplete:
+            rejected = True
+        self.assertTrue(rejected, '#2039 session profile connections boolean drift is rejected')
+
+    def test_memory_rehearsal_holds_tree_lock(self):
+        import io
+        marker = '#2039 same-json memory rehearsal holds the source tree lock'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            spec = importlib.util.spec_from_file_location('samejson_memory_lock', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            seen, order = [], []
+
+            class recording_lock:
+                def __enter__(self):
+                    order.append('lock')
+
+                def __exit__(self, *_exc):
+                    return None
+
+            def recording_tree_lock(*arguments, **keywords):
+                seen.append((arguments, keywords))
+                return recording_lock()
+
+            def fake_run_owned(command, **_keywords):
+                order.append('child')
+                return subprocess.CompletedProcess(command, 0, '', 'Ran 1 test in 0.001s\n\nOK\n')
+
+            previous_target = os.environ.get('CARGO_TARGET_DIR')
+            if previous_target is None:
+                os.environ['CARGO_TARGET_DIR'] = str(common.ROOT / '_build/cargo-target')
+            try:
+                with tempfile.TemporaryDirectory(prefix='pdrs-2039-samejson-') as folder:
+                    with patch.object(module, 'tree_lock', recording_tree_lock), \
+                            patch.object(module, 'run_owned', fake_run_owned), \
+                            patch('sys.stdout', new_callable=io.StringIO), \
+                            patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
+                                                       '--case', 'memory-rehearsal-without-lock']):
+                        module.main()
+            finally:
+                if previous_target is None:
+                    del os.environ['CARGO_TARGET_DIR']
+            self.assertTrue(seen == [((module.root,), {'timeout': 900})]
+                            and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
 
 class RetirementScoring(unittest.TestCase):
     """#1355 fix-r2/r3: E1 retirement scoring rules (R1/R3/R6/R7/R9 + timeout

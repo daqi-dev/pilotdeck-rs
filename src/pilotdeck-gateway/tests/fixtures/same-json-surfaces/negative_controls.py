@@ -22,12 +22,14 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import signal
 import unittest
 from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, tree_lock
+from negative_process import defer_signal_exit, mutating_sources, run_owned, tree_lock, write_source_atomic
+from negative_selection import claim_dir, refuse, registered, verdict_exit
 
 session = root / 'scripts/gateway-parity/session_domain.py'
 native = root / 'scripts/gateway-parity/native_evidence.py'
@@ -65,7 +67,37 @@ cases = [
      "    need(same_json({k: v for k, v in contract.items() if k != 'launcherPid'}, prelaunch),",
      "    need({k: v for k, v in contract.items() if k != 'launcherPid'} == prelaunch,",
      'test_prelaunch_drift_is_not_coerced'),
+    ('receipt-tracer-exit-bare-equal', native,
+     "    need(receipt['status'] == 'WITNESS_CAPTURED' and same_json(receipt['tracerExitCode'], 0),",
+     "    need(receipt['status'] == 'WITNESS_CAPTURED' and receipt['tracerExitCode'] == 0,",
+     'test_tracer_exit_code_drift_is_not_coerced'),
+    ('ws-profile-opcode-rsv-bare-equal', native,
+     "    need(same_json(wire.get('opcode'), 1) and wire.get('fin') is True and same_json(wire.get('rsv'), 0),",
+     "    need(wire.get('opcode') == 1 and wire.get('fin') is True and wire.get('rsv') == 0,",
+     'test_ws_profile_opcode_drift_is_not_coerced'),
+    ('session-profile-connections-bare-equal', native,
+     "    need(same_json(contract.get('connections'), 1), 'session profile connections')",
+     "    need(contract.get('connections') == 1, 'session profile connections')",
+     'test_session_profile_connections_drift_is_not_coerced'),
+    ('memory-rehearsal-without-lock', Path(__file__).resolve(),
+     '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:',
+     '        if memory:\n            for row in selected:\n                one(row)\n        else:',
+     'test_memory_rehearsal_holds_tree_lock'),
 ]
+
+# Static roster (#1666): the denominator of this run is a literal in the
+# source, never len(cases) -- a dropped, renamed, duplicated or reordered row
+# is a startup refusal (rc 2), not a smaller green run.
+EXPECTED_NAMES = ('surfaces-frames-bare-not-equal',
+                  'surfaces-durable-bare-not-equal',
+                  'surfaces-applicable-bare-not-equal',
+                  'surfaces-registry-fields-bare-not-equal',
+                  'cleanup-replay-bare-equal',
+                  'prelaunch-bare-equal',
+                  'receipt-tracer-exit-bare-equal',
+                  'ws-profile-opcode-rsv-bare-equal',
+                  'session-profile-connections-bare-equal',
+                  'memory-rehearsal-without-lock')
 
 messages = {
     'surfaces-frames-bare-not-equal': '#2039 boolean drift must surface on frames',
@@ -74,6 +106,10 @@ messages = {
     'surfaces-registry-fields-bare-not-equal': '#2039 registry.events boolean drift must surface',
     'cleanup-replay-bare-equal': '#2039 cleanup allStopped=1 must not coerce to True',
     'prelaunch-bare-equal': '#2039 boolean drift in the prelaunch mirror is rejected',
+    'receipt-tracer-exit-bare-equal': '#2039 tracer exit code boolean drift is rejected',
+    'ws-profile-opcode-rsv-bare-equal': '#2039 ws profile opcode boolean drift is rejected',
+    'session-profile-connections-bare-equal': '#2039 session profile connections boolean drift is rejected',
+    'memory-rehearsal-without-lock': '#2039 same-json memory rehearsal holds the source tree lock',
 }
 
 
@@ -136,9 +172,30 @@ def classify(result, test, marker):
     return 'INVALID'
 
 
+def terminate_cleanly(signum, _frame):
+    """Unwind on SIGTERM/SIGHUP/SIGQUIT so the finally blocks restore the
+    sources; the default disposition would leave a mutant in the tree and the
+    parity lease held (mirror of session-domain-cleanup's #892 r23 form)."""
+    if defer_signal_exit(signum):
+        return
+    raise SystemExit(128 + signum)
+
+
+def install_terminate_handlers():
+    signal.signal(signal.SIGTERM, terminate_cleanly)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, terminate_cleanly)
+    if hasattr(signal, 'SIGQUIT'):
+        signal.signal(signal.SIGQUIT, terminate_cleanly)
+
+
 def main():
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
+    try:
+        registered(cases, EXPECTED_NAMES)
+    except Exception as error:
+        refuse('case roster drifted from the static inventory: ' + repr(error))
     if not preflight():
         return 2
     if sys.argv[1:] == ['--check-anchors']:
@@ -147,12 +204,11 @@ def main():
     memory = '--memory' in arguments
     arguments = [a for a in arguments if a != '--memory']
     if len(arguments) not in (1, 3) or (len(arguments) == 3 and arguments[1] != '--case'):
-        raise SystemExit('usage: negative_controls.py NEW_OUTPUT [--memory] [--case NAME] | --check-anchors')
+        refuse('usage: negative_controls.py NEW_OUTPUT [--memory] [--case NAME] | --check-anchors')
     selected = cases if len(arguments) == 1 else [row for row in cases if row[0] == arguments[2]]
     if not selected:
-        raise SystemExit('unknown mutation')
-    out = Path(arguments[0]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+        refuse('unknown mutation: ' + arguments[2])
+    out = claim_dir(arguments[0])
     results = []
     def run(label, command):
         value = run_owned(command, cwd=root, env=None, timeout=60)
@@ -172,7 +228,9 @@ def main():
             if memory:
                 result = run(name + '-mutant', [sys.executable, '-I', '-B', __file__, '--memory-run', name])
             else:
-                path.write_text(changed)
+                # #1903: a truncating in-place write leaves a half-file on
+                # SIGKILL; publish in one rename instead.
+                write_source_atomic(root, path, changed.encode())
                 result = run(name + '-mutant', command)
             status = classify(result, test, messages[name])
             reason = 'compiled; ' + full + '; ' + messages[name]
@@ -180,7 +238,7 @@ def main():
             reason = repr(error)
         finally:
             if restore:
-                path.write_bytes(originals[path])
+                write_source_atomic(root, path, originals[path])
         try:
             restored = run(name + '-restored', command)
             if restored.returncode != 0:
@@ -194,7 +252,11 @@ def main():
                 for row in selected:
                     one(row)
         else:
-            with mutating_sources(root, [session, native, common]) as originals:
+            # The fixture guards its own bytes too: the memory-rehearsal case
+            # mutates this file, so it must be snapshotted for restore.
+            install_terminate_handlers()
+            with mutating_sources(root, [session, native, common,
+                                          Path(__file__).resolve()]) as originals:
                 for row in selected:
                     one(row, True)
     except Exception as error:
@@ -205,7 +267,7 @@ def main():
     temporary.write_text(json.dumps(summary, indent=2) + '\n')
     temporary.replace(out / 'summary.json')
     print(json.dumps(summary, indent=2))
-    return 0 if len(results) == len(selected) and all(row['status'] == 'KILLED' for row in results) else 1
+    return verdict_exit(results, key='status')
 
 
 if __name__ == '__main__':
