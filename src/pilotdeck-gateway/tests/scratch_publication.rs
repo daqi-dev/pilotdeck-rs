@@ -2405,10 +2405,20 @@ const PROBE_ZOMBIE_BUDGET: Duration = Duration::from_secs(10);
 const PROBE_KILL_WINDOW: Duration = Duration::from_secs(5);
 
 /// How long a timeout branch waits for its own explicit kill to land before
-/// it panics — the kill's confirmation, so the window is released only behind
-/// a group that is provably dying, the same order the healthy path keeps.
+/// it escalates — the kill's confirmation, so the window is released only
+/// behind a group that is provably dying, the same order the healthy path
+/// keeps.
 #[cfg(target_os = "linux")]
 const PROBE_DEATH_CONFIRM: Duration = Duration::from_secs(1);
+
+/// #2142 fix-r3 (concurrency P1, two reviewers): the confirmation escalates
+/// once — a first SIGKILL that has not landed within [`PROBE_DEATH_CONFIRM`]
+/// gets a second kill and this named window before the branch gives up and
+/// panics, so the panic never releases the window over a group that was only
+/// presumed dying (the fix-r2 shape dropped the verdict on the floor with
+/// `let _ =`, which is the gap this closes).
+#[cfg(target_os = "linux")]
+const PROBE_DEATH_RETRY_WINDOW: Duration = Duration::from_secs(3);
 
 /// The kill margin as a machine-checked fact (#2142 fix-r2, boundary r2 #1 /
 /// MM boundary r2 #1): the EOF test's whole front path — pid line + receipt +
@@ -2459,17 +2469,68 @@ fn read_probe_line(stdout: process::ChildStdout, budget: Duration) -> (usize, St
 /// tests share — the group behind `pid` is gone from `/proc` (already reaped)
 /// or entirely `Z`/`X`, within `budget`, at a 5 ms cadence. Returns whether
 /// it settled in time; the caller owns the failure action, so the
-/// mutant-bound killpg lines stay at their own call sites.
+/// mutant-bound killpg line stays inside [`confirm_probe_group_death`], a
+/// different line from the guard's Drop the `probe-group-kill-removed` mutant
+/// removes. #2142 fix-r3 (concurrency #1): the wait fails closed — a `/proc`
+/// read that is anything but "no entry" (see [`metadata_failure_is_gone`])
+/// counts as alive, so a restricted procfs cannot hide a live group behind a
+/// read error and still deliver a confirmed death, the fail-open shape that
+/// could have false-PASSED the kill-removed mutant.
 #[cfg(target_os = "linux")]
 fn group_is_gone_within(pid: &str, budget: Duration) -> bool {
     let deadline = Instant::now() + budget;
-    while fs::metadata(format!("/proc/{pid}")).is_ok() && !thread_group_is_dead(pid) {
+    loop {
+        let gone = match fs::metadata(format!("/proc/{pid}")) {
+            // The usual exit: reaped, and gone from the tree.
+            Err(error) if metadata_failure_is_gone(&error) => true,
+            // Anything else unreadable is an unknown — alive for a wait
+            // whose whole job is proving death.
+            Err(_) => false,
+            Ok(_) => thread_group_is_dead(pid),
+        };
+        if gone {
+            return true;
+        }
         if Instant::now() >= deadline {
             return false;
         }
         thread::sleep(Duration::from_millis(5));
     }
-    true
+}
+
+/// #2142 fix-r3 (concurrency #1): what a failed `/proc/<pid>` metadata read
+/// means for the group-is-gone wait — only a vanished entry is a
+/// disappearance. Any other failure (a restricted procfs answers EACCES for
+/// a live hero) leaves the group's state unknown, which the wait must count
+/// as alive: the same fail-closed side [`blind_source`] keeps for unreadable
+/// sources. Pinned by its own unit test — a healthy host's `/proc` never
+/// answers the error side for a descendant, the same reason
+/// [`an_unreadable_link_is_a_release_only_when_its_holder_is_gone`] pins the
+/// link rule instead of forcing a real unreadable link.
+#[cfg(target_os = "linux")]
+fn metadata_failure_is_gone(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+}
+
+/// #2142 fix-r3 (concurrency P1, two reviewers): the timeout branch's kill
+/// confirmation, made a real assertion. The fix-r2 shape dropped the verdict
+/// (`let _ = group_is_gone_within(..)`), so a group that outlived its own
+/// SIGKILL — a D-state task past the confirm budget — still saw the branch
+/// panic release the window over it. Now a false first confirm escalates
+/// once, a second kill and [`PROBE_DEATH_RETRY_WINDOW`], and only a group
+/// that stays live through both fails the assert; a confirmed death returns
+/// to the caller, whose own panic is the failure the branch exists for.
+#[cfg(target_os = "linux")]
+fn confirm_probe_group_death(group: Pid, hero: &str) {
+    rustix::process::kill_process_group(group, Signal::KILL).ok();
+    if group_is_gone_within(hero, PROBE_DEATH_CONFIRM) {
+        return;
+    }
+    rustix::process::kill_process_group(group, Signal::KILL).ok();
+    assert!(
+        group_is_gone_within(hero, PROBE_DEATH_RETRY_WINDOW),
+        "#2142 the timeout branch must not panic over a group whose death it could not confirm"
+    );
 }
 
 /// #2142 fix-r2 (concurrency r2 #1 / boundary r2 #3): collect the probe's
@@ -2615,11 +2676,11 @@ os.waitpid(pid, 0)
     // vanished entry cannot be a source at all. The timeout branch kills the
     // group explicitly and confirms the kill before it panics (#2142 fix-r2,
     // sibling r2 #3 / concurrency r2 #2 — the same shape the EOF test's
-    // window has kept since fix-r1), so no exit releases the window over a
-    // live group.
+    // window has kept since fix-r1; fix-r3, concurrency P1, made the
+    // confirmation an asserted escalation instead of a dropped verdict), so
+    // no exit releases the window over a live group.
     if !group_is_gone_within(&hero, PROBE_KILL_WINDOW) {
-        rustix::process::kill_process_group(group, Signal::KILL).ok();
-        let _ = group_is_gone_within(&hero, PROBE_DEATH_CONFIRM);
+        confirm_probe_group_death(group, &hero);
         panic!("#1409 the probe's thread group must die by the guard's kill");
     }
     // #2142 fix-r1 (concurrency r1 #2; comment corrected in fix-r2, sibling r2
@@ -2662,8 +2723,12 @@ os.waitpid(pid, 0)
 /// so the kill-removed mutant cannot be outwaited by the front loops' own
 /// clocks — where a 10s hold left the verdict to host speed. The timeout
 /// branch additionally kills the group explicitly and confirms the kill
-/// before it panics, so even the mutant leaves no residue past its failure
-/// and never releases the window over a live group.
+/// before it panics — an asserted escalation since #2142 fix-r3 (concurrency
+/// P1: one more kill and a named retry window when the first confirm has not
+/// landed, so a group that outlives its own SIGKILL fails the assert instead
+/// of seeing the panic release the window over it) — so even the mutant
+/// leaves no residue past its failure and never releases the window over a
+/// live group.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_probe_that_dies_before_the_pid_line_takes_its_group_with_it() {
@@ -2761,16 +2826,19 @@ os._exit(9)
     // behind a group that is provably dying: the timeout branch kills
     // explicitly, confirms the kill inside its own bound, and only then
     // panics (#2142 fix-r2, concurrency r2 #2 — the panic's unwind releases
-    // the window, so it must not overtake the kill it just issued).
+    // the window, so it must not overtake the kill it just issued; fix-r3,
+    // concurrency P1, made that confirmation an asserted escalation — a
+    // second kill and a named retry window — rather than a dropped verdict).
     drop(_probe_group);
     if !group_is_gone_within(&hero, PROBE_KILL_WINDOW) {
         // #2142 fix-r1 (concurrency r1 #1 / boundary r1 #2): the mutant's
         // on-disk residue is bounded right here — the failure alone would
         // leave the poison group alive for the hold thread's full 30s — and
-        // the kill is written differently from the guard's Drop line the
-        // mutant removes, so the negative-control anchor stays unique.
-        rustix::process::kill_process_group(group, Signal::KILL).ok();
-        let _ = group_is_gone_within(&hero, PROBE_DEATH_CONFIRM);
+        // the kill lives in `confirm_probe_group_death`, whose line still
+        // reads differently from the guard's Drop line the mutant removes
+        // (`group` and `.ok()`, not `self.0` and `let _ =`), so the
+        // negative-control anchor stays unique.
+        confirm_probe_group_death(group, &hero);
         panic!("#2154 the poison group must not outlive the guard's kill");
     }
     drop(_scan_window);
@@ -2821,6 +2889,31 @@ fn an_unreadable_link_is_a_release_only_when_its_holder_is_gone() {
             &mut BlindSources::default()
         ),
         "#1409 an unreadable link behind a holder that does not exist is a release"
+    );
+}
+
+/// #2142 fix-r3 (concurrency #1): the error side of the group-is-gone wait,
+/// pinned the same way the link rule above is — a healthy host's `/proc`
+/// never answers the error side for a descendant, so the classification is
+/// the testable seam. Only a vanished entry is a disappearance: a procfs
+/// that hides the hero behind EACCES (hidepid, a restricted container) must
+/// leave the group counted as alive, or the wait confirms a death it never
+/// observed — the fail-open that could have false-PASSED the kill-removed
+/// mutant.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_proc_read_error_means_gone_only_when_the_entry_is_absent() {
+    assert!(
+        metadata_failure_is_gone(&io::Error::from(io::ErrorKind::NotFound)),
+        "#2142 a vanished /proc entry is the one read error that means the group is gone"
+    );
+    assert!(
+        !metadata_failure_is_gone(&io::Error::from_raw_os_error(13)),
+        "#2142 an unreadable /proc entry means the group's state is unknown, never gone"
+    );
+    assert!(
+        !metadata_failure_is_gone(&io::Error::from_raw_os_error(5)),
+        "#2142 an I/O error reading /proc means the group's state is unknown, never gone"
     );
 }
 

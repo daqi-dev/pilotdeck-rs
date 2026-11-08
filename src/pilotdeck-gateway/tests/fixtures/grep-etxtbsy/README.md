@@ -351,14 +351,35 @@ panic 用例
   常量（`PROBE_HOLD_SECS` 经 `format!` 注入两段探针脚本），余量算式是**编译期
   assert**（`PROBE_LINE_BUDGET + PROBE_RECEIPT_BUDGET + PROBE_ZOMBIE_BUDGET +
   PROBE_KILL_WINDOW < PROBE_HOLD_SECS`），不再靠注释手算；
-  窗口超时分支另有一行**独立于锚点**的显式 killpg + ≤1s 有界确认（先确认组在死、
-  再 panic 放窗口，concurrency #2），把变异体的盘上残留当场收掉。
+  窗口超时分支另有一行**独立于锚点**的显式 killpg + 有界确认（先确认组在死、
+  再 panic 放窗口，concurrency #2；fix-r3 concurrency P1 把确认升为真断言——首确认
+  失败再 killpg 一次并按 `PROBE_DEATH_RETRY_WINDOW` 延长一轮，仍失败才以专属消息
+  panic，确认结果不再被 `let _ =` 丢弃），把变异体的盘上残留当场收掉。
   真实组长探针的子进程同样首句 `os.close(1)`（fix-r1 boundary #1，实测
   `_tmp/20261026-issue-2142/fix-r1/oom-eof-probe-ab.log`：不关 fd 1 时 OOM 杀掉
   父进程后 read_line 要等存活线程满 30s 才见 EOF——「空 pid 行 panic」的 OOM
   机理此前对真实探针不成立），此后该机理对两个探针同形。探针各自成组
   （`process_group(0)`），组长用例的健康路径仍先按 pid 精确 kill
   （`KillOnDrop`），组守卫只是断后。
+- `metadata-failure-always-gone`（#2142 fix-r3 新增，Linux，绑定单元测试）：
+  `group_is_gone_within` 的 `/proc` 读取错误分类退回 fail-open——任何错误都当
+  「条目已消失」。受限 procfs（hidepid / 受限容器）对活 hero 回 EACCES 时，判杀
+  确认会把一个看不见的活组宣判为死（`probe-group-kill-removed` 可借道假 PASS 的
+  形状）。分类收口为单一函数 `metadata_failure_is_gone`（只有 ENOENT 是消失，
+  其余错误视为组仍存活），绑定新单元测试
+  `a_proc_read_error_means_gone_only_when_the_entry_is_absent`（与
+  `an_unreadable_link_is_a_release_only_when_its_holder_is_gone` 同一形态：健康
+  宿主的 `/proc` 对后代永远不回错误侧，故钉分类函数本身）的
+  `#2142 an unreadable /proc entry means the group's state is unknown, never gone`。
+- `group-gone-always-false`（#2142 fix-r3 新增，Linux，绑定 leader 单元测试）：
+  判杀确认的裁决写死永假——「`/proc` 永远无法证明死亡」的形状（fix-r3 P1 修的
+  正是确认结果曾被 `let _ =` 丢弃）。绑定
+  `a_live_group_behind_a_zombie_leader_is_not_terminal`：变异下首等判杀窗口即假、
+  进超时分支，显式 killpg 后首确认假、升级轮（再 killpg +
+  `PROBE_DEATH_RETRY_WINDOW`）的 assert 以专属消息失败——对修前代码同一变异只会
+  打出分支 panic 的旧消息、本行标记不出现，所以这条标记就是「断言存在且在路径
+  上」的可杀事实。判杀消息
+  `#2142 the timeout branch must not panic over a group whose death it could not confirm`。
 
 `tests/scratch_publication.rs` 是专用集成测试二进制：`tests/common/
 scratch.rs` 被约 35 个集成测试 crate 以 `#[path]` 各编一份，共享文件里不
@@ -401,6 +422,6 @@ Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**
 变异体在任意 unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
 
-<!-- mutants: total=38 lib=3 test=35 unix=16 linux-survives=9 linux-invalid=13 -->
-<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false terminal-state-production-hardcoded-false blind-source-self-unrelated probe-group-kill-removed -->
+<!-- mutants: total=40 lib=3 test=37 unix=16 linux-survives=9 linux-invalid=15 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false terminal-state-production-hardcoded-false blind-source-self-unrelated probe-group-kill-removed metadata-failure-always-gone group-gone-always-false -->
 
