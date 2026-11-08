@@ -1114,7 +1114,9 @@ fn executor_drop_case(poll_predecessor: bool, close_live: bool, panic_payload: b
     }
     let writes = lock(&publisher.publication.state).pending.clone();
     assert_eq!(writes.len(), 2, "both reservations installed");
-    let flags: Vec<_> = (0..5)
+    // #2498: after a hard close `next` is no longer an observer (see below),
+    // so only the three waiters and the finisher park on the pending writes.
+    let flags: Vec<_> = (0..if close_live { 4 } else { 5 })
         .map(|_| Arc::new(WakeFlag(AtomicBool::new(false))))
         .collect();
     let poll = |future: Pin<&mut dyn Future<Output = ()>>, index: usize| {
@@ -1131,12 +1133,24 @@ fn executor_drop_case(poll_predecessor: bool, close_live: bool, panic_payload: b
     poll(cancelled_wait.as_mut(), 0);
     drop(cancelled_wait);
     let mut cancelled_next = Box::pin(publisher.next());
-    assert!(
-        cancelled_next
-            .as_mut()
-            .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
-            .is_pending()
-    );
+    if close_live {
+        // #2498: after a hard close `next` ends delivery at once — the
+        // trailing-write wait is skipped, so it settles instead of parking.
+        assert_eq!(
+            cancelled_next
+                .as_mut()
+                .poll(&mut std::task::Context::from_waker(std::task::Waker::noop())),
+            std::task::Poll::Ready(None),
+            "hard-closed delivery ends without the trailing wait"
+        );
+    } else {
+        assert!(
+            cancelled_next
+                .as_mut()
+                .poll(&mut std::task::Context::from_waker(std::task::Waker::noop()))
+                .is_pending()
+        );
+    }
     drop(cancelled_next);
     let mut waiters: Vec<_> = (0..3)
         .map(|_| Box::pin(publisher.publication.wait_for(&writes)))
@@ -1147,13 +1161,19 @@ fn executor_drop_case(poll_predecessor: bool, close_live: bool, panic_payload: b
     let mut finish = Box::pin(publisher.finish());
     poll(finish.as_mut(), 3);
     let mut next = Box::pin(publisher.next());
-    assert!(
-        next.as_mut()
-            .poll(&mut std::task::Context::from_waker(
-                &std::task::Waker::from(flags[4].clone())
-            ))
-            .is_pending()
-    );
+    // #2498: after a hard close the consumer is no longer an observer of the
+    // pending writes (it returned at the close, as the cancelled next above
+    // shows), so it registers no wake flag and stays untouched until the
+    // block_on below polls it to completion.
+    if !close_live {
+        assert!(
+            next.as_mut()
+                .poll(&mut std::task::Context::from_waker(
+                    &std::task::Waker::from(flags[4].clone())
+                ))
+                .is_pending()
+        );
+    }
     // current_thread A cannot poll either supervisor while these observers register.
     drop(runtime_a);
     assert!(
@@ -1179,8 +1199,9 @@ fn executor_drop_case(poll_predecessor: bool, close_live: bool, panic_payload: b
                 received, None,
                 "closed executor cannot reopen live delivery"
             );
-            // The first next resumes inside its trailing-write wait and returns
-            // None without rechecking the queue; a fresh next must stay closed too.
+            // The first next returned None at the hard close (#2498: without
+            // the trailing wait) and never rechecked the queue; a fresh next
+            // must stay closed too.
             assert_eq!(
                 publisher.next().await,
                 None,

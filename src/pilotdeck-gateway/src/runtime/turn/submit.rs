@@ -758,21 +758,32 @@ impl TurnSubmitter {
                         // delivery must still close. Only the failure record is
                         // claim-guarded: a terminal the deadline already owns
                         // must not be registered a second time.
-                        if terminal.claim() {
-                            self.publish_failure(&run, &publisher, &SubmitError::new("gateway_submit_failed", error.to_string())).await;
-                        }
-                        // #2498: a panicked worker can leave durable appends
-                        // that never settle (a stuck host future), and an
-                        // unbounded `finish` here would hold the turn — and its
-                        // admission and completion fence — alive forever. Mirror
-                        // the timer-path backstop below: drain only within the
-                        // abort budget, then close live delivery unconditionally.
-                        // `close_live` is immediate and idempotent; frames whose
-                        // appends settle after the close are dropped rather than
-                        // blocking the turn (registered in
-                        // specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001.md).
-                        let budget = Duration::from_millis(self.host.abort_turn_timeout_ms().max(1_000));
-                        let _ = tokio::time::timeout(budget, publisher.finish()).await;
+                        // #2498: a panicked worker can leave the whole failure
+                        // tail stuck on host futures — a durable failure record
+                        // that never returns, or durable appends that never
+                        // settle — and an unbounded wait on either would hold
+                        // the turn (and its admission and completion fence)
+                        // alive forever. Mirror the timer-path backstop below:
+                        // the record and the finish drain share one abort
+                        // budget; whatever has not settled by the budget is
+                        // abandoned to the unconditional hard close.
+                        // `close_live` is immediate and idempotent, and it
+                        // ends the consumer's trailing wait as well, so the
+                        // turn releases on the budget even when appends never
+                        // settle. Frames whose appends settle after the close
+                        // are dropped rather than blocking the turn
+                        // (registered in specs/gateway-parity/diffs/
+                        // A7.2-TURN-PANIC-FINISH-001.md and its -R2
+                        // correction).
+                        let owned = terminal.claim();
+                        let budget = self.abort_budget();
+                        let _ = tokio::time::timeout(budget, async {
+                            if owned {
+                                self.publish_failure(&run, &publisher, &SubmitError::new("gateway_submit_failed", error.to_string())).await;
+                            }
+                            publisher.finish().await;
+                        })
+                        .await;
                         publisher.close_live();
                     }
                 },
@@ -821,7 +832,7 @@ impl TurnSubmitter {
                         // *or* dies first (a dropped sender resolves the wait),
                         // so a panicked worker cannot leave delivery open.
                         let publisher = publisher.clone();
-                        let budget = Duration::from_millis(self.host.abort_turn_timeout_ms().max(1_000));
+                        let budget = self.abort_budget();
                         tokio::spawn(async move {
                             if !matches!(tokio::time::timeout(budget, flush_wait).await, Ok(Ok(()))) {
                                 publisher.close_live();
@@ -931,6 +942,13 @@ impl TurnSubmitter {
         Ok(())
     }
 
+    /// The abort budget shared by the panic arm and the timer-path backstop
+    /// (#2498): the host's abort timeout with a 1s floor, so a sub-second
+    /// embedder configuration still lets in-flight failure appends settle
+    /// inside the bounded drain (`panic-budget` cell pins the floor).
+    fn abort_budget(&self) -> Duration {
+        Duration::from_millis(self.host.abort_turn_timeout_ms().max(1_000))
+    }
     async fn publish_failure(&self, run: &RunRef, publisher: &TurnPublisher, error: &SubmitError) {
         let managed = error.code == "SDK_MANAGED_MODEL_DENIED"
             || error.code.starts_with("GATEWAY_ORGANIZATION_")
