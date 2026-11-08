@@ -265,12 +265,12 @@ def control(command, value):
     return child.returncode, out, err
 
 
-def rejected_control(code, out, err):
+def rejected_control(code, out, err, expected_code="gateway_request_failed"):
     # pilotdeck-control writes successful envelopes to stdout, structured failures to stderr.
     assert code == 1 and out == b"", (code, out, err)
     value = json.loads(err)
     assert value["kind"] == "gateway_error" and value["message"] == "Gateway request failed.", value
-    assert value["error"]["code"] == "gateway_request_failed", value
+    assert value["error"]["code"] == expected_code, value
     return value["error"]
 
 
@@ -394,7 +394,7 @@ try:
     rows.append({"sdk_messages": json.loads(sdk_out)})
     code, out, err = control("call", {"method": "read_session_messages", "params": {
         "sessionKey": "native-stream", "projectKey": str(args.out / "another-project")}})
-    denied = rejected_control(code, out, err)
+    denied = rejected_control(code, out, err, "PROJECT_SESSION_MISMATCH")
     assert denied["code"] == "PROJECT_SESSION_MISMATCH", denied
     assert denied["message"].startswith("PROJECT_SESSION_MISMATCH:"), denied
     rows.append({"unserved_project": denied})
