@@ -1610,6 +1610,115 @@ mod async_capture_tests {
         options.idle_sweep_interval_ms = 0;
         SessionOwner::new(options)
     }
+
+    #[derive(Default)]
+    struct SteerRecords(std::sync::atomic::AtomicUsize);
+    impl crate::runtime::steer::MutationRecorder for SteerRecords {
+        fn record(
+            &self,
+            _: JsString,
+            _: pilotdeck_protocol::JsObject,
+        ) -> crate::host::HostFuture<()> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+    }
+    fn probe(owner: &SessionOwner, key: &JsString) -> CompletionSteer {
+        let state = owner.0.state.lock().unwrap();
+        let current = state.completion_owners.get(key).unwrap();
+        CompletionSteer {
+            owner: Arc::downgrade(&owner.0),
+            session: key.clone(),
+            completion: current.completion.clone(),
+            identity: current.admission.clone().unwrap(),
+            steer: current.async_steer.clone(),
+        }
+    }
+    fn message(id: &str) -> crate::runtime::steer::SteerMessage {
+        crate::runtime::steer::SteerMessage {
+            item_id: id.into(),
+            message: JsValue::String(id.into()),
+            allowed_read_files: None,
+        }
+    }
+    #[tokio::test]
+    async fn same_text_old_steer_is_never_used_before_the_new_exact_receipt_is_bound() {
+        use crate::host::modules::ModuleRouter;
+        use crate::runtime::{
+            async_hooks::AsyncHookTurnHandle, hooks::Cancellation,
+            project::interaction_steer::InteractionSteer,
+        };
+        use std::sync::atomic::Ordering;
+        let owner = owner();
+        let key = "session".into();
+        let run = "same".into();
+        let lookup = owner.weak_async_turn_lookup();
+        let resource = InteractionSteer::default();
+        let records = Arc::new(SteerRecords::default());
+        let session = resource
+            .bind_session(key.clone(), Some(records.clone()))
+            .unwrap();
+        let old_admission = owner.begin_turn(&key, &run).unwrap();
+        let old_completion = owner.begin_completion(&key, &run);
+        let old = lookup(&key, Some(resource.clone())).unwrap();
+        let old_probe = probe(&owner, &key);
+        let mut router = ModuleRouter::default();
+        let old_steer = session
+            .start_turn(
+                "old-turn".into(),
+                run.clone(),
+                vec![],
+                Cancellation::new(),
+                &mut router,
+            )
+            .unwrap();
+        (old.bind_steer)(old_steer.async_hook_info().unwrap()).unwrap();
+        assert!(old_probe.enqueue(message("first")).await.unwrap().accepted);
+        let written = records.0.load(Ordering::SeqCst);
+        owner.end_turn(&key, Some(&run), Some(&old_admission));
+        let _new_admission = owner.begin_turn(&key, &run).unwrap();
+        let new_completion = owner.begin_completion(&key, &run);
+        let new = lookup(&key, Some(resource.clone())).unwrap();
+        let new_probe = probe(&owner, &key);
+        assert!(
+            old_steer.async_hook_info().is_some(),
+            "negative must retain a real live equal-text predecessor"
+        );
+        assert!(
+            !new_probe
+                .enqueue(message("must-not-hit-old"))
+                .await
+                .unwrap()
+                .accepted
+        );
+        assert_eq!(
+            records.0.load(Ordering::SeqCst),
+            written,
+            "no mailbox mutation before exact new binding"
+        );
+        old_steer.close().await.unwrap();
+        let new_steer = session
+            .start_turn(
+                "new-turn".into(),
+                run,
+                vec![],
+                Cancellation::new(),
+                &mut router,
+            )
+            .unwrap();
+        let receipt = new_steer.async_hook_info().unwrap();
+        assert!(
+            (old.bind_steer)(receipt.clone()).is_err(),
+            "old callback cannot bind a successor"
+        );
+        (new.bind_steer)(receipt).unwrap();
+        assert!(new_probe.enqueue(message("new")).await.unwrap().accepted);
+        assert!(!old_probe.enqueue(message("stale")).await.unwrap().accepted);
+        owner.complete_turn(&key, &old_completion);
+        assert!((new.guard)());
+        owner.complete_turn(&key, &new_completion);
+        resource.dispose().await.unwrap();
+    }
     #[tokio::test]
     async fn admission_capture_exists_before_steer_binding_and_expires_on_slot_release() {
         let owner = owner();
