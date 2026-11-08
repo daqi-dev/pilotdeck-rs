@@ -935,7 +935,7 @@ async fn http10_close_delimited_response() {
         "#1349 pin http10: the 1.0 response is close with no keep-alive like Node: {raw:?}"
     );
     assert!(
-        !raw.to_ascii_lowercase().contains("content-length"),
+        !raw.to_ascii_lowercase().contains("\r\ncontent-length:"),
         "#1947 pin http10: the 1.0 reply is close-delimited, no content-length: {raw:?}"
     );
     assert!(
@@ -978,7 +978,7 @@ async fn http10_value_body_is_close_delimited() {
         "#1947 pin http10 value body: the 1.0 response is close with no keep-alive like Node: {raw:?}"
     );
     assert!(
-        !raw.to_ascii_lowercase().contains("content-length"),
+        !raw.to_ascii_lowercase().contains("\r\ncontent-length:"),
         "#1947 pin http10 value body: the 1.0 reply is close-delimited, no content-length: {raw:?}"
     );
     assert!(

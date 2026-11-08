@@ -1077,7 +1077,7 @@ async fn http10_close_delimited_response() {
             "#1209 pin {id}: HTTP/1.0 is answered close with no keep-alive: {raw:?}"
         );
         assert!(
-            !raw.to_ascii_lowercase().contains("content-length"),
+            !raw.to_ascii_lowercase().contains("\r\ncontent-length:"),
             "#1947 pin {id}: the HTTP/1.0 reply is close-delimited, no content-length: {raw:?}"
         );
         assert!(
@@ -1171,8 +1171,8 @@ async fn http10_webhook_json_is_close_delimited() {
             "#1947 pin {id}: the 1.0 webhook reply closes with no keep-alive: {raw:?}"
         );
         assert!(
-            !raw.to_ascii_lowercase().contains("content-length")
-                && !raw.to_ascii_lowercase().contains("transfer-encoding"),
+            !raw.to_ascii_lowercase().contains("\r\ncontent-length:")
+                && !raw.to_ascii_lowercase().contains("\r\ntransfer-encoding:"),
             "#1947 pin {id}: the 1.0 webhook reply is close-delimited, no content-length: {raw:?}"
         );
         assert!(
