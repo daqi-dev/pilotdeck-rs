@@ -314,6 +314,18 @@ panic 用例
   18×，且尾部没有被 3000 轮样本界住**（有 2 个样本落在 1–10ms 桶）。不收尾
   这 2810 轮就会变成健康路径上的假 FAIL，收尾过短则在重载下漏掉正在退出的
   后代。
+- `probe-group-kill-removed`（#2154 新增，Linux，绑定单元测试）：探针组守卫
+  `KillProbeGroupOnDrop` 的组 kill 被删——僵尸组长探针在 `os.fork()` 与打印子
+  pid 之间死掉（OOM 形状）时，测试在空 pid 行上 panic，unwind 只剩这个 Drop
+  终结毒状态；删掉它，毒组（`Z` 组长 + 活线程组 + EACCES fd 目录）活过
+  `SCAN_WINDOW` 的释放。绑定新用例
+  `a_probe_that_dies_before_the_pid_line_takes_its_group_with_it`（探针父进程
+  不打印直接退出、子进程关掉 stdout 让 EOF 真到达、把自己停进毒状态并把 pid
+  发到收据文件，存活线程 10s 硬上界）的 `#2154 the poison group must not
+  outlive the guard's kill`——删掉 kill 后毒组要活满 10s，5s 判杀截止先红；
+  变异体在盘上的残留同样被 10s 上界兜住。探针从此各自成组
+  （`process_group(0)`），组长用例的健康路径仍先按 pid 精确 kill
+  （`KillOnDrop`），组守卫只是断后。
 
 `tests/scratch_publication.rs` 是专用集成测试二进制：`tests/common/
 scratch.rs` 被约 35 个集成测试 crate 以 `#[path]` 各编一份，共享文件里不
@@ -356,6 +368,6 @@ Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**
 变异体在任意 unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
 
-<!-- mutants: total=36 lib=2 test=34 unix=16 linux-survives=9 linux-invalid=11 -->
-<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false blind-source-self-unrelated -->
+<!-- mutants: total=37 lib=2 test=35 unix=16 linux-survives=9 linux-invalid=12 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false blind-source-self-unrelated probe-group-kill-removed -->
 

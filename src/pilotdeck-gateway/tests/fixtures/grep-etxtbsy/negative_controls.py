@@ -173,6 +173,9 @@ link_unit = 'an_unreadable_link_is_a_release_only_when_its_holder_is_gone'
 # #1409 item 1 (r2 review, concurrency): a live thread group behind a zombie
 # leader is not terminal — Linux-only, it forks a pthread_exit probe.
 leader_unit = 'a_live_group_behind_a_zombie_leader_is_not_terminal'
+# #2154: the EOF-before-pid stranding shape — Linux-only, it parks a probe's
+# child in the poison state and asserts the group guard's kill ends it.
+eof_unit = 'a_probe_that_dies_before_the_pid_line_takes_its_group_with_it'
 # #1155 fix-r1 review P1: the two ETXTBSY races stay bound to the lib stress
 # test; every publication mutant runs the dedicated integration binary, whose
 # process owns the subreaper lease instead of the shared lib test process.
@@ -851,6 +854,19 @@ cases = [
         settles_into_a_terminal_source(pid)''',
      publication_target, blind_unit,
      '#1409 this process is the scan\'s own source and must never be skipped'),
+    # #2154 (probe OOM window): the group kill in the probe guard's Drop is
+    # the only thing that ends the poison state when the probe dies before
+    # the pid line — a test that panics there unwinds through exactly this
+    # drop, so removing it strands a zombie leader with a live thread group
+    # past the scan window's release. Bound to the EOF-path test, whose
+    # 5s deadline the hold thread's 10s cap outwaits.
+    ('probe-group-kill-removed', publication,
+     '''        let _ = rustix::process::kill_process_group(self.0, Signal::KILL);
+''',
+     '''        let _ = self.0;
+''',
+     publication_target, eof_unit,
+     '#2154 the poison group must not outlive'),
 ]
 
 
@@ -885,6 +901,7 @@ INVALID_OFF_LINUX = (
     'terminal-state-hardcoded-false',
     'stranger-pid-reap-removed',
     'blind-source-self-unrelated',
+    'probe-group-kill-removed',
 )
 
 
