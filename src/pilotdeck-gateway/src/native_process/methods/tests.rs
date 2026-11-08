@@ -4010,6 +4010,11 @@ async fn steer_and_cancel_use_selected_project_generation() {
             .drain(&"t".into())
             .is_empty()
     );
-    requests.owner.shutdown().await.unwrap();
-    requests.project.dispose().await.unwrap();
+    _turn.close().await.unwrap();
+    requests.owner.end_turn(&"s-b".into(), Some(&"r".into()), Some(&_reservation));
+    drop(lease);
+    tokio::time::timeout(std::time::Duration::from_secs(10), requests.owner.shutdown())
+        .await.expect("B steer fixture owner cleanup must settle").unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(10), requests.project.dispose())
+        .await.expect("B steer fixture project leases must be released").unwrap();
 }
