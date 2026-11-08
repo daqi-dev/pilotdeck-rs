@@ -31,7 +31,7 @@ TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
 # two rows that mutate it directly point here.
 STORE = ROOT / 'src/pilotdeck-gateway/src/upload/mod.rs'
 sys.path.insert(0, str(FIXTURES))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -368,7 +368,12 @@ def main():
                 try:
                     if not args.compile_only and not passed(run(name + '-positive', env, test), test):
                         raise RuntimeError('positive bound test failed')
-                    path.write_text(originals[path].decode().replace(old, new, 1))
+                    # #2495 fix-r1 (concurrency review P2 same-family co-fix):
+                    # one atomic rename, never a truncating in-place write — a
+                    # SIGKILL mid-window must not leave a half-written source
+                    # (#1903, write_source_atomic).
+                    write_source_atomic(
+                        ROOT, path, originals[path].decode().replace(old, new, 1).encode())
                     if run(name + '-compile', env, test, compile_only=True).returncode:
                         raise RuntimeError('mutant did not compile; not a runtime kill')
                     item['compiled'] = True
@@ -383,7 +388,7 @@ def main():
                 except Exception as error:
                     item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(ROOT, path, originals[path])
                 try:
                     if not args.compile_only:
                         if not passed(run(name + '-restored', env, test), test):

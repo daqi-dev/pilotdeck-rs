@@ -18,7 +18,14 @@
 //! tail),
 //! and the #1320 fix-r1 F2/F3 settings-composition tests (the production
 //! stack binds no notification server; the settings store anchors at
-//! PILOT_HOME).
+//! PILOT_HOME),
+//! and the #2495 note-pass domain split (the hasInspectable accumulation
+//! sits before the lexical note dedup, and both the note lines and the
+//! accumulation key on the allowedReadFiles membership test instead of
+//! channel registration — note_dedup_*,
+//! dual_spelling_accumulates_inspectable_per_entry,
+//! unregistered_colliding_spelling_* and
+//! unregistered_non_member_inspectable_does_not_count).
 
 use super::services::{
     NativeSettingsOptions, attachment_identity_matches, canonical_upload_store,
@@ -738,6 +745,51 @@ fn unregistered_colliding_spelling_gets_note_line() {
 }
 
 #[test]
+fn unregistered_non_member_inspectable_does_not_count() {
+    let scratch = Scratch::new();
+    // #2495 fix-r1 (sibling review P2) — the inspectable-side dual of the
+    // #1469 note-line gate: `hasInspectableAttachment` keys on the
+    // allowedReadFiles membership test (composer :144), never on the
+    // entry's own registration or inspectability alone. The registered
+    // .docx is a member but not read_file-inspectable; the uploaded .pdf
+    // is inspectable but its own spelling is a member of nothing. Only a
+    // member's inspectable may flip the guidance, so the conversion form
+    // must hold — an accumulation hoisted above the membership gate
+    // (or keyed on registration) would take the read_file form instead.
+    let docx_path = scratch.lease("member.docx");
+    std::fs::write(&docx_path, b"PK\x03\x04office").expect("#2495 member fixture");
+    let pdf_path = scratch.lease("outsider.pdf");
+    std::fs::write(&pdf_path, b"%PDF-1.4").expect("#2495 outsider fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&docx_path, DOCX_MIME),
+            upload_attachment(&pdf_path, "application/pdf"),
+        ],
+    )
+    .expect("#2495 non-member attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- member.docx: {docx_path}")),
+        "#2495 the registered member must keep its note line, got: {note}"
+    );
+    negative_assert!(
+        !note.contains(&format!("- outsider.pdf: {pdf_path}")),
+        "#2495 the non-member upload must not get a note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. These registered files are not \
+             directly inspectable with read_file; ask for a supported export or convert \
+             them before inspection."
+        ),
+        "#2495 a non-member inspectable must not flip the guidance to the read_file form, got: {note}"
+    );
+}
+
+#[test]
 fn lease_parent_dotdot_softens_to_not_found() {
     let scratch = Scratch::new();
     // #1464: a `..` lease path is lexically outside the root — the
@@ -1117,10 +1169,7 @@ fn binary_extension_attachment_stays_path_reference() {
     let result = compose_attachment_turn(
         &scratch.0,
         &message("hello"),
-        &[attachment(
-            &path,
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )],
+        &[attachment(&path, DOCX_MIME)],
     )
     .expect("#1321 binary attachments compose the turn");
     let blocks = content_blocks(&result);
