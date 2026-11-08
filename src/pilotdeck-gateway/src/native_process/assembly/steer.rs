@@ -37,8 +37,13 @@ pub(super) fn build_async_hook_registry(
                     let run_id = reg_owner.active_turn_run_id(session_key)?;
                     // Shared lookup: fetch the InteractionSteer resource
                     // and guard the run ID against the admission slot.
-                    let info = crate::runtime::project::interaction_steer::active_turn_for(
+                    let root = match reg_owner.project_key(session_key) {
+                        Some(key) => Some(std::path::PathBuf::from(key.to_utf8().ok()?)),
+                        None => None,
+                    };
+                    let info = crate::runtime::project::interaction_steer::active_turn_for_project(
                         &reg_project,
+                        root.as_deref(),
                         session_key,
                         Some(&run_id),
                     )?;
@@ -442,6 +447,90 @@ mod tests {
             .owner
             .end_turn(&session, Some(&run), Some(&reservation2));
         drop(keep_old_generation);
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+    }
+    #[tokio::test]
+    async fn legacy_async_hook_lookup_uses_session_project() {
+        use crate::runtime::session::SessionContext;
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let b = requests
+            .options
+            .project
+            .parent()
+            .unwrap()
+            .join("steer-hooks-B");
+        std::fs::create_dir_all(&b).unwrap();
+        let mut options = requests.options.clone();
+        options.project = b.clone();
+        super::super::register_project(&options).unwrap();
+        let session = JsString::from("hook-project-b");
+        requests.owner.enforce_project_binding();
+        let _handle = requests
+            .owner
+            .get_or_create(SessionContext {
+                session_key: session.clone(),
+                project_key: Some(JsString::from(b.to_string_lossy().as_ref())),
+                channel_key: "test".into(),
+                allowed_tools: None,
+                disallowed_tools: None,
+            })
+            .await
+            .unwrap();
+        let _reservation = requests.owner.begin_turn(&session, &"run".into()).unwrap();
+        let lease = requests.project.acquire(Some(&b)).unwrap();
+        let steer = lease
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .unwrap()
+            .context()
+            .resource(Resource::InteractionSteer)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<InteractionSteer>()
+            .unwrap()
+            .clone();
+        let binding = steer.bind_session(session.clone(), None).unwrap();
+        let _turn = binding
+            .start_turn(
+                "turn".into(),
+                "run".into(),
+                vec![],
+                Cancellation::new(),
+                &mut ModuleRouter::default(),
+            )
+            .unwrap();
+        let registry =
+            build_async_hook_registry(&requests.project, &requests.owner, &requests.coordinator)
+                .unwrap();
+        registry
+            .register(AsyncHookRegistration {
+                session_key: session.clone(),
+                invocation_id: "inv-b".into(),
+                hook_name: "hook".into(),
+                hook_event: "PreToolUse".into(),
+                timeout_ms: Some(60_000.0),
+                include_hook_events: false,
+            })
+            .unwrap();
+        let output = crate::metadata::object([(
+            "hookSpecificOutput",
+            crate::metadata::object([
+                ("hookEventName", "PreToolUse".into()),
+                ("additionalContext", "B-hook".into()),
+            ]),
+        )]);
+        let result = registry
+            .submit(session.clone(), "inv-b".into(), output)
+            .await
+            .unwrap();
+        assert_eq!(result.status, AsyncHookStatus::Delivered);
+        let entries = steer
+            .mailbox_for_test(&session)
+            .unwrap()
+            .drain(&"turn".into());
+        assert!(!entries.is_empty(), "B turn received hook result");
         requests.owner.shutdown().await.unwrap();
         requests.project.dispose().await.unwrap();
     }

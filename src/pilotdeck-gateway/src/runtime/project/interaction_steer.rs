@@ -155,7 +155,18 @@ pub fn active_turn_for(
     session_key: &JsString,
     active_run: Option<&JsString>,
 ) -> Option<ActiveSteerInfo> {
-    let lease = project.acquire(None).ok()?;
+    active_turn_for_project(project, None, session_key, active_run)
+}
+
+/// Native view selects the session's actual project generation while retaining
+/// the same admission run-ID check and the returned opaque run identity.
+pub(crate) fn active_turn_for_project(
+    project: &super::ProjectRuntimeRegistry,
+    root: Option<&std::path::Path>,
+    session_key: &JsString,
+    active_run: Option<&JsString>,
+) -> Option<ActiveSteerInfo> {
+    let lease = project.acquire(root).ok()?;
     let context = lease
         .runtime()
         .resources()
