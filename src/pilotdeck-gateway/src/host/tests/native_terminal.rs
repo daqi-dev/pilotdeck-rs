@@ -82,3 +82,23 @@ async fn blocked_native_failure_prefix_reports_bounded_drain_failure() {
     assert_eq!(handler.applied_events.load(Ordering::SeqCst), 0);
     assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn cancellation_bound_preserves_an_already_validated_native_failure() {
+    let handler = Handler::new("gated-event");
+    let mut limits = limits();
+    limits.terminal_drain_timeout = Duration::from_secs(30);
+    let client = HostClient::spawn(&mut native_peer(), Some(&"fixture".into()), limits)
+        .await.unwrap().with_native_terminal_errors(true);
+    let final_received = client.final_received();
+    let cancellation = Cancellation::default();
+    let worker = tokio::spawn(client.execute_cancellable(request(), handler.clone(), cancellation.clone()));
+    wait_for_event("native final received before cancel", || final_received.load(Ordering::SeqCst)).await;
+    cancellation.cancel(Some("consumer stopped".into()));
+    let error = tokio::time::timeout(Duration::from_secs(10), worker).await.unwrap().unwrap().unwrap_err();
+    assert_eq!(handler.applied_events.load(Ordering::SeqCst), 0);
+    assert_eq!(handler.disposed.load(Ordering::SeqCst), 1);
+    let detail = error.native_terminal_error.expect("cancel must retain the received failure");
+    assert_eq!(detail.get("code"), Some(&"NATIVE_FACTORY_FAILURE".into()));
+    assert_eq!(detail.get("fixtureDetail"), Some(&JsValue::Number(7.0)));
+}

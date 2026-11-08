@@ -419,6 +419,10 @@ pub(super) async fn run(
                 if let Some((event, aborted)) = known_terminal.take() {
                     return Ok(terminal_result(event, aborted, progress));
                 }
+                // Cancellation bounds prefix application for both terminal
+                // forms. A validated failure received inside that bound must
+                // retain its original detail, just like a known success above.
+                if let Some(error) = native_failure.take() { return Err(error); }
                 return Err(post_cancel_timeout());
             }
             input = client.connection.receive(), if !terminal_received => {

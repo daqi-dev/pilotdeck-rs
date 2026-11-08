@@ -149,9 +149,9 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/host/execution.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/tests.rs',
     # #2228 r10 (MM r9 sibling P2#5): host/tests.rs (registered above)
-    # assembles its six `mod` faces into the same --lib binary
-    # (src/host/tests.rs:6-11) — binding.rs, cancel_exit.rs, event.rs,
-    # model.rs, modules.rs, resume.rs — and those faces bake five more
+    # assembles its direct `mod` faces into the same --lib binary
+    # (src/host/tests.rs) — including native_terminal.rs and tcp.rs.
+    # The original faces bake five more
     # oracles: host-module-binding/oracle.json (binding.rs:22),
     # host-cancel-timeout/oracle.json (tests.rs:920), host-event/oracle.json
     # (event.rs:12), host-model/oracle.json (model.rs:18) and
@@ -165,6 +165,8 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/host/tests/model.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/tests/modules.rs',
     ROOT / 'src/pilotdeck-gateway/src/host/tests/resume.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/tests/native_terminal.rs',
+    ROOT / 'src/pilotdeck-gateway/src/host/tests/tcp.rs',
     FIXTURES / 'host-module-binding/oracle.json',
     FIXTURES / 'host-cancel-timeout/oracle.json',
     FIXTURES / 'host-event/oracle.json',

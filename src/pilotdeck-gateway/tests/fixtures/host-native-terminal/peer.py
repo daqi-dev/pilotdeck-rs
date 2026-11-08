@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported protocol peer fixture, no mutation definitions
 """Self-written Module2 failure peer; no provider, filesystem or TS business code."""
 import json
 import signal
