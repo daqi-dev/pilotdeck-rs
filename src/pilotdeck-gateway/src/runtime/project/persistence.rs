@@ -132,7 +132,8 @@ impl PersistenceResources {
                     JsonlTranscriptStore::open_locked_bounded(&path)
                 } else {
                     JsonlTranscriptStore::open_locked(&path)
-                }.map_err(RecorderError::Store)?;
+                }
+                .map_err(RecorderError::Store)?;
                 let locked = Arc::new(store);
                 (
                     locked.clone() as Arc<dyn TranscriptStore>,

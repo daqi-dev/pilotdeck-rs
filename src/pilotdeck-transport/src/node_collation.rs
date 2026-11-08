@@ -1,6 +1,6 @@
 //! Shared pure Node/ICU locale profile, moved from gateway helpers.
 //! Uses the workspace-pinned ICU78 data and its existing fr-CA repair.
-use icu_collator::{Collator,CollatorBorrowed,CollatorPreferences};
+use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
 use icu_locale_core::Locale;
 
 pub fn node_locale(env: impl FnMut(&str) -> Option<String>) -> Locale {

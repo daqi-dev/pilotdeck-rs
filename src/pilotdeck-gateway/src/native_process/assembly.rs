@@ -449,12 +449,15 @@ async fn start_assembly(
     validate_profile_inner(&options, &env, true).await?;
     let prepare_deployment = super::deployment::resolve(&options, &env)?;
     let registration_permit = super::methods::session_dir::session_io_permit()
-        .await.map_err(|error| String::from_utf16_lossy(error.message.units()))?;
+        .await
+        .map_err(|error| String::from_utf16_lossy(error.message.units()))?;
     let registration_options = options.clone();
     tokio::task::spawn_blocking(move || {
         let _permit = registration_permit;
         register_project(&registration_options)
-    }).await.map_err(|error| format!("Native project registration task failed: {error}"))??;
+    })
+    .await
+    .map_err(|error| format!("Native project registration task failed: {error}"))??;
     let project = project_registry(&options, &env);
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
@@ -1725,9 +1728,9 @@ pub(super) fn register_project_at(
     options: &Options,
     cwd: &std::path::Path,
 ) -> Result<(), ProxyError> {
-    let chats = super::methods::session_dir::bounded_chat_dir_at(
-        &options.home, &options.project, cwd,
-    ).map_err(|error| String::from_utf16_lossy(error.message.units()))?;
+    let chats =
+        super::methods::session_dir::bounded_chat_dir_at(&options.home, &options.project, cwd)
+            .map_err(|error| String::from_utf16_lossy(error.message.units()))?;
     let directory = chats
         .parent()
         .ok_or("Native project storage has no parent.")?;

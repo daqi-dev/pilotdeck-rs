@@ -702,9 +702,16 @@ pub(crate) fn node_explicit_collator(locale: &Locale) -> Result<CollatorBorrowed
     build_node_collator(locale, false)
 }
 
-fn build_node_collator(locale: &Locale, process_default: bool) -> Result<CollatorBorrowed<'static>> {
-    pilotdeck_transport::node_collation::node_collator(locale, process_default)
-        .map_err(|_| ("gateway_request_failed", "Collation data unavailable.".into()))
+fn build_node_collator(
+    locale: &Locale,
+    process_default: bool,
+) -> Result<CollatorBorrowed<'static>> {
+    pilotdeck_transport::node_collation::node_collator(locale, process_default).map_err(|_| {
+        (
+            "gateway_request_failed",
+            "Collation data unavailable.".into(),
+        )
+    })
 }
 
 #[cfg(unix)]

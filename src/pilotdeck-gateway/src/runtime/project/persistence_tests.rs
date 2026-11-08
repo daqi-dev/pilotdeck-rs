@@ -977,22 +977,40 @@ async fn stale_snapshot_restore_must_not_corrupt_the_transcript_chain() {
 fn native_bounded_recording_rejects_unsafe_inputs_subprocess() {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
-    for case in ["lock-fifo", "lock-symlink", "transcript-fifo", "oversize", "regular"] {
+    for case in [
+        "lock-fifo",
+        "lock-symlink",
+        "transcript-fifo",
+        "oversize",
+        "regular",
+    ] {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--nocapture", "native_bounded_recording_child"])
-            .env("PDRS_RECORDING_CASE", case).stdin(Stdio::null()).stdout(Stdio::piped())
-            .stderr(Stdio::piped()).spawn().unwrap();
+            .env("PDRS_RECORDING_CASE", case)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(status) = child.try_wait().unwrap() {
                 let output = child.wait_with_output().unwrap();
-                assert!(status.success(), "{case}: {}", String::from_utf8_lossy(&output.stderr));
+                assert!(
+                    status.success(),
+                    "{case}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
                 break;
             }
             if Instant::now() >= deadline {
-                let _ = child.kill(); let output = child.wait_with_output().unwrap();
-                panic!("{case}: blocked: {}", String::from_utf8_lossy(&output.stderr));
+                let _ = child.kill();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "{case}: blocked: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
             std::thread::sleep(Duration::from_millis(20));
         }
@@ -1008,14 +1026,22 @@ fn native_bounded_recording_child() {
     let case = std::env::var("PDRS_RECORDING_CASE").unwrap();
     let root = std::env::temp_dir().join(format!("pdrs-recording-{}-{case}", std::process::id()));
     std::fs::create_dir(&root).unwrap();
-    let home = root.join("home"); let project = root.join("project");
-    std::fs::create_dir(&home).unwrap(); std::fs::create_dir(&project).unwrap();
+    let home = root.join("home");
+    let project = root.join("project");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::create_dir(&project).unwrap();
     let path = root.join("session.jsonl");
     let lock = root.join("session.jsonl.lock");
     match case.as_str() {
         "lock-fifo" | "transcript-fifo" => {
             let fifo = if case == "lock-fifo" { &lock } else { &path };
-            assert!(Command::new("/usr/bin/mkfifo").arg(fifo).status().unwrap().success());
+            assert!(
+                Command::new("/usr/bin/mkfifo")
+                    .arg(fifo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
         }
         "lock-symlink" => {
             std::fs::write(root.join("other"), b"unchanged").unwrap();
@@ -1023,20 +1049,38 @@ fn native_bounded_recording_child() {
         }
         "oversize" => {
             let file = std::fs::File::create(&path).unwrap();
-            file.set_len(crate::storage::TRANSCRIPT_MAX_BYTES + 1).unwrap();
+            file.set_len(crate::storage::TRANSCRIPT_MAX_BYTES + 1)
+                .unwrap();
         }
-        "regular" => { std::fs::write(&path, b"").unwrap(); }
+        "regular" => {
+            std::fs::write(&path, b"").unwrap();
+        }
         _ => panic!("unknown case"),
     }
     let resources = PersistenceResources::for_tests(project, home);
     let result = resources.create_session_bounded("bounded-session".into(), Some(path.clone()));
     if case == "regular" {
         let recording = result.as_ref().expect("regular recorder must open");
-        assert!(crate::runtime::session::transcript_locks::ensure_recorder_matches(&path, &recording.recorder).is_ok());
-        assert!(crate::runtime::session::transcript_locks::ensure_recorder_matches(&root.join("other.jsonl"), &recording.recorder).is_err());
+        assert!(
+            crate::runtime::session::transcript_locks::ensure_recorder_matches(
+                &path,
+                &recording.recorder
+            )
+            .is_ok()
+        );
+        assert!(
+            crate::runtime::session::transcript_locks::ensure_recorder_matches(
+                &root.join("other.jsonl"),
+                &recording.recorder
+            )
+            .is_err()
+        );
+    } else {
+        assert!(result.is_err(), "{case}: unsafe file accepted");
     }
-    else { assert!(result.is_err(), "{case}: unsafe file accepted"); }
     drop(result);
-    if case == "lock-symlink" { assert_eq!(std::fs::read(root.join("other")).unwrap(), b"unchanged"); }
+    if case == "lock-symlink" {
+        assert_eq!(std::fs::read(root.join("other")).unwrap(), b"unchanged");
+    }
     std::fs::remove_dir_all(root).unwrap();
 }

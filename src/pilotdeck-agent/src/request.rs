@@ -92,7 +92,14 @@ impl OriginalRequestAssembler {
         observer: &mut dyn RequestPreparationObserver,
         compare: &dyn Fn(&JsString, &JsString) -> std::cmp::Ordering,
     ) -> PortResult<PreparedRequestIntent> {
-        crate::request_assembly::assemble_with_collation(state,host,parameters,options,observer,Some(compare))
+        crate::request_assembly::assemble_with_collation(
+            state,
+            host,
+            parameters,
+            options,
+            observer,
+            Some(compare),
+        )
     }
     pub fn assemble_with_options(
         &self,

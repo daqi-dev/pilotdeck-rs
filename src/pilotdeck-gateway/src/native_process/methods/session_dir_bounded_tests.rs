@@ -414,5 +414,8 @@ fn relative_marker_writer_identity_child() {
     let assembly_file = assembly.join("same-session.jsonl");
     let request_key = crate::storage::canonical_transcript_path(&request_file).unwrap();
     let assembly_key = crate::storage::canonical_transcript_path(&assembly_file).unwrap();
-    assert_eq!(request_key, assembly_key, "native factory and cold writer must share a fence");
+    assert_eq!(
+        request_key, assembly_key,
+        "native factory and cold writer must share a fence"
+    );
 }

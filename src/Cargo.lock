@@ -1416,6 +1416,8 @@ name = "pilotdeck-transport"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "icu_collator",
+ "icu_locale_core",
  "libc",
  "pilotdeck-agent",
  "pilotdeck-protocol",

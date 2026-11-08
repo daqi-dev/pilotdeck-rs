@@ -693,7 +693,9 @@ impl Requests {
                         // recorded instead of forking the chain.
                         return super::super::assembly::live_recorder(&recorders, &session_key)
                             .is_some_and(|(_owner, recorder)| {
-                                if transcript_locks::ensure_recorder_matches(&fence_path, &recorder).is_err() {
+                                if transcript_locks::ensure_recorder_matches(&fence_path, &recorder)
+                                    .is_err()
+                                {
                                     return false;
                                 }
                                 recorder

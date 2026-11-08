@@ -83,7 +83,9 @@ pub(crate) fn ensure_recorder_matches(
     recorder: &crate::storage::recorder::Recorder,
 ) -> Result<(), RequestError> {
     if fence_key(fence_path)? != fence_key(recorder.writer().path())? {
-        return Err(RequestError::new("Session transcript identity changed; retry after closing the session."));
+        return Err(RequestError::new(
+            "Session transcript identity changed; retry after closing the session.",
+        ));
     }
     Ok(())
 }

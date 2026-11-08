@@ -24,14 +24,24 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::sync::{Arc, Mutex};
 
 fn assemble_with_native_collation(
-    state: &mut RequestPreparationState, host: &mut dyn HostPort,
-    parameters: RequestAssemblyInput<'_>, options: pilotdeck_agent::request::RequestAssemblyOptions,
+    state: &mut RequestPreparationState,
+    host: &mut dyn HostPort,
+    parameters: RequestAssemblyInput<'_>,
+    options: pilotdeck_agent::request::RequestAssemblyOptions,
     observer: &mut dyn RequestPreparationObserver,
 ) -> PortResult<pilotdeck_agent::request::PreparedRequestIntent> {
-    let locale=crate::node_collation::node_locale(|key|std::env::var_os(key).map(|value|value.to_string_lossy().into_owned()));
-    let collator=crate::node_collation::node_collator(&locale,true).map_err(|message|PortError::InvalidResponse{message:message.into()})?;
-    let compare=|left:&JsString,right:&JsString|collator.compare_utf16(left.units(),right.units());
-    OriginalRequestAssembler.assemble_with_collation(state,host,parameters,options,observer,&compare)
+    let locale = crate::node_collation::node_locale(|key| {
+        std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
+    });
+    let collator = crate::node_collation::node_collator(&locale, true).map_err(|message| {
+        PortError::InvalidResponse {
+            message: message.into(),
+        }
+    })?;
+    let compare =
+        |left: &JsString, right: &JsString| collator.compare_utf16(left.units(), right.units());
+    OriginalRequestAssembler
+        .assemble_with_collation(state, host, parameters, options, observer, &compare)
 }
 pub struct OriginalAgentFactory {
     pub clock: Arc<dyn ExecutionClock>,

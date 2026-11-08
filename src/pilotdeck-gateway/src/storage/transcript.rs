@@ -604,19 +604,25 @@ impl LedgerLock {
                 options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
             }
             #[cfg(not(unix))]
-            return Err(invalid("Bounded native ledger lock is unavailable on this platform."));
+            return Err(invalid(
+                "Bounded native ledger lock is unavailable on this platform.",
+            ));
         }
-        let lock = options.open(&lock_path)
-            .map_err(|error| {
-                io::Error::new(
-                    error.kind(),
-                    format!(
-                        "Could not open session ledger lock {}: {error}",
-                        lock_path.display()
-                    ),
-                )
-            })?;
-        if bounded && !lock.metadata().map_err(|error| descriptor_error(error, "fstat"))?.is_file() {
+        let lock = options.open(&lock_path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "Could not open session ledger lock {}: {error}",
+                    lock_path.display()
+                ),
+            )
+        })?;
+        if bounded
+            && !lock
+                .metadata()
+                .map_err(|error| descriptor_error(error, "fstat"))?
+                .is_file()
+        {
             return Err(invalid("Native session ledger lock is not a regular file."));
         }
         // Rust-only single-writer fence: TS has no lock syscall, and the
