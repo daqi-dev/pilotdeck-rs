@@ -216,6 +216,12 @@ impl LiveTurn for Stream {
                     ));
                 }
             }
+            // Only the canonical replay regression holds the terminal frame
+            // after releasing model text, so active reads observe both without
+            // assuming the ordinary fixture's single gate separates them.
+            if self.index == 3 && session.setup["activeReplayBarrier"] == true {
+                session.end.wait().await;
+            }
             if let Some(event) = self.native.get(self.index) {
                 if event.get("type") == Some(&"turn_completed".into())
                     && session.setup["statusRecordGate"] == true
@@ -1082,7 +1088,7 @@ async fn replay_case(case: &Value) {
         }
         settle(&registry).await;
         if let Some(project) = setup["boundProjectKey"].as_str()
-            && step == "accept"
+            && (step == "accept" || (setup["activeReplayBarrier"] == true && step == "terminal"))
         {
             let replay_input = super::super::replay::ActiveTurnSnapshotInput::new("s".into());
             let snapshot = submitter
@@ -1090,7 +1096,12 @@ async fn replay_case(case: &Value) {
                 .snapshot_for_project(&replay_input, &project.into())
                 .expect("bound project replay must remain visible with omitted/aliased raw key");
             assert!(snapshot.active, "input-accept barrier retains active run");
-            for kind in ["turn_started", "input_accepted", "assistant_text_delta"] {
+            let expected: &[&str] = if step == "terminal" {
+                &["turn_started", "input_accepted", "assistant_text_delta"]
+            } else {
+                &["turn_started", "input_accepted"]
+            };
+            for kind in expected {
                 assert!(
                     snapshot.events.iter().any(|event| event
                         .get("type")
@@ -1771,6 +1782,7 @@ async fn scoped_submit_omitted_and_aliased_project_keep_canonical_active_replay(
         case["orderOnly"] = true.into();
         case["setup"]["bindProject"] = true.into();
         case["setup"]["boundProjectKey"] = "/owned/project-B".into();
+        case["setup"]["activeReplayBarrier"] = true.into();
         if omitted {
             case["setup"]["omitProjectKey"] = true.into();
         } else {

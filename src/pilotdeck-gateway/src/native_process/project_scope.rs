@@ -217,8 +217,7 @@ mod tests {
             .unwrap()
             .join("services-B");
         std::fs::create_dir_all(b.join(".pilotdeck")).unwrap();
-        std::fs::write(b.join(".pilotdeck/pilotdeck.yaml"), "schemaVersion: 1\nagent: {model: test/only-b}\nmodel: {providers: {test: {models: {only-b: {}}}}}\n".replace("\n", "
-")).unwrap();
+        std::fs::write(b.join(".pilotdeck/pilotdeck.yaml"), "schemaVersion: 1\nagent: {model: test/only-b}\nmodel: {providers: {test: {models: {only-b: {}}}}}\n").unwrap();
         let mut options = requests.options.clone();
         options.project = b.clone();
         super::super::assembly::register_project(&options).unwrap();

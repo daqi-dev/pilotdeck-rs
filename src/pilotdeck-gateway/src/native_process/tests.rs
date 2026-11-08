@@ -948,8 +948,8 @@ async fn production_profile_and_registration() {
     )
     .expect("#1071 plugin manifest");
     negative_assert!(
-        assembly::validate_profile(&options, &env).await.is_err(),
-        "#1071 non-style plugin remains refused"
+        assembly::validate_profile(&options, &env).await.is_ok(),
+        "native plugin command declarations are supported"
     );
     std::fs::remove_dir_all(options.project.join(".pilotdeck/plugins"))
         .expect("#1071 remove plugin fixture");

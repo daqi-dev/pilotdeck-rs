@@ -359,7 +359,7 @@ async fn native_ordinary_loader_failures_follow_real_ts_staging() {
                     "manifest-chmod000" => Some(plugin.join("plugin.json")),
                     "discovery-chmod000" => Some(dir.clone()), _ => None,
                 };
-                if let Some(path) = mode_path { let original = fs::metadata(&path).unwrap().permissions(); restore = Some(Restore(path.clone(), original)); fs::set_permissions(path, fs::Permissions::from_mode(0)).unwrap(); }
+                if let Some(path) = mode_path { let original = fs::metadata(&path).unwrap().permissions(); restore = Some(Restore(path.clone(), original)); fs::set_permissions(path, fs::Permissions::from_mode(0o0)).unwrap(); }
             }
         }
         let runtime = PluginRuntime::new_native_style_only(options);

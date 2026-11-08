@@ -2103,71 +2103,6 @@ pub(crate) fn native_settings_for_process_with_styles(
 /// the test fails (race-hook-target-assert). Per-thread and RAII-removed
 /// like the `mutation_test_hook` convention in file_memory.rs; production
 /// builds compile none of this.
-#[cfg(test)]
-pub(super) mod swap_test_hook {
-    use super::*;
-
-    /// Which injection point the swap happens in: right after `lease_guard`'s
-    /// canonicalization but before the approved identity is sampled (#1468
-    /// r2 — the approved stat must not follow a link planted here), after
-    /// that sample but before `File::open` (#1468 — the open itself may then
-    /// follow a swapped link), between `File::open` and the post-open
-    /// `canonicalize` containment revalidation (step 2), or between the
-    /// revalidation and the `(dev, inode)` path-stat/fstat comparison
-    /// (step 3). The #1468 multi-step sequence chains one swap per window,
-    /// so every window holds its own slot.
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum SwapWindow {
-        BeforeApprovedStat,
-        BeforeOpen,
-        AfterOpen,
-        AfterRevalidate,
-    }
-
-    type Hook = Box<dyn FnMut(&Path)>;
-
-    thread_local! {
-        static HOOKS: std::cell::RefCell<Vec<(SwapWindow, Hook)>> =
-            std::cell::RefCell::default();
-    }
-
-    /// Removes exactly its own window's hook on drop.
-    pub struct Guard {
-        window: SwapWindow,
-    }
-
-    pub fn set(window: SwapWindow, hook: impl FnMut(&Path) + 'static) -> Guard {
-        HOOKS.with(|hooks| {
-            assert!(
-                hooks.borrow().iter().all(|(set, _)| *set != window),
-                "one swap hook per window"
-            );
-            hooks.borrow_mut().push((window, Box::new(hook)));
-        });
-        Guard { window }
-    }
-
-    pub fn notify(window: SwapWindow, resolved: &Path) {
-        HOOKS.with(|hooks| {
-            for (hook_window, hook) in hooks.borrow_mut().iter_mut() {
-                if *hook_window == window {
-                    hook(resolved);
-                }
-            }
-        });
-    }
-
-    impl Drop for Guard {
-        fn drop(&mut self) {
-            HOOKS.with(|hooks| {
-                hooks
-                    .borrow_mut()
-                    .retain(|(window, _)| *window != self.window)
-            });
-        }
-    }
-}
-
 struct ScopedServices {
     services: Services,
     _reservation: Option<crate::runtime::session::SessionProjectScope>,
@@ -2238,5 +2173,70 @@ impl SubmitHostServices for ScopedServices {
     }
     fn abort_turn_timeout_ms(&self) -> u64 {
         self.services.abort_turn_timeout_ms()
+    }
+}
+
+#[cfg(test)]
+pub(super) mod swap_test_hook {
+    use super::*;
+
+    /// Which injection point the swap happens in: right after `lease_guard`'s
+    /// canonicalization but before the approved identity is sampled (#1468
+    /// r2 — the approved stat must not follow a link planted here), after
+    /// that sample but before `File::open` (#1468 — the open itself may then
+    /// follow a swapped link), between `File::open` and the post-open
+    /// `canonicalize` containment revalidation (step 2), or between the
+    /// revalidation and the `(dev, inode)` path-stat/fstat comparison
+    /// (step 3). The #1468 multi-step sequence chains one swap per window,
+    /// so every window holds its own slot.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum SwapWindow {
+        BeforeApprovedStat,
+        BeforeOpen,
+        AfterOpen,
+        AfterRevalidate,
+    }
+
+    type Hook = Box<dyn FnMut(&Path)>;
+
+    thread_local! {
+        static HOOKS: std::cell::RefCell<Vec<(SwapWindow, Hook)>> =
+            std::cell::RefCell::default();
+    }
+
+    /// Removes exactly its own window's hook on drop.
+    pub struct Guard {
+        window: SwapWindow,
+    }
+
+    pub fn set(window: SwapWindow, hook: impl FnMut(&Path) + 'static) -> Guard {
+        HOOKS.with(|hooks| {
+            assert!(
+                hooks.borrow().iter().all(|(set, _)| *set != window),
+                "one swap hook per window"
+            );
+            hooks.borrow_mut().push((window, Box::new(hook)));
+        });
+        Guard { window }
+    }
+
+    pub fn notify(window: SwapWindow, resolved: &Path) {
+        HOOKS.with(|hooks| {
+            for (hook_window, hook) in hooks.borrow_mut().iter_mut() {
+                if *hook_window == window {
+                    hook(resolved);
+                }
+            }
+        });
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            HOOKS.with(|hooks| {
+                hooks
+                    .borrow_mut()
+                    .retain(|(window, _)| *window != self.window)
+            });
+        }
     }
 }
