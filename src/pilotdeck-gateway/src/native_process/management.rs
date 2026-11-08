@@ -310,17 +310,6 @@ impl Requests {
             .ok_or_else(|| RequestError::new("Native project resources are missing."))?;
         let context = resources.context();
         if method.starts_with("snapshot_") {
-            if method == "snapshot_restore"
-                && let Some(target) = params.get("targetProjectKey").filter(|v| !v.is_undefined())
-                && target
-                    .as_string()
-                    .is_some_and(|s| !s.to_utf8().is_ok_and(|p| self.options.serves_project(&p)))
-            {
-                return Err(error(
-                    Some("CAPABILITY_UNAVAILABLE"),
-                    "The isolated native process serves only its configured project.".into(),
-                ));
-            }
             let persistence = context
                 .resource(Resource::Persistence)
                 .ok_or_else(unavailable)?;

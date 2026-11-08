@@ -746,7 +746,7 @@ async fn admission_and_unwired_families_stay_closed() {
     let result=requests.request("snapshot_restore".into(),expand(&json!({"projectKey":"<root>/project","snapshotId":"missing","targetProjectKey":target}),&scratch.0)).await;
     negative_assert_eq!(
         result.expect_err("#1231 foreign restore must fail").code,
-        "CAPABILITY_UNAVAILABLE",
+        "SNAPSHOT_NOT_FOUND",
         "#1231 restore target project admission"
     );
     let units = format!(
@@ -758,7 +758,7 @@ async fn admission_and_unwired_families_stay_closed() {
     let result = requests.request("snapshot_restore".into(), malformed).await;
     negative_assert_eq!(
         result.expect_err("#1231 surrogate restore must fail").code,
-        "CAPABILITY_UNAVAILABLE",
+        "SNAPSHOT_NOT_FOUND",
         "#1231 surrogate restore target admission"
     );
     let result = requests
@@ -2494,4 +2494,48 @@ async fn production_style_reload_null_rejects_and_empty_project_reloads() {
     assert_eq!(get("empty")["ok"], true, "{:?}", get("empty"));
     assert_eq!(get("empty")["result"]["reloaded"], true);
     assert_eq!(get("other")["ok"], false, "{:?}", get("other"));
+}
+
+#[tokio::test]
+async fn snapshot_restore_uses_registered_target_project_without_touching_its_files() {
+    let (scratch, requests) = setup();
+    let oracle: Value = serde_json::from_str(ORACLE).unwrap();
+    let fixture = &oracle["snapshotSuccess"];
+    seed_files(&requests.options.home.join("storage"), &fixture["storageFiles"], &scratch.0);
+    let target = scratch.0.join("target-B");
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(target.join("keep.txt"), "B original").unwrap();
+    let marker = requests.options.home.join("projects/target-B");
+    std::fs::create_dir_all(&marker).unwrap();
+    std::fs::write(marker.join(".cwd"), target.to_str().unwrap()).unwrap();
+    let mut params = fixture["restore"]["params"].clone();
+    params["targetProjectKey"] = json!(target);
+    let restored = requests.request("snapshot_restore".into(), expand(&params, &scratch.0)).await.unwrap();
+    let path = PathBuf::from(restored.get("workspaceKey").unwrap().as_string().unwrap().to_utf8().unwrap());
+    negative_assert_eq!(path.parent(), Some(target.as_path()), "native snapshot restores to selected target project");
+    assert_eq!(file_tree(&path), fixture["restore"]["files"]);
+    assert_eq!(std::fs::read_to_string(target.join("keep.txt")).unwrap(), "B original");
+    params["targetProjectKey"] = json!(scratch.0.join("unregistered"));
+    let error = requests.request("snapshot_restore".into(), expand(&params, &scratch.0)).await.unwrap_err();
+    assert_eq!(error.code, "PROJECT_NOT_FOUND");
+
+    // A raw surrogate is a different catalog identity from U+FFFD, even if
+    // the latter is a real registered project. Never silently restore there.
+    let replacement = target.join("�");
+    std::fs::create_dir(&replacement).unwrap();
+    let replacement_marker = requests.options.home.join("projects/replacement-target");
+    std::fs::create_dir(&replacement_marker).unwrap();
+    std::fs::write(replacement_marker.join(".cwd"), replacement.to_str().unwrap()).unwrap();
+    let mut raw = expand(&fixture["restore"]["params"], &scratch.0);
+    let mut units: Vec<u16> = format!("{}/", target.display()).encode_utf16().collect();
+    units.push(0xd800);
+    if let JsValue::Object(fields) = &mut raw {
+        fields.insert("targetProjectKey".into(), JsValue::String(JsString::from_utf16(units)));
+    }
+    let result = requests.request("snapshot_restore".into(), raw).await;
+    negative_assert!(result.is_err(), "#1231 surrogate restore target admission");
+    assert_eq!(result.unwrap_err().code, "PROJECT_NOT_FOUND");
+    assert_eq!(std::fs::read_dir(&replacement).unwrap().count(), 0);
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
 }
