@@ -2006,7 +2006,8 @@ async fn a_panicking_drain_cleanup_still_disposes_the_coordinator() {
 /// rather than hang. Behavior anchor, not a regression discriminator:
 /// tokio's `timeout` saturates a MAX bound into a far-future timer, so the
 /// pre-#1949 `timeout(budget, drain)` settled too — the drain-side
-/// `checked_add` only spells that waiver out. The drain's own `Result` has
+/// `checked_add` spells that waiver out and additionally waives the
+/// tick-conversion band (`TICK_CONVERSION_HEADROOM`). The drain's own `Result` has
 /// been asserted here from the start: the guard above consumes its outer
 /// `Result` with `.expect`, and the pre-image asserted the inner `is_ok()`;
 /// the later restatement as `expect` only unified the form, adding no
@@ -2028,10 +2029,13 @@ async fn a_maximal_drain_budget_still_settles_the_drain() {
 /// headroom of its ceiling still gets the waiver. Tokio converts a deadline
 /// into a timer tick through an unchecked `Instant + Duration` (tokio 1.48
 /// `time/instant.rs:169`, fed by `TimeSource::deadline_to_tick`'s
-/// `Duration::from_nanos(999_999)`), so the maximal deadline `checked_add`
-/// admits panics on registration where the old `timeout(budget, …)` call
-/// survived the very same budget. Binary-search the maximal budget the
-/// clock admits and shut the host down with one backed off into the middle
+/// `Duration::from_nanos(999_999)`), so registering a deadline that fits
+/// the clock but lands inside that band panics under either spelling —
+/// `timeout_at` directly, and the old `timeout(budget, …)` through the
+/// same conversion (an overflowing budget is what takes `timeout`'s
+/// far-future branch instead; see `TICK_CONVERSION_HEADROOM`).
+/// Binary-search the maximal budget the clock admits and shut the host
+/// down with one backed off into the middle
 /// of the headroom: the drain site reads its own clock on the host thread
 /// after the caller's, so the exact maximum overflows at that later read
 /// and never reaches the headroom tier, while the backed-off one fits there
