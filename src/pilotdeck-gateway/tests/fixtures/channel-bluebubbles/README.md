@@ -87,7 +87,8 @@ submitTurn 报错（"Error: boom" 日志 + 兜底文案）、sendReply 500（mes
 差异编号见 `specs/gateway-parity/`（002 无生产 InteractionPort · 003 stop 不
 drain，003-R1 更正其 Rust 侧收口描述 · 004 restart 同 guid 通道层再派发 ·
 005 非法 serverUrl 不炸进程 · 006 无信号轮询 GET 的 300 s 总界 · 007 未 stop
-丢弃即停 + poll 任务 panic 无 `poll error` 日志；001-R2 摘除拒绝表条目）：
+丢弃（无在途轮询时即停；静默服务器在途窗口与 TS 泄漏同形，r2 已知缺口）+
+poll 任务 panic 无 `poll error` 日志；001-R2 摘除拒绝表条目）：
 
 - **002**：生产装载挂载装 `no_interaction()`，elicitation/permission 应答链在
   生产不可达；金样回放装真实 helper 支撑的 `HelperInteraction` + 脚本
@@ -117,8 +118,12 @@ drain，003-R1 更正其 Rust 侧收口描述 · 004 restart 同 guid 通道层�
 
 - **② drop-without-stop**：TS 的形态是泄漏的 `setInterval`（unsupported
   start-without-stop flow，本金样不覆盖）；Rust 收紧为 driver 任务只持
-  `Weak<Runtime>`，升级失败即退出——`poll_driver_exits_when_runtime_is_dropped`
-  钉两个观察量（服务端轮询停增 + `Runtime` 释放），负控
+  `Weak<Runtime>`，升级失败即退出——**仅限无在途轮询时**（r2 收窄，见 007）：
+  静默服务器下在途轮询持强 `Arc<Runtime>` 至 300 s 总界定格，下一 tick 升级
+  仍成功、driver 不退出，与 TS 泄漏同形；该形状无专属钉（需要「接受但不
+  回包」的服务器 + 300 s 实时窗口），007 登记为已知缺口。
+  `poll_driver_exits_when_runtime_is_dropped`（用每请求都回包的 mock）钉
+  两个观察量（服务端轮询停增 + `Runtime` 释放），负控
   `driver-weak-reverted` 回退强引用必被杀。已 stop / 正常 restart 的金样
   路径行为不变（16 用例全绿）。
 - **③ JoinHandle / panic 检测**：interval 任务句柄保留（api_server
@@ -132,11 +137,15 @@ drain，003-R1 更正其 Rust 侧收口描述 · 004 restart 同 guid 通道层�
   stop 可收）一致，仅缺错误日志；`poll_task_panic_does_not_stop_the_driver`
   用脚本网关 turn-index 互斥量投毒注入 panic 钉该行为面（毒行排在脚本
   槽位 1、落在 driver 首 tick 的 spawn 任务里，等到第 3 次 poll 才证明
-  interval 存活；gateway 投影为空证明投毒路径走到；停后窗口镜像 drop 钉
-  的「排空后基线 + 完整 POLL_MS 窗口」逻辑），负控
+  interval 存活；判据同在第 3 次 poll 之后：`submit` 入口计数恰为 1 证明
+  投毒路径确实走到 `submit`、gateway 投影为空证明 panic 早于记录——旧时序
+  「第 2 次 poll 后立即断言投影为空」存在派发尚未执行的竞态假 PASS 窗口，
+  r2 移除；停后窗口只保留弱判据——stop 返回 Ok + 停后计数停增，看不见
+  幸存 driver，abort/reap 无专属判据见 003-R1），负控
   `poll-task-inlined-into-driver`（per-tick spawn 改 inline → panic 落进
-  driver 任务 → 第 3 次 poll 永不到达）必被杀。未 stop 丢弃即停（比 TS 严）
-  一并登记在 007。
+  driver 任务 → 第 3 次 poll 永不到达）、`poison-turn-index-removed`
+  （去掉投毒 → 派发正常完成 → gateway 投影非空）必被杀。未 stop 丢弃
+  （无在途轮询时即停；静默服务器窗口同 TS 泄漏）一并登记在 007。
 - **① SEND_TIMEOUT**：`sendReply` 的 `AbortSignal.timeout(120_000)` 与
   `MESSAGE_LIMIT` 同为进请求字节的常量，同口径处理——常量钉
   `send_timeout_is_the_ts_abort_deadline` + 负控 `send-timeout-changed`。
@@ -160,9 +169,11 @@ drain，003-R1 更正其 Rust 侧收口描述 · 004 restart 同 guid 通道层�
   窗口时，已在途字节仍落在自己用例的 armed 窗口，而不是排空过早退出后
   落成 stray（r1 假 FAIL 窗口收窄；仍是启发式，连续两轮饿住仍会掐断）。
   终止语义由 `drained_holds_through_a_single_silent_window`（暂停时钟：
-  到达落在第一、二窗口之间时必须被观察到且等待 ≥150 ms）钉住，负控
-  `drained-single-quiet` 回退单窗终止必被杀。超脚本槽位的轮询只拿兜底
-  `{}`、在去重投影里不可见，扩展窗口不会改变绿快照；整体仍受 `DEADLINE`
+  到达落在第一、二窗口之间时必须被观察到，且排空恰在第 200 ms——连续
+  两个静默窗——终止，钉 `elapsed == SETTLE*4` 精确值）钉住，负控
+  `drained-single-quiet` 回退单窗终止、`drained-quiet-not-reset` 回退连续
+  语义（去 `quiet = 0` 重置变累计静默，150 ms 即假终止）必被杀。超脚本
+  槽位的轮询只拿兜底 `{}`、在去重投影里不可见，扩展窗口不会改变绿快照；整体仍受 `DEADLINE`
   20 s 总界约束（排空后的静默检查仍为固定 SETTLE，其语义是断言「 arrivals
   停止」而非等待排空）。
 
@@ -212,5 +223,7 @@ v22.22.0 实测字面量。
 （#2285 r4 ④）、receipt 看门狗「字节前停摆 / 到达前死亡」两支（#2285 r4 ⑤）、
 strays 外纪元（#2285 r2 ④）、arm 清空回插与 replay 末尾真实迟请求
 （#2285 fix-r1 boundary #1）、per-tick 轮询 inline 进 driver（#2285 fix-r1
-sibling #2）、排空单窗终止回退（#2285 fix-r1 boundary #2），以及 oracle
+sibling #2）、排空单窗终止回退（#2285 fix-r1 boundary #2）、排空连续
+语义回退（#2285 r2 `drained-quiet-not-reset`）、投毒移除（#2285 r2
+`poison-turn-index-removed`），以及 oracle
 三重校验各一条；先 `--compile-only` 全过再交协调者跑 OUT。

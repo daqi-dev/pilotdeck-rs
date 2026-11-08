@@ -208,7 +208,37 @@ MUTATIONS = [
      '            }\n',
      'bluebubbles::tests::drained_holds_through_a_single_silent_window',
      '#2285 the disarm drain holds through a single silent window '
-     '(the drain waited past one silent window)'),
+     '(two consecutive silent windows end the drain at exactly 200 ms)'),
+    # #2285 r2 review P2a-2: dropping the `quiet = 0` reset turns "two
+    # consecutive silent windows" into two cumulative ones — the 50 → 100
+    # (movement) → 150 ms trace ends the drain at 150 ms and the
+    # exact-trace pin (SETTLE * 4) fires.
+    ('drained-quiet-not-reset', tests,
+     '        } else {\n'
+     '            quiet = 0;\n'
+     '            last = now;\n'
+     '        }\n',
+     '        } else {\n'
+     '            last = now;\n'
+     '        }\n',
+     'bluebubbles::tests::drained_holds_through_a_single_silent_window',
+     '#2285 the disarm drain holds through a single silent window '
+     '(two consecutive silent windows end the drain at exactly 200 ms)'),
+    # #2285 r2 review P2a-1: removing the turn-index poisoning lets the
+    # dispatch complete normally, so the gateway projection is no longer
+    # empty — the submit-count ruler (judged after the third poll, when the
+    # dispatch has certainly run) must go red; the old immediately-after-
+    # polls>=2 assertion could pass on a dispatch that had not executed yet.
+    ('poison-turn-index-removed', tests,
+     '    // Poison the turn-index mutex before any dispatch can use it.\n'
+     '    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {\n'
+     '        let _guard = gateway.next.lock().expect("#2285 turn index");\n'
+     '        panic!("#2285 poison the turn index");\n'
+     '    }));\n',
+     '',
+     'bluebubbles::tests::poll_task_panic_does_not_stop_the_driver',
+     '#2285 a panicking poll task does not stop the poll driver '
+     '(the poisoned dispatch panicked before recording)'),
     # A8.3-CHANNEL-BLUEBUBBLES-001-R2: the implemented channel must not be in
     # the unmigrated rejection table; re-inserting the key refuses startup
     # for the subset the loader test keeps loadable.
