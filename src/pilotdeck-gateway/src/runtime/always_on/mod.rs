@@ -53,14 +53,14 @@ pub(crate) use workspace::{NativeWorkspace, NativeWorkspaceDiff, WorkspaceError,
 pub(crate) use control::{AlwaysOnControl, StandaloneApply, create_control};
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
 pub(crate) use fire::{
-    acquire_discovery_lock, derive_execution_session_key, derive_report_session_key,
+    DiscoveryFirePort, acquire_discovery_lock, derive_execution_session_key, derive_report_session_key,
     derive_workspace_session_key, release_discovery_lock,
 };
 pub(crate) use gates::{GateBlockReason, GateInput, evaluate_always_on_discovery_gates};
 pub(crate) use leases::{ChannelLease, ChannelLeaseRegistry};
 pub(crate) use manager::{
     AbortInput, AlwaysOnAgentGateway, AlwaysOnManagerOptions, ApplyInput, ControlError,
-    GatewayAbortInput, RerunInput, PhaseRequest, PhaseResult, PhaseObserver, PhaseCompletion,
+    GatewayAbortInput, RerunInput, PhaseRequest, PhaseResult, PhaseObserver, PhaseCompletion, FireInputs, FireFactory,
     AlwaysOnRunContextRegistry,
 };
 // The one face that crosses the crate boundary: `native_process::requests`

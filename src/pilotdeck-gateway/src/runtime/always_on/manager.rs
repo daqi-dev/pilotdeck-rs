@@ -317,6 +317,23 @@ struct RuntimeShared {
     active_control_runs: Mutex<HashMap<String, ActiveControlRun>>,
 }
 
+/// Dependencies bound to the existing per-project runtime generation.
+pub(crate) struct FireInputs {
+    pub config: AlwaysOnConfig,
+    pub project_key: String,
+    pub paths: AlwaysOnPaths,
+    pub state_store: Arc<DiscoveryStateStore>,
+    pub plan_store: Arc<DiscoveryPlanStore>,
+    pub cycle_store: Arc<WorkCycleStore>,
+    pub contexts: Arc<AlwaysOnRunContextRegistry>,
+    pub gateway: Arc<dyn AlwaysOnAgentGateway>,
+    pub now: Arc<dyn Fn() -> f64 + Send + Sync>,
+    pub uuid: Arc<dyn Fn() -> String + Send + Sync>,
+}
+pub(crate) trait FireFactory: Send + Sync {
+    fn create(&self, input: FireInputs) -> io::Result<Arc<dyn DiscoveryFirePort>>;
+}
+
 /// `AlwaysOnRuntime` (AlwaysOnRuntime.ts:133-448): the lifecycle owner. The
 /// construction sequence is the TS one (constructor → `bindAgentGateway` →
 /// `start` → `stop`), with the same refusal messages on out-of-order calls.
@@ -425,6 +442,15 @@ impl AlwaysOnRuntime {
         gateway: Arc<dyn AlwaysOnAgentGateway>,
         is_session_in_flight: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     ) -> Result<(), io::Error> {
+        self.bind_with_factory(gateway, is_session_in_flight, None)
+    }
+
+    fn bind_with_factory(
+        &self,
+        gateway: Arc<dyn AlwaysOnAgentGateway>,
+        is_session_in_flight: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+        factory: Option<&Arc<dyn FireFactory>>,
+    ) -> Result<(), io::Error> {
         let mut bound = self
             .shared
             .agent_gateway
@@ -435,9 +461,17 @@ impl AlwaysOnRuntime {
                 "AlwaysOnRuntime.bindAgentGateway already called.",
             ));
         }
+        let fire: Arc<dyn DiscoveryFirePort> = if let Some(factory) = factory {
+            factory.create(FireInputs {
+                config: self.config.clone(), project_key: self.project_key.clone(), paths: self.paths.clone(),
+                state_store: self.state_store.clone(), plan_store: self.plan_store.clone(),
+                cycle_store: self.cycle_store.clone(), contexts: self.run_contexts.clone(),
+                gateway: gateway.clone(), now: self.now.clone(), uuid: self.uuid.clone(),
+            })?
+        } else {
+            Arc::new(DiscoveryFire::new(self.plan_store.clone()))
+        };
         *bound = Some(gateway);
-        let fire: Arc<dyn DiscoveryFirePort> =
-            Arc::new(DiscoveryFire::new(self.plan_store.clone()));
         let in_flight = is_session_in_flight.unwrap_or_else(|| self.is_session_in_flight.clone());
         let scheduler = Arc::new(DiscoveryScheduler::new(SchedulerDeps {
             config: self.config.clone(),
@@ -767,7 +801,10 @@ pub(crate) struct AlwaysOnManagerOptions {
 pub struct AlwaysOnManager {
     runtimes: Vec<Arc<AlwaysOnRuntime>>,
     logger: Arc<dyn AlwaysOnLogger>,
+    factory_state: Mutex<ManagerFactoryState>,
 }
+#[derive(Default)]
+struct ManagerFactoryState { factory: Option<Arc<dyn FireFactory>>, binding_started: bool }
 
 impl AlwaysOnManager {
     /// The constructor loop (AlwaysOnManager.ts:110-133): one runtime per
@@ -793,6 +830,7 @@ impl AlwaysOnManager {
         }
         Ok(Self {
             runtimes,
+            factory_state: Mutex::new(ManagerFactoryState::default()),
             logger: options
                 .logger
                 .unwrap_or_else(|| Arc::new(super::NoopAlwaysOnLogger)),
@@ -815,7 +853,17 @@ impl AlwaysOnManager {
                 options.now.clone(), options.uuid.clone(), options.logger.clone(), None,
             )?));
         }
-        Ok(Self { runtimes, logger: options.logger.unwrap_or_else(|| Arc::new(super::NoopAlwaysOnLogger)) })
+        Ok(Self { runtimes, factory_state: Mutex::new(ManagerFactoryState::default()), logger: options.logger.unwrap_or_else(|| Arc::new(super::NoopAlwaysOnLogger)) })
+    }
+
+    /// Install the native fire factory once, before any gateway bind.
+    pub(crate) fn set_fire_factory(&self, factory: Arc<dyn FireFactory>) -> io::Result<()> {
+        let mut state = self.factory_state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.binding_started || state.factory.is_some() {
+            return Err(io::Error::other("Always-On fire factory is already installed or binding started"));
+        }
+        state.factory = Some(factory);
+        Ok(())
     }
 
     /// `bindAgentGateway` (AlwaysOnManager.ts:147-160): every runtime binds
@@ -826,6 +874,12 @@ impl AlwaysOnManager {
         gateway: Arc<dyn AlwaysOnAgentGateway>,
         is_project_busy: Option<IsProjectBusy>,
     ) -> Result<(), io::Error> {
+        let factory = {
+            let mut state = self.factory_state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.binding_started { return Err(io::Error::other("Always-On gateway binding already started")); }
+            state.binding_started = true;
+            state.factory.clone()
+        };
         for runtime in &self.runtimes {
             let in_flight = is_project_busy.as_ref().map(|busy| {
                 let busy = busy.clone();
@@ -834,7 +888,7 @@ impl AlwaysOnManager {
                     Arc::new(move || busy(&project_key));
                 hook
             });
-            runtime.bind_agent_gateway(gateway.clone(), in_flight)?;
+            runtime.bind_with_factory(gateway.clone(), in_flight, factory.as_ref())?;
         }
         Ok(())
     }
@@ -1326,6 +1380,29 @@ mod tests {
         });
         assert_eq!(called, 1);
         assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::PermissionDenied));
+    }
+
+    #[test]
+    fn native_fire_factory_is_used_once_per_enabled_project_before_binding() {
+        struct Factory(std::sync::atomic::AtomicUsize);
+        impl FireFactory for Factory {
+            fn create(&self, input: FireInputs) -> io::Result<Arc<dyn DiscoveryFirePort>> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                assert!(input.project_key.ends_with("/proj"));
+                Ok(Arc::new(DiscoveryFire::new(input.plan_store)))
+            }
+        }
+        let home = scratch("fire-factory");
+        let project_key = home.join("proj").to_string_lossy().into_owned();
+        let manager = AlwaysOnManager::new(AlwaysOnManagerOptions {
+            config: config(&project_key), pilot_home: home, now: None, uuid: None, logger: None,
+        }).unwrap();
+        let factory = Arc::new(Factory(std::sync::atomic::AtomicUsize::new(0)));
+        manager.set_fire_factory(factory.clone()).unwrap();
+        let gateway = Arc::new(RecordingGateway { calls: Mutex::new(Vec::new()) });
+        manager.bind_agent_gateway(gateway, None).unwrap();
+        assert_eq!(factory.0.load(Ordering::SeqCst), 1);
+        assert!(manager.set_fire_factory(factory).is_err());
     }
 
     // r9 (generate.mts:567-588): the manager answers project_not_found for
