@@ -516,6 +516,122 @@ fn upload_live_lease_survives_upload_cleanup_until_lease_expiry() {
 fn task_dir_of(project: &Path) -> PathBuf {
     project.join(".tmp/chat-uploads/upload-1")
 }
+
+/// #1441 三态反差（ts-probe/p1-attachment-ids.out.txt，真 TS UploadStore
+/// 实测）：`attachmentIds` undefined → 全部；`[]` → 静默零个（校验与租约
+/// 都成功、无硬链接）；未知 id → ATTACHMENT_NOT_FOUND "Unknown
+/// attachmentId."。三态互为反差钉死：`[]` 不得退化成 unknown 的报错，
+/// unknown 不得退化成 `[]` 的静默成功。
+#[test]
+fn upload_attachment_ids_three_state_contrast() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    // undefined → 全部
+    let all = h
+        .store
+        .verify_attachment("upload-1", "project", None)
+        .unwrap();
+    assert_eq!(all.len(), 1, "undefined selects every attachment");
+    assert_eq!(string(&all[0], "attachmentId").unwrap(), "file-1");
+    // [] → 静默零个（wanted 为空集合，长度核对 0 == 0 通过）
+    let none = h
+        .store
+        .verify_attachment("upload-1", "project", Some(&[]))
+        .unwrap();
+    assert!(none.is_empty(), "an empty selection is a silent zero");
+    // 未知 → ATTACHMENT_NOT_FOUND
+    let e = h
+        .store
+        .verify_attachment("upload-1", "project", Some(&["bogus".to_string()]))
+        .err()
+        .unwrap();
+    assert_eq!(
+        (e.code.as_str(), e.message_string().as_str()),
+        ("ATTACHMENT_NOT_FOUND", "Unknown attachmentId.")
+    );
+    // 已知 → 精确一个（正控：过滤本身没坏）
+    let one = h
+        .store
+        .verify_attachment("upload-1", "project", Some(&["file-1".to_string()]))
+        .unwrap();
+    assert_eq!(one.len(), 1);
+    // `[]` 同样租得到零附件租约：无硬链接，只有 lease.json
+    let lease = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", Some(&[]))
+        .unwrap();
+    assert!(lease.attachments.is_empty());
+    assert_eq!(
+        names(&lease.dir),
+        vec!["lease.json".to_owned()],
+        "an empty lease links nothing"
+    );
+    lease.release().unwrap();
+}
+
+/// M1/M12（矩阵）：同一 uploadId 的两次 acquire 并发跑在两个线程上——
+/// 各自拿到独立随机租约目录，内容都可读，释放互不影响。
+#[test]
+fn upload_concurrent_lease_acquires_are_independent() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let store = h.store.clone();
+    let (left, right) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| {
+            store
+                .acquire_attachment_lease("upload-1", "project", None)
+                .unwrap()
+        });
+        let second = scope.spawn(|| {
+            store
+                .acquire_attachment_lease("upload-1", "project", None)
+                .unwrap()
+        });
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    let left_path = PathBuf::from(string(&left.attachments[0], "path").unwrap());
+    let right_path = PathBuf::from(string(&right.attachments[0], "path").unwrap());
+    assert_ne!(left_path, right_path, "each acquire gets its own lease dir");
+    assert_eq!(fs::read(&left_path).unwrap(), b"hello");
+    assert_eq!(fs::read(&right_path).unwrap(), b"hello");
+    left.release().unwrap();
+    right.release().unwrap();
+    assert!(!left_path.exists());
+    assert!(!right_path.exists());
+}
+
+/// M5（探针 P3）：completed 拒绝 cancel（UPLOAD_ALREADY_COMPLETED）；
+/// 在途（有已写分片）的 cancel 走 in-gate 转换并删掉 files 目录。
+#[test]
+fn upload_cancel_refuses_completed_and_removes_pending_files() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p");
+    let h = golden_store(&project);
+    completed(&h);
+    let e = h.store.cancel("upload-1").err().unwrap();
+    assert_eq!(
+        (e.code.as_str(), e.message_string().as_str()),
+        (
+            "UPLOAD_ALREADY_COMPLETED",
+            "Completed uploads cannot be cancelled."
+        )
+    );
+    // 第二个上传在途：cancel 转换状态并移除 files 目录
+    let manifest = value(&crate::test_baseline::oracle(ORACLE), "manifest");
+    h.store.create("project", &manifest, None).unwrap();
+    h.store
+        .write_part("upload-2", "file-1", &b"hello"[..])
+        .unwrap();
+    let files = project.join(".tmp/chat-uploads/upload-2/files");
+    assert!(files.exists(), "a written part lands in the files dir");
+    let cancelled = h.store.cancel("upload-2").unwrap();
+    assert_eq!(status(&cancelled), "cancelled");
+    assert!(!files.exists(), "cancel removes the in-gate files dir");
+}
 fn completed(h: &Harness) {
     let manifest = parse_json(&compact(&value(
         &crate::test_baseline::oracle(ORACLE),
@@ -2345,4 +2461,223 @@ async fn cleanup_clamps_a_zero_interval_instead_of_panicking() {
     .expect("a zero interval is clamped, not fatal");
     assert!(!handle.is_finished(), "the clamped schedule keeps running");
     handle.abort();
+}
+
+// #1850: `store_swapping_tmp` for any single directory: the first `now`
+// callback renames `dir` to a sibling and replaces it with a symlink to
+// `outside`. Used with the record's task directory — the plain root above it
+// stays real, so only `inside_root` can refuse the cancel delete — and with
+// the lease `<id>` directory, whose emptied-parent removal is guarded the same
+// way.
+fn store_swapping_dir(
+    project: &Path,
+    dir: PathBuf,
+    outside: &Path,
+    clock: Arc<AtomicI64>,
+    swaps: Arc<AtomicUsize>,
+) -> Arc<UploadStore> {
+    let (resolved, listed) = (project.to_owned(), project.to_owned());
+    let (target, dir) = (outside.to_owned(), dir);
+    let (tick, swap) = (clock, swaps);
+    let mut opts = UploadStoreOptions::new(
+        move |_: &JsString| Ok(resolved.clone()),
+        move || Ok(vec![listed.clone()]),
+    );
+    opts.now = Arc::new(move || {
+        if swap.fetch_add(1, Ordering::SeqCst) == 0 {
+            fs::rename(&dir, dir.with_extension("real")).unwrap();
+            std::os::unix::fs::symlink(&target, &dir).unwrap();
+        }
+        tick.load(Ordering::SeqCst)
+    });
+    Arc::new(UploadStore::new(opts))
+}
+
+// #1850: the cancel delete is the fourth removal point on the `chat-uploads`
+// tree, and its window is everything between `get`'s record read and the
+// delete: the expiry clock read, then the whole `mutate` rewrite. The device
+// fires at that first clock read, so both the rewrite and the delete below
+// run against a `.tmp` that is already a symlink. The metadata write follows
+// the same link (a pre-existing residual, out of scope here); what this test
+// pins is that the *removal* does not.
+#[test]
+fn upload_cancel_does_not_follow_a_root_swapped_mid_mutate() {
+    let scratch = Scratch::new();
+    let outside = scratch.dir("outside-swap-cancel");
+    let victim = outside.join("chat-uploads/upload-1/files/x");
+    fs::create_dir_all(victim.parent().unwrap()).unwrap();
+    fs::write(&victim, "keep").unwrap();
+
+    let project = scratch.dir("p-swap-cancel");
+    let h = golden_store(&project);
+    created(&h);
+    h.store
+        .write_part("upload-1", "file-1", &b"hello"[..])
+        .unwrap();
+    drop(h);
+
+    let swaps = Arc::new(AtomicUsize::new(0));
+    let store = store_swapping_tmp(
+        &project,
+        &outside,
+        Arc::new(AtomicI64::new(EPOCH)),
+        swaps.clone(),
+    );
+    let updated = store.cancel("upload-1").unwrap();
+
+    assert_eq!(status(&updated), "cancelled");
+    assert_eq!(
+        swaps.load(Ordering::SeqCst),
+        2,
+        "the swap fired before the delete (expiry check, then updatedAt)"
+    );
+    assert!(
+        victim.exists(),
+        "a cancel delete must not follow a root swapped mid-mutate"
+    );
+    let log = store.cleanup_log.lock().unwrap().join("\n");
+    assert!(
+        log.contains("[uploads] cancel skipped"),
+        "the refused delete is logged: {log}"
+    );
+}
+
+// #1850: the same delete, but the component swapped for an outside symlink
+// is the record's task directory — the root above it is still plain, so the
+// plain-root gate alone would let `remove_tree` follow the link. Only the
+// per-entry `inside_root` comparison refuses it.
+#[test]
+fn upload_cancel_does_not_follow_a_task_dir_swapped_mid_mutate() {
+    let scratch = Scratch::new();
+    let outside = scratch.dir("outside-swap-task");
+    let victim = outside.join("files/x");
+    fs::create_dir_all(outside.join("files")).unwrap();
+    fs::write(&victim, "keep").unwrap();
+
+    let project = scratch.dir("p-swap-task");
+    let h = golden_store(&project);
+    created(&h);
+    h.store
+        .write_part("upload-1", "file-1", &b"hello"[..])
+        .unwrap();
+    drop(h);
+
+    let swaps = Arc::new(AtomicUsize::new(0));
+    let store = store_swapping_dir(
+        &project,
+        project.join(".tmp/chat-uploads/upload-1"),
+        &outside,
+        Arc::new(AtomicI64::new(EPOCH)),
+        swaps.clone(),
+    );
+    let updated = store.cancel("upload-1").unwrap();
+
+    assert_eq!(status(&updated), "cancelled");
+    assert_eq!(
+        swaps.load(Ordering::SeqCst),
+        2,
+        "the swap fired before the delete (expiry check, then updatedAt)"
+    );
+    assert!(
+        victim.exists(),
+        "a cancel delete must not follow a task dir swapped mid-mutate"
+    );
+    let log = store.cleanup_log.lock().unwrap().join("\n");
+    assert!(
+        log.contains("outside the uploads root"),
+        "the refused delete is logged: {log}"
+    );
+}
+
+// #1850: the emptied `<id>` directory at the end of a lease round. The entry
+// sweep skipped the (now linked) `<id>` entirely, so `names` reads through the
+// link and finds the outside target empty — without the `inside_root` term
+// the parent removal would unlink the symlinked `<id>` itself. The record
+// half never runs (no uploads root), so the first `now` callback is the lease
+// expiry check, exactly where the swap lands.
+#[test]
+fn upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round() {
+    let scratch = Scratch::new();
+    let outside = scratch.dir("outside-swap-lease-id");
+    let project = scratch.dir("p-swap-lease-id");
+    let own = project.join(".tmp/chat-upload-leases/upload-1/lease-a");
+    fs::create_dir_all(&own).unwrap();
+    fs::write(
+        own.join("lease.json"),
+        "{\"expiresAt\":\"1970-01-01T00:00:00.000Z\"}\n",
+    )
+    .unwrap();
+
+    let swaps = Arc::new(AtomicUsize::new(0));
+    let store = store_swapping_dir(
+        &project,
+        project.join(".tmp/chat-upload-leases/upload-1"),
+        &outside,
+        Arc::new(AtomicI64::new(EPOCH)),
+        swaps.clone(),
+    );
+    store.cleanup_expired().unwrap();
+
+    assert_eq!(swaps.load(Ordering::SeqCst), 1, "the swap happened");
+    let swapped = project.join(".tmp/chat-upload-leases/upload-1");
+    assert!(
+        matches!(fs::symlink_metadata(&swapped), Ok(m) if m.file_type().is_symlink()),
+        "an id directory swapped mid-round must not be removed"
+    );
+    assert!(
+        names(&outside).is_empty(),
+        "the outside target must stay untouched"
+    );
+    let log = store.cleanup_log.lock().unwrap().join("\n");
+    assert!(
+        log.contains("outside the leases root"),
+        "the skipped entry is logged: {log}"
+    );
+}
+
+// #1850: the non-`NotFound` `realpath` branch of `release` — an ELOOP root has
+// no permission-based injection, so a self-referential symlink is the one
+// deterministic shape. The failure must surface (not be swallowed into the
+// idempotent `Ok`), and it must stay cached: healing the root and releasing
+// again has to answer with the same error and leave the lease tree in place.
+#[test]
+fn upload_lease_release_surfaces_and_caches_a_realpath_failure() {
+    let scratch = Scratch::new();
+    let project = scratch.dir("p-realpath");
+    let h = golden_store(&project);
+    completed(&h);
+    let lease = h
+        .store
+        .acquire_attachment_lease("upload-1", "project", None)
+        .unwrap();
+    let dir = PathBuf::from(string(&lease.attachments[0], "path").unwrap())
+        .parent()
+        .unwrap()
+        .to_owned();
+    let root = dir.parent().unwrap().parent().unwrap().to_owned();
+    let real = root.with_extension("real");
+    fs::rename(&root, &real).unwrap();
+    std::os::unix::fs::symlink(&root, &root).unwrap();
+
+    let first = lease.release();
+    assert!(
+        first.is_err(),
+        "a release realpath failure must surface, not be swallowed"
+    );
+    assert_eq!(first.unwrap_err().code, "ELOOP");
+
+    // Heal the root: the cached failure must still be the answer, and the
+    // lease tree must still be there (the release did not run again).
+    fs::remove_file(&root).unwrap();
+    fs::rename(&real, &root).unwrap();
+    let second = lease.release();
+    assert!(
+        second.is_err(),
+        "a cached release failure must stay cached after the root heals"
+    );
+    assert_eq!(second.unwrap_err().code, "ELOOP");
+    assert!(
+        dir.join("lease.json").exists(),
+        "a cached release failure must not re-run the release"
+    );
 }

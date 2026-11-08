@@ -103,6 +103,16 @@ LEASE_RELEASE = 'upload::tests::upload_lease_release_does_not_follow_a_swapped_l
 PLAIN_ROOT = 'upload::tests::plain_root_rejects_a_root_that_resolves_elsewhere'
 ORPHAN_RM = 'upload::tests::upload_cleanup_orphan_removal_failure_does_not_stop_the_sweep'
 SCHEDULE = 'upload::tests::cleanup_failure_keeps_the_schedule_alive'
+# #1850: the cancel delete gate, the emptied `<id>` removal guard, and the
+# release `realpath` branches.
+CANCEL_ROOT_SWAP = (
+    'upload::tests::upload_cancel_does_not_follow_a_root_swapped_mid_mutate')
+CANCEL_TASK_SWAP = (
+    'upload::tests::upload_cancel_does_not_follow_a_task_dir_swapped_mid_mutate')
+LEASE_ID_SWAP = (
+    'upload::tests::upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round')
+RELEASE_REALPATH = (
+    'upload::tests::upload_lease_release_surfaces_and_caches_a_realpath_failure')
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -616,6 +626,136 @@ mutations = [
                 return;
             }''', SCHEDULE,
      'the next tick sweeps again after the failed one'),
+    # #1850: the cancel delete is the fourth removal point on the `chat-uploads`
+    # tree; the mutant is its pre-#1850 shape — the bare `remove_tree` after
+    # the in-gate transition, which follows a `.tmp` swapped during cancel's
+    # record read / mutate rewrite window.
+    ('cancel-remove-tree-ungated', STORE, '''        if cancelled {
+            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
+            let dir = task_dir(&updated).join("files");
+            let root_real = match plain_root(&project, "chat-uploads") {
+                PlainRoot::Plain(root) => root,
+                // The record was just read from this tree, so `Missing` means
+                // the whole task directory is gone: the same quiet no-op the
+                // bare `remove_tree` gave.
+                PlainRoot::Missing => return Ok(updated),
+                PlainRoot::Blocked => {
+                    self.log_cleanup(format!(
+                        "[uploads] cancel skipped {}: uploads root is not a plain directory",
+                        project.join(".tmp/chat-uploads").display()
+                    ));
+                    return Ok(updated);
+                }
+            };
+            if !inside_root(&root_real, &dir) {
+                self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root",
+                    dir.display()
+                ));
+                return Ok(updated);
+            }
+            remove_tree(&dir)?;
+        }''', '''        if cancelled {
+            remove_tree(&task_dir(&updated).join("files"))?;
+        }''', CANCEL_ROOT_SWAP,
+     'a cancel delete must not follow a root swapped mid-mutate'),
+    # #1850: the plain-root gate alone is not enough: the record's task
+    # directory itself can be the swapped component, so only the per-entry
+    # `inside_root` comparison refuses the delete. The row drops that term.
+    ('cancel-inside-root-dropped', STORE, '''            if !inside_root(&root_real, &dir) {
+                self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root",
+                    dir.display()
+                ));
+                return Ok(updated);
+            }
+''', '', CANCEL_TASK_SWAP,
+     'a cancel delete must not follow a task dir swapped mid-mutate'),
+    # #1850: the emptied `<id>` directory at the end of a lease round. The
+    # entry sweep skips a linked `<id>` entirely, so `names` reads through the
+    # link and finds the outside target empty; without the `inside_root` term
+    # the parent removal unlinks the symlinked `<id>` itself.
+    ('cleanup-lease-id-guard-dropped', STORE, '''            if names(&leases).is_empty() && inside_root(&root_real, &leases) {
+                remove_tree(&leases)?;
+            }''', '''            if names(&leases).is_empty() {
+                remove_tree(&leases)?;
+            }''', LEASE_ID_SWAP,
+     'an id directory swapped mid-round must not be removed'),
+    # #1850: the non-`NotFound` `realpath` branch of `release` had no direct
+    # regression test (A8 registered it as untestable without permission
+    # injection); an ELOOP root is the deterministic shape. The mutant swallows
+    # the failure into the idempotent `Ok`.
+    ('release-realpath-swallowed', STORE,
+     '''                    Err(e) => return Err(UploadError::io(e, "realpath", Some(root))),''',
+     '''                    Err(_) => return Ok(()),''', RELEASE_REALPATH,
+     'a release realpath failure must surface, not be swallowed'),
+    # #1850: `release` caches its result — including errors — via
+    # `get_or_insert_with`, so a retried release answers with the same verdict
+    # instead of re-running against a since-healed root. The mutant caches
+    # successes only, which lets the retry re-run and delete the lease tree.
+    ('release-err-not-cached', STORE, '''    pub fn release(&self) -> Result<()> {
+        self.released
+            .lock()
+            .unwrap()
+            .get_or_insert_with(|| {
+                // The same guard as the lease sweep, applied late: `dir` was
+                // built from the record's canonical project at acquire time,
+                // and the lease can live for many turns. If `.tmp` or
+                // `chat-upload-leases` was swapped for a symlink since, the
+                // recursive delete would follow it out of the project. Require
+                // the root to still resolve to exactly the plain path, then the
+                // entry to still be strictly inside it.
+                let Some(root) = self.dir.parent().and_then(Path::parent) else {
+                    return Ok(());
+                };
+                // "Gone" stays a quiet no-op (the lease is already clean, and
+                // `release` is idempotent); any other failure keeps the
+                // original `remove_tree` behaviour of surfacing the error
+                // instead of caching a success that never happened.
+                let root_real = match fs::canonicalize(root) {
+                    Ok(real) => real,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+                    Err(e) => return Err(UploadError::io(e, "realpath", Some(root))),
+                };
+                if root_real != root {
+                    return Ok(());
+                }
+                match resolved_inside(&root_real, &self.dir) {
+                    Ok(Some(_)) => remove_tree(&self.dir),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(UploadError::io(e, "realpath", Some(&self.dir))),
+                }
+            })
+            .clone()
+    }''', '''    pub fn release(&self) -> Result<()> {
+        let mut slot = self.released.lock().unwrap();
+        if let Some(cached) = slot.clone() {
+            return cached;
+        }
+        let computed = (|| {
+                let Some(root) = self.dir.parent().and_then(Path::parent) else {
+                    return Ok(());
+                };
+                let root_real = match fs::canonicalize(root) {
+                    Ok(real) => real,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+                    Err(e) => return Err(UploadError::io(e, "realpath", Some(root))),
+                };
+                if root_real != root {
+                    return Ok(());
+                }
+                match resolved_inside(&root_real, &self.dir) {
+                    Ok(Some(_)) => remove_tree(&self.dir),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(UploadError::io(e, "realpath", Some(&self.dir))),
+                }
+        })();
+        if computed.is_ok() {
+            *slot = Some(computed.clone());
+        }
+        computed
+    }''', RELEASE_REALPATH,
+     'a cached release failure must stay cached after the root heals'),
 ]
 
 # #1666: static denominator; a deleted row must not shrink the run silently and
@@ -651,6 +791,11 @@ EXPECTED_NAMES = (
     'cleanup-lease-root-recanonicalized', 'lease-release-symlink-root-swept',
     'plain-root-accepts-any-resolve', 'cleanup-orphan-rm-silent',
     'cleanup-schedule-stop-on-failure',
+    # #1850 的五条（cancel 删除点闸门 / 条目 containment / 空目录守卫 /
+    # release realpath 分支 / Err 缓存），与上面同一名册口径。
+    'cancel-remove-tree-ungated', 'cancel-inside-root-dropped',
+    'cleanup-lease-id-guard-dropped', 'release-realpath-swallowed',
+    'release-err-not-cached',
 )
 
 if '--check' in sys.argv[1:]:

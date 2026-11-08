@@ -403,6 +403,15 @@ impl UploadStore {
     /// `completed` record's files survive a racing cancel. The `remove_tree`
     /// itself still runs after the gate (the module-doc pair scope and #1503
     /// cover what a concurrently in-flight `write_part` can interleave).
+    ///
+    /// #1850: that delete is the fourth removal point on the `chat-uploads`
+    /// tree, and unlike the sweeps it runs after the whole `mutate` rewrite —
+    /// a window wide enough to swap `.tmp` (or the task directory itself) for
+    /// a symlink, which `remove_tree` would follow out of the project. The
+    /// status transition is already durable at that point, so a refused
+    /// delete is logged and skipped, never a `cancel` error: the record is
+    /// cancelled either way, and the sweep's "rather not delete" trade-off
+    /// (A8-UPLOAD-CLEANUP-ROBUSTNESS-001) applies unchanged.
     pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
         let mut refusal: Option<UploadError> = None;
@@ -422,7 +431,30 @@ impl UploadStore {
             return Err(e);
         }
         if cancelled {
-            remove_tree(&task_dir(&updated).join("files"))?;
+            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
+            let dir = task_dir(&updated).join("files");
+            let root_real = match plain_root(&project, "chat-uploads") {
+                PlainRoot::Plain(root) => root,
+                // The record was just read from this tree, so `Missing` means
+                // the whole task directory is gone: the same quiet no-op the
+                // bare `remove_tree` gave.
+                PlainRoot::Missing => return Ok(updated),
+                PlainRoot::Blocked => {
+                    self.log_cleanup(format!(
+                        "[uploads] cancel skipped {}: uploads root is not a plain directory",
+                        project.join(".tmp/chat-uploads").display()
+                    ));
+                    return Ok(updated);
+                }
+            };
+            if !inside_root(&root_real, &dir) {
+                self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root",
+                    dir.display()
+                ));
+                return Ok(updated);
+            }
+            remove_tree(&dir)?;
         }
         Ok(updated)
     }

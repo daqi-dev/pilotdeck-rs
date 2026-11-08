@@ -1,7 +1,7 @@
 use super::{Options, assembly::Recorders};
 use crate::{
     config::Env,
-    metadata::{object, resolve_units, text_field},
+    metadata::{object, resolve_path, resolve_units, text_field},
     runtime::{
         context::compaction::js_truthy,
         project::{ProjectResources, ProjectRuntimeRegistry},
@@ -18,7 +18,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write as IoWrite};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -121,6 +121,15 @@ struct AttachEntry {
 /// mirroring TS `collectRegisteredAttachmentReadFiles`
 /// (GatewayAttachmentTurnComposer.ts:173-193, `kind === "file"` only).
 struct RegisteredAttachment {
+    /// #1446 — the Node `path.resolve` spelling of the client-sent path
+    /// (`allowed.add(resolve(attachment.path))`, composer :182). The note
+    /// line prints this spelling (`safeAllowedAttachmentPath`, composer
+    /// :167-171); a symlinked project spelling or a mid-path link keeps it
+    /// distinct from `resolved`.
+    lexical: PathBuf,
+    /// The canonicalized spelling (`allowed.add(resolve(await
+    /// port.realpath(attachment.path)))`, composer :183) — the containment
+    /// authority and the second allowedReadFiles entry.
     resolved: PathBuf,
     /// Raw attachment name; the note cleans it (composer :108-109).
     name: String,
@@ -131,8 +140,9 @@ struct RegisteredAttachment {
 
 /// Outcome of the per-attachment lease guard.
 enum LeaseGuard {
-    /// The path canonicalizes under the canonical lease root; inlining and
-    /// allowedReadFiles use this resolved path, never the client spelling.
+    /// The path canonicalizes under the canonical lease root; inlining uses
+    /// this resolved path, and #1446 registers it beside the client's
+    /// lexical spelling in allowedReadFiles (composer :182-183).
     Resolved(PathBuf),
     /// The path is lexically inside the lease root but does not resolve
     /// (missing file / dangling symlink — a lease TTL cleanup race): the
@@ -1121,7 +1131,18 @@ pub(super) fn compose_attachment_turn(
         // truthy `metadata.channelKey` enter allowedReadFiles and the path
         // note (uploaded lease attachments, bundle :57-62, never do).
         if metadata.is_file() && entry.channel_key {
+            // #1446 — composer :182-183 registers both spellings: the
+            // lexical `resolve(attachment.path)` and the canonicalized
+            // realpath. The path reaching here is always absolute (the
+            // lease guard's lexical pre-filter holds it against an absolute
+            // root), so the process cwd a TS `path.resolve` would consult
+            // never changes the result.
+            let lexical = resolve_path(
+                &cached_process_cwd().unwrap_or_default(),
+                Path::new(&entry.path),
+            );
             registered.push(RegisteredAttachment {
+                lexical,
                 resolved: resolved.clone(),
                 name: entry.name.clone(),
                 inspectable: is_read_file_inspectable(entry),
@@ -1211,6 +1232,8 @@ pub(super) fn compose_attachment_turn(
                     );
                     continue;
                 }
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeRead, &resolved);
                 let bytes = match read_bounded(&mut file, limit) {
                     Ok(bytes) => bytes,
                     // P1-e (codex, ts-probe/probe.out "P1-e composer dir-*"):
@@ -1290,17 +1313,29 @@ pub(super) fn compose_attachment_turn(
     }
 
     // TS composer :98-111 — the note lines come from registered paths,
-    // deduped by normalized path; allowedReadFiles holds the same resolved
-    // spellings (composer :167-171 `safeAllowedAttachmentPath`).
+    // deduped by the lexical spelling (`seen` on `normalized`); #1446
+    // (composer :173-193) allowedReadFiles is the Set of both spellings per
+    // attachment — the note pass and the collection pass dedup
+    // independently, so a duplicate lexical spelling with a different
+    // realpath still contributes its canonical entry.
     let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut allowed: HashSet<PathBuf> = HashSet::new();
     let mut note_lines: Vec<String> = Vec::new();
     let mut allowed_paths: Vec<JsValue> = Vec::new();
     let mut has_inspectable = false;
     for attachment in &registered {
-        if !seen.insert(attachment.resolved.clone()) {
+        for spelling in [&attachment.lexical, &attachment.resolved] {
+            if !allowed.insert(spelling.clone()) {
+                continue;
+            }
+            allowed_paths.push(JsValue::from(
+                spelling.to_string_lossy().into_owned().as_str(),
+            ));
+        }
+        if !seen.insert(attachment.lexical.clone()) {
             continue;
         }
-        let normalized = attachment.resolved.to_string_lossy().into_owned();
+        let normalized = attachment.lexical.to_string_lossy().into_owned();
         // composer :108 — `normalized.split(/[\\/]/).pop() || "attachment"`.
         let fallback_name = normalized
             .split(['/', '\\'])
@@ -1309,7 +1344,6 @@ pub(super) fn compose_attachment_turn(
             .unwrap_or("attachment");
         let name = clean_attachment_name(&attachment.name, fallback_name);
         note_lines.push(format!("- {name}: {normalized}"));
-        allowed_paths.push(JsValue::from(normalized.as_str()));
         has_inspectable |= attachment.inspectable;
     }
 
@@ -1575,7 +1609,15 @@ impl SubmitHostServices for Services {
                         Err(e) => {
                             for lease in acquired.iter().rev() {
                                 if let Err(rel) = lease.release() {
-                                    eprintln!("native upload lease release on error: {rel}");
+                                    // #1850: `eprintln!` panics when stderr is
+                                    // unwritable, which would abort this
+                                    // blocking task mid-release. The whole
+                                    // loop is best-effort, so a dropped line
+                                    // must not cost the remaining leases.
+                                    let _ = writeln!(
+                                        std::io::stderr(),
+                                        "native upload lease release on error: {rel}"
+                                    );
                                 }
                             }
                             Err(e)
@@ -1602,7 +1644,14 @@ impl SubmitHostServices for Services {
                             for lease in leases.iter().rev() {
                                 // Best-effort: log failures but continue.
                                 if let Err(e) = lease.release() {
-                                    eprintln!("native upload lease release: {e}");
+                                    // #1850: same as the error path above —
+                                    // this runs detached from the submit
+                                    // call, where an `eprintln!` panic would
+                                    // silently kill the remaining releases.
+                                    let _ = writeln!(
+                                        std::io::stderr(),
+                                        "native upload lease release: {e}"
+                                    );
                                 }
                             }
                         })
@@ -1912,16 +1961,21 @@ pub(super) mod swap_test_hook {
     /// r2 — the approved stat must not follow a link planted here), after
     /// that sample but before `File::open` (#1468 — the open itself may then
     /// follow a swapped link), between `File::open` and the post-open
-    /// `canonicalize` containment revalidation (step 2), or between the
+    /// `canonicalize` containment revalidation (step 2), between the
     /// revalidation and the `(dev, inode)` path-stat/fstat comparison
-    /// (step 3). The #1468 multi-step sequence chains one swap per window,
-    /// so every window holds its own slot.
+    /// (step 3), or between the handle's own stat — the authoritative
+    /// oversize gate — and the bounded read (#1448: a file grown in that
+    /// window only stays capped because `read_bounded` returns at most
+    /// limit + 1 and the 读满 backstop fires). The #1468 multi-step
+    /// sequence chains one swap per window, so every window holds its own
+    /// slot.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum SwapWindow {
         BeforeApprovedStat,
         BeforeOpen,
         AfterOpen,
         AfterRevalidate,
+        BeforeRead,
     }
 
     type Hook = Box<dyn FnMut(&Path)>;
