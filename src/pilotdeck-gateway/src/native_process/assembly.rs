@@ -563,7 +563,7 @@ async fn start_assembly(
             let project = prepare_project.clone();
             let forks = prepare_forks.clone();
             let session_events = prepare_session_events.clone();
-            let options = prepare_options.clone();
+            let mut options = prepare_options.clone();
             let env = prepare_env.clone();
             let deployment = prepare_deployment.clone();
             let recorders = prepare_recorders.clone();
@@ -585,8 +585,12 @@ async fn start_assembly(
                             RuntimeError::new("Parent fork execution world has been released.")
                         })?
                         .fork()?,
-                    None => project.acquire(None)?,
+                    None => {
+                        let root = context.project_key.as_ref().map(|key| key.to_utf8().map(PathBuf::from).map_err(|_| RuntimeError::new("Native session project identity is not representable."))).transpose()?.unwrap_or_else(|| options.project.clone());
+                        project.acquire(Some(&root))?
+                    }
                 };
+                options.project = lease.runtime().project_root().to_path_buf();
                 let resources = lease
                     .runtime()
                     .resources()
@@ -830,11 +834,22 @@ async fn start_assembly(
                 );
                 let mut retained = PreparedResources::default();
                 let fork_owner = super::agent::NativeForkOwner::new(lease);
-                let pinned_generation = if fork_scope.is_some() {
-                    fork_owner.generation().map(|lease| Arc::downgrade(&lease))
+                // Every native session, not just a fork, runs the exact
+                // project generation that prepared its tools and permissions.
+                let generation = fork_owner.generation().ok_or_else(|| RuntimeError::new("Native session generation is missing."))?;
+                let pinned_generation = Some(Arc::downgrade(&generation));
+                let storage_factory = if let Some(scope) = &fork_scope {
+                    let store = scope.store.clone();
+                    let key = scope.key.clone();
+                    Arc::new(move |_| {
+                        let store = store.clone();
+                        let key = key.clone();
+                        Box::pin(async move { Ok(SessionStorage::Unlocked(crate::runtime::session::factory::FactoryStorage::new(store, key))) }) as crate::runtime::refresh::BoxFuture<_>
+                    }) as crate::runtime::session::factory::CreateStorage
                 } else {
-                    None
+                    super::project_storage::for_generation(options.home.clone(), generation)
                 };
+                retained.set_storage_factory(storage_factory)?;
                 let release_owner = fork_owner.clone();
                 retained.push(move || release_owner.release_generation());
                 retained.push(move || {
@@ -1357,6 +1372,7 @@ async fn start_assembly(
         move |coordinator| {
             session_events.install(&coordinator);
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
+            owner.enforce_project_binding();
             lookup_forks.install_session_lookup(owner.weak_handle_lookup());
             lookup_forks.install_async_turn_lookup(owner.weak_async_turn_lookup());
             let replacement = Arc::new(ReplacementCoordinator::new(

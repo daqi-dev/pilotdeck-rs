@@ -5035,9 +5035,9 @@ async fn session_input_admission_records_expanded_text_keeps_raw_prompt_and_bloc
         failure.as_ref().and_then(|x| x.get("code")),
         Some(&"agent_unsupported_feature".into())
     );
-    let oracle = crate::test_baseline::oracle(include_str!(
+    let oracle = pilotdeck_protocol::parse_json(include_str!(
         "../../../tests/fixtures/native-input-admission/meta-title-oracle.json"
-    ));
+    )).expect("fixed TS meta/title oracle");
     let expected_kinds: Vec<JsString> = match oracle.get("events") {
         Some(JsValue::Array(events)) => events
             .iter()
