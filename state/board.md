@@ -5064,3 +5064,7 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | #2498/#1891/#2547 哨兵三班照旧（到期续挂） | 协调者 | 04:0x–04:30 |
 
 现场指针：`_tmp/20261109-2425-harvest/report.md`（#2544 收货正本）· `_tmp/20261109-2387-reviewgap/` `_tmp/20261109-2417-reviewgap/` `_tmp/20261109-2397-rebase-review/`（三车道任务书）· `_tmp/20261109-2543-fixr1-harvest/task.md`（c2 fix-r1 收货任务书）。
+
+### 2026-11-09 Module2-host 固定新基线（Codex，Refs #2570）
+
+Module2独立切片保留原539审查引用，重基固定b9fa7b69；src/.github完整补丁逐字保持，路由/关联修复与已登记P2范围不变。board保留新main原文，本轮仅追加此段；补验Module2/Protocol与独立locked consumer，随后交单家非作者小增量复审。未push，正式PR #2576由协调者更新。
