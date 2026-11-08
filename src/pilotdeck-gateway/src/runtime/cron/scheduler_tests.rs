@@ -8,7 +8,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::{
-        Arc, Mutex, Weak,
+        Arc, Condvar, Mutex, Weak,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
@@ -261,6 +261,17 @@ impl Harness {
 }
 
 fn harness(config: CronManagerConfig, idle_poll_ms: Option<u64>) -> Harness {
+    harness_with_now(config, idle_poll_ms, Arc::new(|| PINNED_NOW_MS))
+}
+
+/// [`harness`] with a custom clock seam: the pre-register window test parks
+/// the fire thread inside `now` so a stop can land between the tick's
+/// pre-register and the fire's re-register.
+fn harness_with_now(
+    config: CronManagerConfig,
+    idle_poll_ms: Option<u64>,
+    now: Arc<dyn Fn() -> f64 + Send + Sync>,
+) -> Harness {
     let scratch = Scratch::new("cron-scheduler");
     let home = scratch.path().join("home");
     fs::create_dir_all(&home).unwrap();
@@ -271,7 +282,7 @@ fn harness(config: CronManagerConfig, idle_poll_ms: Option<u64>) -> Harness {
         config,
         pilot_home: home.to_string_lossy().into_owned(),
         session_overrides: None,
-        now: Some(Arc::new(|| PINNED_NOW_MS)),
+        now: Some(now),
         uuid: Some(Arc::new(move || {
             JsString::from(format!("id-{}", next_id.fetch_add(1, Ordering::SeqCst) + 1))
         })),
@@ -694,6 +705,14 @@ fn start_after_stop_does_not_revive() {
     seed_tasks(&harness, &[once_body("t1", DUE)]);
     harness.manager.start().unwrap();
     let runtime = harness.manager.loaded_runtime("/fire").unwrap();
+    // A tick that legitimately fired while the test thread was preempted past
+    // the 100ms poll is not the leak — only submits after the stop are.
+    let submits_before_stop = harness
+        .gateway
+        .calls()
+        .iter()
+        .filter(|call| call.starts_with("submitTurn"))
+        .count();
     harness.manager.stop().unwrap();
     runtime.start().unwrap();
     assert!(
@@ -705,13 +724,16 @@ fn start_after_stop_does_not_revive() {
         "#2295 the stopped scheduler must not re-arm"
     );
     thread::sleep(Duration::from_millis(300));
-    assert!(
-        harness
-            .gateway
-            .calls()
-            .iter()
-            .all(|call| !call.starts_with("submitTurn")),
-        "#2295 nothing may fire after the restart attempt"
+    let submits = harness
+        .gateway
+        .calls()
+        .iter()
+        .filter(|call| call.starts_with("submitTurn"))
+        .count();
+    assert_eq!(
+        submits, submits_before_stop,
+        "#2295 nothing may fire after the restart attempt: {} submits before the stop, {} after",
+        submits_before_stop, submits
     );
 }
 
@@ -807,26 +829,211 @@ fn poke_gates_on_running_and_stopped() {
 
 /// S9/S10: stop is authoritative — with a tight poll nothing fires after
 /// `stop()` returns (the TS leak that can run one post-stop tick is the
-/// registered divergence; the port's join is the stricter shape).
+/// registered divergence; the port's join is the stricter shape). A run the
+/// pre-stop window started may still write its terminal record after the
+/// stop returns (TS's fire-and-forget finally), so the record count may not
+/// exceed the submits that preceded the stop.
 #[test]
 fn stop_is_authoritative_no_post_stop_tick() {
     let harness = harness(CronManagerConfig::default(), Some(100));
     seed_tasks(&harness, &[once_body("t1", DUE)]);
     harness.manager.start().unwrap();
+    let submits_before_stop = harness
+        .gateway
+        .calls()
+        .iter()
+        .filter(|call| call.starts_with("submitTurn"))
+        .count();
     harness.manager.stop().unwrap();
     thread::sleep(Duration::from_millis(400));
     let observed = harness.observe();
+    let submits = observed
+        .calls
+        .iter()
+        .filter(|call| call.starts_with("submitTurn"))
+        .count();
+    assert_eq!(
+        submits, submits_before_stop,
+        "#2295 no tick may run after stop: {} submits before, {} after: {:?}",
+        submits_before_stop, submits, observed.calls
+    );
+    assert!(
+        observed.history.len() <= submits_before_stop,
+        "#2295 no run record may appear without a pre-stop submit: {:?}",
+        observed.history
+    );
+}
+
+/// The pre-register window of #2295 fix-r1: the tick pre-registers the run
+/// before spawning the fire thread, and the fire re-registers it; a stop
+/// that lands in that window must survive the re-register (TS registers once
+/// in the calling thread before the fire's first await, so the flag can
+/// never be lost there). The now seam parks the fire thread before its
+/// register, forcing the interleaving deterministically.
+#[test]
+fn stop_in_the_pre_register_window_survives_the_re_register() {
+    let release = Arc::new((Mutex::new(false), Condvar::new()));
+    let owner = thread::current().id();
+    let now = {
+        let release = release.clone();
+        Arc::new(move || {
+            // Only calls off the arming thread park: whether the fire thread
+            // races ahead or lags, its re-register always happens after the
+            // stop below has completed.
+            if thread::current().id() != owner {
+                let (locked, cvar) = &*release;
+                let mut open = locked.lock().unwrap();
+                while !*open {
+                    open = cvar.wait(open).unwrap();
+                }
+            }
+            PINNED_NOW_MS
+        })
+    };
+    let harness = harness_with_now(CronManagerConfig::default(), Some(10_000), now);
+    seed_tasks(&harness, &[cron_body("t1", DUE)]);
+    // The tick pre-registers run id-1 and spawns the fire thread, which
+    // parks in the gated now before its own register.
+    harness.manager.run_tick_once(Some("/fire")).unwrap();
+    let runtime = harness.manager.loaded_runtime("/fire").unwrap();
+    assert_eq!(
+        runtime.active_run_count(),
+        1,
+        "#2295 the tick must pre-register the run before the fire thread starts"
+    );
+    harness
+        .manager
+        .stop_task(&json("{\"taskId\": \"t1\", \"projectKey\": \"/fire\"}"))
+        .unwrap();
+    // Open the gate: the fire's re-register merges, keeping the requested
+    // stop, so the finally records "stopped" and the cron arm still
+    // reschedules.
+    {
+        let (locked, cvar) = &*release;
+        *locked.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+    let observed = wait_settled(&harness);
+    assert_eq!(
+        observed.history.len(),
+        1,
+        "#2295 the pre-registered run must still write its terminal record: {:?}",
+        observed.history
+    );
+    let record = json(&observed.history[0]);
+    assert_eq!(
+        text(&record, "outcome"),
+        "stopped",
+        "#2295 a stop requested in the pre-register window must survive the fire's re-register"
+    );
     assert!(
         observed
             .calls
             .iter()
-            .all(|call| !call.starts_with("submitTurn")),
-        "#2295 no tick may run after stop: {:?}",
+            .any(|call| call.starts_with("submitTurn")),
+        "#2295 the stopped run still submits its turn (TS marks, not cancels)"
+    );
+}
+
+/// #2295 fix-r1: a panicking tick seam must not kill the scheduler thread —
+/// TS folds a rejecting `tick()` into the "cron scheduler tick failed" warn
+/// and the `.then` still re-arms (CronScheduler.ts:77-86), so the next tick
+/// still fires the due task.
+#[test]
+fn tick_panic_folds_into_a_warn_and_re_arms() {
+    let panics = Arc::new(AtomicUsize::new(0));
+    let now = {
+        let panics = panics.clone();
+        Arc::new(move || {
+            // Only the scheduler thread's first read panics: start()'s own
+            // recalculation reads the seam on the caller's thread, and the
+            // fire thread ("cron-fire") must stay clean.
+            if thread::current()
+                .name()
+                .is_some_and(|name| name == "cron-scheduler")
+                && panics.fetch_add(1, Ordering::SeqCst) == 0
+            {
+                panic!("#2295 the seam throws mid-tick");
+            }
+            PINNED_NOW_MS
+        })
+    };
+    let harness = harness_with_now(CronManagerConfig::default(), Some(30), now);
+    seed_tasks(&harness, &[once_body("t1", DUE)]);
+    harness.manager.start().unwrap();
+    wait_until("the panicked tick to fold into a warn", || {
+        harness
+            .logger
+            .warns()
+            .iter()
+            .any(|warn| warn.contains("cron scheduler tick failed"))
+            .then_some(())
+    });
+    let observed = wait_settled(&harness);
+    assert!(
+        observed
+            .calls
+            .iter()
+            .any(|call| call.starts_with("submitTurn")),
+        "#2295 the post-panic tick must still fire the due task: {:?}",
         observed.calls
     );
-    assert!(
-        observed.history.is_empty(),
-        "#2295 no run record may appear after stop"
+    assert_eq!(
+        observed.history.len(),
+        1,
+        "#2295 the fired run must still complete after the panic: {:?}",
+        observed.history
+    );
+}
+
+/// #2295 fix-r1 arbitration: two fire threads drive turns on the gateway's
+/// current-thread runtime through `Handle::block_on` — the exact production
+/// topology of `NativeCronGatewayBody::run_turn` (assembly/cron.rs) — while
+/// this thread is the runtime's driver. Both parked timer turns must
+/// complete: two std threads blocking on the same current-thread runtime
+/// must not hang or starve its timers.
+#[test]
+fn two_fire_threads_drive_the_shared_current_thread_runtime() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#2295 the current-thread runtime must build");
+    let handle = runtime.handle().clone();
+    let harness = harness(
+        CronManagerConfig {
+            max_concurrent_runs: 2.0,
+            ..CronManagerConfig::default()
+        },
+        Some(50),
+    );
+    seed_tasks(&harness, &[once_body("t1", DUE), once_body("t2", DUE)]);
+    harness.gateway.set_submit(move |_| {
+        handle.block_on(async {
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            Ok(())
+        })
+    });
+    harness.manager.start().unwrap();
+    // This thread is the runtime's driver — the production main loop's seat.
+    runtime.block_on(async {
+        tokio::time::sleep(Duration::from_millis(400)).await;
+    });
+    let observed = wait_settled(&harness);
+    let submits = observed
+        .calls
+        .iter()
+        .filter(|call| call.starts_with("submitTurn"))
+        .count();
+    assert_eq!(
+        submits, 2,
+        "#2295 both due tasks must fire under max_concurrent_runs=2: {:?}",
+        observed.calls
+    );
+    assert_eq!(
+        observed.history.len(),
+        2,
+        "#2295 both parked turns must complete on the shared runtime: {:?}",
+        observed.history
     );
 }
 
@@ -1064,13 +1271,20 @@ fn fire_harness(delivery_fails: bool) -> FireHarness {
     let deliveries: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let register = {
         let registry = registry.clone();
+        // The manager's register semantics (manager.rs): a same-runId
+        // re-register merges, keeping a `stop_requested` set in the
+        // pre-register window.
         Arc::new(move |run: CronActiveRun| {
             let mut runs = registry.lock().unwrap();
             match runs
                 .iter_mut()
                 .find(|existing| existing.run_id == run.run_id)
             {
-                Some(existing) => *existing = run,
+                Some(existing) => {
+                    let stop_requested = existing.stop_requested || run.stop_requested;
+                    *existing = run;
+                    existing.stop_requested = stop_requested;
+                }
                 None => runs.push(run),
             }
         }) as Arc<dyn Fn(CronActiveRun) + Send + Sync>
@@ -1318,6 +1532,33 @@ fn stop_requested_overrides_the_outcome() {
         *harness.releases.lock().unwrap(),
         ["cron:t1".to_owned()],
         "#2295 the session releases after the stopped run"
+    );
+}
+
+/// #2295 fix-r1: a panicking submit seam must not leak the registered run —
+/// TS's `finally` runs `unregisterActiveRun` even when the try block throws
+/// (CronFire.ts:150-202), so the port's panic path unregisters too (a
+/// residue would keep the run counted against the capacity gate forever and
+/// defer every later cron task).
+#[test]
+fn submit_panic_still_unregisters() {
+    let harness = fire_harness(false);
+    harness.seed(&[cron_body("t1", DUE)]);
+    harness
+        .gateway
+        .set_submit(|_| panic!("#2295 the submit seam throws"));
+    let error = harness
+        .fire
+        .run_task(&harness.snapshot(), &JsString::from("run-1"))
+        .expect_err("#2295 the panic must surface as the port's Err");
+    assert_eq!(
+        error.message().to_utf8().expect("#2295 messages are UTF-8"),
+        "#2295 the submit seam throws",
+        "#2295 the panic payload must ride the Err"
+    );
+    assert!(
+        harness.registry.lock().unwrap().is_empty(),
+        "#2295 a panicking submit seam must not leak the active run"
     );
 }
 
