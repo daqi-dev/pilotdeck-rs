@@ -1,0 +1,13 @@
+[package]
+name = "independent-capability-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+pilotdeck-protocol = { path = "../../../pilotdeck-protocol" }
+pilotdeck-budget = { path = "../../../pilotdeck-budget" }
+pilotdeck-context = { path = "../../../pilotdeck-context" }
+pilotdeck-model-anthropic = { path = "../../../pilotdeck-model-anthropic" }
