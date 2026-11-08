@@ -551,9 +551,24 @@ impl TurnHooks {
                 tokio::select! {
                     biased;
                     result = turn.wait_barrier() => result?,
-                    _ = signal.cancelled() => return Err(stale()),
+                    _ = async {
+                        // #996: barrier-cancel-lost never observes the
+                        // cancellation (live-session/schemata.py). Off — the
+                        // signal's own cancellation.
+                        if crate::mutants::on("barrier-cancel-lost") {
+                            std::future::pending::<()>().await;
+                        } else {
+                            signal.cancelled().await;
+                        }
+                    } => return Err(stale()),
                 }
-                input.signal = Some(signal);
+                // #996: session-signal-lost substitutes a fresh cancellation
+                // (live-session/schemata.py). Off — the barrier's signal.
+                input.signal = Some(if crate::mutants::on("session-signal-lost") {
+                    Cancellation::new()
+                } else {
+                    signal
+                });
             } else {
                 turn.wait_barrier().await?;
             }

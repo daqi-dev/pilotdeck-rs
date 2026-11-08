@@ -213,9 +213,9 @@ SEQUENTIAL_ROWS = {
     # table stays empty until another control needs an ordered replacement.
 }
 ROW_EXCEPTIONS = {
-    # #996: session-abort-contract/negative.py was deleted with its text table
-    # (the rows are compile-time switches in schemata.py now).
-    ('session-owner/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
+    # #996: session-abort-contract/negative.py and session-owner/negative.py
+    # were deleted with their text tables (the rows are compile-time switches
+    # in schemata.py now).
     ('session-admission/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
     ('connection-context/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',
     ('user-dialog-channel/negative.py', 'tampered-source-hash'): 'JSON provenance corruption, not a source replacement',

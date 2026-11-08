@@ -304,7 +304,11 @@ impl LiveSessionHandle {
 
     fn reserve_activity(&self, maintenance: bool) -> Result<HandleActivity, RuntimeError> {
         let mut progress = self.0.progress.lock().unwrap();
-        if progress.state != HandleState::Active {
+        // #996: reserve-activity-ignores-inactive-handle admits the activity
+        // anyway (session-owner/schemata.py). Off — the original guard.
+        if progress.state != HandleState::Active
+            && !crate::mutants::on("reserve-activity-ignores-inactive-handle")
+        {
             return Err(RuntimeError::new("Agent handle is not active."));
         }
         if progress.activity {
@@ -633,7 +637,11 @@ impl SessionSubmission {
     pub async fn next(&mut self) -> Result<Option<JsValue>, RuntimeError> {
         let result = self.stream.next().await;
         if !matches!(result, Ok(Some(_))) {
-            self._activity.take();
+            // #996: owner-slot-kept-after-none retains the activity slot
+            // (live-session/schemata.py). Off — the release.
+            if !crate::mutants::on("owner-slot-kept-after-none") {
+                self._activity.take();
+            }
         }
         result
     }

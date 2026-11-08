@@ -201,7 +201,12 @@ impl SteerMailbox {
             mailbox.record(&turn_id, insert).await?;
             let rejected = {
                 let mut state = mailbox.0.state.lock().unwrap();
-                if !state.open || state.turn_id.as_ref() != Some(&turn_id) {
+                // #996: steer-insert-after-close-accepted accepts inserts on
+                // a closed mailbox (live-session/schemata.py). Off — the
+                // original open check.
+                if (!state.open && !crate::mutants::on("steer-insert-after-close-accepted"))
+                    || state.turn_id.as_ref() != Some(&turn_id)
+                {
                     true
                 } else {
                     state.seen.insert(input.item_id.clone());

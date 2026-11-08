@@ -172,6 +172,20 @@ struct Inner {
 #[derive(Clone)]
 pub struct SessionOwner(Arc<Inner>);
 
+/// #996: ignore-stop-new-publication clears the stop flag around
+/// create_active's publication guard; Drop restores it on every exit,
+/// including unwinds. Inert unless compiled into a mutants test binary.
+struct StopFlagRestore {
+    inner: Arc<Inner>,
+    stopped: bool,
+}
+
+impl Drop for StopFlagRestore {
+    fn drop(&mut self) {
+        self.inner.state.lock().unwrap().stopped = self.stopped;
+    }
+}
+
 impl SessionOwner {
     #[cfg(test)]
     pub(super) fn creations_sent_for_test(&self) -> watch::Receiver<usize> {
@@ -383,6 +397,18 @@ impl SessionOwner {
                 }
             }
         };
+        // #996: ignore-stop-new-publication bypasses the stop refusal below
+        // (session-owner/schemata.py): the flag is cleared around the
+        // publication read and restored on every exit by the drop guard — the
+        // same read the old mutation's disabled guard made. Off — the flag is
+        // untouched.
+        let _restore_stop = crate::mutants::on("ignore-stop-new-publication").then(|| {
+            let mut state = self.0.state.lock().unwrap();
+            StopFlagRestore {
+                inner: self.0.clone(),
+                stopped: std::mem::replace(&mut state.stopped, false),
+            }
+        });
         if let Err(cause) = self
             .0
             .options
@@ -464,7 +490,11 @@ impl SessionOwner {
             .unwrap()
             .records
             .get(key)
-            .is_some_and(|record| record.handle.same_identity(handle))
+            // #996: old-handle-is-current reports any cached record as the
+            // current owner. Off — the identity check.
+            .is_some_and(|record| {
+                crate::mutants::on("old-handle-is-current") || record.handle.same_identity(handle)
+            })
     }
 
     pub fn current_handle(&self, key: &JsString) -> Option<LiveSessionHandle> {
@@ -546,6 +576,11 @@ impl SessionOwner {
 
     pub fn complete_turn(&self, key: &JsString, handle: &TurnCompletionHandle) {
         let mut state = self.0.state.lock().unwrap();
+        // #996: old-complete-releases-new-owner ends the reservation unfenced
+        // before the completion-owner cleanup. Off — the identity-filtered end.
+        if crate::mutants::on("old-complete-releases-new-owner") {
+            self.0.turns.admission.end_turn(key, None, None);
+        }
         let current = self.0.turns.completion.is_current(key, handle);
         self.0.turns.completion.complete(key, handle);
         if current && let Some(owner) = state.completion_owners.remove(key) {
@@ -671,10 +706,12 @@ impl SessionOwner {
                                     .is_some_and(|record| record.handle.same_identity(handle))
                             })
                     });
-                if active
+                let stale = active
                     .as_ref()
-                    .map_or(!exact_completion_owner, |active| active != run)
-                {
+                    .map_or(!exact_completion_owner, |active| active != run);
+                // #996: unchecked-live-abort rechecks nothing and aborts the
+                // current writer anyway. Off — the original fence.
+                if stale && !crate::mutants::on("unchecked-live-abort") {
                     return Ok(());
                 }
             }
@@ -695,10 +732,25 @@ impl SessionOwner {
         // own result; no entry means `await undefined`: fulfilled. The
         // whole-shutdown aggregate stays shutdown()'s own answer
         // (A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001, #1245).
-        if let Some(closing) = unsettled_closing(&mut state, key) {
-            return Box::pin(wait_result(closing));
+        // #996 switches (session-owner/schemata_close_shutdown.py):
+        // close-during-shutdown-aggregate reverts to the pre-alignment
+        // branch — every close while shutdown is set answers the aggregate
+        // and the per-key branches are skipped entirely. Off — the
+        // #1245 shape.
+        let aggregate = crate::mutants::on("close-during-shutdown-aggregate");
+        if aggregate && let Some(shutdown) = state.shutdown.clone() {
+            return Box::pin(wait_result(shutdown));
         }
-        if state.shutdown.is_some() {
+        if !aggregate && let Some(closing) = unsettled_closing(&mut state, key) {
+            // #996: close-else-awaits-nothing settles immediately instead of
+            // awaiting the mid-flight eviction. Off — the original await.
+            return if crate::mutants::on("close-else-awaits-nothing") {
+                Box::pin(async { Ok(()) })
+            } else {
+                Box::pin(wait_result(closing))
+            };
+        }
+        if !aggregate && state.shutdown.is_some() {
             return Box::pin(async { Ok(()) });
         }
         let ticket = ticket(&mut state, key);
@@ -708,55 +760,91 @@ impl SessionOwner {
             .get(key)
             .and_then(|record| record.context.project_key.clone());
         track(&mut state, project, completion.clone());
-        state.closings.insert(key.clone(), completion.clone());
+        // #996: close-call-registration-removed drops the close task's closing
+        // registration. Off — the original insert.
+        if !crate::mutants::on("close-call-registration-removed") {
+            state.closings.insert(key.clone(), completion.clone());
+        }
         let settle = done.clone();
         let owner = self.clone();
         let key = key.clone();
-        super::super::cleanup_task::spawn_with_error(
-            &tokio::runtime::Handle::current(),
-            done,
-            RuntimeError::new("Session close task was dropped or panicked before completion."),
-            async move {
-                // #1245 settle-before-release: the serial ticket moves into
-                // the closing guard, whose `Drop` writes the key's closing
-                // entry strictly before the ticket is released — after the
-                // release a queued same-key get_or_create may publish a new
-                // record, and shutdown's skip must never see this entry
-                // unsettled then, or that record would escape every drain
-                // list. TS has no such gap: getOrCreateActive awaits
-                // closingSessions first. On a panic or abort no outcome is
-                // staged, so the outer `Completion` guard settles this entry
-                // with its dropped error after the ticket's release instead.
-                let mut closing = ClosingGuard::new(settle, Some(ticket.enter().await));
-                let (record, identity) = {
-                    let mut state = owner.0.state.lock().unwrap();
-                    state.order.retain(|item| item != &key);
-                    state.completion_owners.remove(&key);
-                    (
-                        state.records.remove(&key),
-                        owner.0.turns.admission.turn_identity(&key),
-                    )
-                };
-                let outcome = if let Some(record) = record {
-                    // #1055 ②: an evicted record's unconsumed creation or
-                    // cleanup error would otherwise die with it; the closing
-                    // caller receives it, aggregated beside a failed
-                    // disposal's own error.
-                    let pending = record.unreported_creation_error.clone();
-                    let result = owner.evict(&key, record, EvictionReason::Closed).await;
-                    let _state = owner.0.state.lock().unwrap();
+        // #996: closing-settle-write-removed also redirects the close task's
+        // `done` sender to a fresh channel (the old paired mutation's second
+        // site), so the entry never receives the completion guard's error
+        // either; `settle_write` turns the guard's own write off.
+        let settle_write = !crate::mutants::on("closing-settle-write-removed");
+        let done = if settle_write {
+            done
+        } else {
+            watch::channel(None).0
+        };
+        let task = async move {
+            // #1245 settle-before-release: the serial ticket moves into
+            // the closing guard, whose `Drop` writes the key's closing
+            // entry strictly before the ticket is released — after the
+            // release a queued same-key get_or_create may publish a new
+            // record, and shutdown's skip must never see this entry
+            // unsettled then, or that record would escape every drain
+            // list. TS has no such gap: getOrCreateActive awaits
+            // closingSessions first. On a panic or abort no outcome is
+            // staged, so the outer `Completion` guard settles this entry
+            // with its dropped error after the ticket's release instead.
+            // #996: close-without-ticket-serialization skips the ticket
+            // entirely (session-owner/schemata.py). Off — the serialized
+            // entry.
+            let serialized = if crate::mutants::on("close-without-ticket-serialization") {
+                None
+            } else {
+                Some(ticket.enter().await)
+            };
+            let mut closing = ClosingGuard::new(settle, serialized, settle_write);
+            let (record, identity) = {
+                let mut state = owner.0.state.lock().unwrap();
+                state.order.retain(|item| item != &key);
+                state.completion_owners.remove(&key);
+                (
+                    state.records.remove(&key),
+                    owner.0.turns.admission.turn_identity(&key),
+                )
+            };
+            let outcome = if let Some(record) = record {
+                // #1055 ②: an evicted record's unconsumed creation or
+                // cleanup error would otherwise die with it; the closing
+                // caller receives it, aggregated beside a failed
+                // disposal's own error.
+                let pending = record.unreported_creation_error.clone();
+                let result = owner.evict(&key, record, EvictionReason::Closed).await;
+                let _state = owner.0.state.lock().unwrap();
+                // #996: old-close-clears-new-reservation ends any same-key
+                // reservation unfenced. Off — the identity-filtered end.
+                if crate::mutants::on("old-close-clears-new-reservation") {
+                    owner.0.turns.admission.end_turn(&key, None, None);
+                } else {
                     owner
                         .0
                         .turns
                         .admission
                         .end_identity(&key, identity.as_ref());
-                    combine_pending_error(result, pending)
-                } else {
-                    Ok(())
-                };
-                closing.settle(outcome)
-            },
-        );
+                }
+                combine_pending_error(result, pending)
+            } else {
+                Ok(())
+            };
+            closing.settle(outcome)
+        };
+        // #996: close-panic-guard-removed spawns the task bare, losing the
+        // completion guard (#1365 fix-r1). Off — the guarded spawn.
+        if crate::mutants::on("close-panic-guard-removed") {
+            drop(done);
+            tokio::spawn(task);
+        } else {
+            super::super::cleanup_task::spawn_with_error(
+                &tokio::runtime::Handle::current(),
+                done,
+                RuntimeError::new("Session close task was dropped or panicked before completion."),
+                task,
+            );
+        }
         Box::pin(wait_result(completion))
     }
 
@@ -840,14 +928,23 @@ impl SessionOwner {
                 #[cfg(test)]
                 let no_pending_error =
                     no_pending_error || option_env!("PDRS_1022_R3_SWEEP_PENDING_ERROR").is_some();
-                !state
-                    .gates
-                    .get(*key)
-                    .is_some_and(|gate| gate.strong_count() > 0)
+                // #996 switches (session-owner/schemata.py). Off — the
+                // original conjuncts: no in-flight gate, no active turn, no
+                // maintenance, and the idle timeout strictly exceeded.
+                let idle_for = now.saturating_sub(record.last_used);
+                (crate::mutants::on("idle-ignores-inflight-and-queued-close")
+                    || !state
+                        .gates
+                        .get(*key)
+                        .is_some_and(|gate| gate.strong_count() > 0))
                     && no_pending_error
-                    && !self.0.turns.admission.has_active_turn(key)
-                    && !self.0.turns.admission.has_maintenance(key)
-                    && now.saturating_sub(record.last_used) > self.0.options.idle_timeout_ms
+                    && (crate::mutants::on("idle-ignores-active-turn")
+                        || !self.0.turns.admission.has_active_turn(key))
+                    && (crate::mutants::on("idle-ignores-maintenance")
+                        || !self.0.turns.admission.has_maintenance(key))
+                    && (idle_for > self.0.options.idle_timeout_ms
+                        || (crate::mutants::on("idle-strict-boundary-inclusive")
+                            && idle_for >= self.0.options.idle_timeout_ms))
             })
             .cloned()
             .collect();
@@ -862,9 +959,23 @@ impl SessionOwner {
                 record.context.project_key.clone(),
                 completion.clone(),
             );
-            state.closings.insert(key.clone(), completion);
+            // #996: idle-sweep-registration-removed drops the idle eviction's
+            // closing registration (schemata_close_shutdown.py). Off — the
+            // original insert.
+            if !crate::mutants::on("idle-sweep-registration-removed") {
+                state.closings.insert(key.clone(), completion);
+            }
             let owner = self.clone();
             let settle = done.clone();
+            // #996: idle-settle-write-removed also redirects the idle task's
+            // `done` sender to a fresh channel (the old paired mutation's
+            // second site); `settle_write` turns the guard's own write off.
+            let settle_write = !crate::mutants::on("idle-settle-write-removed");
+            let done = if settle_write {
+                done
+            } else {
+                watch::channel(None).0
+            };
             super::super::cleanup_task::spawn_with_error(
                 &tokio::runtime::Handle::current(),
                 done,
@@ -878,7 +989,8 @@ impl SessionOwner {
                     // guard writes the entry, then releases the ticket; a
                     // panic or abort leaves the entry to the outer
                     // `Completion` guard instead.
-                    let mut closing = ClosingGuard::new(settle, Some(ticket.enter().await));
+                    let mut closing =
+                        ClosingGuard::new(settle, Some(ticket.enter().await), settle_write);
                     let outcome = owner.evict(&key, record, EvictionReason::Idle).await;
                     closing.settle(outcome)
                 },
@@ -912,7 +1024,16 @@ impl SessionOwner {
             // failure through the pending drain (#1245 fix-r1). The
             // recreation-serialization divergence (A7.2-SESSION-RECREATE-
             // DRAIN-001) keeps the record available for such a close.
-            if unsettled_closing(&mut state, &key).is_some() {
+            // #996 switches (schemata_close_shutdown.py): shutdown-steals-
+            // close-owned-record drops the skip entirely (fix-r1); off — the
+            // original skip. shutdown-skip-stops-draining breaks the drain
+            // order instead of continuing past the closing key (fix-r2).
+            if !crate::mutants::on("shutdown-steals-close-owned-record")
+                && unsettled_closing(&mut state, &key).is_some()
+            {
+                if crate::mutants::on("shutdown-skip-stops-draining") {
+                    break;
+                }
                 continue;
             }
             if let Some(record) = state.records.remove(&key) {
@@ -942,13 +1063,18 @@ impl SessionOwner {
                     // arrives mid-flight transmits this drain's own result
                     // instead of the whole-shutdown aggregate.
                     let (drain_done, drain_completion) = watch::channel(None);
-                    owner
-                        .0
-                        .state
-                        .lock()
-                        .unwrap()
-                        .closings
-                        .insert(key.clone(), drain_completion);
+                    // #996: shutdown-drain-registration-removed drops the
+                    // drain's closing registration. Off — the original
+                    // insert.
+                    if !crate::mutants::on("shutdown-drain-registration-removed") {
+                        owner
+                            .0
+                            .state
+                            .lock()
+                            .unwrap()
+                            .closings
+                            .insert(key.clone(), drain_completion);
+                    }
                     drains.push(drain_done.subscribe());
                     // Same completion guard as the close and idle tasks: a
                     // panicked or dropped disposal settles the key's closing
@@ -958,24 +1084,36 @@ impl SessionOwner {
                     // branch (TS: `await closingSessions.get(key)` after
                     // finishEviction removed the entry → undefined →
                     // fulfilled).
-                    super::super::cleanup_task::spawn_with_error(
-                        &tokio::runtime::Handle::current(),
-                        drain_done,
-                        RuntimeError::new(
-                            "Session disposal task was dropped or panicked before completion.",
-                        ),
-                        async move {
-                            // #1055 ②: fold each record's unconsumed creation or
-                            // cleanup error into the shutdown aggregate, aggregated
-                            // beside a failed disposal's own error, so neither is
-                            // dropped.
-                            let pending = record.unreported_creation_error.clone();
-                            combine_pending_error(
-                                owner.evict(&key, record, EvictionReason::Shutdown).await,
-                                pending,
-                            )
-                        },
-                    );
+                    let dispose = async move {
+                        // #1055 ②: fold each record's unconsumed creation or
+                        // cleanup error into the shutdown aggregate, aggregated
+                        // beside a failed disposal's own error, so neither is
+                        // dropped.
+                        let pending = record.unreported_creation_error.clone();
+                        combine_pending_error(
+                            owner.evict(&key, record, EvictionReason::Shutdown).await,
+                            pending,
+                        )
+                    };
+                    // #996: drain-guard-removed spawns the per-key disposal
+                    // bare, losing the completion guard (fix-r2). Off — the
+                    // guarded spawn.
+                    if crate::mutants::on("drain-guard-removed") {
+                        let settle = drain_done.clone();
+                        tokio::spawn(async move {
+                            let result = dispose.await;
+                            settle.send_replace(Some(result));
+                        });
+                    } else {
+                        super::super::cleanup_task::spawn_with_error(
+                            &tokio::runtime::Handle::current(),
+                            drain_done,
+                            RuntimeError::new(
+                                "Session disposal task was dropped or panicked before completion.",
+                            ),
+                            dispose,
+                        );
+                    }
                 }
                 for drain in drains {
                     if let Err(error) = wait_result(drain).await {
@@ -1140,13 +1278,18 @@ impl Ticket {
 }
 impl Drop for Ticket {
     fn drop(&mut self) {
-        self.done.send_replace(true);
+        // #996: ticket-release-write-removed deletes the release write — a
+        // registered EQUIVALENT row (schemata_equivalent.py). Off — the
+        // original write.
+        if !crate::mutants::on("ticket-release-write-removed") {
+            self.done.send_replace(true);
+        }
         // #1365: the probe records the release event (and its order against
         // the settle), not the write above it. A dropped sender wakes
         // `enter`'s `wait_for` exactly like `send_replace(true)` — the
         // receiver returns `Err`, which `enter` ignores — so deleting the
         // write is an equivalent mutation and no event sequence can witness
-        // it. See the fixture's EQUIVALENT registry.
+        // it. See the fixture's equivalent schemata.
         #[cfg(test)]
         settle_order::record("ticket-released");
     }
@@ -1166,13 +1309,23 @@ struct ClosingGuard {
     settle: watch::Sender<Option<RuntimeResult>>,
     outcome: Option<RuntimeResult>,
     exclusive: Option<Ticket>,
+    // #996: the paired settle-write rows (closing-settle-write-removed,
+    // idle-settle-write-removed) turn this Drop write off through the flag of
+    // the task that owns the redirected sender, keeping each switch to its
+    // single call site.
+    write_settle: bool,
 }
 impl ClosingGuard {
-    fn new(settle: watch::Sender<Option<RuntimeResult>>, exclusive: Option<Ticket>) -> Self {
+    fn new(
+        settle: watch::Sender<Option<RuntimeResult>>,
+        exclusive: Option<Ticket>,
+        write_settle: bool,
+    ) -> Self {
         Self {
             settle,
             outcome: None,
             exclusive,
+            write_settle,
         }
     }
     /// Stage the outcome for the settle-on-drop; the closing entry itself is
@@ -1184,8 +1337,16 @@ impl ClosingGuard {
 }
 impl Drop for ClosingGuard {
     fn drop(&mut self) {
+        // #996: settle-after-release releases the serial ticket before the
+        // settle write (the old mutation moved the release first). Off — the
+        // settle-then-release order.
+        if crate::mutants::on("settle-after-release") {
+            self.exclusive = None;
+        }
         if let Some(outcome) = self.outcome.take() {
-            self.settle.send_replace(Some(outcome));
+            if self.write_settle {
+                self.settle.send_replace(Some(outcome));
+            }
             #[cfg(test)]
             settle_order::record("closing-settled");
         }
@@ -1195,6 +1356,11 @@ impl Drop for ClosingGuard {
 }
 
 fn ticket(state: &mut State, key: &JsString) -> Ticket {
+    // #996: global-factory-wait serializes every key behind one shared gate
+    // (the old mutation rebound the key to "global"). Off — the key's own
+    // gate.
+    let global = crate::mutants::on("global-factory-wait").then(|| JsString::from("global"));
+    let key = global.as_ref().unwrap_or(key);
     let serial = state
         .gates
         .get(key)
@@ -1216,7 +1382,12 @@ fn ticket(state: &mut State, key: &JsString) -> Ticket {
 }
 
 fn project_paused(state: &State, project: Option<&JsString>) -> bool {
-    project.is_some_and(|project| !project.is_empty() && state.paused_projects.contains(project))
+    project.is_some_and(|project| {
+        // #996: empty-project-is-paused drops the non-empty check. Off — the
+        // original conjunction.
+        (crate::mutants::on("empty-project-is-paused") || !project.is_empty())
+            && state.paused_projects.contains(project)
+    })
 }
 
 /// #1055 ②: only the factory's transient drain-timeout error is retriable.

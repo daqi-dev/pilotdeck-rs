@@ -197,9 +197,20 @@ impl Recording {
         if let Some(resume) = self.resume.take() {
             let _ = resume.send(());
         }
+        // #996: waiter-takes-transition moves the pending future out before
+        // the settle polls it (live-recording/schemata.py): a progress event
+        // then cancels the transition instead of leaving it for the next
+        // settle. Off — the borrowed future below.
+        let mut taken: Option<Pin<Box<dyn Future<Output = Transition> + Send>>> = None;
+        if crate::mutants::on("waiter-takes-transition") {
+            taken = self.pending.take();
+        }
         let pending = self
             .pending
             .as_mut()
+            // the taken future stands in for the borrowed one; the in-chain
+            // comment keeps rustfmt from reflowing the anchored chain
+            .or(taken.as_mut())
             .ok_or_else(|| RecorderError::State("No recording transition is pending.".into()))?;
         let outcome = tokio::select! {
             outcome = pending => outcome,

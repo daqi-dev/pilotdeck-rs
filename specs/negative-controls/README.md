@@ -63,9 +63,13 @@
     共享 `mutant_switch.run` 后必须传 `receipts=True`——负控相子进程携带本轮回执
     配置，判杀只认被绑定断言写出的本轮 nonce 回执加具名 FAILED 行；setup 失败、
     诊断文本恰含锚点、回显 nonce 均判 INVALID（#889 replay 反例对迁移后入口重跑，
-    `_shared/test_mutant_switch.py` 的 `ReceiptProtocolTests`）。本 PR 五个旧入口中
+    `_shared/test_mutant_switch.py` 的 `ReceiptProtocolTests`）。#996-pr2 五个旧入口中
     仅 tool-budget-cwd 用回执判杀，已接回；其余四个旧入口为文本 classify，语义
-    不变。`--negative-controls` 把 `judge` 换成 prose 判杀（迁移丢回执的形状）后
+    不变。#996 批次三按旧基线逐夹具判定，不按新入口偏好：live-session 旧
+    `matrix_main` 表以回执判杀（基线 reason 为具名断言 + 本轮 nonce 回执），迁移后
+    传 `receipts=True`；live-recording 旧脚本走 legacy `run_cases`/classify 判杀
+    （基线 reason「bound test failed at its assertion」且无 `.receipts` 目录），不传
+    回执。`--negative-controls` 把 `judge` 换成 prose 判杀（迁移丢回执的形状）后
     replay 自测必须死在 `#996-pr3` 断言；把回执配置改为不下发后，真实回执判杀
     自测必须死在 `#996-pr3` 断言。
 
