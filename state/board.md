@@ -5088,3 +5088,8 @@ d2c4已整合插件诊断/空hooks测试及token回退四格、TCP清理候选�
 ### 2026-11-09 02:12 · 默认技能交付与插件命令接入
 
 用户明确授权仅复用固定旧32技能，0fa3ec7fc按原Git blob和模式导入109文件/793106 bytes，原许可与逐文件SHA清单随源码交付；安装器同代skills切换、外部root优先及旧代保留已源码实现，待mbp2测试。711b814fd接入session冻结命令展开，16格真TS oracle可复采字节相同，尚未编译；root新增真实32技能catalog/read_skill回归。多项目Sol、声明loader audit及MCP UTF16端到端上下文Terra仍实施；不是仅待验收。r84旧固定源全Gateway已有4584实际PASS/0FAILED但未结束；优先负控6KILLED、manager一INVALID待36e7精确子断言复跑，其余继续。三类check_frozen对d9dd9a093全0；双谱系当前增量审中。仅本机提交、Rust全在mbp2，无GitHub写，02:41交接继续。
+
+
+### 2026-11-09 02:41 · CLI 两小时接续（继续开发）
+
+r89 全CLI546过0失败140忽略，默认32技能catalog/read_skill、插件MCP/命令/UTF16上下文均实际通过；冻结bin真实三轮old/new/old命令与stdio MCP/模型请求闭环通过。多项目资源首轮真实reload失败，已定位ExecutionWorld family每代重建丢archive共享，Sol修产品；Terra按owner/replay来源隔离history，audit补每项目memory能力，不能以旧TS跨项目混用行为当安全标准。r90新loader测试两处不存在JsString方法首编失败，f5已源修，未计通过。r84全Gateway5327过4失败249忽略，四失败同bin/same256limit独立运行均过，但原低FD单进程累积问题仍未关闭；优先负控10KILL1INVALID+6在跑，旧manager INVALID待修后复验。现场/责任/证据见主仓 `_tmp/20261108-cli-completion/handoff-0241.md`；仅本机提交、Rust全mbp2，唯一正本与旧树快照保持。本机明确归属约1.89GiB无Rust产物，完整CLI/阶段D人签仍未完成，下个04:41交接后继续。
