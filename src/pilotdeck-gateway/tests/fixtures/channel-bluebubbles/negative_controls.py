@@ -76,6 +76,26 @@ MUTATIONS = [
      'const MESSAGE_LIMIT: u32 = 50;',
      'const MESSAGE_LIMIT: u32 = 51;',
      GOLDEN, '#1343 case first-poll-hello-reply matches the TS oracle'),
+    # #2285 ①: `sendReply`'s `AbortSignal.timeout(120_000)` is the semantic
+    # sibling of MESSAGE_LIMIT; moving the deadline off the TS literal must
+    # fail the constant pin.
+    ('send-timeout-changed', source / 'mod.rs',
+     'const SEND_TIMEOUT: Duration = Duration::from_millis(120_000);',
+     'const SEND_TIMEOUT: Duration = Duration::from_millis(120_001);',
+     'bluebubbles::tests::send_timeout_is_the_ts_abort_deadline',
+     '#2285 the reply POST keeps the TS AbortSignal.timeout(120_000) deadline'),
+    # #2285 ②: the poll driver holds the runtime only weakly, so a channel
+    # dropped without stop ends it; re-arming a strong reference (the TS
+    # leak shape) keeps the dropped channel polling forever.
+    ('driver-weak-reverted', source / 'mod.rs',
+     '        let driver = tokio::spawn(async move {\n'
+     '            let mut timer = tokio::time::interval(POLL_MS);\n',
+     '        let driver = tokio::spawn(async move {\n'
+     '            let _hold = weak.upgrade();\n'
+     '            let mut timer = tokio::time::interval(POLL_MS);\n',
+     'bluebubbles::tests::poll_driver_exits_when_runtime_is_dropped',
+     '#2285 dropping a started channel without stop ends the poll driver '
+     '(the server keeps seeing polls after the drop)'),
     # The poll GET's only bound is the undici default 300 s deadline
     # (measured 301,257 ms on Node v22.22.0); unwiring that deadline must
     # fail the silent-server behavioral pin.
@@ -87,6 +107,58 @@ MUTATIONS = [
      '            std::time::Duration::from_secs(100000),\n',
      'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
      '#1343 a silent server settles the no-signal poll GET at the undici default'),
+    # #2285 r4 ④: a deadline drifting into the (300 s, 400 s) blind window
+    # still settles the outcome assertion; only the elapsed pin kills it.
+    ('unbounded-timeout-drift-350s',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     '        match tokio::time::timeout(\n'
+     '            UNDICI_DEFAULT_TIMEOUT,\n',
+     '        match tokio::time::timeout(\n'
+     '            std::time::Duration::from_secs(350),\n',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 the settle deadline is the undici default, not a later bound'),
+    # #2285 r4 ④: the folded constant pin — moving the measured undici
+    # default off 300 s dies on the value pin before any exchange runs.
+    ('unbounded-constant-changed',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     'pub(crate) const UNDICI_DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);',
+     'pub(crate) const UNDICI_DEFAULT_TIMEOUT: Duration = Duration::from_secs(301);',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 the no-signal poll GET stays bounded at the undici default'),
+    # #2285 r4 ⑤: an exchange that never writes any bytes must fail the
+    # wall-clock watchdog namedly instead of hanging the paused-clock test
+    # with the keeper spinning on one core.
+    ('request-stalls-before-bytes',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     '        let exchange = async {\n',
+     '        let exchange = async {\n'
+     '            std::future::pending::<()>().await;\n',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 server never saw the request'),
+    # #2285 r4 ⑤: a request that ends before the server saw any bytes must
+    # fail the is_finished race namedly (the watchdog's other branch).
+    ('request-dies-before-receipt',
+     root / 'src/pilotdeck-gateway/src/channel/http_client.rs',
+     '        let request = builder\n'
+     '            .body(Full::new(Bytes::from(body.to_owned())))\n'
+     '            .map_err(|error| format!("TypeError: {error}"))?;\n',
+     '        let request = builder\n'
+     '            .body(Full::new(Bytes::from(body.to_owned())))\n'
+     '            .map_err(|error| format!("TypeError: {error}"))?;\n'
+     '        return Ok(HttpResponse { status: 200, status_text: "", body: Bytes::new() });\n',
+     'http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default',
+     '#1343 the request task ends only after the server saw the request'),
+    # #2285 r2 ④: a stray stamped with a foreign epoch — the exact leak the
+    # old `arm()` clear used to hide — must fail the case that observes it,
+    # not be silently dropped by the next arm.
+    ('strays-foreign-epoch', tests,
+     '                                let index = record.polls;\n'
+     '                                record.polls += 1;\n',
+     '                                let index = record.polls;\n'
+     '                                record.polls += 1;\n'
+     '                                mock.strays.lock().expect("#1343 stray mutex")\n'
+     '                                    .push((0, format!("{method} {path}")));\n',
+     GOLDEN, '#2285 every stray lands inside the case that armed it (case first-poll-hello-reply)'),
     # A8.3-CHANNEL-BLUEBUBBLES-001-R2: the implemented channel must not be in
     # the unmigrated rejection table; re-inserting the key refuses startup
     # for the subset the loader test keeps loadable.

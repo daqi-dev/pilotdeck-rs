@@ -101,8 +101,45 @@ drain · 004 restart 同 guid 通道层再派发 · 005 非法 serverUrl 不炸�
   `headersTimeout`（实测 301,257 ms）为总界收口，错误串保持 TS 同形的
   `TypeError: fetch failed`；组件钉子
   `http_client::tests::request_unbounded_settles_a_silent_server_at_the_undici_default`
-  用暂停时钟（keeper + receipt 防空转）钉 300 s 定界与错误串，负控
-  `unbounded-timeout-dropped` 删界必被杀。
+  用暂停时钟（keeper + receipt 防空转）钉 300 s 定界与错误串，elapsed 钉
+  落在 `[300 s, 301 s)` 容忍带（#2285 r4 评论 4/⑤），receipt 等待带
+  10 s 墙钟看门狗与 `is_finished` 竞速（#2285 r4 ⑤，失败路径具名不挂起，
+  `clock_held` 改 Drop guard 任何退出都释放冻结时钟）。负控
+  `unbounded-timeout-dropped` 删界必被杀；`unbounded-timeout-drift-350s`
+  钉 (300 s, 400 s) 漂移盲区由 elapsed 断言具名杀、`unbounded-constant-changed`
+  钉常量值、`request-stalls-before-bytes` / `request-dies-before-receipt`
+  钉看门狗两支（#2285 r4 ④⑤）。
+
+## #2285 poll driver 收口（未 stop 丢弃 / JoinHandle / SEND_TIMEOUT / strays 纪元）
+
+- **② drop-without-stop**：TS 的形态是泄漏的 `setInterval`（unsupported
+  start-without-stop flow，本金样不覆盖）；Rust 收紧为 driver 任务只持
+  `Weak<Runtime>`，升级失败即退出——`poll_driver_exits_when_runtime_is_dropped`
+  钉两个观察量（服务端轮询停增 + `Runtime` 释放），负控
+  `driver-weak-reverted` 回退强引用必被杀。已 stop / 正常 restart 的金样
+  路径行为不变（16 用例全绿）。
+- **③ JoinHandle / panic 检测**：interval 任务句柄保留（api_server
+  `Listener.task` 形态），`stop` 先 abort 再有界 await（20 s 上界，不引入
+  无界等待）；panic 早于 stop 时记 `error` 日志。per-tick 轮询任务保持
+  TS `void this.pollMessages()` 的逐字 fire-and-forget 形态。**已登记偏差**：
+  TS 侧 `pollMessages` 的 try/catch 把失败记成 `poll error` 日志后继续轮询，
+  Rust 侧 poll 任务 panic 被 tokio 吞掉、无日志（句柄按 TS 形态不保留），
+  但 interval 继续轮询、`stop` 仍返回 Ok——行为面（轮询不停、running 闸门、
+  stop 可收）一致，仅缺错误日志；`poll_task_panic_does_not_stop_the_driver`
+  用脚本网关 turn-index 互斥量投毒注入 panic 钉该行为面。
+- **① SEND_TIMEOUT**：`sendReply` 的 `AbortSignal.timeout(120_000)` 与
+  `MESSAGE_LIMIT` 同为进请求字节的常量，同口径处理——常量钉
+  `send_timeout_is_the_ts_abort_deadline` + 负控 `send-timeout-changed`。
+- **r2 ④ arm 清空 strays**：`arm()` 不再清 strays、改记用例纪元
+  （`strays: Vec<(epoch, request)>`），断言「stray 的 epoch == 观察到它的
+  用例」+「本纪元无 stray」；上一用例泄漏的晚到 poll 具名失败而不是被
+  下一 `arm()` 静默清掉。负控 `strays-foreign-epoch` 注入外纪元 stray。
+- **r2 ⑤ SETTLE**：disarm 前的排空从固定 50 ms 改为自扩展重试（50 ms
+  一轮、计数仍在动则续等、上限 4 轮 = 200 ms）：慢机 / 重负载下回环套接字
+  里已在途的字节仍落在自己用例的 armed 窗口；超脚本槽位的轮询只拿兜底
+  `{}`、在去重投影里不可见，扩展窗口不会改变绿快照；整体仍受 `DEADLINE`
+  20 s 总界约束（排空后的静默检查仍为固定 SETTLE，其语义是断言「 arrivals
+  停止」而非等待排空）。
 
 ## 重生成
 
@@ -144,6 +181,9 @@ v22.22.0 实测字面量。
 `negative_controls.py` 形态照 channel-feishu：`--check` 校验锚点；
 `OUT [mutation …]` 在落盘后的 HEAD 树上执行（`mutating_sources` 拒绝未提交的
 产品文件）。变异锚点覆盖 seen 去重删除、fromMe 闸反转、时间戳推进删除、
-`/new` 回复删除、sendReply running 闸删除、MESSAGE_LIMIT 改值、拒绝表回插
-bluebubbles、无信号轮询 GET 的 300 s 总界删除，以及 oracle 三重校验各一
+`/new` 回复删除、sendReply running 闸删除、MESSAGE_LIMIT 改值、SEND_TIMEOUT
+改值（#2285 ①）、driver 强引用回退（#2285 ②）、拒绝表回插 bluebubbles、
+无信号轮询 GET 的 300 s 总界删除、(300 s, 400 s) 漂移 350 s 与常量改值
+（#2285 r4 ④）、receipt 看门狗「字节前停摆 / 到达前死亡」两支（#2285 r4 ⑤）、
+strays 外纪元（#2285 r2 ④），以及 oracle 三重校验各一
 条；先 `--compile-only` 全过再交协调者跑 OUT。

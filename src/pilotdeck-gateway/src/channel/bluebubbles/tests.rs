@@ -409,7 +409,13 @@ struct Mock {
     armed: Mutex<Option<Arc<Mutex<Record>>>>,
     scripted_polls: Mutex<Vec<(u16, String)>>,
     scripted_sends: Mutex<Vec<(u16, String)>>,
-    strays: Mutex<Vec<String>>,
+    /// (case epoch, request) — the epoch is stamped when the server task
+    /// reads the request, so a poll leaking past its case's end is charged
+    /// to that case by name instead of being silently cleared by the next
+    /// `arm()` (#2285 r2 ④; `arm()` increments the epoch and no longer
+    /// clears).
+    strays: Mutex<Vec<(u64, String)>>,
+    epoch: std::sync::atomic::AtomicU64,
 }
 
 impl Mock {
@@ -419,6 +425,7 @@ impl Mock {
             scripted_polls: Mutex::new(Vec::new()),
             scripted_sends: Mutex::new(Vec::new()),
             strays: Mutex::new(Vec::new()),
+            epoch: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -439,14 +446,24 @@ impl Mock {
             .unwrap_or_default()
     }
 
-    fn arm(&self, case: &Value, record: Arc<Mutex<Record>>) {
+    /// Arms the mock for one case and returns that case's epoch. The epoch
+    /// increments here; strays are never cleared anymore — a leftover from
+    /// an earlier case must fail the case that observes it, not vanish
+    /// (#2285 r2 ④: the `arm()` clear traded r1's false FAIL for a silent
+    /// false-PASS window that nothing tested).
+    fn arm(&self, case: &Value, record: Arc<Mutex<Record>>) -> u64 {
+        let epoch = self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         *self.armed.lock().expect("#1343 armed mutex") = Some(record);
         *self.scripted_polls.lock().expect("#1343 poll script") = Self::scripted(case, "polls");
         *self.scripted_sends.lock().expect("#1343 send script") = Self::scripted(case, "sends");
-        // A strays entry from a previous case (a poll that the server task
-        // only processed after that case's own stray check) would otherwise
-        // be charged to the next case and fail it (review r1 P2 arbitration).
-        self.strays.lock().expect("#1343 stray mutex").clear();
+        epoch
+    }
+
+    fn stray(&self, text: String) {
+        self.strays
+            .lock()
+            .expect("#1343 stray mutex")
+            .push((self.epoch.load(std::sync::atomic::Ordering::SeqCst), text));
     }
 
     fn disarm(&self) {
@@ -491,10 +508,7 @@ async fn start_mock_on(mock: Arc<Mock>, port: u16) {
                         };
                         let record = mock.armed.lock().expect("#1343 armed mutex").clone();
                         let Some(record) = record else {
-                            mock.strays
-                                .lock()
-                                .expect("#1343 stray mutex")
-                                .push(format!("{method} {path}"));
+                            mock.stray(format!("{method} {path}"));
                             return Ok::<_, std::io::Error>(respond(200, "{}"));
                         };
                         if method == "GET" && path == "/api/v1/message" {
@@ -556,10 +570,7 @@ async fn start_mock_on(mock: Arc<Mock>, port: u16) {
                         // ever uses is a divergence the strays check
                         // reports loudly (the generator's handler asserts
                         // instead, failing its own run).
-                        mock.strays
-                            .lock()
-                            .expect("#1343 stray mutex")
-                            .push(format!("unexpected {method} {path}"));
+                        mock.stray(format!("unexpected {method} {path}"));
                         Ok(respond(200, "{}"))
                     }
                 });
@@ -591,6 +602,37 @@ fn turn_scripts(case: &Value) -> Vec<TurnScript> {
         .unwrap_or_default()
 }
 
+/// The generator's post-case quiescence window (`ticks(50)`), made
+/// self-extending for the disarm drain (#2285 r2 ⑤): one 50 ms round is
+/// repeated while the arrival counters still move, up to four rounds
+/// (200 ms), so bytes a slow or loaded loopback peer has already written
+/// still land inside the case's own armed window instead of turning into a
+/// late stray. Polls beyond the scripted slots only ever draw the dry
+/// default and stay invisible in the deduplicated `pollQueries`
+/// projection, so the extra rounds cannot change a green snapshot; the
+/// whole wait stays far inside `DEADLINE`.
+async fn drained(record: &Arc<Mutex<Record>>) {
+    let snapshot = |record: &Arc<Mutex<Record>>| {
+        let record = record.lock().expect("#1343 record mutex");
+        (
+            record.polls,
+            record.sends,
+            record.gateway.len(),
+            record.responds.len(),
+            record.decides.len(),
+        )
+    };
+    let mut last = snapshot(record);
+    for _ in 0..4 {
+        tokio::time::sleep(SETTLE).await;
+        let now = snapshot(record);
+        if now == last {
+            break;
+        }
+        last = now;
+    }
+}
+
 async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
     let record = Arc::new(Mutex::new(Record::default()));
     let gates = Gates::default();
@@ -598,7 +640,7 @@ async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
     let responded: Gate = Arc::new(tokio::sync::watch::Sender::new(false));
     let name = case["name"].as_str().expect("#1343 case name");
     let context = format!("case {name}");
-    mock.arm(case, record.clone());
+    let case_epoch = mock.arm(case, record.clone());
 
     let responder = Arc::new(MockResponder {
         record: record.clone(),
@@ -719,7 +761,7 @@ async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
     // letting the server task see them after `disarm` and charge the
     // next-late stray to this case (review r1 P2 arbitration: three lanes
     // flagged the disarm/strays race as a false-FAIL window).
-    tokio::time::sleep(SETTLE).await;
+    drained(&record).await;
     mock.disarm();
 
     // Every scripted slot must have been served; polls beyond the scripted
@@ -762,10 +804,28 @@ async fn replay(case: &Value, mock: &Arc<Mock>) -> Value {
         );
     }
     let strays = mock.strays.lock().expect("#1343 stray mutex");
+    // #2285 r2 ④: `arm()` no longer clears strays, so the list keeps every
+    // stray since the replay began. Each entry carries the epoch of the case
+    // whose window it was read in: a leftover from an earlier case fails
+    // this case by name (the leak is visible, not silently dropped by the
+    // next `arm()`), and a stray of this case's own epoch is the same
+    // out-of-armed-window failure it always was. The strays themselves go
+    // to stderr (the assertion messages stay byte-stable for the receipt
+    // protocol).
+    if !strays.is_empty() {
+        eprintln!("#1343 case {name} strays: {strays:?}");
+    }
+    crate::negative_assert!(
+        strays.iter().all(|(epoch, _)| *epoch == case_epoch),
+        "#2285 every stray lands inside the case that armed it (case {name})"
+    );
     crate::negative_assert_eq!(
-        strays.len(),
+        strays
+            .iter()
+            .filter(|(epoch, _)| *epoch == case_epoch)
+            .count(),
         0,
-        "#1343 case {name} records no request outside an armed case: {strays:?}"
+        "#1343 case {name} records no request outside an armed case"
     );
     drop(strays);
     record.lock().expect("#1343 record mutex").snapshot()
@@ -893,6 +953,196 @@ async fn send_reply_after_stop_is_gated_by_running() {
 #[ignore = "regenerates from the real TS baseline; set PDRS_BASELINE and the pinned Node v22.22.0 runtime"]
 fn bluebubbles_fixture_regenerates_identically() {
     crate::test_baseline::regenerates_identically("channel-bluebubbles");
+}
+
+// ------------------------------------------------- #2285 poll-driver pins
+
+/// `sendReply`'s `AbortSignal.timeout(120_000)` (Node v22.22.0 实测, see
+/// `_tmp/20261108-issue-2285-r1/probe-2285.output`: a fresh 120 000 ms
+/// signal stays pending — a real deadline, not an immediate abort — and
+/// the mechanism fires with `TimeoutError` at its own deadline; the 120 000
+/// literal itself is the TS source). The reply POST deadline is a semantic
+/// sibling of `MESSAGE_LIMIT` (both ride the request bytes) and gets the
+/// same constant-pin + negative-control treatment (#2285 ①).
+#[test]
+fn send_timeout_is_the_ts_abort_deadline() {
+    crate::negative_assert_eq!(
+        SEND_TIMEOUT,
+        Duration::from_millis(120_000),
+        "#2285 the reply POST keeps the TS AbortSignal.timeout(120_000) deadline"
+    );
+}
+
+/// #2285 ②: dropping a started channel without `stop` must end the poll
+/// driver. TS leaks its interval on that flow (the registered unsupported
+/// start-without-stop shape); here the driver holds only a `Weak<Runtime>`,
+/// so the next tick's upgrade failure breaks the loop. Two observable
+/// proofs, both bounded by `DEADLINE`: the loopback server stops seeing
+/// polls once a full poll interval has had every chance to fire, and the
+/// `Runtime` itself is freed (the driver's `Weak` no longer upgrades).
+#[tokio::test]
+async fn poll_driver_exits_when_runtime_is_dropped() {
+    const CELL: &str = "#2285 dropping a started channel without stop ends the poll driver";
+    const DROP_PORT: u16 = 19463;
+    let record = Arc::new(Mutex::new(Record::default()));
+    let mock = Mock::new();
+    mock.arm(
+        &json!({ "scripted": { "polls": [], "sends": [] } }),
+        record.clone(),
+    );
+    start_mock_on(mock.clone(), DROP_PORT).await;
+    let channel = BlueBubblesChannel::new(
+        BlueBubblesOptions {
+            server_url: Some(JsString::from(format!("http://127.0.0.1:{DROP_PORT}"))),
+            password: Some(JsString::from("pw-drop")),
+            mapper: None,
+            env: None,
+        },
+        no_interaction(),
+    );
+    let deps = ChannelStartDeps {
+        config: None,
+        report_status: None,
+        log: None,
+        turn_gateway: None,
+    };
+    let handle = bounded("drop", channel.start(deps))
+        .await
+        .expect("#2285 drop start");
+    {
+        let record = record.clone();
+        until(CELL, "drop first poll", move || {
+            record.lock().expect("#1343 record mutex").polls >= 1
+        })
+        .await;
+    }
+    let weak = Arc::downgrade(&channel.runtime);
+    drop(handle);
+    drop(channel);
+    // One full poll interval plus the settle margin: a live driver would
+    // have fired at least one tick in that window and the loopback server
+    // would have seen it (the immediate poll already landed above).
+    tokio::time::sleep(SETTLE).await;
+    let before = record.lock().expect("#1343 record mutex").polls;
+    tokio::time::sleep(POLL_MS + SETTLE * 4).await;
+    tokio::time::sleep(SETTLE).await;
+    {
+        let record = record.lock().expect("#1343 record mutex");
+        crate::negative_assert_eq!(
+            record.polls,
+            before,
+            "{CELL} (the server keeps seeing polls after the drop)"
+        );
+    }
+    // The interval task itself is gone: its `Weak` no longer upgrades once
+    // every strong reference is dropped. A leaked driver (the TS shape)
+    // parks on its timer forever and keeps this upgrade succeeding.
+    let started = Instant::now();
+    while weak.upgrade().is_some() {
+        crate::negative_assert!(started.elapsed() < DEADLINE, "{CELL}");
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+}
+
+/// #2285 ③: a panicking per-tick poll task must not stop the interval
+/// driver — TS's `pollMessages` catch keeps the channel polling through a
+/// failing exchange, and `void this.pollMessages()` gives TS no panic
+/// detection either (README registers the Rust deviation: the panic is
+/// swallowed by the runtime instead of logged). The injection poisons the
+/// scripted gateway's turn-index mutex: the first dispatch's `submit`
+/// panics after its GET already landed server-side, the next tick's poll
+/// (the dry default, no rows) completes cleanly, and `stop` still returns
+/// `Ok` — the driver's handle is reaped, not stalled.
+#[tokio::test]
+async fn poll_task_panic_does_not_stop_the_driver() {
+    const CELL: &str = "#2285 a panicking poll task does not stop the poll driver";
+    const PANIC_PORT: u16 = 19464;
+    let record = Arc::new(Mutex::new(Record::default()));
+    let mock = Mock::new();
+    mock.arm(
+        &json!({
+            "scripted": {
+                // The immediate poll gets a dispatchable row; every later
+                // poll draws the dry default and never touches a lock the
+                // poisoned path could poison.
+                "polls": [
+                    { "status": 200, "json": [
+                        { "guid": "panic-1", "chatGuid": "BB-PANIC", "text": "boom" }
+                    ] }
+                ],
+                "sends": []
+            }
+        }),
+        record.clone(),
+    );
+    start_mock_on(mock.clone(), PANIC_PORT).await;
+    let gates = Gates::default();
+    let responded: Gate = Arc::new(tokio::sync::watch::Sender::new(false));
+    let responder = Arc::new(MockResponder {
+        record: record.clone(),
+        responded: responded.clone(),
+    });
+    let gateway = MockInbound::new(Vec::new(), record.clone(), gates.clone(), responded);
+    // Poison the turn-index mutex before any dispatch can use it.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = gateway.next.lock().expect("#2285 turn index");
+        panic!("#2285 poison the turn index");
+    }));
+    let channel = BlueBubblesChannel::new(
+        BlueBubblesOptions {
+            server_url: Some(JsString::from(format!("http://127.0.0.1:{PANIC_PORT}"))),
+            password: Some(JsString::from("pw-panic")),
+            mapper: None,
+            env: None,
+        },
+        Arc::new(HelperInteraction::new(responder)),
+    );
+    let logger = record.clone();
+    let deps = ChannelStartDeps {
+        config: None,
+        report_status: None,
+        log: Some(Arc::new(move |level, message| {
+            logger
+                .lock()
+                .expect("#1343 record mutex")
+                .logs
+                .push(json!([level, mask_dynamic(message)]));
+        })),
+        turn_gateway: Some(gateway),
+    };
+    let handle = bounded("panic", channel.start(deps.clone()))
+        .await
+        .expect("#2285 panic start");
+    {
+        let record = record.clone();
+        until(CELL, "panic first poll", move || {
+            record.lock().expect("#1343 record mutex").polls >= 1
+        })
+        .await;
+    }
+    // The first poll's dispatch panicked on the poisoned turn index; the
+    // interval's next tick must still poll (a clean, row-less exchange).
+    {
+        let record = record.clone();
+        until(CELL, "panic second poll", move || {
+            record.lock().expect("#1343 record mutex").polls >= 2
+        })
+        .await;
+    }
+    bounded("panic", handle.stop("done"))
+        .await
+        .expect("#2285 stop still succeeds after a poll task panicked");
+    tokio::time::sleep(POLL_MS + SETTLE * 4).await;
+    let settled = record.lock().expect("#1343 record mutex").polls;
+    tokio::time::sleep(SETTLE).await;
+    {
+        let record = record.lock().expect("#1343 record mutex");
+        crate::negative_assert_eq!(
+            record.polls,
+            settled,
+            "{CELL} (polls stop arriving after stop)"
+        );
+    }
 }
 
 // ---------------------------------------------------------------- pins
