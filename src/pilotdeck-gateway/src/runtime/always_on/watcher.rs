@@ -484,14 +484,15 @@ mod tests {
         let errors = Arc::new(Mutex::new(Vec::new()));
         let watcher = watcher(&root, signals.clone(), errors.clone());
         watcher.start();
-        let errors = errors.lock().unwrap_or_else(|e| e.into_inner());
-        negative_assert_eq!(errors.len(), 1, "#2294 one on_error");
-        negative_assert_eq!(
-            errors[0],
-            format!("projectRoot not found: {}", root.display()),
-            "#2294 the projectRoot-not-found message"
-        );
-        drop(errors);
+        {
+            let errors = errors.lock().unwrap_or_else(|e| e.into_inner());
+            negative_assert_eq!(errors.len(), 1, "#2294 one on_error");
+            negative_assert_eq!(
+                errors[0],
+                format!("projectRoot not found: {}", root.display()),
+                "#2294 the projectRoot-not-found message"
+            );
+        }
         // A second start on the stopped watcher is a no-op.
         watcher.start();
         tokio::time::sleep(Duration::from_millis(200)).await;

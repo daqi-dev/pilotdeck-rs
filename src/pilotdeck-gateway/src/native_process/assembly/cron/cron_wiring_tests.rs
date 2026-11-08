@@ -589,7 +589,7 @@ async fn configured_assembly_advertises_and_serves_the_three_always_on_names() {
 
     send(&harness, "capabilities", "describe_server", json!({})).await;
     let advertised = capabilities(&harness);
-    for name in crate::runtime::always_on::ALWAYS_ON_METHODS.iter().copied() {
+    for name in crate::runtime::always_on::ALWAYS_ON_METHODS {
         negative_assert!(
             advertised.contains(&name.to_owned()),
             "#2294 the configured runtime advertises {name}"
@@ -691,7 +691,7 @@ async fn a_disabled_always_on_section_keeps_the_three_names_gated() {
 
     send(&harness, "capabilities", "describe_server", json!({})).await;
     let advertised = capabilities(&harness);
-    for name in crate::runtime::always_on::ALWAYS_ON_METHODS.iter().copied() {
+    for name in crate::runtime::always_on::ALWAYS_ON_METHODS {
         negative_assert!(
             !advertised.contains(&name.to_owned()),
             "#2294 the disabled section keeps {name} out of capabilities"

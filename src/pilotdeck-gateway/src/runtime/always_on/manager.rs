@@ -119,6 +119,9 @@ impl AlwaysOnRunContextRegistry {
         Ok(())
     }
 
+    /// The run-end unregister the TS registry performs; the caller lands
+    /// with the explicitly unported fire pipeline.
+    #[allow(dead_code)]
     pub(crate) fn unregister(&self, session_key: &str) {
         self.contexts
             .lock()
@@ -687,7 +690,6 @@ pub(crate) struct AlwaysOnManagerOptions {
 /// the three control entries.
 pub struct AlwaysOnManager {
     runtimes: Vec<Arc<AlwaysOnRuntime>>,
-    run_contexts: Arc<AlwaysOnRunContextRegistry>,
     logger: Arc<dyn AlwaysOnLogger>,
 }
 
@@ -715,7 +717,6 @@ impl AlwaysOnManager {
         }
         Ok(Self {
             runtimes,
-            run_contexts,
             logger: options
                 .logger
                 .unwrap_or_else(|| Arc::new(super::NoopAlwaysOnLogger)),
@@ -825,10 +826,7 @@ mod tests {
     use crate::negative_assert_eq;
     use std::path::{Path, PathBuf};
 
-    const GOLDEN: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/always-on-2294/oracle.json"
-    ));
+    const GOLDEN: &str = include_str!("../../../tests/fixtures/always-on-2294/oracle.json");
     const NOW_MS: f64 = 1_767_225_900_000.0;
 
     fn golden(id: &str) -> serde_json::Value {

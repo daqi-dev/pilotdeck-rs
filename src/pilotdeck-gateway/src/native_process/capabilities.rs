@@ -402,7 +402,7 @@ mod tests {
         }
         for name in crate::runtime::always_on::ALWAYS_ON_METHODS {
             negative_assert!(
-                !recorded.contains(&name),
+                !recorded.contains(name),
                 "#2294 always-on name {name} is recorded by the fixture; the always-on gate assumption is stale"
             );
         }

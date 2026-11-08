@@ -177,6 +177,8 @@ pub(crate) fn evaluate_always_on_discovery_gates(input: &GateInput<'_>) -> GateR
     let target = fresh
         .iter()
         .find(|lease| lease.channel_key == config.prefer_channel)
+        // `fresh[0]` is the TS `[...map.values()][0]` — the registry's
+        // insertion order, which `list_fresh` preserves.
         .unwrap_or(&fresh[0]);
     GateResult {
         ok: true,
@@ -190,10 +192,7 @@ mod tests {
     use super::*;
     use crate::negative_assert_eq;
 
-    const GOLDEN: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/always-on-2294/oracle.json"
-    ));
+    const GOLDEN: &str = include_str!("../../../tests/fixtures/always-on-2294/oracle.json");
 
     fn golden(id: &str) -> serde_json::Value {
         let records: Vec<serde_json::Value> =
@@ -387,18 +386,20 @@ mod tests {
     // The g1-g16 replay: every gate, the first-fail-wins order, the strict
     // recent-message window and the lease pick, byte-identical to the TS
     // baseline records.
+    type GateCase = (
+        &'static str,
+        AlwaysOnConfig,
+        JsObject,
+        Vec<ChannelLease>,
+        Vec<(&'static str, JsValue)>,
+    );
+
     #[test]
     fn replays_the_gate_chain_golden() {
         let enabled = [("/proj/a", true), ("/proj/off", false)];
         let head_config = config(&enabled, &[]);
         let base = state(&[]);
-        let cases: Vec<(
-            &str,
-            AlwaysOnConfig,
-            JsObject,
-            Vec<ChannelLease>,
-            Vec<(&str, JsValue)>,
-        )> = vec![
+        let cases: Vec<GateCase> = vec![
             (
                 "g1-key-not-in-config",
                 head_config.clone(),

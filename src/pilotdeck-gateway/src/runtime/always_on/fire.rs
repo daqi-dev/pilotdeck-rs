@@ -101,6 +101,9 @@ pub(crate) struct FireOutcome {
 /// `run` input — the scheduler's `{ runId, startedAt }` pair.
 pub(crate) struct FireRunInput<'a> {
     pub run_id: &'a str,
+    /// The timestamp the fire half's records stamp; the read side lands
+    /// with the explicitly unported fire pipeline.
+    #[allow(dead_code)]
     pub started_at_ms: f64,
 }
 
@@ -108,16 +111,26 @@ pub(crate) struct FireRunInput<'a> {
 pub(crate) struct RerunFireInput<'a> {
     pub plan_id: &'a str,
     pub run_id: &'a str,
+    /// The timestamp the fire half's records stamp; the read side lands
+    /// with the explicitly unported fire pipeline.
+    #[allow(dead_code)]
     pub started_at_ms: f64,
 }
 
 /// `runApplyPhase` input (DiscoveryFire.ts:264-270): the cycle, its
 /// `{ id, title }` plan projection and the apply context.
 pub(crate) struct ApplyPhaseInput<'a> {
+    /// Apply-phase fields the fire pipeline consumes; the read side lands
+    /// with the explicitly unported fire half (this PR's seam returns the
+    /// documented `internal` error before touching them).
+    #[allow(dead_code)]
     pub run_id: &'a str,
     pub cycle: &'a WorkCycleRecord,
+    #[allow(dead_code)]
     pub plans: &'a [DiscoveryPlanRecord],
+    #[allow(dead_code)]
     pub project_name: Option<&'a str>,
+    #[allow(dead_code)]
     pub project_root: &'a str,
 }
 
@@ -252,10 +265,7 @@ mod tests {
     use crate::negative_assert_eq;
     use std::path::{Path, PathBuf};
 
-    const GOLDEN: &str = include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/always-on-2294/oracle.json"
-    ));
+    const GOLDEN: &str = include_str!("../../../tests/fixtures/always-on-2294/oracle.json");
 
     fn golden(id: &str) -> serde_json::Value {
         let records: Vec<serde_json::Value> =
