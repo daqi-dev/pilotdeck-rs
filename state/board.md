@@ -5037,3 +5037,7 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | macmini 仓外清理授权待人点头（#1157 总表在案） | 人 | 下次派 macmini 宿主前 |
 
 现场指针：`_tmp/20261109-2498-2501-harvest/`（#2498 评审 + 补捞证据）· `_tmp/20261109-2532-fixr2-harvest/`（task2.md 收货续单）· `_tmp/20261107-coord/sweep-0305.md`（六灯 sweep 正本）· `_tmp/20261107-coord/patrol-0231.md`（沿 02:3x 段）。
+
+### 2026-11-09 独立能力包提取（Codex）
+
+从固定 main e8d80 提取 Budget、Context 纯算法、Anthropic 协议及必要 Protocol coercion，gateway 保留 I/O/状态/权限；不含 Kernel backend/BOOT/CLI 路由。包级首轮62通过/1原忽略，原 gateway context 首轮72通过/3原忽略；正在收窄未消费API并升级到本批新基线 f50ad6c84。dev-launch 本机技能缺失已检索，不冒充双谱系评审；正式独立评审由协调者/C接续。变异锚点按实际算法迁移，原冻结 oracle 不改。下一步：新基线定向回归、独立consumer、负控与评审。

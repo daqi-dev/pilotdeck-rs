@@ -47,7 +47,7 @@ from negative_selection import (claim_dir, missing_target, refuse,
 
 root = Path(__file__).resolve().parents[5]
 protocol = root / 'src/pilotdeck-protocol/src/js_math.rs'
-compaction = root / 'src/pilotdeck-gateway/src/runtime/context/compaction/mod.rs'
+compaction = root / 'src/pilotdeck-context/src/lib.rs'
 token_accounting = root / 'src/pilotdeck-gateway/src/runtime/model/token_accounting.rs'
 recall = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/llm/recall.rs'
 sdk_session = root / 'src/pilotdeck-gateway/src/runtime/sdk_session/mod.rs'
@@ -82,14 +82,14 @@ cases = [
     # refactor would reintroduce if the site stopped routing through the
     # shared module.
     ('compaction-left-tie', compaction,
-     'pub(crate) use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
+     'pub use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
      'pub(crate) fn js_max(left: f64, right: f64) -> f64 {\n'
      '    if left == 0.0 && right == 0.0 { right } else { left.max(right) }\n'
      '}\n'
      'pub(crate) fn js_min(left: f64, right: f64) -> f64 {\n'
      '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
      '}',
-     'runtime::context::compaction::tests::js_math_signed_zero_ties_match_ts'),
+     'tests::js_math_signed_zero_ties_match_ts'),
     ('token-accounting-left-tie', token_accounting,
      'use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
      'fn js_max(left: f64, right: f64) -> f64 {\n'
@@ -229,6 +229,7 @@ ASSERTIONS = {
 
 BASELINE = {
     'pilotdeck-protocol': (['-p', 'pilotdeck-protocol', '--lib'], 'js_math'),
+    'pilotdeck-context': (['-p', 'pilotdeck-context', '--lib'], 'js_math_signed_zero_ties_match_ts'),
     'pilotdeck-gateway': (['-p', 'pilotdeck-gateway', '--lib'], 'signed_zero_ties_match_ts'),
     'pilotdeck-agent': (
         ['-p', 'pilotdeck-agent', '--test', 'request_materialization'],
@@ -254,6 +255,8 @@ BASELINE = {
 
 
 def package_for(path):
+    if path == compaction:
+        return 'pilotdeck-context'
     if path == protocol:
         return 'pilotdeck-protocol'
     if path == agent_policy:
