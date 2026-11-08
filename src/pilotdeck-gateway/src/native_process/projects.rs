@@ -25,7 +25,6 @@ impl ProjectRuntimeFactory for NativeProjectFactory {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::runtime::project::{
         ProjectResources, Resource, RuntimeLease, RuntimeState, plugins::PluginResources,
     };
