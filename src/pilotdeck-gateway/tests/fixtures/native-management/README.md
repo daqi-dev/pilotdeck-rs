@@ -18,7 +18,7 @@ negative_controls.py --check 仅检查锚点。实际负控命令为 negative_co
 
 manager_browsers 已分发到现有组件；原生没有 browser provider，因此返回 CAPABILITY_UNAVAILABLE，describe 不广告。U2/U6 保持未接。技能管理可使用持久化技能目录；turn admission 仍拒绝未接的技能执行组合。snapshot 只在配置项目内恢复；host-dependent JS 路径形状明确拒绝。
 
-manager_sessions 金样读取固定时间戳的真实非空 JSONL transcript（session.jsonl），验证配置项目的 chat 目录映射。管理写入不会自动刷新执行资源；原生 turn admission 仍明确拒绝配置了技能的项目，生产宿主用例对此断言。commands 只将同步 acquire 放进 blocking job，后续复用 catalog 自有异步 loader/list，避免持有外层 blocking 线程等待内层。限额线程池用例通过 channel 占用一席，不制造 CPU 压力。sourceSha256 是共享生成器计算的依赖闭包，不仅限于入口文件。
+manager_sessions 金样读取固定时间戳的真实非空 JSONL transcript（session.jsonl），验证配置项目的 chat 目录映射。管理写入后的执行资源与技能加载由 native-process 生产装配及其用例验证，本管理夹具不代替完整 turn 验收。commands 只将同步 acquire 放进 blocking job，后续复用 catalog 自有异步 loader/list，避免持有外层 blocking 线程等待内层。限额线程池用例通过 channel 占用一席，不制造 CPU 压力。sourceSha256 是共享生成器计算的依赖闭包，不仅限于入口文件。
 
 U4 在 TS 注入真实 listProjectSessions 作为 sessionCatalog（与 Rust 已合入的 TranscriptSessionCatalog 提供同一 JSONL provider）；未注入固定返回值。TS 默认 sessionDataPlane 的底层存储选择与原生 JSONL provider 不同，不把两者混为同一部署。
 
@@ -26,7 +26,7 @@ queryUnits 行保留真实 UTF-16 查询：孤立代理项不会先替换成 U+F
 
 ## 生产入口边界（fix-r3、#1323）
 
-native isolated 模式拒绝继承非空 `PILOTDECK_STORAGE_ROOT` / `PILOTDECK_SNAPSHOT_ROOT`，包括纯空白。`Options::parse` 新增可选 `--storage-root` CLI 参数（#1323）；非 UTF-8 值报硬错误。缺省时生产入口 U3 snapshot 禁用：describe 精确比较 `expected_capabilities(false)`（unix 40 项），snapshot_* 返回 CAPABILITY_UNAVAILABLE。提供 `--storage-root` 时启用 snapshot：describe 精确比较 `expected_capabilities(true)`（unix 43 项），workspace_id 与 management 快照路由同用 `SnapshotProjects::workspace_id`（匹配 TS `resolveProjectStorageId`：`.cwd` 注册表优先，否则 legacy slug），提交 turn 时捕获快照至指定存储根。继承环境变量的拒绝规则不变（非空值必须不继承）。
+native isolated 模式拒绝继承非空 `PILOTDECK_STORAGE_ROOT` / `PILOTDECK_SNAPSHOT_ROOT`，包括纯空白。`Options::parse` 新增可选 `--storage-root` CLI 参数（#1323）；非 UTF-8 值报硬错误。缺省时生产入口 U3 snapshot 禁用：describe 精确比较 `expected_capabilities(false)`，snapshot_* 返回 CAPABILITY_UNAVAILABLE。提供 `--storage-root` 时启用 snapshot：describe 精确比较 `expected_capabilities(true)`，workspace_id 与 management 快照路由同用 `bounded_snapshot_workspace_id`（有效普通 `.cwd` 注册表优先，无匹配时使用 legacy slug；不安全或超限 marker 明确拒绝），提交通过会话持有者的内部 workspace_cwd 能力捕获快照至指定存储根，公开 session snapshot 不增加 cwd 字段。异常 marker 的 TS 实测、原生差异和批准状态见 `specs/gateway-parity/diffs/A8-NATIVE-SNAPSHOT-CAPABILITY-001-R2.md`。继承环境变量的拒绝规则不变（非空值必须不继承）。
 
 `production_entry_snapshot_capabilities_are_disabled` 走 Options::parse + validate_environment，覆盖两个 key 缺省/空串的四种组合，及非空/纯空白的继承拒绝；成功启动后精确比较 `expected_capabilities(false)` 并验证 TS 子集。`storage_root_cli_arg_wires_snapshot_capabilities` 测试 `--storage-root` CLI 解析路径、environment() 注入、assembly 启动及 `expected_capabilities(true)` 的广告集。配置只在 persistence stage 构造 provider 时解析；装配将实际 provider 存在性缓存到 Requests.snapshot_enabled，describe 使用该值和显式能力名单；turn 提交路径使用 `workspace_id` 组装快照输入。TS 接受纯空白 storage 并禁用 provider，而 native 启动拒绝是既有隔离边界，已在同一差异账本明确登记，不声称两者一致。
 
