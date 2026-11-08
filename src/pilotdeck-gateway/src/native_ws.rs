@@ -91,6 +91,7 @@ impl NativeWsServer {
             loopback: ts_loopback_literal(address.ip()),
             static_root: None,
             webhook: None,
+            api_web: None,
         };
         Ok(Self {
             // Node's checker phase anchors at the 'listening' event; this
@@ -132,6 +133,14 @@ impl NativeWsServer {
     /// channel start/stop/reload is visible without rebinding.
     pub fn with_webhook(mut self, resolver: native_http::WebhookResolver) -> Self {
         self.http.webhook = Some(resolver);
+        self
+    }
+
+    /// Mount the `/api/web` route group on this listener (#2354): the token
+    /// is the same bearer the WS lane checks, and the catalog is the native
+    /// metadata registry over the same home the WS lane reads.
+    pub(crate) fn with_api_web(mut self, config: crate::api_web::Config) -> Self {
+        self.http.api_web = Some(config);
         self
     }
 

@@ -3,9 +3,10 @@
 //! the bidirectional HTTP/WS visibility checks. The fixture was recorded
 //! against the real TS stack (`startGatewayServer` with a scripted gateway
 //! stub keyed on the fixture root, `describeProject` throwing for `boom`);
-//! here the same requests go through the native hyper listener with the
-//! api-web component composed in front of the #1209 router, which serves the
-//! fallthrough 404s the TS server answers.
+//! here the same requests go through the production dispatch #2354 wired:
+//! the listener's `native_http::serve_with_body` with the api-web group
+//! mounted inside the router config, so every cell exercises the same branch
+//! the native listener serves (the fallthrough 404s included).
 use super::*;
 use crate::{http_proxy, native_http, test_baseline};
 use pilotdeck_protocol::{JsObject, JsValue, stringify_json};
@@ -24,6 +25,13 @@ use tokio::{
     net::{TcpListener, TcpStream},
     time::timeout,
 };
+
+// #1766: the response-normalization parser this file used to carry as the
+// third copy of the #1209/#1350 rules, extracted to the shared module; the
+// api-web body masks below stay here.
+#[path = "../../tests/common/replay_normalize.rs"]
+mod replay_normalize;
+use replay_normalize::find;
 
 const ORACLE: &str = include_str!("../../tests/fixtures/api-web/oracle.json");
 const DEADLINE: Duration = Duration::from_secs(10);
@@ -289,14 +297,20 @@ impl ProjectCatalog for ScriptedCatalog {
 
 /// Bind one native listener and write the raw request bytes to it, then
 /// capture the raw response bytes like the TS recorder did (quiet window,
-/// EOF, or socket error ends the capture). The api-web component is composed
-/// in front of the #1209 router, which answers the fallthrough 404s.
+/// EOF, or socket error ends the capture). #2354: the api-web group rides
+/// inside the router config and the handler is the listener's own
+/// `serve_with_body` entry — the same production dispatch
+/// `native_ws::serve_socket` calls, not a test-only composition.
 async fn exchange(
     config: Config,
     native_config: native_http::Config,
     request: &[u8],
     id: &str,
 ) -> (Vec<u8>, bool) {
+    let native_config = native_http::Config {
+        api_web: Some(config),
+        ..native_config
+    };
     let listener = TcpListener::bind("127.0.0.1:0")
         .await
         .expect("#1348 bind listener");
@@ -304,7 +318,6 @@ async fn exchange(
     let server_task = tokio::spawn(async move {
         loop {
             let (socket, _) = listener.accept().await.expect("#1348 accept connection");
-            let config = config.clone();
             let native_config = native_config.clone();
             tokio::spawn(async move {
                 // The production path always carries a stop signal; a sender
@@ -312,15 +325,9 @@ async fn exchange(
                 let (_, stop) = tokio::sync::watch::channel(false);
                 let served = http_proxy::serve_connection_native_with_shutdown(
                     socket,
-                    move |mut request, _lease| {
-                        let config = config.clone();
+                    move |request, _lease| {
                         let native_config = native_config.clone();
-                        async move {
-                            match serve(&mut request, &config).await {
-                                Some(answer) => answer,
-                                None => native_http::serve(&request, &native_config).await,
-                            }
-                        }
+                        async move { native_http::serve_with_body(request, &native_config).await }
                     },
                     stop,
                     None,
@@ -400,6 +407,7 @@ fn native_config() -> native_http::Config {
         loopback: true,
         static_root: None,
         webhook: None,
+        api_web: None,
     }
 }
 
@@ -683,7 +691,339 @@ async fn catalog_list_failure_is_500() {
     );
 }
 
+// ------------------------------------------------------- #2354/#1765 wiring
+
+/// #1765: the llhttp-equivalent admission gates run before the api-web route
+/// group — a method outside Node's `http.METHODS` table against
+/// `/api/web/projects` answers the parser's bare 400 and closes the socket,
+/// exactly the TS bytes the probe recorded (Node v22.22.0,
+/// `_tmp/20261026-issue-2354/ts-probe/probe-output.txt`, cell
+/// `gate-bad-method`), never the group's own JSON.
+#[tokio::test]
+async fn gate_bad_method_is_parser_bare_400() {
+    let request =
+        b"FOO /api/web/projects HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n";
+    let (raw, closed) = exchange(
+        replay_config("unused"),
+        native_config(),
+        request,
+        "gate-bad-method",
+    )
+    .await;
+    assert_eq!(
+        normalize(&raw, None),
+        normalize(
+            b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+            None
+        ),
+        "#1765 the bad-method gate answers the parser bare 400 before the route group"
+    );
+    assert!(
+        closed,
+        "#1765 the bad-method gate closes the connection like Node's parser"
+    );
+}
+
+/// #1765: an HTTP/1.1 request without a `Host` header against
+/// `/api/web/projects` answers the parser's headless 400 — `Connection:
+/// close`, a Date and a chunked empty body, then the close (probe cell
+/// `gate-no-host`).
+#[tokio::test]
+async fn gate_missing_host_is_headless_400() {
+    let request = b"GET /api/web/projects HTTP/1.1\r\nAuthorization: Bearer fixture-token\r\n\r\n";
+    let (raw, closed) = exchange(
+        replay_config("unused"),
+        native_config(),
+        request,
+        "gate-no-host",
+    )
+    .await;
+    assert_eq!(
+        normalize(&raw, None),
+        normalize(
+            b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\ndate: <masked>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+            None
+        ),
+        "#1765 the missing-Host gate answers the headless 400 before the route group"
+    );
+    assert!(
+        closed,
+        "#1765 the missing-Host gate closes the connection like Node's parser"
+    );
+}
+
+/// #1765: a non-ASCII byte in the request target is the parser's bare 400
+/// even on the api-web path (probe cell `gate-non-ascii-target`).
+#[tokio::test]
+async fn gate_non_ascii_target_is_parser_bare_400() {
+    let request =
+        b"GET /api/web/proj\xe9cts HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n";
+    let (raw, closed) = exchange(
+        replay_config("unused"),
+        native_config(),
+        request,
+        "gate-non-ascii-target",
+    )
+    .await;
+    assert_eq!(
+        normalize(&raw, None),
+        normalize(
+            b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+            None
+        ),
+        "#1765 the non-ASCII target gate answers the parser bare 400 before the route group"
+    );
+    assert!(
+        closed,
+        "#1765 the non-ASCII target gate closes the connection like Node's parser"
+    );
+}
+
+/// #1765 reference cell: a malformed percent escape is ASCII, so it is *not*
+/// a parse-time 400 — WHATWG path parsing keeps the invalid sequence and the
+/// group answers its own 404 JSON naming the raw path (probe cell
+/// `gate-pct-target`), the same family as the `api-web-other` cell.
+#[tokio::test]
+async fn gate_malformed_percent_target_reaches_the_router() {
+    let request =
+        b"GET /api/web/pro%jects HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n";
+    let (raw, closed) = exchange(
+        replay_config("unused"),
+        native_config(),
+        request,
+        "gate-pct-target",
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 404"),
+        "#1765 the malformed-percent target reaches the router, not the parser: {response:?}"
+    );
+    assert!(
+        response.contains("No /api/web route for /api/web/pro%jects"),
+        "#1765 the group's 404 names the raw path: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1765 the router 404 keeps the connection open like Node"
+    );
+}
+
+/// #2354: mounting the api-web group must not hijack the router's own
+/// `/health` cell — the group declines paths outside its prefix, and the
+/// plain router answers exactly as before the wiring.
+#[tokio::test]
+async fn health_is_not_hijacked_by_the_api_web_group() {
+    let request = b"GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+    let (raw, closed) = exchange(
+        replay_config("unused"),
+        native_config(),
+        request,
+        "health-guard",
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 200") && response.contains("{\"ok\":true}"),
+        "#2354 /health answers the router's own cell with the group mounted: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#2354 /health keeps the connection open like before the wiring"
+    );
+}
+
+// ------------------------------------------------------ #1764 write refusals
+
+/// #1764: a write whose target names the project root (`path: "."`) answers
+/// Node's own EISDIR text — measured on node v22.22.0
+/// (`_tmp/20261026-issue-2354/ts-probe/probe-output.txt`, cell
+/// `write-root-dot`): `EISDIR: illegal operation on a directory, open
+/// '<root>'`. The pre-#1764 replica answered a bare InvalidInput here.
+#[tokio::test]
+async fn write_to_the_project_root_answers_node_eisdir() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let body = r#"{"path":".","content":"x"}"#;
+    let request = format!(
+        "POST /api/web/projects/{}/files/write HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        percent_encode(&root_text),
+        body.len(),
+        body
+    );
+    let (raw, closed) = exchange(
+        replay_config(&root_text),
+        native_config(),
+        request.as_bytes(),
+        "write-root-dot",
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 500"),
+        "#1764 the root write answers the 500: {response:?}"
+    );
+    assert!(
+        response.contains(&format!(
+            "{{\"error\":{{\"code\":\"internal_error\",\"message\":\"EISDIR: illegal operation on a directory, open '{root_text}'\"}}}}"
+        )),
+        "#1764 the root write answers Node's EISDIR text with the target path: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1764 the EISDIR 500 keeps the connection open like Node"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #1764: a write whose target names an existing directory (probe cell
+/// `write-existing-dir`) is the same EISDIR family, with the directory's own
+/// path in the text.
+#[tokio::test]
+async fn write_to_an_existing_directory_answers_node_eisdir() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let body = r#"{"path":"sub","content":"x"}"#;
+    let request = format!(
+        "POST /api/web/projects/{}/files/write HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        percent_encode(&root_text),
+        body.len(),
+        body
+    );
+    let (raw, closed) = exchange(
+        replay_config(&root_text),
+        native_config(),
+        request.as_bytes(),
+        "write-existing-dir",
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 500"),
+        "#1764 the directory write answers the 500: {response:?}"
+    );
+    assert!(
+        response.contains(&format!(
+            "{{\"error\":{{\"code\":\"internal_error\",\"message\":\"EISDIR: illegal operation on a directory, open '{root_text}/sub'\"}}}}"
+        )),
+        "#1764 the directory write answers Node's EISDIR text with the target path: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1764 the EISDIR 500 keeps the connection open like Node"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #1764: a path with a NUL byte is refused by Node's fs argument validation
+/// before any syscall — the received value rendered by `util.inspect`, NUL
+/// as the literal `\x00` (probe cell `write-nul-path`; the quoting table is
+/// measured in `node-nul-render*.txt`). The pre-#1764 replica answered an
+/// EINVAL here.
+#[tokio::test]
+async fn write_to_a_nul_path_answers_node_argument_validation() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let body = r#"{"path":"a\u0000b.txt","content":"x"}"#;
+    let request = format!(
+        "POST /api/web/projects/{}/files/write HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        percent_encode(&root_text),
+        body.len(),
+        body
+    );
+    let (raw, closed) = exchange(
+        replay_config(&root_text),
+        native_config(),
+        request.as_bytes(),
+        "write-nul-path",
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 500"),
+        "#1764 the NUL-path write answers the 500: {response:?}"
+    );
+    assert!(
+        response.contains(&format!(
+            "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '{root_text}/a\\\\x00b.txt'"
+        )),
+        "#1764 the NUL-path write answers Node's argument-validation text: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1764 the validation 500 keeps the connection open like Node"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #1764: a NUL below an existing directory (probe cell `write-nul-nested`)
+/// is the same validation refusal with the joined target path — TS's
+/// `mkdir(dirname)` runs first and only the write's own argument carries the
+/// NUL.
+#[tokio::test]
+async fn write_to_a_nested_nul_path_answers_node_argument_validation() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let body = r#"{"path":"sub/a\u0000b.txt","content":"x"}"#;
+    let request = format!(
+        "POST /api/web/projects/{}/files/write HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        percent_encode(&root_text),
+        body.len(),
+        body
+    );
+    let (raw, closed) = exchange(
+        replay_config(&root_text),
+        native_config(),
+        request.as_bytes(),
+        "write-nul-nested",
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 500"),
+        "#1764 the nested NUL-path write answers the 500: {response:?}"
+    );
+    assert!(
+        response.contains(&format!(
+            "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '{root_text}/sub/a\\\\x00b.txt'"
+        )),
+        "#1764 the nested NUL-path write names the joined target: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#1764 the validation 500 keeps the connection open like Node"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
 // ------------------------------------------------- file service boundary pins
+
+/// #1691: the tree's `modifiedAt` is the transport's shared
+/// `format_epoch_iso`, Node v22.22.0's `Date#toISOString` for the whole
+/// epoch domain — every literal below is the measured Node output
+/// (`_tmp/20261026-issue-2354/ts-probe/node-iso-clip.txt`), including both
+/// TimeClip bounds and the extended-year spellings the local formatter this
+/// file used to carry was deleted for. The extreme years cannot round-trip
+/// through a real file's mtime (the filesystem clamps them), so the pin is
+/// the direct call.
+#[test]
+fn modified_at_epoch_domain_is_the_transport_formatter() {
+    for (epoch_ms, expected) in [
+        (0, "1970-01-01T00:00:00.000Z"),
+        (-1, "1969-12-31T23:59:59.999Z"),
+        (-8_640_000_000_000_000, "-271821-04-20T00:00:00.000Z"),
+        (8_640_000_000_000_000, "+275760-09-13T00:00:00.000Z"),
+        (-62_167_219_200_000, "0000-01-01T00:00:00.000Z"),
+        (-62_198_755_200_000, "-000001-01-01T00:00:00.000Z"),
+        (253_402_300_800_000, "+010000-01-01T00:00:00.000Z"),
+    ] {
+        assert_eq!(
+            pilotdeck_transport::system_clock::format_epoch_iso(epoch_ms),
+            expected,
+            "#1691 epoch {epoch_ms} renders Node's toISOString literal"
+        );
+    }
+}
 
 /// `JSON.stringify` of a service value, for the pins below.
 fn json_of(value: &JsValue) -> String {
@@ -1352,116 +1692,12 @@ fn write_creates_below_a_directory_link_that_stays_inside_the_root() {
 
 // ----------------------------------------------------------------- normalize
 
-/// The bytes both sides are compared in, the #1209 rules — the Date value
-/// masked, header names case-folded (hyper renders Title-Case, TS's
-/// `content-type` is literal lowercase — the registered transport diff), the
-/// empty-body `content-length: 0` line dropped, chunk sizes case-folded —
-/// plus the two api-web masks: both spellings of the fixture root fold to
-/// `<root>` and a directory's `size` digit run folds to `0` (filesystem-
-/// dependent). A chunked body is re-framed as one chunk whose size names the
-/// masked content, because the oracle's recorded chunk sizes name the
-/// pre-mask bytes — the same recomputation on both sides makes them agree.
+/// The bytes both sides are compared in: the shared #1209 parser
+/// (#1766, `replay_normalize`) plus the two api-web body masks — both
+/// spellings of the fixture root fold to `<root>` and a directory's `size`
+/// digit run folds to `0` (filesystem-dependent).
 fn normalize(raw: &[u8], root: Option<&Path>) -> Vec<u8> {
-    let mut out = Vec::with_capacity(raw.len());
-    let mut rest = raw;
-    'responses: while !rest.is_empty() {
-        let Some(head_end) = find(rest, b"\r\n\r\n") else {
-            out.extend_from_slice(rest);
-            break;
-        };
-        let head = &rest[..head_end];
-        let mut chunked = false;
-        let mut length = None;
-        for line in split(head, b"\r\n").skip(1) {
-            let Some((name, value)) = split_once(line, b":") else {
-                continue;
-            };
-            let name = trim_ascii(name).to_ascii_lowercase();
-            if name == b"transfer-encoding"
-                && find(&value.to_ascii_lowercase(), b"chunked").is_some()
-            {
-                chunked = true;
-            } else if name == b"content-length" {
-                length = std::str::from_utf8(value)
-                    .ok()
-                    .and_then(|text| text.trim().parse::<usize>().ok());
-            }
-        }
-        rest = &rest[head_end + 4..];
-        if chunked {
-            let Some(body) = chunked_content(&mut rest) else {
-                emit_head(&mut out, head);
-                out.extend_from_slice(rest);
-                break 'responses;
-            };
-            let body = mask_body(&body, root);
-            emit_head(&mut out, head);
-            out.extend_from_slice(format!("{:x}\r\n", body.len()).as_bytes());
-            out.extend_from_slice(&body);
-            out.extend_from_slice(b"\r\n0\r\n\r\n");
-            continue 'responses;
-        }
-        match length {
-            Some(size) if rest.len() >= size => {
-                let body = mask_body(&rest[..size], root);
-                rest = &rest[size..];
-                emit_head(&mut out, head);
-                out.extend_from_slice(&body);
-            }
-            _ => {
-                emit_head(&mut out, head);
-                out.extend_from_slice(rest);
-                break 'responses;
-            }
-        }
-    }
-    out
-}
-
-/// The head lines under the comparison rules; the status line is verbatim
-/// (both stacks write canonical casing, and the one code without a canonical
-/// reason never appears on this surface).
-fn emit_head(out: &mut Vec<u8>, head: &[u8]) {
-    for (index, line) in split(head, b"\r\n").enumerate() {
-        if index == 0 {
-            out.extend_from_slice(line);
-            out.extend_from_slice(b"\r\n");
-            continue;
-        }
-        let Some((name, value)) = split_once(line, b":") else {
-            out.extend_from_slice(line);
-            out.extend_from_slice(b"\r\n");
-            continue;
-        };
-        if name.eq_ignore_ascii_case(b"date") {
-            out.extend_from_slice(b"date: <masked>\r\n");
-        } else if name.eq_ignore_ascii_case(b"content-length") && trim_ascii(value) == b"0" {
-            // hyper's implicit empty-body length.
-        } else {
-            out.extend_from_slice(&name.to_ascii_lowercase());
-            out.extend_from_slice(b":");
-            out.extend_from_slice(value);
-            out.extend_from_slice(b"\r\n");
-        }
-    }
-    out.extend_from_slice(b"\r\n");
-}
-
-/// One chunked body's content, single-chunk (both stacks write exactly one
-/// data chunk per `writeHead`+`end` / single-frame response): the section
-/// between the size line after the head and the terminal `0` chunk. The
-/// oracle's recorded chunk sizes name the pre-mask content, so a size-line
-/// walk cannot find the boundary there — the terminal marker can, and no
-/// body carries a CRLF for it to hide inside. `None` when the bytes end
-/// before the terminal chunk.
-fn chunked_content(rest: &mut &[u8]) -> Option<Vec<u8>> {
-    const TERMINAL: &[u8] = b"\r\n0\r\n\r\n";
-    let end = find(rest, TERMINAL)?;
-    let section = &rest[..end];
-    // The first line is the (stale) size; the content is the rest.
-    let content = split_once(section, b"\r\n").map_or(section, |(_, after)| after);
-    *rest = &rest[end + TERMINAL.len()..];
-    Some(content.to_vec())
+    replay_normalize::normalize(raw, &|body| mask_body(body, root))
 }
 
 /// The api-web body masks: both spellings of the fixture root fold to
@@ -1504,56 +1740,6 @@ fn replace_all(raw: &[u8], needle: &[u8], replacement: &[u8]) -> Vec<u8> {
     }
     out.extend_from_slice(rest);
     out
-}
-
-/// Find the first occurrence of `needle` in `haystack`.
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
-}
-
-/// Split on every `separator`, the `str::split` shape (a trailing separator
-/// yields a final empty slice; an empty haystack yields nothing).
-fn split<'a>(haystack: &'a [u8], separator: &[u8]) -> impl Iterator<Item = &'a [u8]> {
-    let mut rest = haystack;
-    std::iter::from_fn(move || {
-        if rest.is_empty() {
-            return None;
-        }
-        match find(rest, separator) {
-            Some(at) => {
-                let (line, tail) = rest.split_at(at);
-                rest = &tail[separator.len()..];
-                Some(line)
-            }
-            None => {
-                let line = rest;
-                rest = &[];
-                Some(line)
-            }
-        }
-    })
-}
-
-fn split_once<'a>(haystack: &'a [u8], separator: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
-    find(haystack, separator).map(|at| {
-        let (before, after) = haystack.split_at(at);
-        (before, &after[separator.len()..])
-    })
-}
-
-/// Trim ASCII whitespace from both ends.
-fn trim_ascii(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|byte| !byte.is_ascii_whitespace())
-        .unwrap_or(bytes.len());
-    let end = bytes
-        .iter()
-        .rposition(|byte| !byte.is_ascii_whitespace())
-        .map_or(start, |at| at + 1);
-    &bytes[start..end]
 }
 
 /// The wire bytes the oracle's latin1-mapped response text names: every char

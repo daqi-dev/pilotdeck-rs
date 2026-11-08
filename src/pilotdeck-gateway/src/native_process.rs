@@ -55,6 +55,19 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     let env = options.environment(inherited);
     let (host, feishu_webhook, switch_handles) =
         assembly::start_with_webhook(options.clone(), env).await?;
+    // #2354: the `/api/web` route group (TS `handleWebApiRequest` over
+    // `options.gateway`) on the same listener, mounted between the webhook
+    // prefix check and the static fallback exactly like GatewayServer.ts. The
+    // catalog is the native metadata registry over the WS lane's home and an
+    // empty cwd (the lazy process-cwd spelling `metadata_request` uses), so
+    // the HTTP surface lists and describes the same bytes the WS RPCs do.
+    let api_web = crate::api_web::Config {
+        token: token.clone(),
+        catalog: std::sync::Arc::new(crate::api_web::NativeProjectCatalog::new(
+            options.home.clone(),
+            std::path::PathBuf::new(),
+        )),
+    };
     let server = match crate::native_ws::NativeWsServer::bind(
         options.listen,
         host.clone(),
@@ -65,7 +78,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
     {
         // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
         // registers it on the HTTP server, after `/auth/local-token`).
-        Ok(server) => server.with_webhook(feishu_webhook),
+        Ok(server) => server.with_webhook(feishu_webhook).with_api_web(api_web),
         Err(error) => {
             let _ = host.shutdown(options.drain_budget).await;
             return Err(error);

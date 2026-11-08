@@ -3,7 +3,9 @@
 //! backed by the `projectFiles.ts` replica in [`files`]. `serve` answers
 //! `None` for every request whose WHATWG path is not under `/api/web/`,
 //! like TS `handleWebApiRequest` returning `false` — the caller keeps
-//! routing. Not wired into `native_http` yet; #1305 owns the wiring.
+//! routing. #2354 wires the group into `native_http::serve_with_body`, the
+//! production listener entry, behind the same llhttp-equivalent admission
+//! gates every other route answers (#1765).
 //!
 //! Two registered divergences (specs/gateway-parity/diffs/A8.4-API-WEB-001.md):
 //! a files-branch project key whose percent-encoding is malformed makes TS
@@ -13,12 +15,11 @@
 //! entry applies to the `http10` cell. Byte-level header/chunk-case effects
 //! of the hyper codec are the same entry's and are normalized by the replay.
 //!
-//! One security divergence (#1675, `specs/gateway-parity/diffs/A8.4-API-WEB-002.md`):
-//! the file service reads, writes and enumerates through the
-//! A4-FILE-TOCTOU-001 NOFOLLOW descriptor walk, so a component swapped after
-//! the workspace gate fails closed with 403 `workspace_boundary` where TS
-//! follows it out of the root.
-#![cfg_attr(not(test), allow(dead_code))]
+//! One security divergence (#1675, `specs/gateway-parity/diffs/A8.4-API-WEB-002.md`,
+//! approved by its R1 correction, `A8.4-API-WEB-002-R1`): the file service
+//! reads, writes and enumerates through the A4-FILE-TOCTOU-001 NOFOLLOW
+//! descriptor walk, so a component swapped after the workspace gate fails
+//! closed with 403 `workspace_boundary` where TS follows it out of the root.
 mod files;
 #[cfg(test)]
 mod tests;
@@ -215,6 +216,11 @@ pub(crate) async fn serve(
 
 /// The three file endpoints plus the branch-local 400s; `None` falls through
 /// to the router's final 404 (path from the WHATWG pathname, like TS).
+/// #1740: every file-service call runs on the blocking pool — the TS service
+/// is synchronous `fs` at its core, and the replica's descriptor walk is the
+/// same std::fs work, so no reactor thread stalls on disk. The service is
+/// built from the same project key and answers the same values, byte for
+/// byte; only the executing thread changes.
 async fn files_branch(
     request: &mut hyper::Request<hyper::body::Incoming>,
     sub: &str,
@@ -223,13 +229,12 @@ async fn files_branch(
     path: &str,
     keep_alive: bool,
 ) -> Result<hyper::Response<Body>, io::Error> {
-    let service = files::ProjectFileService::new(key);
     let outcome = if sub == "/files/tree" && request.method() == hyper::Method::GET {
         // searchParams.get("path") ?? "."
         let path = query_param(query, "path").unwrap_or_else(|| ".".to_owned());
         Some(
-            service
-                .read_tree(&path)
+            run_files_job(key, move |service| service.read_tree(&path))
+                .await?
                 .map(|value| send_json_value(hyper::StatusCode::OK, &value, keep_alive)),
         )
     } else if sub == "/files/read" && request.method() == hyper::Method::GET {
@@ -243,8 +248,8 @@ async fn files_branch(
                 ));
             }
             Some(path) => Some(
-                service
-                    .read_file(&path)
+                run_files_job(key, move |service| service.read_file(&path))
+                    .await?
                     .map(|value| send_json_value(hyper::StatusCode::OK, &value, keep_alive)),
             ),
         }
@@ -263,9 +268,11 @@ async fn files_branch(
                 // surrogates as the replacement at the boundary.
                 let path = String::from_utf16_lossy(path.units());
                 Some(
-                    service
-                        .write_file(&path, &content, base64)
-                        .map(|()| send_json(hyper::StatusCode::OK, WRITE_OK_BODY, keep_alive)),
+                    run_files_job(key, move |service| {
+                        service.write_file(&path, &content, base64)
+                    })
+                    .await?
+                    .map(|()| send_json(hyper::StatusCode::OK, WRITE_OK_BODY, keep_alive)),
                 )
             }
         }
@@ -293,6 +300,23 @@ async fn files_branch(
             keep_alive,
         ),
     })
+}
+
+/// Build the file service from the project key and run one synchronous call
+/// on the blocking pool (#1740). A join failure (the service panicked or the
+/// runtime shut down) is the handler `Err` that closes the connection with no
+/// bytes, like any other zero-response failure.
+async fn run_files_job<T>(
+    key: &str,
+    job: impl FnOnce(files::ProjectFileService) -> Result<T, files::FilesError> + Send + 'static,
+) -> Result<Result<T, files::FilesError>, io::Error>
+where
+    T: Send + 'static,
+{
+    let key = key.to_owned();
+    tokio::task::spawn_blocking(move || job(files::ProjectFileService::new(&key)))
+        .await
+        .map_err(|error| io::Error::other(format!("api-web files task: {error}")))
 }
 
 /// The write branch's 400 gate: `path` a non-empty string, `content` a
