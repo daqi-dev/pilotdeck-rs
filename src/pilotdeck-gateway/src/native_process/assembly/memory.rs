@@ -3,7 +3,7 @@ use super::{
     MemoryProviderError, Options, ProjectMemoryRegistry, ProjectResources, ProjectRuntimeRegistry,
     ProxyError, Resource, RuntimeError,
 };
-use crate::metadata::{Metadata, NativeFiles};
+use crate::metadata::Metadata;
 use crate::runtime::project::RuntimeLease;
 use pilotdeck_protocol::JsValue;
 use std::sync::Arc;
@@ -28,7 +28,6 @@ use std::sync::Arc;
 struct NativeMemoryRegistry {
     project: Arc<ProjectRuntimeRegistry>,
     options: Options,
-    metadata: Metadata,
 }
 
 impl NativeMemoryRegistry {
@@ -36,14 +35,6 @@ impl NativeMemoryRegistry {
         Self {
             project,
             options: options.clone(),
-            // Same base the management snapshot route builds
-            // (`PersistenceResources::snapshot_gateway(PathBuf::new())`), so
-            // both management families resolve a project key identically.
-            metadata: Metadata {
-                home: options.home.clone(),
-                cwd: std::path::PathBuf::new(),
-                files: NativeFiles,
-            },
         }
     }
 
@@ -63,9 +54,16 @@ impl NativeMemoryRegistry {
 
 impl ProjectMemoryRegistry for NativeMemoryRegistry {
     fn resolve_project_key(&self, project_key: &JsString) -> Result<JsString, MemoryProviderError> {
-        self.metadata
-            .resolve_dialog_project(project_key)
-            .map(JsString::from)
+        let metadata = Metadata {
+            home: self.options.home.clone(),
+            cwd: std::path::PathBuf::new(),
+            files: crate::native_process::methods::session_dir::BoundedSessionMarkers::new(),
+        };
+        let resolved = metadata.resolve_dialog_project(project_key);
+        if metadata.files.was_refused() {
+            return Err(MemoryProviderError::new("Unsafe project marker."));
+        }
+        resolved.map(JsString::from)
             .ok_or_else(|| MemoryProviderError::unknown_project_key(project_key.units()))
     }
 
@@ -598,4 +596,43 @@ mod tests {
             "#1456 the provider is disposed exactly once, after the lease is released"
         );
     }
+    #[cfg(unix)]
+    #[test]
+    fn native_memory_marker_fifo_is_bounded_subprocess() {
+        use std::time::Instant;
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--nocapture", "native_memory_marker_fifo_child"])
+            .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill(); let _ = child.wait_with_output();
+                panic!("memory marker FIFO blocked");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "run by bounded parent"]
+    fn native_memory_marker_fifo_child() {
+        let scratch = Scratch::new();
+        let provider = Arc::new(FakeMemory::default());
+        let project = registry(&scratch, &provider);
+        let resolver = NativeMemoryRegistry::new(project, &options(&scratch));
+        let key = JsString::from(scratch.root().to_string_lossy().as_ref());
+        assert!(resolver.resolve_project_key(&key).is_ok());
+        let dir = scratch.home().join("projects/000-unrelated");
+        std::fs::create_dir(&dir).unwrap();
+        assert!(std::process::Command::new("/usr/bin/mkfifo").arg(dir.join(".cwd")).status().unwrap().success());
+        let error = resolver.resolve_project_key(&key).expect_err("unsafe marker accepted");
+        assert_eq!(error.message, JsString::from("Unsafe project marker."));
+    }
+
 }
