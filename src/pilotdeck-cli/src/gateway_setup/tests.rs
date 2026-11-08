@@ -76,6 +76,8 @@ impl Scratch {
             credentials_label: self.0.join("creds.json"),
             home_pilot: None,
             home_pilot_label: None,
+            home_input: crate::paths::HomeInput::capture(&Env::from_pairs(&[])),
+            cwd: self.0.clone(),
         }
     }
 }
@@ -170,6 +172,65 @@ fn setup_paths_do_not_expand_pilot_home_tilde() {
         Path::new("/h/.pilotdeck/weixin-credentials.json")
     );
 }
+#[test]
+fn setup_home_fallback_is_lazy_and_preserves_literal_overrides() {
+    let cwd = Path::new("/work");
+    for home in [
+        None,
+        Some(""),
+        Some("relative-home"),
+        Some("/explicit-home"),
+    ] {
+        for pilot in [
+            None,
+            Some(""),
+            Some("~"),
+            Some("relative-pilot"),
+            Some("/pilot"),
+        ] {
+            let mut pairs = Vec::new();
+            if let Some(home) = home {
+                pairs.push(("HOME", home));
+            }
+            if let Some(pilot) = pilot {
+                pairs.push(("PILOT_HOME", pilot));
+            }
+            let env = Env::with_home_fallback(&pairs, PathBuf::from("/fake-account"));
+            let paths = SetupPaths::new(&env, cwd).unwrap();
+            let account = PathBuf::from(home.unwrap_or("/fake-account"));
+            let pilot = pilot
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| account.join(".pilotdeck"));
+            assert_eq!(
+                paths.config,
+                crate::paths::resolve(cwd, &pilot.join("pilotdeck.yaml"))
+            );
+            assert_eq!(
+                paths.credentials,
+                crate::paths::resolve(cwd, &pilot.join("weixin-credentials.json"))
+            );
+            assert_eq!(
+                paths.weixin_home().unwrap().0,
+                crate::paths::resolve(cwd, &account.join(".pilotdeck"))
+            );
+        }
+    }
+    let scratch = Scratch::new();
+    let env = Env::from_pairs(&[("PILOT_HOME", "isolated-pilot")]);
+    let paths = SetupPaths::new(&env, &scratch.0).unwrap();
+    assert!(matches!(
+        paths.weixin_home(),
+        Err(Failure::Todo("home directory lookup without $HOME"))
+    ));
+    let mut dialog = Dialog::new(&["q"]);
+    let mut network = Fake::new("null");
+    run_with(&[], &paths, &mut dialog, &mut network).unwrap();
+    assert!(dialog.output.ends_with("未选择任何平台，退出。\n"));
+    assert!(network.requests.is_empty());
+    assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 0);
+}
+
 #[test]
 fn yaml_emit_matches_fixed_baseline_corpus() {
     let corpus = parse_json(include_str!(

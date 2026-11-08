@@ -15,16 +15,20 @@ pub(super) struct SetupPaths {
     pub credentials_label: PathBuf,
     pub home_pilot: Option<PathBuf>,
     pub home_pilot_label: Option<PathBuf>,
+    pub home_input: paths::HomeInput,
+    pub cwd: PathBuf,
 }
 impl SetupPaths {
     pub fn new(env: &Env, cwd: &Path) -> Result<Self, Failure> {
-        let home = env
-            .string("PILOT_HOME")
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(env.string("HOME").unwrap_or_default()).join(".pilotdeck")
-            });
+        let home_input = paths::HomeInput::capture(env);
+        // Explicit PILOT_HOME short-circuits homedir in the baseline. In
+        // particular Feishu/WeCom/cancel do not require a future Weixin home.
+        let home = match env.string("PILOT_HOME").filter(|s| !s.is_empty()) {
+            Some(home) => PathBuf::from(home),
+            None => {
+                PathBuf::from(home_input.resolve()?.to_string_lossy().as_ref()).join(".pilotdeck")
+            }
+        };
         let config = env
             .string("PILOTDECK_CONFIG_PATH")
             .filter(|s| !s.is_empty())
@@ -41,9 +45,20 @@ impl SetupPaths {
             credentials_label,
             home_pilot,
             home_pilot_label,
+            home_input,
+            cwd: cwd.to_path_buf(),
             config: paths::resolve(cwd, &config),
             credentials: paths::resolve(cwd, &home.join("weixin-credentials.json")),
         })
+    }
+
+    pub fn weixin_home(&self) -> Result<(PathBuf, PathBuf), Failure> {
+        if let (Some(home), Some(label)) = (&self.home_pilot, &self.home_pilot_label) {
+            return Ok((home.clone(), label.clone()));
+        }
+        let home = self.home_input.resolve()?;
+        let label = join_clean(Path::new(home.to_string_lossy().as_ref()), ".pilotdeck");
+        Ok((paths::resolve(&self.cwd, &label), label))
     }
 }
 

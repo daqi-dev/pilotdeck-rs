@@ -102,6 +102,194 @@ fn weixin_matches_fixed_ts_sdk_callback_requests_credentials_and_config_oracle()
     check_oracle(&oracle);
 }
 #[test]
+fn unset_home_weixin_save_uses_only_injected_account_and_matches_existing_oracle() {
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/gateway-setup/weixin-oracle.json"
+    ))
+    .unwrap();
+    let case = oracle["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == "login-success")
+        .unwrap();
+    let scratch = Scratch::new();
+    let env = Env::with_home_fallback(
+        &[
+            ("PILOT_HOME", "pilot"),
+            ("PILOTDECK_CONFIG_PATH", "pilot/pilotdeck.yaml"),
+        ],
+        scratch.0.join("fake-account"),
+    );
+    let paths = SetupPaths::new(&env, &scratch.0).unwrap();
+    fs::create_dir_all(paths.config.parent().unwrap()).unwrap();
+    fs::write(&paths.config, case["initial"].as_str().unwrap()).unwrap();
+    let mut io = Dialog::new(&[""]);
+    let mut fake = responses(case);
+    run_with(&["weixin".into()], &paths, &mut io, &mut fake).unwrap();
+    assert_eq!(io.output, case["stdout"].as_str().unwrap());
+    assert_eq!(
+        fs::read_to_string(&paths.config).unwrap(),
+        case["after"].as_str().unwrap()
+    );
+    assert_eq!(
+        fs::read_to_string(&paths.credentials).unwrap(),
+        case["afterCredentials"].as_str().unwrap()
+    );
+    assert!(scratch.0.join("fake-account/.pilotdeck").is_dir());
+    assert!(!scratch.0.join(".pilotdeck").exists());
+    assert_eq!(fake.base.requests.len(), 2);
+}
+
+#[test]
+fn setup_home_complete_output_files_and_requests_match_ten_real_ts_cases() {
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/startup-home/setup-home-oracle.json"
+    ))
+    .unwrap();
+    let cases = oracle["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 10);
+    for case in cases {
+        let scratch = Scratch::new();
+        let root = scratch.0.to_str().unwrap();
+        let pilot = case["pilot"]
+            .as_str()
+            .map(|pilot| pilot.replace("<CASE>", root));
+        let mut pairs = Vec::new();
+        if let Some(home) = case["home"].as_str() {
+            pairs.push(("HOME", home));
+        }
+        if let Some(pilot) = pilot.as_deref() {
+            pairs.push(("PILOT_HOME", pilot));
+        }
+        let env = Env::with_home_fallback(&pairs, scratch.0.join("account"));
+        let paths = SetupPaths::new(&env, &scratch.0).unwrap();
+        let save = case["save"] == true;
+        if save && case["missingParent"] != true {
+            fs::create_dir(scratch.0.join("pilot")).unwrap();
+        }
+        let answers: Vec<&str> = if save {
+            vec![""]
+        } else if case["answers"].is_array() {
+            case["answers"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a[1].as_str().unwrap())
+                .collect()
+        } else {
+            vec!["q"]
+        };
+        let argv: Vec<String> = if save {
+            vec!["weixin".into()]
+        } else {
+            case["argv"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|arg| arg.as_str().unwrap().to_owned())
+                .collect()
+        };
+        let replies = serde_json::json!({"responses": [
+            {"json": {"qrcode": "fixture-code", "qrcode_img_content": "https://fixture.invalid/qr"}},
+            {"json": {"status": "confirmed", "ilink_bot_id": "fixture-account", "bot_token": "fixture-token", "baseurl": "https://fixture.invalid/api"}}
+        ]});
+        let mut fake = if save {
+            responses(&replies)
+        } else {
+            IlinkMock::new()
+        };
+        let mut io = Dialog::new(&answers);
+        run_with(&argv, &paths, &mut io, &mut fake).unwrap();
+        assert_eq!(
+            io.output.replace(root, "<CASE>"),
+            case["stdout"].as_str().unwrap(),
+            "{} output",
+            case["id"]
+        );
+        assert!(io.answers.is_empty(), "{} answers", case["id"]);
+        assert_eq!(case["stderr"], "");
+        assert_eq!(case["code"], 0);
+        assert_eq!(case["timeout"], false);
+        assert_eq!(
+            scratch.0.join("account/.pilotdeck").is_dir(),
+            case["accountPilotCreated"].as_bool().unwrap(),
+            "{} account mkdir",
+            case["id"]
+        );
+        assert_eq!(
+            scratch.0.join(".pilotdeck").is_dir(),
+            case["emptyPilotCreated"].as_bool().unwrap(),
+            "{} empty mkdir",
+            case["id"]
+        );
+        assert_eq!(
+            scratch.0.join("relative-home/.pilotdeck").is_dir(),
+            case["relativePilotCreated"].as_bool().unwrap(),
+            "{} relative mkdir",
+            case["id"]
+        );
+        fn collect(
+            dir: &Path,
+            root: &Path,
+            files: &mut serde_json::Map<String, serde_json::Value>,
+        ) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect(&path, root, files);
+                } else {
+                    files.insert(
+                        path.strip_prefix(root).unwrap().to_str().unwrap().into(),
+                        fs::read_to_string(path).unwrap().into(),
+                    );
+                }
+            }
+        }
+        let mut files = serde_json::Map::new();
+        for folder in ["account", "pilot", ".pilotdeck", "relative-home", "~"] {
+            let path = scratch.0.join(folder);
+            if path.exists() {
+                collect(&path, &scratch.0, &mut files);
+            }
+        }
+        assert_eq!(
+            serde_json::Value::Object(files),
+            case["files"],
+            "{} complete product files",
+            case["id"]
+        );
+        let events = case["fetch"]["events"].as_array().unwrap();
+        let expected: Vec<_> = events
+            .iter()
+            .map(|event| {
+                (
+                    event["method"].as_str().unwrap().to_owned(),
+                    event["url"].as_str().unwrap().to_owned(),
+                    event["body"].as_str().map(str::to_owned),
+                )
+            })
+            .collect();
+        assert_eq!(fake.base.requests, expected, "{} requests", case["id"]);
+        assert_eq!(
+            fake.polls,
+            events
+                .iter()
+                .map(|e| e["headers"].is_object())
+                .collect::<Vec<_>>(),
+            "{} poll headers",
+            case["id"]
+        );
+        assert_eq!(
+            fake.base.time_ms,
+            case["fetch"]["clock"].as_u64().unwrap(),
+            "{} callback clock",
+            case["id"]
+        );
+    }
+}
+
+#[test]
 fn all_platform_menu_matches_ts_order_and_complete_output() {
     let oracle: serde_json::Value = serde_json::from_str(include_str!(
         "../../tests/fixtures/gateway-setup/weixin-all.json"

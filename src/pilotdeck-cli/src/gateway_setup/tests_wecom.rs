@@ -357,6 +357,8 @@ fn wecom_write_failure_child() {
             credentials_label: PathBuf::from("unused-credentials"),
             home_pilot: None,
             home_pilot_label: None,
+            home_input: crate::paths::HomeInput::capture(&Env::from_pairs(&[])),
+            cwd: std::env::current_dir().unwrap(),
         };
         let mut dialog = if qr {
             Dialog::new(&["", "", "", ""])

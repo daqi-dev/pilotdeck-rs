@@ -70,3 +70,13 @@
 - 建议与决定：**AI 代批，待人复核**。协调者明确允许 CLI manifest 加 rustix process。只有 snapshot 与实际进程均 HOME absent、real/effective UID 相同且查询前后未变化时才用 std::env::home_dir；UTF8 账户 home 成功返回，缺账户/非UTF8/不同UID/环境变化明确 TODO，未实测不得伪造空值或根路径。非 Unix 保持未实现，不宣称平台运行已验。
 - 原则与断言：可注入环境不能悄悄读取宿主环境；真实账户 home 仅取字符串做与固定 Node 的比对，不执行其路径的任何 fs 操作。普通单测以隔离 fake account 覆盖优先级和完整迁移 report；真实 HOME-unset 只运行路径专用 ignored probe，禁止生产技能扫描。
 - 批准与验证：这是恢复固定 TS 的普通账户语义，不新增已接受差异或冻结豁免；异常账户未支持仍据实列出。所有 Rust runtime 由协调者在 mbp2 执行，未完成不报通过。后续 setup 与裸 tilde 另片审查，不扩大本片修复声明。
+
+
+## 2026-11-08 · setup 账户 home 延迟查询
+
+- 卡在哪：setup自有`PILOT_HOME || join(homedir(),'.pilotdeck')`在Rust无HOME时误落cwd，Weixin保存再TODO；复用pilot_home会错误展开非空~，构造时提前查Weixin目录又会阻断本来无需homedir的显式PILOT_HOME取消/其它平台。
+- 谁受影响：gateway setup目录计算与Weixin凭据保存；普通HOME含空/相对原label保持，不触碰原子保存、HTTP、prompt、SDK/main/TUI或共享Gateway。
+- 能否撤回/尺子：可撤回，无新格式迁移；不改冻结文件/既有金样，追加自己的真实TS受控OS金样，正常分支恢复TS语义。
+- 建议与决定：**AI代批，待人复核**。SetupPaths只保存HOME-only输入/来源与传入cwd；默认目录需要时查询home，非空PILOT_HOME保持字面并短路账户查询，Weixin真正保存时才解析独立mkdir目录；IO以cwd定位、错误label仍用join原相对值。
+- 原则与断言：延迟行为不能被目录预备动作破坏。固定TS受控fake os.homedir十格记录真实查询时机/输出/文件/HTTP，Rust无fallback synthetic取消仍成功、保存才要求home，成功写入只发生在注入fake账户。真实OS账户只查字符串不做fs，不以“隔离PILOT_HOME”掩盖Weixin另写homedir的事实。
+- 验证与边界：所有Rust与Node运行在mbp2。r1严格clippy/49测试/build已通过，新增完整十格oracle断言后r2严格clippy/50普通+4父实际调用helper/build实际通过、非作者独审无确认P0/P1或需处置具体P2；兼容账户范围同首片，未批准任何冻结豁免。

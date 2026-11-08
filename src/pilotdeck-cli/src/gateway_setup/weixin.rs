@@ -81,16 +81,9 @@ fn enable(paths: &SetupPaths) -> SetupResult<()> {
     )
 }
 fn save_credentials(paths: &SetupPaths, credentials: &Credentials) -> SetupResult<()> {
-    let home = paths
-        .home_pilot
-        .as_ref()
-        .ok_or(Failure::Todo("home directory lookup without $HOME"))?;
-    let label = paths
-        .home_pilot_label
-        .as_ref()
-        .expect("home pilot label accompanies path");
-    fs::create_dir_all(home).map_err(|error| {
-        Failure::Error(paths::node_fs_message_or_unknown(&error, "mkdir", label))
+    let (home, label) = paths.weixin_home()?;
+    fs::create_dir_all(&home).map_err(|error| {
+        Failure::Error(paths::node_fs_message_or_unknown(&error, "mkdir", &label))
     })?;
     // The baseline creates os.homedir()/.pilotdeck even when PILOT_HOME points
     // elsewhere. Preserve its missing custom-parent failure before preparing

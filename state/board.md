@@ -4801,3 +4801,8 @@ SDK文件回退已在Unix接O_NONBLOCK同fd普通文件检查及65536+1有界读
 ### 2026-11-08 · HOME 未设账户回退首片（Codex，候选冻结）
 
 CLI路径与skills migrate现区分真实进程环境/注入环境，HOME未设时仅同real/effective UID的UTF8系统账户安全回退；既存HOME含空/相对值保持，synthetic测试只读注入fake home。mbp2 r1 fmt/严格clippy、paths10普通+实际ignored字符串探针1、skills_migrate14与build全PASS；只比较OS home字符串，不在其路径做任何fs IO。3源hash与bin73de92635ee689a5786697fa5da20946424666eb0bd4b2e01716669e66a2c24b见fixture README；Python3.9 driver首轮hashlib接口错误原件保留，兼容修复后r2实际exit0/Rust1passed/scratchEntries=[]，root非作者独审无确认P0/P1，不冒称两家formal gate/人签字。setup/bare~空相对/cwd分别后续片，SDK保持冻结，未新增冻结豁免、未标完整CLI完成。仅本机交付、无GitHub写入。
+
+
+### 2026-11-08 · setup HOME 延迟查询（Codex，本机提交）
+
+setup现按TS独立env||join目录规则处理HOME未设，显式PILOT_HOME保持字面且不提前要求账户home；Weixin真正保存才解析其独立mkdir目录，既有空/相对label保留。mbp2 r1严格clippy/49普通+4父实际调用helper/build通过；固定TS受控OS十格原件全exit0无timeout，查询时机、输出、文件位置与请求已实采，只fake账户/网络、不写真实home。新增完整十格Rust断言后mbp2 r2严格clippy/50普通+4父实际调用helper/build全部通过，源码postfmt零变化，独立非作者审无确认P0/P1或需处置P2；源码与证据见startup-home fixture和主仓setup-lazy目录。仍不冒称两家formal gate/人验收，未标D2/完整CLI完成；后续裸~路径另片。仅本机交付，无GitHub。
