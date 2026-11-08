@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 234 mutants:
+`JUDGES`, keyed by the same names. The current table has 237 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -330,7 +330,9 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `nested-boolop-value-bypass`, `nested-is-literal-bypass`,
 `nested-shared-call-boolop-bypass`,
 `calibrate-status-write-is-literal-bypass`,
-`calibrate-exit-is-literal-bypass`, `controls-nested-same-name`,
+`calibrate-exit-is-literal-bypass`, `summary-status-shared-call-bypass`,
+`summary-unpack-shared-call-bypass`,
+`calibrate-exit-name-is-literal-bypass`, `controls-nested-same-name`,
 `calibrate-shared-excuse`, `calibrate-status-setdefault`,
 `calibrate-status-update-kwarg`, `calibrate-early-return-branch`,
 `calibrate-two-hop-zero`, `calibrate-int-call-code`,
@@ -1144,4 +1146,34 @@ detector from the mutation side, with the write/exit identity spellings
 pinned by `calibrate-status-write-is-literal-bypass`
 (`report['status'] = 'PASS' if 1.0 is 1.0 else 'FAIL'`) and
 `calibrate-exit-is-literal-bypass` (`sys.exit(0 if 1.0 is 1.0 else 1)`)
-in the same family.
+in the same family.  fix-r7 (DS + MiniMax r6, both families, probe-verified)
+closed four more gaps in that settlement.  First, the *top-level* summary
+slot scan had kept the full-tree `_calls_aggregate` exemption the nested layer
+lost in fix-r6, so `{'status': 'PASS' or common.aggregate_status(overall)}`
+still passed at the top level; the exemption there is now judged on the exit
+arms only, and a `Dict` literal in `**` unpack position is judged recursively
+as the summary level it merges into — an arm-based rule alone does not see
+the dict literal itself (`summary-status-shared-call-bypass` and
+`summary-unpack-shared-call-bypass` pin both spellings).  Second,
+`_exit_name_violation` — the fifth `_exit_arms` consumer — treated an empty
+arm set as *no violation* where every other consumer fails closed; an
+unresolvable test now reads as `conditional` (cannot rule out), and
+`calibrate-exit-name-is-literal-bypass` pins the name-relay spelling
+(`sys.exit(code)` where `code = 0 if 1.0 is 1.0 else 1`, which never matches
+a `Constant` node and so dodged the optimistic-name rule).  Third, the census
+row-side pid check compared only `is None`, so a bool or float pid (`True ==
+1`, `7.0 == 7`) matched a declared int through `==`; `_retirement_real_pid`
+(int and not bool) is now applied to every row pid and to the declared
+comparison, and the declared-side `untrustworthy` set projects unhashable
+entries through the same hashable wrapper before sorting — an unhashable
+declared element used to raise `TypeError` out of the report builder and
+collapse the whole 16-face retirement report into a `ROUND_EVIDENCE BLOCKED`
+stub (every r6 role block, both families).  Fourth, the executed facet
+keyed its rounds by the raw `round` label, so two verdicts sharing one label
+silently dropped a round; the facet now deduplicates (`round-01#2`, …) and
+the generator test pins it.  The `_folded_string` fold grew the same
+wrapper as `_literal_test_value` — any `ArithmeticError`, `TypeError`,
+`ValueError`, `MemoryError` or `RecursionError` resolves to nothing instead
+of collapsing the audit — plus a width pre-check on `%` formatting, because
+`'%2000000000s' % 'x'` *succeeds* at runtime by allocating ~2 GB rather
+than raising.
