@@ -223,13 +223,18 @@ class CoverageControls(unittest.TestCase):
         noisy = list(base)
         noisy.insert(header + 1, "    // churn")
         tables = {path: (noisy, literal_table_lines(noisy))}
+        # The drifted set is derived from the ledger and the table itself,
+        # not a hardcoded key list: channels migrate out of the table as
+        # the port lands (slack left in #1344, bluebubbles in #1343 —
+        # their ledger anchors moved to the new modules), and a hardcoded
+        # list goes stale against exactly that and false-fails the merge
+        # ref (#2286 fix-r5, the CI semantic-conflict catch). Any
+        # gateway.channel:* entry anchored on a table member line drifts.
         current = {row["id"]: int(row["evidence"].rsplit(":", 1)[1])
                    for row in self.data["entries"]
-                   if row["id"] in ("gateway.channel:whatsapp", "gateway.channel:signal",
-                                    "gateway.channel:mattermost", "gateway.channel:matrix",
-                                    "gateway.channel:slack", "gateway.channel:discord",
-                                    "gateway.channel:telegram", "gateway.channel:qq",
-                                    "gateway.channel:wecom")}
+                   if row["evidence"].startswith(loader + ":")
+                   and int(row["evidence"].rsplit(":", 1)[1]) in literal_table_lines(base)}
+        self.assertGreaterEqual(len(current), 2)  # never silently vacuous
         for key, number in current.items():
             with self.subTest(key=key, form="drifted"):
                 self.assertEqual(
@@ -241,17 +246,19 @@ class CoverageControls(unittest.TestCase):
         # A member line carrying a trailing // comment must stay green too:
         # literal_member admits it into the table, so the comparison has to
         # strip the comment instead of flagging a mismatch (fix-r2, DS
-        # boundary P1 / sibling P1).
+        # boundary P1 / sibling P1). The first anchored key in table order
+        # stands in for the hardcoded whatsapp (same derivation reason).
         annotated = list(base)
         annotated.insert(header + 1, "    // churn")
-        whatsapp = current["gateway.channel:whatsapp"] + 1  # on-key after shift
-        annotated[whatsapp - 1] += "  // keep last"
+        first_key, first_number = min(current.items(), key=lambda kv: kv[1])
+        on_key = first_number + 1  # on-key after shift
+        annotated[on_key - 1] += "  // keep last"
         tables_annotated = {path: (annotated, literal_table_lines(annotated))}
         self.assertIsNone(key_literal_error(
-            "gateway.channel:whatsapp", f"{loader}:{whatsapp}", tables_annotated))
+            first_key, f"{loader}:{on_key}", tables_annotated))
         self.assertEqual(key_literal_error(
-            "gateway.channel:whatsapp", f"{loader}:{whatsapp + 1}", tables_annotated),
-            "evidence key literal mismatch: gateway.channel:whatsapp")
+            first_key, f"{loader}:{on_key + 1}", tables_annotated),
+            "evidence key literal mismatch: " + first_key)
 
     def test_for_in_arrays_stay_range_only(self):
         # Non-binding arrays (a for-in list) never trigger the assertion.
