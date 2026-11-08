@@ -2808,6 +2808,26 @@ class RetirementScoring(unittest.TestCase):
             self.assertTrue(report[face]['status'] == status,
                             f'#16 budget-blocked face {face}: {report[face]["status"]} != {status}')
 
+    def test_collection_refusal_keeps_the_full_face_set(self):
+        # #1588 r1 §2: the collection-phase refusals (ps census failure,
+        # missing driver artifacts, unverified owned-process cleanup) raise
+        # EvidenceError from inside _retirement_report; the pre-fix wrapper
+        # only caught the budget timeout, so they escaped and main's fallback
+        # wrote the 5-key BLOCKED stub with every scoring face missing.  They
+        # must classify BLOCKED with the full 16-face report and the refusal's
+        # own rule in failure.
+        for rule in ('HOST_CENSUS', 'ROUND_EVIDENCE', 'CLEANUP'):
+            with patch.object(self.session, '_retirement_report',
+                              side_effect=self.session.EvidenceError(rule, 'probe failed')):
+                report = self.session.retirement_report(Path('out'), Path('baseline'))
+            self.assertEqual(report['status'], 'BLOCKED', f'#44 {rule} status: {report["status"]}')
+            self.assertEqual(report['executionStatus'], 'BLOCKED', f'#44 {rule} executionStatus')
+            self.assertEqual(report['failure']['rule'], rule, f'#44 {rule} failure: {report["failure"]}')
+            self.assertIn('could not collect round evidence', report['reason'])
+            for face in self.REPORT_FACES:
+                self.assertIn(face, report, f'#44 {rule} lacks face {face}')
+            self.assertIn('failure', report, f'#44 {rule} lacks face failure')
+
     def test_entry_inventory_reads_every_round(self):
         # ④ (#1355 fix-r3): an entry that answered in round 1 but 404'd in
         # round 2 is NO_HIT — the pre-fix face only read rounds[0] and hid the
@@ -3316,26 +3336,83 @@ class RetirementScoring(unittest.TestCase):
         # (diffs/A8.6-RETIREMENT-001.md) promises the full report for these
         # shapes, and the missing observation must read as unobserved
         # (BLOCKED), never as a clean empty sample (PASS).
+        # #1588 r1 §1: every remaining observation key gets the same treatment
+        # — a round that recorded no outcome/frame/http group, no processes,
+        # no driver exit code, no label, no runtime, no port map or no cleanup
+        # audit must keep the full 16-face report, and its inner-null shapes
+        # (a null rows list, a null addresses list, a null port value) are the
+        # same family: never a KeyError/TypeError out of the report path, never
+        # a PASS read.
         expected = ['submit_turn', 'run_get']
-        faces = {
-            'census': ('processCensus', 'BLOCKED'),
-            'connections': ('network', 'BLOCKED'),
-            'listeners': ('listeners', 'FAIL'),
-        }
-        for key, (face, status) in faces.items():
-            for tag, value in (('missing', KeyError), ('null', None)):
-                row = self._stream_ok_round_row()
-                if value is KeyError:
-                    del row[key]
-                else:
-                    row[key] = value
-                report = self._report_for(row, expected)
-                for name in self.REPORT_FACES:
-                    self.assertIn(name, report, f'#43 {tag} {key} lacks face {name}')
-                self.assertNotEqual(report['executionStatus'], 'NOT_RUN', f'#43 {tag} {key}')
-                self.assertEqual(report['hostAudit'][face][0]['status'], status,
-                                 f'#43 {tag} {key}: {report["hostAudit"][face]}')
-                self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#43 {tag} {key}')
+
+        # (tag, key, value) → the face that must carry the non-PASS read, with
+        # the path naming where the read lives.  KeyError means "delete the
+        # key"; a (…, None) target only asserts the round is named unobserved
+        # rather than crashed.
+        cases = (
+            ('census', 'census', KeyError, ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census null', 'census', None, ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census null rows', 'census',
+             {'rows': None, 'declared': [7], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            ('census non-dict row', 'census',
+             {'rows': ['not-a-dict'], 'declared': [7], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'FAIL'),
+            ('census unproven alive', 'census',
+             {'rows': [{'pid': 7}], 'declared': [7]},
+             ('hostAudit', 'processCensus', 0, 'status'), 'FAIL'),
+            ('connections', 'connections', KeyError, ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            ('connections null', 'connections', None, ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            ('connections null rows', 'connections',
+             {'rows': None, 'commandStatus': 'ok'},
+             ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            ('listeners', 'listeners', KeyError, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('listeners null', 'listeners', None, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('listeners null addresses', 'listeners',
+             {'pid': 7, 'addresses': None, 'loopbackOnly': None},
+             ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('ports', 'ports', KeyError, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('ports null', 'ports', None, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('ports null gateway', 'ports', {'mock': 28761, 'gateway': None},
+             ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
+            ('audit', 'audit', KeyError, ('cleanupAudit', 'status'), 'FAIL'),
+            ('audit null', 'audit', None, ('cleanupAudit', 'status'), 'FAIL'),
+            ('audit not stopped', 'audit', {'allStopped': False},
+             ('cleanupAudit', 'status'), 'FAIL'),
+            ('outcomes', 'outcomes', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('outcomes null', 'outcomes', None, ('rounds', 0, 'status'), 'FAIL'),
+            ('frames', 'frames', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('frames null', 'frames', None, ('rounds', 0, 'status'), 'FAIL'),
+            ('http', 'http', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('http null', 'http', None, ('rounds', 0, 'status'), 'FAIL'),
+            ('processes', 'processes', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('driverExitCode', 'driverExitCode', KeyError, ('rounds', 0, 'status'), 'FAIL'),
+            ('driverExitCode null', 'driverExitCode', None, ('rounds', 0, 'status'), 'FAIL'),
+            ('label', 'label', KeyError, ('rounds', 0, 'round'), None),
+            ('runtime', 'runtime', KeyError, None, None),
+        )
+        for tag, key, value, face, status in cases:
+            row = self._stream_ok_round_row()
+            if value is KeyError:
+                del row[key]
+            else:
+                row[key] = value
+            report = self._report_for(row, expected)
+            for name in self.REPORT_FACES:
+                self.assertIn(name, report, f'#43 {tag} {key} lacks face {name}')
+            self.assertNotEqual(report['executionStatus'], 'NOT_RUN', f'#43 {tag} {key}')
+            if face is None:
+                continue
+            observed = report
+            for part in face:
+                observed = observed[part]
+            if status is None:
+                self.assertIsNone(observed, f'#43 {tag} {key}: {observed!r}')
+            else:
+                self.assertEqual(observed, status, f'#43 {tag} {key}: {observed!r}')
+                if face[0] == 'hostAudit':
+                    self.assertNotEqual(report['hostAudit']['status'], 'PASS',
+                                        f'#43 {tag} {key}')
 
 
     def test_control_attribution_requires_the_injected_object(self):
@@ -3441,15 +3518,49 @@ class RetirementScoring(unittest.TestCase):
 
     def test_network_verdict_fails_closed_on_empty_unparsed_or_failed_samples(self):
         # R3: an empty, unparsed or failed lsof sample cannot prove loopback.
-        for connections, expected_status in (
-                ({'rows': []}, 'BLOCKED'),
-                ({'rows': [{'peer': None, 'raw': 'unparsed lsof line'}]}, 'BLOCKED'),
-                ({'rows': [], 'commandStatus': 'failed', 'reason': 'lsof exited 1'}, 'BLOCKED'),
-                ({'rows': [{'peer': '203.0.113.7:443', 'raw': 'x'}]}, 'FAIL'),
-                ({'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}]}, 'PASS')):
+        # #1588 r1 §4: the verdict is the single source of truth for whether
+        # the sample was observable — a missing commandStatus is a probe that
+        # never reported success (BLOCKED, not a sample that passes because it
+        # forgot to say it failed), and the observable field the class-4
+        # control reads is judged here, once, for all of these shapes.
+        for connections, expected_status, expected_observable in (
+                ({'rows': []}, 'BLOCKED', False),
+                ({'rows': [{'peer': None, 'raw': 'unparsed lsof line'}]}, 'BLOCKED', False),
+                ({'rows': [], 'commandStatus': 'failed', 'reason': 'lsof exited 1'}, 'BLOCKED', False),
+                ({'rows': [{'peer': '203.0.113.7:443', 'raw': 'x'}]}, 'BLOCKED', False),
+                ({'rows': [{'peer': '203.0.113.7:443', 'raw': 'x'}], 'commandStatus': 'ok'},
+                 'FAIL', True),
+                ({'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}], 'commandStatus': 'ok'},
+                 'PASS', True)):
             verdict = self.session._retirement_network_verdict(connections)
             self.assertEqual(verdict['status'], expected_status, connections)
             self.assertEqual(verdict['rule'], 'NETWORK_FALLBACK')
+            self.assertIs(verdict['observable'], expected_observable, connections)
+
+    def test_forwarding_control_unavailable_when_a_row_lacks_a_parsed_peer(self):
+        # #1588 r1 §5: the paired negative control for the class-4 "no
+        # missing-peer row" observability guard.  A sample whose rows carry a
+        # ``peer: None`` row while the *unparsed* list stays empty is exactly
+        # the shape a verdict status cannot distinguish from a usable sample,
+        # and the recorded mutation (`return True` on the observability guard)
+        # survived #41 because none of its samples had a missing-peer row
+        # without unparsed lines.  The verdict must report the sample as
+        # unobservable, the class-4 control must stay NOT_APPLICABLE, never a
+        # PASS, and the report keeps its full faces.
+        expected = ['submit_turn', 'run_get']
+        observation = {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'},
+                                {'peer': None, 'raw': 'lsof line without a parseable peer'}],
+                       'unparsed': [], 'commandStatus': 'ok'}
+        verdict = self.session._retirement_network_verdict(observation)
+        self.assertIs(verdict['observable'], False, verdict)
+        self.assertNotEqual(verdict['status'], 'PASS', verdict)
+        row = self._stream_ok_round_row()
+        row['connections'] = observation
+        controls = self.session._retirement_controls(row, expected)
+        class4 = next(c for c in controls['classes'] if c['class'] == 'FORWARDING_MISLABELED')
+        self.assertEqual(class4['status'], 'NOT_APPLICABLE', f'#41 missing-peer row: {class4}')
+        self.assertIn('unobservable', class4['reason'])
+        self._assert_full_faces(self._report_for(row, expected), '#41 missing-peer row')
 
     def test_lsof_failure_is_not_an_empty_connection_set(self):
         dead = subprocess.Popen(['true'])
@@ -3570,6 +3681,14 @@ class RetirementScoring(unittest.TestCase):
             self.assertEqual(ungated['gated'], [])
             self.assertIn('/feishu/webhook', ungated['unhit'])
             self.assertEqual(ungated['status'], 'BLOCKED')
+            # #1588 r1 §1: a round that recorded no runtime shape cannot prove
+            # the credential gate either — that reads as "gate does not hold",
+            # never as a TypeError out of the inventory path.
+            no_runtime = {key: value for key, value in row.items() if key != 'runtime'}
+            unproven = self.session._retirement_entry_inventory(baseline, no_runtime)
+            self.assertEqual(unproven['gated'], [])
+            self.assertIn('/feishu/webhook', unproven['unhit'])
+            self.assertEqual(unproven['status'], 'BLOCKED')
 
 
 if __name__ == '__main__':

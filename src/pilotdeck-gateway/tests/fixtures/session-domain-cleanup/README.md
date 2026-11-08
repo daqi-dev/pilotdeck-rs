@@ -1054,3 +1054,22 @@ now does).  Separately, an alias chain of ~1,100 hops exhausts the Python
 recursion limit instead of resolving (codex's measurement, not independently
 reproduced here); the README's "bounded by the chain's own length" statement
 holds only below the interpreter's recursion limit.
+
+`#1652` adds the recursive layer the two #892 layers could not see: a summary
+face nested inside a returned dict — `{'status': 'BLOCKED', 'face': {'status':
+'PASS'}}` — reads clean to the top-level slot scan, because the inner `status`
+key never becomes a slot of its own.  The recursive walk collects status/verdict
+keys in dict values (including `**` expansions), list/tuple/set elements,
+`IfExp` arms and `BoolOp` values inside a returned summary of a registered
+point, and judges them by the same provenance rules as the top level: a relay
+(`_relays_status` / `_calls_aggregate`) or any arm folding into a fail-closed
+literal (`BLOCKED`/`FAIL`/`NOT_RUN`/…) is legal, an unconditional clean literal
+is a `nested status slot` bypass.  Names, calls and comprehensions stay opaque
+to the recursion — a Name is resolved by the write families, a callee by the
+delegation registries, and a comprehension body is its own scope; walking them
+here would double-judge the shapes those families already own.  Four probes pin
+it: a clean status inside a returned face, one inside a list element of a
+returned face, and the legal pair — an `IfExp` face that keeps its fail-closed
+arm, and a bare fail-closed literal.  The `nested-status-slot-bypass` mutant
+(the retirement report's `cleanupAudit` face hard-written to `PASS`) pins the
+detector from the mutation side.

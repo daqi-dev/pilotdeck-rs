@@ -1803,6 +1803,25 @@ def retirement_duplicate_status_key(rows):
                   'passed=False')
 
 
+def nested_status_slot_bypass(rows):
+    """#1652: a status slot nested inside a face of a returned summary (the
+    cleanupAudit slot hard-written to PASS) is invisible to the top-level slot
+    scan; the recursive layer must flag it as ``nested status slot 'PASS'``."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested status slot bypass flagged, '
+                  'passed=False')
+
+
 def controls_nested_same_name(rows):
     """#892 r3: a nested ``def main`` must not shadow or duplicate the
     registered point name (MiniMax/DeepSeek boundary P2)."""
@@ -2040,6 +2059,11 @@ MUTATIONS = [
     ('retirement-duplicate-status-key', SOURCE,
      "        'status': overall,\n",
      "        'status': 'BLOCKED', 'status': 'PASS',\n"),
+    ('nested-status-slot-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS'},\n"),
     ('controls-nested-same-name', CONTROLS_SOURCE,
      "    report['cleanup'] = cleanup\n",
      "    def main():\n"
@@ -4409,6 +4433,8 @@ JUDGES = {
         'aggregation-audit', calibrate_status_update, False, ()),
     'retirement-duplicate-status-key': (
         'aggregation-audit', retirement_duplicate_status_key, False, ()),
+    'nested-status-slot-bypass': (
+        'aggregation-audit', nested_status_slot_bypass, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
     'calibrate-shared-excuse': (

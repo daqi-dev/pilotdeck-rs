@@ -56,6 +56,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import unittest
@@ -607,6 +608,14 @@ def guard_prefix(disable=False):
     return prefix
 
 
+# #1718: ``ast`` line numbers follow the tokenizer -- only \n, \r\n and \r
+# end a line.  ``str.splitlines`` also breaks on \f (and \v, \x85, U+2028,
+# ...), so one form feed above the preflight shifts the slice and the paired
+# control below deletes the wrong lines while the preflight survives.  Same
+# regex as ``scripts/check-frozen-delivery.py``.
+_LINE_BREAK = re.compile(r'\r\n|\r|\n')
+
+
 def without_preflight(source):
     """The same guard bytes with the os-preload preflight block removed.
 
@@ -620,9 +629,9 @@ def without_preflight(source):
                  and 'version_info' in ast.unparse(statement.test)), None)
     if node is None:
         return source
-    lines = source.splitlines(keepends=True)
+    lines = _LINE_BREAK.split(source)
     del lines[node.lineno - 1:node.end_lineno]
-    return ''.join(lines)
+    return '\n'.join(lines)
 
 
 def guarded_probe(disable=False):
@@ -672,6 +681,26 @@ class EntryGuardTests(unittest.TestCase):
                              + (opened.stdout + opened.stderr)[-500:])
             self.assertIn('Ran 1 test', opened.stdout + opened.stderr,
                           marker + ' control: the probe itself must run')
+
+    def test_without_preflight_splits_only_ast_line_breaks(self):
+        """#1718 paired control: the helper slices lines the way ast counts them.
+
+        ``str.splitlines`` also breaks on \f, so a form feed above the
+        preflight shifted the old slice: the control then deleted the wrong
+        lines and the preflight survived.  ``_LINE_BREAK`` keeps the form
+        feed inside its line, so the deleted span is still the preflight.
+        """
+        marker = ('#1355-r1 #1718: without_preflight must delete exactly the '
+                  'preflight lines even when the source holds a form feed')
+        source = ('import sys\n'
+                  'if sys.version_info < (3, 11):\n'
+                  "    raise SystemExit('os must be preloaded')\n"
+                  'import os\n')
+        with_feed = source.replace('import sys\n', 'import sys\f\n', 1)
+        self.assertEqual(without_preflight(source),
+                         'import sys\nimport os\n', marker)
+        self.assertEqual(without_preflight(with_feed),
+                         'import sys\f\nimport os\n', marker)
 
     def test_guard_requires_preloaded_os(self):
         """fix-r4 GLM P1: import os may only run after its preload is proved.

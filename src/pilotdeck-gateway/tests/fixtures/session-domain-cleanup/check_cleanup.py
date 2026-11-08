@@ -4383,6 +4383,71 @@ def _summary_slot_violations(summary, bindings, lineno):
     return problems
 
 
+# #1652: a registered point's report nests face dicts inside the returned
+# summary (``'cleanupAudit': {'status': ...}``).  The top-level slot rules judge
+# only each summary dict's own entries, so a nested status slot claiming an
+# unconditional clean verdict was invisible: mutating the cleanupAudit slot to
+# ``{'status': 'PASS'}`` detached the face from the real rounds while the audit
+# stayed green.  The nested layer is deliberately one notch more permissive
+# than the top-level slot rule: ``'PASS' if <measured predicate> else 'FAIL'``
+# keeps a fail-closed arm, which is the healthy data-driven shape a face
+# computed from the real rounds has; what it must not survive is a slot whose
+# every possible value is clean.  Fail-closed literals and shared/relayed
+# sources stay legal exactly as everywhere else.
+def _nested_slot_fail_closed(value, bindings):
+    """True when a nested status slot relays a shared verdict or keeps a
+    fail-closed arm (#1652)."""
+    if _relays_status(value, bindings) or _calls_aggregate(value):
+        return True
+    return any(_folded_string(arm) in _FAIL_CLOSED_LITERALS
+               for arm in _exit_arms(value))
+
+
+def _nested_status_slots(value):
+    """Every status/verdict slot nested anywhere inside *value* (#1652).
+
+    Walks dict entries, list/tuple/set elements and conditional/boolean arms --
+    the literal shapes a report's nested faces are built from.  A name or a
+    call is opaque here on purpose: the name-resolution and callee rules live
+    with the top-level slot and write families, which already judge the shapes
+    they can see, and the nested walk is the layer for what they structurally
+    cannot.
+    """
+    slots = []
+    if isinstance(value, ast.Dict):
+        for key, item in _dict_pairs(value):
+            if _status_key(key):
+                slots.append(item)
+            slots.extend(_nested_status_slots(item))
+    elif isinstance(value, (ast.List, ast.Tuple, ast.Set)):
+        for element in value.elts:
+            slots.extend(_nested_status_slots(element))
+    elif isinstance(value, ast.IfExp):
+        for arm in (value.body, value.orelse):
+            slots.extend(_nested_status_slots(arm))
+    elif isinstance(value, ast.BoolOp):
+        for arm in value.values:
+            slots.extend(_nested_status_slots(arm))
+    return slots
+
+
+def _nested_status_slot_violations(summary, bindings, lineno):
+    """Judge every status/verdict slot nested inside a returned summary (#1652).
+
+    The summary dict's own top level is judged by ``_summary_slot_violations``
+    and stays out of this walk; this is the layer for the face dicts one or
+    more levels deeper.
+    """
+    violations = []
+    for _key, value in _dict_pairs(summary):
+        for slot in _nested_status_slots(value):
+            if _nested_slot_fail_closed(slot, bindings):
+                continue
+            violations.append(f'nested status slot {ast.unparse(slot)[:60]} '
+                              f'at line {lineno}')
+    return violations
+
+
 def _name_feeds_shared(name, function):
     """True when *name* is handed to the shared call (#892 r3).
 
@@ -5633,6 +5698,7 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
         is_pair = bool(dicts) or _status_literals(value) or _has_passed_aggregate(value)
         for summary in dicts:
             violations.extend(_summary_slot_violations(summary, bindings, node.lineno))
+            violations.extend(_nested_status_slot_violations(summary, bindings, node.lineno))
         elements = value.elts if isinstance(value, ast.Tuple) else [value]
         for element in elements:
             if any(element is summary for summary in dicts):
@@ -6610,7 +6676,20 @@ def aggregation_audit():
         "    global md3\n"
         "    md3 = _SN(common=_SN(aggregate_status=lambda *a: ('PASS', 0)))\n"
         "def _global_receiver(report):\n"
-        "    return md3.common.aggregate_status(report)[1]\n")
+        "    return md3.common.aggregate_status(report)[1]\n"
+        # #1652: the nested slot layer -- a clean status hidden inside a face
+        # dict (or a list of them) is the same bypass as at the top level, and
+        # the two legal shapes beside it: a data-driven face with a fail-closed
+        # arm, and a fail-closed literal face.
+        "def _nested_status_slot(report):\n"
+        "    return {'status': 'BLOCKED', 'face': {'status': 'PASS'}}\n"
+        "def _nested_list_status(report):\n"
+        "    return {'status': 'BLOCKED', 'faces': [{'status': 'PASS'}]}\n"
+        "def _nested_conditional_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': 'PASS' if report.get('ok') else 'FAIL'}}\n"
+        "def _nested_fail_closed_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': {'status': 'NOT_RUN'}}\n")
     probe892_found, _probe892_duplicates = scan_aggregation_tree(probe892, '<self-test-892>')
     # #892 r21: the key side of the r20 constant folding (GLM sibling r20
     # P1-1) and the function-scope trust withdrawal (GLM sibling r20 P1-2 /
@@ -6623,6 +6702,29 @@ def aggregation_audit():
     if not folded_write or not unshared_status_slots(folded_write[1]):
         failures.append('#892 aggregation-audit: detector self-test did not flag a '
                         'folded-key status write')
+    # #1652: the nested slot layer -- the flag shapes with their healthy controls
+    # beside them, so deleting the walk reopens the hole instead of silently
+    # narrowing it.
+    nested_slot = probe892_found.get(('<self-test-892>', '_nested_status_slot'))
+    if (not nested_slot
+            or not any('nested status slot' in slot
+                       for slot in unshared_status_slots(nested_slot[1]))):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'clean status nested inside a returned face (#1652)')
+    nested_list = probe892_found.get(('<self-test-892>', '_nested_list_status'))
+    if (not nested_list
+            or not any('nested status slot' in slot
+                       for slot in unshared_status_slots(nested_list[1]))):
+        failures.append('#892 aggregation-audit: detector self-test did not flag a '
+                        'clean status nested inside a returned list of faces (#1652)')
+    nested_conditional = probe892_found.get(('<self-test-892>', '_nested_conditional_face'))
+    if not nested_conditional or unshared_status_slots(nested_conditional[1]):
+        failures.append('#892 aggregation-audit: detector self-test rejected a '
+                        'nested face with a fail-closed arm (#1652)')
+    nested_fail_closed = probe892_found.get(('<self-test-892>', '_nested_fail_closed_face'))
+    if not nested_fail_closed or unshared_status_slots(nested_fail_closed[1]):
+        failures.append('#892 aggregation-audit: detector self-test rejected a '
+                        'nested fail-closed status literal (#1652)')
 
     def _probe892_function(name):
         return next((node for node in probe892.body
