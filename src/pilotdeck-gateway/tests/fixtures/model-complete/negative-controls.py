@@ -29,6 +29,11 @@ Recovery protocol (concurrency P2):
   here, and any control character in a sample is a probe failure (#2516
   item 3: universal newlines would fold a literal \r into \n and tear one
   row into two). A failure of both probes is fatal (never treated as zero).
+  Registered residual (#2516 fix-r1 arbitration, 2026-11-09): the \n exemption
+  above is a registered residual, not a closed invariant -- this probe trusts
+  the local PATH, and with PATH attacker-controlled no whole-table census is
+  in scope (a torn fragment can spell a lawful row). See the "已知残余"
+  section of this fixture's README and follow-up #2609.
 - Every in-place run also enters `negative_process.mutating_sources`: it takes
   the shared `.negative-source.lock` and refuses to start unless the whole
   gateway product tree matches HEAD, so a residue from any SIGKILLed control
@@ -106,7 +111,10 @@ ORIGINAL_FILE = STATE_DIR / "original.http.rs"
 # universal newlines), \n is the only character that may lawfully break a
 # row, and a \r in the wild means a wrapper spoke, not that the table is
 # empty. Real macOS ps escapes argv control bytes (^M / \012), so a genuine
-# sample carries none of these.
+# sample carries none of these. The \n exemption is a registered residual
+# (#2516 fix-r1 arbitration), not a closed invariant: this probe trusts the
+# local PATH, and with PATH attacker-controlled no whole-table census is in
+# scope. See this fixture's README ("已知残余") and follow-up #2609.
 CONTROL_CHARACTERS = r"[\x00-\x09\x0b-\x1f\x7f]"
 
 CONTROLS = [
@@ -769,7 +777,11 @@ def slots_from_ps() -> tuple[int | None, str]:
     so a genuine sample carries none). Every other control character in
     the decoded sample fails the probe the same way instead of becoming a
     zero count: bytes the row parser cannot fully account for must never
-    release a mutation. \n itself is exempt because it is the row separator;
+    release a mutation. \n itself is exempt because it is the row separator --
+    a registered residual, not a closed invariant (#2516 fix-r1 arbitration):
+    this probe trusts the local PATH, and with PATH attacker-controlled no
+    whole-table census is in scope (a torn fragment can spell a lawful row);
+    see this fixture's README ("已知残余") and follow-up #2609;
     invalid UTF-8 stays in the args column as surrogates, which can spell
     neither a pid nor a cargo name.
 
