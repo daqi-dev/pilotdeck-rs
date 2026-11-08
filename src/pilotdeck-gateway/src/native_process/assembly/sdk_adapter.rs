@@ -85,7 +85,6 @@ pub(super) struct NativeSdkPort {
     pub registry: Mutex<SdkSessionRegistry>,
     pub handlers: Arc<std::sync::Mutex<crate::runtime::sdk_session::SessionHandlerRegistry>>,
     pub async_hooks: crate::runtime::turn::interaction::SdkAsyncRegistrySlot,
-    pub mcp_config: Arc<std::sync::OnceLock<Arc<crate::runtime::mcp::sdk::SdkMcpConfig>>>,
 }
 impl NativeSdkPort {
     /// Read the committed value, including the session's retained configuration

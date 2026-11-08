@@ -16,3 +16,8 @@
 - 选择：outputFormat 使用已有 structured_output 工具的会话局部 schema，由既有 ToolRuntime 输入验证与现成 AgentLoop 停止机制执行。有效 schema/有效答案维持旧调用形式，旧实现漏校验的答案将明确拒绝。
 - 依据与边界：用户已允许功能完整而非一比一重构；两项均为可撤回产品行为，不改 frozen 标准/旧账本，不冒称与旧实际缺陷逐字一致。恢复原始 TS race、schema helper来源及采样见主仓 `_tmp/20261108-cli-completion/` 下 `user-dialog-recovery-flight-formatted`、`sdk-deferred-oracle`，runtime断言随产品测试。
 - 原则：成功回执必须对应实际落盘身份；机器输出合同必须在同一实际执行通路验证。
+
+
+## SDK MCP deferred 有界消费（06:41，AI 代批，待人复核）
+
+SDK启用MCP服务器的deferredTools按固定TS顺序追加显式SDK列表并转真实wire name；项目/plugin-only服务器不扩大范围。合计1024项预算超限明确报错且不发布截断配置；最终工具权限视图仍拦截展示与执行。可撤回、无冻结语义变更；测试包含边界与保留原配置负例。

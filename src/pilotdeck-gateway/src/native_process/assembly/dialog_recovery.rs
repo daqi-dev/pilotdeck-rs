@@ -248,7 +248,6 @@ mod tests {
             ),
             handlers: Arc::default(),
             async_hooks: Arc::default(),
-            mcp_config: Arc::default(),
         });
         NativeDialogRecovery::new(
             requests.options.home.clone(),

@@ -200,7 +200,7 @@ mod tests {
                 a.clone(), a.clone(), requests.env.clone(),
                 Arc::new(super::super::sdk_adapter::NativeSdkResolver { project: requests.project.clone() }),
             ))),
-            handlers: Arc::default(), async_hooks: Arc::default(), mcp_config: Arc::default(),
+            handlers: Arc::default(), async_hooks: Arc::default(),
         });
         let reload = NativeStyleReload {
             options: requests.options.clone(), project: requests.project.clone(), owner: requests.owner.clone(),

@@ -539,7 +539,6 @@ async fn start_assembly(
         .with_shared_handlers(sdk_handlers.clone());
     let sdk_async_hooks = Arc::new(std::sync::OnceLock::new());
     let sdk_port = Arc::new(sdk_adapter::NativeSdkPort {
-        mcp_config: prepare_mcp_config.clone(),
         handlers: sdk_handlers.clone(),
         async_hooks: sdk_async_hooks.clone(),
         registry: tokio::sync::Mutex::new(sdk_registry),
@@ -950,6 +949,10 @@ async fn start_assembly(
                 // the empty composition: the ask-rule sync above already
                 // reported that wiring miss for this assembly (#1429).
                 let native_observer = config.get("nativeObserver") == Some(&JsValue::Bool(true));
+                if let Some(mcp_config) = mcp_config_handle.get().filter(|_| !native_observer) {
+                    super::sdk_tools::merge_mcp_deferred(&mut config, &super::enabled_session_mcp_servers(mcp_config, &context.session_key))
+                        .map_err(|error| RuntimeError::new(error.message))?;
+                }
                 let (mut session_mcp, session_mcp_release) = match mcp_config_handle.get().filter(|_| !native_observer) {
                     Some(mcp_config) => {
                         let provider = staged
