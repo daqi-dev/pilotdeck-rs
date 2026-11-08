@@ -4666,3 +4666,6 @@ PD代码ce7b82422与Kernel661375e7、integration f3c723e组成七二进制候选
 
 
 2026-11-08 本轮收口定向复验：作者HEAD 6cfa4316e（仅board差于e4c9693a1，生产源码等价）复用B原pd-kernel-capabilities编译缓存，原runtime::turn::submit::tests为10 PASS/0 FAIL/1原TS再生ignored，含原submit oracle/UTF16与Kernel timeout/旧run围栏；native_process::methods::history_transfer::tests为7 PASS/0 FAIL，保留原hash/pendingtools/active-state拒绝、工具配对和附件字节及canonical metadata。未运行完整gateway千项/未重生冻结oracle。日志分别/tmp/product-persistence-submit-regression.log与/tmp/product-persistence-history-transfer-regression.log。
+
+
+2026-11-08 本轮strict lint收口：作者80c2f88b4生产源码等价e4c9693a1，原B warm target执行gateway --all-targets Clippy -D warnings，退出101，lib/lib-test均29项既有诊断；与wait-gateway-b24d30f76/wait-pd-clippy.log按message+path+主源码行多重集比较完全一致，新增0/消失0，仅kernel.rs旧位置因本批插入偏移。未改生产或既有29项，不宣称strict通过；原日志/tmp/product-persistence-gateway-strict-clippy.log、比较/tmp/product-persistence-clippy-comparison.json。
