@@ -473,9 +473,9 @@ impl SessionTools {
             .expect("native automation tool names are unique");
         }
         self.skills.register(&tools);
-        if let Some(knowledge) = &self.knowledge {
-            tools.register(knowledge.clone()).map_err(|error| RuntimeError::new(error.to_string()))?;
-        }
+        let knowledge_catalog_error: Option<JsString> = self.knowledge.as_ref()
+            .and_then(|knowledge| tools.register(knowledge.clone()).err())
+            .map(|error| error.message.into());
         if let Some(web) = &self.web {
             web.register(&tools, identity)
                 .expect("native web tool names are unique");
@@ -530,7 +530,7 @@ impl SessionTools {
             Arc::new(Permissions(Mutex::new((turn_context.clone(), None)))),
             SchedulerMode::Concurrent,
         )
-        .with_catalog_error(sdk_catalog_error)
+        .with_catalog_error(knowledge_catalog_error.or(sdk_catalog_error))
         .with_native_sandbox(
             self.config
                 .get("sandboxMode")

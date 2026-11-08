@@ -5173,3 +5173,8 @@ r119固定5a409全目标check/native522/AO106/四个实际bin构建通过；stri
 ### 2026-11-09 07:19 · 知识消费者首轮整合
 
 逐SHA导入21源SOP authority/query完整消费者，保留已编译Sol render/error和文件权限片；同项目代authority重验、host-only上下文经真实scheduler、8MiB/4槽新transport，待r123。r122全目标check/四bin通过，SDK24/model30/SOP8均过；native535过3旧cleanup断言漏新增temporary阶段，已扩展失败矩阵并让临时清理错误同project一样诊断；AO111过1虚拟时钟测试缺阻塞IO完成barrier，已按同模块相邻真实用例补wait_real，原标准不变。损坏JSON/未知schema的保留+uncertain诊断真实反例均通过，可独立仲裁此前P1。两家SDK固定76c7e增量审进行中，真实SDK和SOP知识E2E待r123固定bin。仅本机提交、Rust只mbp2，完整CLI未完成。
+
+
+### 2026-11-09 07:22 · 知识工具注册错误传播
+
+r123唯一首编错误为非Result的turn装配误用?；已逐SHA接窄修，将knowledge注册错误保留到现有catalog_error真实执行闸门，构造失败仍由prepare传播，无expect或吞错。接r124完整相关测试及strict；SDK生命周期probe复核消除装置晚异常假PASS与清理漏落盘，产品仍待新固定bin实跑。所有Rust只mbp2、仅本机提交，CLI未完。
