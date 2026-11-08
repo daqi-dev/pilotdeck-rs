@@ -649,6 +649,9 @@ impl ForkApi {
                             Some(request.subagent_id),
                         );
                         tokio::pin!(running);
+                        // Child timeout is classified by api.run's own deadline.
+                        // Only real task cancellation revokes lifecycle hooks;
+                        // timeout must still dispatch SubagentStop(false).
                         tokio::select! {
                             biased;
                             _=signal.cancelled()=>{
@@ -656,11 +659,7 @@ impl ForkApi {
                                 cancel.cancel();
                                 running.await
                             },
-                            _=tokio::time::sleep_until(deadline)=>{
-                                if let Some(hooks)=detached.owned_hooks.get(){hooks.cancel();}
-                                cancel.cancel();
-                                running.await
-                            },
+
                             result=&mut running=>result,
                         }
                     }
