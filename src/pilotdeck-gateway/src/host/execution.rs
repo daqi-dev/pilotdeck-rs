@@ -196,6 +196,8 @@ pub(super) async fn run(
     let mut known_terminal = None;
     let mut terminal_applied = None;
     let mut drain_deadline = None;
+    let mut native_failure = None;
+    let mut native_drain_deadline = None;
     let callbacks = &mut scope.callbacks;
     let mut interruption = None;
     // True once the cancel deadline is seen already elapsed at a loop top,
@@ -263,6 +265,11 @@ pub(super) async fn run(
             && let Some(terminal) = terminal_applied.take()
         {
             return Ok(terminal);
+        }
+        if callbacks.is_empty() && events.is_empty()
+            && let Some(error) = native_failure.take()
+        {
+            return Err(error);
         }
         if client.cancel_enabled
             && progress.stream_id.is_some()
@@ -336,7 +343,7 @@ pub(super) async fn run(
         // ahead of `receive` so a still-streaming peer cannot starve it.
         tokio::select! {
             biased;
-            _ = wait_for_deadline(execution_deadline), if terminal_applied.is_none() => {
+            _ = wait_for_deadline(execution_deadline), if terminal_applied.is_none() && native_failure.is_none() => {
                 return Err(HostError::new(HostErrorKind::Timeout, "Sidecar execute timed out."));
             }
             _ = wait_for_deadline(drain_deadline), if terminal_applied.is_some() => {
@@ -389,6 +396,17 @@ pub(super) async fn run(
                         }
                     }
                 }
+            }
+            _ = wait_for_deadline(native_drain_deadline), if native_failure.is_some() => {
+                // A factory failure is authoritative only after the validated
+                // event prefix has reached the consumer. Never silently lose a
+                // blocked prefix while reporting only the original error.
+                callbacks.shutdown().await;
+                if events.is_empty() && !event_running {
+                    return Err(native_failure.take().expect("native failure"));
+                }
+                return Err(HostError::new(HostErrorKind::Timeout,
+                    "Native sidecar failure prefix could not be fully applied before the terminal drain deadline."));
             }
             // Receiving final does not mean its event callback has completed.
             // At the same absolute bound, stop cooperative application and keep
@@ -454,7 +472,16 @@ pub(super) async fn run(
                                 String::from_utf16_lossy(detail.get("message").and_then(JsValue::as_string).expect("validated native error message").units()));
                             error.native_terminal_error = Some(Box::new(detail));
                             progress.terminal_lease = Some(raw.lease);
-                            return Err(error);
+                            native_failure = Some(error);
+                            terminal_received = true;
+                            // Invalidly large drain durations use the finite
+                            // close grace for this native-only error profile.
+                            native_drain_deadline = Some(Instant::now().checked_add(limits.terminal_drain_timeout)
+                                .or_else(|| Instant::now().checked_add(limits.close_timeout))
+                                .unwrap_or_else(Instant::now));
+                            #[cfg(test)]
+                            client.test_signals.final_received.store(true, Ordering::SeqCst);
+                            continue;
                         }
                         let aborted = validate_event(event, &identity, &cancellation)?;
                         if event.sequence.value() != next_sequence {

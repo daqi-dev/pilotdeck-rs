@@ -602,7 +602,6 @@ impl LiveTurn for LiveTurnStream {
                 }
                 let result = self.result.take();
                 if self.accepted
-                    && !crate::mutants::on("gates-discard-host-failure")
                     && let Some(Err(error)) = &result
                     && let Some(detail) = &error.native_terminal_error
                 {

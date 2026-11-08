@@ -8,6 +8,7 @@ mod cancel_exit;
 mod event;
 mod model;
 mod modules;
+mod native_terminal;
 mod resume;
 mod tcp;
 
