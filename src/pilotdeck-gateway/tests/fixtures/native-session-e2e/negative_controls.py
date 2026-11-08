@@ -16,8 +16,8 @@ from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import (mutating_sources, run_owned, wait_for_slot, tree_lock,
-                               write_source_atomic)
+from negative_process import (mutating_sources, new_output_directory, run_owned, wait_for_slot,
+                               tree_lock, write_source_atomic)
 from negative_process import target_environment
 
 session = root / 'scripts/gateway-parity/session_domain.py'
@@ -32,15 +32,16 @@ runner = Path(__file__).resolve()
 # of one whole-run lease, so the loop no longer sits inside a single with.
 paths = [session, common, native, collector, fixture, runner, chain]
 # #1402 per-case lease window: a case holds /tmp/pdrs-parity.lock only while
-# its mutant is on disk (cargo no-run preflight + bound test + restore).
-# wait_for_slot and the positive/restored controls run outside the lease, so
-# other trees can take it in every gap. The window must stay below the
-# stale-lease takeover age in common.py, or another tree could take a live
-# window over; test_negative_lease_bound_composition pins the composition.
+# its mutant is on disk and through the restored control (cargo no-run
+# preflight + bound test + restore + restored re-run). wait_for_slot and the
+# positive control run outside the lease, so other trees can take it in
+# every gap. The window must stay below the stale-lease takeover age in
+# common.py, or another tree could take a live window over;
+# test_negative_lease_bound_composition pins the composition.
 BUILD_SECONDS = 900
 BOUND_TEST_SECONDS = 300
 SLOT_WAIT_SECONDS = 900
-PER_CASE_LEASE_SECONDS = BUILD_SECONDS + BOUND_TEST_SECONDS
+PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 2 * BOUND_TEST_SECONDS
 # Each row mutates one #1140 fix-r1 addition and names the e2e test whose
 # dedicated assertion message must fire (the named FAIL the classifier pins):
 # the scoring-side shapes in session_domain.py and the recorder/contract-side
@@ -70,7 +71,7 @@ cases = [
     ('manifest-count-minus-one', fixture, "    return len(c.session_manifest())", "    return len(c.session_manifest()) - 1", 'test_e2e_scores_real_capture'),
     ('chain-manifest-count-minus-one', chain, "        return len(self.healthy['expected'])", "        return len(self.healthy['expected']) - 1", 'test_negative_chain_denominators_derived'),
     ('lease-enter-without-release', runner, "                with mutating_sources(root, paths, baseline=baseline) as originals:\n                    write_source_atomic(root, path, changed.encode())", "                for originals in [mutating_sources(root, paths, baseline=baseline).__enter__()]:\n                    write_source_atomic(root, path, changed.encode())", 'test_negative_lease_released_and_loud_on_cancellation'),
-    ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
+    ('lease-bound-erased', runner, "PER_CASE_LEASE_SECONDS = BUILD_SECONDS + 2 * BOUND_TEST_SECONDS\n", "PER_CASE_LEASE_SECONDS = 10 ** 9\n", 'test_negative_lease_bound_composition'),
     ('lease-cancel-swallowed', runner, "                        compiled = True\n                        status = classify(run(name + '-negative', test), test, messages[name])", "                        compiled = True\n                        try:\n                            status = classify(run(name + '-negative', test), test, messages[name])\n                        except BaseException:\n                            pass", 'test_negative_lease_released_and_loud_on_cancellation'),
     ('memory-rehearsal-without-lock', Path(__file__).resolve(), '        if memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
     ('port-lease-not-exclusive', fixture, '        fcntl.flock(lease, fcntl.LOCK_EX | fcntl.LOCK_NB)\n', '        fcntl.flock(lease, fcntl.LOCK_UN)\n', 'test_port_reservation_is_exclusive_across_processes'),
@@ -241,8 +242,7 @@ def main():
     selected = cases if only is None else [row for row in cases if row[0] == only]
     if not selected:
         raise SystemExit('unknown negative case')
-    out = Path(output).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = new_output_directory(Path(output).resolve())
     results = []
     def publish():
         # Publish only after mutating_sources has verified restoration; a
@@ -263,6 +263,17 @@ def main():
         return result
     def one(row):
         name, path, before, after, test = row
+
+        def restored():
+            nonlocal status, reason
+            try:
+                if not passed(run(name + '-restored', test)):
+                    status, reason = 'INVALID', reason + '; restored test failed'
+            except Exception as error:
+                status, reason = 'INVALID', reason + '; restore: ' + str(error)
+
+        # `native-stimulus-plan` anchors the two lines below verbatim
+        # (`memory-e2e-claims-compiled`); keep them adjacent.
         status, reason, compiled = 'INVALID', '', False
         try:
             text = path.read_text()
@@ -278,9 +289,11 @@ def main():
                 slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=SLOT_WAIT_SECONDS)
                 (out / (name + '-slots.log')).write_text(slot.stdout + slot.stderr)
                 # One lease per case: acquired by mutating_sources below and
-                # held only while the mutant is on disk (no-run preflight,
-                # bound test, restore). The restored control runs after the
-                # release, so other trees can use every between-case gap.
+                # held while the mutant is on disk (no-run preflight, bound
+                # test, restore) and through the restored control, because
+                # that control re-runs the bound test and must never race
+                # another tree that takes the same .negative-source.lock /
+                # parity lease over (#1440).
                 # #1908: one rename, never a truncating in-place write; the
                 # shared publish helper (#1903) keeps a SIGKILL mid-write from
                 # leaving a source the next preflight would refuse as "differs
@@ -304,17 +317,19 @@ def main():
                         # write_bytes restore has the same SIGKILL window as
                         # the mutation write above.
                         write_source_atomic(root, path, originals[path])
+                    # The restored control runs inside the lease window (the
+                    # negative verdict is already final); only a row that
+                    # raised before this point skips it, like the other
+                    # guarded runners. The memory rehearsal keeps its restored
+                    # run under the whole-loop tree lock below instead.
+                    restored()
             else:
                 status = classify(run(name + '-negative', test, name), test, messages[name])
                 reason = {'KILLED': 'named assertion matched', 'SURVIVED': 'bound test passed',
                           'INVALID': 'exit/test identity/assertion marker did not match'}[status]
+                restored()
         except Exception as error:
             status, reason = 'INVALID', str(error)
-        try:
-            if not passed(run(name + '-restored', test)):
-                status, reason = 'INVALID', reason + '; restored test failed'
-        except Exception as error:
-            status, reason = 'INVALID', reason + '; restore: ' + str(error)
         results.append({'name': name, 'status': status, 'compiled': compiled, 'reason': reason,
                         'test': bound(test), 'marker': messages[name]})
     try:
