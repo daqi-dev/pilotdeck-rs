@@ -395,7 +395,8 @@ try:
     code, out, err = control("call", {"method": "read_session_messages", "params": {
         "sessionKey": "native-stream", "projectKey": str(args.out / "another-project")}})
     denied = rejected_control(code, out, err)
-    assert denied["message"] == "The isolated native process serves only its configured project.", denied
+    assert denied["code"] == "PROJECT_SESSION_MISMATCH", denied
+    assert denied["message"].startswith("PROJECT_SESSION_MISMATCH:"), denied
     rows.append({"unserved_project": denied})
     (home / "server-token").write_text("stream-native-test-token\n")
     (home / "pilotdeck.yaml").write_text(config + f"gateway:\n  port: {address.split(':')[-1]}\n")
