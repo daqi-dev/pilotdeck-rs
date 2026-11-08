@@ -72,7 +72,7 @@ for name, path, before, after, test, marker in selected:
         try:
             assert original.count(before) == 1, (name, 'stale anchor')
             code, raw = run(name + '-positive', test)
-            positive_ok = code == 0 and '1 passed' in raw
+            positive_ok = code == 0 and ' 1 passed; 0 failed' in raw
             path.write_text(original.replace(before, after, 1))
             code, raw = run(name, test)
             killed = (positive_ok and code == 101
@@ -87,7 +87,7 @@ for name, path, before, after, test, marker in selected:
             path.write_bytes(snapshots[path])
     with mutating_sources(root, [path]):
         code, raw = run(name + '-restored', test)
-        restored = code == 0 and '1 passed' in raw
+        restored = code == 0 and ' 1 passed; 0 failed' in raw
     if not restored:
         status = 'INVALID'
     summary.append({'name': name, 'status': status, 'restored': restored})

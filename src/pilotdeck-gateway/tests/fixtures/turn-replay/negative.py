@@ -775,7 +775,7 @@ for name, filename, before, after, test in selected:
         original = snapshots[path].decode()
         assert original.count(before) == 1, (name, "stale anchor")
         result, raw = run(name + "-positive", test)
-        positive_ok = result.returncode == 0 and "1 passed" in raw
+        positive_ok = result.returncode == 0 and " 1 passed; 0 failed" in raw
         path.write_text(original.replace(before, after, 1))
         result, raw = run(name, test)
         # #819: the named test's own FAILED line plus its own panic payload.
@@ -789,7 +789,7 @@ for name, filename, before, after, test in selected:
             status = "INVALID"
     with mutating_sources(rust.parent, [path]):
         result, raw = run(name + "-restored", test)
-        restored_ok = result.returncode == 0 and "1 passed" in raw
+        restored_ok = result.returncode == 0 and " 1 passed; 0 failed" in raw
     if not restored_ok:
         status = "INVALID"
     summary.append({"name": name, "test": full, "status": status,

@@ -104,7 +104,7 @@ with mutating_sources(root, [source, refresh, helper], baseline=baseline):
         raise RuntimeError(f'restored baseline is not green (rc={result.returncode})')
     if any(m[0] == 'production-handle' for m in run_rows):
         result, log = run('restored-production-handle', next(m[4] for m in run_rows if m[0] == 'production-handle'))
-        if result.returncode != 0 or '1 passed' not in log:
+        if result.returncode != 0 or ' 1 passed; 0 failed' not in log:
             raise RuntimeError('restored production-handle baseline did not pass its named test')
 with (out / 'summary.json').open('x') as f: json.dump(summary,f,indent=2)
 print(f'{len(summary)}/{len(run_rows)} KILLED; restored PASS',flush=True)

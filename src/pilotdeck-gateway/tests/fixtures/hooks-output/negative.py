@@ -35,7 +35,7 @@ def run(name, must_pass):
     log = result.stdout + result.stderr
     (evidence / f'{name}.log').write_text(log)
     if must_pass:
-        assert result.returncode == 0 and '3 passed; 0 failed' in log, name
+        assert result.returncode == 0 and ' 3 passed; 0 failed' in log, name
     else:
         # Compilation failures and watchdog kills cannot masquerade as detection.
         assert result.returncode != 0 and 'test result: FAILED' in log, name
