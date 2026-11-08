@@ -1957,14 +1957,17 @@ async fn a_panicking_drain_cleanup_still_disposes_the_coordinator() {
 }
 
 /// #1949: an embedding that declares `Duration::MAX` for shutdown has
-/// explicitly waived the drain deadline, so the drain must settle with its
-/// real result (here `Ok`) rather than hang. Behavior anchor, not a
-/// regression discriminator: tokio's `timeout` saturates a MAX bound into a
-/// far-future timer, so the pre-#1949 `timeout(budget, drain)` settled too —
-/// the drain-side `checked_add` only spells that waiver out. The inner
-/// result is asserted (not just the outer guard) so a host panic escaping
-/// the drain (`Err("gateway host exited without drain result")`) cannot
-/// pass as a settle.
+/// explicitly waived the drain deadline (see `declared_cleanup_budget` for
+/// the waiver), so the drain must settle with its real result (here `Ok`)
+/// rather than hang. Behavior anchor, not a regression discriminator:
+/// tokio's `timeout` saturates a MAX bound into a far-future timer, so the
+/// pre-#1949 `timeout(budget, drain)` settled too — the drain-side
+/// `checked_add` only spells that waiver out. The drain's own `Result` has
+/// been asserted here from the start: the guard above consumes its outer
+/// `Result` with `.expect`, and the pre-image asserted the inner `is_ok()`;
+/// the later restatement as `expect` only unified the form, adding no
+/// discriminating power (a host panic that escapes the drain settles the
+/// inner `Err` under either form).
 #[tokio::test]
 async fn a_maximal_drain_budget_still_settles_the_drain() {
     let host = native_ws_fixture_with_cleanup(Arc::new(Requests), async { Ok(()) });
