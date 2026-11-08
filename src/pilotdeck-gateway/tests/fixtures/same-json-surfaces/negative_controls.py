@@ -28,7 +28,9 @@ from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import defer_signal_exit, mutating_sources, run_owned, tree_lock, write_source_atomic
+from negative_process import (SourceBaselineError, defer_signal_exit,
+                              mutating_sources, run_owned, tree_lock,
+                              write_source_atomic)
 from negative_selection import claim_dir, refuse, registered, verdict_exit
 
 session = root / 'scripts/gateway-parity/session_domain.py'
@@ -259,6 +261,17 @@ def main():
                                           Path(__file__).resolve()]) as originals:
                 for row in selected:
                     one(row, True)
+    except (SourceBaselineError, TimeoutError) as error:
+        # A guard that never started (dirty tree / lease or source-lock wait
+        # exhausted) is a startup refusal, not a red run: rc 2 and no evidence
+        # dir that looks finished (specs/negative-controls/README.md:142/:145/
+        # :167).  rmdir only removes the empty dir claim_dir made -- a run that
+        # already wrote logs keeps them.
+        try:
+            out.rmdir()
+        except OSError:
+            pass
+        refuse('guard refused to start: ' + repr(error))
     except Exception as error:
         results = [{'name': row[0], 'status': 'INVALID', 'reason': 'guard: ' + repr(error)} for row in selected]
     summary = {'mode': 'memory-only' if memory else 'guarded-source', 'results': results,
