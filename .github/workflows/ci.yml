@@ -227,17 +227,16 @@ jobs:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    # 外层预算必须**大于**装置内部预算之和（评审 r8 P2；r10 P0 复算——算式在
-    # self_check.py 的 INTERNAL_WORST_CASE_SECONDS 派生机检，趟数与子进程数由
-    # _assert_pass_counting 与源码调用点同源互证）：七项自检 worst-case emit 300 s
-    # + check 300 s + 负控 1800 s + 六趟锁探针（七项 1 趟 + control_lock 5 趟：
-    # detail / 弱化 flock / 守卫 fd 三变异循环）各 660 s（4×60 s 等锁 + 2×60 s
-    # wait + 敌意锁 3×50 s + 守卫 fd 3×50 s）+ 敌意写目标 4×50 s + control_check
-    # 三个变异方向各一个 300 s checker 子进程 → 全 job ≈ 7460 s ≈ 124.3 min
-    # （r9 的 4580 s 漏算了 control_lock 的三趟与 control_check 的子进程，85 min
-    # 下派生不等式恒真）；130 min = 7800 s > 7460 + 300 s 开销——与
-    # negative-controls job 的既有口径一致。
-    timeout-minutes: 130
+    # 外层预算必须**大于**全 job 内部最坏和 + 开销（r11 P0）：self_check.py
+    # 遍历实际 steps 求和，并与 RETIREMENT_STEP_ORDER 双向互证；未知贡献规则即红。
+    # 直跑 emit/check 各有声明上限 5 min；直跑负控按其模块登记推导：
+    # (参考轮数 5 + 跨轮 1 + 负控 18 + 正控 2) × 600 s = 15600 s 原始上限，
+    # 再由该 step 的 30 min 声明限到 1800 s（与自检 NEGCTL 上限同源）。
+    # 七项自检 3260 s + 变异自检 4200 s（沿用 _assert_pass_counting 互证）
+    # → 全有效内部和 9860 s ≈ 164.3 min；checkout/setup/upload 显式共享 300 s
+    # overhead 桶并核覆盖。170 min = 10200 s > 9860 + 300 s，低于托管 job 6 h 上限。
+    # r9 85 min / r10 130 min 的不完整和均被替代，不改严格大于的派生判据。
+    timeout-minutes: 170
     steps:
       - uses: actions/checkout@v4
       # #2017-A：接线守卫（r5 起）按 PyYAML 解析后的完整标量判，解析器版本钉死
@@ -254,6 +253,7 @@ jobs:
       #    不一致 = 夹具或金样有一个被改过而另一个没跟上（或有人手改金样）。
       - name: emit 复算与金样逐字节比对
         shell: bash
+        timeout-minutes: 5
         run: |
           F=scripts/retirement-outcome-parity/fixtures
           python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py emit \
@@ -264,6 +264,7 @@ jobs:
       # ② 判据 5 轮全 PASS（含 P7 跨轮稳定性——单轮时 P7 是空判，报告会写 p7Evaluated）。
       - name: check 5 轮
         shell: bash
+        timeout-minutes: 5
         run: |
           F=scripts/retirement-outcome-parity/fixtures
           python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
@@ -278,6 +279,7 @@ jobs:
         run: |
           python3 -I scripts/retirement-outcome-parity/negative_controls.py \
             --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"
+        timeout-minutes: 30
       # ④ 装置守卫自检：七项全跑（体积预算 / emit 复算 / 5 轮判据 / 负控 / 输出目录锁 /
       #    敌意写目标 / CI 接线）。前四项与 ①–③ 重叠是**有意**的：那三条分支只有在 self_check 里被
       #    真正执行过才算数（否则它们只是没人跑的死代码），整套约 5 s。后三项是「守卫本身
