@@ -5041,3 +5041,7 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-09 Module2-host 上游切片（Codex）
 
 固定f04基线，仅新增pilotdeck-module2-host及workspace/lock注册，不依赖#2549、Kernel SDK或gateway。保原24HostCall清单/路由、共享driver的KernelClient/LcError端口；无效/未支持lifecycle明确拒绝。实际UTF16差分负控发现旧serde投影把原合法帧误报INVALID_JSON，按协调者边界新增原Protocol无损入口，serde互操作无法表达时独立UNREPRESENTABLE_FRAME，未全DTO重写。Module2 12测试/原Protocol45测试通过（1原忽略），strictClippy通过，独立consumer已实际运行，正在收锁/最终提交交协调者review。未push/开PR。
+
+### 2026-11-09 Module2-host 初审修复（Codex，Refs #2570）
+
+保留94e审查ref后重基固定43a，src提取补丁逐字等价；按原payload.operation权威修复顶层方言，已接收module_call拒绝改关联response并保requestId/error明细。旧实现两项有效失败及枚举词表漂移负控保留，修后Module2/Protocol、strict与实际独立locked consumer通过；无损验证入口不声称直接可执行完整UTF16域，秒级UTC工具不冒充事件时间。consumer CI归#2560；本轮交两家增量复审，未push/开PR。
