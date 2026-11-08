@@ -4007,8 +4007,14 @@ class RetirementScoring(unittest.TestCase):
         # pids) can emit one, so the only source is a corrupt artifact, exactly
         # the threat model this face fail-closes on.  The int32 ceiling covers
         # every OS pid space (Linux pid_max <= 2**22).
+        # fix-r11 (DS sibling r10 P2): the pid domain's own boundary, the
+        # twin of the port matrix's 65536/65535 pair — 2**31 is the first
+        # value past the int32 ceiling and 2**31 - 1 the domain's last
+        # legal value; 2**63 was only a far-away value.
         for census in ({'rows': [{'pid': 0}], 'declared': [0], 'declaredAlive': True},
                        {'rows': [{'pid': -1}], 'declared': [-1], 'declaredAlive': True},
+                       {'rows': [{'pid': 2 ** 31}], 'declared': [2 ** 31],
+                        'declaredAlive': True},
                        {'rows': [{'pid': 2 ** 63}], 'declared': [2 ** 63],
                         'declaredAlive': True}):
             verdict = self.session._retirement_census_verdict(census)
@@ -4019,6 +4025,10 @@ class RetirementScoring(unittest.TestCase):
         self.assertEqual(self.session._retirement_census_verdict(
             {'rows': [{'pid': 7}], 'declared': [7], 'declaredAlive': True})['status'],
             'PASS')
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 2 ** 31 - 1}], 'declared': [2 ** 31 - 1],
+             'declaredAlive': True})['status'], 'PASS',
+            'the top of the pid domain still judges PASS')
         verdict = self.session._retirement_census_verdict(
             {'rows': [{'pid': 7}], 'declared': [7, 0], 'declaredAlive': True})
         self.assertEqual(verdict['status'], 'FAIL')
@@ -4141,23 +4151,30 @@ class RetirementScoring(unittest.TestCase):
         # ever emit one.
         # fix-r10 (anthropic boundary r9 P2): 65536 is the first value past
         # the domain — the boundary itself, not just a far-away 70000.
-        for tag, port, addresses in (
-                ('zero', 0, ['127.0.0.1:0']),
-                ('boolean', True, ['127.0.0.1:True']),
-                ('boundary', 65536, ['127.0.0.1:65536']),
-                ('oversized', 70000, ['127.0.0.1:70000'])):
+        # fix-r11 (DS sibling#2 + boundary#3 r10 P2, both roles): the
+        # in-domain top 65535 is pinned on both read paths too — only the
+        # out-of-domain side was pinned, so an off-by-one tightening
+        # (``<= 65534``) kept every case green while rejecting the domain's
+        # last legal port.  fix-r11 (DS simplify r10 P3): the two loops
+        # share one ``cases`` table so the verdict path and the report
+        # path cannot drift apart on the next domain value.
+        cases = (('zero', 0, ['127.0.0.1:0']),
+                 ('boolean', True, ['127.0.0.1:True']),
+                 ('boundary', 65536, ['127.0.0.1:65536']),
+                 ('oversized', 70000, ['127.0.0.1:70000']))
+        for tag, port, addresses in cases:
             verdict = self.session._retirement_listener_verdict(
                 {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}, port)
             self.assertEqual(verdict['status'], 'FAIL', f'#49 {tag}: {verdict}')
             self.assertEqual(verdict['rule'], 'LISTENER_EXPOSURE', f'#49 {tag}')
             self.assertIn('not a real port', verdict['detail'], f'#49 {tag}')
+        self.assertEqual(self.session._retirement_listener_verdict(
+            {'pid': 7, 'addresses': ['127.0.0.1:65535'], 'loopbackOnly': True},
+            65535)['status'], 'PASS',
+            '#49 the top of the port domain still judges PASS')
         # The report gate reads the same shapes as a missing observation.
         expected = ['submit_turn', 'run_get']
-        for tag, port, addresses in (
-                ('zero', 0, ['127.0.0.1:0']),
-                ('boolean', True, ['127.0.0.1:True']),
-                ('boundary', 65536, ['127.0.0.1:65536']),
-                ('oversized', 70000, ['127.0.0.1:70000'])):
+        for tag, port, addresses in cases:
             row = self._stream_ok_round_row()
             row['ports'] = {'mock': 28761, 'gateway': port}
             row['listeners'] = {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}
@@ -4168,6 +4185,12 @@ class RetirementScoring(unittest.TestCase):
         report = self._report_for(row, expected)
         self.assertEqual(report['hostAudit']['listeners'][0]['status'], 'PASS',
                          '#49 the healthy port still judges PASS')
+        row = self._stream_ok_round_row()
+        row['ports'] = {'mock': 28761, 'gateway': 65535}
+        row['listeners'] = {'pid': 7, 'addresses': ['127.0.0.1:65535'], 'loopbackOnly': True}
+        report = self._report_for(row, expected)
+        self.assertEqual(report['hostAudit']['listeners'][0]['status'], 'PASS',
+                         '#49 report: the top of the port domain still judges PASS')
 
     def test_audit_native_rejects_oversized_witness_pids(self):
         # fix-r9 (DS sibling r8 P2, probe-verified — fix-r9-audit/
@@ -4189,6 +4212,19 @@ class RetirementScoring(unittest.TestCase):
         with self.assertRaises(self.session.EvidenceError) as raised:
             self.session.audit_native(evidence, {'host': 'rust', 'processRoles': []})
         self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS')
+        # fix-r11 (DS sibling r10 P2): the int32 boundary itself — 2**31 is
+        # the first pid past the ceiling while 2**31 - 1 is the domain's last
+        # legal value and fails only on the honest contract mismatch.
+        evidence['processes'] = [{'pid': 2 ** 31, 'argv': ['pilotdeck'], 'role': 'host'}]
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust'})
+        self.assertEqual(raised.exception.rule, 'PROCESS_WITNESS')
+        evidence['processes'] = [{'pid': 2 ** 31 - 1, 'argv': ['pilotdeck'],
+                                  'role': 'host'}]
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust', 'processRoles': []})
+        self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS',
+                            'the top of the pid domain is a legal witness shape')
 
     def _fake_baseline(self, root, break_route=False, drop_listener=False):
         """Synthetic baseline whose parse reproduces the real 13/4 entry set."""

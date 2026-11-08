@@ -4003,6 +4003,21 @@ _FAIL_CLOSED_LITERALS = STATUS_WORDS - _CLEAN_STATUS_LITERALS
 # closed instead of being computed.
 _FOLD_MAX_BITS = 1_000_000
 _FOLD_MAX_ITEMS = 1_000_000
+# fix-r10 (DS concurrency r9 P0) + fix-r11 (DS concurrency/sibling/boundary
+# r10 P0+P1): the traversal work cap — a separate axis from the two size
+# caps above.  It bounds *visits*, not size: a shared zero-size child
+# (``[''] * 999999``) costs ~1e6 visits and contributes 0 size, while a
+# string contributes size without per-character visits, so neither size cap
+# bounds the walk.  4x the items cap keeps every legal at-cap shape (a
+# cap-length repetition, a single at-cap int, a whole fold of in-cap
+# containers) under the work cap with margin, while the bomb and the
+# nesting shapes cross it orders of magnitude sooner.  Declared with the
+# cap family because the at-cap int control (``(1 << _FOLD_MAX_BITS,)``
+# still folds) also pins the premise that int bits and sequence items are
+# judged against equal ceilings — the container branch counts an int's
+# bits against the items cap, sound only while
+# ``_FOLD_MAX_BITS == _FOLD_MAX_ITEMS``.
+_FOLD_SIZE_WORK_CAP = _FOLD_MAX_ITEMS * 4
 
 # A call is only a proven slot source when its callee's own return path is
 # audited -- i.e. the callee is one of the registered points above.  Any other
@@ -4365,7 +4380,7 @@ def _test_is_runtime(node):
     return any(isinstance(part, _RUNTIME_TEST_NODES) for part in ast.walk(node))
 
 
-def _literal_test_value(node):
+def _literal_test_value(node, budget=None):
     """``_literal_test_value_fold`` with the recursion limit made fail-closed.
 
     fix-r6 (MiniMax concurrency P2, in-round): a pure-literal tree nested
@@ -4383,9 +4398,16 @@ def _literal_test_value(node):
     recursion limit, so any fold-level error raised outside the BinOp
     branch's own ``try`` (the container-literal branches have none) escapes
     the whole audit the same way.  Same family, same fail-closed value.
+
+    fix-r11 (DS concurrency/sibling/boundary r10 P0+P1, three roles,
+    probe-verified — fix-r11-audit/probe-r11-depth*.out): *budget* is the
+    whole top-level fold's traversal allowance — the call sites that start
+    a fold pass nothing (one fresh budget per top-level expression), and
+    the fold's internal recursion threads the same list down so nested
+    container literals cannot draw a new allowance per level.
     """
     try:
-        return _literal_test_value_fold(node)
+        return _literal_test_value_fold(node, budget)
     except (ArithmeticError, TypeError, ValueError, MemoryError,
             RecursionError):
         return _LITERAL_TEST_UNRESOLVED
@@ -4397,9 +4419,6 @@ class _FoldedSizeOverflow(Exception):
     Never escapes ``_folded_size`` — it maps to the None return the
     container branches resolve as a fail-closed container.
     """
-
-
-_FOLD_SIZE_WORK_CAP = _FOLD_MAX_ITEMS * 4
 
 
 def _folded_size(value, budget=None):
@@ -4423,10 +4442,20 @@ def _folded_size(value, budget=None):
     repetition shares one folded child, so ``([(['x'] * 999999)] *
     999999,)`` (a ~40-byte source) put ~10^12 virtual nodes behind one
     element's size call and hung the ruler (>25 s on the fold path, n^2
-    growth measured).  Every child visit spends one unit from ``budget``
-    (a one-cell list the container branches share across their element
-    loop, so the bound covers the whole container, not one element);
+    growth measured).  Every sequence element and every dict entry (its
+    key and value walks together) spends one unit from ``budget``;
     exhausting it returns None and the caller resolves the container.
+
+    fix-r11 (DS concurrency/sibling/boundary r10 P0+P1, three roles,
+    probe-verified — fix-r11-audit/probe-r11-depth*.out): ``budget``
+    belongs to ONE whole top-level fold, not to each container literal —
+    the fold threads it through every recursive call, so a nesting level
+    re-walking the same shared folded child draws from the same allowance
+    and the depth shape aborts instead of scaling linearly with the
+    nesting depth (measured pre-fix: a 621-byte nested zero-size pile
+    folded for 17.2 s; twelve such tests 197.5 s, past the 180 s
+    CHECK_TIMEOUT).  The ``budget=None`` default only serves a direct
+    outside call; the fold always passes its own.
     """
     if budget is None:
         budget = [_FOLD_SIZE_WORK_CAP]
@@ -4461,7 +4490,7 @@ def _folded_size(value, budget=None):
         return None
 
 
-def _literal_test_value_fold(node):
+def _literal_test_value_fold(node, budget=None):
     """Value of an expression built only from literals and operators.
 
     ``ast.literal_eval`` folds ``True`` but rejects ``not False``, ``1 == 1``,
@@ -4473,11 +4502,21 @@ def _literal_test_value_fold(node):
     Returns ``_LITERAL_TEST_UNRESOLVED`` for a pure-literal tree outside the
     grammar or one that raises while folding; callers must not consult it
     for a test with a runtime operand (``_test_is_runtime`` first).
+
+    fix-r11 (DS concurrency/sibling/boundary r10 P0+P1): one traversal
+    budget per top-level fold — created here when the wrapper passes None,
+    threaded through every recursive call below, so nested container
+    literals share the whole fold's allowance.  A per-literal budget let
+    each nesting level re-walk a shared folded child on a fresh
+    allowance (measured 17.2 s from 621 bytes of source; twelve such
+    tests 197.5 s).
     """
+    if budget is None:
+        budget = [_FOLD_SIZE_WORK_CAP]
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.UnaryOp):
-        operand = _literal_test_value(node.operand)
+        operand = _literal_test_value(node.operand, budget)
         if operand is _LITERAL_TEST_UNRESOLVED:
             return _LITERAL_TEST_UNRESOLVED
         try:
@@ -4493,7 +4532,7 @@ def _literal_test_value_fold(node):
             return _LITERAL_TEST_UNRESOLVED
         return _LITERAL_TEST_UNRESOLVED
     if isinstance(node, ast.BoolOp):
-        values = [_literal_test_value(value) for value in node.values]
+        values = [_literal_test_value(value, budget) for value in node.values]
         if any(value is _LITERAL_TEST_UNRESOLVED for value in values):
             return _LITERAL_TEST_UNRESOLVED
         result = values[0]
@@ -4508,11 +4547,11 @@ def _literal_test_value_fold(node):
                 result = value
         return result
     if isinstance(node, ast.Compare):
-        left = _literal_test_value(node.left)
+        left = _literal_test_value(node.left, budget)
         for op, comparator in zip(node.ops, node.comparators):
             if left is _LITERAL_TEST_UNRESOLVED:
                 return _LITERAL_TEST_UNRESOLVED
-            right = _literal_test_value(comparator)
+            right = _literal_test_value(comparator, budget)
             if right is _LITERAL_TEST_UNRESOLVED:
                 return _LITERAL_TEST_UNRESOLVED
             try:
@@ -4561,9 +4600,12 @@ def _literal_test_value_fold(node):
         # the whole container — a per-element budget would let a pile of
         # zero-size elements (``[''] * 999999`` x n) iterate n x the cap
         # without ever crossing the size total.
-        budget = [_FOLD_SIZE_WORK_CAP]
+        # fix-r11 (DS concurrency/sibling/boundary r10 P0+P1): that budget
+        # is the whole top-level fold's (threaded through the recursion),
+        # so a nesting level re-walking a shared folded child draws the
+        # same allowance instead of a fresh one per literal.
         for element_node in node.elts:
-            element = _literal_test_value(element_node)
+            element = _literal_test_value(element_node, budget)
             if element is _LITERAL_TEST_UNRESOLVED:
                 return _LITERAL_TEST_UNRESOLVED
             size = _folded_size(element, budget)
@@ -4586,14 +4628,16 @@ def _literal_test_value_fold(node):
         # folded keys and values.
         entries = []
         total = 0
-        # fix-r10 (DS concurrency r9 P0): same shared traversal budget as the
-        # sequence branches, covering the whole dict in one allowance.
-        budget = [_FOLD_SIZE_WORK_CAP]
+        # fix-r10 (DS concurrency r9 P0): same shared traversal budget as
+        # the sequence branches, covering the whole dict in one allowance.
+        # fix-r11 (DS concurrency/sibling/boundary r10 P0+P1): and that
+        # budget is the whole top-level fold's, threaded through the
+        # recursion like the sequence branches above.
         for key, value in zip(node.keys, node.values):
             if key is None:  # a ``**`` spread is not a constant key
                 return _LITERAL_TEST_UNRESOLVED
-            folded_key = _literal_test_value(key)
-            folded_value = _literal_test_value(value)
+            folded_key = _literal_test_value(key, budget)
+            folded_value = _literal_test_value(value, budget)
             if (_LITERAL_TEST_UNRESOLVED in (folded_key, folded_value)
                     or not isinstance(folded_key, (str, int, float, bool, type(None)))):
                 return _LITERAL_TEST_UNRESOLVED
@@ -4607,8 +4651,8 @@ def _literal_test_value_fold(node):
             entries.append((folded_key, folded_value))
         return dict(entries)
     if isinstance(node, ast.BinOp):
-        left = _literal_test_value(node.left)
-        right = _literal_test_value(node.right)
+        left = _literal_test_value(node.left, budget)
+        right = _literal_test_value(node.right, budget)
         if _LITERAL_TEST_UNRESOLVED in (left, right):
             return _LITERAL_TEST_UNRESOLVED
         # fix-r6 (DS boundary P2 + MiniMax boundary P1/concurrency P1, both
@@ -4731,10 +4775,10 @@ def _literal_test_value_fold(node):
             return _LITERAL_TEST_UNRESOLVED
         return _LITERAL_TEST_UNRESOLVED
     if isinstance(node, ast.IfExp):
-        test = _literal_test_value(node.test)
+        test = _literal_test_value(node.test, budget)
         if test is _LITERAL_TEST_UNRESOLVED:
             return _LITERAL_TEST_UNRESOLVED
-        return _literal_test_value(node.body if test else node.orelse)
+        return _literal_test_value(node.body if test else node.orelse, budget)
     return _LITERAL_TEST_UNRESOLVED
 
 
@@ -7684,7 +7728,6 @@ def aggregation_audit():
     # would never fire — the budget must be shared across the whole
     # container loop.
     for _source in ("([(['x'] * 999999)] * 999999,)",
-                    "((1 << 999999), (1 << 999999))",
                     "([''] * 999999, [''] * 999999, [''] * 999999,"
                     " [''] * 999999, [''] * 999999)"):
         if (_literal_test_value(ast.parse(_source, mode='eval').body)
@@ -7693,6 +7736,76 @@ def aggregation_audit():
                             f'traversed a bomb-shaped container {_source!r} '
                             'instead of aborting on the shared traversal '
                             'budget (#1652)')
+    # #1652 fix-r11 (DS r10 concurrency P3 + boundary P3): the int pile is
+    # its own pin — its interception is the *total* bound (2 x 1e6 bits
+    # over the 1e6-items cap), not the traversal budget (its two walks
+    # spend exactly 2 units); sharing the bomb loop's failure message
+    # misattributed which mechanism a regression broke.
+    if (_literal_test_value(ast.parse("((1 << 999999), (1 << 999999))",
+                                      mode='eval').body)
+            is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: the container fold '
+                        'accepted a past-cap int total instead of '
+                        'failing closed on the total bound (#1652)')
+    # #1652 fix-r11 (DS concurrency/sibling/boundary r10 P0+P1, three
+    # roles, probe-verified — fix-r11-audit/probe-r11-depth*.out): the
+    # traversal budget belongs to ONE whole top-level fold, not to each
+    # container literal.  Nested single-element containers re-walk the
+    # same shared folded child at every level — each level's walk is
+    # ~1e6 visits and each level used to draw a fresh budget — so
+    # ``'[' * 198 + "[''] * 999999" + ']' * 198`` (621 bytes of source)
+    # folded for a measured 17.2 s and twelve such tests exceeded the
+    # 180 s CHECK_TIMEOUT (measured 197.5 s).  The depth pin holds the
+    # *nesting* dimension (seven single-element wrappers around the same
+    # zero-size pile) and the deep-small control proves depth alone
+    # never trips the budget.
+    if (_literal_test_value(ast.parse(
+            "((((((([''] * 999999,),),),),),),)", mode='eval').body)
+            is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: the container fold '
+                        're-walked a nested zero-size pile per level '
+                        'instead of sharing one traversal budget (#1652)')
+    _deep_small_source = "(['a'],)"
+    _deep_small_expected = (['a'],)
+    for _ in range(7):
+        _deep_small_source = f'({_deep_small_source},)'
+        _deep_small_expected = (_deep_small_expected,)
+    if (_literal_test_value(ast.parse(_deep_small_source, mode='eval').body)
+            != _deep_small_expected):
+        failures.append('#892 aggregation-audit: the container fold rejected '
+                        'a deep small container (the budget bounds work, '
+                        'not nesting depth) (#1652)')
+    # #1652 fix-r11 (DS sibling#4 + boundary#2 r10 P2, both roles): the
+    # dict branch shares the fold budget with the sequence branches — a
+    # five-entry dict of zero-size values is ~5e6 visits (UNRESOLVED)
+    # while a single at-cap int value still folds (the empty key keeps the
+    # entry total at the cap — a 1-char key would push it one over).
+    if (_literal_test_value(ast.parse(
+            "{'a': [''] * 999999, 'b': [''] * 999999, 'c': [''] * 999999,"
+            " 'd': [''] * 999999, 'e': [''] * 999999}", mode='eval').body)
+            is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: the dict fold drew a '
+                        'per-entry traversal budget instead of the shared '
+                        'fold budget (#1652)')
+    if _literal_test_value(ast.parse("{'': (1 << 999999)}",
+                                     mode='eval').body) != {'': (1 << 999999)}:
+        failures.append('#892 aggregation-audit: the dict fold rejected '
+                        'a single at-cap int value (#1652)')
+    # #1652 fix-r11 followup (variant negctl B survived the pins above: a
+    # dict branch that re-draws a fresh budget mid-fold escapes the pile
+    # pin, because the enclosing sequence's size walk re-charges the dict
+    # anyway): a dict nested in a sequence is walked twice on the same
+    # allowance — once per entry while folding (~1.7e6 visits) and once as
+    # the enclosing element's size (~1.7e6 again) — so after a prior
+    # element's ~1e6 the shared budget sees ~4.4e6 and fails closed, while
+    # a dict that re-drew folds (only ~2.7e6 on the outer allowance).
+    if (_literal_test_value(ast.parse(
+            "([''] * 999999, {'a': [''] * 850000, 'b': [''] * 850000})",
+            mode='eval').body)
+            is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: the dict fold re-drew a '
+                        'traversal budget mid-fold instead of sharing the '
+                        'whole fold allowance (#1652)')
     # #1652 fix-r10 (DS boundary r9 P1, probe-verified — fix-r10-audit/
     # probe-r10-ds-before.out C): ints count by bit length, not by "1
     # each" — a legal single int is 1 << 999999 (bit_length exactly the

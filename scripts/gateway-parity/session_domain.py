@@ -2878,8 +2878,12 @@ def _retirement_entry_inventory(baseline, round_row):
             # ``[{'frame': None}]`` must not HIT here either.
             frames = round_row.get('frames')
             # fix-r10: same _retirement_frame_rows predicate as the wire
-            # backing above (DS simplify r9 advisory) — the hit reading
-            # stays exactly the rows the wire pass would count.
+            # backing above (DS simplify r9 advisory; fix-r11 wording, DS
+            # r10 sibling): the hit reading shares the frame-bearing
+            # predicate — the wire pass additionally requires a usable
+            # frame id, so every row it counts is a hit, but a hit row
+            # without one backs no wire outcome (the outcomes side stays
+            # fail-closed on it).
             hit = bool(_retirement_frame_rows(_retirement_list_rows(frames)))
             reason = None if hit else 'no websocket frames recorded'
         else:

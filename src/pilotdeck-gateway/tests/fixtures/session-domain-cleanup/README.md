@@ -1249,3 +1249,32 @@ P2 (the port-domain matrix pinned 0/True/70000 but not the 65536 boundary
 itself) joined `test_safety`'s two matrices, and its sibling P3 wording
 (the r9 README/docstring mixed "~100 KB" sources and mismatched RSS
 numbers) is unified to the measured source/fold/RSS triple above.
+
+fix-r11 (DS r10 concurrency P0 + sibling/boundary P1 — one mechanism,
+three roles; probe-verified) again added no mutants.  The r10 work budget
+was still drawn *per container literal*: each nesting level re-walked the
+same shared folded child on a fresh allowance, so
+`'[' * 198 + "[''] * 999999" + ']' * 198` (621 bytes of source) folded
+for a measured 17.2 s and twelve such tests ran 197.5 s — past the 180 s
+`CHECK_TIMEOUT` (the CPython parser caps nesting at ~199, so one
+expression caps at ~17 s, but a file of them scales linearly).  One budget
+now belongs to the whole top-level fold: the fold creates it when the
+wrapper passes `None` and threads it through every recursive call, so a
+nesting level re-walking the shared child draws from the same allowance
+and the depth shape aborts (measured post-fix: 0.27 s per shape, 12 ×
+d=198 in 3.3 s).  The self-tests pin the depth shape (seven
+single-element wrappers → `UNRESOLVED`), the deep-small control (nesting
+depth alone never trips the budget), the five-entry dict pile, the
+at-cap dict control, and — after the first variant run showed a
+per-dict-literal budget *surviving* the pile pin (the enclosing
+sequence's size walk re-charges the dict anyway) — the cumulative shape
+`([''] * 999999, {'a': [''] * 850000, 'b': [''] * 850000})`: a nested
+dict is walked twice on one allowance (per entry while folding, then as
+the enclosing element's size), so ~4.4e6 visits fail closed while a dict
+that re-drew folds on ~2.7e6.  The int pile got its own pin message
+because its interception is the *total* bound, not the budget.  DS r10's
+sibling/boundary P2s joined `test_safety` as test-only pins over the
+unchanged production domains (65535 top-valid on both port-matrix paths,
+census and witness pid 2**31/2**31-1), and the P3 comment fixes reworded
+the budget's docstring scope and the `/ws` hit predicate's wire-outcome
+condition — no behavior to mutate.
