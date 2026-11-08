@@ -885,11 +885,61 @@ async fn start_with_adapters_alive(adapters_yaml: &str) -> AliveAssembly {
 /// suite serialize on the lock file instead of racing for the port between
 /// the probe and the channel's bind; a squatter outside this suite still
 /// fails the pre-probe by name.
+///
+/// #2301 fix-r3 (review P0 ② / DS concurrency#6): the release is ordered
+/// after the listeners close, not merely after the test body returns. A panic
+/// unwinds this guard before the tokio runtime drops the channel listeners,
+/// which used to leave a window where the lock was free above an open
+/// listener — a sibling run's pre-probe then failed by name (fail-closed, but
+/// not the "held throughout" the ledger describes). [`Drop`] now hands the
+/// flock files to a bounded watcher that releases them only once every
+/// claimed port stopped accepting connections, and the two assembly tests
+/// hold their regions inside a re-exec'd child process, where the kernel
+/// closes the listeners and the lock in the same process teardown.
 struct FixedPortRegion {
-    _files: Vec<std::fs::File>,
+    ports: Vec<u16>,
+    files: Vec<std::fs::File>,
 }
 
-fn lock_fixed_port_region(ports: &[u16]) -> FixedPortRegion {
+impl Drop for FixedPortRegion {
+    fn drop(&mut self) {
+        let files = std::mem::take(&mut self.files);
+        if files.is_empty() {
+            return;
+        }
+        let ports = self.ports.clone();
+        // Bounded (120s) and detached: on the normal path the after-stop
+        // assertions already proved the ports closed, so the first check
+        // releases immediately.
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(120);
+            loop {
+                let closed = ports.iter().all(|port| {
+                    std::net::TcpStream::connect_timeout(
+                        &std::net::SocketAddr::from(([127, 0, 0, 1], *port)),
+                        Duration::from_millis(250),
+                    )
+                    .is_err()
+                });
+                if closed || std::time::Instant::now() > deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            drop(files);
+        });
+    }
+}
+
+/// Claims the fixed ports for a test: the exclusive flock first (conforming
+/// runs of this suite serialize instead of racing for the port between the
+/// probe and the channel's bind), then the bind pre-probe itself — the
+/// A8.3-CH-SMS-012 convention: a port another run or a stray listener already
+/// owns fails here by name instead of turning into a bind failure the
+/// production channels report as a plain error (#2301 fix-r3 review P0 ③:
+/// both steps of the old `lock_fixed_port_region` + inline probe pair
+/// collapsed into this one entry point).
+async fn claim_fixed_ports(ports: &[u16]) -> FixedPortRegion {
     let mut files = Vec::new();
     for port in ports {
         let file = std::fs::OpenOptions::new()
@@ -922,7 +972,206 @@ fn lock_fixed_port_region(ports: &[u16]) -> FixedPortRegion {
         }
         files.push(file);
     }
-    FixedPortRegion { _files: files }
+    for port in ports {
+        let probe = tokio::net::TcpListener::bind(("127.0.0.1", *port)).await;
+        crate::negative_assert!(
+            probe.is_ok(),
+            "#2301 fixed-port test port {port} is already occupied — another run of this \
+             suite (or a stray listener) owns it; rerun when the shared host is idle"
+        );
+        drop(probe);
+    }
+    FixedPortRegion {
+        ports: ports.to_vec(),
+        files,
+    }
+}
+
+/// The after-stop half of the fixed-port convention (#2301 fix-r3 review
+/// P0 ③): every listener this run built must be gone once the host stopped,
+/// or a listener that outlives the assembly would keep answering from another
+/// run's channel.
+async fn assert_ports_closed_after_stop(ports: &[u16]) {
+    for port in ports {
+        crate::negative_assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", *port))
+                .await
+                .is_err(),
+            "#2301 the fixed-port listener on port {port} is gone after stop"
+        );
+    }
+}
+
+/// #2301 fix-r3 (review P2-a #7): a named pre-check for host environment
+/// values that would divert a channel's auth or bind behavior away from the
+/// assertions (`API_SERVER_KEY` 401s the chat completion before `normalize`
+/// runs, `API_SERVER_HOST` moves the bind off 127.0.0.1 so the readiness
+/// line never matches). Shared by the identity test and the startup test's
+/// child body; `startup_skips_*` needs no pre-flight of its own — its
+/// apiServer key throws inside the constructor before any env read.
+fn require_env_unset(names: &[&str]) {
+    for name in names {
+        crate::negative_assert!(
+            std::env::var_os(name).is_none(),
+            "#2301 this test requires {name} unset — a host environment value \
+             would divert the channel's auth/bind behavior away from the assertions"
+        );
+    }
+}
+
+/// The child-probe marker (#2301 fix-r3 review P1 #3): a probe parent passes
+/// a fresh random token per spawn both as this env value (`<mode>:<token>`)
+/// and as a positional libtest filter. A process takes the probe branch only
+/// when both halves match — a stale marker left in some earlier run's
+/// environment cannot match this run's argv, so the harness itself can never
+/// be steered into a probe branch. A positional filter was chosen over a
+/// flag because libtest rejects unknown `--flag`s outright (verified on this
+/// toolchain), while an unknown positional filter merely matches no test.
+const CHILD_PROBE_ENV: &str = "PDRS_2301_CHILD_PROBE";
+
+/// The probe branch for `mode`, taken only by the re-exec'd child this run
+/// spawned (both the env value and the argv nonce must name the same token).
+fn child_probe_token(mode: &str) -> Option<String> {
+    let value = std::env::var_os(CHILD_PROBE_ENV)?;
+    let value = value.to_str()?;
+    let (probe_mode, token) = value.split_once(':')?;
+    if probe_mode != mode || token.is_empty() {
+        return None;
+    }
+    std::env::args()
+        .any(|argument| argument == token)
+        .then(|| token.to_owned())
+}
+
+/// The environment a probe child inherits: everything the parent test ran
+/// with — the receipt protocol included, so the child's named assertions
+/// still write their receipts under this test's identity — plus this spawn's
+/// token pair.
+fn probe_child_env(mode: &str, token: &str) -> Vec<(String, String)> {
+    let mut env: Vec<(String, String)> = std::env::vars().collect();
+    crate::test_negative_receipt::forward_to_worker(&mut env);
+    env.retain(|(key, _)| key != CHILD_PROBE_ENV);
+    env.push((CHILD_PROBE_ENV.to_owned(), format!("{mode}:{token}")));
+    env
+}
+
+/// The last 4 KiB of a probe child's console, for embedding in the parent's
+/// named failure messages — the child's own panic payload lands there, so
+/// the fixture anchors stay killable through the parent's failure line.
+fn console_tail(console: &str) -> String {
+    let start = console.len().saturating_sub(4096);
+    console[start..].to_owned()
+}
+
+/// Parent half of a re-exec'd startup probe (#2301 fix-r3 review P0 #1): the
+/// whole claim → probe → start → stop → after-stop stretch now runs inside
+/// the child process, so its flock and its listeners are released by the
+/// same kernel teardown, and the instance-binding proof moves to the child's
+/// console — each channel's readiness line (`api-server: listening on …` and
+/// siblings) is printed by the channel itself only after its bind succeeded,
+/// so a squatter that grabs the port inside the probe → bind window (the
+/// assembly reports the bind failure as a plain error line and answers
+/// `/health` with its own platform body) can no longer turn the run green:
+/// the missing readiness line fails by name. Every wait states its
+/// termination condition, and a timed-out child is killed and reaped before
+/// the named failure (P1 #4: a dropped tokio `Child` keeps running).
+async fn run_startup_probe_child(test: &str, mode: &str, readiness: &[String]) {
+    let token = format!("pdrs-2301-{}", uuid::Uuid::new_v4().simple());
+    let mut child =
+        tokio::process::Command::new(std::env::current_exe().expect("#2301 the probe binary path"))
+            .args([
+                "--exact",
+                // `--exact` matches the full libtest path, not the bare name.
+                test,
+                // libtest's capture would route console writes into its in-memory
+                // sink instead of the child's stdout, hiding the readiness lines
+                // this test exists to observe; the token doubles as a positional
+                // filter that matches no test.
+                "--nocapture",
+                "--test-threads=1",
+                &token,
+            ])
+            .env_clear()
+            .envs(probe_child_env(mode, &token))
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("#2301 the startup probe child spawns");
+    let mut stdout = child.stdout.take().expect("#2301 the child's stdout pipe");
+    let mut stderr = child.stderr.take().expect("#2301 the child's stderr pipe");
+    let out = tokio::spawn(async move {
+        let mut buffer = Vec::new();
+        stdout
+            .read_to_end(&mut buffer)
+            .await
+            .expect("#2301 the child's stdout stays readable");
+        buffer
+    });
+    let err = tokio::spawn(async move {
+        let mut buffer = Vec::new();
+        stderr
+            .read_to_end(&mut buffer)
+            .await
+            .expect("#2301 the child's stderr stays readable");
+        buffer
+    });
+    // Every wait states its termination condition: 240 seconds on the child
+    // (a full assembly start plus its bounded polls), then kill + reap
+    // before the named failure.
+    let exited = tokio::time::timeout(Duration::from_secs(240), child.wait()).await;
+    let (status, console) = match exited {
+        Ok(status) => {
+            let out_buffer = out.await.expect("#2301 the child's stdout drains");
+            let err_buffer = err.await.expect("#2301 the child's stderr drains");
+            let console = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out_buffer),
+                String::from_utf8_lossy(&err_buffer)
+            );
+            (
+                status.expect("#2301 the startup probe child is waitable"),
+                console,
+            )
+        }
+        Err(_) => {
+            child
+                .kill()
+                .await
+                .expect("#2301 the timed-out startup probe child is killed");
+            let _ = child.wait().await;
+            let out_buffer = out.await.expect("#2301 the killed child's stdout drains");
+            let err_buffer = err.await.expect("#2301 the killed child's stderr drains");
+            let console = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out_buffer),
+                String::from_utf8_lossy(&err_buffer)
+            );
+            crate::negative_assert!(
+                false,
+                "#2301 the startup probe child did not finish within 240s; \
+                 child output tail: {}",
+                console_tail(&console)
+            );
+            unreachable!("negative_assert! panics");
+        }
+    };
+    for line in readiness {
+        crate::negative_assert!(
+            console.contains(line.as_str()),
+            "#2301 this assembly's readiness line {:?} never appeared on the \
+             startup console — the channel either failed to bind its port or never \
+             started; child exit {status}, child output tail: {}",
+            line,
+            console_tail(&console)
+        );
+    }
+    crate::negative_assert!(
+        status.success(),
+        "#2301 the startup probe child must pass its own assembly assertions; \
+         child exit {status}, child output tail: {}",
+        console_tail(&console)
+    );
 }
 
 // #2301: the production startup constructs the configured loader channels
@@ -954,28 +1203,76 @@ fn lock_fixed_port_region(ports: &[u16]) -> FixedPortRegion {
 // well. The window itself is now closed for conforming runs: every
 // fixed-port test holds an exclusive cross-process flock over its ports for
 // the whole probe → start → stop → after-stop stretch (see
-// [`lock_fixed_port_region`]), so two parallel runs serialize instead of
+// [`claim_fixed_ports`]), so two parallel runs serialize instead of
 // racing for the port. A squatter that is not this suite still either fails
 // the pre-probe by name or (when it grabs the port inside the window) turns
 // the `/health` probe into the named timeout below, never a silent pass.
+//
+// #2301 fix-r3 (review P0 #1): the `/health` body is byte-identical, and the
+// after-stop check passes against any listener still on the port — so a
+// squatter that lands inside the window makes the run *green* on someone
+// else's listener (the r1/r2 residual: the named failures only cover
+// conforming runs and squatters outside the window). The test is now driven
+// through a re-exec'd child process (see [`run_startup_probe_child`]): the
+// whole flock → probe → start → stop → after-stop stretch and the
+// instance-binding proof live in the child, where the kernel closes the
+// listeners and releases the lock in one teardown, and the parent adds the
+// readiness lines over the child's console — the one observable a squatter
+// cannot fake, because the channel prints it only after its own bind
+// succeeded. The wecomCallback key pins an explicit port too (#2438 review
+// P2-a #6): the interaction listener defaults to 8780, and without a fixed
+// port of its own the startup could never prove which assembly owns the
+// listener it asserts about.
+const STARTUP_BUILDS_API_SERVER_PORT: u16 = 28642;
+const STARTUP_BUILDS_WEBHOOK_PORT: u16 = 28643;
+const STARTUP_BUILDS_WECOM_CALLBACK_PORT: u16 = 28646;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn startup_builds_the_enabled_loader_channels() {
-    const API_SERVER_PORT: u16 = 28642;
-    const WEBHOOK_PORT: u16 = 28643;
-    let _ports = lock_fixed_port_region(&[API_SERVER_PORT, WEBHOOK_PORT]);
-    for port in [API_SERVER_PORT, WEBHOOK_PORT] {
-        let probe = tokio::net::TcpListener::bind(("127.0.0.1", port)).await;
-        crate::negative_assert!(
-            probe.is_ok(),
-            "#2301 loader test port {port} is already occupied — another run of this \
-             suite (or a stray listener) owns it; rerun when the shared host is idle"
-        );
+    if child_probe_token("startup-builds").is_some() {
+        startup_builds_loader_channels_child().await;
+        return;
     }
+    run_startup_probe_child(
+        "native_process::channels_tests::startup_builds_the_enabled_loader_channels",
+        "startup-builds",
+        &[
+            format!("api-server: listening on http://127.0.0.1:{STARTUP_BUILDS_API_SERVER_PORT}"),
+            format!(
+                "webhook: listening on http://127.0.0.1:{STARTUP_BUILDS_WEBHOOK_PORT} \
+                 — routes: (none configured)"
+            ),
+            format!("wecom_callback: listening on 0.0.0.0:{STARTUP_BUILDS_WECOM_CALLBACK_PORT}"),
+        ],
+    )
+    .await;
+}
+
+/// The child half of [`startup_builds_the_enabled_loader_channels`]: the body
+/// that claims the fixed ports, drives the real `assembly::start`, and stops
+/// the host — everything the parent then observes through the child's
+/// console (readiness lines) and exit status.
+async fn startup_builds_loader_channels_child() {
+    require_env_unset(&["API_SERVER_KEY", "API_SERVER_HOST"]);
+    let _ports = claim_fixed_ports(&[
+        STARTUP_BUILDS_API_SERVER_PORT,
+        STARTUP_BUILDS_WEBHOOK_PORT,
+        STARTUP_BUILDS_WECOM_CALLBACK_PORT,
+    ])
+    .await;
     let adapters = format!(
+        // The wecomCallback key carries dummy credentials so its start passes
+        // the config gate and really binds the pinned port (the gate only
+        // checks the strings are present; the channel contacts the qyapi on
+        // send, not at startup). `token` is a top-level field, the rest sit
+        // in `extra`, mirroring the loader's option object.
         "  slack: {{enabled: true}}\n  bluebubbles: {{enabled: true}}\n  \
-         wecomCallback: {{enabled: true}}\n  sms: {{enabled: true}}\n  \
-         apiServer: {{enabled: true, extra: {{port: {API_SERVER_PORT}}}}}\n  \
-         webhook: {{enabled: true, extra: {{port: {WEBHOOK_PORT}}}}}\n"
+         wecomCallback: {{enabled: true, token: probe, extra: {{corpId: probe, \
+         agentId: probe, secret: probe, encodingAesKey: probe, \
+         port: {STARTUP_BUILDS_WECOM_CALLBACK_PORT}}}}}\n  \
+         sms: {{enabled: true}}\n  \
+         apiServer: {{enabled: true, extra: {{port: {STARTUP_BUILDS_API_SERVER_PORT}}}}}\n  \
+         webhook: {{enabled: true, extra: {{port: {STARTUP_BUILDS_WEBHOOK_PORT}}}}}\n"
     );
     let alive = start_with_adapters_alive(&adapters).await;
     // The status-entry key is the adapter's channel key (loader camelCase
@@ -1029,17 +1326,18 @@ async fn startup_builds_the_enabled_loader_channels() {
     // each listener is this assembly's channel: `/health` answers the
     // channel's own platform string (the `health-and-routing` oracle body),
     // which a stray listener on the port does not.
-    assert_health_platform(API_SERVER_PORT, "api-server").await;
-    assert_health_platform(WEBHOOK_PORT, "webhook").await;
+    assert_health_platform(STARTUP_BUILDS_API_SERVER_PORT, "api-server").await;
+    assert_health_platform(STARTUP_BUILDS_WEBHOOK_PORT, "webhook").await;
     alive.stop().await;
-    for port in [API_SERVER_PORT, WEBHOOK_PORT] {
-        crate::negative_assert!(
-            tokio::net::TcpStream::connect(("127.0.0.1", port))
-                .await
-                .is_err(),
-            "#2301 the loader-built listeners are gone after stop"
-        );
-    }
+    // The wecomCallback interaction listener is this run's too: it was
+    // pinned to a fixed port above, so it is claimed, observed (the
+    // readiness line the parent requires) and confirmed gone here.
+    assert_ports_closed_after_stop(&[
+        STARTUP_BUILDS_API_SERVER_PORT,
+        STARTUP_BUILDS_WEBHOOK_PORT,
+        STARTUP_BUILDS_WECOM_CALLBACK_PORT,
+    ])
+    .await;
 }
 
 /// `GET /health` on one of the assembly's loader-built listeners: the
@@ -1156,17 +1454,16 @@ fn console_channel_log_routes_levels_to_the_console_sinks() {
     );
 }
 
-/// The child marker for [`console_ports_survive_a_failing_sink`]: when set,
-/// this process is the probe itself (the test re-execs its own binary with
-/// the marker and a filter matching only this test).
-const FAILING_CONSOLE_PROBE: &str = "PDRS_2301_FAILING_CONSOLE_PROBE";
-
+/// The child marker for [`console_ports_survive_a_failing_sink`]: when the
+/// `failing-console` token pair matches (see [`CHILD_PROBE_ENV`]), this
+/// process is the probe itself.
 #[tokio::test]
 async fn console_ports_survive_a_failing_sink() {
-    if std::env::var_os(FAILING_CONSOLE_PROBE).is_some() {
-        run_failing_console_probe();
+    if let Some(token) = child_probe_token("failing-console") {
+        run_failing_console_probe(&token);
         return;
     }
+    let token = format!("pdrs-2301-{}", uuid::Uuid::new_v4().simple());
     let mut child =
         tokio::process::Command::new(std::env::current_exe().expect("#2301 the probe binary path"))
             .args([
@@ -1175,10 +1472,14 @@ async fn console_ports_survive_a_failing_sink() {
                 "native_process::channels_tests::console_ports_survive_a_failing_sink",
                 // libtest's capture would route a mutated `println!` into its
                 // in-memory sink instead of the failing fd, so the probe must run
-                // uncaptured to reach the real console.
+                // uncaptured to reach the real console. The token doubles as the
+                // positional nonce the child checks (see [`child_probe_token`]).
                 "--nocapture",
+                "--test-threads=1",
+                &token,
             ])
-            .env(FAILING_CONSOLE_PROBE, "1")
+            .env_clear()
+            .envs(probe_child_env("failing-console", &token))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -1187,14 +1488,15 @@ async fn console_ports_survive_a_failing_sink() {
     let stdin = child.stdin.take().expect("#2301 the probe's stdin pipe");
     let mut stdout = child.stdout.take().expect("#2301 the probe's stdout pipe");
     let stderr = child.stderr.take().expect("#2301 the probe's stderr pipe");
-    // The child's half blocks reading its stdin until this side closes it,
-    // which orders the handshake: first libtest's startup banner
-    // ("running 1 test") is consumed while the console pipes still have
-    // readers — the child's own startup writes must succeed — then the
-    // readers are dropped (every later write on the child's fds 1/2 fails
-    // with EPIPE, the closed-console hazard), and only then is the child
-    // released through the stdin EOF.
-    let banner = tokio::time::timeout(Duration::from_secs(10), async {
+    // The handshake orders the probe (#2301 fix-r3 review P1 #3: the old
+    // libtest-banner scan raced it — under `RUST_TEST_THREADS=1` or a
+    // single-CPU host the banner could land after the pipes were already
+    // closed, failing the control spuriously). The child now announces
+    // itself with a marker line naming this run's token, and this side
+    // drops the read ends (every later write on the child's fds 1/2 fails
+    // with EPIPE, the closed-console hazard) only after the marker arrives.
+    let marker = format!("PDRS-2301-CONSOLE-READY-{token}\n").into_bytes();
+    let announced = tokio::time::timeout(Duration::from_secs(10), async {
         let mut seen = Vec::new();
         let mut chunk = [0u8; 64];
         loop {
@@ -1206,30 +1508,31 @@ async fn console_ports_survive_a_failing_sink() {
                 return false;
             }
             seen.extend_from_slice(&chunk[..read]);
-            if seen
-                .windows(b"running 1 test".len())
-                .any(|window| window == b"running 1 test")
-            {
+            if seen.windows(marker.len()).any(|window| window == marker) {
                 return true;
             }
         }
     })
     .await;
     crate::negative_assert!(
-        matches!(banner, Ok(true)),
-        "#2301 the failing-console probe reached its own test within 10s — the \
-         harness startup line never arrived on the child console"
+        matches!(announced, Ok(true)),
+        "#2301 the failing-console probe announced itself within 10s — its \
+         ready marker never arrived on the child console"
     );
     drop(stdout);
     drop(stderr);
     drop(stdin);
     // Every wait states its termination condition: 30 seconds on the probe,
-    // then it is killed and reported by name.
+    // then it is killed and reaped before the named failure (P1 #4).
     let done = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
     let status = match done {
         Ok(status) => status.expect("#2301 the failing-console probe is waitable"),
         Err(_) => {
-            let _ = child.start_kill();
+            child
+                .kill()
+                .await
+                .expect("#2301 the timed-out console probe is killed");
+            let _ = child.wait().await;
             crate::negative_assert!(
                 false,
                 "#2301 the failing-console probe did not finish within 30s"
@@ -1252,13 +1555,41 @@ async fn console_ports_survive_a_failing_sink() {
 /// failing console is already in place when the production closures run.
 /// No fd surgery is needed (and none is possible under the workspace's
 /// `unsafe_code = "forbid"`): the pipes were wired by the parent's `spawn`.
-fn run_failing_console_probe() {
+fn run_failing_console_probe(token: &str) {
+    // Announce first (the marker names this run's token, so a stale process
+    // from an earlier run cannot satisfy the parent's scan), then wait for
+    // the parent to close the pipes and release the stdin EOF. The wait is
+    // bounded (60s watchdog): a lost parent must not park this process
+    // forever.
+    {
+        use std::io::Write as _;
+        let mut stdout = std::io::stdout();
+        writeln!(stdout, "PDRS-2301-CONSOLE-READY-{token}")
+            .expect("#2301 the probe's ready marker write");
+        stdout
+            .flush()
+            .expect("#2301 the probe's ready marker flush");
+    }
+    let released = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let armed = released.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(60));
+        if !armed.load(std::sync::atomic::Ordering::Relaxed) {
+            // The console may already be failing — write best-effort, never
+            // panic, then exit by name.
+            use std::io::Write as _;
+            let _ =
+                std::io::stderr().write_all(b"#2301 the probe's stdin never closed within 60s\n");
+            std::process::exit(1);
+        }
+    });
     {
         use std::io::Read as _;
         let mut stdin = std::io::stdin();
         let mut byte = [0u8; 1];
         while stdin.read(&mut byte).unwrap_or(0) > 0 {}
     }
+    released.store(true, std::sync::atomic::Ordering::Relaxed);
     // Production console port #1: the `console_channel_log` closure
     // `assembly::start` mounts on the channel server.
     let log = super::channels::console_channel_log();
@@ -1291,7 +1622,108 @@ fn run_failing_console_probe() {
         0,
         "#2301 the probe's bad apiServer key constructs nothing"
     );
+    drop(startup);
+    drop(channels);
+    // The probe's scratch directory is released before the exit (#2301
+    // fix-r3 review P1: `process::exit` skips destructors, so a probe that
+    // exits with its `Root` still alive leaks the temp directory).
+    drop(home);
     std::process::exit(0);
+}
+
+/// Review P2-a #5 (fix-r3): the failing-sink probe above cannot observe
+/// routing — both of its sinks fail, so whichever way the production
+/// `console_channel_log` closure routes, the writes are dropped either way.
+/// This control drives the real closure itself (the one `assembly::start`
+/// mounts) with the child's fds pointed at files, pinning the level → sink
+/// selection TS's `consoleLogger` owns (info → stdout, warn/error → stderr,
+/// pilotdeckServer.ts:67-72). libtest's own output shares those files, so
+/// the assertions are containment-shaped with an explicit "not in the other
+/// sink" half.
+#[tokio::test]
+async fn console_channel_log_routes_through_the_real_closure() {
+    if child_probe_token("sink-routing").is_some() {
+        run_console_sink_probe();
+        return;
+    }
+    let home = Root::new();
+    let out_path = home.path().join("console-out");
+    let err_path = home.path().join("console-err");
+    let out_file = std::fs::File::create(&out_path)
+        .unwrap_or_else(|error| panic!("#2301 the sink probe's stdout file: {error}"));
+    let err_file = std::fs::File::create(&err_path)
+        .unwrap_or_else(|error| panic!("#2301 the sink probe's stderr file: {error}"));
+    let token = format!("pdrs-2301-{}", uuid::Uuid::new_v4().simple());
+    let mut child = tokio::process::Command::new(
+        std::env::current_exe().expect("#2301 the probe binary path"),
+    )
+    .args([
+        "--exact",
+        "native_process::channels_tests::console_channel_log_routes_through_the_real_closure",
+        "--nocapture",
+        "--test-threads=1",
+        &token,
+    ])
+    .env_clear()
+    .envs(probe_child_env("sink-routing", &token))
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::from(out_file))
+    .stderr(std::process::Stdio::from(err_file))
+    .spawn()
+    .expect("#2301 the sink-routing probe child spawns");
+    // Every wait states its termination condition: 30 seconds on the child,
+    // then kill + reap before the named failure (P1 #4).
+    let exited = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
+    let status = match exited {
+        Ok(status) => status.expect("#2301 the sink-routing probe child is waitable"),
+        Err(_) => {
+            child
+                .kill()
+                .await
+                .expect("#2301 the timed-out sink-routing probe child is killed");
+            let _ = child.wait().await;
+            crate::negative_assert!(
+                false,
+                "#2301 the sink-routing probe child did not finish within 30s"
+            );
+            unreachable!("negative_assert! panics");
+        }
+    };
+    crate::negative_assert!(
+        status.success(),
+        "#2301 the sink-routing probe child exited cleanly (exit {status})"
+    );
+    let out = std::fs::read_to_string(&out_path)
+        .unwrap_or_else(|error| panic!("#2301 the sink probe's stdout file reads: {error}"));
+    let err = std::fs::read_to_string(&err_path)
+        .unwrap_or_else(|error| panic!("#2301 the sink probe's stderr file reads: {error}"));
+    crate::negative_assert!(
+        out.contains("sink-probe: info line\n") && !err.contains("sink-probe: info line\n"),
+        "#2301 the real console_channel_log closure routes info to stdout \
+         (stdout file: {out:?}, stderr file: {err:?})"
+    );
+    crate::negative_assert!(
+        err.contains("sink-probe: warn line\n") && !out.contains("sink-probe: warn line\n"),
+        "#2301 the real console_channel_log closure routes warn to stderr \
+         (stdout file: {out:?}, stderr file: {err:?})"
+    );
+    crate::negative_assert!(
+        err.contains("sink-probe: error line\n") && !out.contains("sink-probe: error line\n"),
+        "#2301 the real console_channel_log closure routes error to stderr \
+         (stdout file: {out:?}, stderr file: {err:?})"
+    );
+}
+
+/// The child half of [`console_channel_log_routes_through_the_real_closure`]:
+/// this process's stdout and stderr are the parent-chosen files, so the
+/// production closure's routing lands in them directly; the child returns
+/// normally (libtest reports the test ok) — the files are the evidence, no
+/// assertion runs here.
+fn run_console_sink_probe() {
+    let log = super::channels::console_channel_log();
+    log("info", "sink-probe: info line");
+    log("warn", "sink-probe: warn line");
+    log("error", "sink-probe: error line");
 }
 
 // Review P1 #4 (loader level; fix-r2 review P1 #3 + P2-a #6 widened it): TS
@@ -1391,21 +1823,38 @@ fn install_proto_to_string_port(config: &mut JsValue) {
 // real startup — `assembly::start` calls `create_startup_configured`, so the
 // apiServer key with a `{toString: null}` port must never reach
 // `ChannelServer` (no runtime-status entry) while the webhook key after it
-// in table order still constructs and owns its port.
+// in table order still constructs and owns its port. #2301 fix-r3 (review
+// P0 #1): the port ownership stretch moved into a re-exec'd child, with the
+// webhook readiness line as the parent's instance-binding proof — the
+// apiServer key needs no env pre-flight, its constructor throws before any
+// environment read.
+const STARTUP_SKIPS_WEBHOOK_PORT: u16 = 28644;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn startup_skips_channels_whose_constructor_throws() {
-    const WEBHOOK_PORT: u16 = 28644;
-    let _ports = lock_fixed_port_region(&[WEBHOOK_PORT]);
-    let probe = tokio::net::TcpListener::bind(("127.0.0.1", WEBHOOK_PORT)).await;
-    crate::negative_assert!(
-        probe.is_ok(),
-        "#2301 loader skip test port {WEBHOOK_PORT} is already occupied — another run of this \
-         suite (or a stray listener) owns it; rerun when the shared host is idle"
-    );
-    drop(probe);
+    if child_probe_token("startup-skips").is_some() {
+        startup_skips_channels_child().await;
+        return;
+    }
+    run_startup_probe_child(
+        "native_process::channels_tests::startup_skips_channels_whose_constructor_throws",
+        "startup-skips",
+        &[format!(
+            "webhook: listening on http://127.0.0.1:{STARTUP_SKIPS_WEBHOOK_PORT} \
+             — routes: (none configured)"
+        )],
+    )
+    .await;
+}
+
+/// The child half of [`startup_skips_channels_whose_constructor_throws`]:
+/// the body that claims the fixed port, drives the real `assembly::start`
+/// with one bad key ahead of one good key, and stops the host.
+async fn startup_skips_channels_child() {
+    let _ports = claim_fixed_ports(&[STARTUP_SKIPS_WEBHOOK_PORT]).await;
     let adapters = format!(
         "  apiServer: {{enabled: true, extra: {{port: {{toString: null}}}}}}\n  \
-         webhook: {{enabled: true, extra: {{port: {WEBHOOK_PORT}}}}}\n"
+         webhook: {{enabled: true, extra: {{port: {STARTUP_SKIPS_WEBHOOK_PORT}}}}}\n"
     );
     let alive = start_with_adapters_alive(&adapters).await;
     let polled = tokio::time::timeout(Duration::from_secs(10), async {
@@ -1443,17 +1892,12 @@ async fn startup_skips_channels_whose_constructor_throws() {
         "#2301 a constructor failure leaves no runtime-status entry: {:?}",
         api_entry.map(|entry| field_text(entry, "state"))
     );
-    assert_health_platform(WEBHOOK_PORT, "webhook").await;
+    assert_health_platform(STARTUP_SKIPS_WEBHOOK_PORT, "webhook").await;
     alive.stop().await;
     // The listener this run built is gone with the host (#2301 fix-r2 review
     // P0: without the after-stop check a listener that outlives the assembly
     // would keep answering `/health` from another run's channel).
-    crate::negative_assert!(
-        tokio::net::TcpStream::connect(("127.0.0.1", WEBHOOK_PORT))
-            .await
-            .is_err(),
-        "#2301 the skip-test webhook listener is gone after stop"
-    );
+    assert_ports_closed_after_stop(&[STARTUP_SKIPS_WEBHOOK_PORT]).await;
 }
 
 // Review P1 #3: the whole channel server shares one `TurnGateway`
@@ -1604,6 +2048,13 @@ impl SessionFactory for UnreachedSessionFactory {
     }
 }
 
+// #2301 fix-r3 (review P0 #1): this test keeps its assembly in-process (the
+// recording submitter and its mpsc channel are the oracle), so its port
+// ownership proof stays in the parent — the claim helper's ordered release
+// (see [`FixedPortRegion`]) and the readiness log line remain the binding
+// evidence, plus the named env pre-flight below.
+const IDENTITY_API_SERVER_PORT: u16 = 28645;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loader_channels_submit_under_their_own_channel_identity() {
     // #2301 fix-r2 (review P2-a #8): the api-server channel falls back to
@@ -1613,27 +2064,14 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
     // never runs — the poll below fails misleadingly ten seconds later) and a
     // host `API_SERVER_HOST` would move the bind off 127.0.0.1 (the readiness
     // log line never matches). Both are named pre-checks, like the port probe.
-    for name in ["API_SERVER_KEY", "API_SERVER_HOST"] {
-        crate::negative_assert!(
-            std::env::var_os(name).is_none(),
-            "#2301 the identity test requires {name} unset — a host environment value \
-             would divert the channel's auth/bind behavior away from the assertions"
-        );
-    }
+    require_env_unset(&["API_SERVER_KEY", "API_SERVER_HOST"]);
     // Fixed port with the pre-probe ownership convention (see
     // [`startup_builds_the_enabled_loader_channels`]): the log line prints the
     // configured port, not the bound one, so a port-0 listener cannot be
     // discovered from it and the test owns its port explicitly instead. The
     // flock region serializes parallel runs of this suite (fix-r2 review P0).
-    const API_SERVER_PORT: u16 = 28645;
-    let _ports = lock_fixed_port_region(&[API_SERVER_PORT]);
-    let probe = tokio::net::TcpListener::bind(("127.0.0.1", API_SERVER_PORT)).await;
-    crate::negative_assert!(
-        probe.is_ok(),
-        "#2301 identity test port {API_SERVER_PORT} is already occupied — another run of this \
-         suite (or a stray listener) owns it; rerun when the shared host is idle"
-    );
-    drop(probe);
+    const API_SERVER_PORT: u16 = IDENTITY_API_SERVER_PORT;
+    let _ports = claim_fixed_ports(&[API_SERVER_PORT]).await;
     let home = Root::new();
     let log_lines: Arc<Mutex<Vec<String>>> = Arc::default();
     let sink = log_lines.clone();
@@ -1776,10 +2214,5 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
     // The listener this run built is gone with the channels (#2301 fix-r2
     // review P0: the after-stop ownership check, same shape as the startup
     // test's).
-    crate::negative_assert!(
-        tokio::net::TcpStream::connect(("127.0.0.1", API_SERVER_PORT))
-            .await
-            .is_err(),
-        "#2301 the identity test's api-server listener is gone after close"
-    );
+    assert_ports_closed_after_stop(&[IDENTITY_API_SERVER_PORT]).await;
 }
