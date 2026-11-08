@@ -2114,15 +2114,18 @@ def score_retirement_round(row, expected):
             continue
         method = outcome_row.get('method')
         status = outcome_row.get('outcome')
+        if not isinstance(method, str):
+            # fix-r4 (DS sibling P1) / fix-r5 (DS boundary P1, guard moved
+            # ahead of the timeout branch): an unhashable method dies at the
+            # dict membership below and at `_retirement_evidence_pairs`'s
+            # `pairs.add((method, problem))` even on the timeout path —
+            # MISSING_FIELD above already fails the round, so the wire pass
+            # skips what it cannot look up or hash.
+            continue
         if status == 'timeout':
             # F1 (#1355 fix-r1): a gateway that takes requests and never answers
             # produces exactly this outcome with zero wire backing.
             violations.append({'method': method, 'problem': 'timeout lacks wire backing'})
-            continue
-        if not isinstance(method, str):
-            # fix-r4 (DS sibling P1): an unhashable method dies at the dict
-            # membership below — MISSING_FIELD above already fails the round,
-            # so the wire pass skips what it cannot look up.
             continue
         if method not in sends:
             violations.append({'method': method, 'problem': 'send frame missing'})
@@ -2284,7 +2287,8 @@ def _retirement_controls(round_row, expected, verdict=None):
     # 1. 故意偷偷回退 TS / 假 local 实透传: an executed method with no wire frame.
     mutated = copy.deepcopy(round_row)
     victim = next((row.get('method') for row in _retirement_list_rows(mutated.get('outcomes'))
-                   if isinstance(row, dict) and row.get('outcome') == 'ok' and row.get('method')), None)
+                   if isinstance(row, dict) and row.get('outcome') == 'ok'
+                   and isinstance(row.get('method'), str) and row.get('method')), None)
     injection = 'executed method with every wire frame stripped while its ok outcome is kept'
     if victim is None:
         # P1 (#1355 fix-r4): same unestablishable-control rule as class 6 — a
@@ -2471,7 +2475,8 @@ def _retirement_controls(round_row, expected, verdict=None):
     # — the pre-fix scorer passed exactly this shape.
     mutated = copy.deepcopy(round_row)
     stream_row = next((row for row in _retirement_list_rows(mutated.get('outcomes'))
-                       if isinstance(row, dict) and row.get('shape') == 'stream' and row.get('method')), None)
+                       if isinstance(row, dict) and row.get('shape') == 'stream'
+                       and isinstance(row.get('method'), str) and row.get('method')), None)
     injection = ('stream method rewritten to error with every receive frame stripped while '
                  'keeping its send frame')
     if stream_row is None:
@@ -2506,7 +2511,8 @@ def _retirement_controls(round_row, expected, verdict=None):
     mutated = copy.deepcopy(round_row)
     stream_ok = next((row for row in _retirement_list_rows(mutated.get('outcomes'))
                       if isinstance(row, dict) and row.get('shape') == 'stream'
-                      and row.get('outcome') == 'ok' and row.get('method')), None)
+                      and row.get('outcome') == 'ok'
+                      and isinstance(row.get('method'), str) and row.get('method')), None)
     injection = 'stream ok outcome whose terminal event frame is downgraded to final:false'
     if stream_ok is None:
         # P1 (#1355 fix-r4): a legal degraded round (the only stream method
@@ -3089,7 +3095,11 @@ def _retirement_report(output, baseline):
                   'hash re-registration is the coordinator receive step',
         'baseline': {'path': str(baseline), 'revision': revision},
         'expected': {'methods': expected, 'count': len(expected), 'provenance': provenance},
-        'executed': {(verdict.get('round') or f'round-{index + 1:02d}'):
+        # fix-r5 (DS boundary P2): a non-str round label (a corrupted driver
+        # artifact) is normalized to the positional fallback instead of
+        # crashing the dict-key construction and collapsing the report.
+        'executed': {(verdict.get('round') if isinstance(verdict.get('round'), str)
+                      and verdict.get('round') else f'round-{index + 1:02d}'):
                      {'count': len(verdict.get('executed') or []),
                       'methods': verdict.get('executed') or []}
                      for index, verdict in enumerate(verdicts)},
@@ -3197,7 +3207,8 @@ def retirement_report(output, baseline):
         # collapse to dropped all 16 scoring faces, the exact shape this
         # wrapper's budget branch was fixed to remove.
         return _retirement_budget_blocked(baseline, error, rule=error.rule)
-    except (KeyError, TypeError, AttributeError, ValueError, OSError) as error:
+    except (KeyError, TypeError, AttributeError, ValueError, OSError,
+            RecursionError) as error:
         # fix-r2 (DS concurrency P2 / boundary P2): a corrupted or truncated
         # driver artifact (a half-written methods.json, a frames.jsonl line
         # that is valid JSON but not an object) raised before any source
@@ -3205,7 +3216,10 @@ def retirement_report(output, baseline):
         # with every scoring face missing — the exact collapse this PR removes.
         # Any residual shape defect now reports the same full 16-face BLOCKED
         # under ROUND_EVIDENCE; EvidenceError (a ValueError) is caught by the
-        # clause above and keeps its own rule.
+        # clause above and keeps its own rule.  fix-r5 (DS concurrency P1):
+        # RecursionError joins — copy.deepcopy on a deeply nested artifact
+        # (600-deep, measured) overflows before json.loads ever would (the
+        # C scanner handles 50000-deep) and used to reach main's stub here.
         return _retirement_budget_blocked(baseline, error, rule='ROUND_EVIDENCE')
 
 

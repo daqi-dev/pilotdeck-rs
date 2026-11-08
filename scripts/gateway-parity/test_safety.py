@@ -3452,6 +3452,19 @@ class RetirementScoring(unittest.TestCase):
             ('outcomes method unhashable', 'outcomes',
              [{'method': ['x'], 'outcome': 'ok', 'shape': 'request'}],
              ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r5 (DS r4 boundary/sibling P1): the timeout branch met the
+            # unhashable method before its guard — one corrupted timeout row
+            # used to die at `_retirement_evidence_pairs`'s ``pairs.add`` and
+            # collapse every measured round into the ROUND_EVIDENCE stub.
+            ('outcomes timeout method unhashable', 'outcomes',
+             [{'method': ['x'], 'outcome': 'timeout', 'shape': 'request'}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r5 (DS r4 sibling P1): the class 6 selector (and 1/5) only
+            # accepts a str method — an unhashable ok stream method must fail
+            # its own round, never ride the truthiness check into a hash.
+            ('outcomes stream ok method unhashable', 'outcomes',
+             [{'method': ['x'], 'outcome': 'ok', 'shape': 'stream'}],
+             ('rounds', 0, 'status'), 'FAIL'),
             ('frames', 'frames', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('frames null', 'frames', None, ('rounds', 0, 'status'), 'FAIL'),
             ('frames non-dict rows', 'frames', [None, 123, 'x'],
@@ -3532,6 +3545,82 @@ class RetirementScoring(unittest.TestCase):
                          [f'round-{index:02d}' for index in range(1, 6)],
                          f'#45 executed face keys: {sorted(report["executed"])!r}')
 
+    def test_executed_face_keys_normalize_a_non_str_label(self):
+        # fix-r5 (DS r4 boundary P2): a corrupted non-str round label (a list
+        # in a hand-edited artifact) used to die at the executed face's dict-key
+        # construction and collapse the report into the ROUND_EVIDENCE stub —
+        # the positional fallback keys the entry instead.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        row['label'] = ['x']
+        report = self._report_for(row, expected)
+        self.assertEqual(sorted(report['executed']),
+                         [f'round-{index:02d}' for index in range(1, 6)],
+                         f'#45 executed face keys: {sorted(report["executed"])!r}')
+        # The labeled round itself stays healthy — only the face key was
+        # corrupted, and the normalization must not fail the round.
+        self.assertEqual(report['rounds'][0]['status'], 'PASS',
+                         f'#45 round status: {report["rounds"][0]!r}')
+
+    def test_controls_skip_an_unhashable_victim_method(self):
+        # fix-r5 (DS r4 sibling P1): the class 1/5/6 selectors require a str
+        # method.  An ok outcome carrying an unhashable method with its
+        # matching frame used to ride the truthiness check: the strip matched
+        # (``['x'] == ['x']``) and ``require_pair in original_evidence`` hashed
+        # the tuple, collapsing the whole 16-face report into the stub.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        row['outcomes'][0]['method'] = ['x']
+        row['frames'][0]['frame']['method'] = ['x']
+        controls = self.session._retirement_controls(row, expected)
+        ts_fallback = next(entry for entry in controls['classes']
+                           if entry['class'] == 'TS_FALLBACK')
+        # The selector skipped the unhashable row and established the control
+        # on the remaining str-method ok outcome — pre-fix this raised
+        # TypeError at ``require_pair in original_evidence`` instead.
+        self.assertEqual(ts_fallback['status'], 'PASS',
+                         f'TS_FALLBACK control: {ts_fallback!r}')
+        self.assertIn("strip all wire frames of executed method 'run_get'",
+                      ts_fallback['injection'])
+        # The full report still assembles with every face present.
+        report = self._report_for(row, expected)
+        for face in self.REPORT_FACES:
+            self.assertIn(face, report, f'#45 unhashable victim lacks face {face}')
+        self.assertEqual(report['rounds'][0]['status'], 'FAIL',
+                         f'#45 round status: {report["rounds"][0]!r}')
+
+    def test_deeply_nested_round_value_blocks_with_the_full_face_set(self):
+        # fix-r5 (DS r4 concurrency P1): copy.deepcopy overflows on a deeply
+        # nested artifact (600-deep raises RecursionError at the default
+        # limit, measured) while json.loads' C scanner accepts 50000-deep —
+        # the controls' deepcopy is a collection refusal the wrapper must
+        # report as the full 16-face BLOCKED, never main's 5-key FAIL
+        # skeleton.  The nesting rides an inert key so the deepcopy in
+        # _retirement_controls is the only code that recurses.
+        expected = ['submit_turn', 'run_get']
+        row = self._stream_ok_round_row()
+        deep = {}
+        node = deep
+        for _ in range(600):
+            node['child'] = {}
+            node = node['child']
+        row['probeExtra'] = deep
+        report = self._report_for(row, expected)
+        self.assertEqual(report['status'], 'BLOCKED',
+                         f'#45 deep nesting status: {report["status"]}')
+        self.assertEqual(report['executionStatus'], 'BLOCKED',
+                         f'#45 deep nesting executionStatus')
+        self.assertEqual(report['failure']['rule'], 'ROUND_EVIDENCE',
+                         f'#45 deep nesting failure: {report["failure"]}')
+        self.assertIn('could not collect round evidence', report['reason'],
+                      f'#45 deep nesting reason: {report["reason"]}')
+        for face in self.REPORT_FACES:
+            self.assertIn(face, report, f'#45 deep nesting lacks face {face}')
+        self.assertEqual(report['rounds'], [],
+                         f'#45 deep nesting rounds: {report["rounds"]}')
+        self.assertEqual(report['executed'], {},
+                         f'#45 deep nesting executed: {report["executed"]}')
+
     def test_shape_errors_keep_the_full_face_set(self):
         # fix-r2 (DS concurrency P2 / boundary P2): a corrupted or truncated
         # driver artifact (a half-written methods.json, a frames.jsonl line
@@ -3550,7 +3639,11 @@ class RetirementScoring(unittest.TestCase):
                   AttributeError("'str' object has no attribute 'get'"),
                   self.session.json.JSONDecodeError('Expecting value', '{', 0),
                   ValueError('corrupt artifact'),
-                  OSError('read failed'))
+                  OSError('read failed'),
+                  # fix-r5 (DS r4 concurrency P1): copy.deepcopy on a deeply
+                  # nested artifact (600-deep, measured) overflows before
+                  # json.loads ever would — the same full-face refusal.
+                  RecursionError('maximum recursion depth exceeded'))
         for error in errors:
             with patch.object(self.session, '_retirement_report', side_effect=error):
                 report = self.session.retirement_report(Path('out'), Path('baseline'))

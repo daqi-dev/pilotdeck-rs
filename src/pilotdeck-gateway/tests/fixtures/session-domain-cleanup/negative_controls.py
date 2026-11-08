@@ -1841,6 +1841,47 @@ def nested_constant_conditional_bypass(rows):
                   'flagged, passed=False')
 
 
+def nested_boolop_value_bypass(rows):
+    """#1652 fix-r5 (DS boundary P0): the cleanupAudit face written as
+    ``'PASS' or 'FAIL'`` is an unconditional clean status by short-circuit
+    semantics — the dead fail-closed operand never runs, so the recursive
+    layer must flag the slot."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' or 'FAIL'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested BoolOp-value bypass flagged, '
+                  'passed=False')
+
+
+def nested_is_literal_bypass(rows):
+    """#1652 fix-r5 (DS boundary P1): the cleanupAudit face written as
+    ``'PASS' if 1.0 is 1.0 else 'FAIL'`` takes the clean arm at runtime —
+    CPython shares one object between equal constants in the same code object
+    (measured: ``1.0 is 1.0`` is True), so folding identity off the parsed AST
+    nodes must fail closed instead of claiming the fail-closed arm."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' if 1.0 is 1.0 else 'FAIL'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested identity-literal bypass flagged, '
+                  'passed=False')
+
+
 def nested_not_false_conditional_bypass(rows):
     """#1652 fix-r4 (DS boundary P0): the cleanupAudit face written as
     ``'PASS' if not False else 'FAIL'`` is constant-by-semantics —
@@ -2118,6 +2159,22 @@ MUTATIONS = [
      "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
      "            for row in rounds) else 'FAIL'},\n",
      "        'cleanupAudit': {'status': 'PASS' if not False else 'FAIL'},\n"),
+    # #1652 fix-r5 (DS boundary P0): a BoolOp *value* follows short-circuit
+    # semantics — ``'PASS' or 'FAIL'`` can only ever produce the clean operand,
+    # so the dead fail-closed operand must not excuse it.
+    ('nested-boolop-value-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' or 'FAIL'},\n"),
+    # #1652 fix-r5 (DS boundary P1): identity of two parsed literal nodes is
+    # not foldable — at runtime CPython dedups equal constants in the same
+    # code object, ``1.0 is 1.0`` is True and the clean arm is the live one.
+    ('nested-is-literal-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' if 1.0 is 1.0 else 'FAIL'},\n"),
     ('controls-nested-same-name', CONTROLS_SOURCE,
      "    report['cleanup'] = cleanup\n",
      "    def main():\n"
@@ -4493,6 +4550,10 @@ JUDGES = {
         'aggregation-audit', nested_constant_conditional_bypass, False, ()),
     'nested-not-false-conditional-bypass': (
         'aggregation-audit', nested_not_false_conditional_bypass, False, ()),
+    'nested-boolop-value-bypass': (
+        'aggregation-audit', nested_boolop_value_bypass, False, ()),
+    'nested-is-literal-bypass': (
+        'aggregation-audit', nested_is_literal_bypass, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
     'calibrate-shared-excuse': (

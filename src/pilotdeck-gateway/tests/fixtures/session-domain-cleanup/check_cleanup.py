@@ -4302,10 +4302,14 @@ def _literal_test_value(node):
                     outcome = left in right
                 elif isinstance(op, ast.NotIn):
                     outcome = left not in right
-                elif isinstance(op, ast.Is):
-                    outcome = left is right
-                elif isinstance(op, ast.IsNot):
-                    outcome = left is not right
+                elif isinstance(op, (ast.Is, ast.IsNot)):
+                    # fix-r5 (DS boundary P1): identity is not foldable — the
+                    # interpreter may share one object between equal literals
+                    # in the same code object (``1.0 is 1.0`` is True at
+                    # runtime, measured) while two freshly parsed AST nodes
+                    # never do, so a folded verdict can disagree with the
+                    # arm the run actually takes.  No arm is certified.
+                    return _LITERAL_TEST_UNRESOLVED
                 else:
                     return _LITERAL_TEST_UNRESOLVED
             except (TypeError, ValueError):
@@ -4343,6 +4347,24 @@ def _literal_test_value(node):
         right = _literal_test_value(node.right)
         if _LITERAL_TEST_UNRESOLVED in (left, right):
             return _LITERAL_TEST_UNRESOLVED
+        # fix-r5 (DS boundary P2, in-round a): the fold runs on audited source
+        # text, so an adversarial or corrupted literal must not be able to
+        # hang or OOM the audit — the unbounded shapes stay unresolved and
+        # fail closed instead of being computed.
+        if isinstance(node.op, ast.Pow):
+            if (isinstance(left, (int, float)) and isinstance(right, int)
+                    and abs(right) > 64):
+                return _LITERAL_TEST_UNRESOLVED
+        if isinstance(node.op, (ast.LShift, ast.RShift)):
+            if not isinstance(right, int) or not -256 <= right <= 256:
+                return _LITERAL_TEST_UNRESOLVED
+        if isinstance(node.op, ast.Mult):
+            if (isinstance(left, str) and isinstance(right, int)
+                    and len(left) * abs(right) > 1_000_000):
+                return _LITERAL_TEST_UNRESOLVED
+            if (isinstance(right, str) and isinstance(left, int)
+                    and len(right) * abs(left) > 1_000_000):
+                return _LITERAL_TEST_UNRESOLVED
         try:
             if isinstance(node.op, ast.Add):
                 return left + right
@@ -4368,7 +4390,8 @@ def _literal_test_value(node):
                 return left & right
             if isinstance(node.op, ast.BitXor):
                 return left ^ right
-        except (ArithmeticError, TypeError, ValueError):
+        except (ArithmeticError, TypeError, ValueError, MemoryError,
+                RecursionError):
             return _LITERAL_TEST_UNRESOLVED
         return _LITERAL_TEST_UNRESOLVED
     if isinstance(node, ast.IfExp):
@@ -4421,7 +4444,30 @@ def _exit_arms(node):
             return _exit_arms(node.body if taken else node.orelse)
         return [arm for sub in (node.body, node.orelse) for arm in _exit_arms(sub)]
     if isinstance(node, ast.BoolOp):
-        return [arm for sub in node.values for arm in _exit_arms(sub)]
+        # fix-r5 (DS boundary P0): a BoolOp's *value* follows short-circuit
+        # semantics — ``'PASS' or 'FAIL'`` can only ever produce ``'PASS'``, so
+        # the dead fail-closed operand cannot excuse the live clean one, the
+        # mirror of the constant-conditional rule two lines above.  A runtime
+        # operand leaves both itself and every later operand reachable; a
+        # pure-literal operand outside the foldable grammar certifies no arm.
+        arms = []
+        for index, sub in enumerate(node.values):
+            if _test_is_runtime(sub):
+                # For Or a falsy runtime operand falls through to the next,
+                # for And a truthy one does — either way the later operands
+                # stay reachable and the loop keeps collecting them.
+                arms.extend(_exit_arms(sub))
+                continue
+            value = _literal_test_value(sub)
+            if value is _LITERAL_TEST_UNRESOLVED:
+                return []
+            truthy = bool(value)
+            settles = truthy if isinstance(node.op, ast.Or) else not truthy
+            if settles or index == len(node.values) - 1:
+                arms.extend(_exit_arms(sub))
+                if settles:
+                    return arms
+        return arms
     return [node]
 
 
@@ -6938,6 +6984,28 @@ def aggregation_audit():
         "def _nested_boolop_conditional_face(report):\n"
         "    return {'status': 'BLOCKED', 'face': "
         "{'status': 'PASS' if True and True else 'FAIL'}}\n"
+        # #1652 fix-r5 (DS boundary P0): a BoolOp *value* follows the same
+        # short-circuit semantics — the dead fail-closed operand cannot
+        # excuse the live clean one, the mirror of the constant condition.
+        "def _nested_boolop_value_or_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': 'PASS' or 'FAIL'}}\n"
+        "def _nested_boolop_value_and_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': 'FAIL' and 'PASS'}}\n"
+        # #1652 fix-r5 (DS boundary P1): identity of two parsed literal
+        # nodes is not foldable — the interpreter may share one object
+        # between equal constants (``1.0 is 1.0`` is True at runtime,
+        # measured), so both arms stay reachable and the clean one is live.
+        "def _nested_is_literal_conditional_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': 'PASS' if 1.0 is 1.0 else 'FAIL'}}\n"
+        # fix-r5 healthy controls: a runtime operand keeps the fail-closed
+        # operand reachable, and an unresolvable identity keeps both arms —
+        # neither may be flagged.
+        "def _nested_boolop_value_runtime_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': report.get('ok') or 'FAIL'}}\n"
         # #1652 fix-r2 (DS boundary observation): a starred literal spread.
         "def _nested_starred_face(report):\n"
         "    return {'status': 'BLOCKED', 'faces': [*[{'status': 'PASS'}]]}\n")
@@ -6998,6 +7066,24 @@ def aggregation_audit():
             failures.append('#892 aggregation-audit: detector self-test did not '
                             f'flag a clean status behind a literal-grammar '
                             f'condition ({_probe_name}, #1652)')
+    # #1652 fix-r5 (DS boundary P0/P1): the same two probes as flag shapes,
+    # with a healthy runtime-BoolOp control beside them.
+    for _probe_name in ('_nested_boolop_value_or_face',
+                        '_nested_boolop_value_and_face',
+                        '_nested_is_literal_conditional_face'):
+        _probe = probe892_found.get(('<self-test-892>', _probe_name))
+        if (not _probe
+                or not any('nested status slot' in slot
+                           for slot in unshared_status_slots(_probe[1]))):
+            failures.append('#892 aggregation-audit: detector self-test did not '
+                            f'flag a clean status behind a short-circuit value '
+                            f'or identity condition ({_probe_name}, #1652)')
+    _boolop_runtime = probe892_found.get(
+        ('<self-test-892>', '_nested_boolop_value_runtime_face'))
+    if not _boolop_runtime or unshared_status_slots(_boolop_runtime[1]):
+        failures.append('#892 aggregation-audit: detector self-test rejected a '
+                        'nested face whose BoolOp value keeps a runtime operand '
+                        'and a fail-closed operand (#1652)')
     # A pure-literal test outside the foldable grammar certifies no arm
     # (fail-closed): the dead arm must not be claimable, and the slot itself
     # stays flagged rather than excused.
@@ -7015,6 +7101,43 @@ def aggregation_audit():
     if len(_exit_arms(ast.parse("0 if not ok else 1", mode='eval').body)) != 2:
         failures.append('#892 aggregation-audit: a runtime test did not keep '
                         'both arms (#1652)')
+    # #1652 fix-r5 (DS boundary P0): a BoolOp value follows short-circuit
+    # semantics — every shape below is checked against the interpreter's own
+    # evaluation order.
+    for _source, _expected in (
+            ("'PASS' or 'FAIL'", 1), ("'FAIL' and 'PASS'", 1),
+            ("'' or 'FAIL'", 1), ("'PASS' and ok", 1),
+            ("ok or 'FAIL'", 2), ("'PASS' or ok", 1), ("'' and 'FAIL'", 1),
+            ("2 @ 3 or 'FAIL'", 0), ("ok and 2 @ 3", 0)):
+        _arms = _exit_arms(ast.parse(_source, mode='eval').body)
+        if len(_arms) != _expected:
+            failures.append('#892 aggregation-audit: the BoolOp value fold '
+                            f'disagreed with short-circuit semantics on {_source!r} '
+                            f'(#1652)')
+    if (_folded_string(_exit_arms(ast.parse("'PASS' or 'FAIL'", mode='eval').body)[0])
+            != 'PASS'):
+        failures.append('#892 aggregation-audit: the BoolOp value fold kept the '
+                        'dead operand of \'PASS\' or \'FAIL\' (#1652)')
+    # #1652 fix-r5 (DS boundary P1): identity of two parsed literal nodes is
+    # unresolvable — the interpreter may share one object between equal
+    # constants (``1.0 is 1.0`` is True at runtime, measured).
+    if (_literal_test_value(ast.parse('1.0 is 1.0', mode='eval').body)
+            is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: the constant fold judged an '
+                        'identity test instead of failing closed (#1652)')
+    # #1652 fix-r5 (DS boundary P2, in-round a): the arithmetic fold stays
+    # bounded — an adversarial literal cannot hang or OOM the audit.
+    for _source in ('2 ** 100', '1 << 300', "'x' * 10 ** 7"):
+        if (_literal_test_value(ast.parse(_source, mode='eval').body)
+                is not _LITERAL_TEST_UNRESOLVED):
+            failures.append('#892 aggregation-audit: the arithmetic fold computed '
+                            f'an unbounded literal {_source!r} instead of failing '
+                            'closed (#1652)')
+    for _source, _expected in (('2 ** 10', 1024), ('1 << 10', 1024),
+                               ("'x' * 3", 'xxx')):
+        if _literal_test_value(ast.parse(_source, mode='eval').body) != _expected:
+            failures.append('#892 aggregation-audit: the arithmetic fold rejected '
+                            f'a bounded literal {_source!r} (#1652)')
     # #1652 fix-r2 (DS boundary observation): a starred literal spread is
     # walked — the clean status inside ``[*[{'status': 'PASS'}]]`` must be
     # flagged, while spreading a name stays opaque by design.
