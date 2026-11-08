@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported native history end-to-end probe; no product source mutations
 """Real Rust Gateway/sidecar/control integration. Only owned temporary state and loopback."""
 import argparse
 import fcntl

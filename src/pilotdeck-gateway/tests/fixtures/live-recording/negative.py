@@ -12,7 +12,7 @@ runner = live.with_name('runner.rs'); driver = live.with_name('runner_recording.
 controls = [
  ('disposed-admission', live, 'if state.disposed {', 'if false {', 'live_recording_start_dispose', 'disposed session stays closed'),
  ('active-admission', live, 'if state.active.is_some() {', 'if false {', 'live_recording_start_resubmit', 'pending write blocks resubmit'),
- ('start-error-propagates', runner, 'self.io(|r, s, t| r.start_turn(s, t)).await?;', 'let _ = self.io(|r, s, t| r.start_turn(s, t)).await;', 'live_recording_start_failure', '#743 recording expected failure'),
+ ('start-error-propagates', runner, 'self.io(move |r, s, t| r.start_turn_with_inbox(s, t, inbox.as_ref()))\n                .await?;', 'let _ = self.io(move |r, s, t| r.start_turn_with_inbox(s, t, inbox.as_ref()))\n                .await;', 'live_recording_start_failure', '#743 recording expected failure'),
  ('shared-lease-exclusive-only', interaction, 'if let Ok(mut lease) = Arc::try_unwrap(owned.lease)', 'if Arc::strong_count(&owned.lease) > 1 { return Err(ModuleError::new("shared recorder lease incorrectly blocks handler cleanup").into()); }\n                if let Ok(mut lease) = Arc::try_unwrap(owned.lease)', 'recording_shared_lease_outlives_handler_cleanup', 'shared recorder lease incorrectly blocks handler cleanup'),
  ('accept-failure-not-success', runner, '("type", "error".into()),', '("type", "success".into()),', 'live_recording_accept_failure', 'integrity failure terminal must be error'),
  ('complete-failure-not-success', runner, '("type", "error".into()),', '("type", "success".into()),', 'live_recording_complete_failure', 'integrity failure terminal must be error'),

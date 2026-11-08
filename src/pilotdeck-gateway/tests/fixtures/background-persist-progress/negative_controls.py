@@ -62,8 +62,8 @@ mutations = [
      '            // #1233 fix-r1: assigned under the lock with the terminal state,',
      'test_output_spill_write_and_read', '#978 spill producer delivered all bytes'),
     ('spill-read-skipped', output,
-     '        let path = &self.spill.as_ref()?.path;',
-     '        if offset == 0 { return None; }\n        let path = &self.spill.as_ref()?.path;',
+     '        let path = &spill.path;',
+     '        if offset == 0 { return None; }\n        let path = &spill.path;',
      'test_output_spill_write_and_read', '#978 spill prefix is not truncated'),
     # #1233 renamed the restore binding; both mutations still target the
     # was_unsettled gate in the restore loop.

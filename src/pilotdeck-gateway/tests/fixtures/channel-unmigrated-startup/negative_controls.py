@@ -25,23 +25,7 @@ assembly = root / 'src/pilotdeck-gateway/src/native_process/assembly.rs'
 loader = root / 'src/pilotdeck-gateway/src/channel/loader.rs'
 
 REJECT_BLOCK = (
-    '        let rejected = crate::channel::loader::reject_unmigrated_channels(config.get("adapters"))\n'
-    '            .and_then(|()| {\n'
-    '                crate::channel::loader::reject_unimplemented_bundle_channels(\n'
-    '                    config.get("adapters"),\n'
-    '                    super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,\n'
-    '                )\n'
-    '            });\n'
-    '        if let Err(error) = rejected {\n'
-    '            // Same teardown order as the failure branch below (#1328): the\n'
-    '            // session factory first, then the project registry.\n'
-    '            let _ = tokio::time::timeout(options.drain_budget, async {\n'
-    '                let _ = factory.dispose().await;\n'
-    '                project.dispose().await\n'
-    '            })\n'
-    '            .await;\n'
-    '            return Err(error.into());\n'
-    '        }\n'
+    '        let rejected = if mode == AssemblyMode::Server {\n            crate::channel::loader::reject_unmigrated_channels(config.get("adapters")).and_then(\n                |()| {\n                    crate::channel::loader::reject_unimplemented_bundle_channels(\n                        config.get("adapters"),\n                        super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,\n                    )\n                },\n            )\n        } else {\n            Ok(())\n        };\n        if let Err(error) = rejected {\n            // Same teardown order as the failure branch below (#1328): the\n            // session factory first, then the project registry.\n            let _ = tokio::time::timeout(options.drain_budget, async {\n                let _ = factory.dispose().await;\n                project.dispose().await\n            })\n            .await;\n            return Err(error.into());\n        }\n'
 )
 
 EVERY = ('startup_refuses_every_unmigrated_channel',
@@ -61,15 +45,7 @@ MUTATIONS = [
     # #1763: the error is swallowed instead of propagating, i.e. "refuse" turns
     # into the silent skip #1302 B forbids. Same cells must kill.
     ('assembly-reject-silently-skipped', assembly, REJECT_BLOCK,
-     '        let rejected = crate::channel::loader::reject_unmigrated_channels(config.get("adapters"))\n'
-     '            .and_then(|()| {\n'
-     '                crate::channel::loader::reject_unimplemented_bundle_channels(\n'
-     '                    config.get("adapters"),\n'
-     '                    super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,\n'
-     '                )\n'
-     '            });\n'
-     '        // #1763 negative control: silent skip\n'
-     '        let _ = rejected;\n',
+     '        let rejected = if mode == AssemblyMode::Server {\n            crate::channel::loader::reject_unmigrated_channels(config.get("adapters")).and_then(\n                |()| {\n                    crate::channel::loader::reject_unimplemented_bundle_channels(\n                        config.get("adapters"),\n                        super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,\n                    )\n                },\n            )\n        } else {\n            Ok(())\n        };\n        // #1763 negative control: silent skip\n        let _ = rejected;\n',
      [EVERY]),
     # #1694 §7: `feishu` drops out of the bundle table while the assembly still
     # claims to construct it, so the two declarations disagree.

@@ -187,8 +187,8 @@ mutations['open-skip-complete'] = (
 
 mutations['reject-completes'] = (
     root / 'src/pilotdeck-gateway/src/runtime/turn/runner.rs',
-    '            self.io(|r, s, t| r.start_turn(s, t)).await?;',
-    '            self.io(|r, s, t| {\n                let result = r.start_turn(s, t);\n                let _ = r.writer().record_turn_result(s, t, crate::metadata::object([("type", JsValue::String("error".into()))]));\n                result\n            })\n            .await?;',
+    '            self.io(move |r, s, t| r.start_turn_with_inbox(s, t, inbox.as_ref()))\n                .await?;',
+    '            self.io(move |r, s, t| {\n                let result = r.start_turn_with_inbox(s, t, inbox.as_ref());\n                let _ = r.writer().record_turn_result(s, t, crate::metadata::object([("type", JsValue::String("error".into()))]));\n                result\n            })\n            .await?;',
     'gates_pump_reject_never_starts_the_pump',
     [('gates_pump_reject_never_starts_the_pump',
       '#1219 [reject]: a rejected turn appends no durable turn_result')],

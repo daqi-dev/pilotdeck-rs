@@ -227,12 +227,8 @@ mutations = [
     # fix-r2 P1: the home travels as bytes; a lossy re-parse keys the same
     # physical directory twice and the later empty bucket overwrites it.
     ('entry-lossy-home', migration,
-     '    let body = migrate_locked(input, &home, &root_dir);',
-     '    let body = migrate_locked(\n'
-     '        input,\n'
-     '        &PathBuf::from(home.to_string_lossy().into_owned()),\n'
-     '        &root_dir,\n'
-     '    );',
+     '    let body = migrate_locked(input, &home, &root_dir, scope);',
+     '    let body = migrate_locked(\n        input,\n        &PathBuf::from(home.to_string_lossy().into_owned()),\n        &root_dir,\n        scope,\n    );',
      'runtime::cron::tests::migration_non_utf8_home_keeps_one_physical_key',
      '#1216 non-UTF-8 home: the same-directory projectKey must keep one physical key'),
     # #1400: the skip probe lies — claims a rejecting filesystem accepts

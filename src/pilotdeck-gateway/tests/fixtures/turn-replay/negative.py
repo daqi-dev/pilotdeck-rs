@@ -204,18 +204,7 @@ DRAIN_GUARD_SKIPS_POISON = DRAIN_GUARD_TOLERANT.replace(
 
 # Shared verbatim blocks of the current coordinator.rs, so the mutants that
 # rearrange or recreate parts of `emit`/`start` keep their anchors exact.
-EMIT_LOOKUP = """            let Some(sink) = state
-                .sinks
-                .get(session_key)
-                .and_then(|registration| registration.upgrade())
-                .map(|registration| Arc::clone(&registration.sink))
-            else {
-                // The host dropped the registration (or never started the
-                // session): TS looks a live sink up in its map, this port
-                // prunes the dead weak reference on the way out.
-                state.sinks.remove(session_key);
-                return false;
-            };"""
+EMIT_LOOKUP = '            let Some(sink) = state\n                .sinks\n                .get(session_key)\n                .and_then(|registration| registration.upgrade())\n                .filter(|registration| {\n                    expected\n                        .is_none_or(|expected| Arc::ptr_eq(registration, &expected.registration))\n                })\n                .map(|registration| Arc::clone(&registration.sink))\n            else {\n                // The host dropped the registration (or never started the\n                // session): TS looks a live sink up in its map, this port\n                // prunes the dead weak reference on the way out.\n                if expected.is_none() {\n                    state.sinks.remove(session_key);\n                }\n                return false;\n            };'
 EMIT_LOOKUP_TRUE = EMIT_LOOKUP.replace("return false;", "return true;")
 EMIT_RUN_ID_AND_RECORD = """            // `with_run_id` panics on the null/undefined edge like the TS
             // `event.runId` throw; the guard keeps that panic from poisoning
@@ -257,6 +246,9 @@ EMIT_ACCEPTS_IN_FLIGHT = """            let mut sink = state
                 .sinks
                 .get(session_key)
                 .and_then(|registration| registration.upgrade())
+                .filter(|registration| {
+                    expected.is_none_or(|expected| Arc::ptr_eq(registration, &expected.registration))
+                })
                 .map(|registration| Arc::clone(&registration.sink));
             if sink.is_none() && state.draining.contains_key(session_key) {
                 // The pre-r8 check asked the sink: an in-flight drainer
@@ -639,8 +631,8 @@ mutants = [
     # gate7 P1 #1: a dropped registration must reject later emits, not accept
     # them into a replay with no live sink.
     ("registration-drop-accepted", "coordinator.rs",
-     "                state.sinks.remove(session_key);\n                return false;\n            };",
-     "                return true;\n            };",
+     '                if expected.is_none() {\n                    state.sinks.remove(session_key);\n                }\n                return false;\n            };',
+     '                if expected.is_none() {\n                    state.sinks.remove(session_key);\n                }\n                return true;\n            };',
      "coordinator::tests::dropping_the_registration_unregisters_the_sink_but_keeps_the_coordinator"),
     # --- fix round 8: codex-r8 P1 #1 (registration liveness vs sink liveness)
     # and P1 #2 (documented ownership contract + explicit unregister); each

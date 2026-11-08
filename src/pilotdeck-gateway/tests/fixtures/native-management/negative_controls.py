@@ -476,7 +476,20 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 97
+# Native marker guards have separate submit and management observations.
+# The child tests are bounded by these nonblocking readers and by run_owned.
+mutations.append(('submit-workspace-id-refusal-dropped', SOURCE,
+                  '    if metadata.files.was_refused() {\n        return Err("Unsafe project marker.");\n    }',
+                  '    if false && metadata.files.was_refused() {\n        return Err("Unsafe project marker.");\n    }',
+                  'native_process::management::bounded_snapshot_tests::native_submit_workspace_fifo_child',
+                  'unsafe submit marker accepted'))
+mutations.append(('snapshot-project-refusal-message-changed', SOURCE,
+                  '        if metadata.files.was_refused() {\n            return Err(SnapshotProjectionError::plain(\n                "Error",\n                "Unsafe project marker.",\n            ));\n        }',
+                  '        if metadata.files.was_refused() {\n            return Err(SnapshotProjectionError::plain(\n                "Error",\n                "Different marker error.",\n            ));\n        }',
+                  'native_process::management::bounded_snapshot_tests::native_snapshot_marker_fifo_child',
+                  'native snapshot resolver preserves unsafe marker error'))
+
+EXPECTED_TOTAL = 99
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -575,6 +588,8 @@ EXPECTED_NAMES = (
     'legacy-project-id-trim-omitted',
     'mcp-status-constant-empty',
     'mcp-status-disabled-spelling-flattened',
+    'submit-workspace-id-refusal-dropped',
+    'snapshot-project-refusal-message-changed',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '

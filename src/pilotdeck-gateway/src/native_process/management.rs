@@ -646,7 +646,12 @@ mod bounded_snapshot_tests {
                 .unwrap()
                 .success()
         );
-        assert!(resolver.resolve_project_key(&key).is_err());
+        let error = resolver.resolve_project_key(&key).unwrap_err();
+        assert_eq!(
+            error.message(),
+            &JsString::from("Unsafe project marker."),
+            "native snapshot resolver preserves unsafe marker error"
+        );
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
