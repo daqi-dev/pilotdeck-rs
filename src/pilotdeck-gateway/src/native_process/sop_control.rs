@@ -130,7 +130,7 @@ impl NativeSopControl {
             .resources()
             .get::<ProjectResources>()
             .ok_or_else(|| plain("SOP project resources are unavailable."))?;
-        let snapshot = resources.snapshot();
+        let snapshot = resources.context().snapshot().clone();
         Ok((lease, snapshot))
     }
     async fn profile(&self, project: Option<&JsValue>) -> Result<Profile> {

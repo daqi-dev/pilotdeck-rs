@@ -1,0 +1,300 @@
+{
+  "records": [
+    {
+      "id": "nested-required-no",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "N": {
+            "type": "object",
+            "$dynamicAnchor": "node",
+            "properties": {
+              "tag": {
+                "type": "string"
+              },
+              "child": {
+                "$dynamicRef": "#node"
+              }
+            },
+            "required": [
+              "tag"
+            ]
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/N"
+          }
+        }
+      },
+      "answer": {
+        "x": {
+          "tag": "a",
+          "child": {}
+        }
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "N": {
+              "type": "object",
+              "$dynamicAnchor": "node",
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "child": {
+                  "$dynamicRef": "#node"
+                }
+              },
+              "required": [
+                "tag"
+              ]
+            }
+          },
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/N"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "nested-required-yes",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "N": {
+            "type": "object",
+            "$dynamicAnchor": "node",
+            "properties": {
+              "tag": {
+                "type": "string"
+              },
+              "child": {
+                "$dynamicRef": "#node"
+              }
+            },
+            "required": [
+              "tag"
+            ]
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/N"
+          }
+        }
+      },
+      "answer": {
+        "x": {
+          "tag": "a",
+          "child": {
+            "tag": "b"
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "N": {
+              "type": "object",
+              "$dynamicAnchor": "node",
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "child": {
+                  "$dynamicRef": "#node"
+                }
+              },
+              "required": [
+                "tag"
+              ]
+            }
+          },
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/N"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "ancestor-anchor",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$dynamicAnchor": "node",
+        "$defs": {
+          "N": {
+            "type": "object",
+            "$dynamicAnchor": "node",
+            "properties": {
+              "tag": {
+                "type": "string"
+              },
+              "child": {
+                "$dynamicRef": "#node"
+              }
+            },
+            "required": [
+              "tag"
+            ]
+          }
+        },
+        "properties": {
+          "root": {
+            "type": "string"
+          },
+          "x": {
+            "$ref": "#/$defs/N"
+          }
+        },
+        "required": [
+          "root"
+        ]
+      },
+      "answer": {
+        "root": "r",
+        "x": {
+          "tag": "a",
+          "child": {
+            "root": "s"
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$dynamicAnchor": "node",
+          "$defs": {
+            "N": {
+              "type": "object",
+              "$dynamicAnchor": "node",
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "child": {
+                  "$dynamicRef": "#node"
+                }
+              },
+              "required": [
+                "tag"
+              ]
+            }
+          },
+          "properties": {
+            "root": {
+              "type": "string"
+            },
+            "x": {
+              "$ref": "#/$defs/N"
+            }
+          },
+          "required": [
+            "root"
+          ]
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "ancestor-anchor-no",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$dynamicAnchor": "node",
+        "$defs": {
+          "N": {
+            "type": "object",
+            "$dynamicAnchor": "node",
+            "properties": {
+              "tag": {
+                "type": "string"
+              },
+              "child": {
+                "$dynamicRef": "#node"
+              }
+            },
+            "required": [
+              "tag"
+            ]
+          }
+        },
+        "properties": {
+          "root": {
+            "type": "string"
+          },
+          "x": {
+            "$ref": "#/$defs/N"
+          }
+        },
+        "required": [
+          "root"
+        ]
+      },
+      "answer": {
+        "root": "r",
+        "x": {
+          "tag": "a",
+          "child": {
+            "tag": "b"
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$dynamicAnchor": "node",
+          "$defs": {
+            "N": {
+              "type": "object",
+              "$dynamicAnchor": "node",
+              "properties": {
+                "tag": {
+                  "type": "string"
+                },
+                "child": {
+                  "$dynamicRef": "#node"
+                }
+              },
+              "required": [
+                "tag"
+              ]
+            }
+          },
+          "properties": {
+            "root": {
+              "type": "string"
+            },
+            "x": {
+              "$ref": "#/$defs/N"
+            }
+          },
+          "required": [
+            "root"
+          ]
+        }
+      },
+      "accepted": false
+    }
+  ]
+}

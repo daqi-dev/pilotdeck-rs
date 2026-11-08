@@ -1,0 +1,406 @@
+{
+  "records": [
+    {
+      "id": "root-dynamic",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$dynamicAnchor": "node",
+        "properties": {
+          "child": {
+            "$dynamicRef": "#node"
+          }
+        }
+      },
+      "answer": {
+        "child": {}
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$dynamicAnchor": "node",
+          "properties": {
+            "child": {
+              "$dynamicRef": "#node"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "root-dynamic-bad",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$dynamicAnchor": "node",
+        "properties": {
+          "child": {
+            "$dynamicRef": "#node"
+          }
+        }
+      },
+      "answer": {
+        "child": "x"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$dynamicAnchor": "node",
+          "properties": {
+            "child": {
+              "$dynamicRef": "#node"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "root-dynamic-empty",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$dynamicAnchor": "node",
+        "properties": {
+          "child": {
+            "$dynamicRef": "#node"
+          }
+        }
+      },
+      "answer": {
+        "child": {
+          "child": {}
+        }
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$dynamicAnchor": "node",
+          "properties": {
+            "child": {
+              "$dynamicRef": "#node"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "nested-dynamic-string",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "base": {
+            "$dynamicAnchor": "node",
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$dynamicRef": "#node"
+          }
+        }
+      },
+      "answer": {
+        "x": "a"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "base": {
+              "$dynamicAnchor": "node",
+              "type": "string"
+            }
+          },
+          "properties": {
+            "x": {
+              "$dynamicRef": "#node"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "nested-dynamic-object",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "base": {
+            "$dynamicAnchor": "node",
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$dynamicRef": "#node"
+          }
+        }
+      },
+      "answer": {
+        "x": {}
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "base": {
+              "$dynamicAnchor": "node",
+              "type": "string"
+            }
+          },
+          "properties": {
+            "x": {
+              "$dynamicRef": "#node"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "nested-dynamic-number",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "base": {
+            "$dynamicAnchor": "node",
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$dynamicRef": "#node"
+          }
+        }
+      },
+      "answer": {
+        "x": 1
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "base": {
+              "$dynamicAnchor": "node",
+              "type": "string"
+            }
+          },
+          "properties": {
+            "x": {
+              "$dynamicRef": "#node"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "missing-dynamic",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "$dynamicRef": "#missing"
+          }
+        }
+      },
+      "answer": {
+        "x": 1
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "$dynamicRef": "#missing"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "dynamic-pointer",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "base": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$dynamicRef": "#/$defs/base"
+          }
+        }
+      },
+      "answer": {
+        "x": "a"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "base": {
+              "type": "string"
+            }
+          },
+          "properties": {
+            "x": {
+              "$dynamicRef": "#/$defs/base"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "recursive-anchor",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$recursiveAnchor": true
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: schema is invalid: data/$recursiveAnchor must be string"
+      },
+      "accepted": null
+    },
+    {
+      "id": "recursive-ref",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "$recursiveRef": "#"
+          }
+        }
+      },
+      "answer": {
+        "x": {}
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "$recursiveRef": "#"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "dynamic-anchor-bad",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$dynamicAnchor": "a b"
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: schema is invalid: data/$dynamicAnchor must match pattern \"^[A-Za-z_][-A-Za-z0-9._]*$\""
+      },
+      "accepted": null
+    },
+    {
+      "id": "nested-id",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "nested": {
+            "$id": "https://example.test/nested",
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/nested"
+          }
+        }
+      },
+      "answer": {
+        "x": "a"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "nested": {
+              "$id": "https://example.test/nested",
+              "type": "string"
+            }
+          },
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/nested"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "local-ref-root",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "child": {
+            "$ref": "#"
+          }
+        }
+      },
+      "answer": {
+        "child": {}
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "child": {
+              "$ref": "#"
+            }
+          }
+        }
+      },
+      "accepted": true
+    }
+  ]
+}
