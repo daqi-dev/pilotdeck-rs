@@ -97,10 +97,9 @@ mod tests {
             (Some(b.join("child/..")), &b, "only-B", "only-A"),
         ] {
             let mut params = object([("sessionKey", "same".into()), ("runId", "same-run".into())]);
-            if let Some(project) = project {
-                if let JsValue::Object(values) = &mut params {
-                    values.insert("projectKey".into(), JsValue::String(project.to_string_lossy().as_ref().into()));
-                }
+            if let Some(project) = project
+                && let JsValue::Object(values) = &mut params {
+                values.insert("projectKey".into(), JsValue::String(project.to_string_lossy().as_ref().into()));
             }
             for method in ["run_get", "run_reattach"] {
                 let result = requests.request(method.into(), params.clone()).await.unwrap();
