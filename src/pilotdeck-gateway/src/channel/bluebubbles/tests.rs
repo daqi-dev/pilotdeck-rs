@@ -23,10 +23,11 @@
 //! 005 a non-empty but invalid `serverUrl` logs and keeps polling instead of
 //!     the TS unhandled rejection — no replay case (the fake's URL is always
 //!     well-formed), the `Invalid URL` string is a component pin below;
-//! 007 the #2285 deviations (drop-without-stop ends the driver — stricter
-//!     than TS's leaked interval — and a panicking per-tick poll task is
-//!     swallowed without the TS `poll error` log) do not shape this replay;
-//!     their pins live in the #2285 section below.
+//! 007 the #2285 deviations (drop-without-stop ends the driver once no poll
+//!     is in flight — the silent-server in-flight window matches TS's
+//!     leaked interval, 007's registered gap — and a panicking per-tick poll
+//!     task is swallowed without the TS `poll error` log) do not shape this
+//!     replay; their pins live in the #2285 section below.
 use super::super::protocol::{
     BoxFuture, ChannelError, ChannelHandle, ChannelStartDeps, TurnEventStream, TurnGateway,
     TurnRequest,
@@ -260,6 +261,11 @@ struct MockInbound {
     record: Arc<Mutex<Record>>,
     gates: Gates,
     responded: Gate,
+    /// Counts `submit` entries — bumped before the turn-index lock is
+    /// taken, so a dispatch that panics on that (poisoned) lock still lands
+    /// here (#2285 r2: an empty gateway projection alone cannot tell
+    /// "panicked inside submit" from "never dispatched").
+    submit_attempts: std::sync::atomic::AtomicUsize,
 }
 
 /// Adapts the scripted `mpsc` receiver to the shared `TurnEventStream`; the
@@ -306,6 +312,7 @@ impl MockInbound {
             record,
             gates,
             responded,
+            submit_attempts: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 }
@@ -315,6 +322,10 @@ impl TurnGateway for MockInbound {
         &self,
         input: TurnRequest,
     ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        // Before the turn-index lock: a poisoned dispatch must still count
+        // as having reached `submit` (#2285 r2).
+        self.submit_attempts
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let turn = {
             let mut next = self.next.lock().expect("#1343 turn index");
             let index = *next;
@@ -1135,7 +1146,7 @@ async fn poll_task_panic_does_not_stop_the_driver() {
                 .logs
                 .push(json!([level, mask_dynamic(message)]));
         })),
-        turn_gateway: Some(gateway),
+        turn_gateway: Some(gateway.clone()),
     };
     let handle = bounded("panic", channel.start(deps.clone()))
         .await
@@ -1158,18 +1169,6 @@ async fn poll_task_panic_does_not_stop_the_driver() {
         })
         .await;
     }
-    // The poisoned dispatch panicked before it could record anything: the
-    // gateway projection stays empty, proving the injection path was
-    // actually walked (the dispatch reached `submit`; the panic did not
-    // bypass it).
-    crate::negative_assert!(
-        record
-            .lock()
-            .expect("#1343 record mutex")
-            .gateway
-            .is_empty(),
-        "{CELL} (the poisoned dispatch panicked before recording)"
-    );
     // The interval survived the panicking poll task: its next tick still
     // polls (a clean, row-less exchange).
     {
@@ -1179,15 +1178,38 @@ async fn poll_task_panic_does_not_stop_the_driver() {
         })
         .await;
     }
+    // Judged only now, after the third poll: the dispatch spawned at the
+    // first tick has certainly run, so an empty gateway can no longer pass
+    // on a dispatch that simply has not executed yet (the r2 review's
+    // false-PASS window — the server counts the poll before the spawned
+    // dispatch runs). Exactly one submit attempt proves the injection path
+    // was walked (`submit` was reached); the empty projection proves the
+    // panic beat the recording push.
+    crate::negative_assert_eq!(
+        gateway
+            .submit_attempts
+            .load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "{CELL} (the poisoned dispatch reached submit exactly once)"
+    );
+    crate::negative_assert!(
+        record
+            .lock()
+            .expect("#1343 record mutex")
+            .gateway
+            .is_empty(),
+        "{CELL} (the poisoned dispatch panicked before recording)"
+    );
     bounded("panic", handle.stop("done"))
         .await
         .expect("#2285 stop still succeeds after a poll task panicked");
-    // Drain whatever the stop-aborted epoch already had in flight, then
-    // hold one full poll interval past a post-drain baseline (the drop pin's
-    // window shape): a driver that survived stop ticks exactly once in a
-    // window this long, so comparing against a baseline sampled after the
-    // window — the old shape — could only ever see a ~50 ms slice of a
-    // 2.5 s period and pass almost unconditionally.
+    // Weak judgment only, per 003-R1's registered abort/reap no-criterion
+    // gap: `stop` already returned `Ok` above, and this window checks the
+    // server-side count stops growing afterwards. It deliberately does not
+    // claim to probe a surviving driver — `running === false` returns any
+    // post-stop `poll_messages` before the GET, so the count freezes with
+    // or without one (the drop pin can make that claim because it never
+    // stops; this scenario cannot).
     tokio::time::sleep(POLL_MS + SETTLE * 4).await;
     let settled = record.lock().expect("#1343 record mutex").polls;
     tokio::time::sleep(POLL_MS + SETTLE).await;
@@ -1209,7 +1231,9 @@ async fn poll_task_panic_does_not_stop_the_driver() {
 /// clock makes the trace exact: the mover's deadline sits determinately
 /// between the two windows, so the drain runs 50 → 75 (arrival) → 100
 /// (movement seen, extension) → 150 → 200 ms (two consecutive silent
-/// windows) and never earlier.
+/// windows) and never earlier — the pin below asserts that exact total, so
+/// a drain that terminated on *cumulative* silence instead (150 ms, the
+/// `drained-quiet-not-reset` negative control) cannot pass it either.
 #[tokio::test(start_paused = true)]
 async fn drained_holds_through_a_single_silent_window() {
     const CELL: &str = "#2285 the disarm drain holds through a single silent window";
@@ -1230,9 +1254,10 @@ async fn drained_holds_through_a_single_silent_window() {
         1,
         "{CELL} (the in-window arrival was observed)"
     );
-    crate::negative_assert!(
-        elapsed >= SETTLE * 3,
-        "{CELL} (the drain waited past one silent window)"
+    crate::negative_assert_eq!(
+        elapsed,
+        SETTLE * 4,
+        "{CELL} (two consecutive silent windows end the drain at exactly 200 ms)"
     );
 }
 

@@ -12,9 +12,11 @@
 //! Not carried over from TS (registered diffs, see
 //! `specs/gateway-parity/diffs/`): production assembly installs
 //! [`no_interaction`] (A8.3-CH-BLUEBUBBLES-002), `stop` does not await
-//! in-flight turns (A8.3-CH-BLUEBUBBLES-003, #1353 owns the drain entry), and
-//! a same-guid row arriving after a restart re-dispatches channel-side
-//! (A8.3-CH-BLUEBUBBLES-004 — upstream admission owns no-re-execution).
+//! in-flight turns (A8.3-CH-BLUEBUBBLES-003, #1353 owns the drain entry), a
+//! same-guid row arriving after a restart re-dispatches channel-side
+//! (A8.3-CH-BLUEBUBBLES-004 — upstream admission owns no-re-execution), and
+//! the #2285 poll-driver deviations — drop-without-stop and swallowed
+//! poll-task panics — are registered as A8.3-CH-BLUEBUBBLES-007.
 mod interaction;
 mod mapper;
 #[cfg(test)]
