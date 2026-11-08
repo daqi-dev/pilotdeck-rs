@@ -80,6 +80,7 @@ jobs:
       # 结论无意义）；另有一条只减不增的裸 assert 存量登记。两者都不需要 cargo。
       - name: 网关负控守卫 -O 不变性自测（#1666/#1734）
         working-directory: src/pilotdeck-gateway/tests/fixtures
+        shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
         run: |
           python3 -B -m unittest -v test_negative_optimize_guards
           python3 -B -m unittest -v settings-gateway/test_negative_controls.py
@@ -94,6 +95,7 @@ jobs:
       # 这里跑推导与 fail-closed 边界的自测；不需要 cargo。
       - name: 共享副本清单推导自测（#1570）
         working-directory: src/pilotdeck-gateway/tests/fixtures
+        shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
         run: python3 -B -m unittest -v _shared.test_compile_inputs
       # #1203：CLI fixtures 的负控脚本自带 --check 锚点自检，但此前没有任何闸门跑它——
       # #1145 重构 transport.rs 后 stream-event-field 锚点过期（6 条里 5 条有效），CI、
@@ -192,6 +194,7 @@ jobs:
       # 报错——「把断言改成 assert!(true) / 删掉上限断言 / 改掉换行守卫的返回动作」
       # 三种已实测的假绿都在这里变红。
       - name: 绑定漂移自检（#1989）
+        shell: bash  # #1809 r9：合并带入的步骤补钉（r7 P0 执行层守卫）
         run: |
           python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_source.py
           python3 -I src/pilotdeck-gateway/tests/fixtures/native-entry-authority/test_native_entry_binding.py
@@ -224,13 +227,15 @@ jobs:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    # 外层预算必须**大于**装置内部预算之和（评审 r8 P2）：七项自检 worst-case
-    # emit 300 s + check 300 s + 负控 1800 s + 锁探针 180 s（2×60 s 等锁 + 3×20 s
-    # 敌意锁）+ 敌意写目标 4×20 s = 2660 s，变异自检再加 control_lock 的两趟锁探针
-    # 2×180 s = 360 s → 全 job ≈ 3020 s ≈ 50.3 min，45 min 装不下——内部超时
-    # 永远打不着、失败退化为平台硬杀（cancelled，summary 不发布）；55 min 给足
-    # 余量——与 negative-controls job 的既有口径一致。
-    timeout-minutes: 55
+    # 外层预算必须**大于**装置内部预算之和（评审 r8 P2；r9 P2 重算——算式在
+    # self_check.py 的 INTERNAL_WORST_CASE_SECONDS 派生机检）：七项自检 worst-case
+    # emit 300 s + check 300 s + 负控 1800 s + 三趟锁探针（七项 1 趟 + control_lock
+    # 两趟）各 660 s（4×60 s 等锁 + 2×60 s wait + 敌意锁 3×50 s + 守卫 fd 3×50 s）
+    # + 敌意写目标 4×50 s → 全 job ≈ 4580 s ≈ 76.3 min，55 min 装不下——内部超时
+    # 永远打不着、失败退化为平台硬杀（cancelled，summary 不发布）；85 min 给足
+    # 余量（内部和 4580 s + 300 s 开销 < 85×60 = 5100 s）——与 negative-controls
+    # job 的既有口径一致。
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@v4
       # #2017-A：接线守卫（r5 起）按 PyYAML 解析后的完整标量判，解析器版本钉死
@@ -263,9 +268,10 @@ jobs:
             --oracle scripts/retirement-outcome-parity/ts-oracle.json \
             --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \
             --round "$F/round-04" --round "$F/round-05"
-      # ③ 负控 N1–N17 全 KILLED（任一 SURVIVED / INVALID 即非零退出）。
+      # ③ 负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD（任一非 KILLED / 非 HELD
+      #    即非零退出；正控断言「应当 PASS 的性质」没被写窄，#2143）。
       #    默认 --data 指向入库夹具；输出目录在 RUNNER_TEMP，供下一步上传。
-      - name: 负控 N1–N17 全 KILLED
+      - name: 负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD
         shell: bash
         run: |
           python3 -I scripts/retirement-outcome-parity/negative_controls.py \
