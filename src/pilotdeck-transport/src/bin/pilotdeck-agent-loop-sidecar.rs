@@ -95,7 +95,8 @@ fn main() -> ExitCode {
         process_cwd,
     });
     if let Some(port) = tcp_port {
-        let host_value = std::env::var("PILOTDECK_AGENT_LOOP_TCP_HOST").ok();
+        let host_value = std::env::var_os("PILOTDECK_AGENT_LOOP_TCP_HOST")
+            .map(|value| value.to_string_lossy().into_owned());
         let host = pilotdeck_transport::tcp::listen_host(host_value.as_deref());
         let listener = match pilotdeck_transport::tcp::TcpExecutionServer::bind(
             (host, port),

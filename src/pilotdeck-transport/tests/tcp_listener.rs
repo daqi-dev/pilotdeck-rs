@@ -341,3 +341,19 @@ fn tcp_oversize_input_does_not_stop_other_connections() {
         &JsValue::Bool(true)
     );
 }
+
+
+#[test]
+fn tcp_partial_frame_does_not_spend_another_connections_input_budget() {
+    let h = Harness::new();
+    let mut stalled = h.connect();
+    let mut healthy = h.connect();
+    // No newline: the reader must retain this frame while another owner runs.
+    stalled.write_all(&vec![b' '; 8 * 1024 * 1024]).unwrap();
+    assert_eq!(get(&hello(&mut healthy, "still-healthy"), "ok"), &JsValue::Bool(true));
+    send(&mut healthy, &execute("independent"));
+    assert_eq!(get(&response(&healthy, "execute-independent"), "ok"), &JsValue::Bool(true));
+    h.wait_entered("op-independent");
+    stalled.shutdown(Shutdown::Both).unwrap();
+    assert_eq!(get(get(&status(&mut healthy, "still-running", "independent"), "payload"), "state"), &JsValue::from("running"));
+}

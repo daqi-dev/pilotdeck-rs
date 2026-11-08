@@ -417,13 +417,14 @@ struct State {
 #[derive(Clone, Default)]
 pub struct SharedExecutionLedger {
     state: Arc<Mutex<State>>,
-    incoming: Arc<AtomicUsize>,
+    decoding: Arc<Mutex<()>>,
 }
 pub struct ExecutionServer {
     owner: ConnectionOwner,
     state: Arc<Mutex<State>>,
     operation_limit: Option<usize>,
     incoming: Option<Arc<AtomicUsize>>,
+    decoding: Option<Arc<Mutex<()>>>,
     ready: Arc<pilotdeck_agent::ports::WakeSignal>,
     factory: Arc<dyn ExecutionFactory>,
     clock: Arc<dyn ExecutionClock>,
@@ -464,6 +465,7 @@ impl ExecutionServer {
             state: Arc::new(Mutex::new(State::default())),
             operation_limit: None,
             incoming: None,
+            decoding: None,
             ready: Arc::default(),
             factory,
             clock,
@@ -483,7 +485,8 @@ impl ExecutionServer {
             owner,
             state: ledger.state,
             operation_limit: Some(4096),
-            incoming: Some(ledger.incoming),
+            incoming: Some(Arc::default()),
+            decoding: Some(ledger.decoding),
             ready: Arc::default(),
             factory,
             clock,
@@ -1119,6 +1122,11 @@ impl ExecutionServer {
                 if line.chars().all(js_whitespace) {
                     continue;
                 }
+                // A stalled partial frame spends only its own connection's
+                // allowance. Decode/dispatch one bounded frame at a time so
+                // 32 simultaneous raw buffers cannot multiply JSON expansion.
+                let _decode = reader_server.decoding.as_ref().map(|gate|
+                    gate.lock().unwrap_or_else(|poison| poison.into_inner()));
                 let result = match parse_json(&line) {
                     Ok(value) => reader_server.receive(&value),
                     Err(_) => reader_server
