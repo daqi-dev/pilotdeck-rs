@@ -1166,6 +1166,10 @@ mod tests {
     /// inner lock and the provider's state lock are all released before their
     /// awaited stops, so a concurrent `dispose()` reaches its own settle wait
     /// instead of parking on a mutex held across the release's await.
+    /// #2444: the shared half is observed in its own window — the shared
+    /// gate opens only after the release has parked on it and the provider
+    /// dispose is waiting at its settle, and a probe takes the provider
+    /// state lock while that awaited stop is really in flight.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn session_mcp_release_stays_concurrent_with_registry_and_provider_dispose() {
         let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -1277,10 +1281,21 @@ mod tests {
             1,
             "#1433 the parked release keeps the shared entry for its lease"
         );
+        // `registry.dispose()` needs no gate: the parked release already
+        // unlinked its own entry under the inner lock, so only the ungated
+        // "draining" entry remains. Awaiting it before any gate opens makes
+        // the "not blocked" claim real (#2444: awaiting it after the gates
+        // opened proved nothing).
         let registry_dispose = {
             let runtimes = runtimes.clone();
             tokio::spawn(async move { runtimes.dispose().await })
         };
+        let registry_result =
+            tokio::time::timeout(std::time::Duration::from_secs(2), registry_dispose)
+                .await
+                .expect("#1433 registry dispose is not blocked by the parked release")
+                .expect("#1433 the registry dispose task joins");
+        crate::test_negative_receipt::expect_ok(registry_result, "#1433 registry dispose returns");
         let provider_dispose = {
             let provider = provider.clone();
             tokio::spawn(async move { provider.dispose().await })
@@ -1288,6 +1303,50 @@ mod tests {
         open_per_session
             .send(())
             .expect("#1433 open the per-session stop gate");
+        // #2444: wait until the release reaches the gated shared stop — the
+        // shared entry's stop closure pushes its label before awaiting the
+        // gate — so the provider lock is probed while that await is really
+        // in flight, not before the shared half has even started (the empty
+        // window the back-to-back gate sends used to leave).
+        let mut shared_parked = false;
+        for _ in 0..400 {
+            if events
+                .lock()
+                .expect("#1433 events lock")
+                .iter()
+                .any(|event| event == "stop:shared")
+            {
+                shared_parked = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        crate::negative_assert!(
+            shared_parked,
+            "#1433 the release parks on the gated shared stop"
+        );
+        crate::negative_assert!(
+            !provider_dispose.is_finished(),
+            "#1433 the provider dispose waits for the gated shared stop"
+        );
+        // The provider half of the invariant, observed inside the window
+        // where the shared stop is parked on its gate: the state lock must
+        // be free across that await (the probe runs as its own task, so a
+        // held lock surfaces as a timeout, not a blocked worker).
+        let provider_probe = {
+            let provider = provider.clone();
+            tokio::spawn(async move { provider.shared_generation_count() })
+        };
+        let generations_after_park =
+            tokio::time::timeout(std::time::Duration::from_secs(2), provider_probe)
+                .await
+                .expect("#1433 the provider state lock is free across the awaited shared stop")
+                .expect("#1433 the provider probe task joins");
+        crate::negative_assert_eq!(
+            generations_after_park,
+            1,
+            "#1433 the parked shared stop keeps its entry until it finishes"
+        );
         open_shared
             .send(())
             .expect("#1433 open the shared stop gate");
@@ -1296,12 +1355,6 @@ mod tests {
             .expect("#1433 the release finishes once the gates open")
             .expect("#1433 the release task joins");
         crate::test_negative_receipt::expect_ok(released, "#1433 gated release returns");
-        let registry_result =
-            tokio::time::timeout(std::time::Duration::from_secs(2), registry_dispose)
-                .await
-                .expect("#1433 registry dispose is not blocked by the parked release")
-                .expect("#1433 the registry dispose task joins");
-        crate::test_negative_receipt::expect_ok(registry_result, "#1433 registry dispose returns");
         let provider_result =
             tokio::time::timeout(std::time::Duration::from_secs(2), provider_dispose)
                 .await

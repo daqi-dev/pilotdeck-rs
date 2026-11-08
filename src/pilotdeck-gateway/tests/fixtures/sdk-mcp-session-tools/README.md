@@ -5,7 +5,7 @@
 `session_mcp_tools` / `native_tools` 的 MCP 注册），逐条验证：正向先行通过、
 变异体可编译、绑定的 `#1433 …` 断言以本轮 nonce receipt 失败、还原后复通过。
 
-绑定关系（9 条）：
+绑定关系（10 条）：
 
 | 变异 | 语义（TS 基线） | 绑定测试 | 绑定断言 |
 |---|---|---|---|
@@ -18,6 +18,7 @@
 | `start-failure-propagated` | 启动失败降级为诊断（:147） | `…::session_mcp_tools_degrades_per_session_start_failures` | `#1433 composition survives the start failure` |
 | `turn-registry-drops-mcp` | 组合工具进 turn 注册表（#1433 原始缺陷） | `…::native_turn_registry_carries_the_session_mcp_tools` | `#1433 the turn registry carries the session MCP tool` |
 | `composition-reads-no-servers` | 组合读 enabled 表（生产读面） | `tests/sdk_mcp_session_tools.rs::discovery_composes_shared_and_per_session_tools` | `#1433 the shared lease tool is discovered` |
+| `shared-stop-unlinks-provider-state-early` | shared stop 的 provider state 摘除在 awaited stop 之后（#2444 新观测窗口负控；字面「provider 锁持过 await」重排被 `shared_on` 的 Send 约束禁编译，见该轮 RESULT） | `…::session_mcp_release_stays_concurrent_with_registry_and_provider_dispose` | `#1433 the parked shared stop keeps its entry until it finishes` |
 
 用法（提交后，由协调者在宿主跑；与 `native-registry-switch` 同款）：
 

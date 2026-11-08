@@ -143,6 +143,32 @@ mutations = [
      'let servers = JsObject::new();',
      'discovery_composes_shared_and_per_session_tools',
      '#1433 the shared lease tool is discovered'),
+    # #2444: the shared stop's provider-state critical section runs only after
+    # its awaited stop — unlinking the entry early is the compiling neighbor
+    # of the "provider state lock held across the awaited stop" reorder (the
+    # literal swap cannot compile: `shared_on` requires a Send future and a
+    # MutexGuard across the await is not). Only the observation window the
+    # release-concurrency test gained in #2444 (the probe after the shared
+    # stop parks) sees it; the previous shape let it survive.
+    ('shared-stop-unlinks-provider-state-early', REGISTRY,
+     '''                    let result = entry.runtime.stop().await;
+                    let mut state = lock(&provider.state);
+                    if *entry.leases.borrow() == 0
+                        && let Some(at) = state.entries.iter().position(|e| Arc::ptr_eq(e, &entry))
+                    {
+                        state.entries.remove(at);
+                    }
+                    result''',
+     '''                    if *entry.leases.borrow() == 0 {
+                        let mut state = lock(&provider.state);
+                        if let Some(at) = state.entries.iter().position(|e| Arc::ptr_eq(e, &entry)) {
+                            state.entries.remove(at);
+                        }
+                    }
+                    let result = entry.runtime.stop().await;
+                    result''',
+     'native_process::tools::tests::session_mcp_release_stays_concurrent_with_registry_and_provider_dispose',
+     '#1433 the parked shared stop keeps its entry until it finishes'),
 ]
 
 # #1433 fix-r1 (review P1-1): the denominator is this literal, never
@@ -160,6 +186,7 @@ EXPECTED_NAMES = (
     'start-failure-propagated',
     'turn-registry-drops-mcp',
     'composition-reads-no-servers',
+    'shared-stop-unlinks-provider-state-early',
 )
 
 EXTERNAL = {'discovery_composes_shared_and_per_session_tools'}
