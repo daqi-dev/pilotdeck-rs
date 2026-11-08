@@ -259,9 +259,11 @@ def main():
     env = dict(os.environ)
     if not env.get('CARGO_TARGET_DIR'):
         raise SystemExit('CARGO_TARGET_DIR must be supplied by the caller')
-    # `run_cases` installs the receipt protocol per case (negative_suite.py:410);
-    # anything inherited from a caller shell is stale and would turn a real
-    # KILLED into INVALID (same pop list as the sibling fixtures, #1616 r3).
+    # `run_cases` runs plain cases with no receipt protocol of its own (the
+    # #946 ReceiptRun lives in `matrix_main`, negative_suite.py, not here), so
+    # anything inherited from a caller shell is stale config: `record_failure`
+    # would panic on it and turn a real KILLED into INVALID (same pop list as
+    # the sibling fixtures, #1616 r3).
     for key in ('PDRS_MUTANT', 'PDRS_NEGATIVE_RECEIPTS',
                 'PDRS_NEGATIVE_PARENT_TEST', 'CARGO_TERM_QUIET'):
         env.pop(key, None)
