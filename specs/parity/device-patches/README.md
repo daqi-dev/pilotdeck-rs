@@ -93,7 +93,12 @@ FAIL；fix-r3 起这是入口机械断言，落内即 FAIL-CLOSED；fix-r4 起�
 在链接旁边；fix-r5 起身份口径（#1033「Identity, not spelling」先例）：大小写不敏感卷
 （darwin 默认 APFS）上同一目录的不同拼写按 `os.path.samefile` 文件身份判——最近存在
 祖先链上任意一级与 `--evidence` 同一即 FAIL-CLOSED，守卫判定中任何 OSError（如符号
-链接环 ELOOP）也一律 FAIL-CLOSED）：
+链接环 ELOOP）也一律 FAIL-CLOSED；fix-r6 起起点物理化口径：身份链起点先经
+`os.path.realpath(os.path.abspath(...))` 锚定 cwd 并折叠 `..` 与符号链接——
+`missing/../ev` 类变体、cwd 在树内的相对 `--out`、经链接落树内三类起点均归一到真实
+父链再判；守卫判定中任何 OSError / RuntimeError（3.11/3.12 符号链接环上 `resolve()`
+抛 RuntimeError）/ ValueError（路径嵌 NUL）一律 FAIL-CLOSED，退化 `--out`（指向目录、
+或其父路径是普通文件）也在入口 FAIL-CLOSED，不到写入阶段裸 traceback）：
 
 ```bash
 python3 -I specs/parity/device-patches/20261108-1841-verify.py \
