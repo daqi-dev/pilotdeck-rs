@@ -97,7 +97,9 @@ fn walk_files(source: &File, target: Option<&File>, limits: CopyLimits) -> io::R
                             if bytes.checked_add(copied).is_none_or(|total| total > limits.bytes) { return Err(storage::budget("snapshot source bytes")); }
                             output.write_all(&buffer[..length])?;
                         }
-                        fchmod(&output, Mode::from_raw_mode(metadata.mode() & 0o777))?;
+                        #[allow(clippy::unnecessary_cast)] // Darwin mode_t is u16; Linux RawMode is u32.
+                        let copied_mode = Mode::from_raw_mode((metadata.mode() & 0o777) as rustix::fs::RawMode);
+                        fchmod(&output, copied_mode)?;
                         output.sync_all()?; bytes += copied;
                     } else { bytes += metadata.len(); }
                 }

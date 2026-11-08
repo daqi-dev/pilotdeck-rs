@@ -134,6 +134,37 @@ mod tests {
         }))
     }
     #[tokio::test]
+    async fn compact_and_split_surrogate_match_real_typescript() {
+        let root = std::env::temp_dir().join(format!("pdrs-chat-compact-{}", uuid::Uuid::new_v4()));
+        let home = root.join("home"); let project = root.join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let metadata = crate::metadata::Metadata { home: home.clone(), cwd: Default::default(), files: crate::metadata::NativeFiles };
+        let chat = metadata.process_chat_dir(&project.to_string_lossy()).unwrap();
+        std::fs::create_dir_all(&chat).unwrap();
+        let fixture = pilotdeck_protocol::parse_json(include_str!("../../../tests/fixtures/always-on-cli/chat-oracle.json")).unwrap();
+        let JsValue::Array(cases) = fixture.get("records").unwrap() else { panic!("cases") };
+        assert_eq!(cases.len(), 7);
+        let handler = ChatHandler { run_id: "run".into(), files: HistoryFiles { home, project }, aliases: HashMap::new(),
+            catalog: Arc::new(Catalog), max_frame_bytes: 16 * 1024 * 1024 };
+        for case in &cases[5..7] {
+            let JsValue::Array(entries) = case.get("entries").unwrap() else { panic!("entries") };
+            let mut lines = String::new();
+            for (index, item) in entries.iter().enumerate() {
+                let mut entry = item.as_object().unwrap().clone();
+                entry.insert("sequence".into(), JsValue::Number((index + 1) as f64));
+                entry.insert("entryId".into(), format!("e-{index}").as_str().into());
+                entry.insert("createdAt".into(), "2026-01-02T03:04:05.678Z".into());
+                lines.push_str(&pilotdeck_protocol::stringify_json(&JsValue::Object(entry)).unwrap().unwrap());
+                lines.push('\n');
+            }
+            std::fs::write(chat.join(format!("{}.jsonl", crate::storage::sanitize_session_id(&"real".into()))), lines).unwrap();
+            let mut input = JsObject::new(); input.insert("sessionId".into(), "real".into());
+            let result = handler.execute("always_on_read_chat_history", JsValue::Object(input), context()).await.unwrap();
+            assert_eq!(result.data.as_ref(), case.get("result").and_then(|v| v.get("data")));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
     async fn actual_bounded_transcript_replay_matches_typescript_chat_tool() {
         let root = std::env::temp_dir().join(format!("pdrs-always-on-chat-{}", uuid::Uuid::new_v4()));
         let home = root.join("home"); let project = root.join("project");

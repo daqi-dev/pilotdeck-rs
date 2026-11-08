@@ -201,12 +201,12 @@ async fn disk_state_matches_fifteen_real_ts_sequences_thirty_five_steps() {
 #[cfg(unix)]
 #[tokio::test]
 async fn state_refuses_fifo_symlink_and_sparse_without_changing_original_bytes() {
-    use rustix::fs::{CWD, Mode, mkfifoat};
     let scratch = Scratch::new();
     let store = DiskSopStore::new(scratch.0.clone());
     let session: JsString = "s1".into();
     let path = store.path(&session);
-    mkfifoat(CWD, &path, Mode::from_raw_mode(0o600)).unwrap();
+    assert!(std::process::Command::new("/usr/bin/mkfifo")
+        .arg("-m").arg("600").arg(&path).status().unwrap().success());
     let error = tokio::time::timeout(std::time::Duration::from_secs(2), store.load(&session))
         .await
         .expect("FIFO read is bounded")

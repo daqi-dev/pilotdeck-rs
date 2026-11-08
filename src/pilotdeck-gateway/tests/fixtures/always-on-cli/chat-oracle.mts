@@ -12,12 +12,13 @@ verify();const out=process.argv[2];assert.ok(out?.startsWith('/private/tmp/'));a
 const {createAlwaysOnChatHistoryTool}=await import(pathToFileURL(join(root,sources[0])).href);
 const msg=(role:string,text:string)=>({role,content:[{type:'text',text}]});
 const records=[];
-for(const scenario of ['normal','incomplete','empty','alias','truncate']){
+for(const scenario of ['normal','incomplete','empty','alias','truncate','compact','split-surrogate']){
  const calls=[];
  const entries=scenario==='empty'?[]:[
   {type:'session_metadata',sessionId:'real',turnId:'t',metadata:{title:'Saved title'}},
   {type:'accepted_input',sessionId:'real',turnId:'t',messages:[msg('user','  user one  ')]},
-  {type:'assistant_message',sessionId:'real',turnId:'t',message:msg('assistant',scenario==='truncate'?'x'.repeat(301):' answer ')},
+  {type:'assistant_message',sessionId:'real',turnId:'t',message:msg('assistant',scenario==='truncate'?'x'.repeat(301):scenario==='split-surrogate'?'x'.repeat(299)+'🙂':' answer ')},
+  ...(scenario==='compact'?[{type:'control_boundary',sessionId:'real',turnId:'t',boundary:{kind:'compact',subtype:'compact_boundary',snapshot:{version:1,messages:[msg('user','summary')]}}}]:[]),
   ...(scenario==='incomplete'?[]:[{type:'turn_result',sessionId:'real',turnId:'t',result:{type:'success',sessionId:'real',turnId:'t',stopReason:'completed',usage:{},permissionDenials:[],turns:1,startedAt:'2026-01-02T03:04:05.678Z',completedAt:'2026-01-02T03:05:05.678Z'}}]),
  ];
  const tool=createAlwaysOnChatHistoryTool({
