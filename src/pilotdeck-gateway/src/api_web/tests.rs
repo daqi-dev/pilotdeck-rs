@@ -1296,7 +1296,8 @@ fn write_dot_on_a_file_root_answers_the_registered_enotdir_residual() {
 /// #2354 fix-r1: Node's EISDIR names the literal target — node v22.22.0
 /// measured (`fix-r1/ts-probe/node-write-refusal.txt`): a write whose path
 /// goes through an in-root directory symlink answers `open '<root>/link'`,
-/// not the canonical `<root>/sub` the armed walk resolves the link to.#[cfg(unix)]
+/// not the canonical `<root>/sub` the armed walk resolves the link to.
+#[cfg(unix)]
 #[test]
 fn write_to_an_in_root_directory_link_reports_the_literal_path() {
     let (parent, root) = fixture();
