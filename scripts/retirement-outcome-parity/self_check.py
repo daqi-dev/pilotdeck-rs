@@ -6,7 +6,7 @@
   budget   切片夹具的体积预算（单文件 ≤ 1 MiB、总量 ≤ 5 MiB，铁律 8 的入库上限）
   emit     `emit` 从入库夹具复算金样，必须与已提交的 `ts-oracle.json` **逐字节**相同
   check    `check` 5 轮全 PASS，且 `p7Evaluated` 为真（跨轮稳定性真的核过）
-  negctl   负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD（任一非 KILLED / 非 HELD 即红）
+  negctl   负控 N1–N17 全 KILLED（任一非 KILLED 即红；正控注册数现 0，PC1–PC2 已随 A8.6-R2 撤回）
   lock     输出目录互斥：第二个进程必须**等**第一个（不是静默并行）
   wiring   `.github/workflows/ci.yml` 里这四件事都接着，且 `check` 聚合 job 依赖它；
            pr-gate.yml（合并闸门第 2、3 步的宿主）同一巡走：根键白名单 + job `if`
@@ -334,7 +334,7 @@ def check_check(fixtures=None):
 
 
 def check_negctl():
-    """负控必须全部 KILLED、正控必须全部 HELD（#2143 起 PC1–PC2 与 N1–N18 同跑）。"""
+    """负控必须全部 KILLED、正控必须全部 HELD（正控注册数现 0；A8.6-R1 的 PC1–PC2 与 N18 已随 #2294 按反转条款撤回）。"""
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-negctl-') as tmp:
         result = subprocess.run(
             [sys.executable, '-I', str(CONTROLS), '--output', tmp],
@@ -889,7 +889,7 @@ GATE_SCRIPTS = {
         '  --oracle scripts/retirement-outcome-parity/ts-oracle.json \\\n'
         '  --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \\\n'
         '  --round "$F/round-04" --round "$F/round-05"\n',
-    '负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD':
+    '负控 N1–N17 全 KILLED':
         'python3 -I scripts/retirement-outcome-parity/negative_controls.py \\\n'
         '  --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"\n',
     '装置守卫自检（七项）':
@@ -905,7 +905,7 @@ RETIREMENT_STEP_ORDER = (
     ('setup', '安装钉死 PyYAML（#2017-A）'),
     ('gate', 'emit 复算与金样逐字节比对'),
     ('gate', 'check 5 轮'),
-    ('gate', '负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD'),
+    ('gate', '负控 N1–N17 全 KILLED'),
     ('gate', '装置守卫自检（七项）'),
     ('gate', '接线守卫变异自检'),
     ('uses', '上传负控证据'),
@@ -915,7 +915,7 @@ RETIREMENT_STEP_ORDER = (
 GATE_STEP_TIMEOUT_MINUTES = {
     'emit 复算与金样逐字节比对': 5,
     'check 5 轮': 5,
-    '负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD': NEGCTL_TIMEOUT_SECONDS // 60,
+    '负控 N1–N17 全 KILLED': NEGCTL_TIMEOUT_SECONDS // 60,
 }
 # 这三步共享 JOB_OVERHEAD_MARGIN_SECONDS，不另计入 internal。桶也双向核覆盖，
 # 新 uses/setup 不能静默当成零秒；新增形态必须明确登记或给出上限。
@@ -1209,7 +1209,7 @@ def retirement_budget_rows(workflow=None):
                 raise CheckFailure(f'#1809 r11 budget rule missing: `{label}` step cap')
             seconds, passes, limit = cap_seconds, 1, cap_seconds
             source = 'declared step timeout-minutes'
-        elif kind == 'gate' and label == '负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD':
+        elif kind == 'gate' and label == '负控 N1–N17 全 KILLED':
             spec = importlib.util.spec_from_file_location('negative_controls', CONTROLS)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

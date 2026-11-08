@@ -9,9 +9,9 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
 |---|---|
 | `check_outcome_parity.py` | 唯一实现。子命令 `emit`（从 TS 参考轮重生成 / 复核金样）与 `check`（一轮或多轮对照金样）。退出码 0 PASS / 1 FAIL / 2 输入不可用（fail-closed）。 |
 | `ts-oracle.json` | 101 行金样：`method` / `shape` / `outcome` / `errorCode` / `wireCode` + `baseline`（revision、Node 版本）+ `rounds`（k、目录名、逐文件 sha256）。 |
-| `negative_controls.py` | N1–N18 负控 + PC1–PC2 正控汇总式执行器（见下）。 |
+| `negative_controls.py` | N1–N17 负控汇总式执行器（见下）。 |
 | `fixtures/` | 金样的**入库输入**（5 轮 `methods.json` + `frames.jsonl` 切片，`du -sk` 1568 KiB）。来源、切片规则与新旧 sha256 对照见 `fixtures/PROVENANCE.md`。 |
-| `self_check.py` | 装置守卫闸门（体积预算 / `emit` 复现 / `check` 5 轮 / 负控全 KILLED / 正控全 HELD / 输出目录锁 / 敌意写目标 / CI 接线——ci.yml 与 pr-gate.yml 两份 workflow 都巡走），CI 与本机共用；`--self-check-controls` 是它自己的变异负控。 |
+| `self_check.py` | 装置守卫闸门（体积预算 / `emit` 复现 / `check` 5 轮 / 负控全 KILLED / 输出目录锁 / 敌意写目标 / CI 接线——ci.yml 与 pr-gate.yml 两份 workflow 都巡走），CI 与本机共用；`--self-check-controls` 是它自己的变异负控。 |
 
 ## 金样来源
 
@@ -44,25 +44,6 @@ Rust 侧 retirement 产物，Rust 列一律 `NOT_RUN`）。本目录是这些判
   `memory_list`、`memory_wipe`、`snapshot_get`、`snapshot_list`、`snapshot_restore`）；
   5 轮 `(outcome, errorCode)` 零漂移；24/24 error 行线缆 `error.code` 与
   `outcome.errorCode` 一致。
-
-## 已登记延期：always-on 三方法（#2143）
-
-`always_on_apply` / `always_on_abort` / `always_on_rerun_plan` 按 2026-11-05 人定
-「只做核心 agent 功能，always-on 等增值模块暂缓」尚未实现：Rust 无条件回
-`CAPABILITY_UNAVAILABLE`（#1313），而 TS 基线（cc7c4e6 / Node v22.22.0，实测见 #2143）
-回的是**成功信封** `ok:true` + payload `error.code`（`cycle_not_found` /
-`not_configured` / `not_configured`）。金样没写错，所以这是**延期**，不是「金样过期」：
-
-- 容忍**只有一格**：该方法 `outcome == 'error'` 且 `errorCode == CAPABILITY_UNAVAILABLE`
-  对应金样 `ok`。换成别的错误码 → P3 + P4 照常 FAIL（负控 N18 钉死这一条）。
-- **逐方法显式列出**（`DEFERRED_UNAVAILABLE_METHODS`），无前缀/正则/通配。
-- P1 / P2 / P6 / P7 / P8 对这三个方法**照常核**；P3 / P4 / P5 对其余 98 个方法逐字节不变。
-- 报告**不得静默**：逐轮 `deferred` 计数 + `deferredMethods` 列表，顶层 `deferred`
-  段给出登记集与理由。
-- 金样侧 fail-closed：延期行在金样里必须是 `ok`，且不得与 gated 集重叠；`emit` 也拒绝
-  从「延期方法答错」的轮次派生金样（否则 Rust 差异会被写进 TS 金样）。
-- 登记：`specs/gateway-parity/diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001-R1.md`。
-  always-on 实现补齐后删除该集合与登记件（反转条件写在登记件里）。
 
 ## 重生成（必须与已提交金样逐字节相同）
 
@@ -105,8 +86,7 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
 
 ## 容差与残余（登记在差异条目里，此处只摘要）
 
-- 阈值 = **0 处不一致**；无百分比、无退化名额。唯一例外是上面那 3 个 always-on 方法的
-  **已登记延期**（一格、逐方法、报告可见、`-R1` 登记），它不是打分折扣也不是通用白名单。
+- 阈值 = **0 处不一致**；无百分比、无退化名额、无 per-method 白名单。
 - 不比较（理由在条目「范围」）：`elapsedMs`（纯计时，95/101 跨轮变动）、
   `error.message` 文本（含轮次绝对路径与 provider 措辞，只要求非空）、
   `events` 计数 / `lastEventType`（只要求 stream ok 有 `final: true` 帧且 `events >= 1`）。
@@ -119,7 +99,7 @@ python3 -I scripts/retirement-outcome-parity/check_outcome_parity.py check \
   error 的「任意 receive 帧」更严——只落 event 帧的 stream error 会判 FAIL（响亮失败，
   非假 PASS）；放宽需另立更正件。
 
-## 负控（N1–N18）与正控（PC1–PC2）
+## 负控（N1–N17）
 
 ```sh
 python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输出目录> \
@@ -155,17 +135,6 @@ python3 -I scripts/retirement-outcome-parity/negative_controls.py --output <输�
 负控守卫 / self_check 控件），`self_check` 的 lock 用例断言三份都在源码里——改常量只改两处
 当场红（r8）。
 
-负控只证明装置**能抓住**注入的错误；延期这一格若被写窄（`deferred_match` 漏容忍），
-18 条负控照样全 KILLED。因此另配两条**正控**（数据变异、断言「应当 PASS 的性质」，
-判 HELD / BROKEN / INVALID）：PC1 把三个延期方法都改成 `error /
-CAPABILITY_UNAVAILABLE`，要求 checker rc=0、逐轮 `deferred == 3` 且
-`deferredMethods` 点名三条、顶层 `deferred.methods` 是登记集——漏容忍或报告丢字段
-都是 BROKEN；PC2 用未变异参考轮要求 `deferred == 0` 且零违规，钉住「不是整体豁免」。
-rc 映射与负控同口径：checker rc=0 → 核断言（HELD / BROKEN），rc=1 → BROKEN（应 PASS
-却没 PASS），rc∉{0,1}（输入或环境不可用）→ INVALID，绝不记成「应 PASS 的性质不成立」。
-`summary.json` 里正控记在 `positives` / `positiveCounts`，与 `counts` 并列，任一条
-非 HELD 即整轮非零退出。
-
 只做数据变异（内存改 + 写临时目录，**不改任何源码文本**）；逐条记
 `KILLED` / `SURVIVED` / `INVALID` + 原因，全部跑完再汇总，任一非 KILLED 即非零退出；
 `summary.json` 原子发布（先写 `*.tmp` 再 `rename`）。判据分三步：**先核各原始轮对金样
@@ -181,12 +150,6 @@ N13（`outcome` 改成未登记值）分别给 P2 / P8 两条此前无控件的�
 ok response 则改写成错误帧）与 N15（两个 request ok 方法共用同一请求 id、只留一条 response）
 封住 P6 的两条假 PASS：矛盾 response 被忽略、一个方法的成功 response 被另一个方法借用；
 N16（同 id 两条 response）与 N17（一个方法两条 send）给重复响应/重复请求两条守卫配控件。
-N18 把已登记延期的方法换成别的错误码，要求 P3 + P4 **双双**点名它——延期只容忍那一格，
-写成整体豁免就会被这条控件判 SURVIVED。凡靠「答 unavailable 必须被点名」归因的负控
-（N3、N10），探针选取都显式排除**会被 P5 集合减法扣掉的两个集合**（gated 集与延期集）
-并加断言：P3/P4 会按 `deferred_match` 跳过、P5 两侧减法都会吞掉它，探针落在任一侧就会从
-KILLED 退化成 SURVIVED（假 FAIL）。两种行序（延期方法顶首行、gated 方法顶首行）各有
-复算证据。
 
 执行器**第一件事**是失效同输出目录的旧 `summary.json`（含残留 `*.tmp`）——下游以「文件存在」
 为跑完证据，所以必须在读数据 / preflight / 控件构造**之前**失效，任何早退路径都不得留下上一轮
@@ -302,7 +265,7 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 | 安装钉死 PyYAML（#2017-A） | 装出 `pyyaml==6.0.3` venv 并前置 PATH，供下方 `python3 -I` 闸门使用 |
 | `emit` 复算 + `cmp` 金样 | 夹具能逐字节复现已提交金样 |
 | `check` 5 轮 | P1–P8 全 PASS，`p7Evaluated=true` |
-| 负控 N1–N18 + 正控 PC1–PC2 | 负控全 KILLED（任一 SURVIVED / INVALID / BROKEN 即红）；正控全 HELD（应 PASS 的性质被写窄 / 写豁免即红，#2143） |
+| 负控 N1–N17 | 负控全 KILLED（任一 SURVIVED / INVALID / BROKEN 即红）。A8.6-R1 的延期正控 PC1–PC2 已随 #2294 实现落地按反转条款撤回（A8.6-…-R2），正控注册数现归 0 |
 | `self_check.py`（七项全跑） | 体积预算 · `emit` 复现 · `check` 5 轮 · 负控 · 输出目录互斥 · 敌意写目标 · CI 接线，七条守卫本身都还在 |
 | `self_check.py --self-check-controls` | 给上面这些守卫造违反样本，它们必须**变红**（接线守卫自己的变异自检） |
 
