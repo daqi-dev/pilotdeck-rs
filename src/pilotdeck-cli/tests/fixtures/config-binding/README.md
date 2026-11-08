@@ -1,6 +1,6 @@
 # CLI 只读 StaffDeck runtime binding
 
-默认CLI配置预检现在沿Gateway已有loader执行`applyProjectBinding(..., runtime=true)`，不再把环境变量精确`true`直接拦为TODO。它只加载/校验后丢弃Config；远端Gateway仍决定实际运行的配置，CLI不会把本地module配置经WS传过去。本片不实现provisioning、身份认证、SOP/knowledge服务、绑定写入或本地Gateway fallback，不改变A8/阶段完成状态。
+默认CLI配置预检现在沿Gateway已有loader执行`applyProjectBinding(..., runtime=true)`，不再把环境变量精确`true`直接拦为TODO。它只加载/校验后丢弃Config；远端Gateway仍决定实际运行的配置，CLI不会把本地module配置经WS传过去。绑定预检本身不实现provisioning、身份认证、SOP/knowledge服务或绑定写入；默认CLI的本地fallback现已由共享native LocalHost实现，本测试的503分支也验证该真实入口，不改变A8/阶段完成状态。
 
 ## 固定真实 TS 原件
 
@@ -40,10 +40,11 @@ CARGO_TARGET_DIR="$PWD/_build/cargo-target" cargo test --manifest-path src/Cargo
   -p pilotdeck-gateway --lib config::bounded:: -- --nocapture
 CARGO_TARGET_DIR="$PWD/_build/cargo-target" cargo test --manifest-path src/Cargo.toml \
   -p pilotdeck-cli --test config_exit
+PDRS_TEST_SIDECAR="$TASK_BUILT_SIDECAR" \
 CARGO_TARGET_DIR="$PWD/_build/cargo-target" cargo test --manifest-path src/Cargo.toml \
   -p pilotdeck-cli --test config_binding_exit -- --ignored --nocapture
 ```
 
 unit测试逐格核check结果、snapshot归一modules、错误优先级、现有requires_host和文件原字节不变；snapshot普通例全值对比原API。有界测试真实打开global/store/SOP/lock FIFO、超限稀疏文件，由父进程5秒限额保护定向子测试（双API都执行）；累计预算测试实际读4次8MiB普通文件，再拒绝额外读，并核fault后missing路径不是ENOENT、活PID不再查询。不能将列表中的ignored helper当作未执行，父测试要求逐phase回执。
 
-真实CLI测试因legacy discovery固定18789而标ignored，只允许mbp2显式运行：先取得既有`/tmp/pdrs-cron-18789.lock`，bind失败就拒绝，不杀占用者，绝不在本机探测18789。隔离home/project/fake凭据，坏store/YAML/SOP/URI须完整错误、退出1、零连接；普通缺binding/bound/dead binding在自己持有的HTTP+WS fake中核hello/submit/完整输出，503明确保留本地fallback TODO/退出2。每步网络与子进程有期限，输入文件保持原件。这证明配置预检接线和远端选择，不证明远端采用本地binding modules，更不代填真实StaffDeck或真人实效。
+真实CLI测试因legacy discovery固定18789而标ignored，只允许mbp2显式运行：先取得既有`/tmp/pdrs-cron-18789.lock`，bind失败就拒绝，不杀占用者，绝不在本机探测18789。隔离home/project/fake凭据，坏store/YAML/SOP/URI须完整错误、退出1、零连接；普通缺binding/bound/dead binding在自己持有的HTTP+WS fake中核hello/submit/完整输出，503之后使用显式`PDRS_TEST_SIDECAR`（必须是已构建Rust sidecar的绝对文件路径，缺少即失败、不skip）启动真正LocalHost。该格复用固定TS的`missing-store` YAML，只把原fixture provider URL替换为独占loopback地址；真实TS投影本就是knowledge disabled、无SOP。自有HTTP provider最多接两次有界请求（title及唯一main stream），逐字核退出0、stdout正文、fallback提示与首次transcript_missing诊断的完整stderr（含实际落盘路径）；同时核真实main请求的model/prompt、无第二discovery连接、成功turn_result持久化及原YAML/store未变。该正控不使用伪Gateway WS响应或伪sidecar。每步网络与子进程有期限（旧分支5秒、本地启动/执行/关闭15秒），输入文件保持原件。这证明配置预检、远端选择及本地fallback接线，不证明远端采用本地binding modules，更不代填真实StaffDeck或真人实效。

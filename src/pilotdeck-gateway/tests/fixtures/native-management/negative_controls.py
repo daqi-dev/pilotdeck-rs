@@ -316,10 +316,10 @@ mutations.append(('hello-serverinfo-independent', CONNECTION,
                   HELLO, '#1352 hello_ok.serverInfo equals the describe_server result'))
 
 # fix-r2 (#1322): memory IO must stay off the serial host.
-mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'std::future::ready(requests.memory_dispatch(&method, &params))\n                    .await,', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
+mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(move || {\n                    let _permit = permit;\n                    requests.memory_dispatch(&method, &params)\n                })', 'std::future::ready(Ok::<_, tokio::task::JoinError>({ let _permit = permit; requests.memory_dispatch(&method, &params) }))', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
 # fix-r3 (#1322): inline-sync variant — calls memory_dispatch directly on the
 # calling thread (no spawn_blocking), which blocks the serial host.
-mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'requests.memory_dispatch(&method, &params),', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
+mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || {\n                    let _permit = permit;\n                    requests.memory_dispatch(&method, &params)\n                })', 'async move { Ok::<_, tokio::task::JoinError>({ let _permit = permit; requests.memory_dispatch(&method, &params) }) }', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
 
 # #1431 P2-3 + 收尾自查残差: two production steps had assertions but no paired
 # mutation. `non-utf8-project-accepted` reopens the unreachable-workspace path a
@@ -335,7 +335,7 @@ mutations.append(('non-utf8-project-accepted', ENTRY,
                   'native_process::tests::non_utf8_project_path_is_refused',
                   '#1431 non-UTF-8 --project must be rejected'))
 mutations.append(('snapshot-list-resolver-bypassed', SNAPSHOT,
-                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id(&project_key);\n        let limit = snapshot_limit(field(input, "limit"))?;',
+                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id_checked(&project_key)?;\n        let limit = snapshot_limit(field(input, "limit"))?;',
                   '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = crate::metadata::project_id(std::path::Path::new(&project_key));\n        let limit = snapshot_limit(field(input, "limit"))?;',
                   WIRING, '#1431 snapshot_list returns the submit-captured snapshot'))
 # #1431 review (both lineages): `snapshot_get` / `snapshot_restore` resolve the
@@ -343,11 +343,11 @@ mutations.append(('snapshot-list-resolver-bypassed', SNAPSHOT,
 # restore) and had assertions but no paired mutation, so swapping those two for
 # the legacy slug would only be caught by the oracle replay.
 mutations.append(('snapshot-get-resolver-bypassed', SNAPSHOT,
-                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id(&project_key);\n        let snapshot_id = field(input, "snapshotId");',
+                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id_checked(&project_key)?;\n        let snapshot_id = field(input, "snapshotId");',
                   '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = crate::metadata::project_id(std::path::Path::new(&project_key));\n        let snapshot_id = field(input, "snapshotId");',
                   SNAPSHOT_TEST, '#1231 snapshot get success and workspace filter'))
 mutations.append(('snapshot-restore-resolver-bypassed', SNAPSHOT,
-                  '        let workspace_id = self.resolver.workspace_id(&source_project);\n        let snapshot_id = field(input, "snapshotId");',
+                  '        let workspace_id = self.resolver.workspace_id_checked(&source_project)?;\n        let snapshot_id = field(input, "snapshotId");',
                   '        let workspace_id = crate::metadata::project_id(std::path::Path::new(&source_project));\n        let snapshot_id = field(input, "snapshotId");',
                   SNAPSHOT_TEST, '#1231 snapshot restore success'))
 # #1431 review r2 (GLM sibling): the `--storage-root` rejection already had a
