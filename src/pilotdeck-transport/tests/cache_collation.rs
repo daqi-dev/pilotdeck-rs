@@ -1,4 +1,4 @@
-use pilotdeck_agent::{ports::Route, cache_plan_with_collation};
+use pilotdeck_agent::{cache_plan_with_collation, ports::Route};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use pilotdeck_transport::node_collation::{node_collator, node_locale};
 use std::cmp::Ordering;
@@ -39,8 +39,9 @@ fn real_node_ten_default_locales_match_cache_order_and_seventy_fingerprints() {
             "{lang}"
         );
         let collator = node_collator(&locale, true).unwrap();
-        let compare =
-            |left: &JsString, right: &JsString| collator.compare_utf16_preserving_surrogates(left.units(), right.units());
+        let compare = |left: &JsString, right: &JsString| {
+            collator.compare_utf16_preserving_surrogates(left.units(), right.units())
+        };
         let signs = array(field(profile, "signs"));
         for (i, left) in strings.iter().enumerate() {
             for (j, right) in strings.iter().enumerate() {

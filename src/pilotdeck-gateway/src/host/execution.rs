@@ -266,7 +266,8 @@ pub(super) async fn run(
         {
             return Ok(terminal);
         }
-        if callbacks.is_empty() && events.is_empty()
+        if callbacks.is_empty()
+            && events.is_empty()
             && let Some(error) = native_failure.take()
         {
             return Err(error);

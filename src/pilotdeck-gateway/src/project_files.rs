@@ -5,9 +5,9 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use icu_casemap::CaseMapper;
-use icu_collator::CollatorBorrowed;
 #[cfg(test)]
 use icu_collator::Collator;
+use icu_collator::CollatorBorrowed;
 use icu_locale_core::{LanguageIdentifier, Locale};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
