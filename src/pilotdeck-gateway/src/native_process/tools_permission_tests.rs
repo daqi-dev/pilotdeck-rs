@@ -710,3 +710,11 @@ fn sdk_dontask_uses_default_instead_of_retained_bypass_but_keeps_explicit_turn_m
         assert!(ports.interaction.permission.context.mode.as_js_string().equals_str(expected));assert!(!ports.interaction.permission.context.can_prompt);assert_eq!(ports.context_config.get("permissionMode"),Some(&expected.into()));
     }
 }
+
+#[tokio::test]
+async fn sdk_ephemeral_turn_spills_under_temp_storage_without_moving_tool_cwd(){
+    let sessions=crate::native_process::sdk_ephemeral::EphemeralSessions::default();let root=sessions.acquire("session".into()).await.unwrap();let config=crate::metadata::object([("nativeEphemeralRoot",JsValue::String(root.path().to_string_lossy().into_owned().into()))]).as_object().unwrap().clone();
+    let(_scratch,tools,recorder,identity)=make_tools(config,Arc::default(),RuleSetHandle::empty());let project=tools.options.project.clone();let ports=tools.turn(&identity,recorder,Cancellation::new());assert!(ports.tool_results_dir.starts_with(root.path()));assert!(!ports.tool_results_dir.starts_with(&project));assert_eq!(ports.context_config.get("cwd"),Some(&JsValue::String(project.to_string_lossy().into_owned().into())));
+    let budget=crate::runtime::context::tool_budget::ToolResultBudget::new(crate::runtime::context::tool_budget::ToolResultBudgetOptions{tool_results_dir:ports.tool_results_dir.clone(),max_result_size_chars:Some(1),max_result_size_tokens:Some(100),preview_bytes:Some(1)}).unwrap();
+    let message=crate::metadata::object([("role","user".into()),("content",JsValue::Array(vec![crate::metadata::object([("type","tool_result".into()),("toolCallId","spill".into()),("content",JsValue::Array(vec![crate::metadata::object([("type","text".into()),("text","EPHEMERAL-LARGE-PAYLOAD".into())])]))])]))]);let result=budget.apply_to_message(&message,Some(&"turn".into())).await.unwrap();assert_ne!(result,message);assert!(ports.tool_results_dir.exists());assert!(!project.join(".pilotdeck/tool-results").exists());ports.tool_execution.dispose().await.unwrap();ports.tool_execution.wait_closed().await.unwrap();sessions.close().await.unwrap();assert!(!root.path().exists());
+}

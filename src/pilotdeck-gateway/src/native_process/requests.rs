@@ -71,6 +71,7 @@ pub struct Requests {
     /// reads back. One instance shared with the factory.
     pub session_overrides: Arc<SessionOverrides>,
     pub clear_sdk_state: Option<SessionStateCleanup>,
+    pub(crate) ephemeral: Option<Arc<super::sdk_ephemeral::EphemeralSessions>>,
 }
 
 impl Requests {

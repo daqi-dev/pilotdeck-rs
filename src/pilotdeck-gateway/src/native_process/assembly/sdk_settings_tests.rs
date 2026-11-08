@@ -396,3 +396,131 @@ async fn sdk_settings_and_style_rpc_share_committed_owner_and_replace_clears_sel
     );
     plugins.dispose().await.unwrap();
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn model_policy_consumes_resolved_user_source_and_short_fallback_inherits_effective_parent() {
+    use crate::native_process::assembly::sdk_adapter::NativeSdkPort;
+    use crate::runtime::{
+        plugins::{PluginRuntime, PluginRuntimeOptions},
+        sdk_session::{SdkRuntimeResolver, SdkSessionOptions, SdkSessionRegistry},
+        turn::admission::SubmitSdkSessionConfig,
+    };
+    use std::sync::Arc;
+    struct TwoModels(Runtime);
+    impl SdkRuntimeResolver for TwoModels {
+        fn resolve(
+            &self,
+            p: Option<&pilotdeck_protocol::JsString>,
+        ) -> Result<
+            crate::runtime::sdk_session::ResolvedSdkRuntime,
+            crate::runtime::sdk_session::SdkSessionError,
+        > {
+            let mut r = self.0.resolve(p)?;
+            r.snapshot = crate::metadata::object([(
+                "config",
+                crate::metadata::object([
+                    (
+                        "agent",
+                        crate::metadata::object([(
+                            "model",
+                            crate::metadata::object([
+                                ("provider", "p".into()),
+                                ("model", "base".into()),
+                            ]),
+                        )]),
+                    ),
+                    (
+                        "model",
+                        crate::metadata::object([(
+                            "providers",
+                            crate::metadata::object([(
+                                "p",
+                                crate::metadata::object([(
+                                    "models",
+                                    crate::metadata::object([
+                                        (
+                                            "base",
+                                            JsValue::Object(pilotdeck_protocol::JsObject::new()),
+                                        ),
+                                        (
+                                            "selected",
+                                            JsValue::Object(pilotdeck_protocol::JsObject::new()),
+                                        ),
+                                    ]),
+                                )]),
+                            )]),
+                        )]),
+                    ),
+                ]),
+            )]);
+            Ok(r)
+        }
+    }
+    let scratch = crate::test_scratch::Scratch::new("sdk-model-settings");
+    let home = scratch.path().join("home");
+    let project = scratch.path().join("project");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::create_dir(&project).unwrap();
+    let contents = "agent:\n  model: p/selected\n  fallbackModel: base\n";
+    std::fs::write(home.join("pilotdeck.yaml"), contents).unwrap();
+    let plugins = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
+        project_root: project.clone(),
+        pilot_home: home.clone(),
+        builtin_skills_root: None,
+        builtin_plugins: vec![],
+        builtin_plugins_enabled: Default::default(),
+    }));
+    let runtime = Arc::new(TwoModels(Runtime {
+        root: project.clone(),
+        plugins: plugins.clone(),
+    }));
+    let options = SdkSessionOptions::new(
+        &project,
+        &project,
+        source_environment(&Env::new(), &home),
+        runtime,
+    )
+    .with_homedir(home.join("unread"))
+    .with_setting_source_reader(Arc::new(NativeSettingSourceReader));
+    let sdk = NativeSdkPort {
+        registry: tokio::sync::Mutex::new(SdkSessionRegistry::new(options)),
+        handlers: Arc::default(),
+        async_hooks: Arc::default(),
+    };
+    let session = "settings-model".into();
+    let key = pilotdeck_protocol::JsString::from(project.to_string_lossy().into_owned());
+    sdk.registry
+        .lock()
+        .await
+        .set_session_config(
+            &session,
+            &crate::metadata::object([("settingSources", JsValue::Array(vec!["user".into()]))]),
+            Some(&key),
+            None,
+        )
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        SubmitSdkSessionConfig::models(&sdk, &session, Some(&key)),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .unwrap();
+    assert_eq!(result.fallback.len(), 1);
+    assert_eq!(
+        result.fallback[0].provider,
+        pilotdeck_protocol::JsString::from("p")
+    );
+    assert_eq!(
+        result.fallback[0].model,
+        pilotdeck_protocol::JsString::from("selected"),
+        "TS bare fallback inherits composed parent, not pre-settings project model"
+    );
+    assert_eq!(
+        std::fs::read_to_string(home.join("pilotdeck.yaml")).unwrap(),
+        contents
+    );
+    plugins.dispose().await.unwrap();
+}

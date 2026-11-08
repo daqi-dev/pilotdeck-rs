@@ -305,6 +305,11 @@ impl SessionTools {
         self
     }
 
+    pub(super) fn tool_results_dir(&self,session:&JsString)->PathBuf {
+        let root=self.config.get("nativeEphemeralRoot").and_then(JsValue::as_string).and_then(|v|v.to_utf8().ok()).map(PathBuf::from).unwrap_or_else(||self.options.project.clone());
+        session_tool_results_dir(&root,session)
+    }
+
     pub fn turn(
         &self,
         identity: &ExecutionIdentity,
@@ -863,7 +868,7 @@ impl SessionTools {
                 agent_max_context_tokens: self.config.get("maxContextTokens").cloned(),
             },
             recorder: None,
-            tool_results_dir: session_tool_results_dir(&self.options.project, &identity.session_id),
+            tool_results_dir: self.tool_results_dir(&identity.session_id),
             context_runtime: self.context_runtime.clone(),
             context_identity: ContextRequestIdentity::new(binding.clone(), tool_ports.clone()),
             context_config: config,

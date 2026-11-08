@@ -228,7 +228,7 @@ mod failure_cleanup_tests {
                     "phase" => return Err(failure("injected_phase_failure", "phase failed after actual workspace tool success")),
                     "index" => std::fs::set_permissions(self.paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o500)).unwrap(),
                     "state" => std::fs::create_dir(&self.paths.state_file).unwrap(),
-                    "corrupt" => std::fs::write(&self.paths.cycle_index_file, b"{").unwrap(),
+                    "corrupt" => { std::fs::write(&self.paths.cycle_index_file, b"{").unwrap(); std::fs::set_permissions(self.paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o500)).unwrap(); },
                     "schema" => { std::fs::write(&self.paths.cycle_index_file, br#"{"schemaVersion":2,"cycles":[]}"#).unwrap(); std::fs::set_permissions(self.paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o500)).unwrap(); },
                     _ => unreachable!(),
                 }
@@ -252,8 +252,9 @@ mod failure_cleanup_tests {
         let cycles = Arc::new(WorkCycleStore::new(paths.clone()));
         let phase = WorkspacePhase { project: project.to_str().unwrap().into(), gateway: Arc::new(GatewayFault { paths: paths.clone(), fault }), contexts: Arc::new(AlwaysOnRunContextRegistry::new()), observer: Arc::new(super::tests::Observer), workspace: provider.clone(), cycles: cycles.clone(), state: Arc::new(DiscoveryStateStore::new(paths.clone())), now: Arc::new(||0.0), uuid: Arc::new(|| "cleanup-cycle".into()), chinese: false };
         let result = phase.run("cleanup-run", "fixture".into(), &JsValue::Object(Default::default())).await;
-        if fault == "index" || fault == "schema" { std::fs::set_permissions(paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o700)).unwrap(); }
-        let target = paths.snapshots_dir().join("cleanup-run"); let cycle = if fault == "corrupt" { assert!(cycles.read_apply("cleanup-cycle".into()).await.is_err()); None } else { cycles.read_apply("cleanup-cycle".into()).await.unwrap() };
+        if fault == "index" || fault == "schema" || fault == "corrupt" { std::fs::set_permissions(paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o700)).unwrap(); }
+        let target = paths.snapshots_dir().join("cleanup-run"); let cycle = cycles.read_apply("cleanup-cycle".into()).await.unwrap();
+        if fault == "corrupt" || fault == "schema" { assert!(cycles.references_workspace(&target.to_string_lossy().as_ref().into()).is_err()); }
         let closed = provider.close().await; let drained = registry.dispose().await;
         assert!(result.is_err()); assert!(closed.is_ok()); assert!(drained.is_ok());
         if fault == "state" {

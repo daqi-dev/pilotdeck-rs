@@ -322,6 +322,16 @@ impl SessionOwner {
         self.0.creation_sent.subscribe()
     }
 
+    /// A host resource can await the real shutdown without retaining an
+    /// owner -> factory -> host resource ownership cycle.
+    pub(crate) fn weak_shutdown(&self) -> impl Fn() -> BoxFuture<RuntimeResult> + Send + Sync + 'static {
+        let owner = Arc::downgrade(&self.0);
+        move || {
+            let owner=owner.upgrade();
+            Box::pin(async move {match owner {Some(owner)=>SessionOwner(owner).shutdown().await,None=>Ok(())}})
+        }
+    }
+
     /// A weak publication lookup: callbacks never retain owner -> factory cycles.
     pub(crate) fn weak_handle_lookup(&self) -> SessionHandleLookup {
         let owner = Arc::downgrade(&self.0);

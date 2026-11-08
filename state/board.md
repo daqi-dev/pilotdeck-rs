@@ -5153,3 +5153,8 @@ r119固定5a409全目标check/native522/AO106/四个实际bin构建通过；stri
 ### 2026-11-09 06:58 · SDK 设置源与输出样式真实消费
 
 已逐SHA整合Sol十源 settings/settingSources/outputStyle：同fd限额reader、持原项目代解析模型/limits/thinking/subagents、SDK与RPC共享style选择，native PILOT_HOME锁定隔离--home；首编待r120。完整central intake与settingSources fallback进入per-turn model authority尚需增量，ephemeral与knowledge仍实施。fullGateway固定0fd首组api_web 115过3失败1忽略、峰35FD/12KQUEUE；失败为测试长期假定短TMP路径，当前隔离长路径触发Node错误文本截断，待同bin短TMP复验，不计通过。只本机提交、Rust只mbp2，完整CLI未完成。
+
+
+### 2026-11-09 07:07 · SDK 临时存储与中央校验整合
+
+已逐hash整合ephemeral 16源（两个shared clean三方）与central intake五源：临时JSONL/sidechain/spill复用原writer，owner真shutdown后清理；完整57格TS intake、未知键/数组语义、settings源fallback真实model authority均待r121。r120 check过；native531过1新增外部Read权限真实缺口、AO111过1新损坏索引夹具未制造write失败（已补只读父目录保证真实失败），SDK24/permission8/schema8/live231过。audit优先修ReadFile缺check_permissions导致外部路径默认allow，不放松测试；workspace P2继续。r119固定bin 23次本地假provider请求、11个真实CLI闭环检查全过（含预算计费停止/持久结算/下一次模型前拦截），证据native-sdk-completion/passed-r119；不能据此称settings/ephemeral新片已过。全部Rust仅mbp2，仅本机提交，完整CLI尚未完成。

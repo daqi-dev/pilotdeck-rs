@@ -24,7 +24,7 @@ use crate::{
         },
         project::{
             Families, Family, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
-            ProjectRuntimeRegistry, Resource, RuntimeError, RuntimeProfileOverrides, StageContext,
+            ProjectRuntimeRegistry, Resource, RuntimeError, RuntimeProfileOverrides,
             memory_bundle::MemoryManagementResource, persistence::PersistenceResources,
             plugins::PluginResources, tools_mcp::McpProviderResource,
         },
@@ -566,6 +566,10 @@ async fn start_assembly(
     let style_port: Arc<dyn super::session_overrides::SdkOutputStylePort> = sdk_port.clone();
     session_overrides.bind_sdk_styles(Arc::downgrade(&style_port));
     let prepare_sdk = sdk_port.clone();
+    let ephemeral=Arc::new(super::sdk_ephemeral::EphemeralSessions::default());
+    let prepare_ephemeral=ephemeral.clone();
+    let cleanup_ephemeral=ephemeral.clone();
+    let fallback_ephemeral=ephemeral.clone();
     let fork_registry = super::agent::NativeForkRegistry::new();
     let prepare_forks = fork_registry.clone();
     let session_events = Arc::new(super::session_events::NativeSessionEvents::default());
@@ -627,6 +631,7 @@ async fn start_assembly(
             let mcp_diagnostic = prepare_mcp_diagnostic.clone();
             let session_overrides = prepare_overrides.clone();
             let sdk = prepare_sdk.clone();
+            let ephemeral=prepare_ephemeral.clone();
             let dialog_bus = prepare_user_dialog_bus.clone();
             Box::pin(async move {
                 let fork_scope = forks.scope(&context);
@@ -878,11 +883,18 @@ async fn start_assembly(
                 let context_storage = context_storage.as_any()
                     .downcast_ref::<crate::runtime::project::context_storage::ContextStorageResources>()
                     .ok_or_else(|| RuntimeError::new("Native context storage has the wrong type."))?;
+                let is_ephemeral = {let registry=sdk.registry.lock().await;registry.is_ephemeral_session(&context.session_key)};
+                if fork_scope.is_none(){config.insert("nativeEphemeralRoot".into(),JsValue::Undefined);}
+                let ephemeral_root = if fork_scope.is_none() && is_ephemeral {
+                    let root=ephemeral.acquire(context.session_key.clone()).await?;
+                    config.insert("nativeEphemeralRoot".into(),JsValue::String(root.path().to_string_lossy().into_owned().into()));Some(root)
+                }else{None};
+                let session_artifact_project=config.get("nativeEphemeralRoot").and_then(JsValue::as_string).and_then(|s|s.to_utf8().ok()).map(std::path::PathBuf::from).unwrap_or_else(||options.project.clone());
                 let native_context = Arc::new(
                     context_storage
                         .create_session_with_options(
                             super::tools::session_tool_results_dir(
-                                &options.project,
+                                &session_artifact_project,
                                 &context.session_key,
                             ),
                             crate::runtime::project::context_storage::SessionContextOptions {
@@ -908,6 +920,8 @@ async fn start_assembly(
                         let key = key.clone();
                         Box::pin(async move { Ok(SessionStorage::Unlocked(crate::runtime::session::factory::FactoryStorage::new(store, key))) }) as crate::runtime::refresh::BoxFuture<_>
                     }) as crate::runtime::session::factory::CreateStorage
+                } else if let Some(root)=ephemeral_root {
+                    super::project_storage::for_ephemeral(generation,root)
                 } else {
                     super::project_storage::for_generation(options.home.clone(), generation)
                 };
@@ -1514,6 +1528,7 @@ async fn start_assembly(
             session_events.install(&coordinator);
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
             owner.enforce_project_binding();
+            ephemeral.bind_shutdown(Arc::new(owner.weak_shutdown())).map_err(|error|std::io::Error::other(error.to_string()))?;
             lookup_forks.install_session_lookup(owner.weak_handle_lookup());
             lookup_forks.install_async_turn_lookup(owner.weak_async_turn_lookup());
             let replacement = Arc::new(ReplacementCoordinator::new(
@@ -1670,6 +1685,7 @@ async fn start_assembly(
                 automation: Some(published_automation.clone()),
                 settings: settings.gateway,
                 session_overrides,
+                ephemeral: Some(ephemeral.clone()),
                 clear_sdk_state: Some(Arc::new(move |session| {
                     let sdk = sdk_port.clone();
                     Box::pin(async move {
@@ -1856,13 +1872,15 @@ async fn start_assembly(
                 let sessions = cleanup_factory.dispose().await.map_err(|e| e.to_string());
                 factory_finished.store(true, std::sync::atomic::Ordering::Release);
                 let sessions = cleanup_observer("session", sessions).await;
+                let temporary=cleanup_ephemeral.close().await.map_err(|e|e.to_string());
+                let temporary=cleanup_observer("temporary sessions",temporary).await;
                 let project = cleanup_project.dispose().await.map_err(|e| e.to_string());
                 project_finished.store(true, std::sync::atomic::Ordering::Release);
                 let project = cleanup_observer("project", project).await;
                 if let Err(error) = &project {
                     cleanup_diagnostic(error);
                 }
-                let mut outcome = sessions.and(project);
+                let mut outcome = sessions.and(temporary).and(project);
                 for failure in [
                     cron_stop.err(),
                     automation_stop.err(),
@@ -1912,6 +1930,7 @@ async fn start_assembly(
                 })
                 .await;
             }
+            let _ = tokio::time::timeout(budget,fallback_ephemeral.close()).await;
             if !fallback_project_finished.load(std::sync::atomic::Ordering::Acquire) {
                 let _ = tokio::time::timeout(budget, async {
                     let result = project.dispose().await.map_err(|e| e.to_string());

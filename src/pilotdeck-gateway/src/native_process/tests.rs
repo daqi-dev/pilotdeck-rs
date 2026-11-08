@@ -1540,6 +1540,7 @@ async fn requests_registry_switch_gates_run_reads() {
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
             clear_sdk_state: None,
+        ephemeral: None,
         };
         let described = requests
             .describe_server()

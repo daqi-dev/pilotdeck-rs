@@ -298,6 +298,7 @@ fn harness() -> Harness {
         settings: Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
         clear_sdk_state: None,
+        ephemeral: None,
     };
     Harness {
         requests,

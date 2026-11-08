@@ -1,0 +1,830 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "sources": {
+    "src/gateway/client/InProcessGateway.ts": "bbeabd02733d2cba2020f64fdcff31bcb0defd589aa695aa80a6041900859c7a",
+    "src/extension/hooks/protocol/events.ts": "3fde15287d6f60276d8fe48f1793773f8be580fb26831210141c09099c94ce18"
+  },
+  "extraction": "TypeScript AST function declarations; actual hook event module; vm globals URL/isAbsolute/DialogGatewayError only; no network primitive installed",
+  "cases": [
+    {
+      "name": "empty",
+      "config": {},
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "array",
+      "config": [],
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "array-indexed",
+      "config": [
+        {
+          "unexpected": true
+        }
+      ],
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "unknown-keys",
+      "config": {
+        "maxTurns": "ignored",
+        "maxBudgetUsd": null,
+        "future": {
+          "x": 1
+        }
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "null",
+      "config": null,
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "sdkSessionConfig must be an object."
+      }
+    },
+    {
+      "name": "primitive",
+      "config": 3,
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "sdkSessionConfig must be an object."
+      }
+    },
+    {
+      "name": "invalid-systemPrompt",
+      "config": {
+        "systemPrompt": 3
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "systemPrompt must be a string."
+      }
+    },
+    {
+      "name": "invalid-persistSession",
+      "config": {
+        "persistSession": true
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "persistSession must be false when specified."
+      }
+    },
+    {
+      "name": "invalid-appendSystemPrompt",
+      "config": {
+        "appendSystemPrompt": null
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "appendSystemPrompt must be a string."
+      }
+    },
+    {
+      "name": "invalid-planModeInstructions",
+      "config": {
+        "planModeInstructions": false
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "planModeInstructions must be a string."
+      }
+    },
+    {
+      "name": "invalid-outputStyle",
+      "config": {
+        "outputStyle": " "
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "outputStyle must be a non-empty string."
+      }
+    },
+    {
+      "name": "invalid-permissionMode",
+      "config": {
+        "permissionMode": "plan"
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "permissionMode must be acceptEdits or dontAsk."
+      }
+    },
+    {
+      "name": "invalid-managedPermissions",
+      "config": {
+        "managedPermissions": {
+          "deny": [],
+          "ask": [],
+          "canPrompt": true
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "UNSUPPORTED_SDK_MANAGED_SETTING",
+        "message": "managedPermissions may contain deny/ask entries, defaultMode=plan, and canPrompt=false only."
+      }
+    },
+    {
+      "name": "invalid-managedModels",
+      "config": {
+        "managedModels": {
+          "allow": [
+            "bad"
+          ],
+          "deny": []
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_MANAGED_SETTINGS",
+        "message": "managedModels selectors must be *, provider/*, or provider/model."
+      }
+    },
+    {
+      "name": "invalid-includeHookEvents",
+      "config": {
+        "includeHookEvents": 1
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "includeHookEvents must be a boolean."
+      }
+    },
+    {
+      "name": "invalid-agentProgressSummaries",
+      "config": {
+        "agentProgressSummaries": "yes"
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "agentProgressSummaries must be a boolean."
+      }
+    },
+    {
+      "name": "invalid-forwardSubagentText",
+      "config": {
+        "forwardSubagentText": null
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "forwardSubagentText must be a boolean."
+      }
+    },
+    {
+      "name": "invalid-sandbox",
+      "config": {
+        "sandbox": {}
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "sandbox must contain supported tool_policy restrictions."
+      }
+    },
+    {
+      "name": "invalid-userDialogKinds",
+      "config": {
+        "userDialogKinds": []
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "userDialogKinds must be a non-empty unique array containing only input, select, confirm, or form."
+      }
+    },
+    {
+      "name": "invalid-taskBudget",
+      "config": {
+        "taskBudget": {
+          "total": 0
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "taskBudget.total must be a positive finite USD amount."
+      }
+    },
+    {
+      "name": "invalid-settings",
+      "config": {
+        "settings": null
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings must be an object."
+      }
+    },
+    {
+      "name": "invalid-settingSources",
+      "config": {
+        "settingSources": []
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTING_SOURCES",
+        "message": "settingSources must be a non-empty unique array containing only managed, user, project, or local."
+      }
+    },
+    {
+      "name": "invalid-additionalWorkingDirectories",
+      "config": {
+        "additionalWorkingDirectories": [
+          "relative"
+        ]
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "additionalWorkingDirectories must contain absolute paths."
+      }
+    },
+    {
+      "name": "invalid-toolAliases",
+      "config": {
+        "toolAliases": null
+      },
+      "expected": {
+        "ok": false,
+        "code": "gateway_request_failed",
+        "message": "Cannot convert undefined or null to object"
+      }
+    },
+    {
+      "name": "invalid-outputFormat",
+      "config": {
+        "outputFormat": null
+      },
+      "expected": {
+        "ok": false,
+        "code": "gateway_request_failed",
+        "message": "Cannot read properties of null (reading 'type')"
+      }
+    },
+    {
+      "name": "invalid-agents",
+      "config": {
+        "agents": []
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "agents must be an object."
+      }
+    },
+    {
+      "name": "invalid-skills",
+      "config": {
+        "skills": []
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "skills must be all or a non-empty array of unique skill names."
+      }
+    },
+    {
+      "name": "invalid-plugins",
+      "config": {
+        "plugins": []
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "plugins must be a non-empty array of distinct absolute Gateway-local plugin paths."
+      }
+    },
+    {
+      "name": "invalid-hooks",
+      "config": {
+        "hooks": {}
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "hooks.url must be an absolute HTTP(S) URL."
+      }
+    },
+    {
+      "name": "settings-unknown",
+      "config": {
+        "settings": {
+          "x": 1
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "UNSUPPORTED_SDK_SETTING",
+        "message": "Only settings.agent is supported by the SDK session overlay."
+      }
+    },
+    {
+      "name": "settings-agentNull",
+      "config": {
+        "settings": {
+          "agent": null
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings.agent contains unsupported fields."
+      }
+    },
+    {
+      "name": "settings-agentUnknown",
+      "config": {
+        "settings": {
+          "agent": {
+            "extra": 1
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings.agent contains unsupported fields."
+      }
+    },
+    {
+      "name": "settings-modelEmpty",
+      "config": {
+        "settings": {
+          "agent": {
+            "model": ""
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings.agent.model must be a non-empty model id or null."
+      }
+    },
+    {
+      "name": "settings-fallbackEmpty",
+      "config": {
+        "settings": {
+          "agent": {
+            "fallbackModel": 3
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings.agent.fallbackModel must be a non-empty model id or null."
+      }
+    },
+    {
+      "name": "settings-contextBad",
+      "config": {
+        "settings": {
+          "agent": {
+            "maxContextTokens": 0
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings.agent.maxContextTokens must be a positive integer."
+      }
+    },
+    {
+      "name": "settings-outputBad",
+      "config": {
+        "settings": {
+          "agent": {
+            "maxOutputTokens": 1.5
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings.agent.maxOutputTokens must be a positive integer."
+      }
+    },
+    {
+      "name": "settings-thinkingBad",
+      "config": {
+        "settings": {
+          "agent": {
+            "thinking": {
+              "enabled": true,
+              "budgetTokens": -1
+            }
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings.agent.thinking must contain enabled and an optional non-negative integer budgetTokens."
+      }
+    },
+    {
+      "name": "settings-subagentsBad",
+      "config": {
+        "settings": {
+          "agent": {
+            "subagents": {
+              "maxDepth": 1.5
+            }
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings.agent.subagents supports a non-empty default model id, positive integer timeoutMs, and non-negative safe integer maxDepth."
+      }
+    },
+    {
+      "name": "settings-valid",
+      "config": {
+        "settings": {
+          "agent": {
+            "model": null,
+            "fallbackModel": "p/f",
+            "thinking": {
+              "enabled": true,
+              "budgetTokens": 0
+            },
+            "subagents": {
+              "default": null,
+              "timeoutMs": 1,
+              "maxDepth": 0
+            }
+          }
+        }
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "agent-valid",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt"
+          }
+        }
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "agent-unknown",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt",
+            "extra": "ignored"
+          }
+        }
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "agent-emptyDescription",
+      "config": {
+        "agents": {
+          "a": {
+            "description": " ",
+            "prompt": "own test prompt"
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "Agent a is invalid."
+      }
+    },
+    {
+      "name": "agent-numberDescription",
+      "config": {
+        "agents": {
+          "a": {
+            "description": 3,
+            "prompt": "own test prompt"
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "gateway_request_failed",
+        "message": "agent.description?.trim is not a function"
+      }
+    },
+    {
+      "name": "agent-emptyPrompt",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": ""
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "Agent a is invalid."
+      }
+    },
+    {
+      "name": "agent-badTools",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt",
+            "tools": [
+              null
+            ]
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "gateway_request_failed",
+        "message": "Cannot read properties of null (reading 'trim')"
+      }
+    },
+    {
+      "name": "agent-numberTools",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt",
+            "tools": [
+              1
+            ]
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "gateway_request_failed",
+        "message": "tool.trim is not a function"
+      }
+    },
+    {
+      "name": "agent-selfObserver",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt",
+            "observer": "a"
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "Agent a observer must reference a distinct configured AgentDefinition."
+      }
+    },
+    {
+      "name": "agent-missingObserver",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt",
+            "observer": "missing"
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "Agent a observer must reference a distinct configured AgentDefinition."
+      }
+    },
+    {
+      "name": "agent-observerMessage",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt",
+            "observerMessage": "go"
+          }
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "Agent a is invalid."
+      }
+    },
+    {
+      "name": "agent-largeMaxTurns",
+      "config": {
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt",
+            "maxTurns": 9007199254740992
+          }
+        }
+      },
+      "expected": {
+        "ok": true
+      }
+    },
+    {
+      "name": "order-system-before-settings",
+      "config": {
+        "systemPrompt": 1,
+        "settings": null
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "systemPrompt must be a string."
+      }
+    },
+    {
+      "name": "order-model-policy-before-budget",
+      "config": {
+        "managedModels": null,
+        "taskBudget": {
+          "total": 0
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_MANAGED_SETTINGS",
+        "message": "managedModels selectors must be *, provider/*, or provider/model."
+      }
+    },
+    {
+      "name": "order-settings-before-alias",
+      "config": {
+        "settings": null,
+        "toolAliases": null
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SETTINGS",
+        "message": "settings must be an object."
+      }
+    },
+    {
+      "name": "order-alias-before-agent",
+      "config": {
+        "toolAliases": null,
+        "agents": []
+      },
+      "expected": {
+        "ok": false,
+        "code": "gateway_request_failed",
+        "message": "Cannot convert undefined or null to object"
+      }
+    },
+    {
+      "name": "hook-nullheaders",
+      "config": {
+        "hooks": {
+          "url": "http://127.0.0.1/",
+          "headers": null,
+          "events": {}
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "gateway_request_failed",
+        "message": "Cannot convert undefined or null to object"
+      }
+    },
+    {
+      "name": "hook-badurl-nullheaders",
+      "config": {
+        "hooks": {
+          "url": "not-a-url",
+          "headers": null,
+          "events": {}
+        }
+      },
+      "expected": {
+        "ok": false,
+        "code": "INVALID_SDK_SESSION_CONFIG",
+        "message": "hooks.url must be an absolute HTTP(S) URL."
+      }
+    },
+    {
+      "name": "valid-all",
+      "config": {
+        "systemPrompt": "",
+        "persistSession": false,
+        "outputStyle": "style",
+        "permissionMode": "acceptEdits",
+        "managedPermissions": {
+          "deny": [],
+          "ask": [],
+          "defaultMode": "plan",
+          "canPrompt": false
+        },
+        "managedModels": {
+          "allow": [
+            "*"
+          ],
+          "deny": [
+            "p/*"
+          ]
+        },
+        "includeHookEvents": true,
+        "agentProgressSummaries": false,
+        "forwardSubagentText": false,
+        "sandbox": {
+          "type": "tool_policy",
+          "network": "deny"
+        },
+        "userDialogKinds": [
+          "input"
+        ],
+        "settingSources": [
+          "managed",
+          "user",
+          "project",
+          "local"
+        ],
+        "additionalWorkingDirectories": [],
+        "toolAliases": {},
+        "outputFormat": {
+          "type": "json_schema",
+          "schema": {
+            "type": [
+              "object"
+            ],
+            "properties": {
+              "a": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "agents": {
+          "a": {
+            "description": "reader",
+            "prompt": "own test prompt"
+          }
+        },
+        "skills": "all",
+        "plugins": [
+          {
+            "type": "local",
+            "path": "/isolated/plugin"
+          }
+        ],
+        "hooks": {
+          "url": "http://127.0.0.1/",
+          "events": {
+            "Stop": []
+          }
+        }
+      },
+      "expected": {
+        "ok": true
+      }
+    }
+  ]
+}

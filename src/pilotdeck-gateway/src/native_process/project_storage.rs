@@ -129,3 +129,30 @@ mod tests {
         requests.project.dispose().await.unwrap();
     }
 }
+
+/// The same prepared-generation persistence, with a Gateway-owned temporary
+/// native transcript path. This never resolves/registers a project chat marker.
+pub(super) fn for_ephemeral(generation:Arc<RuntimeLease>,root:Arc<super::sdk_ephemeral::TemporaryRoot>)->CreateStorage {
+    Arc::new(move|context|{let generation=generation.clone();let root=root.clone();Box::pin(async move{
+        let resource=generation.runtime().resources().get::<ProjectResources>().ok_or_else(||RuntimeError::new("Native persistence project is missing."))?.context().resource(Resource::Persistence).ok_or_else(||RuntimeError::new("Native persistence is missing."))?;
+        let path=root.path().join(format!("{}.jsonl",crate::storage::sanitize_session_id(&context.session_key)));let open_path=path.clone();
+        Ok(SessionStorage::Recording(RecordingPlan {transcript_path:path,open:Arc::new(move||{
+            let _generation=&generation;root.verify().map_err(|e|crate::storage::recorder::RecorderError::Type(e.to_string()))?;
+            let persistence=resource.as_any().downcast_ref::<PersistenceResources>().ok_or_else(||crate::storage::recorder::RecorderError::Type("Native persistence has the wrong type.".into()))?;
+            persistence.create_session_bounded(context.session_key.clone(),Some(open_path.clone()))
+        })}))
+    })})
+}
+
+#[cfg(test)]mod ephemeral_tests {
+    use super::*;
+    use crate::runtime::session::SessionContext;
+    #[tokio::test]
+    async fn temporary_recording_reopens_across_generations_and_children_stay_under_owned_root(){
+        let(_scratch,requests)=crate::native_process::management_tests::setup();let registry=super::super::assembly::project_registry(&requests.options,&requests.env);let sessions=super::super::sdk_ephemeral::EphemeralSessions::default();let root=sessions.acquire("ephemeral".into()).await.unwrap();
+        let context=SessionContext{session_key:"ephemeral".into(),project_key:None,channel_key:"cli".into(),allowed_tools:None,disallowed_tools:None};
+        let generation=Arc::new(registry.acquire(Some(&requests.options.project)).unwrap());let factory=for_ephemeral(generation,root.clone());let SessionStorage::Recording(plan)=factory(context.clone()).await.unwrap() else{panic!("recording")};assert!(plan.transcript_path.starts_with(root.path()));let path=plan.transcript_path.clone();let opened=(plan.open)().unwrap();opened.recorder.start_turn(&"ephemeral".into(),&"first".into()).unwrap();
+        let(store,key,_)=opened.into_storage();let recorder=crate::storage::recorder::Recorder::new(store.clone(),key.clone());let(_,child,_)=recorder.writer().sidechain_storage(&"child".into());assert!(child.transcript_path.starts_with(root.path()));assert_ne!(child.transcript_path,key.transcript_path);drop(recorder);drop(store);drop(factory);drop(plan);
+        registry.reload().await.unwrap();let generation=Arc::new(registry.acquire(Some(&requests.options.project)).unwrap());let factory=for_ephemeral(generation,root.clone());let SessionStorage::Recording(plan)=factory(context).await.unwrap() else{panic!("recording")};assert_eq!(plan.transcript_path,path);let reopened=(plan.open)().unwrap();assert_eq!(reopened.read().unwrap().entries.len(),1);drop(reopened);drop(plan);drop(factory);sessions.close().await.unwrap();assert!(!root.path().exists());registry.dispose().await.unwrap();requests.owner.shutdown().await.unwrap();requests.project.dispose().await.unwrap();
+    }
+}

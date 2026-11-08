@@ -182,40 +182,52 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
         Result<Option<crate::runtime::turn::interaction::SdkModelOptions>, SubmitError>,
     > {
         Box::pin(async move {
-            let registry = self.registry.lock().await;
-            let Some(config) = registry.session_config(session) else {
+            let (runtime, job, enforced) = {
+                let registry = self.registry.lock().await;
+                if registry.session_config(session).is_none() {
+                    return Ok(None);
+                }
+                let effective_project = project
+                    .cloned()
+                    .or_else(|| registry.session_project(session));
+                let runtime = registry
+                    .options()
+                    .resolver
+                    .resolve(effective_project.as_ref())
+                    .map_err(sdk_submit_error)?;
+                let job = registry.resolve_session_config_async(session, &runtime);
+                let enforced = registry
+                    .options()
+                    .organization_policy
+                    .as_ref()
+                    .and_then(|p| p.settings.as_ref())
+                    .and_then(|s| s.enforced_session_settings.as_ref())
+                    .and_then(|s| s.get("agent"))
+                    .and_then(|a| a.get("fallbackModel"))
+                    .cloned();
+                (runtime, job, enforced)
+            };
+            let Some(config) = job.await.map_err(sdk_submit_error)? else {
                 return Ok(None);
             };
-            let effective_project = project
-                .cloned()
-                .or_else(|| registry.session_project(session));
-            let runtime = registry
-                .options()
-                .resolver
-                .resolve(effective_project.as_ref())
-                .map_err(sdk_submit_error)?;
-            let model = runtime
+            let undefined = JsValue::Undefined;
+            let raw_agent = runtime
                 .snapshot
                 .get("config")
                 .and_then(|v| v.get("agent"))
-                .and_then(|v| v.get("model"));
-            let parent = model.and_then(|m| {
+                .unwrap_or(&undefined);
+            let agent =
+                super::sdk_settings::compose_agent(raw_agent, Some(&config), &runtime.snapshot);
+            let parent = agent.get("model").and_then(|m| {
                 Some(crate::runtime::model::router::RouterModelRef::new(
                     m.get("provider")?.as_string()?.clone(),
                     m.get("model")?.as_string()?.clone(),
                 ))
             });
-            let enforced = registry
-                .options()
-                .organization_policy
-                .as_ref()
-                .and_then(|p| p.settings.as_ref())
-                .and_then(|s| s.enforced_session_settings.as_ref())
-                .and_then(|s| s.get("agent"))
-                .and_then(|a| a.get("fallbackModel"));
-            Ok(Some(super::sdk_model::model_options(
-                config, parent, enforced,
-            )))
+            // Keep this exact project generation alive through settings and policy projection.
+            let result = super::sdk_model::model_options(&config, parent, enforced.as_ref());
+            drop(runtime);
+            Ok(Some(result))
         })
     }
     fn assert_model<'a>(
@@ -303,141 +315,16 @@ pub(super) fn apply_prompt_config(target: &mut pilotdeck_protocol::JsObject, sdk
     }
 }
 
+#[path = "sdk_validation.rs"]
+mod intake;
 fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
-    let object = config.as_object().ok_or_else(|| {
-        SubmitError::new(
-            "INVALID_SDK_SESSION_CONFIG",
-            "sdkSessionConfig must be an object.",
-        )
-    })?;
-    super::super::sdk_permission::validate(config)?;
-    super::super::sdk_tool_policy::validate_sandbox(config)?;
-    super::sdk_hooks::validate(config)?;
-    if let Some(plugins) = object.get("plugins").filter(|v| !v.is_undefined()) {
-        let valid = match plugins {
-            JsValue::Array(items) if !items.is_empty() => {
-                let mut seen = std::collections::HashSet::new();
-                items.iter().all(|item| {
-                    let path = item.get("path").and_then(JsValue::as_string);
-                    item.as_object().is_some()
-                        && item.get("type") == Some(&"local".into())
-                        && path.is_some_and(|p| {
-                            p.units().first() == Some(&u16::from(b'/')) && seen.insert(p.clone())
-                        })
-                })
-            }
-            _ => false,
-        };
-        if !valid {
-            return Err(SubmitError::new(
-                "INVALID_SDK_SESSION_CONFIG",
-                "plugins must be a non-empty array of distinct absolute Gateway-local plugin paths.",
-            ));
-        }
-    }
-
-    for key in ["agentProgressSummaries", "forwardSubagentText"] {
-        if object
-            .get(key)
-            .is_some_and(|v| !v.is_undefined() && v.as_bool().is_none())
-        {
-            return Err(SubmitError::new(
-                "INVALID_SDK_SESSION_CONFIG",
-                format!("{key} must be a boolean."),
-            ));
-        }
-    }
-    super::task_budget::validate(config)?;
+    intake::validate(config)?;
+    let Some(object) = config.as_object() else {
+        return Ok(());
+    };
+    // Bounds and additional native catalog descriptors run after legacy intake.
     super::super::sdk_tools::validate(config)?;
     validate_agents(object.get("agents"))?;
-    if let Some(value) = object.get("userDialogKinds").filter(|v| !v.is_undefined()) {
-        let valid = match value {
-            JsValue::Array(kinds) if !kinds.is_empty() => {
-                kinds.iter().enumerate().all(|(index, kind)| {
-                    kind.as_string().is_some_and(|s| {
-                        ["input", "select", "confirm", "form"]
-                            .iter()
-                            .any(|allowed| s.equals_str(allowed))
-                    }) && !kinds[..index].contains(kind)
-                })
-            }
-            _ => false,
-        };
-        if !valid {
-            return Err(SubmitError::new(
-                "INVALID_SDK_SESSION_CONFIG",
-                "userDialogKinds must be a non-empty unique array containing only input, select, confirm, or form.",
-            ));
-        }
-    }
-
-    if let Some(skills) = object.get("skills").filter(|value| !value.is_undefined())
-        && !valid_skill_selector(skills)
-    {
-        return Err(SubmitError::new(
-            "INVALID_SDK_SESSION_CONFIG",
-            "skills must be an array of strings or all.",
-        ));
-    }
-    for key in ["systemPrompt", "appendSystemPrompt", "planModeInstructions"] {
-        if object
-            .get(key)
-            .is_some_and(|value| !value.is_undefined() && !matches!(value, JsValue::String(_)))
-        {
-            return Err(SubmitError::new(
-                "INVALID_SDK_SESSION_CONFIG",
-                format!("{key} must be a string."),
-            ));
-        }
-    }
-    if object.entries().iter().any(|(key, value)| {
-        ![
-            "agentProgressSummaries",
-            "forwardSubagentText",
-            "plugins",
-            "settings",
-            "settingSources",
-            "outputStyle",
-            "permissionMode",
-            "managedPermissions",
-            "additionalWorkingDirectories",
-            "managedTools",
-            "sandbox",
-            "taskBudget",
-            "promptSuggestions",
-            "toolAliases",
-            "deferredTools",
-            "outputFormat",
-            "managedModels",
-            "fallbackModel",
-            "hooks",
-            "includeHookEvents",
-            "userDialogKinds",
-            "agents",
-            "skills",
-            "systemPrompt",
-            "appendSystemPrompt",
-            "planModeInstructions",
-        ]
-        .iter()
-        .any(|name| key.equals_str(name))
-            && !value.is_undefined()
-    }) {
-        return Err(SubmitError::new(
-            "CAPABILITY_UNAVAILABLE",
-            "This SDK session setting is unavailable in the native host.",
-        ));
-    }
-    if let Some(value) = object.get("permissionMode").filter(|v| !v.is_undefined())
-        && !value
-            .as_string()
-            .is_some_and(|s| s.equals_str("acceptEdits") || s.equals_str("dontAsk"))
-    {
-        return Err(SubmitError::new(
-            "INVALID_SDK_SESSION_CONFIG",
-            "permissionMode must be acceptEdits or dontAsk.",
-        ));
-    }
     Ok(())
 }
 
@@ -538,26 +425,21 @@ fn validate_agents(value: Option<&JsValue>) -> Result<(), SubmitError> {
                     return Err(invalid());
                 }
             } else if name.equals_str("maxTurns") {
-                if !value.as_number().is_some_and(|value| {
-                    value.is_finite()
-                        && value > 0.0
-                        && value.fract() == 0.0
-                        && value <= 9_007_199_254_740_991.0
-                }) {
+                if !value
+                    .as_number()
+                    .is_some_and(|value| value.is_finite() && value > 0.0 && value.fract() == 0.0)
+                {
                     return Err(invalid());
                 }
             } else if name.equals_str("mcpServers") {
                 super::super::agent_mcp::validate(value).map_err(sdk_submit_error)?;
             } else if name.equals_str("background") && matches!(value, JsValue::Bool(_)) {
-            } else {
+            } else if name.equals_str("nativeObserver") || name.equals_str("nativeMemoryDisabled") {
                 return Err(SubmitError::new(
                     "CAPABILITY_UNAVAILABLE",
-                    format!(
-                        "Native SDK agent field {} is unavailable.",
-                        String::from_utf16_lossy(name.units())
-                    ),
+                    "Host-only SDK agent authority cannot be supplied by SDK configuration.",
                 ));
-            }
+            } // Unknown non-authority fields are ignored by the legacy projection.
         }
     }
     Ok(())
@@ -755,11 +637,7 @@ mod tests {
     }
     #[test]
     fn custom_agent_fields_fail_closed_until_their_real_owner_exists() {
-        for field in [
-            "nativeObserver",
-            "nativeMemoryDisabled",
-            "unconfiguredExtension",
-        ] {
+        for field in ["nativeObserver", "nativeMemoryDisabled"] {
             let mut agent = crate::metadata::object([
                 ("description", "fixture".into()),
                 ("prompt", "self-written".into()),
@@ -778,6 +656,22 @@ mod tests {
                 "CAPABILITY_UNAVAILABLE"
             );
         }
+        let unknown = object([(
+            "a",
+            object([
+                ("description", "reader".into()),
+                ("prompt", "self-written".into()),
+                ("unconfiguredExtension", "ignored".into()),
+            ]),
+        )]);
+        validate_supported_config(&object([("agents", unknown.clone())])).unwrap();
+        assert!(
+            project_agents(unknown.as_object().unwrap())
+                .get("a")
+                .unwrap()
+                .get("unconfiguredExtension")
+                .is_none()
+        );
         for turns in [0.0, -1.0, 1.5, f64::INFINITY] {
             assert!(
                 validate_agents(Some(&crate::metadata::object([(

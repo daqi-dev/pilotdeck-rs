@@ -1017,6 +1017,7 @@ async fn project_path_boundaries_worker() {
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
         clear_sdk_state: None,
+        ephemeral: None,
     };
     let services = services::Services {
         options: options.clone(),
