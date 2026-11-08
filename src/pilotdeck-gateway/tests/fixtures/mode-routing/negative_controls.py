@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1354 guarded main-entry routing mutation; commit first, never bypass HEAD.
+"""#1354/#2510 guarded main-entry routing mutation; commit first, never bypass HEAD.
 
 NEW_OUTPUT [mutation ...]. --check validates anchors without changing sources.
 Every mutant must compile, kill its exact bound test, and pass after
@@ -9,7 +9,12 @@ spawn the real `CARGO_BIN_EXE_pilotdeck-gateway` child, so they run with
 `--test mode_routing` (that target rebuilds the gateway binary, which is
 where main.rs's routing lives). Unbound observations (launch failures,
 deadlines without an advertisement, stderr pipe errors) stay INVALID: a slow
-host is never evidence.
+host is never evidence. The #2510 rows below are the measured counterweight,
+not an exception to that rule: their mutants break the shared advertisement
+predicate itself (`tests/common/native_entry.rs`), so the deadline expect
+they bind fires only in a run whose own positive control already saw the
+unmutated child advertise — the mutant, not the host, is what the deadline
+indicts.
 
 The self-managed runner keeps the shared verdict invariants
 (specs/negative-controls/README.md): the denominator is the static
@@ -37,6 +42,10 @@ NATIVE_PROCESS = ROOT / 'src/pilotdeck-gateway/src/native_process.rs'
 MAIN = ROOT / 'src/pilotdeck-gateway/src/main.rs'
 UNIT_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs'
 INTEGRATION = ROOT / 'src/pilotdeck-gateway/tests/mode_routing.rs'
+# The shared constants both sibling tests observe through (#2510 item 1):
+# the 8 mode rows never touch this file, so a drifted NATIVE_LISTENING or a
+# flipped `advertises` judgment had no mutant that could see it.
+COMMON = ROOT / 'src/pilotdeck-gateway/tests/common/native_entry.rs'
 UNIT_TEST = 'native_process::tests::gateway_mode_config_matrix'
 ENV_TEST = 'native_process::tests::explicit_options_and_environment'
 # The lib-target bound tests run `--lib <name>`; everything else is an
@@ -126,6 +135,25 @@ mutations = [
      '    inherited.remove("PILOTDECK_GATEWAY_MODE");',
      '    inherited.remove("PILOTDECK_MODE_SINK_UNUSED");',
      ENV_TEST, '#1354 entry-scope mode item not inherited'),
+    # #2510 item 1: the shared advertisement phrase had no drift binding.
+    # Pointing it one trailing space off makes the predicate unable to match
+    # the child's real line, so the routing observation never resolves and the
+    # 120 s advertisement budget ends at its marked deadline expect (the
+    # same case's positive control proves the child did advertise).
+    ('native-listening-flipped', COMMON,
+     'pub const NATIVE_LISTENING: &str = "native listening";',
+     'pub const NATIVE_LISTENING: &str = "native listening ";',
+     'mode_config_routes_the_native_entry',
+     '#1354 native advertisement deadline'),
+    # #2510 item 1: the predicate's own judgment had no drift binding. Flipping
+    # the address-shape polarity rejects the real advertisement (a non-empty,
+    # whitespace-free address now reads as "not an advertisement"), so the
+    # observation loops past every line and the same marked deadline fires.
+    ('advertises-judgment-flipped', COMMON,
+     '        Some(Some(address)) => !address.is_empty() && !address.contains(char::is_whitespace),',
+     '        Some(Some(address)) => address.is_empty() || address.contains(char::is_whitespace),',
+     'mode_config_routes_the_native_entry',
+     '#1354 native advertisement deadline'),
 ]
 
 # #1666: the denominator is this literal roster, not `len(mutations)`. With a
@@ -142,6 +170,8 @@ EXPECTED_NAMES = (
     'mode-argv-bypasses-gate',
     'mode-env-argv-drop',
     'mode-env-sinks',
+    'native-listening-flipped',
+    'advertises-judgment-flipped',
 )
 
 
@@ -286,7 +316,7 @@ def main():
     # `native-process`): the tree lock is taken once around every case, so a
     # sibling suite serializes against this run instead of interleaving
     # between its cases.
-    guarded = [NATIVE_PROCESS, MAIN, UNIT_TESTS, INTEGRATION,
+    guarded = [NATIVE_PROCESS, MAIN, UNIT_TESTS, INTEGRATION, COMMON,
                Path(__file__).resolve(),
                Path(__file__).resolve().parents[1] / 'negative_process.py',
                Path(__file__).resolve().parents[1] / 'negative_suite.py',
