@@ -32,6 +32,10 @@ from negative_process import mutating_sources, run_owned, tree_lock
 session = root / 'scripts/gateway-parity/session_domain.py'
 native = root / 'scripts/gateway-parity/native_evidence.py'
 test_safety = root / 'scripts/gateway-parity/test_safety.py'
+# Mutating any scripts/gateway-parity source puts the run under the shared
+# parity lease, and negative_process._parity_mutation_lock refuses to load
+# that lease from anything but guarded common.py bytes (#166).
+common = root / 'scripts/gateway-parity/common.py'
 
 # (name, file, old bytes, new bytes, bound test).  The old bytes are the
 # post-#2039 spelling, so an anchor that no longer matches is drift, not a
@@ -190,7 +194,7 @@ def main():
                 for row in selected:
                     one(row)
         else:
-            with mutating_sources(root, [session, native]) as originals:
+            with mutating_sources(root, [session, native, common]) as originals:
                 for row in selected:
                     one(row, True)
     except Exception as error:
