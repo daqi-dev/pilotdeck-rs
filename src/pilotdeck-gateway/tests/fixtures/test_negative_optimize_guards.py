@@ -65,6 +65,9 @@ SCRIPTS = (
     # #1433 fix-r1: same entry shape after the migration to negative_selection
     # (review P1-1); its --check is also wired into CI.
     ('sdk-mcp-session-tools/negative_controls.py', (), ()),
+    # #1354: same entry shape from the start (registered + select + Case rows
+    # + claim_dir/missing_target/refuse_unusable_target + verdict_exit).
+    ('mode-routing/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

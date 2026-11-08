@@ -1,5 +1,7 @@
 //! Explicit isolated process configuration and production gateway composition.
-//! The A4 entry never reads these options unless its first argument is `--native`.
+//! The A4 entry never reads these options unless its routing selects the
+//! native composition: the first argument `--native` (#1071) or the
+//! `PILOTDECK_GATEWAY_MODE` config item (#1354).
 use crate::{ProxyError, config::Env, host::modules::tool_context::TurnEnvironment};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -214,6 +216,32 @@ pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
     first == Some(std::ffi::OsStr::new("--native"))
 }
 
+/// #1354 A8.5-pr3: the main entry's default routing switch, formalized from
+/// #1071's explicit `--native` argument into a config item.
+/// `PILOTDECK_GATEWAY_MODE` names the startup mode: `proxy` (the default,
+/// #1303 option A — the Rust front with the TS upstream stays the rollback
+/// target through stage A) or `native`. Unset keeps the default; every other
+/// value — the empty string and non-UTF-8 bytes included — fails closed at
+/// startup, the same shape as `PILOTDECK_NATIVE_RUN_REGISTRY` (#1369), and
+/// the entry judges the item before the `--native` argument's routing, so the
+/// rejection holds even when that argument is present. The explicit `--native`
+/// argument wins over this config item, like the TS
+/// baseline's own `readStringFlag(argv, "--host") ?? env.PILOTDECK_GATEWAY_HOST`
+/// (src/cli/pilotdeck.ts:213): the per-invocation flag outranks the
+/// deployment default.
+pub fn gateway_mode(mode: Option<&std::ffi::OsStr>) -> Result<bool, ProxyError> {
+    match mode {
+        None => Ok(false),
+        Some(value) => match value.to_str() {
+            Some("proxy") => Ok(false),
+            Some("native") => Ok(true),
+            _ => {
+                Err("gateway mode (PILOTDECK_GATEWAY_MODE) must be exactly proxy or native.".into())
+            }
+        },
+    }
+}
+
 impl Options {
     pub fn parse(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<Self, ProxyError> {
         Self::parse_at(args, Path::new(""))
@@ -338,6 +366,10 @@ impl Options {
     /// When `--storage-root` was supplied it is injected as
     /// `PILOTDECK_STORAGE_ROOT` so the project's persistence stage builds a
     /// real snapshot provider; absent means snapshots remain disabled.
+    /// `PILOTDECK_GATEWAY_MODE` is entry scope (#1354): this process already
+    /// consumed it for its own routing, so it must not sink into the native
+    /// subtree's environment — a descendant that re-executes the gateway
+    /// would otherwise silently inherit a native routing it was never given.
     pub fn environment(&self, mut inherited: Env) -> Env {
         inherited.insert("HOME".into(), self.home.to_string_lossy().into_owned());
         inherited.insert(
@@ -345,6 +377,7 @@ impl Options {
             self.home.to_string_lossy().into_owned(),
         );
         inherited.remove("PILOTDECK_PROXY_UPSTREAM");
+        inherited.remove("PILOTDECK_GATEWAY_MODE");
         inherited.remove("PILOTDECK_CONFIG_PATH");
         inherited.remove("PILOTDECK_AGENT_LOOP_TCP_HOST");
         inherited.remove("PILOTDECK_AGENT_LOOP_TCP_PORT");

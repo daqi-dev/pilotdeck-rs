@@ -280,9 +280,13 @@ impl Clone for ReplacementCoordinator {
      'ports.turn(identity, recorder, signal)',
      'ports.turn(identity, recorder, { let _ = signal; crate::runtime::hooks::Cancellation::new() })',
      'native_process::tests::review::production_turn_ports_share_cancellation', '#1071 production turn ports share cancellation'),
+    # #1354 re-anchored: the single opt-in line grew into the entry's
+    # routing region (explicit `--native` flag plus the config item). The
+    # control keeps its one job — the first argument no longer selects the
+    # native parser — by forcing the flag's binding to false.
     ('native-entry-disconnected', MAIN,
-     'if pilotdeck_gateway::native_process::native_requested(args.next().as_deref()) {',
-     'if false && pilotdeck_gateway::native_process::native_requested(args.next().as_deref()) {',
+     '    let explicit_native = pilotdeck_gateway::native_process::native_requested(first.as_deref());',
+     '    let explicit_native = false\n        && pilotdeck_gateway::native_process::native_requested(first.as_deref());',
      'explicit_entry_selects_parser', '#1071 native first argument selects native parser'),
     ('opt-in', SOURCE,
      'first == Some(std::ffi::OsStr::new("--native"))',

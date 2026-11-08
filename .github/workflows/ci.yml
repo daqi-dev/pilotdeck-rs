@@ -204,6 +204,8 @@ jobs:
           # 负控夹具的 --check 也进 CI——锚点 / 绑定 / 静态名册任一漂移即本步非零退出，
           # 不再只靠宿主链；全量杀灭轮（需要 cargo 与净树）仍由协调者在宿主跑。
           python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-mcp-session-tools/negative_controls.py --check
+          # #1354（minimax r2 P2，同一先例）：入口路由负控夹具的 --check 同理进 CI。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/mode-routing/negative_controls.py --check
       - name: session-assembly-1316 负控夹具执行（#1316 / #1632）
         shell: bash
         run: python3 -I src/pilotdeck-gateway/tests/fixtures/session-assembly-1316/negative_controls.py "$RUNNER_TEMP/negctl-1316"
