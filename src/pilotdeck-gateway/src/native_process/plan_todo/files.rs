@@ -129,7 +129,9 @@ impl PlanFiles for NativePlanFiles {
                 let text = String::from_utf8_lossy(&bytes);
                 let trimmed = crate::metadata::js_trim(&text);
                 // Fixed TS planFile.ts:76 treats empty or whitespace-only text as absent.
-                if trimmed.is_empty() { return Ok(JsValue::Undefined); }
+                if trimmed.is_empty() {
+                    return Ok(JsValue::Undefined);
+                }
                 let plan: JsString = trimmed.into();
                 super::projection::validate_plan(&plan).map_err(|e| error(e.to_string()))?;
                 Ok(JsValue::String(plan))
@@ -148,6 +150,44 @@ mod tests {
     impl Drop for Scratch {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+    #[tokio::test]
+    async fn plan_file_empty_and_whitespace_match_real_ts_reader() {
+        let scratch = Scratch(
+            std::env::temp_dir().join(format!("pdrs-plan-reader-{}", uuid::Uuid::new_v4())),
+        );
+        fs::create_dir_all(&scratch.0).unwrap();
+        let project = scratch.0.canonicalize().unwrap();
+        let files = NativePlanFiles::prepare(project.clone()).await.unwrap();
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/plan-todo/read-file-oracle.json"
+        ))
+        .unwrap();
+        assert_eq!(oracle["rows"].as_array().unwrap().len(), 4);
+        for row in oracle["rows"].as_array().unwrap() {
+            fs::write(
+                project.join(".pilotdeck/plans/plan.md"),
+                row["content"].as_str().unwrap(),
+            )
+            .unwrap();
+            let actual = files
+                .read(
+                    ".pilotdeck/plans/plan.md".into(),
+                    project.to_string_lossy().into_owned().into(),
+                )
+                .await
+                .unwrap();
+            if row["result"]["undefined"] == true {
+                assert!(actual.is_undefined(), "{}", row["name"]);
+            } else {
+                assert_eq!(
+                    actual,
+                    JsValue::from(row["result"]["value"].as_str().unwrap()),
+                    "{}",
+                    row["name"]
+                );
+            }
         }
     }
     #[tokio::test]

@@ -935,6 +935,8 @@ fn sdk_scope_revokes_only_its_own_handler_tokens() {
         config: None,
     };
     scope.revoke();
+    assert!(!signal.is_cancelled());
+    drop(scope);
     assert!(signal.is_cancelled());
     let registry = handlers.lock().unwrap();
     assert!(registry.has_config_change(&key));

@@ -68,12 +68,12 @@ impl SdkSessionHooks {
                 .unwrap_or_else(|error| error.into_inner())
                 .unregister_session_hook(&token);
         }
-        self.signal.abort();
     }
 }
 impl Drop for SdkSessionHooks {
     fn drop(&mut self) {
         self.revoke();
+        self.signal.abort();
     }
 }
 
@@ -134,7 +134,11 @@ impl SessionLifecycle {
             },
             identity.run_id.clone(),
             input.hooks.clone(),
-            input.session_hook_options.clone().or_else(|| input.hook_options.clone()).unwrap_or_default(),
+            input
+                .session_hook_options
+                .clone()
+                .or_else(|| input.hook_options.clone())
+                .unwrap_or_default(),
         )?;
         let port: Arc<dyn LifecyclePort> = Arc::new(port);
         let sdk = input
@@ -175,7 +179,11 @@ impl SessionLifecycle {
                     Arc::new(crate::runtime::hooks::LifecycleRuntime::new(
                         crate::runtime::hooks::HookRuntime::with_options(
                             file_settings,
-                            input.session_hook_options.clone().or_else(|| input.hook_options.clone()).unwrap_or_default(),
+                            input
+                                .session_hook_options
+                                .clone()
+                                .or_else(|| input.hook_options.clone())
+                                .unwrap_or_default(),
                         ),
                     ))
                 });
@@ -189,8 +197,11 @@ impl SessionLifecycle {
                 }
                 let config_settings = settings("ConfigChange");
                 let config = (!config_settings.is_empty()).then(|| {
-                    let mut options = input.session_hook_options.clone().or_else(|| input.hook_options.clone()).unwrap_or_default();
-                    options.on_async_registered = None;
+                    let options = input
+                        .session_hook_options
+                        .clone()
+                        .or_else(|| input.hook_options.clone())
+                        .unwrap_or_default();
                     Arc::new(crate::runtime::hooks::LifecycleRuntime::new(
                         crate::runtime::hooks::HookRuntime::with_options(config_settings, options),
                     ))

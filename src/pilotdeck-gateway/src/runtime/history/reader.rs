@@ -9,16 +9,24 @@ use std::{
 use tokio::sync::Semaphore;
 
 pub(super) static READ_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
-/// Restrict only history's marker reads; existing project lookup semantics and
-/// other NativeFiles consumers remain unchanged. Refusals must not fall back
-/// to a different project's lexical identifier.
+/// Marker IO for history and the native model-selection metadata adapter.
+/// The latter may also read JSONL transcripts; configuration is deliberately
+/// loaded by its separate bounded owner. Refusals cannot become lexical fallback.
 pub(crate) struct HistoryMarkerFiles {
     refused: std::cell::Cell<bool>,
+    allow_transcripts: bool,
 }
 impl HistoryMarkerFiles {
     pub(crate) fn new() -> Self {
         Self {
             refused: std::cell::Cell::new(false),
+            allow_transcripts: false,
+        }
+    }
+    pub(crate) fn for_model_selection() -> Self {
+        Self {
+            allow_transcripts: true,
+            ..Self::new()
         }
     }
     pub(crate) fn was_refused(&self) -> bool {
@@ -37,18 +45,23 @@ impl crate::metadata::Files for HistoryMarkerFiles {
         #[cfg(unix)]
         {
             use std::os::unix::fs::OpenOptionsExt;
-            const MAX_MARKER: u64 = 64 * 1024;
+            let limit =
+                if self.allow_transcripts && path.extension().is_some_and(|ext| ext == "jsonl") {
+                    crate::storage::TRANSCRIPT_MAX_BYTES
+                } else {
+                    64 * 1024
+                };
             let mut options = fs::OpenOptions::new();
             options.read(true).custom_flags(libc::O_NONBLOCK);
             let file = options.open(path)?;
             let meta = file.metadata()?;
-            if !meta.is_file() || meta.len() > MAX_MARKER {
+            if !meta.is_file() || meta.len() > limit {
                 self.refused.set(true);
                 return Err(std::io::Error::other("Unsafe history project marker"));
             }
             let mut bytes = Vec::new();
-            file.take(MAX_MARKER + 1).read_to_end(&mut bytes)?;
-            if bytes.len() as u64 > MAX_MARKER {
+            file.take(limit + 1).read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > limit {
                 self.refused.set(true);
                 return Err(std::io::Error::other("Unsafe history project marker"));
             }
@@ -67,12 +80,12 @@ impl crate::metadata::Files for HistoryMarkerFiles {
 pub(super) fn history_path(files: &HistoryFiles, session: &JsString) -> Result<PathBuf, String> {
     let lookup = crate::metadata::Metadata {
         home: files.home.clone(),
-        cwd: files.project.clone(),
-        files: HistoryMarkerFiles {
-            refused: std::cell::Cell::new(false),
-        },
+        cwd: PathBuf::new(),
+        files: HistoryMarkerFiles::new(),
     };
-    let chat = lookup.chat_dir(&files.project.to_string_lossy());
+    let chat = lookup
+        .process_chat_dir(&files.project.to_string_lossy())
+        .map_err(|error| error.to_string())?;
     if lookup.files.refused.get() {
         return Err("Unsafe history project marker".into());
     }

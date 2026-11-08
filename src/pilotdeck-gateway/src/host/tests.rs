@@ -9,6 +9,7 @@ mod event;
 mod model;
 mod modules;
 mod resume;
+mod tcp;
 
 /// Test-only observations plus an opt-in reconnect gate. Production builds
 /// contain neither; the gate separates real child exit from virtual timers.

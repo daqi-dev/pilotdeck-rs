@@ -126,6 +126,7 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
                 include_events: config.get("includeHookEvents") == Some(&JsValue::Bool(true)),
                 handlers: self.handlers.clone(),
                 async_registry: self.async_hooks.clone(),
+                current_turn: None,
             }))
         })
     }

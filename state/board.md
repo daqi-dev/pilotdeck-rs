@@ -4987,3 +4987,8 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-08 20:41 · CLI 两小时接续（继续开发）
 
 唯一正本与旧树快照维持，本机本轮可归属材料约1.33GiB，Rust仅mbp2，未清理/停止其它任务。r50全目标编译、agent17、execute_code、hooks integration19过1忽略、session投递、内置模块兼容、watch取消序号与71静态锚通过；strict仅MSRV命名冲突已源修。SDK主片/receipt/session投影与stdio环境接线已整合，r51编译缺宿主转发/可见性等已修待r52，未冒通过；7条实际负控仍被旧source guard动态include阻断，静态路径等价修复后待重跑。GLM独审暴露空plan文件P1，按实际TS恢复undefined；Cron交付关停、raw子代理事件缓冲/continuable/observer/TCP及SDK真实probe继续。现场、证据、持有人与下一步见主仓 `_tmp/20261108-cli-completion/handoff-2041.md`，下一交接22:41；本轮只本机提交、无GitHub写，完整CLI/阶段D/人签均未收口。
+
+
+### 2026-11-08 21:17 · CLI 真实 SDK 与模型读取检查点（本机，继续开发）
+
+r56编译/47项SDK/5项async/29格模型矩阵+7子进程边界/20项agent/15项plan/双strict/四bin全过；冻结bin随后真实SDK FileChanged/ConfigChange、同session配置继承、64MiB投影负控、elicitation回答/timeout/abort/reconnect均过。真实slow HTTP证明正常close等待已入场ConfigChange；reload后PreToolUse及ConfigChange async的非空context经steer进入后续provider请求，修了旧代lookup与提前abort两处实效失败。r57真实同文本新turn身份不误投、生产CronManager→ChannelServer pending delivery随shutdown回收、97静态负控锚通过。r58独立配置loader修复64KiB marker误限合法config，含saved模型/大config/相对key的9子进程、旧session_model回归与strict全过。模型single-project差异已追加账本待人复核；普通RPC与set/clear同类FIFO路径在校验，不能冒P0/P1清零。continuable/observer/TCP监听端继续，root新Seatbelt控制字符实测待编译；7条实际负控仍待有提交的干净镜像执行。主证据 `_tmp/20261108-cli-completion/verify-r{52,54,56,57,58}` 与SDK remote原件，仍仅本机提交/mbp2构建，无GitHub写，完整CLI未收口；下个两小时交接22:41。

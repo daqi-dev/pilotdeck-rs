@@ -306,4 +306,143 @@ mod tests {
             .await
             .expect("#1450 registry fixture project shutdown");
     }
+
+    /// An old generation stays leased across reload. A stale callback must
+    /// not target a new run even when all textual IDs are reused.
+    #[tokio::test]
+    async fn pinned_sdk_async_uses_completion_and_steer_identity_across_reload() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let session = JsString::from("sdk-pinned-identity");
+        let run = JsString::from("same-run");
+        let reservation1 = requests.owner.begin_turn(&session, &run).unwrap();
+        let completion1 = requests.owner.begin_completion(&session, &run);
+        let keep_old_generation = requests.project.acquire(None).unwrap();
+        let old_steer = steer_resource(&requests.project);
+        let binding1 = old_steer.bind_session(session.clone(), None).unwrap();
+        let first = binding1
+            .start_turn(
+                "same-turn".into(),
+                run.clone(),
+                vec![],
+                Cancellation::new(),
+                &mut ModuleRouter::default(),
+            )
+            .unwrap();
+        let registry =
+            build_async_hook_registry(&requests.project, &requests.owner, &requests.coordinator)
+                .unwrap();
+        let guard1 = {
+            let owner = requests.owner.clone();
+            let session = session.clone();
+            let completion = completion1.clone();
+            Arc::new(move || owner.is_current_completion(&session, &completion))
+        };
+        let registration = |id: &str| AsyncHookRegistration {
+            session_key: session.clone(),
+            invocation_id: id.into(),
+            hook_name: "hook".into(),
+            hook_event: "PreToolUse".into(),
+            timeout_ms: Some(60_000.0),
+            include_hook_events: false,
+        };
+        let output = || {
+            crate::metadata::object([(
+                "hookSpecificOutput",
+                crate::metadata::object([
+                    ("hookEventName", "PreToolUse".into()),
+                    ("additionalContext", "pinned context".into()),
+                ]),
+            )])
+        };
+        let pinned = || {
+            crate::runtime::async_hooks::AsyncHookTurn::new(
+                old_steer.active_steer_info(&session).unwrap(),
+            )
+        };
+        registry
+            .register_pinned(registration("live"), pinned(), guard1.clone())
+            .unwrap();
+        registry
+            .register_pinned(registration("stale"), pinned(), guard1.clone())
+            .unwrap();
+        requests.project.reload().await.unwrap();
+        let live = registry
+            .submit(session.clone(), "live".into(), output())
+            .await
+            .unwrap();
+        assert_eq!(live.status, AsyncHookStatus::Delivered);
+        assert_eq!(
+            old_steer
+                .mailbox_for_test(&session)
+                .unwrap()
+                .drain(&"same-turn".into())
+                .len(),
+            1
+        );
+        first.close().await.unwrap();
+        requests
+            .owner
+            .end_turn(&session, Some(&run), Some(&reservation1));
+        let reservation2 = requests.owner.begin_turn(&session, &run).unwrap();
+        let completion2 = requests.owner.begin_completion(&session, &run);
+        let new_steer = steer_resource(&requests.project);
+        let binding2 = new_steer.bind_session(session.clone(), None).unwrap();
+        let second = binding2
+            .start_turn(
+                "same-turn".into(),
+                run.clone(),
+                vec![],
+                Cancellation::new(),
+                &mut ModuleRouter::default(),
+            )
+            .unwrap();
+        assert!(!guard1());
+        let result = registry
+            .submit(session.clone(), "stale".into(), output())
+            .await
+            .unwrap();
+        assert_eq!(result.status, AsyncHookStatus::Expired);
+        assert!(
+            new_steer
+                .mailbox_for_test(&session)
+                .unwrap()
+                .drain(&"same-turn".into())
+                .is_empty()
+        );
+        let guard2 = {
+            let owner = requests.owner.clone();
+            let session = session.clone();
+            let completion = completion2.clone();
+            Arc::new(move || owner.is_current_completion(&session, &completion))
+        };
+        registry
+            .register_pinned(
+                registration("fresh"),
+                crate::runtime::async_hooks::AsyncHookTurn::new(
+                    new_steer.active_steer_info(&session).unwrap(),
+                ),
+                guard2,
+            )
+            .unwrap();
+        let fresh = registry
+            .submit(session.clone(), "fresh".into(), output())
+            .await
+            .unwrap();
+        assert_eq!(fresh.status, AsyncHookStatus::Delivered);
+        assert_eq!(
+            new_steer
+                .mailbox_for_test(&session)
+                .unwrap()
+                .drain(&"same-turn".into())
+                .len(),
+            1
+        );
+        second.close().await.unwrap();
+        requests
+            .owner
+            .end_turn(&session, Some(&run), Some(&reservation2));
+        drop(keep_old_generation);
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+    }
 }

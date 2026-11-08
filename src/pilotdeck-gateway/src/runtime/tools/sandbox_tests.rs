@@ -89,6 +89,30 @@ async fn unavailable_platform_never_returns_a_bare_confined_command() {
 }
 #[cfg(target_os = "macos")]
 #[tokio::test]
+async fn control_characters_in_workspace_paths_cannot_widen_real_seatbelt_policy() {
+    let scratch = Scratch(std::env::current_dir().unwrap().join("_tmp").join(format!("seatbelt-paths-{}", uuid::Uuid::new_v4())));
+    std::fs::create_dir_all(&scratch.0).unwrap();
+    let outside = scratch.0.join("outside");
+    std::fs::create_dir_all(&outside).unwrap();
+    for (index, suffix) in ["\n", "\r", "\t", "\u{7f}", "\n\") (allow file-write*) ;"].iter().enumerate() {
+        let workspace = scratch.0.join(format!("workspace-{index}-{suffix}"));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let sandbox = NativeSandbox::new(SandboxMode::WorkspaceWrite, std::env::temp_dir());
+        let inside = workspace.join("inside");
+        let denied = outside.join(format!("denied-{index}"));
+        for (target, allowed) in [(&inside, true), (&denied, false)] {
+            let (program, args) = sandbox.prepare("/usr/bin/touch".into(), vec![target.to_string_lossy().as_ref().into()], &workspace.to_string_lossy().as_ref().into(), None).await.unwrap();
+            let mut command = tokio::process::Command::new(program.to_utf8().unwrap());
+            command.args(args.iter().map(|value| value.to_utf8().unwrap())).kill_on_drop(true);
+            let output = tokio::time::timeout(Duration::from_secs(5), command.output()).await.unwrap().unwrap();
+            assert_eq!(output.status.success(), allowed, "path case {index}, allowed={allowed}, stderr={}", String::from_utf8_lossy(&output.stderr));
+            assert_eq!(target.exists(), allowed, "path case {index} actual write");
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
 async fn real_seatbelt_foreground_and_detached_tasks_enforce_file_effects() {
     use crate::runtime::background::{BackgroundTaskRuntime, StartTaskSpec, TaskStatus};
     let scratch = Scratch(

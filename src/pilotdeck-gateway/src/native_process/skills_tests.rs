@@ -1,6 +1,20 @@
 use super::*;
 use crate::runtime::context::PromptAssembler;
 use std::future::Future;
+#[test]
+fn disabled_skills_do_not_register_execution() {
+    let registry = ToolRegistry::default();
+    NativeSkills::disabled().register(&registry);
+    crate::negative_assert!(
+        !registry.has(&"read_skill".into()),
+        "#1231 disabled skills do not enable execution"
+    );
+    NativeSkills::default().register(&registry);
+    assert!(
+        registry.has(&"read_skill".into()),
+        "enabled native skills retain their execution tool"
+    );
+}
 fn field<'a>(value: &'a JsValue, name: &str) -> &'a JsValue {
     static ABSENT: JsValue = JsValue::Undefined;
     value.get(name).unwrap_or(&ABSENT)

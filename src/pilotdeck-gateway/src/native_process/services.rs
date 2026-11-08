@@ -1662,7 +1662,8 @@ impl SubmitHostServices for Services {
                 .map_err(|e| failure(e.to_string()))?;
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                let marker_files = crate::runtime::history::HistoryMarkerFiles::new();
+                let marker_files =
+                    crate::runtime::history::HistoryMarkerFiles::for_model_selection();
                 let lookup = crate::metadata::Metadata {
                     home: home.clone(),
                     cwd: PathBuf::new(),
@@ -1680,9 +1681,17 @@ impl SubmitHostServices for Services {
                         "Unsafe project marker.",
                     ));
                 }
-                let _resolved = resolved.map_err(|error| {
+                let resolved = resolved.map_err(|error| {
                     SubmitError::new(&error.code, String::from_utf16_lossy(error.message.units()))
                 })?;
+                // This native host owns one project registry lease. Validate
+                // registration first, then refuse a different project rather
+                // than selecting its model against this host's configuration.
+                if std::path::Path::new(&resolved) != project {
+                    return Err(unavailable(
+                        "The isolated native process serves only its configured project.",
+                    ));
+                }
                 let defined = |value: Option<&JsValue>| value.is_some_and(|v| !v.is_undefined());
                 let selected = input.get("modelSelection");
                 let override_model = input.get("modelOverride");
@@ -1750,13 +1759,6 @@ impl SubmitHostServices for Services {
                         ("selection", normalized),
                     ]));
                 }
-                let metadata = crate::metadata::Metadata {
-                    home: home.clone(),
-                    // Relative .cwd markers use process.cwd(), like the public
-                    // metadata RPC; the served project is not a cwd override.
-                    cwd: PathBuf::new(),
-                    files: crate::metadata::NativeFiles,
-                };
                 let params = object([
                     (
                         "projectKey",
@@ -1771,9 +1773,21 @@ impl SubmitHostServices for Services {
                     ),
                 ]);
                 let state =
-                    crate::session_model::execute(&metadata, &params, &env).map_err(|e| {
-                        SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
-                    })?;
+                    crate::session_model::execute_with_config(&lookup, &params, &env, |selected| {
+                        crate::config::load_project_bounded(&home, &lookup.cwd, &env, selected)
+                    });
+                // Both the second marker scan and transcript open use the same
+                // bounded, nonblocking owner. A refused marker must not silently
+                // become a lexical fallback or a default model selection.
+                if lookup.files.was_refused() {
+                    return Err(SubmitError::new(
+                        "gateway_request_failed",
+                        "Unsafe project marker or session transcript.",
+                    ));
+                }
+                let state = state.map_err(|e| {
+                    SubmitError::new(&e.code, String::from_utf16_lossy(e.message.units()))
+                })?;
                 let saved = state.get("saved").cloned().unwrap_or(JsValue::Undefined);
                 if saved.get("mode") == Some(&JsValue::from("model")) {
                     validate(&saved)?;

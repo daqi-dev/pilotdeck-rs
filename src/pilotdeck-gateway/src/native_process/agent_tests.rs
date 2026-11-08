@@ -571,3 +571,160 @@ async fn subagent_lifecycle_uses_real_hook_runtime_and_retries_rejected_success_
     );
     assert_eq!(callbacks[1].get("success"), Some(&JsValue::Bool(false)));
 }
+
+fn owned_event_turn(owner: &Arc<NativeForkOwner>, id: &str, detached: bool) -> Arc<ForkTurn> {
+    let mut turn = turn(JsObject::new());
+    let state = Arc::get_mut(&mut turn).unwrap();
+    state.owner = Some(Arc::downgrade(owner));
+    state.parent.turn_id = id.into();
+    state.detached = detached;
+    turn
+}
+fn event_owner() -> (
+    crate::runtime::project::ProjectRuntimeRegistry,
+    Arc<NativeForkOwner>,
+) {
+    use crate::runtime::project::{ProjectRuntimeRegistry, ResourceBundle};
+    let registry = ProjectRuntimeRegistry::new(
+        "/fixture-session-events",
+        Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+    );
+    let owner = NativeForkOwner::new(registry.acquire(None).unwrap());
+    (registry, owner)
+}
+#[tokio::test]
+async fn late_background_and_foreground_raw_events_share_order_and_next_turn_real_ts_projection() {
+    use crate::runtime::turn::projector::{
+        GatewayAgentEventProjectionInput, GatewayAgentEventProjector,
+    };
+    let fixture = pilotdeck_protocol::parse_json(include_str!("agent_buffer_oracle.json")).unwrap();
+    let JsValue::Array(cases) = fixture.get("cases").unwrap() else {
+        panic!("cases")
+    };
+    let (registry, owner) = event_owner();
+    for case in cases {
+        let JsValue::Array(expected) = case.get("drained").unwrap() else {
+            panic!("drained")
+        };
+        let old = owned_event_turn(&owner, "old-parent-turn", false);
+        let background = owned_event_turn(&owner, "old-parent-turn", true);
+        old.emit(expected[0].as_object().unwrap().clone())
+            .await
+            .unwrap();
+        background
+            .emit(expected[1].as_object().unwrap().clone())
+            .await
+            .unwrap();
+        old.clone().close().await.unwrap();
+        drop(old);
+        let current = owned_event_turn(&owner, "new-parent-turn", false);
+        let drained: Vec<_> = current
+            .drain_raw_events()
+            .into_iter()
+            .map(JsValue::Object)
+            .collect();
+        assert_eq!(&drained, expected);
+        let projector = GatewayAgentEventProjector::new(Default::default()).unwrap();
+        let mut projected = vec![];
+        for event in &drained {
+            projected.extend(
+                projector
+                    .project(&GatewayAgentEventProjectionInput {
+                        event,
+                        run_id: "new-parent-run",
+                        forward_subagent_text: case.get("forwardSubagentText")
+                            == Some(&JsValue::Bool(true)),
+                    })
+                    .unwrap(),
+            );
+        }
+        // Compare the actual gateway wire projection: JS undefined object
+        // properties are omitted by JSON serialization in both runtimes.
+        let wire = |value: &JsValue| -> serde_json::Value {
+            serde_json::from_str(&pilotdeck_protocol::stringify_json(value).unwrap().unwrap())
+                .unwrap()
+        };
+        assert_eq!(
+            wire(&JsValue::Array(projected)),
+            wire(case.get("projected").unwrap())
+        );
+        assert!(current.drain_raw_events().is_empty());
+        background.close().await.unwrap();
+        current.close().await.unwrap();
+    }
+    owner.release_generation().await.unwrap();
+    registry.dispose().await.unwrap();
+}
+#[tokio::test]
+async fn shared_raw_queue_preserves_foreground_backpressure_and_close_revokes_blocked_producer() {
+    let (registry, owner) = event_owner();
+    let foreground = owned_event_turn(&owner, "turn", false);
+    for _ in 0..16 {
+        foreground.emit(JsObject::new()).await.unwrap();
+    }
+    let mut waiting = Box::pin(foreground.emit(JsObject::new()));
+    assert!(std::future::poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+    assert_eq!(owner.drain_raw().len(), 16);
+    tokio::time::timeout(Duration::from_secs(2), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(owner.drain_raw().len(), 1);
+    for _ in 0..16 {
+        foreground.emit(JsObject::new()).await.unwrap();
+    }
+    let mut waiting = Box::pin(foreground.emit(JsObject::new()));
+    assert!(std::future::poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+    foreground.clone().close().await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), waiting)
+            .await
+            .unwrap()
+            .is_err()
+    );
+    owner.close_admission();
+    assert!(owner.drain_raw().is_empty());
+    assert!(owner.push_raw(JsObject::new(), None).is_err());
+    drop(foreground);
+    owner.release_generation().await.unwrap();
+    registry.dispose().await.unwrap();
+}
+#[tokio::test]
+async fn raw_event_count_and_single_event_byte_limit_reject_without_silently_dropping_prior_events()
+{
+    let (registry, owner) = event_owner();
+    for _ in 0..4096 {
+        owner.push_raw(JsObject::new(), None).unwrap();
+    }
+    assert!(
+        owner
+            .push_raw(JsObject::new(), None)
+            .unwrap_err()
+            .message
+            .to_utf8()
+            .unwrap()
+            .contains("count budget")
+    );
+    assert_eq!(owner.drain_raw().len(), 4096);
+    let oversized = object([(
+        "text",
+        JsValue::String(JsString::from_utf16(vec![120; 16 * 1024 * 1024])),
+    )])
+    .as_object()
+    .unwrap()
+    .clone();
+    assert!(
+        owner
+            .push_raw(oversized, None)
+            .unwrap_err()
+            .message
+            .to_utf8()
+            .unwrap()
+            .contains("byte budget")
+    );
+    assert!(owner.drain_raw().is_empty());
+    owner.push_raw(JsObject::new(), None).unwrap();
+    assert_eq!(owner.drain_raw().len(), 1);
+    owner.release_generation().await.unwrap();
+    registry.dispose().await.unwrap();
+}

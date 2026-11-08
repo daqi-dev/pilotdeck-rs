@@ -1,4 +1,4 @@
-//! Per-turn host assembly from a real project lease, then the stdio sidecar.
+//! Per-turn host assembly from a real project lease, then stdio or TCP.
 //!
 //! This is the Rust landing point for `AgentLoopDeploymentProfile.ts:20-110`,
 //! `AgentSessionRuntimeBundle.ts:242-290`, `sidecarHostModulePorts.ts:240-322`
@@ -45,7 +45,7 @@ use std::{
 use tokio::process::Command;
 
 /// `AgentLoopDeploymentProfile` (TS lines 11-38). TCP is parsed for exact
-/// error/selection parity, but the native host factory has no TCP transport.
+/// error/selection parity; stdio and TCP share the bounded host engine.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Deployment {
     Native,
@@ -63,8 +63,8 @@ pub enum Deployment {
 }
 
 /// `resolveAgentLoopDeploymentProfile` (`AgentLoopDeploymentProfile.ts:44-81`).
-/// Error text is byte-for-byte the TS baseline; the tcp selection is kept so
-/// `create` can reject it explicitly (#130) instead of inventing a fallback.
+/// Error text is byte-for-byte the TS baseline; invalid profiles never silently
+/// fall back to the owned default connection.
 pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
     let transport = env
         .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
@@ -358,8 +358,8 @@ impl TurnHostFactory {
         }
     }
 
-    /// Acquire one generation lease and prepare a lazy sidecar connection. Unsupported
-    /// transports fail before any lease exists, so they cannot leak.
+    /// Acquire one generation lease and prepare a lazy stdio or TCP connection.
+    /// Native is a sentinel handled by the native composition before this API.
     pub async fn create(
         &self,
         identity: &ExecutionIdentity,
@@ -390,26 +390,13 @@ impl TurnHostFactory {
         signal: crate::runtime::hooks::Cancellation,
         authority: Option<super::interaction::TurnInteractionAuthority>,
     ) -> Result<InteractionHost, HostError> {
-        let (command, args, cwd, env) = match &self.deployment {
-            Deployment::Stdio {
-                command,
-                args,
-                cwd,
-                env,
-            } => (command, args, cwd, env),
-            Deployment::Native => {
-                return Err(HostError::new(
-                    HostErrorKind::Protocol,
-                    "Agent loop transport 'native' has no sidecar host factory.",
-                ));
-            }
-            Deployment::Tcp { .. } => {
-                return Err(HostError::new(
-                    HostErrorKind::Protocol,
-                    "Agent loop transport 'tcp' is not supported; see #130.",
-                ));
-            }
-        };
+        if matches!(&self.deployment, Deployment::Native) {
+            return Err(HostError::new(
+                HostErrorKind::Protocol,
+                "Agent loop transport 'native' has no sidecar host factory.",
+            ));
+        }
+        let deployment = self.deployment.clone();
         let lease = match &self.pinned_generation {
             Some(generation) => generation
                 .upgrade()
@@ -429,13 +416,40 @@ impl TurnHostFactory {
             // `assemble` owns (and therefore drops) the lease on error.
             Err(error) => return Err(error),
         };
-        let mut command = Command::new(command);
-        command.args(args).current_dir(cwd).env_clear().envs(env);
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
         Ok(InteractionHost {
             client: Box::pin(async move {
-                HostClient::spawn(&mut command, expected.as_ref(), limits).await
+                match deployment {
+                    Deployment::Stdio {
+                        command,
+                        args,
+                        cwd,
+                        env,
+                    } => {
+                        let mut command = Command::new(command);
+                        command.args(args).current_dir(cwd).env_clear().envs(env);
+                        HostClient::spawn(&mut command, expected.as_ref(), limits).await
+                    }
+                    Deployment::Tcp {
+                        host,
+                        port,
+                        connect_timeout_ms,
+                    } => {
+                        HostClient::connect_tcp(
+                            &host,
+                            port,
+                            connect_timeout_ms.map(std::time::Duration::from_millis),
+                            expected.as_ref(),
+                            limits,
+                        )
+                        .await
+                    }
+                    Deployment::Native => Err(HostError::new(
+                        HostErrorKind::Protocol,
+                        "Agent loop transport 'native' has no sidecar host factory.",
+                    )),
+                }
             }),
             lease,
             router,

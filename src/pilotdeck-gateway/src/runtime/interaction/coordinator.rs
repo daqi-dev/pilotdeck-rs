@@ -11,7 +11,6 @@ pub struct InteractionOptions {
     /// Lifecycle ownership is transferred to this coordinator: dispose clears
     /// the entire registry, like TS. Do not share it between independent owners.
     pub permission_grants: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
-    pub on_elicitation_admitted: Option<DeliveredObserver>,
     pub on_elicitation_delivered: Option<DeliveredObserver>,
 }
 pub struct PermissionDecision {
@@ -40,7 +39,6 @@ pub struct GatewayInteractionCoordinator {
     elicitation_bus: GatewayElicitationBus,
     permission_bus: GatewayPermissionBus,
     permission_grants: Arc<GatewaySessionPermissionRuleSetRegistry>,
-    on_admitted: Option<DeliveredObserver>,
     on_delivered: Option<DeliveredObserver>,
 }
 impl Default for GatewayInteractionCoordinator {
@@ -60,7 +58,6 @@ impl GatewayInteractionCoordinator {
                 .unwrap_or_else(|| GatewayPermissionBus::new(reconnect_port.clone())),
             reconnect_port,
             permission_grants: options.permission_grants.unwrap_or_default(),
-            on_admitted: options.on_elicitation_admitted,
             on_delivered: options.on_elicitation_delivered,
         }
     }
@@ -144,12 +141,6 @@ impl GatewayInteractionCoordinator {
         let Some(entry) = self.elicitation_bus.consume(owner, request, binding) else {
             return false;
         };
-        // JS promise continuations run after the synchronous session-hook
-        // observer has admitted its work. Preserve that ordering on Tokio.
-        if let Some(observer) = &self.on_admitted {
-            let _ =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(owner, request)));
-        }
         (entry.resolve)(answer);
         if let Some(observer) = &self.on_delivered {
             observer(owner, request);

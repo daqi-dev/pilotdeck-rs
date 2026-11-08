@@ -687,22 +687,58 @@ fn turn_and_session_hooks_use_their_distinct_emitters() {
         make_tools(JsObject::new(), Arc::default(), RuleSetHandle::empty());
     let turn_events = Arc::new(Mutex::new(Vec::new()));
     let session_events = Arc::new(Mutex::new(Vec::new()));
-    let turn_sink = turn_events.clone(); let session_sink = session_events.clone();
-    let tools = tools.with_session_emitter(Arc::new(move |event| { session_sink.lock().unwrap().push(event); true }));
-    let ports = tools.turn_with_authority(&identity, recorder, Cancellation::new(), Some(TurnInteractionAuthority {
-        permission_mode: None, base_permission_mode: None, can_prompt: Some(true),
-        policy_can_prompt: None, sdk_permission_mode: None, sdk_hooks: None,
-        emit: Arc::new(move |event| { turn_sink.lock().unwrap().push(event); true }),
+    let turn_sink = turn_events.clone();
+    let session_sink = session_events.clone();
+    let tools = tools.with_session_emitter(Arc::new(move |event| {
+        session_sink.lock().unwrap().push(event);
+        true
     }));
+    let ports = tools.turn_with_authority(
+        &identity,
+        recorder,
+        Cancellation::new(),
+        Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
+            can_prompt: Some(true),
+            policy_can_prompt: None,
+            sdk_permission_mode: None,
+            sdk_hooks: None,
+            emit: Arc::new(move |event| {
+                turn_sink.lock().unwrap().push(event);
+                true
+            }),
+        }),
+    );
     let event = crate::metadata::object([
-        ("type", "started".into()), ("sessionId", JsValue::String(identity.session_id.clone())),
-        ("hookName", "h".into()), ("hookEvent", "SessionStart".into()),
+        ("type", "started".into()),
+        ("sessionId", JsValue::String(identity.session_id.clone())),
+        ("hookName", "h".into()),
+        ("hookEvent", "SessionStart".into()),
     ]);
     let event = event.as_object().unwrap();
-    ports.interaction.hook_options.as_ref().unwrap().on_projection.as_ref().unwrap().project(event).unwrap();
+    ports
+        .interaction
+        .hook_options
+        .as_ref()
+        .unwrap()
+        .on_projection
+        .as_ref()
+        .unwrap()
+        .project(event)
+        .unwrap();
     assert_eq!(turn_events.lock().unwrap().len(), 1);
     assert_eq!(session_events.lock().unwrap().len(), 0);
-    ports.interaction.session_hook_options.as_ref().unwrap().on_projection.as_ref().unwrap().project(event).unwrap();
+    ports
+        .interaction
+        .session_hook_options
+        .as_ref()
+        .unwrap()
+        .on_projection
+        .as_ref()
+        .unwrap()
+        .project(event)
+        .unwrap();
     assert_eq!(turn_events.lock().unwrap().len(), 1);
     assert_eq!(session_events.lock().unwrap().len(), 1);
 }

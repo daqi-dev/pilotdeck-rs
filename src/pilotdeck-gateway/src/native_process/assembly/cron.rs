@@ -90,7 +90,9 @@ pub(super) fn bind_callbacks(
         ),
         on_result_delivery: Some(Arc::new(move |value| {
             if tokio::runtime::Handle::try_current().is_ok() {
-                return Err(CronError::error("Cron result delivery requires its scheduler worker thread."));
+                return Err(CronError::error(
+                    "Cron result delivery requires its scheduler worker thread.",
+                ));
             }
             let required = |key: &str| {
                 value
@@ -165,6 +167,212 @@ fn complete_delivery(
 #[cfg(test)]
 mod delivery_completion_tests {
     use super::*;
+    #[tokio::test(flavor = "current_thread")]
+    async fn production_binding_keeps_scheduler_delivery_owned_until_shutdown() {
+        use crate::channel::{im_cron::CronResultDelivery, protocol::*, server::ChannelServer};
+        use crate::runtime::cron::CronAgentGateway;
+        use std::sync::{
+            Mutex,
+            atomic::{AtomicBool, Ordering},
+        };
+        struct Handle;
+        impl ChannelHandle for Handle {
+            fn stop(&self, _: &str) -> BoxFuture<Result<(), ChannelError>> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+        struct Adapter {
+            key: ChannelKey,
+            receipt: Mutex<Option<tokio::sync::oneshot::Sender<CronResultDelivery>>>,
+            dropped: Arc<AtomicBool>,
+        }
+        impl ChannelAdapter for Adapter {
+            fn channel_key(&self) -> &ChannelKey {
+                &self.key
+            }
+            fn start(
+                &self,
+                _: ChannelStartDeps,
+            ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
+                Box::pin(async { Ok(Arc::new(Handle) as Arc<dyn ChannelHandle>) })
+            }
+            fn deliver_cron_result(&self, delivery: &CronResultDelivery) -> BoxFuture<bool> {
+                let receipt = self.receipt.lock().unwrap().take().unwrap();
+                let delivery = delivery.clone();
+                struct Dropped(Arc<AtomicBool>);
+                impl Drop for Dropped {
+                    fn drop(&mut self) {
+                        self.0.store(true, Ordering::SeqCst);
+                    }
+                }
+                let dropped = Dropped(self.dropped.clone());
+                Box::pin(async move {
+                    let _dropped = dropped;
+                    receipt.send(delivery).unwrap();
+                    std::future::pending().await
+                })
+            }
+        }
+        struct Gateway;
+        impl CronAgentGateway for Gateway {
+            fn submit_turn(&self, _: &CronTurnSubmit) -> Result<(), CronError> {
+                panic!("observed turn required")
+            }
+            fn submit_turn_observed(
+                &self,
+                _: &CronTurnSubmit,
+                observe: &mut dyn FnMut(&JsValue) -> Result<(), CronError>,
+            ) -> Result<(), CronError> {
+                observe(&crate::metadata::object([
+                    ("type", "assistant_text_delta".into()),
+                    ("text", "production delivery".into()),
+                ]))
+            }
+            fn abort_turn(
+                &self,
+                _: &JsString,
+                _: Option<&JsString>,
+                _: Option<&JsString>,
+            ) -> Result<(), CronError> {
+                Ok(())
+            }
+            fn close_session(&self, _: &JsString, _: Option<&JsString>) -> Result<(), CronError> {
+                Ok(())
+            }
+        }
+        let scratch = crate::test_scratch::Scratch::new("native-cron-delivery-binding");
+        let home = scratch.path().join("home");
+        let project = scratch.path().join("project");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        let manager = Arc::new(
+            CronManager::new(CronManagerOptions {
+                config: CronManagerConfig {
+                    enabled: true,
+                    timezone: "UTC".into(),
+                    max_concurrent_runs: 1.0,
+                    run_timeout_minutes: 1.0,
+                },
+                pilot_home: home.to_string_lossy().into_owned(),
+                session_overrides: None,
+                now: Some(Arc::new(|| 1_767_225_600_000.0)),
+                uuid: None,
+                logger: None,
+                scheduler_idle_poll_ms: Some(60_000),
+            })
+            .unwrap(),
+        );
+        let server =
+            ChannelServer::new(Default::default(), Arc::new(|| Box::pin(async { Ok(()) })));
+        let (receipt, ready) = tokio::sync::oneshot::channel();
+        let dropped = Arc::new(AtomicBool::new(false));
+        server
+            .hot_start_channel(Arc::new(Adapter {
+                key: ChannelKey::new("fixture"),
+                receipt: Mutex::new(Some(receipt)),
+                dropped: dropped.clone(),
+            }))
+            .await
+            .unwrap();
+        let shutdown = crate::runtime::network::Cancellation::new();
+        bind_callbacks(
+            &manager,
+            server.clone(),
+            tokio::runtime::Handle::current(),
+            shutdown.clone(),
+        )
+        .unwrap();
+        manager.bind_agent_gateway(Arc::new(Gateway)).unwrap();
+        let project_value = JsValue::from(project.to_string_lossy().as_ref());
+        let created = manager
+            .create_task(&crate::metadata::object([
+                ("projectKey", project_value.clone()),
+                ("message", "fixture task".into()),
+                ("sessionKey", "fixture:chat=test:general".into()),
+                ("channelKey", "fixture".into()),
+                (
+                    "schedule",
+                    crate::metadata::object([
+                        ("type", "once".into()),
+                        ("runAt", "2099-01-01T00:00:00.000Z".into()),
+                    ]),
+                ),
+            ]))
+            .unwrap();
+        manager
+            .run_task_now(&crate::metadata::object([
+                ("projectKey", project_value),
+                (
+                    "taskId",
+                    created.get("task").unwrap().get("taskId").unwrap().clone(),
+                ),
+            ]))
+            .unwrap();
+        manager
+            .run_tick_once(Some(project.to_str().unwrap()))
+            .unwrap();
+        let delivery = tokio::time::timeout(std::time::Duration::from_secs(3), ready)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(delivery.text, JsString::from("production delivery"));
+        assert_eq!(
+            delivery.origin_channel_key,
+            Some(ChannelKey::new("fixture"))
+        );
+        assert!(!dropped.load(Ordering::SeqCst));
+        let drain = tokio::task::spawn_blocking(move || {
+            manager.stop_and_drain(std::time::Duration::from_secs(2), || shutdown.cancel())
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(3), drain)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "the real bound callback must drop pending delivery before drain returns"
+        );
+        server.close().await.unwrap();
+    }
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_drains_pending_delivery_before_current_thread_runtime_closes() {
+        let runtime = tokio::runtime::Handle::current();
+        let shutdown = crate::runtime::network::Cancellation::new();
+        let worker_shutdown = shutdown.clone();
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        struct Dropped(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let witness = Dropped(dropped.clone());
+        let (entered, ready) = tokio::sync::oneshot::channel();
+        let worker = tokio::task::spawn_blocking(move || {
+            complete_delivery(
+                &runtime,
+                Some(&worker_shutdown),
+                std::time::Duration::from_secs(30),
+                async {
+                    let _witness = witness;
+                    entered.send(()).unwrap();
+                    std::future::pending::<bool>().await
+                },
+            )
+        });
+        ready.await.unwrap();
+        shutdown.cancel();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), worker)
+            .await
+            .expect("shutdown must not wait for the 30-second delivery deadline")
+            .unwrap();
+        assert_eq!(result, Err("delivery cancelled during gateway shutdown"));
+        assert!(
+            dropped.load(std::sync::atomic::Ordering::SeqCst),
+            "delivery must be dropped before drain returns"
+        );
+    }
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn fire_worker_cannot_finish_before_delivery_and_reports_timeout() {
         let runtime = tokio::runtime::Handle::current();

@@ -1,4 +1,4 @@
-//! Host side of Module 2.0 over an owned stdio child (the inverse of transport/).
+//! Host side of Module 2.0 over an owned stdio child or explicit TCP peer.
 //!
 //! One client owns one turn. `execute` consumes it and always closes the child;
 //! `spawn_resumable` can replace the stdio transport once, without re-executing
@@ -49,9 +49,10 @@
 //! If application stalls, cleanup drops unfinished cooperative callbacks while
 //! preserving the validated terminal result and the last actually applied cursor.
 //! Child shutdown and disposer then use their existing separate bounded waits.
-//! Unix close/Drop kills the owned process group, including grandchildren that
+//! For stdio, Unix close/Drop kills the owned process group, including grandchildren that
 //! retain pipes. A subprocess that deliberately leaves that group is not owned.
 //! Abrupt host death that bypasses close/Drop has no descendant cleanup guarantee.
+//! TCP only owns its socket; close/Drop never terminates the external sidecar.
 mod budget;
 mod connection;
 mod execution;
@@ -459,6 +460,13 @@ pub(super) struct Progress {
     terminal_lease: Option<budget::Lease>,
 }
 
+#[derive(Clone)]
+struct TcpEndpoint {
+    host: String,
+    port: u16,
+    timeout: Duration,
+}
+
 pub struct HostClient {
     connection: Connection,
     binding: SidecarBinding,
@@ -466,6 +474,7 @@ pub struct HostClient {
     cancel_enabled: bool,
     limits: Limits,
     reconnect_command: Option<Command>,
+    reconnect_tcp: Option<TcpEndpoint>,
     reconnect_attempted: bool,
     reconnect_succeeded: bool,
     #[cfg(test)]
@@ -479,7 +488,49 @@ impl HostClient {
         limits: Limits,
     ) -> Result<Self, HostError> {
         limits.validate()?;
-        let mut connection = Connection::spawn(command, limits)?;
+        let connection = Connection::spawn(command, limits)?;
+        Self::from_connection(connection, expected_module_id, limits).await
+    }
+    /// Own one socket, not the long-lived external sidecar. A replacement may
+    /// resume its accepted stream once, without resending execute or effects.
+    pub async fn connect_tcp(
+        host: &str,
+        port: u16,
+        connect_timeout: Option<Duration>,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
+        limits.validate()?;
+        let timeout = connect_timeout.unwrap_or(Duration::from_secs(5));
+        if crate::metadata::js_trim(host).is_empty()
+            || port == 0
+            || timeout.is_zero()
+            || Instant::now().checked_add(timeout).is_none()
+        {
+            return Err(HostError::protocol(
+                "Sidecar TCP endpoint and connect timeout must be valid and representable.",
+            ));
+        }
+        let endpoint = TcpEndpoint {
+            host: host.to_owned(),
+            port,
+            timeout,
+        };
+        let connection = Connection::connect_tcp(
+            &endpoint,
+            limits,
+            budget::Budget::new(limits.max_buffered_bytes),
+        )
+        .await?;
+        let mut client = Self::from_connection(connection, expected_module_id, limits).await?;
+        client.reconnect_tcp = Some(endpoint);
+        Ok(client)
+    }
+    async fn from_connection(
+        mut connection: Connection,
+        expected_module_id: Option<&JsString>,
+        limits: Limits,
+    ) -> Result<Self, HostError> {
         let handshake = timeout(
             limits.handshake_timeout,
             handshake(&mut connection, expected_module_id, None),
@@ -499,6 +550,7 @@ impl HostClient {
                 cancel_enabled,
                 limits,
                 reconnect_command: None,
+                reconnect_tcp: None,
                 reconnect_attempted: false,
                 reconnect_succeeded: false,
                 #[cfg(test)]

@@ -462,7 +462,7 @@ async fn start_assembly(
     let delivered_handlers = sdk_handlers.clone();
     let interactions = Arc::new(GatewayInteractionCoordinator::new(InteractionOptions {
         permission_grants: Some(permission_rule_sets.clone()),
-        on_elicitation_admitted: Some(Arc::new(move |session, request| {
+        on_elicitation_delivered: Some(Arc::new(move |session, request| {
             let handler = delivered_handlers
                 .lock()
                 .unwrap_or_else(|error| error.into_inner())
@@ -583,6 +583,9 @@ async fn start_assembly(
                     .get::<ProjectResources>()
                     .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
                 let staged = resources.context();
+                let pinned_steer = staged.resource(Resource::InteractionSteer).and_then(|resource| {
+                    resource.as_any().downcast_ref::<crate::runtime::project::interaction_steer::InteractionSteer>().cloned()
+                });
                 let title = staged
                     .owner(Family::SessionTitleProvider)
                     .ok_or_else(|| RuntimeError::new("Native title provider is missing."))?;
@@ -1002,6 +1005,7 @@ async fn start_assembly(
                             session_mcp,
                         )?
                         .with_session_emitter(session_emit)
+                        .with_pinned_steer(pinned_steer)
                         .with_permission_mode_source(permission_source.clone())
                         .with_permission_rules(native_permission_rules)
                         .with_web(native_web)

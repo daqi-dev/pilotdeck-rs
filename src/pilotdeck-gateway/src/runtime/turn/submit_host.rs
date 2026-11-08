@@ -158,7 +158,10 @@ pub trait SubmitAdmission: Send + Sync {
     ) -> SubmitFuture<'a, Option<JsString>> {
         Box::pin(async { None })
     }
-    fn sdk_hooks<'a>(&'a self, _session: &'a JsString) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+    fn sdk_hooks<'a>(
+        &'a self,
+        _session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
         Box::pin(async { Ok(None) })
     }
     fn has_sdk_config(&self) -> bool;
@@ -460,7 +463,10 @@ impl SubmitHost for GatewaySubmitHost {
     ) -> SubmitFuture<'a, Option<JsString>> {
         self.admission.sdk_permission_mode(session)
     }
-    fn sdk_hooks<'a>(&'a self, session: &'a JsString) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+    fn sdk_hooks<'a>(
+        &'a self,
+        session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
         self.admission.sdk_hooks(session)
     }
 

@@ -11,11 +11,11 @@ use std::{
 mod agent;
 mod agent_mcp;
 mod assembly;
-mod deployment;
 #[cfg(unix)]
 mod background;
 #[cfg(unix)]
 mod background_archive;
+mod deployment;
 mod local_host;
 mod server_host;
 pub use local_host::{LocalHost, LocalHostOptions};

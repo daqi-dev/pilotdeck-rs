@@ -164,6 +164,7 @@ pub(super) struct ForkTurn {
     detached: bool,
     #[cfg(unix)]
     sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+    foreground_slots: Arc<Semaphore>,
     events: mpsc::Sender<JsObject>,
     events_rx: Mutex<mpsc::Receiver<JsObject>>,
     jobs: Mutex<HashMap<u64, Job>>,
@@ -206,6 +207,7 @@ impl ForkTurn {
             detached: false,
             #[cfg(unix)]
             sandbox,
+            foreground_slots: Arc::new(Semaphore::new(16)),
             events,
             events_rx: Mutex::new(events_rx),
             jobs: Mutex::default(),
@@ -328,16 +330,44 @@ impl ForkTurn {
         if *lock(&self.closed) {
             return Err(ToolError::aborted());
         }
-        if self.detached {
-            if let Some(emit) = self.session_emit.get() {
-                let _ = emit(JsValue::Object(value));
+        if let Some(owner) = &self.owner {
+            let owner = owner.upgrade().ok_or_else(ToolError::aborted)?;
+            let foreground = if self.detached {
+                None
+            } else {
+                Some(
+                    self.foreground_slots
+                        .clone()
+                        .acquire_owned()
+                        .await
+                        .map_err(|_| ToolError::aborted())?,
+                )
+            };
+            if *lock(&self.closed) {
+                return Err(ToolError::aborted());
             }
-            return Ok(());
+            return owner.push_raw(value, foreground);
+        }
+        if self.detached {
+            return Err(error("Native detached event owner is unavailable."));
         }
         self.events
             .send(value)
             .await
             .map_err(|_| ToolError::aborted())
+    }
+    fn drain_raw_events(&self) -> Vec<JsObject> {
+        let mut events = self
+            .owner
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .map(|owner| owner.drain_raw())
+            .unwrap_or_default();
+        let mut receiver = lock(&self.events_rx);
+        while let Ok(event) = receiver.try_recv() {
+            events.push(event);
+        }
+        events
     }
     pub(super) fn register(&self, tools: &ToolRegistry) {
         tools
@@ -353,6 +383,7 @@ impl ForkTurn {
             first
         };
         if first {
+            self.foreground_slots.close();
             {
                 let mut receiver = lock(&self.events_rx);
                 receiver.close();
@@ -492,12 +523,7 @@ impl ToolExecution for ForkExecution {
         self.inner.applies_mode_effects()
     }
     fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
-        let mut receiver = lock(&self.turn.events_rx);
-        let mut events = Vec::new();
-        while let Ok(event) = receiver.try_recv() {
-            events.push(event);
-        }
-        Ok(events)
+        Ok(self.turn.drain_raw_events())
     }
     fn bind_turn_permission(&self, permission: TurnPermission) -> Result<(), HostError> {
         if let Some(session) = &self.turn.prompt_route {
@@ -1032,9 +1058,8 @@ impl ForkApi {
             .dispatch_subagent_hook("SubagentStart", &subagent, &definition, None)
             .await;
         let lifecycle_started = start_hook.is_ok();
-        if lifecycle_started {
-            let _ = self
-                .turn
+        let start_delivery = if lifecycle_started {
+            self.turn
                 .emit(
                     object([
                         ("type", "subagent_started".into()),
@@ -1053,8 +1078,11 @@ impl ForkApi {
                     .unwrap()
                     .clone(),
                 )
-                .await;
-        }
+                .await
+        } else {
+            Ok(())
+        };
+
         let child_context = SessionContext {
             session_key: session.clone(),
             project_key: None,
@@ -1062,7 +1090,7 @@ impl ForkApi {
             allowed_tools: Some(allowed),
             disallowed_tools: None,
         };
-        let mut result = match start_hook {
+        let mut result = match start_hook.and(start_delivery) {
             Ok(()) => {
                 self.execute_child(
                     factory,
@@ -1122,7 +1150,7 @@ impl ForkApi {
             {
                 append_subagent_failure(&mut result, failure);
             }
-            let _ = self
+            let delivery = self
                 .turn
                 .emit(
                     object([
@@ -1140,6 +1168,9 @@ impl ForkApi {
                     .clone(),
                 )
                 .await;
+            if let Err(failure) = delivery {
+                append_subagent_failure(&mut result, failure);
+            }
         }
         let report = result?;
         Ok(agent_output(

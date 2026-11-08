@@ -173,9 +173,18 @@ async fn install_help_and_invalid_arguments_never_start_a_build() {
     assert!(ok, "{stderr}");
     assert!(stderr.is_empty());
     let mut stdout = String::new();
-    help.child.stdout.take().unwrap().read_to_string(&mut stdout).unwrap();
+    help.child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut stdout)
+        .unwrap();
     assert!(stdout.starts_with("pilotdeck-control install --root"));
-    for args in [vec!["install"], vec!["install", "--unknown", "value"], vec!["install", "--root"]] {
+    for args in [
+        vec!["install"],
+        vec!["install", "--unknown", "value"],
+        vec!["install", "--root"],
+    ] {
         let mut invalid = Process::unread(&scratch.0, &args);
         let (ok, stderr) = invalid.exit().await;
         assert!(!ok);
@@ -183,10 +192,20 @@ async fn install_help_and_invalid_arguments_never_start_a_build() {
         assert_eq!(error["kind"], "usage");
         assert!(error["message"].as_str().unwrap().contains("--source"));
         let mut stdout = String::new();
-        invalid.child.stdout.take().unwrap().read_to_string(&mut stdout).unwrap();
+        invalid
+            .child
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_string(&mut stdout)
+            .unwrap();
         assert!(stdout.is_empty());
     }
-    assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 1, "invalid invocations wrote an installation");
+    assert_eq!(
+        fs::read_dir(&scratch.0).unwrap().count(),
+        1,
+        "invalid invocations wrote an installation"
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -195,15 +214,31 @@ async fn live_schema_keeps_real_description_and_redacts_authentication_echo() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}/ws", listener.local_addr().unwrap());
     let token = scratch.0.join("token");
-    let mut child = Process::start(&scratch.0, &["schema", "--url", &url, "--token-file", token.to_str().unwrap()]);
+    let mut child = Process::start(
+        &scratch.0,
+        &[
+            "schema",
+            "--url",
+            &url,
+            "--token-file",
+            token.to_str().unwrap(),
+        ],
+    );
     let mut socket = attach(&listener).await;
     let request = frame(&mut socket).await;
     assert_eq!(request["method"], "describe_server");
-    send(&mut socket, json!({"type":"response","id":request["id"],"ok":true,"result":{
-        "capabilities":["run_get"],"fixture":{"echo":"value watch-secret-123 tail","count":7}
-    }})).await;
+    send(
+        &mut socket,
+        json!({"type":"response","id":request["id"],"ok":true,"result":{
+            "capabilities":["run_get"],"fixture":{"echo":"value watch-secret-123 tail","count":7}
+        }}),
+    )
+    .await;
     let result = child.line().await;
-    assert_eq!(result["live"], json!({"capabilities":["run_get"],"fixture":{"echo":"value [REDACTED] tail","count":7}}));
+    assert_eq!(
+        result["live"],
+        json!({"capabilities":["run_get"],"fixture":{"echo":"value [REDACTED] tail","count":7}})
+    );
     let (ok, stderr) = child.exit().await;
     assert!(ok, "{stderr}");
     assert!(stderr.is_empty());

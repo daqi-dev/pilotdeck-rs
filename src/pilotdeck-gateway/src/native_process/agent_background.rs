@@ -6,8 +6,21 @@ use crate::runtime::{
 };
 use std::sync::atomic::AtomicBool;
 
+const RAW_EVENT_COUNT: usize = 4096;
+const RAW_EVENT_BYTES: usize = 16 * 1024 * 1024;
+struct BufferedRawEvent {
+    event: JsObject,
+    _foreground: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+#[derive(Default)]
+struct RawEvents {
+    events: Vec<BufferedRawEvent>,
+    bytes: usize,
+}
+
 pub(crate) struct NativeForkOwner {
     generation: Mutex<Option<Arc<RuntimeLease>>>,
+    raw: Mutex<RawEvents>,
     closed: AtomicBool,
     releasing: Mutex<bool>,
     completion: watch::Sender<Option<RuntimeResult>>,
@@ -26,6 +39,7 @@ impl NativeForkOwner {
     pub(in crate::native_process) fn new(lease: RuntimeLease) -> Arc<Self> {
         Arc::new(Self {
             generation: Mutex::new(Some(Arc::new(lease))),
+            raw: Mutex::default(),
             closed: AtomicBool::new(false),
             releasing: Mutex::new(false),
             completion: watch::channel(None).0,
@@ -43,6 +57,50 @@ impl NativeForkOwner {
         } else {
             generation.clone()
         }
+    }
+    pub(super) fn push_raw(
+        &self,
+        event: JsObject,
+        foreground: Option<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<(), ToolError> {
+        let mut raw = lock(&self.raw);
+        if !self.is_open() {
+            return Err(ToolError::aborted());
+        }
+        if raw.events.len() >= RAW_EVENT_COUNT {
+            return Err(error(
+                "Native session raw event buffer count budget is full.",
+            ));
+        }
+        let mut value = JsValue::Object(event);
+        let bytes = pilotdeck_protocol::stringify_json(&value)
+            .map_err(|failure| error(failure.to_string()))?
+            .map_or(0, |value| value.len());
+        let total = raw
+            .bytes
+            .checked_add(bytes)
+            .filter(|bytes| *bytes <= RAW_EVENT_BYTES)
+            .ok_or_else(|| error("Native session raw event buffer byte budget is full."))?;
+        if !self.is_open() {
+            return Err(ToolError::aborted());
+        }
+        let JsValue::Object(event) = &mut value else {
+            unreachable!()
+        };
+        raw.events.push(BufferedRawEvent {
+            event: std::mem::take(event),
+            _foreground: foreground,
+        });
+        raw.bytes = total;
+        Ok(())
+    }
+    pub(super) fn drain_raw(&self) -> Vec<JsObject> {
+        let events = {
+            let mut raw = lock(&self.raw);
+            raw.bytes = 0;
+            std::mem::take(&mut raw.events)
+        };
+        events.into_iter().map(|entry| entry.event).collect()
     }
     pub(in crate::native_process) fn is_open(&self) -> bool {
         !self.closed.load(Ordering::SeqCst)
@@ -67,6 +125,11 @@ impl NativeForkOwner {
     }
     pub(in crate::native_process) fn close_admission(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        {
+            let mut raw = lock(&self.raw);
+            raw.events.clear();
+            raw.bytes = 0;
+        }
         let tasks = lock(&self.tasks).clone();
         // Cancel all before waiting; one noncooperative child cannot prevent
         // cancellation from reaching its independent siblings.

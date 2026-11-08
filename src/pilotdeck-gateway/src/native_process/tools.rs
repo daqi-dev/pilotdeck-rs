@@ -62,6 +62,7 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    pinned_steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
     session_emit: Option<super::session_events::SessionEmit>,
     forks: Option<Arc<super::agent::NativeForkRegistry>>,
     fork_owner: Option<Arc<super::agent::NativeForkOwner>>,
@@ -120,6 +121,7 @@ impl SessionTools {
             binding.projection.clone(),
         );
         Ok(Self {
+            pinned_steer: None,
             session_emit: None,
             forks: None,
             fork_owner: None,
@@ -152,6 +154,14 @@ impl SessionTools {
 
     pub(super) fn with_plan_files(mut self, files: Arc<super::plan_todo::NativePlanFiles>) -> Self {
         self.plan_files = Some(files);
+        self
+    }
+
+    pub(super) fn with_pinned_steer(
+        mut self,
+        steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+    ) -> Self {
+        self.pinned_steer = steer;
         self
     }
 
@@ -621,44 +631,57 @@ impl SessionTools {
             }
         }
         // One budget per submit, shared by turn and session projections.
-        let projection_budget = Arc::new(super::assembly::sdk_hooks::HookProjectionBudget::default());
+        let projection_budget =
+            Arc::new(super::assembly::sdk_hooks::HookProjectionBudget::default());
         let hook_options = crate::runtime::hooks::HookRuntimeOptions {
-                    on_projection: Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
-                        session: identity.session_id.clone(),
-                        sdk: sdk_state.as_ref().is_some_and(|sdk| sdk.include_events),
-                        emit: permission_emit.clone(),
-                        error_emit: permission_emit.clone(),
-                        signal: signal.clone(),
-                        budget: projection_budget.clone(),
-                    })),
-                    on_async_registered: sdk_state.as_ref().filter(|sdk| sdk.active).map(|sdk| Arc::new(super::assembly::sdk_hooks::NativeAsyncRegistration { session: identity.session_id.clone(), include_events: sdk.include_events, registry: sdk.async_registry.clone() }) as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>),
+            on_projection: Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
+                session: identity.session_id.clone(),
+                sdk: sdk_state.as_ref().is_some_and(|sdk| sdk.include_events),
+                emit: permission_emit.clone(),
+                error_emit: permission_emit.clone(),
+                signal: signal.clone(),
+                budget: projection_budget.clone(),
+            })),
+            on_async_registered: sdk_state.as_ref().filter(|sdk| sdk.active).map(|sdk| {
+                Arc::new(super::assembly::sdk_hooks::NativeAsyncRegistration {
+                    session: identity.session_id.clone(),
+                    include_events: sdk.include_events,
+                    registry: sdk.async_registry.clone(),
+                    steer: self.pinned_steer.clone(),
+                    current_turn: sdk.current_turn.clone(),
+                })
+                    as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>
+            }),
 
-                    #[cfg(unix)]
-                    shell: self.native_sandbox.as_ref().map(|sandbox| {
-                        Arc::new(crate::runtime::hooks::exec::SandboxedHookShell {
-                            sandbox: sandbox.clone(),
-                            workspace: self.options.project.to_string_lossy().as_ref().into(),
-                        })
-                            as Arc<dyn crate::runtime::hooks::exec::ShellPort>
-                    }),
-                    http: Some(
-                        crate::runtime::hooks::exec::HttpHookExecutor::with_native_proxy(
-                            self.hook_proxy.as_ref(),
-                            &self.hook_env,
-                        ),
-                    ),
-                    ..Default::default()
+            #[cfg(unix)]
+            shell: self.native_sandbox.as_ref().map(|sandbox| {
+                Arc::new(crate::runtime::hooks::exec::SandboxedHookShell {
+                    sandbox: sandbox.clone(),
+                    workspace: self.options.project.to_string_lossy().as_ref().into(),
+                }) as Arc<dyn crate::runtime::hooks::exec::ShellPort>
+            }),
+            http: Some(
+                crate::runtime::hooks::exec::HttpHookExecutor::with_native_proxy(
+                    self.hook_proxy.as_ref(),
+                    &self.hook_env,
+                ),
+            ),
+            ..Default::default()
         };
 
         let mut session_hook_options = hook_options.clone();
-        session_hook_options.on_projection = Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
-            session: identity.session_id.clone(),
-            sdk: sdk_state.as_ref().is_some_and(|sdk| sdk.include_events),
-            emit: self.session_emit.clone().unwrap_or_else(|| permission_emit.clone()),
-            error_emit: permission_emit.clone(),
-            signal: signal.clone(),
-            budget: projection_budget,
-        }));
+        session_hook_options.on_projection =
+            Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
+                session: identity.session_id.clone(),
+                sdk: sdk_state.as_ref().is_some_and(|sdk| sdk.include_events),
+                emit: self
+                    .session_emit
+                    .clone()
+                    .unwrap_or_else(|| permission_emit.clone()),
+                error_emit: permission_emit.clone(),
+                signal: signal.clone(),
+                budget: projection_budget,
+            }));
         SessionPorts {
             model: RouterModelPortOptions {
                 is_main_agent: self.fork_scope.is_none(),

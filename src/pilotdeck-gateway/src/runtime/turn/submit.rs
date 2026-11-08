@@ -1088,6 +1088,15 @@ impl TurnSubmitter {
             set(&mut prepared.options, "execution", execution);
         }
         let mut actual_model = None;
+        let mut sdk_hooks = self.host.sdk_hooks(&run.session_key).await?;
+        if let Some(sdk) = &mut sdk_hooks {
+            let owner = self.owner.clone();
+            let session = run.session_key.clone();
+            let completion = completion.clone();
+            sdk.current_turn = Some(Arc::new(move || {
+                owner.is_current_completion(&session, &completion)
+            }));
+        }
         let mut stream = handle
             .submit_with_authority(
                 prepared.input,
@@ -1097,7 +1106,7 @@ impl TurnSubmitter {
                     base_permission_mode: field(input, "basePermissionMode").as_string().cloned(),
                     can_prompt: field(input, "canPrompt").as_bool(),
                     sdk_permission_mode: self.host.sdk_permission_mode(&run.session_key).await,
-                    sdk_hooks: self.host.sdk_hooks(&run.session_key).await?,
+                    sdk_hooks,
                     policy_can_prompt: (field(
                         field(field(input, "sdkSessionConfig"), "managedPermissions"),
                         "canPrompt",

@@ -37,6 +37,9 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
             .map_err(|error| crate::runtime::project::RuntimeError::new(error.to_string()))?;
         let archive = {
             let mut archives = self.archives.lock().unwrap_or_else(|e| e.into_inner());
+            // Each registry can stage successive workspace identities. Keep
+            // weak sharing for live owners without retaining dead path keys.
+            archives.retain(|_, archive| archive.strong_count() != 0);
             if let Some(archive) = archives.get(&archive_project).and_then(Weak::upgrade) {
                 archive
             } else {

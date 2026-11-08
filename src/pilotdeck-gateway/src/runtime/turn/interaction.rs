@@ -55,6 +55,7 @@ pub struct SdkHookState {
     pub include_events: bool,
     pub handlers: Arc<std::sync::Mutex<crate::runtime::sdk_session::SessionHandlerRegistry>>,
     pub async_registry: SdkAsyncRegistrySlot,
+    pub current_turn: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 pub type SdkFileRuntimeSlot = Arc<
