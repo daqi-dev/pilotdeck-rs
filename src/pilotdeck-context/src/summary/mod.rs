@@ -106,7 +106,7 @@ fn latest_request_group(groups: &[Vec<JsValue>], cut: usize) -> Option<usize> {
         .rev()
         .find(|i| groups[*i].iter().any(is_real_user_request_message))
 }
-fn checkpoint_prefix_len(messages: &[JsValue]) -> usize {
+pub fn checkpoint_prefix_len(messages: &[JsValue]) -> usize {
     let has = |m: &JsValue, role, prefix| {
         is_role(m, role)
             && content(m).iter().any(|b| {

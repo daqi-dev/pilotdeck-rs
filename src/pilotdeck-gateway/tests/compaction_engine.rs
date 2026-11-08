@@ -870,12 +870,12 @@ async fn grouped_estimate_preserves_original_host_failure() {
             CompactionEngineOptions::new(model, "fixture".into(), "summary-model".into());
         let estimates = Arc::new(AtomicUsize::new(0));
         let observed = estimates.clone();
-        let expected_kind = kind.clone();
+        let expected_kind = kind;
         options.estimate_messages = Some(Arc::new(move |_| {
             if observed.fetch_add(1, Ordering::SeqCst) == 0 {
                 return Ok(100.0);
             }
-            let mut error = HostError::new(expected_kind.clone(), "original grouped estimate");
+            let mut error = HostError::new(expected_kind, "original grouped estimate");
             error.accepted = true;
             error.stream_id = Some("original-stream".into());
             error.last_applied_sequence = Some(7.0);
