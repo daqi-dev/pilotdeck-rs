@@ -198,6 +198,7 @@ mod filesystem {
         fail_build: bool,
         unconfirmed: bool,
         bundled_skills: bool,
+        skills_as_file: bool,
         builds: Vec<(PathBuf, String)>,
     }
     impl Builder for MockBuilder {
@@ -228,8 +229,12 @@ mod filesystem {
                         fs::write(cwd.join(".new-source"), b"fixture").unwrap();
                     }
                     if self.bundled_skills {
-                        fs::create_dir_all(cwd.join("skills/example")).unwrap();
-                        fs::write(cwd.join("skills/example/SKILL.md"), sha).unwrap();
+                        if self.skills_as_file {
+                            fs::write(cwd.join("skills"), b"invalid skill root").unwrap();
+                        } else {
+                            fs::create_dir_all(cwd.join("skills/example")).unwrap();
+                            fs::write(cwd.join("skills/example/SKILL.md"), sha).unwrap();
+                        }
                     }
                     Ok(String::new())
                 }
@@ -279,6 +284,7 @@ mod filesystem {
             fail_build: false,
             unconfirmed: false,
             bundled_skills: false,
+            skills_as_file: false,
             builds: Vec::new(),
         };
         let policy = InstallManifest {
@@ -444,6 +450,36 @@ mod filesystem {
                 .unwrap();
             assert_eq!(retry.reason, "alreadyInstalled");
         }
+    }
+    #[test]
+    fn invalid_bundled_skill_root_never_publishes_an_install_or_update() {
+        let scratch = Scratch::new();
+        let (first, mut builder) = fixture(&scratch);
+        builder.bundled_skills = true;
+        builder.skills_as_file = true;
+        let root = scratch.0.join("bad-bundled-install");
+        let old_sha = builder.old.clone();
+        let error = bootstrap(
+            &root,
+            first.policy.clone(),
+            &scratch.0.join("original-source"),
+            &old_sha,
+            &mut builder,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.reason, "invalidSkillsRoot");
+        assert!(!root.exists());
+        let previous = fs::read_link(first.root.join("current")).unwrap();
+        let mut engine = Engine::new(first, builder);
+        let target = engine.check().unwrap().latest.unwrap();
+        let error = engine.apply(&target, &mut |_| {}).unwrap_err();
+        assert_eq!(error.reason, "invalidSkillsRoot");
+        assert_eq!(
+            fs::read_link(engine.installation.root.join("current")).unwrap(),
+            previous
+        );
+        assert!(engine.target_generation().is_none());
     }
     #[test]
     fn bundled_skills_follow_the_published_generation_and_keep_old_bytes() {
