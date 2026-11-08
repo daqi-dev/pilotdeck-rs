@@ -8,6 +8,12 @@ use std::{
 #[test]
 fn native_session_io_fifo_subprocess() {
     for (case, method) in [
+        ("lock-fifo", "rename_session"),
+        ("lock-symlink", "rename_session"),
+        ("lock-fifo", "tag_session"),
+        ("lock-symlink", "tag_session"),
+        ("lock-fifo", "record_agent_status_message"),
+        ("lock-symlink", "record_agent_status_message"),
         ("marker", "rename_session"),
         ("marker", "tag_session"),
         ("marker", "record_agent_status_message"),
@@ -75,16 +81,26 @@ async fn native_session_io_child() {
         let dir = requests.options.home.join("projects/000-unrelated");
         std::fs::create_dir(&dir).unwrap();
         dir.join(".cwd")
+    } else if case.starts_with("lock-") {
+        chat.join("bounded-session.jsonl.lock")
     } else {
         chat.join("bounded-session.jsonl")
     };
-    assert!(
-        Command::new("/usr/bin/mkfifo")
-            .arg(&path)
-            .status()
-            .unwrap()
-            .success()
-    );
+    let target = requests.options.home.join("outside-lock-target");
+    if case == "lock-symlink" {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        #[cfg(not(unix))]
+        panic!("native bounded lock requires Unix");
+    } else {
+        assert!(
+            Command::new("/usr/bin/mkfifo")
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
     let params = object([
         (
             "projectKey",
@@ -121,6 +137,7 @@ async fn native_session_io_child() {
     } else {
         assert!(result.is_err(), "{method}: unsafe transcript accepted");
     }
+    assert!(!target.exists(), "cold lease followed the lock symlink");
     std::fs::remove_file(path).unwrap();
     requests.owner.shutdown().await.unwrap();
     requests.project.dispose().await.unwrap();

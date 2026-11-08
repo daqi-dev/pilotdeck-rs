@@ -281,7 +281,9 @@ async fn acquire_writer_resolved(
 pub(crate) fn try_writer_lease(path: &Path) -> Option<WriterLease> {
     let canonical = crate::storage::canonical_transcript_path(path).ok()?;
     let process = writer_mutex(&canonical).try_lock_owned().ok()?;
-    let (_, file) = crate::storage::LedgerLock::acquire(&canonical).ok()?;
+    // This private fast path is used only by native cold metadata writers;
+    // open the same lock inode with the native bounded policy from the start.
+    let (_, file) = crate::storage::LedgerLock::acquire_bounded(&canonical).ok()?;
     Some(WriterLease {
         _file: file,
         _process: process,
