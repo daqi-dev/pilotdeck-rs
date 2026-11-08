@@ -176,6 +176,10 @@ cargo 槽位在变异**之前**检查并有界等待，计数口径与 scripts/c
 槽记成 2–3 个，#1566 项 1）。`ps` 被沙箱拒绝时回退到 `pgrep -x` 的 cargo 入口名——
 pgrep 拿不到 ppid，只能给下界：读数非零时立即拒绝变异（不等满槽位等待期），
 两个探针都失败同样拒绝变异（绝不把失败当 0）：ps 快照零可解析行判失败（fix-r1），
-且必须列得出调用进程自身、pgrep rc=0 必须带 pid 行、rc=1 不得带 stdout（fix-r2）。
+且必须列得出调用进程自身、pgrep rc=0 必须带 pid 行、rc=1 不得带任何 stdout（含
+纯空白）或 stderr（fix-r2 + fix-r3）。入口名含 CI 直调的 `cargo-nextest`（外部
+子命令：cargo 以 exec 取代自身，`cargo nextest run` 运行期没有名为 cargo 的进程
+可探，实测在案）；零只代表名单内入口不存在——ps 路径匹配任意 `cargo-*` 首词，
+pgrep 回退只探名单内的名字（fix-r3）。
 子进程以独立进程组启动，
 超时或收到信号都先 SIGTERM 再 SIGKILL 整组并回收。

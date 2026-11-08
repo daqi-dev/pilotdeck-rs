@@ -737,7 +737,10 @@ def slots_from_ps() -> tuple[int | None, str]:
     cargo) with non-cargo processes in between. Matching the first command
     word alone -- what the old docstring claimed was "the same criterion" --
     double counts: `cargo clippy` spawns `cargo-clippy`, which spawns
-    `cargo check`, three matches for one slot (#1566 item 1).
+    `cargo check`, three matches for one slot (#1566 item 1). Rows split on
+    "\n" only, never splitlines(): a U+2028 inside some args must stay one
+    row, or it would tear into a second parseable row that can rewrite the
+    parent map (#1770 fix-r3).
 
     A stdout that is nonempty yet has zero parseable rows is a probe failure,
     never a zero count: a sandbox/wrapper printing diagnostics with rc=0 (or
@@ -760,7 +763,14 @@ def slots_from_ps() -> tuple[int | None, str]:
     parent: dict[int, int] = {}
     cargo_pids: set[int] = set()
     parsed = 0
-    for line in result.stdout.splitlines():
+    # split("\n"), not splitlines(): a U+2028 (or \x0b/\x0c/\x85) inside a
+    # process's args must keep it one row -- splitlines() would tear the args
+    # column into a second parseable "int int rest" row, letting a crafted
+    # command line overwrite the parent map (e.g. reparent a live cargo onto
+    # itself) and read a full slot as free. Same invariant as the pgrep rc=0
+    # row parser below (#1770 fix-r3 -- the review's deferred P3, taken as
+    # the 1-line follow-along it permitted, with form T as its control).
+    for line in result.stdout.split("\n"):
         fields = line.split(None, 2)
         if len(fields) < 3 or not fields[0].isdigit() or not fields[1].isdigit():
             continue
@@ -807,11 +817,21 @@ def slots_from_pgrep() -> tuple[int | None, str]:
     that is what this probe returns; `wait_for_slot` refuses to release a
     mutation on it (#1566 item 1).
 
-    rc=0 without a pid row, or rc=1 (pgrep's "no match" code) with stdout,
-    is a probe failure rather than a reading: a wrapper that swallows or
-    injects stdout must not be read as "no entry point alive" (#1770 fix-r2).
+    rc=0 without a pid row, or rc=1 (pgrep's "no match" code) with stdout
+    or stderr, is a probe failure rather than a reading: a wrapper that
+    swallows or injects output must not be read as "no entry point alive"
+    (#1770 fix-r2, fix-r3 for the whitespace-only stdout and stderr shapes).
     Zero stays exact -- it is only returned when every name reported a clean
-    no-match.
+    no-match, and it then means no entry point *on the list* is alive. The
+    list is this repo's cargo entry points: the built-in hot subcommands
+    plus cargo-nextest (CI's test entry, .github/workflows/ci.yml). That
+    last one is not built-in: cargo replaces itself (exec) with an external
+    subcommand, so during `cargo nextest run` no process named `cargo`
+    survives for the other names to find -- nextest must be listed by its
+    own name (#1770 fix-r3, measured on cb8: the exec chain keeps one pid
+    from wrapper to cargo-nextest, with no cargo row as its parent). The
+    scope still differs from the ps path above, which matches any `cargo-*`
+    first word; an unlisted external subcommand would be missed here.
     """
     names = [
         "cargo",
@@ -823,6 +843,12 @@ def slots_from_pgrep() -> tuple[int | None, str]:
         "cargo-run",
         "cargo-bench",
         "cargo-doc",
+        # #1770 fix-r3: external subcommand, CI's test entry. Not in the
+        # built-in list above: cargo exec's it in place (measured), so during
+        # `cargo nextest run` no `cargo` process exists for the built-in
+        # names to find -- without this row the pgrep fallback would read a
+        # full slot as 0 and release a mutation.
+        "cargo-nextest",
     ]
     any_alive = False
     for name in names:
@@ -841,11 +867,21 @@ def slots_from_pgrep() -> tuple[int | None, str]:
                 # through is a probe failure, never "no cargo" -> 0.
                 return None, f"pgrep -x {name} rc=0 without a pid row"
         elif result.returncode == 1:
-            if result.stdout.strip():
-                # #1770 fix-r2: rc=1 is pgrep's "no match", which prints
-                # nothing; stdout here means a wrapper spoke instead of
-                # pgrep, so the probe failed rather than observed an absence.
-                return None, f"pgrep -x {name} exit 1 with stdout: {result.stdout.strip()}"
+            # #1770 fix-r2: rc=1 is pgrep's "no match", which prints
+            # nothing; stdout here means a wrapper spoke instead of
+            # pgrep, so the probe failed rather than observed an absence.
+            # fix-r3: the raw stdout, not strip()ed -- pgrep prints nothing
+            # at all on a clean no-match, so even whitespace-only output is
+            # "someone spoke" (strip() folded it back into the empty string
+            # pgrep never produces, and split("\n") above already keeps a
+            # U+2028 forged row one line for the same reason).
+            if result.stdout:
+                return None, f"pgrep -x {name} exit 1 with stdout: {result.stdout!r}"
+            # fix-r3: same reading for stderr -- a wrapper that refuses to
+            # run pgrep, diagnoses on stderr and exits 1 (stdout empty) is a
+            # probe failure too, never ten clean no-matches -> 0.
+            if result.stderr.strip():
+                return None, f"pgrep -x {name} exit 1 with stderr: {result.stderr.strip()}"
         else:
             return None, f"pgrep -x {name} exit {result.returncode}: {result.stderr.strip()}"
     return (1 if any_alive else 0), ""
@@ -891,7 +927,7 @@ def wait_for_slot() -> None:
         # the mutated source for SLOT_WAIT_SECONDS on an unknowable number.
         # Zero is exact here (no entry point alive means no tree), so only
         # the nonzero bound refuses; since #1770 fix-r2 zero can only come
-        # from nine clean no-match probes, never from a failed one.
+        # from ten clean no-match probes, never from a failed one.
         if source == "pgrep":
             if count == 0:
                 print(f"negctl: cargo slot free: 0/{CARGO_CAP} (probe=pgrep, no cargo entry point alive, {note})")
