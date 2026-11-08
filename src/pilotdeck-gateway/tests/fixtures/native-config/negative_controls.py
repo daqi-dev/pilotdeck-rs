@@ -348,6 +348,20 @@ mutations = [
      '            if let Some(mode) = None::<JsString> {',
      'native_process::tests::review::session_tools_admission_mode_follows_the_store_each_turn',
      '#1864 the stored mode reaches the host admission context'),
+    # ── #2146: the two #1429 acquire-path rulers had no mutants of their own.
+    # Skipping the sync on acquire and dropping the once-per-assembly report
+    # dedup both left the review tests green, so each rule gets a row bound to
+    # the test that states it.
+    ('acquire-ask-sync-removed', ASSEMBLY,
+     'if !sync_acquired_ask_rules(',
+     'if true || !sync_acquired_ask_rules(',
+     'native_process::tests::review::acquiring_a_session_syncs_the_mcp_ask_rules',
+     '#1429 the acquire path restores the generated ask rule'),
+    ('acquire-miss-dedup-removed', ASSEMBLY,
+     'if acquire_miss_reported.set(()).is_ok() {',
+     'if true {',
+     'native_process::tests::review::acquiring_a_session_reports_the_skipped_mcp_ask_sync',
+     '#2146 the second acquire reports nothing: one miss report per assembly'),
 ]
 
 
@@ -362,8 +376,8 @@ mutations = [
 # string that matches no scanned file cannot be told apart from a `{...}`
 # template, so it is not refused here -- the run finds it as an INVALID.
 #
-# The table pins every anchor that is verbatim in the scanned files: 37 of the
-# 43 rows (32 distinct strings, 33 entries -- `the transcript still loads` is
+# The table pins every anchor that is verbatim in the scanned files: 39 of the
+# 45 rows (34 distinct strings, 35 entries -- `the transcript still loads` is
 # registered once per file), the remaining six rows ride a `{...}` template and
 # cannot be pinned. Row and entry counts differ on purpose: rows vs. distinct
 # strings vs. (string, file) pairs are three different numbers. Pinning is the
@@ -416,6 +430,8 @@ LITERAL_ANCHORS = [
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
     (REVIEW_TESTS, '#1864 the stored mode reaches the host admission context'),
+    (REVIEW_TESTS, '#1429 the acquire path restores the generated ask rule'),
+    (REVIEW_TESTS, '#2146 the second acquire reports nothing: one miss report per assembly'),
 ]
 
 # Where an assertion can live: the mutated sources, the read-side files the
