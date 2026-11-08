@@ -108,20 +108,20 @@ async fn shutdown_retries_abort_across_pending_admission_and_drains_terminal() {
     }
     impl CronTurnStream for PendingAdmission {
         async fn next_event(&mut self) -> Result<Option<JsValue>, SubmitError> {
-                if self.done {
-                    return Ok(None);
-                }
-                self.attempts.fetch_add(1, Ordering::SeqCst);
-                while !self.ready.load(Ordering::SeqCst) {
-                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-                }
-                self.done = true;
-                Ok(Some(
-                    pilotdeck_protocol::parse_json(
-                        r#"{"type":"error","code":"agent_aborted","message":"shutdown"}"#,
-                    )
-                    .unwrap(),
-                ))
+            if self.done {
+                return Ok(None);
+            }
+            self.attempts.fetch_add(1, Ordering::SeqCst);
+            while !self.ready.load(Ordering::SeqCst) {
+                tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            }
+            self.done = true;
+            Ok(Some(
+                pilotdeck_protocol::parse_json(
+                    r#"{"type":"error","code":"agent_aborted","message":"shutdown"}"#,
+                )
+                .unwrap(),
+            ))
         }
     }
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));

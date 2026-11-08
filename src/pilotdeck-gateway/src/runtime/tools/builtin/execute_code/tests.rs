@@ -214,13 +214,13 @@ async fn actual_python_helpers_keep_results_local_and_enforce_call_limit() {
         Some(&JsValue::Number(1.))
     );
     {
-    let calls = calls.lock().unwrap();
-    assert_eq!(text(&calls[0].id), "outer:code:1");
-    assert_eq!(text(&calls[0].name), "read_file");
-    assert_eq!(
-        json_value(&calls[0].input),
-        json!({"file_path":"x","offset":2,"limit":3})
-    );
+        let calls = calls.lock().unwrap();
+        assert_eq!(text(&calls[0].id), "outer:code:1");
+        assert_eq!(text(&calls[0].name), "read_file");
+        assert_eq!(
+            json_value(&calls[0].input),
+            json!({"file_path":"x","offset":2,"limit":3})
+        );
     }
     let count = Arc::new(AtomicUsize::new(0));
     let seen = count.clone();

@@ -4997,3 +4997,8 @@ r56编译/47项SDK/5项async/29格模型矩阵+7子进程边界/20项agent/15项
 ### 2026-11-08 21:44 · CLI 队列恢复与阻塞读写修复检查点（本机，继续开发）
 
 r61 首编及 inbox/continuation/owned-jobs 各真实一项、agent/live/factory/附件过；r62 模型get三格与set/clear八格FIFO/超大文件/正常写、SDK与四bin过，cwd绝对路径删除工作目录回归及strict测试警告已源修待r63，不能记全绿。父pending自动wake/实际slot身份守卫已接；后台独立SDK lifecycle与observer adapter尚未齐。真实r56 FIFO并发探针证实get/set/clear/list/describe/catalog会阻塞其它RPC，已串行整合有界descriptor读取/冷写、惰性cwd、取消时保留writer reservation及测试，r63编译已过、其余进行中。SDK真TS四格确认ConfigChange async仅本地pending、FileChanged可网关登记；已纠正前一r56 ConfigChange回投扩展，旧成功记录不再算兼容通过；正常close等已受理HTTP与FileChanged内联await是TS原行为。两家独审复核r62 SDK413行增量中，仍未终审收口。mbp2本树缓存+证据约155GiB后仅删除可再生incremental约37.8GiB（实际可用由25GiB升48GiB），source/原件/bin均保留；本机未编译。下一步TCP监听端root、observer Sol、后台SDK与真实续跑audit、模型最新bin复验Terra，随后净提交镜像跑7实际负控；仅本机提交，无GitHub写，完整CLI/阶段D/人签未完成。证据主仓 `_tmp/20261108-cli-completion/verify-r{59,60,61,62,63}` 与各冻结候选；下一交接22:41。
+
+
+### 2026-11-08 21:48 · CLI 恢复与读写检查全过、实际负控启动
+
+mbp2 r63 全10项返回0：全目标编译、真实parent发布回调/rollback、同文本ID queued slot隔离、模型读取/冷写/取消中writer reservation子进程、list/describe/catalog FIFO与预算、旧metadata cwd/归档矩阵、负控静态锚、agent、strict与四bin。原始logs/source/postfmt已回收，不以子进程ignore误报漏跑；四bin冻结后交audit真实续跑与Terra FIFO并发复验。当前本机检查点15634224d；格式化回收单独保全后将干净镜像固定此源执行7条真实注错，期间mirror不再同步。TCP监听与observer/后台SDK还在实现，未宣称完整CLI完成。
