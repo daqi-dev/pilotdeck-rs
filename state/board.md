@@ -5064,3 +5064,8 @@ r63七条实际负控六条KILLED，signal-exit-status因旧顶层hooks拒绝断
 ### 2026-11-08 22:41 · CLI 两小时接续（继续开发）
 
 r67合main后Cron核心357、api-web119、native-http135、全CLI540个实际测试通过（各自ignored不计）；Cronwiring两处路径诊断回归已源修待r69。r66真实TCP端到端与重连不重复provider通过；r65 continuable held/warm/cold/宿主重启实际全链过，子history空reference按真实TS合同核对，未改产品迁就probe。r68观察器初编9处bool构造已修；r69 compile与transport含7TCP实socket通过，其余进行中。独立后台SDK lifecycle、观察器实跑、两实际负控与最终安装/provider继续，双谱系评审尚未收口。现场和责任见主仓 `_tmp/20261108-cli-completion/handoff-2241.md`；唯一正本、双方快照、只本机提交、Rust只mbp2均不变，完整CLI未完成，下个00:41交接后继续。
+
+
+### 2026-11-08 23:36 · CLI 缓存、异步注册与会话路径收口中
+
+r71四bin与17项检查全0，真实后台SDK六格、observer执行/取消、continuable宿主重启已收原件，独立审查继续促出实际缺口。r73 SDK新inner-slot/精确Steer receipt、native原错误、50MiB边界和catalog通过；r76已编译四bin并过旧request/locale/project-files、manager及原生persistence FIFO/软链/超限，用新不可变bin实测Anthropic与cold/live同路径中。r76 transport有非法locale内部标签断言失配、relative-marker测试有macOS路径拼写问题、strict有新comparator类型别名/dead-code，均保失败原件并修，未标整轮绿。真实TS证实child PreToolUse async应登记parent实际活动run，窄修35661b326已本机提交待下一轮；native error前驱事件有界排空及同名负控重复站点已修待实测。证据主仓 `_tmp/20261108-cli-completion/verify-r{71,73,74,75,76}` 与对应独审/真实probe；cache依赖只增加现锁内两引用，无升级。本机当前本轮材料约1.56GiB、无Rust产物，仍仅mbp2构建/测试，本机提交，无GitHub写；完整CLI尚未收口，下一两小时交接00:41后继续。
