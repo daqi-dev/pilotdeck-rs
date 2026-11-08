@@ -491,6 +491,7 @@ fn load_native_plugin_hooks_from_manifest(
             Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => return Err(error),
             Err(_) => return Ok(None),
         };
+        native::check_manifest_tokens(&text, budget)?;
         let value = match parse_json(&text) {
             Ok(value) => value,
             Err(_) => return Ok(None),

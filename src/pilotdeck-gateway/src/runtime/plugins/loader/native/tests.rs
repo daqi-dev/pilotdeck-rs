@@ -391,3 +391,23 @@ async fn native_manifest_missing_after_load_keeps_the_real_ts_previous_generatio
     assert_eq!(report.staged_failures.len(), 1);
     runtime.dispose().await.unwrap();
 }
+
+#[test]
+fn native_hook_value_budget_applies_before_json_materialization() {
+    let scratch = Scratch::new();
+    let options = declaration_options(&scratch.0);
+    let plugin = options.project_root.join(".pilotdeck/plugins/p");
+    fs::create_dir_all(&plugin).unwrap();
+    fs::write(plugin.join("plugin.json"), r#"{"name":"p","hooks":"hooks.json"}"#).unwrap();
+    // Directory entry + manifest object/name/hooks + hook object/array = 6.
+    for (n, accepted) in [(9994, true), (9995, false)] {
+        fs::write(plugin.join("hooks.json"), format!("{{\"ignored\":[{}]}}", vec!["0"; n].join(","))).unwrap();
+        let result = stage_native_style_plugins(&options);
+        if accepted {
+            assert_eq!(result.expect("native hook exact value boundary is accepted").plugins.len(), 1);
+        } else {
+            assert_eq!(result.err().expect("native hook value budget rejects before projection").code,
+                Some("STYLE_RELOAD_LIMIT"), "native hook value budget rejects before projection");
+        }
+    }
+}

@@ -52,7 +52,7 @@ pub(super) fn fatal(error: &PluginRuntimeError) -> bool {
 /// Count syntactic JSON values before materializing the JsValue tree. Keys do
 /// not count; duplicate-key values do. This is a budget preflight, not a JSON
 /// parser: the existing codec still validates syntax/strings and diagnostics.
-fn check_manifest_tokens(text: &str, budget: &mut StyleBudget) -> Result<(), PluginRuntimeError> {
+pub(super) fn check_manifest_tokens(text: &str, budget: &mut StyleBudget) -> Result<(), PluginRuntimeError> {
     let bytes = text.as_bytes();
     let mut at = 0;
     let mut depth = 0usize;
