@@ -300,6 +300,16 @@ add('gateway-sweep-15', BASE + `gateway: {idleSweepIntervalSeconds: 15}\n`);
 add('gateway-sweep-zero', BASE + `gateway: {idleSweepIntervalSeconds: 0}\n`);
 add('gateway-sweep-fractional', BASE + `gateway: {idleSweepIntervalSeconds: 0.25}\n`);
 add('gateway-sweep-invalid', BASE + `gateway: {idleSweepIntervalSeconds: '15'}\n`);
+// #2445: the per-session MCP cap keeps its fractional form through the
+// snapshot (numberField(..., 5) + Math.max(1, ...) normalize 2.5 to 2.5),
+// pinning the f64 comparison the Rust assembly and session-MCP composition
+// rely on (tools.rs, assembly.rs:638-643).
+add('gateway-mcp-instances-fractional', BASE + `gateway: {maxPerSessionMcpInstances: 2.5}\n`);
+// #2445: a sub-1 cap floors to 1 (parseGatewayConfig.ts:52
+// `Math.max(1, maxMcp)`), pinning the Rust replay normalization
+// `.max(1.0)` in config/snapshot.rs — dropping the floor would replay 0.5
+// against the oracle's recorded 1.
+add('gateway-mcp-instances-floor', BASE + `gateway: {maxPerSessionMcpInstances: 0.5}\n`);
 add('router-token-saver-int-order', BASE + `router: {tokenSaver: {judge: parity/deterministic, tiers: {2: {model: parity/deterministic}, 1: {model: parity/deterministic}}}}\n`);
 add('router-token-saver-int-order-mixed', BASE + `router: {tokenSaver: {judge: parity/deterministic, tiers: {10: {model: parity/deterministic}, 2: {model: parity/deterministic}, z: {model: parity/deterministic}, 1: {model: parity/deterministic}}}}\n`);
 const nestedMap = (depth: number) => '{x:'.repeat(depth) + '42' + '}'.repeat(depth);

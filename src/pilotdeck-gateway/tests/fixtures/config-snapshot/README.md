@@ -7,10 +7,10 @@
 
 ## 目录与条数
 
-`oracle.json` 共 **1140** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
+`oracle.json` 共 **1142** 条，`count` 与 `cases.length` 一致，Rust 测试对条数、
 source 数量和每个 `sourceSha256` 长度做精确断言：
 
-- 105 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
+- 107 条手写与错误用例：覆盖各配置节、诊断、缺省值、路径、非 ASCII、project
   合并、provider/模型目录、credential、modules、SOP、proxy 迁移；其中 28 条为
   第二轮新增（第一轮评审反例：router 冲突、API key 字面量、清扫周期、tier 键序、
   深嵌套、`__proto__`、孤立代理项，以及键序/原型链/分支覆盖），1 条为既有错误
@@ -22,7 +22,12 @@ source 数量和每个 `sourceSha256` 长度做精确断言：
   `(0,1)` 取整差异、`headers`/`extraBody` 的 `__proto__` 语义；#310 新增 5 条：
   三条键序分辨（`headers`、`adapters.*.extra`、`runPolicy.failureGuard.toolFailureLimits`
   中大小写/标点/数字/非 ASCII 键对，钉住 `stableStringify` 的 en-US `localeCompare`
-  与码元序不同的相对顺序），以及 `anthropic`/`google` 协议在非目录 provider 上的默认能力；
+  与码元序不同的相对顺序），以及 `anthropic`/`google` 协议在非目录 provider 上的默认能力，
+  #2445 新增 2 条 `gateway-mcp-instances-fractional`（`maxPerSessionMcpInstances: 2.5`
+  不取整地保留进快照，钉住 Rust 侧 f64 归一化 `finite(...).unwrap_or(5.0).max(1.0)`
+  所依赖的基线语义）与 `gateway-mcp-instances-floor`（`0.5` 经基线
+  `Math.max(1, maxMcp)`（parseGatewayConfig.ts:52）记为 `1`，钉住归一化的
+  `.max(1.0)` 下限——去掉下限会回放出 `0.5` 对上金样的 `1`）；
 - 20 条来自既有 `tests/fixtures/config/catalog.json` 中 `load.ok` 的用例；
 - 1015 条来自既有 `tests/fixtures/config/diagnostics.json` 中全部 `load.ok` 成功用例。
 
