@@ -4657,7 +4657,7 @@ PD代码ce7b82422与Kernel661375e7、integration f3c723e组成七二进制候选
 
 ### 2026-11-08 Kernel 产品 plan 强制只读（接入 lane B）
 
-原 WS submit_turn/CLI permission-mode plan 的同一次有效权限模式现在同时进入组件 prompt 与公开 execution.input limits.read_only；宿主未声明 scheduler.input-limits.v1 时在发送 input 前拒绝。原 operationDeadline 与 read_only 合并保留，default/bypass 不新增授权，managed plan 不能被 basePermissionMode/bypass 提示字段放大。Kernel session 模块21/21通过，含真实UDS外层wire断言与缺能力前置拒绝；specs/parity/README 冻结SHA未变。此项是已有公共Limits接线，不是managed root grant接入；canonical工具alias过滤仍显式不支持，USD taskBudget不映射Kernel quota，桌面P3及默认legacy不变。实际原WS/CLI组合将在固定candidate10独立复验。
+原 WS submit_turn/CLI permission-mode plan 的同一次有效权限模式现在同时进入组件 prompt 与公开 execution.input limits.read_only；宿主未声明 scheduler.input-limits.v1 时在发送 input 前拒绝。原 operationDeadline 与 read_only 合并保留，default/bypass 不新增授权，managed plan 不能被 basePermissionMode/bypass 提示字段放大。Kernel session 模块21/21通过，含真实UDS外层wire断言与缺能力前置拒绝；specs/parity/README 冻结SHA未变。Kernel现有read_only会拒绝全部tool.authorize/exec并过滤整个tool.list，因此本批plan是严格禁工具执行的保守profile，并非原plan可读工具语义完全等价；allowPlanModeTools不能扩大宿主。精细Read/Write工具分类仍未接入。此项是已有公共Limits接线，不是managed root grant接入；canonical工具alias过滤仍显式不支持，USD taskBudget不映射Kernel quota，桌面P3及默认legacy不变。实际原WS/CLI组合将在固定candidate10独立复验。
 
 
 ### 2026-11-08 Kernel 持久化未知回执的产品投影（接入 lane B）
