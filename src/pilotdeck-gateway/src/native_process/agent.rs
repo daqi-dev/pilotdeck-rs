@@ -76,6 +76,10 @@ fn concat(parts: &[&JsString]) -> JsString {
 
 #[path = "agent_background.rs"]
 mod background;
+#[path = "agent_observer.rs"]
+mod observer;
+#[path = "agent_observer_host.rs"]
+mod observer_host;
 #[path = "agent_continuation.rs"]
 mod continuation;
 pub(super) use background::NativeForkOwner;
@@ -950,6 +954,9 @@ impl ForkApi {
             .clone()
         });
         let mut config = self.turn.config.clone();
+        if spec.get("nativeObserver") == Some(&JsValue::Bool(true)) {
+            config.insert("nativeObserver".into(), true.into());
+        }
         config.insert("permissionMode".into(), JsValue::String(child_mode.clone()));
         config.insert("isSubagent".into(), JsValue::Bool(true));
         config.insert("subagentDepth".into(), JsValue::Number(depth + 1.0));
@@ -1056,7 +1063,7 @@ impl ForkApi {
         Ok((scope, context, relative))
     }
     #[allow(clippy::too_many_arguments)]
-    async fn run(
+    fn run(
         self: Arc<Self>,
         factory: Arc<ProjectSessionFactory>,
         definition: String,
@@ -1071,7 +1078,10 @@ impl ForkApi {
         cancel: Cancellation,
         deadline: tokio::time::Instant,
         fixed_id: Option<JsString>,
-    ) -> Result<ToolOutput, ToolError> {
+    ) -> ToolFuture<ToolOutput> {
+        Box::pin(async move {
+        let observer_definition = self.observer_definition(&spec, &definition)?;
+        let activity = observer_definition.as_ref().map(|_| Arc::new(Mutex::new(observer::ObserverActivity::default())));
         let started = Instant::now();
         let subagent: JsString =
             fixed_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
@@ -1142,7 +1152,7 @@ impl ForkApi {
         let mut result = match start_hook.and(start_delivery) {
             Ok(()) => {
                 self.execute_child(
-                    factory,
+                    factory.clone(),
                     child_context,
                     &turn,
                     &subagent,
@@ -1151,6 +1161,7 @@ impl ForkApi {
                     &context,
                     cancel,
                     deadline,
+                    activity.as_ref(),
                 )
                 .await
             }
@@ -1221,6 +1232,21 @@ impl ForkApi {
                 append_subagent_failure(&mut result, failure);
             }
         }
+        if let Some(observer) = observer_definition {
+            let outcome = match &result {
+                Ok(report) => self::observer::ObserverOutcome { success: true, markdown: Some(report.text.clone()), error: None },
+                Err(failure) => self::observer::ObserverOutcome { success: false, markdown: None, error: Some(failure.message.clone()) },
+            };
+            let activity = activity.as_ref().map(|activity| lock(activity).take()).unwrap_or_default();
+            let launch = observer_host::ObserverLaunch {
+                factory, definition: definition.clone(), subagent: subagent.clone(), observer,
+                directive, observer_message: string(&spec, "observerMessage"), activity, outcome,
+                depth, max, context,
+            };
+            if let Err(failure) = self.launch_observer(launch) {
+                append_subagent_failure(&mut result, failure);
+            }
+        }
         let report = result?;
         Ok(agent_output(
             &definition,
@@ -1231,6 +1257,7 @@ impl ForkApi {
             report,
             elapsed,
         ))
+        })
     }
     async fn write_parent(&self, value: JsValue) -> Result<(), ToolError> {
         let recorder = self.turn.recorder.clone();
@@ -1275,6 +1302,7 @@ impl ForkApi {
         parent_context: &ToolRunContext,
         cancel: Cancellation,
         deadline: tokio::time::Instant,
+        activity: Option<&Arc<Mutex<observer::ObserverActivity>>>,
     ) -> Result<Report, ToolError> {
         let effective_mode = self
             .turn
@@ -1341,6 +1369,10 @@ impl ForkApi {
                         }
                         Ok(None) => break,
                         Ok(Some(event)) => {
+                            if let Some(activity) = activity
+                                && let Some(event) = event.as_object() {
+                                lock(activity).record(event);
+                            }
                             let kind = event.get("type").and_then(JsValue::as_string);
                             if kind.is_some_and(|kind| kind.equals_str("turn_completed")) {
                                 terminal = event.get("result").cloned();

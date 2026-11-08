@@ -295,6 +295,8 @@ fn validate_agents(value: Option<&JsValue>) -> Result<(), SubmitError> {
                 "prompt",
                 "model",
                 "initialPrompt",
+                "observer",
+                "observerMessage",
                 "criticalSystemReminder_EXPERIMENTAL",
             ]
             .iter()
@@ -417,6 +419,8 @@ fn project_agents(agents: &pilotdeck_protocol::JsObject) -> pilotdeck_protocol::
             ("memory", "memory"),
             ("initialPrompt", "initialPrompt"),
             ("background", "background"),
+            ("observer", "observer"),
+            ("observerMessage", "observerMessage"),
             (
                 "criticalSystemReminder_EXPERIMENTAL",
                 "criticalSystemReminder",

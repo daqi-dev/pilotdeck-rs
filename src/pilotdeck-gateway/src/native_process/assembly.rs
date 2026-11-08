@@ -863,7 +863,8 @@ async fn start_assembly(
                 // factory's per-session registry. An unpublished config keeps
                 // the empty composition: the ask-rule sync above already
                 // reported that wiring miss for this assembly (#1429).
-                let (mut session_mcp, session_mcp_release) = match mcp_config_handle.get() {
+                let native_observer = config.get("nativeObserver") == Some(&JsValue::Bool(true));
+                let (mut session_mcp, session_mcp_release) = match mcp_config_handle.get().filter(|_| !native_observer) {
                     Some(mcp_config) => {
                         let provider = staged
                             .owner(Family::McpProvider)
@@ -908,7 +909,8 @@ async fn start_assembly(
                 };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
                 let mut fork_mcp_names = Vec::new();
-                if let Some(servers) = config
+                if !native_observer
+                    && let Some(servers) = config
                     .get("nativeForkMcpServers")
                     .and_then(JsValue::as_object)
                     .filter(|servers| !servers.entries().is_empty())
