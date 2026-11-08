@@ -121,9 +121,11 @@ impl GatewaySessionCatalogConsumer {
 /// directly; it does not use the `AsyncTranscriptStorageAdapter` projection.
 /// The adapter is retained only for the project chat-directory mapping, which
 /// is the same `getPilotProjectChatDir` seam the host already owns.
+type BoundedDirectoryResolver = Arc<dyn Fn(&ProjectKey) -> Result<PathBuf, ManagerError> + Send + Sync>;
+
 enum CatalogDirectory {
     Legacy(Arc<dyn Fn(&ProjectKey) -> PathBuf + Send + Sync>),
-    Bounded(Arc<dyn Fn(&ProjectKey) -> Result<PathBuf, ManagerError> + Send + Sync>),
+    Bounded(BoundedDirectoryResolver),
 }
 pub struct TranscriptSessionCatalog {
     directory: CatalogDirectory,

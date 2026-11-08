@@ -562,7 +562,11 @@ mod tests {
     }
     #[test]
     fn custom_agent_fields_fail_closed_until_their_real_owner_exists() {
-        for field in ["nativeObserver", "nativeMemoryDisabled", "unconfiguredExtension"] {
+        for field in [
+            "nativeObserver",
+            "nativeMemoryDisabled",
+            "unconfiguredExtension",
+        ] {
             let mut agent = crate::metadata::object([
                 ("description", "fixture".into()),
                 ("prompt", "self-written".into()),
@@ -614,7 +618,10 @@ mod tests {
             let mut agent = object([
                 ("description", "fixture".into()),
                 ("prompt", "self-written".into()),
-            ]).as_object().unwrap().clone();
+            ])
+            .as_object()
+            .unwrap()
+            .clone();
             let text = JsValue::String(JsString::from_utf16(vec![0x77, 0xd800]));
             agent.insert(field.into(), text.clone());
             let agents = object([("fixture", JsValue::Object(agent.clone()))]);
@@ -624,7 +631,10 @@ mod tests {
             for invalid in [JsValue::Null, JsValue::Bool(true), JsValue::Number(1.0)] {
                 agent.insert(field.into(), invalid);
                 let agents = object([("fixture", JsValue::Object(agent.clone()))]);
-                assert_eq!(validate_agents(Some(&agents)).unwrap_err().code, "INVALID_SDK_SESSION_CONFIG");
+                assert_eq!(
+                    validate_agents(Some(&agents)).unwrap_err().code,
+                    "INVALID_SDK_SESSION_CONFIG"
+                );
             }
         }
     }
