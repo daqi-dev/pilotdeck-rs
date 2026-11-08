@@ -1,0 +1,19 @@
+# Native cache collation
+
+本片针对真实合法Anthropic主turn在model.stream之前失败：Agent request_assembly的多工具cache fingerprint曾直接REQUEST_CACHE_LOCALE_COLLATION_PROFILE；Host又把原错误遮成“Sidecar terminal payload does not contain an AgentLoop result”。错误保真由独立error.patch先处理，本片实现真实排序，不禁用cache、不缩减工具、不使用ASCII/UTF16字典序替代localeCompare。
+
+共享层：将既有Gateway node_locale纯解析及project_files纯ICU构造移到transport::node_collation，Gateway保薄wrapper复用。仍用已锁定/vendored ICU78数据、既有fr-CA backward-secondary修正及fallback；未复制Gateway业务/新owner/IO。Transport Cargo只引用锁中icu_collator2.1.1、icu_locale_core2.3.0，Cargo.lock若须更新由root远端cargo产生。
+
+纯Agent默认入口原guard不变；显式assemble_with_collation由native factory正常请求及三个preview统一注入同default-locale比较器。cache fingerprint的stableTools先按name.localeCompare，平局按stableSerialize(tool).localeCompare排序；排序稳定，发送给model的原prepared.tools次序不变。新的opt-in只承诺有效canonical多工具（name为字符串）；不为非法JS对象发明V8比较器调用顺序。序列化先完成再使用total comparator，避免错误过程中改变排序关系。原递归上限、无profile拒绝保持，不以关闭prompt cache绕缺口。
+
+## 固定TS实采与复现
+
+CachePlan.ts原完整纯模块只在内存用固定TypeScript转译，type-only model imports擦除，保留实际buildCachePlan/stableSerialize/selectRecentMessageBreakpoints函数；只调用node:crypto，不运行旧CLI、provider或业务host。源码SHA899b3f6973eb343d99647ce169a9076495fc935191def6f78ca14bf858b52dc7，基线cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85，Node v22.22.0 / ICU78.2 / TS5.9.3均启动校验。
+
+capture.mjs BASELINE OUT SEED为便携单locale采样；collect.py BASELINE FIXED_NODE OUT按10个独立子进程环境复现并合并。OUT必须不存在；Mac sandbox-exec缺失会失败，无裸跑fallback。每子进程25秒、网络全部拒绝、禁止fork、仅独占run目录可写；HOME/PILOT_HOME/TMPDIR隔离，warning或stderr非空均拒绝。命令路径及seed都显式argv，不内嵌机器baseline路径。
+
+seed.json是本次隔离r69原生目录实际发给sidecar的工具catalog（来自自写stdio relay），另生成Unicode/大小写/标点/数字、重复name的稳定序列化平局、组合字、emoji、lone surrogate、反序、空/单工具输入。每locale7个实际CachePlan和109字符串全对比较。共70计划、118810比较符号。原十份oracle及stderr/profile/env留在mbp2 cache-collation-sol-20261108/capture-*；合并只去重不变的输入和字符串，无结果归一化或按Rust结果改oracle。originals保存各原件SHA。
+
+便携collect已在新独占reproduced实际exit0，十个子进程stderr全部空，合并与首次artifact逐字一致SHA80974c0b026b8629e6b20fffb361f2c0908bd236da895929f030e557b26b6e6d。这里是TS实采成功，Rust候选尚未经作者运行。
+
+Root建议验证transport --test cache_collation（全部ICU比较+70个完整CachePlan JSON输出/指纹，含原工具次序保留）、Agent request_assembly原负控与全套、Gateway原node-locale/native-collation/project_files测试、严格clippy。随后用新immutable bin重复纯loopback Anthropic（必须实际stream>0并成功）及经授权真实provider冒烟。不得把本TS采样或旧r69诊断收证PASS当作Rust主turn修复已验。

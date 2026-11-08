@@ -14,6 +14,7 @@ mod factory_payload;
 mod host_operations;
 pub mod loop_stimulus;
 mod model_admission;
+pub mod node_collation;
 mod notifications;
 pub mod server;
 pub mod stdio;

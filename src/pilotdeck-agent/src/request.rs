@@ -81,6 +81,19 @@ impl OriginalRequestAssembler {
     ) -> PortResult<ContextPrepare> {
         crate::request_assembly::context_preparation(state, parameters, None)
     }
+    /// Opt-in collation supplied by the native composition. No locale or IO is
+    /// owned by the pure assembler, and the default profile guard is unchanged.
+    pub fn assemble_with_collation(
+        &self,
+        state: &mut RequestPreparationState,
+        host: &mut dyn HostPort,
+        parameters: RequestAssemblyInput<'_>,
+        options: RequestAssemblyOptions,
+        observer: &mut dyn RequestPreparationObserver,
+        compare: &dyn Fn(&JsString, &JsString) -> std::cmp::Ordering,
+    ) -> PortResult<PreparedRequestIntent> {
+        crate::request_assembly::assemble_with_collation(state,host,parameters,options,observer,Some(compare))
+    }
     pub fn assemble_with_options(
         &self,
         state: &mut RequestPreparationState,

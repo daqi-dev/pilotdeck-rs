@@ -167,10 +167,17 @@ fn cache_tools(prepared: &JsValue) -> PortResult<Vec<JsValue>> {
         _ => Err(source_error("input.tools is not iterable", prepared)),
     }
 }
+/// Pure cache identity with an explicitly supplied native collation profile.
+/// The ordinary assembly entry retains its unsupported-profile guard.
+pub fn cache_plan_with_collation(
+    prepared: &JsValue, messages: &[JsValue], route: &Route,
+    compare: &dyn Fn(&JsString,&JsString)->std::cmp::Ordering,
+) -> PortResult<JsValue> { build_cache_plan(prepared,messages,route,Some(compare)) }
 fn build_cache_plan(
     prepared: &JsValue,
     messages: &[JsValue],
     route: &Route,
+    compare: Option<&dyn Fn(&JsString, &JsString) -> std::cmp::Ordering>,
 ) -> PortResult<JsValue> {
     let mut selected = vec![];
     for (index, message) in messages.iter().enumerate() {
@@ -181,13 +188,28 @@ fn build_cache_plan(
     if selected.len() > 3 {
         selected.drain(..selected.len() - 3);
     }
-    let tools = cache_tools(prepared)?;
-    if tools.len() > 1 {
+    let mut tools = cache_tools(prepared)?;
+    if tools.len() > 1 && compare.is_none() {
         return Err(gap(
             "REQUEST_CACHE_LOCALE_COLLATION_PROFILE",
             "Original tool ordering uses name.localeCompare followed by stableSerialize.localeCompare; multiple tools require an independently verified Node locale/ICU profile and a pure Rust collation implementation. No ASCII or UTF16 substitute was applied.",
             prepared,
         ));
+    }
+    if tools.len() > 1 {
+        let compare=compare.expect("multi-tool native profile has collation");
+        // Native canonical descriptors have string names. Do not invent V8's
+        // comparator-call order for invalid JS objects or primitive names.
+        // Serialize before sorting so the comparator itself is total and cannot
+        // change ordering midway after an error. This leaves source tools intact.
+        let mut keyed=tools.into_iter().map(|tool| {
+            let name=tool.get("name").and_then(JsValue::as_string).cloned().ok_or_else(||gap(
+                "REQUEST_CACHE_TOOL_NAME_PROFILE", "Native cache collation requires named canonical tool objects.", prepared))?;
+            let serialized=stable_serialize(&tool)?.ok_or_else(||source_error("Cache tool stable serialization returned undefined.",&tool))?;
+            Ok((name,JsString::from(serialized),tool))
+        }).collect::<PortResult<Vec<_>>>()?;
+        keyed.sort_by(|left,right|compare(&left.0,&right.0).then_with(||compare(&left.1,&right.1)));
+        tools=keyed.into_iter().map(|(_,_,tool)|tool).collect();
     }
     let system = prepared.get("systemPrompt");
     let fingerprint_value = JsValue::Object(object([
@@ -954,6 +976,16 @@ pub fn assemble_with_options(
     options: RequestAssemblyOptions,
     observer: &mut dyn RequestPreparationObserver,
 ) -> PortResult<PreparedRequestIntent> {
+    assemble_with_collation(state,host,parameters,options,observer,None)
+}
+pub fn assemble_with_collation(
+    state: &mut RequestPreparationState,
+    host: &mut dyn HostPort,
+    parameters: RequestAssemblyInput<'_>,
+    options: RequestAssemblyOptions,
+    observer: &mut dyn RequestPreparationObserver,
+    compare: Option<&dyn Fn(&JsString,&JsString)->std::cmp::Ordering>,
+) -> PortResult<PreparedRequestIntent> {
     let RequestAssemblyInput {
         control,
         config,
@@ -1022,7 +1054,7 @@ pub fn assemble_with_options(
         ])));
     }
     let cache_plan = if truthy(prepared.get("cachePlan")) {
-        build_cache_plan(&prepared, &messages, &route)?
+        build_cache_plan(&prepared, &messages, &route, compare)?
     } else {
         JsValue::Undefined
     };
