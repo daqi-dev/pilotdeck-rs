@@ -1881,6 +1881,101 @@ fn a_panicking_cleanup_still_disposes_the_coordinator() {
     assert_eq!("#1942 panicking cleanup fixture", error.to_string());
 }
 
+/// #1942: the drain polls the same third-party cleanup the failed
+/// initialization does, so the panic guard must cover it there too — with
+/// the panic escaping (the roster switch below), the host thread dies before
+/// the disposals behind it and the drain never settles; the guard timeout
+/// stands in for that hang so the kill runs through the coordinator
+/// assertion, which is the one the roster binds (the same ordering rule the
+/// initialization twin above documents).
+#[tokio::test]
+async fn a_panicking_drain_cleanup_still_disposes_the_coordinator() {
+    let coordinator_disposed = Arc::new(AtomicBool::new(false));
+    let disposed = coordinator_disposed.clone();
+    let host = TurnGateway::start_with_cleanup(
+        TurnReplayOptions::new(),
+        move |coordinator| {
+            coordinator.set_after_dispose_hook(Arc::new(move || {
+                disposed.store(true, Ordering::SeqCst);
+            }));
+            let session = Arc::new(Session {
+                thread: std::thread::current().id(),
+                native: vec![
+                    parse_json(r#"{"type":"turn_started","sessionId":"s","turnId":"r"}"#)
+                        .expect("#1942 fixture native event"),
+                ],
+                coordinator: coordinator.clone(),
+                accepted: Gate::new(),
+                terminal: Gate::new(),
+                end: Gate::new(),
+                aborts: AtomicUsize::new(0),
+            });
+            let mut options =
+                SessionOwnerOptions::new(Arc::new(NativeFixtureFactory(session, false)));
+            options.idle_sweep_interval_ms = 0;
+            let interactions = Arc::new(GatewayInteractionCoordinator::default());
+            Ok(GatewayServices {
+                submitter: Arc::new(TurnSubmitter {
+                    owner: SessionOwner::new(options),
+                    coordinator,
+                    registry: None,
+                    projector: Arc::new(
+                        GatewayAgentEventProjector::new(Default::default())
+                            .expect("#1942 fixture projector"),
+                    ),
+                    host: Arc::new(Host {
+                        interactions: interactions.clone(),
+                        finally_failure: false,
+                    }),
+                    workspace_admissions: WorkspaceAdmissions::default(),
+                }),
+                interactions,
+                requests: Arc::new(Requests),
+            })
+        },
+        async move {
+            panic!("#1942 injected drain cleanup panic");
+        },
+    )
+    .expect("#1942 fixture serial host");
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        host.shutdown(std::time::Duration::from_secs(5)),
+    )
+    .await;
+    crate::negative_assert!(
+        coordinator_disposed.load(Ordering::SeqCst),
+        "#1942 a panicking drain cleanup must still dispose the coordinator"
+    );
+    let error = settled
+        .expect("#1942 the drain must settle once the panic is caught")
+        .expect_err("#1942 a caught drain cleanup panic must surface as the drain error");
+    assert_eq!(
+        "#1942 injected drain cleanup panic", error,
+        "#1942 the caught panic message must reach the drain result"
+    );
+}
+
+/// #1949: the drain's own deadline arithmetic carries the same clock bound
+/// the initialization teardown got — an embedding that declares
+/// `Duration::MAX` explicitly waived the bound, so the drain must settle
+/// instead of overflowing the host thread into an opaque hang (the drain
+/// twin of the maximal initialization budget test).
+#[tokio::test]
+async fn a_maximal_drain_budget_still_settles_the_drain() {
+    let host = native_ws_fixture_with_cleanup(Arc::new(Requests), async { Ok(()) });
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        host.shutdown(std::time::Duration::MAX),
+    )
+    .await
+    .expect("#1949 a maximal drain budget must not overflow the host");
+    assert!(
+        settled.is_ok(),
+        "#1949 a maximal drain budget must settle the drain: {settled:?}"
+    );
+}
+
 /// #1949 fixture: a factory whose creation never settles, so the owner's
 /// shutdown() drains its pending creation forever — the host must cut that
 /// wait at the owner bound. `entered` flips on the first poll so the test can

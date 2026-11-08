@@ -87,7 +87,9 @@ switches = [
     # poll while the synchronous disposals still run. The third (#1942 panic
     # chain) lets a panicking embedding cleanup escape the host thread
     # instead of being caught, so the disposals behind it never run and the
-    # caller sees the panic, not the builder error.
+    # caller sees the panic, not the builder error. The fourth is the drain
+    # twin: the same escape on the shutdown-drain poll of the same future,
+    # so the drain never settles and the disposals behind it never run.
     ('native-ws-skip-initialization-cleanup', TURN_GATEWAY,
      TURN_TESTS + 'a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup',
      '#1746 a builder error must still dispose the coordinator'),
@@ -97,6 +99,9 @@ switches = [
     ('native-ws-initialization-cleanup-panic-uncaught', TURN_GATEWAY,
      TURN_TESTS + 'a_panicking_cleanup_still_disposes_the_coordinator',
      '#1942 a panicking cleanup must still dispose the coordinator'),
+    ('native-ws-drain-cleanup-panic-uncaught', TURN_GATEWAY,
+     TURN_TESTS + 'a_panicking_drain_cleanup_still_disposes_the_coordinator',
+     '#1942 a panicking drain cleanup must still dispose the coordinator'),
     ('native-ws-skip-drain', SOURCE, PREFIX + 'stop_accepting_drains_existing', '#749 drain waits for existing socket'),
     ('native-ws-input-boundary', ROOT / 'src/pilotdeck-gateway/src/frame.rs', PREFIX + 'input_limit_boundary_preserves_proxy', '#749 exact input boundary remains accepted'),
     ('native-ws-full-close-signal', SOURCE, PREFIX + 'output_slot_budget_and_full_close', '#749 full output queue preserves close frame'),

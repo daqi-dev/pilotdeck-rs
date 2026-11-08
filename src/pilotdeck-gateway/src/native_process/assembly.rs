@@ -832,9 +832,10 @@ async fn start_assembly(
     // #1746: exactly one teardown may run. The host polls this cleanup itself
     // when initialization fails — `start_with_cleanup_budget` below hands it
     // this embedding's `budget`, so the wait is never shorter than the timeout
-    // inside this closure — and the fallback below arms only when the host
-    // thread never started (runtime build or spawn failure), leaving the
-    // future dropped unpolled.
+    // inside this closure — and the fallback below makes up, per resource,
+    // whatever this closure never finished: whether the host thread never
+    // started (runtime build or spawn failure, the future dropped unpolled)
+    // or the inner budget expired mid-teardown (#1959).
     //
     // #1959: "one teardown" records *entry*, which is the wrong denomination
     // for the fallback: a budget that expires mid-teardown (the channels
@@ -1206,9 +1207,12 @@ async fn start_assembly(
             // project/factory teardown the cleanup did not finish — #1959:
             // per resource, not by entry. The host either never started (the
             // future was dropped unpolled, both flags clear) or finished
-            // awaiting the cleanup (its inner budget never exceeds the
-            // host's bound, so the flags are settled by the time this reads
-            // them); a resource the cleanup completed is never disposed twice.
+            // awaiting the cleanup, so the flags are final when read: a flag
+            // left clear means that disposal never completed — the host thread
+            // never started, or the inner budget cut the teardown mid-flight,
+            // which is exactly the case the makeup below exists for — and the
+            // fallback makes that resource up; a resource the cleanup
+            // completed is never disposed twice.
             if !fallback_factory_disposed.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 let _ = tokio::time::timeout(budget, async {
                     let result = factory.dispose().await.map_err(|e| e.to_string());
