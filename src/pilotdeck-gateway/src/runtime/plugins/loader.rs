@@ -414,13 +414,11 @@ pub(crate) fn validate_native_style_paths(
         for entry in entries {
             budget.entry()?;
             let entry = entry.map_err(|error| PluginRuntimeError::new(error.to_string()))?;
-            let metadata = fs::symlink_metadata(entry.path())
-                .map_err(|error| PluginRuntimeError::new(error.to_string()))?;
-            if metadata.file_type().is_symlink() {
-                return Err(PluginRuntimeError::new(
-                    "Native plugin root cannot be a symlink.",
-                ));
-            }
+            // Node stat follows legitimate plugin-root aliases. Pin the
+            // selected manifest file below; a lexical alias is not an escape.
+            let Ok(metadata) = fs::metadata(entry.path()) else {
+                continue;
+            };
             if metadata.is_dir() {
                 paths.push(entry.path());
             }
@@ -466,20 +464,17 @@ fn load_native_plugin_hooks_from_manifest(
         .unwrap_or_else(|| "hooks/hooks.json".to_owned());
     #[cfg(unix)]
     {
-        let parent = path
+        // The manifest explicitly chooses this data file. TS accepts `..`
+        // and static aliases here; ROOT-001 applies only to Markdown families.
+        // Resolve once, then pin its physical parent and require a regular fd.
+        let target = match config::join_path(path, &relative).canonicalize() {
+            Ok(target) => target,
+            Err(_) => return Ok(None),
+        };
+        let parent = target
             .parent()
-            .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?
-            .canonicalize()
-            .map_err(|error| PluginRuntimeError::new(error.to_string()))?;
-        let root = parent.join(
-            path.file_name()
-                .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?,
-        );
-        let target = config::resolve_path(&config::join_path(&root, &relative));
-        if !target.starts_with(&root) {
-            return Err(PluginRuntimeError::new("Invalid hook path."));
-        }
-        let mut file = match crate::project_files::open_beneath(&parent, &target) {
+            .ok_or_else(|| PluginRuntimeError::new("Invalid hook path."))?;
+        let mut file = match crate::project_files::open_beneath(parent, &target) {
             Ok(file) => file,
             Err(error)
                 if matches!(

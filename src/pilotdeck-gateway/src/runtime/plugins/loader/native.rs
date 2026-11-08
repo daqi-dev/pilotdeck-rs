@@ -7,18 +7,17 @@ pub(super) fn read_manifest(
 ) -> Result<JsValue, PluginRuntimeError> {
     #[cfg(unix)]
     {
-        // Pin the discovery directory before opening the plugin/manifest
-        // children, so replacing either child with a symlink cannot redirect I/O.
-        let parent = path
-            .parent()
-            .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?
+        // Follow a legitimate configured alias before opening its selected
+        // physical file. NOFOLLOW/NONBLOCK still reject replacement races and
+        // special files; the descriptor is the only source of read bytes.
+        let target = path
+            .join("plugin.json")
             .canonicalize()
             .map_err(|error| PluginRuntimeError::new(error.to_string()))?;
-        let plugin = parent.join(
-            path.file_name()
-                .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?,
-        );
-        let mut file = crate::project_files::open_beneath(&parent, &plugin.join("plugin.json"))
+        let parent = target
+            .parent()
+            .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?;
+        let mut file = crate::project_files::open_beneath(parent, &target)
             .map_err(|error| PluginRuntimeError::new(error.to_string()))?;
         if !file
             .metadata()
@@ -144,3 +143,6 @@ pub(super) fn load_plugin(
         dispose: None,
     })
 }
+
+#[cfg(all(test, unix))]
+mod tests;

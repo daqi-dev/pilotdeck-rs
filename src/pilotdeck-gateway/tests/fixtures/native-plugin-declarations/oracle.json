@@ -1,0 +1,448 @@
+{
+  "sourceHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "rawNormalizedSha256": "e738e4c02e3efad8fc68d0a92b573ee2581f5dee2a575514469c491f2254eb13",
+  "scope": "Actual TS loadPluginFromPath, source=project. Manifest/source projection not compared because LoadedPlugin has no manifest field. Only paths and frontmatter object key order normalized; external configured Markdown expectedNative differs by approved ROOT-001.",
+  "cases": [
+    {
+      "id": "name-only",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\"}"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": []
+      },
+      "deviation": null
+    },
+    {
+      "id": "empty-styles-hooks",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"outputStyles\":[],\"hooks\":{}}"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": [],
+        "hooksConfig": {}
+      },
+      "deviation": null
+    },
+    {
+      "id": "empty-hook-event",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"hooks\":{\"PreToolUse\":[]}}"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": [],
+        "hooksConfig": {}
+      },
+      "deviation": null
+    },
+    {
+      "id": "defaults-and-skill-filter",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\"}"
+        },
+        {
+          "path": "disk-name/commands/do.md",
+          "content": "---\ndescription: hello\nflag: true\ncount: 2\n---\nCOMMAND\n"
+        },
+        {
+          "path": "disk-name/skills/research/SKILL.md",
+          "content": "SKILL\n"
+        },
+        {
+          "path": "disk-name/skills/reference.md",
+          "content": "OMIT\n"
+        },
+        {
+          "path": "disk-name/output-styles/brief.md",
+          "content": "STYLE\n"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [
+          {
+            "name": "disk-name:do",
+            "path": "disk-name/commands/do.md",
+            "content": "COMMAND\n",
+            "frontmatter": {
+              "count": 2,
+              "description": "hello",
+              "flag": true
+            },
+            "isSkill": false
+          }
+        ],
+        "skills": [
+          {
+            "name": "disk-name:research",
+            "path": "disk-name/skills/research/SKILL.md",
+            "content": "SKILL\n",
+            "frontmatter": {},
+            "isSkill": true
+          }
+        ],
+        "outputStyles": [
+          {
+            "name": "disk-name:brief",
+            "path": "disk-name/output-styles/brief.md",
+            "content": "STYLE\n",
+            "frontmatter": {},
+            "isSkill": false
+          }
+        ]
+      },
+      "deviation": null
+    },
+    {
+      "id": "configured-duplicate-dirs",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"commands\":[\"custom\",\"missing\",\"custom\"],\"skills\":\"custom-skills\",\"outputStyles\":[]}"
+        },
+        {
+          "path": "disk-name/custom/sub/Do.MD",
+          "content": "DUPLICATE\n"
+        },
+        {
+          "path": "disk-name/custom-skills/s/SKILL.md",
+          "content": "CUSTOM SKILL\n"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [
+          {
+            "name": "disk-name:sub:Do",
+            "path": "disk-name/custom/sub/Do.MD",
+            "content": "DUPLICATE\n",
+            "frontmatter": {},
+            "isSkill": false
+          },
+          {
+            "name": "disk-name:sub:Do",
+            "path": "disk-name/custom/sub/Do.MD",
+            "content": "DUPLICATE\n",
+            "frontmatter": {},
+            "isSkill": false
+          }
+        ],
+        "skills": [
+          {
+            "name": "disk-name:s",
+            "path": "disk-name/custom-skills/s/SKILL.md",
+            "content": "CUSTOM SKILL\n",
+            "frontmatter": {},
+            "isSkill": true
+          }
+        ],
+        "outputStyles": []
+      },
+      "deviation": null
+    },
+    {
+      "id": "empty-array-disables",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"commands\":[],\"skills\":[],\"outputStyles\":[]}"
+        },
+        {
+          "path": "disk-name/commands/a.md",
+          "content": "HIDDEN\n"
+        },
+        {
+          "path": "disk-name/skills/SKILL.md",
+          "content": "HIDDEN\n"
+        },
+        {
+          "path": "disk-name/output-styles/a.md",
+          "content": "HIDDEN\n"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": []
+      },
+      "deviation": null
+    },
+    {
+      "id": "invalid-optional-fallback",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"commands\":[1],\"skills\":false,\"outputStyles\":3,\"hooks\":false,\"mcpServers\":[],\"lspServers\":4}"
+        },
+        {
+          "path": "disk-name/commands/a.md",
+          "content": "DEFAULT\n"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [
+          {
+            "name": "disk-name:a",
+            "path": "disk-name/commands/a.md",
+            "content": "DEFAULT\n",
+            "frontmatter": {},
+            "isSkill": false
+          }
+        ],
+        "skills": [],
+        "outputStyles": []
+      },
+      "deviation": null
+    },
+    {
+      "id": "raw-server-declarations",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"mcpServers\":{\"echo\":{\"command\":\"never-run\",\"args\":[\"a\",\"\\ud800\"],\"env\":{\"X\":\"Y\"}},\"__ignored\":null},\"lspServers\":{\"rust\":{\"command\":\"not-started\",\"extensionToLanguage\":{\".rs\":\"rust\"}}}}"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": [],
+        "mcpServers": {
+          "echo": {
+            "command": "never-run",
+            "args": [
+              "a",
+              "\ud800"
+            ],
+            "env": {
+              "X": "Y"
+            }
+          },
+          "__ignored": null
+        },
+        "lspServers": {
+          "rust": {
+            "command": "not-started",
+            "extensionToLanguage": {
+              ".rs": "rust"
+            }
+          }
+        }
+      },
+      "deviation": null
+    },
+    {
+      "id": "ignored-and-metadata-keys",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"agents\":[\"agents\"],\"settings\":{\"x\":true},\"marketplace\":{\"name\":\"m\",\"plugin\":\"p\"},\"mcpb\":\"a.mcpb\",\"unknownKey\":\"ignored\",\"main\":\"never.js\"}"
+        },
+        {
+          "path": "disk-name/never.js",
+          "content": "throw new Error(\"MUST NOT EXECUTE\");\n"
+        },
+        {
+          "path": "disk-name/agents/a.md",
+          "content": "NOT A CONTRIBUTION\n"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": []
+      },
+      "deviation": null
+    },
+    {
+      "id": "hook-file-valid",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"hooks\":\"custom-hooks.json\"}"
+        },
+        {
+          "path": "disk-name/custom-hooks.json",
+          "content": "{\"PreToolUse\":[{\"matcher\":\"read_file\",\"hooks\":[{\"type\":\"command\",\"command\":\"never-run\"}]}]}"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": [],
+        "hooksConfig": {
+          "PreToolUse": [
+            {
+              "matcher": "read_file",
+              "hooks": [
+                {
+                  "type": "command",
+                  "command": "never-run"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "deviation": null
+    },
+    {
+      "id": "hook-file-malformed",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\"}"
+        },
+        {
+          "path": "disk-name/hooks/hooks.json",
+          "content": "{ malformed"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": []
+      },
+      "deviation": null
+    },
+    {
+      "id": "invalid-name",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":false,\"commands\":[]}"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": false,
+        "error": "Plugin manifest must contain a name."
+      },
+      "deviation": null
+    },
+    {
+      "id": "inside-markdown-symlink",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\"}"
+        },
+        {
+          "path": "disk-name/real/a.md",
+          "content": "INSIDE\n"
+        }
+      ],
+      "links": {
+        "commands": "real"
+      },
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [
+          {
+            "name": "disk-name:a",
+            "path": "disk-name/commands/a.md",
+            "content": "INSIDE\n",
+            "frontmatter": {},
+            "isSkill": false
+          }
+        ],
+        "skills": [],
+        "outputStyles": []
+      },
+      "deviation": null
+    },
+    {
+      "id": "external-configured-dir",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"commands\":\"../outside\"}"
+        },
+        {
+          "path": "outside/a.md",
+          "content": "EXTERNAL\n"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": []
+      },
+      "deviation": "A6.3-PLUGIN-MARKDOWN-ROOT-001 (R5 accepted)"
+    },
+    {
+      "id": "external-hook-file",
+      "files": [
+        {
+          "path": "disk-name/plugin.json",
+          "content": "{\"name\":\"Visible Name\",\"hooks\":\"../outside-hooks.json\"}"
+        },
+        {
+          "path": "outside-hooks.json",
+          "content": "{\"PreToolUse\":[]}"
+        }
+      ],
+      "links": {},
+      "expectedNative": {
+        "ok": true,
+        "name": "Visible Name",
+        "commands": [],
+        "skills": [],
+        "outputStyles": [],
+        "hooksConfig": {}
+      },
+      "deviation": null
+    }
+  ]
+}
