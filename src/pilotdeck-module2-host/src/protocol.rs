@@ -2,7 +2,7 @@
 use serde_json::{Map, Value};
 
 /// Module Protocol 版本（与 sidecar 握手声明的版本一致）。
-pub const MODULE_PROTOCOL_VERSION: &str = "2.0";
+pub use pilotdeck_protocol::MODULE_PROTOCOL_VERSION;
 
 /// 帧错误：`code` 与 sidecar 的 `ValidationError::code` 同名。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -144,6 +144,7 @@ pub struct RequestFrame {
 /// 一个响应帧（`kind=response`）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResponseFrame {
+    pub request_id: Option<String>,
     pub message_id: String,
     pub in_reply_to: String,
     pub ok: bool,
@@ -159,6 +160,7 @@ impl ResponseFrame {
     /// 构造一个"已受理"响应（host → sidecar）。
     pub fn accepted(message_id: impl Into<String>, in_reply_to: impl Into<String>) -> Self {
         Self {
+            request_id: None,
             message_id: message_id.into(),
             in_reply_to: in_reply_to.into(),
             ok: true,
@@ -178,6 +180,7 @@ impl ResponseFrame {
         code: impl Into<String>,
     ) -> Self {
         Self {
+            request_id: None,
             message_id: message_id.into(),
             in_reply_to: in_reply_to.into(),
             ok: false,
@@ -271,15 +274,23 @@ fn required(map: &Map<String, Value>, field: &str) -> Result<String, FrameError>
 fn optional_string(map: &Map<String, Value>, field: &str) -> Option<String> {
     map.get(field).and_then(Value::as_str).map(str::to_owned)
 }
-pub fn decode_line(line: &str) -> Result<Frame, FrameError> {
+/// 无损边界：解析并沿用 Protocol 的唯一 Module2 验证器。
+/// UTF-16、显式 null 和扩展字段仍为原 JsValue；调用方可借用 EnvelopeRef。
+pub fn decode_boundary_line(line: &str) -> Result<pilotdeck_protocol::JsValue, FrameError> {
     let boundary = pilotdeck_protocol::parse_json(line)
         .map_err(|error| FrameError::new("INVALID_JSON", format!("{error:?}")))?;
     pilotdeck_protocol::wire::EnvelopeRef::decode(&boundary)
         .map_err(|error| FrameError::new(error.code, error.message))?;
+    Ok(boundary)
+}
+/// 显式 serde 互操作投影。合法但 serde 无法表示的帧并非 INVALID_JSON。
+/// 需要完整 Module2 值域的调用方应使用 decode_boundary_line。
+pub fn decode_line(line: &str) -> Result<Frame, FrameError> {
+    decode_boundary_line(line)?;
     let value: Value = serde_json::from_str(line).map_err(|error| {
         FrameError::new(
-            "INVALID_JSON",
-            format!("host JSON projection failed: {error}"),
+            "UNREPRESENTABLE_FRAME",
+            format!("validated Module2 frame cannot project to serde JSON: {error}"),
         )
     })?;
     project(value)
@@ -307,6 +318,7 @@ fn project(raw: Value) -> Result<Frame, FrameError> {
             raw,
         })),
         Some("response") => Ok(Frame::Response(ResponseFrame {
+            request_id: optional_string(map, "requestId"),
             message_id: required(map, "messageId")?,
             in_reply_to: required(map, "inReplyTo")?,
             ok: map
@@ -372,6 +384,9 @@ fn response_value(response: &ResponseFrame) -> Value {
         "inReplyTo".to_string(),
         Value::from(response.in_reply_to.clone()),
     );
+    if let Some(request_id) = &response.request_id {
+        object.insert("requestId".into(), Value::from(request_id.clone()));
+    }
     object.insert("ok".to_string(), Value::from(response.ok));
     if response.final_field {
         object.insert("final".to_string(), Value::from(true));
@@ -470,5 +485,31 @@ mod tests {
         let source = pilotdeck_protocol::parse_json(raw).unwrap();
         let expected = pilotdeck_protocol::wire::EnvelopeRef::decode(&source).unwrap_err();
         assert_eq!(decode_line(raw).unwrap_err().code, expected.code);
+    }
+}
+
+#[cfg(test)]
+mod surrogate_boundary_tests {
+    #[test]
+    fn original_utf16_payload_is_lossless_and_interop_failure_is_explicit() {
+        let raw = r#"{"kind":"request","messageId":"utf16","method":"module_call","runId":"r","operationId":"o","requestId":"q","module":"event","operation":"emit","payload":{"text":"\ud800"}}"#;
+        let value = super::decode_boundary_line(raw).unwrap();
+        pilotdeck_protocol::wire::EnvelopeRef::decode(&value).unwrap();
+        let text = value
+            .get("payload")
+            .unwrap()
+            .get("text")
+            .unwrap()
+            .as_string()
+            .unwrap();
+        assert_eq!(text.units(), &[0xd800]);
+        assert_eq!(
+            super::decode_line(raw).unwrap_err().code,
+            "UNREPRESENTABLE_FRAME"
+        );
+        assert_eq!(
+            super::decode_boundary_line("{").unwrap_err().code,
+            "INVALID_JSON"
+        );
     }
 }
