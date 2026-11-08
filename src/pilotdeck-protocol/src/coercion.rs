@@ -124,8 +124,28 @@ fn validate_coercion(value: &JsValue) -> Result<(), ToStringError> {
                 }
                 pending.extend(items.iter().rev().map(|item| (item, depth + 1)));
             }
-            JsValue::Object(object) if object.get_property("toString").is_some() => {
-                return Err(ToStringError::NotPrimitive);
+            JsValue::Object(object) => {
+                // ToPrimitive throws when neither `valueOf` nor `toString` is
+                // usable. JSON cannot carry a callable, so any *visible*
+                // `toString` is a non-callable one that shadows the inherited
+                // method (the fix-r1 shape, including through the explicit
+                // prototype chain a config merge installs — `get_property`
+                // walks it). A chain that terminates at `null` (the
+                // `Object.create(null)` / `__proto__: null` shape, #2301
+                // fix-r3) finds neither method at all and throws the same
+                // TypeError; a missing explicit prototype is the *implicit*
+                // `Object.prototype` (both methods callable, no throw), and a
+                // non-object prototype value is ignored by JS the same way.
+                if object.get_property("toString").is_some() {
+                    return Err(ToStringError::NotPrimitive);
+                }
+                let mut prototype = object.prototype();
+                while let Some(JsValue::Object(inner)) = prototype {
+                    prototype = inner.prototype();
+                }
+                if matches!(prototype, Some(JsValue::Null)) {
+                    return Err(ToStringError::NotPrimitive);
+                }
             }
             _ => {}
         }
