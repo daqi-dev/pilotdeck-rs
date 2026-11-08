@@ -1245,3 +1245,7 @@ mod calibration_lookup_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "default_factory_cache_tests.rs"]
+mod native_cache_collation_tests;
