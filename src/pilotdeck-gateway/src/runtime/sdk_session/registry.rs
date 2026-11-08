@@ -174,6 +174,20 @@ fn check_abort(signal: Option<&dyn SdkAbortSignal>) -> Result<(), SdkSessionErro
 
 // ─────────────────────────────────────────────────────────── registry
 
+/// Native hosts may normalize SDK agents against the exact plugin view which
+/// the same transaction will commit; generic embedders keep the old behavior.
+pub type SdkAgentNormalizer = Arc<
+    dyn Fn(
+            &SdkSessionRegistry,
+            &JsString,
+            &JsValue,
+            &ResolvedSdkRuntime,
+            &[crate::runtime::plugins::PluginSkillContribution],
+        ) -> Result<JsValue, SdkSessionError>
+        + Send
+        + Sync,
+>;
+
 pub struct SdkSessionOptions {
     pub fallback_project_root: PathBuf,
     pub cwd: PathBuf,
@@ -187,6 +201,7 @@ pub struct SdkSessionOptions {
     pub projects: Arc<SdkSessionProjects>,
     pub organization_policy: Option<OrganizationPolicy>,
     pub plugin_loader: Option<Arc<dyn SdkPluginLoader>>,
+    pub agent_normalizer: Option<SdkAgentNormalizer>,
     pub task_budget: Option<Arc<dyn SdkTaskBudget>>,
     pub clock: Arc<dyn Fn() -> f64 + Send + Sync>,
 }
@@ -207,6 +222,7 @@ impl SdkSessionOptions {
             projects: SdkSessionProjects::shared(),
             organization_policy: None,
             plugin_loader: Some(Arc::new(DiskSdkPluginLoader)),
+            agent_normalizer: None,
             task_budget: None,
             clock: Arc::new(|| {
                 std::time::SystemTime::now()
@@ -231,6 +247,10 @@ impl SdkSessionOptions {
     }
     pub fn with_plugin_loader(mut self, loader: Arc<dyn SdkPluginLoader>) -> Self {
         self.plugin_loader = Some(loader);
+        self
+    }
+    pub fn with_agent_normalizer(mut self, normalizer: SdkAgentNormalizer) -> Self {
+        self.agent_normalizer = Some(normalizer);
         self
     }
     pub fn with_task_budget(mut self, budget: Arc<dyn SdkTaskBudget>) -> Self {
@@ -421,7 +441,7 @@ impl SdkSessionRegistry {
         .map_err(map_settings_error)
     }
 
-    fn assert_organization_model_allowed(
+    pub(crate) fn assert_organization_model_allowed(
         &self,
         runtime: &ResolvedSdkRuntime,
         model: &ModelRef,
@@ -980,7 +1000,11 @@ impl SdkSessionRegistry {
             let resolved = resolve_session_skills(items, &available)?;
             set_property(&mut next, "skills", resolved);
         }
-        // resolveSdkSubagentScopes (TS :2118) is outside this slice's ranges.
+        // Native agent validation uses the same selected plugin view and runs
+        // before config/plugins are published, preserving atomic failure.
+        if let Some(normalize) = self.options.agent_normalizer.as_ref() {
+            next = normalize(self, session_key, &next, &runtime, &view.all_skills())?;
+        }
 
         if let Some(model) = own(&next, "settings")
             .and_then(|settings| settings.get("agent"))

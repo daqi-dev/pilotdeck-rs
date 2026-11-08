@@ -5128,3 +5128,8 @@ r113 固定 d16309700 在 mbp2 全目标编译通过，Always-On106过0失败1�
 ### 2026-11-09 06:29 · SOP 生产执行与 SDK 预算/策略收口
 
 r114固定59c3d16a6：mbp2 all-target check、AO106、native501、HTTP134、SOP host3/controller5、native预算2、SDK22通过；budget-store误用lib筛选命中0不计通过，r115改实际integration task_budget七过一忽略。r115固定fa61b4ff5已真实装配SOP并通过check、host3/controller5/model30/submit-host14；native504过1测试末广播竞态失败，admission10过1新增测试对象键序错误，两项已按真实广播完成和对象语义修夹具，待下一轮。managedTools/sandbox、弱引用deferred搜索、outputFormat/aliases、progress与真实建议生成器已整合待编译；settings/SDK local plugins/managedPermissions与ephemeral存储仍实施。恢复不同答案与结构化schema判断见当日决策，不改冻结尺子。只本机提交、全部Rust仅mbp2；完整CLI尚未完成，06:41交接后继续。
+
+
+### 2026-11-09 06:37 · 会话插件与恢复列表原子接线
+
+r117固定d8296784e在mbp2全目标编译通过，native517、tools141、plugins86、SOP host3/controller5实际通过；admission10过1数值断言失败（JSON Number 2与2.0），按字段数值检查修正待复验。已逐hash整合会话插件同次技能/agent归一和装配实际contribution view、恢复列表与live注册共用gate及真实barrier回归，待r118；settings/权限/ephemeral及SOP尾部协议仍实施。只本机提交、Rust仅mbp2，无GitHub写；完整CLI未完成。

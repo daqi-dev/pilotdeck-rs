@@ -121,6 +121,19 @@ impl Requests {
                         "INVALID_USER_DIALOG_LIST",
                         "sessionKey is required.",
                     )?;
+                    // A live start owns this independent gate from before its journal
+                    // write through bus registration. Snapshot and recovered-list
+                    // filtering must observe one side of that transaction.
+                    let _start_gate = if self.dialog_recovery.is_some() {
+                        Some(
+                            crate::runtime::tools::builtin::user_dialog::dialog_start_gate(
+                                &session_key,
+                            )
+                            .await,
+                        )
+                    } else {
+                        None
+                    };
                     // #1442: `list` may expire a lease and queue a change;
                     // the observer is host code, so it is delivered only
                     // after the guard drops.

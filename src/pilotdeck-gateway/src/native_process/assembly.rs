@@ -518,6 +518,8 @@ async fn start_assembly(
     let prepare_overrides = session_overrides.clone();
     let sdk_projects = SdkSessionProjects::shared();
     let budget_ledger = task_budget::NativeBudgetLedger::new(options.home.clone());
+    let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
+    let normalize_mcp_config = prepare_mcp_config.clone();
     let sdk_options = crate::runtime::sdk_session::SdkSessionOptions::new(
         options.project.clone(),
         options.project.clone(),
@@ -528,9 +530,11 @@ async fn start_assembly(
     )
     .with_homedir(options.home.clone())
     .with_plugin_loader(Arc::new(sdk_plugins::NativeSdkPluginLoader))
+    .with_agent_normalizer(Arc::new(move |registry, session, config, runtime, skills| {
+        sdk_adapter::resolve_native_agents(registry, session, config, runtime, skills, normalize_mcp_config.get())
+    }))
     .with_projects(sdk_projects.clone())
     .with_task_budget(budget_ledger.clone());
-    let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
     let sdk_registry = crate::runtime::sdk_session::SdkSessionRegistry::new(sdk_options)
         .with_shared_handlers(sdk_handlers.clone());
     let sdk_async_hooks = Arc::new(std::sync::OnceLock::new());
@@ -821,8 +825,9 @@ async fn start_assembly(
                     .refresh()
                     .await
                     .map_err(|error| RuntimeError::new(error.to_string()))?;
+                let session_plugins = sdk.registry.lock().await.session_plugins(&context.session_key).to_vec();
                 let mut skill_lease = plugin_runtime
-                    .acquire_session_contributions(vec![])
+                    .acquire_session_contributions(session_plugins)
                     .await
                     .map_err(|error| RuntimeError::new(error.to_string()))?;
                 let input_admission = Arc::new(super::input_admission::InputAdmission::new(

@@ -946,6 +946,119 @@ mod tests {
         );
         cleanup(&requests).await;
     }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_journal_start_is_not_listed_as_recovered() {
+        use crate::runtime::tools::builtin::user_dialog::NativeUserDialogPort;
+        use crate::user_dialog::{
+            ChannelOptions, GatewayUserDialogChannel, InputRequest, UserDialogJournal,
+        };
+        struct PausedJournal {
+            inner: GatewayUserDialogJournal,
+            started: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+            release: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+        }
+        impl UserDialogJournal for PausedJournal {
+            fn record(&self, event: &JsValue) -> crate::user_dialog::Result<()> {
+                self.inner.record(event)?;
+                if let Some(sender) = self.started.lock().unwrap().take() {
+                    let _ = sender.send(());
+                }
+                self.release.lock().unwrap().recv().unwrap();
+                Ok(())
+            }
+            fn remove(&self, id: &JsString) -> crate::user_dialog::Result<()> {
+                self.inner.remove(id)
+            }
+        }
+        let (_scratch, mut requests) = crate::native_process::management_tests::setup();
+        let recovery = Arc::new(super::super::tests::recovery(&requests));
+        requests.dialog_recovery = Some(recovery.clone());
+        let session: JsString = "live-list-race".into();
+        let chat = crate::native_process::methods::session_dir::bounded_chat_dir(
+            &requests.options.home,
+            &requests.options.project,
+        )
+        .unwrap();
+        let journal = journal(&requests.options.home, &chat, &session).unwrap();
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let mut options = ChannelOptions::new(
+            session.clone(),
+            requests.user_dialog_bus.clone(),
+            Arc::new(|_| Ok(())),
+        );
+        options.uuid = Arc::new(|| "dialog".to_owned());
+        options.journal = Some(Arc::new(PausedJournal {
+            inner: journal,
+            started: std::sync::Mutex::new(Some(started_tx)),
+            release: std::sync::Mutex::new(release_rx),
+        }));
+        let channel = GatewayUserDialogChannel::new(options.clone());
+        let port = NativeUserDialogPort::new(options);
+        let begin = tokio::spawn(async move {
+            port.begin(move || {
+                channel.request_input(&InputRequest {
+                    tool_call_id: "tool-call".into(),
+                    tool_name: "request_user_input".into(),
+                    prompt: "Question?".into(),
+                    placeholder: None,
+                    allow_empty: false,
+                    abort: None,
+                })
+            })
+            .await
+            .unwrap()
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(3), started_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        let input = object([("sessionKey", JsValue::String(session.clone()))]);
+        let mut listing = Box::pin(requests.user_dialog_request("user_dialog_list".into(), input));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(500), &mut listing)
+                .await
+                .is_err(),
+            "list cannot observe the written journal before live registration"
+        );
+        release_tx.send(()).unwrap();
+        let mut request = tokio::time::timeout(std::time::Duration::from_secs(3), begin)
+            .await
+            .unwrap()
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), listing)
+            .await
+            .unwrap()
+            .unwrap();
+        let Some(JsValue::Array(dialogs)) = result.get("dialogs") else {
+            panic!("dialogs")
+        };
+        assert_eq!(dialogs.len(), 1);
+        assert_eq!(dialogs[0].get("requestId"), Some(&"dialog".into()));
+        assert_ne!(dialogs[0].get("reason"), Some(&"gateway_restarted".into()));
+        // Settle through the actual live bus before shutting down the owner.
+        let answer = object([
+            ("sessionKey", JsValue::String(session)),
+            ("requestId", "dialog".into()),
+            (
+                "result",
+                object([
+                    ("behavior", "answered".into()),
+                    ("value", "accepted".into()),
+                ]),
+            ),
+        ]);
+        assert_eq!(
+            requests
+                .user_dialog_request("user_dialog_respond".into(), answer)
+                .await
+                .unwrap()
+                .get("delivered"),
+            Some(&JsValue::Bool(true))
+        );
+        assert!(request.try_result().is_some());
+        cleanup(&requests).await;
+    }
     #[test]
     fn native_recovery_formats_cancel_choice_and_form_as_the_legacy_context() {
         let input = request("input");

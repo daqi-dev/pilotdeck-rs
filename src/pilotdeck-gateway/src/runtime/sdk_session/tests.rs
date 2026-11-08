@@ -861,3 +861,99 @@ async fn default_plugin_loader_reads_disk_and_maps_manifest_failure() {
     );
     assert!(registry.session_plugins(&"bad".into()).is_empty());
 }
+
+#[tokio::test]
+async fn native_agent_normalizer_sees_same_transaction_plugin_skills_and_failure_is_atomic() {
+    use crate::runtime::plugins::loader::LoadedPluginCommand;
+    struct Loader;
+    impl SdkPluginLoader for Loader {
+        fn load<'a>(&'a self, path: &'a Path) -> PluginLoadFuture<'a> {
+            let path = path.to_path_buf();
+            Box::pin(async move {
+                Ok(LoadedPlugin {
+                    name: "local".into(),
+                    path: path.clone(),
+                    source: PluginSource::Project,
+                    commands: vec![],
+                    skills: vec![LoadedPluginCommand {
+                        name: "guide".into(),
+                        path: path.join("guide.md"),
+                        content: "guide".into(),
+                        frontmatter: Default::default(),
+                        is_skill: true,
+                    }],
+                    output_styles: vec![],
+                    hooks_config: None,
+                    mcp_servers: None,
+                    lsp_servers: None,
+                    dispose: None,
+                })
+            })
+        }
+    }
+    let scratch = scratch::Scratch::new("sdk-plugin-normalizer");
+    let root = scratch.path();
+    let dir = root.join("local");
+    std::fs::create_dir_all(&dir).unwrap();
+    let runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
+        project_root: root.into(),
+        pilot_home: root.join("home"),
+        builtin_skills_root: None,
+        builtin_plugins: vec![],
+        builtin_plugins_enabled: HashMap::new(),
+    }));
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = calls.clone();
+    let normalizer = Arc::new(
+        move |_: &SdkSessionRegistry,
+              session: &JsString,
+              config: &JsValue,
+              _: &ResolvedSdkRuntime,
+              skills: &[crate::runtime::plugins::PluginSkillContribution]| {
+            assert_eq!(skills.len(), 1);
+            assert!(skills[0].name.ends_with("guide"));
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if session.equals_str("reject") {
+                return Err(SdkSessionError::new("fixture_rejected", "blocked"));
+            }
+            Ok(config.clone())
+        },
+    );
+    let options = SdkSessionOptions::new(
+        root,
+        root,
+        Env::new(),
+        Arc::new(FixedResolver {
+            root: root.into(),
+            plugin_runtime: runtime,
+        }),
+    )
+    .with_plugin_loader(Arc::new(Loader))
+    .with_agent_normalizer(normalizer);
+    let mut registry = SdkSessionRegistry::new(options);
+    let config = js_object(vec![(
+        "plugins",
+        JsValue::Array(vec![js_object(vec![(
+            "path",
+            JsValue::String(dir.to_string_lossy().as_ref().into()),
+        )])]),
+    )]);
+    assert!(
+        registry
+            .set_session_config(&"ok".into(), &config, None, None)
+            .await
+            .unwrap()
+    );
+    assert_eq!(registry.session_plugins(&"ok".into()).len(), 1);
+    assert_eq!(
+        registry
+            .set_session_config(&"reject".into(), &config, None, None)
+            .await
+            .unwrap_err()
+            .code,
+        "fixture_rejected"
+    );
+    assert!(registry.session_config(&"reject".into()).is_none());
+    assert!(registry.session_plugins(&"reject".into()).is_empty());
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+}

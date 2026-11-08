@@ -211,13 +211,9 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
         Box::pin(async move {
             let signal = CompletionSignal(completion);
             let mut registry = self.registry.lock().await;
-            let normalized =
-                resolve_native_agents(&registry, session, config, project, self.mcp_config.get())
-                    .await
-                    .map_err(sdk_submit_error)?;
             signal.throw_if_aborted().map_err(sdk_submit_error)?;
             registry
-                .set_session_config(session, &normalized, project, Some(&signal))
+                .set_session_config(session, config, project, Some(&signal))
                 .await
                 .map_err(|e| {
                     SubmitError::new(
@@ -235,9 +231,13 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
 
 pub(super) fn apply_prompt_config(target: &mut pilotdeck_protocol::JsObject, sdk: &JsValue) {
     for key in ["toolAliases", "deferredTools", "outputFormat"] {
-        if let Some(value)=sdk.get(key).filter(|v|!v.is_undefined()){target.insert(key.into(),value.clone());}
+        if let Some(value) = sdk.get(key).filter(|v| !v.is_undefined()) {
+            target.insert(key.into(), value.clone());
+        }
     }
-    if sdk.get("outputFormat").is_some_and(|v|!v.is_undefined()){target.insert("stopOnStructuredOutput".into(),JsValue::Bool(true));}
+    if sdk.get("outputFormat").is_some_and(|v| !v.is_undefined()) {
+        target.insert("stopOnStructuredOutput".into(), JsValue::Bool(true));
+    }
 
     if sdk.get("agentProgressSummaries") == Some(&JsValue::Bool(true)) {
         target.insert("includeToolProgress".into(), JsValue::Bool(true));
@@ -274,6 +274,29 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
     })?;
     super::super::sdk_tool_policy::validate_sandbox(config)?;
     super::sdk_hooks::validate(config)?;
+    if let Some(plugins) = object.get("plugins").filter(|v| !v.is_undefined()) {
+        let valid = match plugins {
+            JsValue::Array(items) if !items.is_empty() => {
+                let mut seen = std::collections::HashSet::new();
+                items.iter().all(|item| {
+                    let path = item.get("path").and_then(JsValue::as_string);
+                    item.as_object().is_some()
+                        && item.get("type") == Some(&"local".into())
+                        && path.is_some_and(|p| {
+                            p.units().first() == Some(&u16::from(b'/')) && seen.insert(p.clone())
+                        })
+                })
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(SubmitError::new(
+                "INVALID_SDK_SESSION_CONFIG",
+                "plugins must be a non-empty array of distinct absolute Gateway-local plugin paths.",
+            ));
+        }
+    }
+
     for key in ["agentProgressSummaries", "forwardSubagentText"] {
         if object
             .get(key)
@@ -332,6 +355,7 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
         ![
             "agentProgressSummaries",
             "forwardSubagentText",
+            "plugins",
             "permissionMode",
             "managedTools",
             "sandbox",
@@ -570,11 +594,12 @@ fn project_agents(agents: &pilotdeck_protocol::JsObject) -> pilotdeck_protocol::
     }
     output
 }
-async fn resolve_native_agents(
+pub(super) fn resolve_native_agents(
     registry: &SdkSessionRegistry,
     session: &JsString,
     config: &JsValue,
-    project: Option<&JsString>,
+    runtime: &ResolvedSdkRuntime,
+    available: &[crate::runtime::plugins::PluginSkillContribution],
     mcp_config: Option<&Arc<crate::runtime::mcp::sdk::SdkMcpConfig>>,
 ) -> Result<JsValue, SdkSessionError> {
     use crate::runtime::sdk_session::{
@@ -583,16 +608,8 @@ async fn resolve_native_agents(
     if config.get("agents").is_none_or(JsValue::is_undefined) {
         return Ok(config.clone());
     }
-    let runtime = registry.options().resolver.resolve(project)?;
-    runtime
-        .plugin_runtime
-        .refresh()
-        .await
-        .map_err(|error| SdkSessionError::raw("Error", error.to_string()))?;
-    let view = runtime.plugin_runtime.create_view(vec![]).await;
-    let available = view.all_skills();
     let parent = match config.get("skills") {
-        Some(JsValue::Array(names)) => Some(resolve_session_skills(names, &available)?),
+        Some(JsValue::Array(names)) => Some(resolve_session_skills(names, available)?),
         _ => None,
     };
     let mut next = config.as_object().cloned().unwrap_or_default();
@@ -615,7 +632,7 @@ async fn resolve_native_agents(
                     ),
                 )
             })?;
-            registry.assert_model_allowed(session, Some(&model), project)?;
+            registry.assert_organization_model_allowed(runtime, &model)?;
             assert_managed_model_allowed(config.get("managedModels"), &model)?;
             let mut text = model.provider.units().to_vec();
             text.push(47);
@@ -623,7 +640,7 @@ async fn resolve_native_agents(
             agent.insert("model".into(), JsValue::String(JsString::from_utf16(text)));
         }
         let selected = match agent.get("skills") {
-            Some(JsValue::Array(names)) => Some(resolve_session_skills(names, &available)?),
+            Some(JsValue::Array(names)) => Some(resolve_session_skills(names, available)?),
             Some(JsValue::String(all)) if all.equals_str("all") => parent.clone(),
             None | Some(JsValue::Undefined) => parent.clone(),
             _ => None,
@@ -782,10 +799,23 @@ mod tests {
     }
     #[test]
     fn sdk_catalog_policies_are_projected_only_from_present_committed_config() {
-        let config=object([("managedTools",object([("allow",JsValue::Array(vec!["read*".into()])),("deny",JsValue::Array(Vec::new()))])),("sandbox",object([("process","deny".into())]))]);
-        assert!(validate_supported_config(&config).is_ok()); let mut target=pilotdeck_protocol::JsObject::new(); apply_prompt_config(&mut target,&config);
-        assert_eq!(target.get("managedTools"),config.get("managedTools")); assert_eq!(target.get("sandbox"),config.get("sandbox"));
-        apply_prompt_config(&mut target,&object([]));assert_eq!(target.get("managedTools"),config.get("managedTools"));
+        let config = object([
+            (
+                "managedTools",
+                object([
+                    ("allow", JsValue::Array(vec!["read*".into()])),
+                    ("deny", JsValue::Array(Vec::new())),
+                ]),
+            ),
+            ("sandbox", object([("process", "deny".into())])),
+        ]);
+        assert!(validate_supported_config(&config).is_ok());
+        let mut target = pilotdeck_protocol::JsObject::new();
+        apply_prompt_config(&mut target, &config);
+        assert_eq!(target.get("managedTools"), config.get("managedTools"));
+        assert_eq!(target.get("sandbox"), config.get("sandbox"));
+        apply_prompt_config(&mut target, &object([]));
+        assert_eq!(target.get("managedTools"), config.get("managedTools"));
     }
     #[test]
     fn only_wired_sdk_modes_are_accepted() {
@@ -866,5 +896,27 @@ mod user_dialog_config_tests {
             config.get("includeToolProgress"),
             Some(&JsValue::Bool(true))
         );
+    }
+    #[test]
+    fn sdk_plugin_descriptors_require_unique_absolute_local_paths() {
+        for text in [
+            "null",
+            "[]",
+            "[{}]",
+            "[{\"type\":\"remote\",\"path\":\"/tmp/a\"}]",
+            "[{\"type\":\"local\",\"path\":\"relative\"}]",
+            "[{\"type\":\"local\",\"path\":\"/a\"},{\"type\":\"local\",\"path\":\"/a\"}]",
+        ] {
+            let value = pilotdeck_protocol::parse_json(text).unwrap();
+            assert_eq!(
+                validate_supported_config(&object([("plugins", value)]))
+                    .unwrap_err()
+                    .code,
+                "INVALID_SDK_SESSION_CONFIG"
+            );
+        }
+        let value =
+            pilotdeck_protocol::parse_json("[{\"type\":\"local\",\"path\":\"/a\"}]").unwrap();
+        assert!(validate_supported_config(&object([("plugins", value)])).is_ok());
     }
 }
