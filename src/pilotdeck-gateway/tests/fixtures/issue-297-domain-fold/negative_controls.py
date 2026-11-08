@@ -57,9 +57,12 @@ restoring revokes every recorded row and exits 2 (#979, #1076, #1734).
 SIGINT/SIGTERM/SIGHUP/SIGQUIT raise `SystemExit(2)`: a cancel outside the
 shared guard's write-back window is a refusal, the same code `run_cases`
 itself normalizes to. A cancel landing inside the restore window still
-unwinds and re-verifies the tree first, then exits 128+signum (the
-`negative_process.mutating_sources` deferred-signal contract, the family
-convention `test_negative_process` locks in).
+unwinds and re-verifies the tree first; the guard raises
+`SystemExit(128+signum)` on exit (the `negative_process.mutating_sources`
+deferred-signal contract) and `run_cases` normalizes that back to 2 with
+an all-INVALID summary -- both phases of this family exit 2
+(`test_negative_suite.test_guard_systemexit_256_voids_last_kill_and_exits_2`
+locks the normalization in).
 """
 import argparse
 import json
