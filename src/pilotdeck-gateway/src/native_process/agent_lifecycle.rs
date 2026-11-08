@@ -62,7 +62,7 @@ impl AsyncHookRegistrationHandler for DynamicRegistration {
     }
 }
 impl ForkTurn {
-    pub(super) fn bind_detached_hooks(
+    pub(in crate::native_process) fn bind_detached_hooks(
         self: &Arc<Self>,
         settings: HooksSettings,
         mut options: HookRuntimeOptions,

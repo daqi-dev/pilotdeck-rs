@@ -1455,43 +1455,62 @@ mod tcp_liveness_tests {
     #[test]
     fn poisoned_shared_decode_gate_releases_between_real_connections() {
         use std::io::{BufRead, BufReader, Write};
-        use std::os::unix::net::UnixStream;
         use std::net::Shutdown;
+        use std::os::unix::net::UnixStream;
         let ledger = SharedExecutionLedger::default();
         let gate = ledger.decoding.clone();
         let poison = gate.clone();
-        assert!(thread::spawn(move || {
-            let _guard = poison.lock().unwrap();
-            panic!("injected decode panic");
-        }).join().is_err());
+        assert!(
+            thread::spawn(move || {
+                let _guard = poison.lock().unwrap();
+                panic!("injected decode panic");
+            })
+            .join()
+            .is_err()
+        );
         assert!(gate.is_poisoned());
         let (tx, rx) = mpsc::channel();
         for index in 0..2 {
             let owner = ConnectionOwner::new(
                 SidecarBinding {
-                    module_id: "m".into(), module_instance_id: "i".into(),
+                    module_id: "m".into(),
+                    module_instance_id: "i".into(),
                     connection_generation: format!("g-{index}").as_str().into(),
                     capabilities_version: "1".into(),
-                }, 8,
+                },
+                8,
             );
             let server = ExecutionServer::with_shared_ledger(
-                owner, Arc::new(UnusedFactory), Arc::new(Clock), 8, ledger.clone(),
+                owner,
+                Arc::new(UnusedFactory),
+                Arc::new(Clock),
+                8,
+                ledger.clone(),
             );
             assert!(Arc::ptr_eq(server.decoding.as_ref().unwrap(), &gate));
             let (stream, mut client) = UnixStream::pair().unwrap();
-            client.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
             let input = stream.try_clone().unwrap();
             let done = tx.clone();
             thread::spawn(move || {
-                let _ = done.send(server.serve(BufReader::new(input), stream, Duration::from_secs(2)));
+                let _ =
+                    done.send(server.serve(BufReader::new(input), stream, Duration::from_secs(2)));
             });
-            writeln!(client, "{{\"kind\":\"request\",\"messageId\":\"h\",\"method\":\"hello\",\"payload\":{{}}}}").unwrap();
+            writeln!(
+                client,
+                "{{\"kind\":\"request\",\"messageId\":\"h\",\"method\":\"hello\",\"payload\":{{}}}}"
+            )
+            .unwrap();
             let mut response = String::new();
             BufReader::new(&client).read_line(&mut response).unwrap();
             let response = pilotdeck_protocol::parse_json(&response).unwrap();
             assert_eq!(response.get("ok"), Some(&JsValue::Bool(true)));
             client.shutdown(Shutdown::Both).unwrap();
-            let report = rx.recv_timeout(Duration::from_secs(4)).expect("connection stuck");
+            let report = rx
+                .recv_timeout(Duration::from_secs(4))
+                .expect("connection stuck");
             assert!(report.complete(), "{report:?}");
         }
     }

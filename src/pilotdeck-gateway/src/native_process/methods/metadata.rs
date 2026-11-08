@@ -291,7 +291,8 @@ impl crate::metadata::Files for BoundedMetadataFiles {
             return Err(self.limit());
         }
         let max = crate::storage::TRANSCRIPT_MAX_BYTES as usize;
-        let bytes = crate::metadata::Files::archive_read(&NativeFiles, root, path, limit.min(max + 1))?;
+        let bytes =
+            crate::metadata::Files::archive_read(&NativeFiles, root, path, limit.min(max + 1))?;
         if bytes.len() > max {
             return Err(self.limit());
         }
@@ -306,7 +307,8 @@ impl crate::metadata::Files for BoundedMetadataFiles {
             return Err(self.limit());
         }
         const MARKER_LIMIT: usize = 64 * 1024;
-        let bytes = crate::metadata::Files::archive_read(&NativeFiles, root, path, MARKER_LIMIT + 1)?;
+        let bytes =
+            crate::metadata::Files::archive_read(&NativeFiles, root, path, MARKER_LIMIT + 1)?;
         let used = self.bytes.get().saturating_add(bytes.len());
         if bytes.len() > MARKER_LIMIT || used > Self::BYTE_LIMIT {
             return Err(self.limit());
@@ -326,8 +328,8 @@ struct SummaryReader<'a> {
 #[cfg(unix)]
 impl std::io::Read for SummaryReader<'_> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        const LIMIT: usize = crate::storage::TRANSCRIPT_MAX_BYTES as usize
-            + 2 * crate::metadata::LITE_BYTES;
+        const LIMIT: usize =
+            crate::storage::TRANSCRIPT_MAX_BYTES as usize + 2 * crate::metadata::LITE_BYTES;
         if self.owner.was_refused() {
             return Err(self.owner.limit());
         }
