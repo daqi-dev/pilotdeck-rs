@@ -46,7 +46,8 @@ impl ResourceFamilySource for PluginFamilySource {
     }
 }
 
-/// Native CLI restricted generation. Full plugin hooks/MCP/tools are never loaded.
+/// Native CLI restricted generation supports output styles, standalone skills,
+/// and configured hooks; unsupported plugin contributions remain rejected.
 pub struct NativeStylePluginFamilySource {
     pub options: PluginRuntimeOptions,
 }
@@ -80,7 +81,7 @@ mod native_style_tests {
         }
     }
     #[tokio::test]
-    async fn native_generation_accepts_only_inert_style_plugins() {
+    async fn native_generation_loads_styles_and_hooks_but_rejects_unsupported_contributions() {
         let root =
             Scratch(std::env::temp_dir().join(format!("pdrs-style-gate-{}", uuid::Uuid::new_v4())));
         let project = root.0.join("project");
@@ -110,13 +111,37 @@ mod native_style_tests {
         assert_eq!(runtime.generation().await, 1);
         assert!(runtime.all_commands().await.is_empty());
         fs::remove_dir_all(plugin.join("commands")).unwrap();
-        fs::write(&manifest, r#"{"name":"p","hooks":{"PreToolUse":[]}}"#).unwrap();
+        fs::write(
+            &manifest,
+            r#"{"name":"p","hooks":{"PreToolUse":[{"matcher":"write_file","hooks":[{"type":"command","command":"echo fixture-hook"}]}]}}"#,
+        )
+        .unwrap();
+        runtime.refresh().await.unwrap();
+        assert_eq!(runtime.generation().await, 2);
+        let snapshot = runtime.create_view(vec![]).await.snapshot_contributions();
+        let (event, matchers) = snapshot
+            .hooks
+            .iter()
+            .find(|(event, _)| event.equals_str("PreToolUse"))
+            .expect("PreToolUse hook is loaded");
+        assert!(event.equals_str("PreToolUse"));
+        assert_eq!(matchers.len(), 1);
+        assert!(
+            matchers[0]
+                .matcher
+                .as_ref()
+                .is_some_and(|matcher| matcher.equals_str("write_file"))
+        );
+        assert!(
+            matches!(matchers[0].hooks.as_slice(), [crate::hooks::protocol::HookCommand::Command { command, .. }] if command.equals_str("echo fixture-hook"))
+        );
+        fs::write(&manifest, r#"{"name":"p","mcpServers":{}}"#).unwrap();
         assert!(runtime.refresh().await.is_err());
-        assert_eq!(runtime.generation().await, 1);
+        assert_eq!(runtime.generation().await, 2);
         fs::write(&manifest, r#"{"name":"p","outputStyles":"custom"}"#).unwrap();
         fs::rename(plugin.join("output-styles"), plugin.join("custom")).unwrap();
         runtime.refresh().await.unwrap();
-        assert_eq!(runtime.generation().await, 2);
+        assert_eq!(runtime.generation().await, 3);
         assert_eq!(
             runtime.create_view(vec![]).await.list_output_styles().len(),
             1

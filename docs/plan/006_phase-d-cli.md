@@ -6,7 +6,9 @@
 
 命令及 profile 的唯一明细是 [产品入口总账](../../specs/product-coverage/entries.json)，由独立枚举器从固定 Git 对象读源码验证。包括 package.json 的两个 bin、手写 argv 分派、默认/未知参数路径、叶命令及别名、TUI slash 子树、实际读取的选项和 sidecar 部署 profile。help 文本不完整，不能用它或候选 parser 作为完整标准。行为以同参数、同输入的基线实测为准；已批准差异必须有明确期望及登记，首次装置定标不得根据 Rust 结果放宽规则。
 
-2026-11-08 当前本地 CLI 已实现 SDK、本地命令、全平台 setup、默认远端模式、TUI、独立 control serve/call/stream 及原生主 history；旧 server/update、默认本地宿主、native权限和机器接口余项仍未完成，最新代码和证据以board为准。早期候选 `codex/cli-server@1fdb99b` 的过渡代理 server/help/version不作为标准：空参数输出版本、未知命令报错及严格parser不符合基线。`pilotdeck server` 同时绑定 A 的 gateway/后台与 B 的 UI 编排，D 负责命令参数、输出、退出及组合验收。sidecar 协议属于 C；Rust 不支持 factory/TCP 已另建 #130，现有 stdio 证据不能覆盖它们。
+2026-11-09 工程接线状态：旧 CLI 的 server/update、默认 Rust LocalHost、原生权限，以及 control 的 schema/watch/connect/install 已接入；sidecar 的 Rust 默认 factory、stdio 与 TCP 客户端/监听端也已有实现。第三方 JavaScript factory 仍明确拒绝，不以业务 TS 自动回退充当 Rust 实现。早期候选 `codex/cli-server@1fdb99b` 的过渡代理 server/help/version不作为标准：空参数输出版本、未知命令报错及严格parser不符合基线。`pilotdeck server` 同时绑定 A 的 gateway/后台与 B 的 UI 编排，D 负责命令参数、输出、退出及组合验收；接入代码不取消各阶段既有完成门。
+
+验证状态与工程接线分别报告：最终组合的源码提交、bin SHA、实际通过/失败/忽略、PTY、故障注入与恢复结果，待协调者按最终运行原件填入交付记录，以 board 所引证据为准；中间一轮通过或注册名册完整不等于全部行为验收通过。AI 实测与真人验收也分别登记，最终 CLI/TUI 实际任务和人签未闭合前，阶段 D 不标完成。独立 `/app/v1` 应用服务与新版前端按本轮用户确认留到前端阶段，不由 Gateway 机器桥替代。
 
 ## 任务与依赖
 
