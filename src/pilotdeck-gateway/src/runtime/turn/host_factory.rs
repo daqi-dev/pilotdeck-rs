@@ -215,6 +215,7 @@ pub struct TurnHostFactory {
     pinned_generation: Option<std::sync::Weak<RuntimeLease>>,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
     input_admission: Option<Arc<crate::native_process::input_admission::InputAdmission>>,
+    loop_controller: Option<Arc<dyn super::loop_control::HostLoopController>>,
 }
 
 impl TurnHostFactory {
@@ -290,7 +291,12 @@ impl TurnHostFactory {
             pinned_generation: None,
             permission_mode_source: None,
             input_admission: None,
+            loop_controller: None,
         }
+    }
+
+    pub(crate) fn with_loop_controller(mut self, controller: Arc<dyn super::loop_control::HostLoopController>) -> Self {
+        self.loop_controller = Some(controller); self
     }
 
     pub(crate) fn with_input_admission(
@@ -350,6 +356,7 @@ impl TurnHostFactory {
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
         let input_admission = self.input_admission.take();
+        let loop_controller = self.loop_controller.clone();
         let factory = Arc::new(self);
         let session = LiveSessionAdapter::with_interaction_authority(
             recorder,
@@ -369,6 +376,7 @@ impl TurnHostFactory {
             close_timeout
         })
         .with_unique_tcp_request_id(unique_tcp_request_id);
+        let session = match loop_controller { Some(controller) => session.with_loop_controller(controller), None => session };
         let session = match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,
@@ -436,6 +444,7 @@ impl TurnHostFactory {
         }
         .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let ports = (self.ports)(identity, recorder, signal, authority);
+        let node_template = self.loop_controller.as_ref().map(|_| Arc::new(super::sop_executor::NodeTemplate::capture(&ports, identity, deployment.clone(), self.limits, self.expected_module_id.clone(), self.native_terminal_errors)));
         let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.
@@ -445,6 +454,7 @@ impl TurnHostFactory {
         let limits = self.limits;
         let native_terminal_errors = self.native_terminal_errors;
         Ok(InteractionHost {
+            node_template,
             client: Box::pin(async move {
                 let client = match deployment {
                     Deployment::Stdio {
@@ -491,6 +501,18 @@ impl TurnHostFactory {
         identity: &ExecutionIdentity,
         ports: SessionPorts,
     ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
+        Self::assemble_bound(lease, identity, ports, None, None, None).await
+    }
+    pub(super) async fn assemble_sop(
+        lease: RuntimeLease, identity: &ExecutionIdentity, ports: SessionPorts,
+        binding: Option<Arc<dyn super::loop_control::SopRunBinding>>, route: Option<JsObject>, model_session: JsString,
+    ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
+        Self::assemble_bound(lease, identity, ports, binding, route, Some(model_session)).await
+    }
+    async fn assemble_bound(
+        lease: RuntimeLease, identity: &ExecutionIdentity, ports: SessionPorts,
+        binding: Option<Arc<dyn super::loop_control::SopRunBinding>>, route: Option<JsObject>, model_session: Option<JsString>,
+    ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
         let SessionPorts {
             model,
             recorder,
@@ -528,8 +550,9 @@ impl TurnHostFactory {
                 Some(profile.question_provider != "disabled");
         }
         let signal = interaction.signal.clone();
+        let model_session = model_session.unwrap_or_else(|| identity.session_id.clone());
         let turn_context = TurnContext {
-            session_id: identity.session_id.clone(),
+            session_id: model_session.clone(),
             turn_id: identity.turn_id.clone(),
             abort: Some(signal.clone()),
             ..Default::default()
@@ -550,13 +573,18 @@ impl TurnHostFactory {
                 )
             })?;
         let mut result = ModuleRouter {
-            model: model_port::compose(
-                router.router.clone(),
-                router.model_config.clone(),
-                recorder,
-                model,
-                turn_context,
-            ),
+            model: if binding.is_some() || route.is_some() {
+                let composed = model_port::ports(router.router.clone(), router.model_config.clone(), recorder, model, &model_session);
+                let mut execution = composed.execution;
+                let mut materializer = composed.materializer;
+                if let Some(binding) = &binding {
+                    execution = binding.model(execution);
+                    materializer = binding.materializer(materializer);
+                }
+                if let Some(route) = route { execution = Arc::new(super::sop_executor::NodeModel { inner: execution, route }); }
+                let mut handler = crate::host::modules::model::Handler::with_ports(execution, composed.metadata, turn_context);
+                handler.materializer = materializer; handler
+            } else { model_port::compose(router.router.clone(), router.model_config.clone(), recorder, model, turn_context) },
             ..Default::default()
         };
         if let Some(resource) = context.resource(Resource::TokenAccounting) {
@@ -625,6 +653,7 @@ impl TurnHostFactory {
             }
         };
         if let Some(runtime) = context_runtime {
+            let runtime = binding.as_ref().map_or_else(|| runtime.clone(), |binding| binding.context(runtime.clone()));
             result.context = context::Handler::new(
                 runtime,
                 context_identity,

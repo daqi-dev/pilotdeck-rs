@@ -204,12 +204,14 @@ type SharedWriterLease = Arc<Mutex<Option<WriterLease>>>;
 struct WriterCloseGuard {
     writer: Arc<crate::storage::TranscriptWriter>,
     _lease: Option<WriterLease>,
+    owner: Option<Arc<dyn Send + Sync>>,
 }
 impl Drop for WriterCloseGuard {
     fn drop(&mut self) {
         self.writer.begin_close();
         let writer = self.writer.clone();
         let lease = self._lease.take();
+        let owner = self.owner.take();
         let close = move || {
             // #1019 test pin: only the lease-holding close thread consults the
             // gate, and it does so before releasing the fence and process
@@ -223,6 +225,7 @@ impl Drop for WriterCloseGuard {
             }
             writer.close();
             drop(lease);
+            drop(owner);
         };
         // An independent blocking thread also works when a future is dropped
         // after its runtime has exited. It owns the lease through the drain.
@@ -667,7 +670,32 @@ pub struct FactoryStorage {
     pub load_checkpoint: Arc<dyn Fn() -> BoxFuture<RuntimeResult> + Send + Sync>,
     pub close: Arc<dyn Fn() -> BoxFuture<RuntimeResult> + Send + Sync>,
 }
+/// SOP sidechains use the existing factory writer fence and restore protocol.
+/// On cancellation/unwind the same WriterCloseGuard retires writes and retains
+/// the lease through the actual blocking close, just like factory disposal.
+pub(crate) struct SopStorage {
+    pub storage: Arc<FactoryStorage>,
+    _writer: WriterCloseGuard,
+}
+impl SopStorage {
+    pub(crate) fn close(self) -> BoxFuture<RuntimeResult> {
+        let closing = self.storage.close_owned();
+        Box::pin(async move { let owner = self; let result = closing.await; drop(owner); result })
+    }
+}
 impl FactoryStorage {
+    pub(crate) async fn open_sop(self, writer_wait: std::time::Duration, generation: Arc<RuntimeLease>) -> Result<SopStorage, RuntimeError> {
+        let storage = Arc::new(self);
+        let deadline = tokio::time::Instant::now().checked_add(writer_wait).ok_or_else(|| RuntimeError::new("SOP writer wait is outside the supported range."))?;
+        let lease = acquire_writer(storage.recorder.writer().path().to_owned(), deadline).await?;
+        *lock(&storage.writer_lease) = Some(lease);
+        let mut writer = storage.take_writer_lease(); writer.owner = Some(generation);
+        let owner = SopStorage { _writer: writer, storage };
+        let path = owner.storage.recorder.writer().path().to_owned();
+        let _fence = super::transcript_locks::acquire(&path).await.map_err(|error| RuntimeError::new(String::from_utf16_lossy(error.message.units())))?;
+        owner.storage.restore().await?;
+        Ok(owner)
+    }
     /// Supply an unlocked store (for JSONL, `JsonlTranscriptStore::new`).
     /// The factory acquires the canonical writer lease before restore. A store
     /// already owned by `open_locked` / `PersistenceResources::create_session`
@@ -744,6 +772,7 @@ impl FactoryStorage {
         WriterCloseGuard {
             writer: self.recorder.writer().clone(),
             _lease: lock(&self.writer_lease).take(),
+            owner: None,
         }
     }
     fn close_owned(&self) -> BoxFuture<RuntimeResult> {

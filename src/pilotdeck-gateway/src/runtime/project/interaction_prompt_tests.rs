@@ -35,6 +35,7 @@ async fn run_prompt(mode: &'static str) {
                 ));
                 input.hooks[0].0 = "UserPromptSubmit".into();
                 Ok(InteractionHost {
+                        node_template: None,
                     client: Box::pin(async move {
                         calls.fetch_add(1, Ordering::SeqCst);
                         client("live-payload").await
@@ -355,6 +356,7 @@ async fn prompt_host_aborted_terminal_reports_the_execute_payload_with_hook_cont
                 );
                 input.hooks[0].0 = "UserPromptSubmit".into();
                 Ok(InteractionHost {
+                        node_template: None,
                     client: Box::pin(async move {
                         calls.fetch_add(1, Ordering::SeqCst);
                         client_with_arg("live-prompt-compaction", &peer_scratch.to_string_lossy())

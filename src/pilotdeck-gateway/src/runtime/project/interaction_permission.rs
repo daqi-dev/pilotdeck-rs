@@ -93,6 +93,7 @@ impl Run {
     }
 }
 /// All fields are host authority. A wire context is never merged into these.
+#[derive(Clone)]
 pub struct PermissionTurnOptions {
     pub profile: InteractionProfile,
     pub context: PermissionContext,

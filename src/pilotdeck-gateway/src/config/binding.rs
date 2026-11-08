@@ -107,19 +107,10 @@ fn lock_live<F: Files>(metadata: &Metadata<F>) -> Result<bool, Error> {
     Ok(lock_pid(&bytes).is_some_and(|pid| metadata.files.process_alive(pid)))
 }
 
-pub(super) fn apply<F: Files>(
+fn selected_binding<F: Files>(
     metadata: &Metadata<F>,
-    raw: JsValue,
     project: Option<&str>,
-    env: &Env,
-) -> Result<JsValue, Error> {
-    if env
-        .get("STAFFDECK_PROJECT_BINDING_ENABLED")
-        .map(String::as_str)
-        != Some("true")
-    {
-        return Ok(raw);
-    }
+) -> Result<Option<JsValue>, Error> {
     let mut binding = None;
     if let Some(project) = project.filter(|p| !p.is_empty()) {
         let path = metadata.home.join("staffdeck/project-bindings.json");
@@ -164,12 +155,14 @@ pub(super) fn apply<F: Files>(
             }
         }
     }
-    let mut next = structured_clone(&raw);
-    let mut modules = field(&next, "modules").clone();
-    if nullish(&modules) {
-        modules = object([]);
-    }
-    let live = if let Some(b) = &binding {
+    Ok(binding)
+}
+fn active_binding<F: Files>(
+    metadata: &Metadata<F>,
+    binding: Option<&JsValue>,
+    env: &Env,
+) -> Result<bool, Error> {
+    let live = if let Some(b) = binding {
         eq(field(b, "status"), "bound")
             || (eq(field(b, "status"), "binding")
                 && truthy(field(b, "runtimeReady"))
@@ -177,7 +170,7 @@ pub(super) fn apply<F: Files>(
     } else {
         false
     };
-    let matches = binding.as_ref().is_some_and(|b| {
+    let matches = binding.is_some_and(|b| {
         field(b, "tenantId")
             == &env
                 .get("STAFFDECK_COPY_TENANT_ID")
@@ -189,9 +182,57 @@ pub(super) fn apply<F: Files>(
                         s.strip_suffix('/').unwrap_or(s).into()
                     })
     });
+    Ok(live && matches)
+}
+/// Re-read the binding for authorization, without loading SOP definitions or
+/// deriving authority from a previously cached runtime snapshot.
+pub(super) fn target_agent<F: Files>(
+    metadata: &Metadata<F>,
+    project: &str,
+    env: &Env,
+) -> Result<Option<pilotdeck_protocol::JsString>, Error> {
+    if env
+        .get("STAFFDECK_PROJECT_BINDING_ENABLED")
+        .map(String::as_str)
+        != Some("true")
+    {
+        return Ok(env
+            .get("STAFFDECK_COPY_TARGET_AGENT_ID")
+            .map(|v| v.as_str().into()));
+    }
+    let binding = selected_binding(metadata, Some(project))?;
+    if !active_binding(metadata, binding.as_ref(), env)? {
+        return Ok(None);
+    }
+    Ok(binding
+        .as_ref()
+        .and_then(|b| field(b, "agentId").as_string())
+        .cloned())
+}
+
+pub(super) fn apply<F: Files>(
+    metadata: &Metadata<F>,
+    raw: JsValue,
+    project: Option<&str>,
+    env: &Env,
+) -> Result<JsValue, Error> {
+    if env
+        .get("STAFFDECK_PROJECT_BINDING_ENABLED")
+        .map(String::as_str)
+        != Some("true")
+    {
+        return Ok(raw);
+    }
+    let binding = selected_binding(metadata, project)?;
+    let mut next = structured_clone(&raw);
+    let mut modules = field(&next, "modules").clone();
+    if nullish(&modules) {
+        modules = object([]);
+    }
+    let active = active_binding(metadata, binding.as_ref(), env)?;
     // The disabled branch assigns knowledge immediately; the enabled branch first
     // reads/parses the SOP bundle and preserves timeouts before the assignment.
-    if !live || !matches {
+    if !active {
         ensure_modules(&modules, "knowledge")?;
         set(
             &mut modules,

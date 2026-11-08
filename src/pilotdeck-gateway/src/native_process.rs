@@ -23,6 +23,7 @@ mod project_scope;
 mod project_storage;
 mod projects;
 mod server_host;
+mod sop_control;
 pub use local_host::{LocalHost, LocalHostOptions};
 pub use server_host::{
     ControlHandler, ControlReply, ControlRequest, HostExit, ServerOptions, legacy_local_bind_host,

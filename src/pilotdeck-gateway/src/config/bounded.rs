@@ -9,6 +9,26 @@ const FILE_LIMIT: usize = 8 * 1024 * 1024;
 #[cfg(unix)]
 const TOTAL_LIMIT: usize = 32 * 1024 * 1024;
 
+/// Fresh authorization lookup through the same bounded configuration Files
+/// facade. No project stage, SOP bundle, or write is performed.
+pub(crate) fn project_binding_target_bounded(
+    home: &Path,
+    env: &Env,
+    project: &str,
+) -> Result<Option<JsString>, Error> {
+    #[cfg(unix)]
+    {
+        unix::binding_target(home, env, project)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (home, env, project);
+        Err(Error::new(
+            "CONFIG_BOUNDED_UNSUPPORTED",
+            "Bounded configuration loading requires Unix file descriptors.",
+        ))
+    }
+}
 /// Load through the existing configuration pipeline with Unix nonblocking,
 /// same-descriptor regular-file reads: 8 MiB per file, 32 MiB per invocation.
 pub fn load_project_bounded(
@@ -86,6 +106,22 @@ mod unix {
         os::unix::fs::OpenOptionsExt,
     };
 
+    pub(super) fn binding_target(
+        home: &Path,
+        env: &Env,
+        project: &str,
+    ) -> Result<Option<JsString>, Error> {
+        let metadata = Metadata {
+            home: home.to_path_buf(),
+            cwd: Path::new("").to_path_buf(),
+            files: BoundedFiles::new(FILE_LIMIT, TOTAL_LIMIT),
+        };
+        let result = super::super::binding::target_agent(&metadata, project, env);
+        match metadata.files.error() {
+            Some(error) => Err(error),
+            None => result,
+        }
+    }
     #[derive(Clone, Copy)]
     enum Fault {
         NonRegular,

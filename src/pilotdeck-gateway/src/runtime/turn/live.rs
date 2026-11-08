@@ -31,6 +31,9 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::{Duration, Instant, sleep_until};
 
+#[path = "sop_live.rs"]
+mod sop;
+
 type StatusReceipt = Option<oneshot::Sender<()>>;
 type ForwardedEvent = (JsValue, bool, StatusReceipt);
 
@@ -47,6 +50,7 @@ type PreparedHost = (
     Option<crate::runtime::project::interaction_events::TurnEvents>,
     Option<super::runner::PromptHooks>,
     Option<super::live_session::SessionLifecycle>,
+    Option<sop::Prepared>,
 );
 type TurnHostFactory = dyn Fn(
         ExecutionIdentity,
@@ -65,6 +69,7 @@ type TurnHostFactory = dyn Fn(
 /// observer and plan/todo ports retain per-turn state. InteractionTurn::bind
 /// only replaces the interaction handlers; it cannot sanitize these ports.
 pub struct InteractionHost {
+    pub(crate) node_template: Option<Arc<super::sop_executor::NodeTemplate>>,
     pub client: HostFuture<HostClient>,
     pub lease: crate::runtime::project::RuntimeLease,
     pub router: crate::host::modules::ModuleRouter,
@@ -75,6 +80,7 @@ pub struct InteractionHost {
 /// HostClient closes its process and disposes its handler after each execution.
 pub struct LiveSessionAdapter {
     host_factory: Arc<TurnHostFactory>,
+    loop_controller: Option<Arc<dyn super::loop_control::HostLoopController>>,
     close_timeout: std::time::Duration,
     agent_config: Option<JsObject>,
     /// Shared TCP sidecars retain request identities across connections.
@@ -125,6 +131,7 @@ impl LiveSessionAdapter {
             unique_tcp_request_id: false,
             permission_mode_source: None,
             input_admission: None,
+            loop_controller: None,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -132,12 +139,14 @@ impl LiveSessionAdapter {
                 let host = host_factory(recorder);
                 Box::pin(async move {
                     let (client, handler, lease) = host.await?;
-                    Ok((client, handler, lease, None, None, None, None))
+                    Ok((client, handler, lease, None, None, None, None, None))
                 })
             }),
             state: Arc::default(),
         }
     }
+
+    pub(crate) fn with_loop_controller(mut self, controller: Arc<dyn super::loop_control::HostLoopController>) -> Self { self.loop_controller = Some(controller); self }
 
     pub(crate) fn with_input_admission(
         mut self,
@@ -265,6 +274,7 @@ impl LiveSessionAdapter {
             unique_tcp_request_id: false,
             permission_mode_source: None,
             input_admission: None,
+            loop_controller: None,
             tail: None,
             recorder,
             history: Arc::new(history),
@@ -305,6 +315,7 @@ impl LiveSessionAdapter {
                     if let Some(lifecycle) = &mut lifecycle {
                         lifecycle.retain_turn(handler.clone());
                     }
+                    let sop = host.node_template.take().map(|template| sop::Prepared { template, parent: handler.clone() });
                     let manifest = handler.manifest().clone();
                     let events = if crate::mutants::on("notices-wiring") {
                         None
@@ -328,6 +339,7 @@ impl LiveSessionAdapter {
                         events,
                         prompt_hooks,
                         lifecycle,
+                        sop,
                     ))
                 })
             }),
@@ -480,6 +492,7 @@ pub(super) struct LiveTurnStream {
     pending_event: Option<(JsValue, bool, StatusReceipt)>,
     pending_durable: Option<(JsValue, StatusReceipt)>,
     callback_cancel: Option<Cancellation>,
+    host_loop: bool,
     accepted: bool,
     preflight: u8,
     execute_ready: Option<oneshot::Sender<Vec<JsValue>>>,
@@ -930,6 +943,18 @@ impl LiveTurnStream {
         result: Result<ExecuteResult, HostError>,
     ) -> Result<Option<JsValue>, RuntimeError> {
         match result {
+            Ok(ExecuteResult::Terminal(terminal)) if self.host_loop => {
+                // Only the host-installed controller can use this path. Every
+                // node final was independently checked before controller use;
+                // recovery-only delivery legitimately has no sidecar stream.
+                self.integrity.module_id.lock().unwrap().take();
+                let result = terminal.get("payload").and_then(|p| p.get("result"));
+                if result.and_then(|r| r.get("sessionId")) != Some(&JsValue::String(self.identity.session_id.clone()))
+                    || result.and_then(|r| r.get("turnId")) != Some(&JsValue::String(self.identity.turn_id.clone())) {
+                    return Err(RuntimeError::new("SOP aggregate result identity mismatch."));
+                }
+                Ok(Some(self.completed_event(terminal.get("payload").unwrap(), true)?))
+            }
             Ok(ExecuteResult::Terminal(terminal)) => {
                 let outcome = terminal
                     .get("payload")
@@ -2137,6 +2162,7 @@ mod tests {
             pending_event: None,
             pending_durable: None,
             callback_cancel: None,
+            host_loop: false,
             accepted: false,
             preflight: 0,
             execute_ready: None,
@@ -2673,6 +2699,9 @@ impl LiveSessionAdapter {
         let (recording_sender, recording_ready) = oneshot::channel();
         let (execute_ready, execute_wait) = oneshot::channel();
         let host_factory = self.host_factory.clone();
+        let loop_controller = self.loop_controller.clone();
+        let host_loop = loop_controller.is_some();
+        let sop_input = input.input.clone();
         let close_timeout = self.close_timeout;
         let recorder = self.recorder.clone();
         let identity = request.identity.clone();
@@ -2696,7 +2725,7 @@ impl LiveSessionAdapter {
         let turn = LiveTurnStream {
             callback_cancel: Some(cancellation.clone()),
             execution: Some(Box::pin(async move {
-                let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle) = tokio::select! {
+                let (client, inner, lease, manifest, interaction_events, prompt_hooks, lifecycle, sop) = tokio::select! {
                     biased;
                     _ = cancellation.cancelled(), if !crate::mutants::on("gates-factory-ready-priority") => {
                         return Ok(ExecuteResult::Aborted { terminal: None });
@@ -2718,8 +2747,8 @@ impl LiveSessionAdapter {
                     },
                 ));
                 let mut runner = TurnRunner::new(
-                    recorder,
-                    lease,
+                    recorder.clone(),
+                    lease.clone(),
                     request.identity.session_id.clone(),
                     request.identity.turn_id.clone(),
                 )
@@ -2794,6 +2823,17 @@ impl LiveSessionAdapter {
                 request
                     .payload
                     .insert("messages".into(), JsValue::Array(messages));
+                if let Some(controller) = loop_controller {
+                    let prepared = sop.ok_or_else(|| HostError::new(HostErrorKind::Session, "SOP host node executor is unavailable."))?;
+                    let executor = sop::Executor { prepared, stream: handler.clone(), recorder, lease,
+                        request: request.clone(), input: sop_input, signal: cancellation.clone(), close_timeout };
+                    let identity = request.identity.clone();
+                    let visible_messages = match request.payload.get("messages") { Some(JsValue::Array(messages)) => messages.clone(), _ => Vec::new() };
+                    let result = handler.with_pump(controller.run(super::loop_control::SopLoopInput { request, signal: cancellation, visible_messages }, &executor), identity).await;
+                    let closed = handler.inner.dispose().await;
+                    if let Some(pending) = pending_host.take() { pending.handoff(); }
+                    return match (result, closed) { (Err(error), _) | (_, Err(error)) => Err(error), (Ok(result), Ok(())) => Ok(result) };
+                }
                 let client = tokio::select! {
                     biased;
                     _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
@@ -2823,6 +2863,7 @@ impl LiveSessionAdapter {
             recording: None,
             pending_event: None,
             pending_durable: None,
+            host_loop,
             accepted: false,
             preflight: 0,
             execute_ready: Some(execute_ready),

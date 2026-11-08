@@ -2167,3 +2167,60 @@ fn tcp_listener_and_gateway_port_grammars_stay_paired() {
         assert_eq!(listener, required_port(Some(value)).ok(), "{value:?}");
     }
 }
+
+struct SopProbeController { isolated: bool, rounds: usize, outcomes: Arc<Mutex<Vec<usize>>> }
+impl super::super::loop_control::HostLoopController for SopProbeController {
+    fn run<'a>(&'a self, input: super::super::loop_control::SopLoopInput, native: &'a dyn super::super::loop_control::SopNodeExecutor) -> super::super::loop_control::SopFuture<'a, Result<crate::host::ExecuteResult, HostError>> {
+        Box::pin(async move {
+            let mut final_result = None;
+            for round in 0..self.rounds {
+                let context = if self.isolated && round > 0 { super::super::loop_control::SopNodeContext::Isolated { sop: "fixture/sop".into(), node: "isolated node".into() } } else { super::super::loop_control::SopNodeContext::Inherit };
+                let output = native.run(super::super::loop_control::SopNodePlan { context, request: input.request.clone(), instruction: "fixture instruction".into(), model_override: None, step: crate::metadata::object([("skillId", "fixture/sop".into()), ("nodeId", "isolated node".into())]), binding: None }).await?;
+                self.outcomes.lock().unwrap().push(output.messages.len());
+                let aborted = output.result.get("type") == Some(&"aborted".into());
+                final_result = Some(output.result); if aborted { break; }
+            }
+            let result = final_result.ok_or_else(|| HostError::new(HostErrorKind::Protocol, "No native SOP result."))?;
+            Ok(crate::host::ExecuteResult::Terminal(crate::metadata::object([("payload", crate::metadata::object([("result", result), ("messages", JsValue::Array(input.visible_messages))]))])))
+        })
+    }
+}
+#[tokio::test]
+async fn sop_real_nodes_share_one_parent_admission_and_restore_isolated_history() {
+    let scratch = Scratch::new(); let registry = registry(&scratch); let recorder = test_recorder();
+    let outcomes = Arc::new(Mutex::new(Vec::new())); let calls = Arc::new(AtomicUsize::new(0)); let invoked = calls.clone();
+    let pid = scratch.0.join("sop.pid");
+    let session = TurnHostFactory::new(registry.clone(), peer("success", Some(&pid)), Limits::default(), Some("fixture".into()), move |_, _| { invoked.fetch_add(1, Ordering::SeqCst); ports(None) })
+        .with_loop_controller(Arc::new(SopProbeController { isolated: true, rounds: 3, outcomes: outcomes.clone() }))
+        .into_live_session(recorder.clone(), || vec![crate::metadata::object([("role", "assistant".into()), ("content", "PARENT HISTORY ONLY".into())])]);
+    let mut stream = session.submit_turn_for_test(parse_json(r#"{"type":"text","text":"user input"}"#).unwrap(), wire()).unwrap();
+    let mut events = Vec::new(); while let Some(event) = bounded_liveness(stream.next()).await.unwrap() { events.push(event); }
+    drop(stream); bounded(session.dispose()).await.unwrap(); bounded(registry.dispose()).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1, "node execution must use the captured outer services");
+    assert_eq!(*outcomes.lock().unwrap(), vec![2, 1, 2], "isolated node must exclude parent history and reopen its own prior accepted input");
+    for kind in ["turn_started", "input_accepted", "turn_completed"] { assert_eq!(events.iter().filter(|event| event.get("type") == Some(&kind.into())).count(), 1, "one parent {kind}"); }
+    assert_eq!(events.iter().filter(|event| event.get("type") == Some(&"model_request_started".into())).count(), 3);
+    let read = crate::storage::read_transcript(recorder.writer().path()).unwrap();
+    assert_eq!(read.entries.iter().filter(|entry| entry.get("type") == Some(&"accepted_input".into())).count(), 1, "child accepts must never be written to the parent transcript");
+    let executions = std::fs::read_dir(&scratch.0).unwrap().filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().ends_with(".execute")).count();
+    assert_eq!(executions, 3, "exactly three real child processes; no eager unused outer connection");
+}
+#[tokio::test]
+async fn sop_cancel_drains_the_real_node_and_retains_the_old_generation() {
+    let scratch = Scratch::new(); let registry = registry(&scratch); let old = registry.resolve(None).unwrap(); let recorder = test_recorder();
+    let pid = scratch.0.join("sop-cancel.pid");
+    let session = factory(registry.clone(), peer("hold", Some(&pid)), None)
+        .with_loop_controller(Arc::new(SopProbeController { isolated: false, rounds: 1, outcomes: Arc::default() }))
+        .into_live_session(recorder.clone(), Vec::new);
+    let mut stream = session.submit_turn_for_test(parse_json(r#"{"type":"text","text":"cancel node"}"#).unwrap(), wire()).unwrap();
+    loop { let event = bounded_liveness(stream.next()).await.unwrap().unwrap(); if event.get("type") == Some(&"model_request_started".into()) { break; } }
+    bounded(registry.reload()).await.unwrap(); assert!(old.lease_count() > 0);
+    session.abort("cancel probe".into()).unwrap();
+    let mut terminal = None; while let Some(event) = bounded_liveness(stream.next()).await.unwrap() { if event.get("type") == Some(&"turn_completed".into()) { terminal = Some(event); } }
+    drop(stream); bounded(session.dispose()).await.unwrap(); bounded(registry.dispose()).await.unwrap();
+    assert_eq!(terminal.unwrap().get("result").and_then(|result| result.get("type")), Some(&"aborted".into()));
+    assert_peer_reaped(&pid).await; assert_eq!(old.lease_count(), 0);
+    let read = crate::storage::read_transcript(recorder.writer().path()).unwrap();
+    assert_eq!(read.entries.iter().filter(|entry| entry.get("type") == Some(&"accepted_input".into())).count(), 1);
+    assert!(read.entries.iter().any(|entry| entry.get("type") == Some(&"turn_result".into()) && entry.get("result").and_then(|result| result.get("type")) == Some(&"aborted".into())));
+}

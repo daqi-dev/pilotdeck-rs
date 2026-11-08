@@ -162,6 +162,7 @@ impl TurnRunner {
         }
         Ok(())
     }
+    pub(super) fn callback_failure(&self) -> Option<&str> { self.callback_error.as_deref() }
     pub fn messages(&self) -> &[JsValue] {
         &self.messages
     }

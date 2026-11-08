@@ -264,6 +264,7 @@ async fn replay_case(case: &JsValue, name: &str) {
         pending_event: None,
         pending_durable: None,
         callback_cancel: None,
+        host_loop: false,
         accepted: false,
         preflight: 0,
         execute_ready: None,
