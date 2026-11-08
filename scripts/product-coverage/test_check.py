@@ -103,14 +103,30 @@ class CoverageControls(unittest.TestCase):
         # loader.rs but outside the literal table stay put.
         source = split_lines((ROOT / loader).read_text())
         inside = literal_table_lines(source)
-        drifted = {row["id"]: int(row["evidence"].rsplit(":", 1)[1]) + 1
-                   for row in self.data["entries"]
-                   if row["evidence"].startswith(loader + ":")
-                   and int(row["evidence"].rsplit(":", 1)[1]) in inside}
+        # The drift target is the next table line strictly below the anchor
+        # (the adjacent key, the closing `];` for the last member), derived
+        # from the table scan instead of a hardcoded +1: an interior
+        # comment between members must not push the probe onto a
+        # transparent line and false-red (r5 DS boundary P2#2). Anchors
+        # keep their original line for the restore pass.
+        drifted = {}
+        for row in self.data["entries"]:
+            if not row["evidence"].startswith(loader + ":"):
+                continue
+            anchor = int(row["evidence"].rsplit(":", 1)[1])
+            if anchor not in inside:
+                continue
+            nxt = min((l for l in inside if l > anchor), default=None)
+            if nxt is not None:
+                drifted[row["id"]] = (anchor, nxt)
+        # never silently vacuous (r5 DS boundary P0#1 / sibling P2#2): a
+        # table-scan regression that empties the derived set must red
+        # here instead of vacuously passing the restore assertion.
+        self.assertGreaterEqual(len(drifted), 2)
         data = copy.deepcopy(self.data)
         for row in data["entries"]:
             if row["id"] in drifted:
-                row["evidence"] = f"{loader}:{drifted[row['id']]}"
+                row["evidence"] = f"{loader}:{drifted[row['id']][1]}"
         errors = check(data, self.baseline)
         # every drifted entry goes red per entry — each now points at the
         # adjacent next key, wecom at the closing `];`. The restore below
@@ -120,16 +136,27 @@ class CoverageControls(unittest.TestCase):
             self.assertIn("evidence key literal mismatch: " + key, errors)
         for row in data["entries"]:  # restore must go back to green
             if row["id"] in drifted:
-                row["evidence"] = f"{loader}:{drifted[row['id']] - 1}"
+                row["evidence"] = f"{loader}:{drifted[row['id']][0]}"
         self.assertEqual(check(data, self.baseline), [])
 
     def test_line_numbers_count_only_real_newlines(self):
-        # channel/sms/mod.rs really contains U+2028/U+2029 (in the line-1761
-        # doc comment): splitlines() would count 1876 lines and admit 1875,
-        # the "\n"/editor count is 1874 and must reject it.
-        for number, valid in [(433, True), (1683, True), (1874, True), (1875, False), (1876, False)]:
-            with self.subTest(line=number):
-                self.assertIs(local_ref(f"src/pilotdeck-gateway/src/channel/sms/mod.rs:{number}"), valid)
+        # channel/sms/mod.rs really contains U+2028/U+2029 (in a doc
+        # comment around :1761): splitlines() counts two lines more than
+        # the "\n"/editor count. The boundary is derived from the file
+        # itself — the module is live product code and a hardcoded
+        # 1874/1875/1876 false-fails on any unrelated edit (r5 DS
+        # sibling P1#1 / boundary P2#3: the same anti-pattern fix-r3
+        # removed everywhere else in this PR).
+        module = "src/pilotdeck-gateway/src/channel/sms/mod.rs"
+        text = (ROOT / module).read_text()
+        n = len(split_lines(text))  # "\n"/editor count
+        m = len(text.splitlines())  # additionally cuts U+2028/U+2029
+        # the premise: the extra separators are really there, otherwise
+        # this control no longer discriminates the old splitlines count
+        self.assertGreater(m, n)
+        self.assertIs(local_ref(f"{module}:{n}"), True)
+        self.assertIs(local_ref(f"{module}:{n + 1}"), False)
+        self.assertIs(local_ref(f"{module}:{m}"), False)
 
     def test_evidence_forms_without_a_mechanical_key_stay_range_only(self):
         # Deliberate fail-open set (see plan): block-opening anchors
@@ -230,15 +257,25 @@ class CoverageControls(unittest.TestCase):
         # list goes stale against exactly that and false-fails the merge
         # ref (#2286 fix-r5, the CI semantic-conflict catch). Any
         # gateway.channel:* entry anchored on a table member line drifts.
+        inside_base = literal_table_lines(base)
+        inside_noisy = literal_table_lines(noisy)
         current = {row["id"]: int(row["evidence"].rsplit(":", 1)[1])
                    for row in self.data["entries"]
                    if row["evidence"].startswith(loader + ":")
-                   and int(row["evidence"].rsplit(":", 1)[1]) in literal_table_lines(base)}
+                   and int(row["evidence"].rsplit(":", 1)[1]) in inside_base}
         self.assertGreaterEqual(len(current), 2)  # never silently vacuous
         for key, number in current.items():
             with self.subTest(key=key, form="drifted"):
+                # next table line below the anchor (adjacent key, or the
+                # closing `];` for the last member), shifted +1 by the
+                # inserted comment — derived, not hardcoded +2, so an
+                # interior comment between members cannot push the probe
+                # onto a transparent line and false-red (r5 DS boundary
+                # P2#2).
+                nxt = min((l for l in inside_base if l > number),
+                          default=number + 1) + 1
                 self.assertEqual(
-                    key_literal_error(key, f"{loader}:{number + 2}", tables),
+                    key_literal_error(key, f"{loader}:{nxt}", tables),
                     "evidence key literal mismatch: " + key)
         for key, number in current.items():  # +1 (comment shift) restores green
             with self.subTest(key=key, form="restored"):
@@ -252,12 +289,14 @@ class CoverageControls(unittest.TestCase):
         annotated.insert(header + 1, "    // churn")
         first_key, first_number = min(current.items(), key=lambda kv: kv[1])
         on_key = first_number + 1  # on-key after shift
+        after_key = min((l for l in inside_noisy if l > on_key),
+                        default=on_key + 1)  # next table line, derived
         annotated[on_key - 1] += "  // keep last"
         tables_annotated = {path: (annotated, literal_table_lines(annotated))}
         self.assertIsNone(key_literal_error(
             first_key, f"{loader}:{on_key}", tables_annotated))
         self.assertEqual(key_literal_error(
-            first_key, f"{loader}:{on_key + 1}", tables_annotated),
+            first_key, f"{loader}:{after_key}", tables_annotated),
             "evidence key literal mismatch: " + first_key)
 
     def test_for_in_arrays_stay_range_only(self):
