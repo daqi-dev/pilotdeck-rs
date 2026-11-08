@@ -3,7 +3,7 @@ use super::requests::Requests;
 use crate::{
     runtime::{
         connection::RequestError,
-        manager::{ManagerGateway, ManagerProjects, TranscriptSessionCatalog},
+        manager::{ManagerError, ManagerGateway, ManagerProjectResolver, TranscriptSessionCatalog},
         memory::gateway::MemoryDispatch,
         plugins::{
             CommandsListInput, GatewayCommandCatalogBundle, catalog::NativeCommandCatalogProvider,
@@ -32,6 +32,23 @@ fn unavailable() -> RequestError {
         Some("CAPABILITY_UNAVAILABLE"),
         "Native gateway cannot execute this host-dependent operation.".into(),
     )
+}
+
+struct BoundedManagerProjects { home: std::path::PathBuf }
+impl ManagerProjectResolver for BoundedManagerProjects {
+    fn resolve_project_key(&self, project_key: &[u16]) -> Result<std::path::PathBuf, ManagerError> {
+        let metadata = crate::metadata::Metadata {
+            home: self.home.clone(),
+            cwd: std::path::PathBuf::new(),
+            files: super::methods::session_dir::BoundedSessionMarkers::new(),
+        };
+        let result = metadata.resolve_dialog_project(&JsString::from_utf16(project_key.to_vec()));
+        if metadata.files.was_refused() {
+            return Err(ManagerError::plain("Error", "Unsafe project marker."));
+        }
+        result.map(std::path::PathBuf::from)
+            .ok_or_else(|| ManagerError::unknown_project_key(project_key))
+    }
 }
 
 impl Requests {
@@ -70,6 +87,12 @@ impl Requests {
                     .and_then(|result| result),
             );
         }
+        let permit = if method == "manager_sessions" {
+            match super::methods::session_dir::session_io_permit().await {
+                Ok(permit) => Some(permit),
+                Err(error) => return Some(Err(error)),
+            }
+        } else { None };
         let requests = self.clone();
         let method = method.to_owned();
         let params = params.clone();
@@ -79,6 +102,7 @@ impl Requests {
         // host's drain deadline. The worker owns its request and resource lease.
         Some(
             tokio::task::spawn_blocking(move || {
+                let _permit = permit;
                 runtime.block_on(requests.management(&method, &params))
             })
             .await
@@ -170,21 +194,14 @@ impl Requests {
     async fn management(&self, method: &str, params: &JsValue) -> Result<JsValue, RequestError> {
         self.admit_management_project(params)?;
         if matches!(method, "manager_sessions" | "manager_browsers") {
+            let catalog = TranscriptSessionCatalog::new_bounded(|key| {
+                super::methods::session_dir::bounded_chat_dir(&key.pilot_home, &key.project_root)
+                    .map_err(|error| ManagerError::with_message("Error", None, error.message))
+            });
             let gateway = ManagerGateway::from_parts(
-                Some(Arc::new(TranscriptSessionCatalog::new(Arc::new(
-                    crate::storage::AsyncTranscriptAdapter::new(
-                        Arc::new(crate::storage::JsonlTranscriptStore::new()),
-                        Arc::new(|key| {
-                            crate::session_chat_dir(
-                                &key.pilot_home,
-                                &key.project_root,
-                                &key.project_root.to_string_lossy(),
-                            )
-                        }),
-                    ),
-                )))),
+                Some(Arc::new(catalog)),
                 None,
-                ManagerProjects::new(&self.options.home, std::path::PathBuf::new()),
+                BoundedManagerProjects { home: self.options.home.clone() },
                 &self.options.project,
                 &self.options.home,
             );

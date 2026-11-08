@@ -600,7 +600,21 @@ impl LiveTurn for LiveTurnStream {
                     }
                     continue;
                 }
-                return match self.result.take() {
+                let result = self.result.take();
+                if self.accepted
+                    && !crate::mutants::on("gates-discard-host-failure")
+                    && let Some(Err(error)) = &result
+                    && let Some(detail) = &error.native_terminal_error
+                {
+                    // The host already validated stream binding, identity,
+                    // sequence and both copies of this Module2 native failure.
+                    // Keep the original UTF16 fields and the recorder's real
+                    // current state; never invent an empty AgentLoop snapshot.
+                    let failure = JsValue::Object((**detail).clone());
+                    return self.begin_recording(RecordingAction::Fail(failure),
+                        JsValue::Null, true, None).await;
+                }
+                return match result {
                     Some(result) => match self.finish(result) {
                         Ok(Some(event)) => self.record_event(event, true, false, None).await,
                         Err(error)

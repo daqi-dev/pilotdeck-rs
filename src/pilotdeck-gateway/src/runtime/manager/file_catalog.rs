@@ -145,6 +145,110 @@ pub(crate) fn list_sessions(
 /// `readSessionInfo` including both metadata fallbacks. A malformed JSON escape
 /// inside a scanned metadata field is a V8 `SyntaxError` in TS and must abort
 /// the whole listing, not degrade to "field absent".
+// Native public catalog: descriptor-bound reads with request-wide budgets.
+#[cfg(unix)]
+pub(crate) fn list_sessions_bounded(
+    chat_dir: &Path, project_root: &Path, include_internal: bool,
+) -> Result<Vec<(f64, JsValue)>, JsString> {
+    use std::os::unix::fs::OpenOptionsExt;
+    const MAX_ENTRIES: usize = 16_384;
+    const MAX_READ_BYTES: u64 = 128 * 1024 * 1024;
+    let Ok(entries) = fs::read_dir(chat_dir) else { return Ok(Vec::new()); };
+    let mut all = Vec::new();
+    for entry in entries.flatten() {
+        if all.len() == MAX_ENTRIES { return Err("Native session catalog entry limit exceeded.".into()); }
+        all.push(entry);
+    }
+    all.sort_by_key(|entry| entry.file_name());
+    let mut sessions = Vec::new();
+    let mut remaining = MAX_READ_BYTES;
+    for entry in all {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(session_id) = name.strip_suffix(".jsonl") else { continue; };
+        if !include_internal && is_internal_session(session_id) { continue; }
+        let file = match fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(entry.path()) {
+            Ok(file) => file,
+            Err(_) => continue,
+        };
+        let Ok(metadata) = file.metadata() else { continue; };
+        if !metadata.is_file() { return Err("Unsafe native session catalog file.".into()); }
+        if metadata.len() == 0 { continue; }
+        let Ok(modified) = metadata.modified() else { continue; };
+        let mut reader = CatalogReader { file, remaining: &mut remaining, refused: false };
+        let info = read_session_info_from_fd(&mut reader, &metadata, &JsString::from(session_id), project_root)?;
+        if reader.refused { return Err("Native session catalog byte limit exceeded.".into()); }
+        if let Some(info) = info {
+            sessions.push((system_time_ms(modified), info));
+        }
+    }
+    sessions.sort_by(|a,b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    Ok(sessions)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn list_sessions_bounded(
+    _: &Path, _: &Path, _: bool,
+) -> Result<Vec<(f64, JsValue)>, JsString> {
+    Err("Bounded native session catalog is unavailable on this platform.".into())
+}
+
+#[cfg(unix)]
+struct CatalogReader<'a> { file: File, remaining: &'a mut u64, refused: bool }
+#[cfg(unix)]
+impl Read for CatalogReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() { return Ok(0); }
+        if *self.remaining == 0 {
+            let mut byte = [0u8; 1];
+            if self.file.read(&mut byte)? == 0 { return Ok(0); }
+            self.refused = true;
+            return Err(io::Error::other("Native session catalog byte limit exceeded."));
+        }
+        let n = buf.len().min((*self.remaining).min(usize::MAX as u64) as usize);
+        let read = self.file.read(&mut buf[..n])?;
+        *self.remaining -= read as u64;
+        Ok(read)
+    }
+}
+#[cfg(unix)]
+impl Seek for CatalogReader<'_> {
+    fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> { self.file.seek(pos) }
+}
+
+#[cfg(unix)]
+fn read_session_info_from_fd(
+    file: &mut CatalogReader<'_>, metadata: &fs::Metadata,
+    session_id: &JsString, project_root: &Path,
+) -> Result<Option<JsValue>, JsString> {
+    let size = metadata.len();
+    let mut head = vec![0; size.min(SESSION_LITE_READ_BYTES) as usize];
+    if file.read_exact(&mut head).is_err() { return Ok(None); }
+    let mut tail = head.clone();
+    let offset = size.saturating_sub(SESSION_LITE_READ_BYTES);
+    if offset > 0 {
+        if file.seek(SeekFrom::Start(offset)).is_err() { return Ok(None); }
+        tail.resize((size - offset) as usize, 0);
+        if file.read_exact(&mut tail).is_err() { return Ok(None); }
+    }
+    let lite = SessionLite {
+        mtime: metadata.modified().ok().map(system_time_ms).unwrap_or(0.0), size,
+        head: String::from_utf8_lossy(&head).into_owned(),
+        tail: String::from_utf8_lossy(&tail).into_owned(),
+    };
+    let fast = parse_session_info_from_lite(session_id, &lite, project_root)?;
+    if fast.is_some() && size <= SESSION_LITE_READ_BYTES { return Ok(fast); }
+    if let Some(snapshot) = read_latest_tail_snapshot(&lite)
+        && let Some(info) = parse_session_info_from_metadata(session_id, &lite, &snapshot, project_root)?
+    { return Ok(merge_session_info(fast, Some(info))); }
+    if file.seek(SeekFrom::Start(0)).is_err() { return Ok(fast); }
+    let metadata = read_metadata_from(file.take(size));
+    let info = match metadata.as_ref() {
+        Some(value) => parse_session_info_from_metadata(session_id, &lite, value, project_root)?,
+        None => None,
+    };
+    Ok(merge_session_info(fast, info))
+}
+
 fn read_session_info(
     path: &Path,
     session_id: &JsString,

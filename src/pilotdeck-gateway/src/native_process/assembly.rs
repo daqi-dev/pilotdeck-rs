@@ -1063,6 +1063,7 @@ async fn start_assembly(
                             },
                         )
                         .with_pinned_generation(pinned_generation)
+                        .with_native_terminal_errors()
                         .with_agent_config(config)
                         // #1864 (b): TS re-reads the permission-mode override
                         // on every run (InProcessGateway.ts:1443), so an

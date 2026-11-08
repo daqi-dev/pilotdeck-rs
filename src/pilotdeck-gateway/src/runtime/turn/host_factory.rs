@@ -209,6 +209,7 @@ pub struct TurnHostFactory {
     deployment: Deployment,
     limits: Limits,
     expected_module_id: Option<JsString>,
+    native_terminal_errors: bool,
     ports: Arc<PortsFactory>,
     agent_config: Option<JsObject>,
     pinned_generation: Option<std::sync::Weak<RuntimeLease>>,
@@ -216,6 +217,12 @@ pub struct TurnHostFactory {
 }
 
 impl TurnHostFactory {
+    /// Preserve well-formed native factory errors without changing the
+    /// default TS AgentLoop client contract for other factory callers.
+    pub(crate) fn with_native_terminal_errors(mut self) -> Self {
+        self.native_terminal_errors = true;
+        self
+    }
     pub fn new(
         registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
         deployment: Deployment,
@@ -277,6 +284,7 @@ impl TurnHostFactory {
             limits,
             expected_module_id,
             ports: Arc::new(ports),
+            native_terminal_errors: false,
             agent_config: None,
             pinned_generation: None,
             permission_mode_source: None,
@@ -418,9 +426,10 @@ impl TurnHostFactory {
         };
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
+        let native_terminal_errors = self.native_terminal_errors;
         Ok(InteractionHost {
             client: Box::pin(async move {
-                match deployment {
+                let client = match deployment {
                     Deployment::Stdio {
                         command,
                         args,
@@ -449,7 +458,8 @@ impl TurnHostFactory {
                         HostErrorKind::Protocol,
                         "Agent loop transport 'native' has no sidecar host factory.",
                     )),
-                }
+                }?;
+                Ok(client.with_native_terminal_errors(native_terminal_errors))
             }),
             lease,
             router,

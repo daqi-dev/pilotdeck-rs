@@ -219,6 +219,9 @@ pub struct HostError {
     pub module_error: Option<Box<ModuleError>>,
     /// Bounded child stderr retained for diagnostics, never projected as protocol text.
     pub diagnostic: String,
+    /// Native opt-in only: a validated Module2 failed terminal, retained as
+    /// the original error object rather than a fabricated AgentLoop result.
+    pub native_terminal_error: Option<Box<JsObject>>,
 }
 impl HostError {
     pub fn new(kind: HostErrorKind, message: impl Into<String>) -> Self {
@@ -230,6 +233,7 @@ impl HostError {
             last_applied_sequence: None,
             module_error: None,
             diagnostic: String::new(),
+            native_terminal_error: None,
         }
     }
     fn protocol(message: impl Into<String>) -> Self {
@@ -477,10 +481,17 @@ pub struct HostClient {
     reconnect_tcp: Option<TcpEndpoint>,
     reconnect_attempted: bool,
     reconnect_succeeded: bool,
+    native_terminal_errors: bool,
     #[cfg(test)]
     test_signals: tests::ExecutionSignals,
 }
 impl HostClient {
+    /// Native composition owns this extension. The default TS client contract
+    /// continues to reject malformed or missing AgentLoop terminal results.
+    pub fn with_native_terminal_errors(mut self, enabled: bool) -> Self {
+        self.native_terminal_errors = enabled;
+        self
+    }
     /// Command is explicit so the caller controls args, cwd and isolated env.
     pub async fn spawn(
         command: &mut Command,
@@ -553,6 +564,7 @@ impl HostClient {
                 reconnect_tcp: None,
                 reconnect_attempted: false,
                 reconnect_succeeded: false,
+                native_terminal_errors: false,
                 #[cfg(test)]
                 test_signals: tests::ExecutionSignals::default(),
             }),

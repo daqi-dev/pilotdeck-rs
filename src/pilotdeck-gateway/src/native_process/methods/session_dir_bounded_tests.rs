@@ -7,9 +7,11 @@ fn native_session_io_fifo_subprocess() {
     for (case, method) in [
         ("marker", "rename_session"), ("marker", "tag_session"),
         ("marker", "record_agent_status_message"), ("marker", "delete_session"),
-        ("marker", "rewind_files"),
+        ("marker", "rewind_files"), ("marker", "list_sessions"),
+        ("marker", "manager_sessions"),
         ("transcript", "rename_session"), ("transcript", "tag_session"),
         ("transcript", "record_agent_status_message"), ("transcript", "rewind_files"),
+        ("transcript", "list_sessions"), ("transcript", "manager_sessions"),
     ] {
         let mut child = Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--nocapture", "native_session_io_child"])
@@ -61,6 +63,8 @@ async fn native_session_io_child() {
     let result = tokio::time::timeout(Duration::from_secs(4), async {
         if method == "rewind_files" {
             requests.tools_request(method.clone(), params).await
+        } else if method == "manager_sessions" {
+            requests.management_request(&method, &params).await.expect("management method")
         } else {
             requests.session_dir_request(method.clone(), params).await
         }
@@ -155,4 +159,51 @@ async fn native_session_rename_cancel_child() {
     assert!(text.contains("first-retained") && text.contains("second-after-release"));
     requests.owner.shutdown().await.unwrap();
     requests.project.dispose().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bounded_catalog_real_seeded_session_matches_legacy_projection() {
+    let (_scratch, requests) = crate::native_process::management_tests::setup();
+    let home = requests.options.home.clone();
+    let project = requests.options.project.clone();
+    let chat = bounded_chat_dir(&home, &project).unwrap();
+    let old = crate::runtime::manager::file_catalog::list_sessions(&chat, &project, false).unwrap();
+    let new = crate::runtime::manager::file_catalog::list_sessions_bounded(&chat, &project, false).unwrap();
+    assert!(!old.is_empty(), "fixture must exercise a real catalog record");
+    assert_eq!(old, new);
+    let list = requests.session_dir_request("list_sessions".into(), object([])).await.unwrap();
+    assert!(matches!(list.get("sessions"), Some(JsValue::Array(items)) if !items.is_empty()));
+    let manager = requests.management_request("manager_sessions", &object([])).await.unwrap().unwrap();
+    assert!(matches!(manager.get("items"), Some(JsValue::Array(items)) if !items.is_empty()));
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn bounded_catalog_rejects_aggregate_stream_budget_without_hanging() {
+    let (_scratch, requests) = crate::native_process::management_tests::setup();
+    let project = &requests.options.project;
+    let chat = bounded_chat_dir(&requests.options.home, project).unwrap();
+    let huge = std::fs::File::create(chat.join("huge.jsonl")).unwrap();
+    huge.set_len(129 * 1024 * 1024).unwrap();
+    drop(huge);
+    let error = crate::runtime::manager::file_catalog::list_sessions_bounded(&chat, project, false)
+        .expect_err("stream budget must reject oversized fallback");
+    assert!(error.equals_str("Native session catalog byte limit exceeded."));
+    requests.owner.shutdown().await.unwrap();
+    requests.project.dispose().await.unwrap();
+}
+
+#[test]
+fn session_marker_limits_fail_closed_before_repeated_io() {
+    use crate::metadata::Files;
+    let root = std::env::temp_dir().join(format!("pdrs-marker-limit-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("item"), b"x").unwrap();
+    let files = BoundedSessionMarkers::new();
+    files.entries.set(16_384);
+    assert!(files.entries(&root).is_err());
+    assert!(files.was_refused());
+    assert!(files.read(&root.join("item")).is_err());
+    std::fs::remove_dir_all(root).unwrap();
 }

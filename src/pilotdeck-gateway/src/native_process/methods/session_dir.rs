@@ -105,13 +105,65 @@ pub(in crate::native_process) async fn session_io_permit() -> Result<tokio::sync
         .map_err(|_| RequestError::new("Native session IO is unavailable."))
 }
 
+// Bounded per-lookup marker discovery. Metadata's legacy resolver may swallow
+// IO errors, so callers must also inspect was_refused before accepting a path.
+pub(in crate::native_process) struct BoundedSessionMarkers {
+    inner: crate::runtime::history::HistoryMarkerFiles,
+    entries: std::cell::Cell<usize>,
+    bytes: std::cell::Cell<usize>,
+    refused: std::cell::Cell<bool>,
+}
+impl BoundedSessionMarkers {
+    pub(in crate::native_process) fn new() -> Self {
+        Self {
+            inner: crate::runtime::history::HistoryMarkerFiles::new(),
+            entries: std::cell::Cell::new(0),
+            bytes: std::cell::Cell::new(0),
+            refused: std::cell::Cell::new(false),
+        }
+    }
+    pub(in crate::native_process) fn was_refused(&self) -> bool {
+        self.refused.get() || self.inner.was_refused()
+    }
+    fn limit(&self) -> std::io::Error {
+        self.refused.set(true);
+        std::io::Error::other("Native session marker budget exceeded.")
+    }
+}
+impl crate::metadata::Files for BoundedSessionMarkers {
+    fn entries(&self, path: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
+        if self.was_refused() { return Err(self.limit()); }
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let used = self.entries.get().saturating_add(1);
+            if used > 16_384 { return Err(self.limit()); }
+            self.entries.set(used);
+            entries.push((entry.file_name(), entry.file_type()?.is_dir()));
+        }
+        entries.sort_by(|a, b| a.0.as_encoded_bytes().cmp(b.0.as_encoded_bytes()));
+        Ok(entries.into_iter().map(|(name, dir)| (name.to_string_lossy().into_owned(), dir)).collect())
+    }
+    fn stat(&self, path: &std::path::Path) -> std::io::Result<crate::metadata::Stat> {
+        crate::metadata::Files::stat(&crate::metadata::NativeFiles, path)
+    }
+    fn read(&self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        if self.was_refused() { return Err(self.limit()); }
+        let bytes = crate::metadata::Files::read(&self.inner, path)?;
+        let used = self.bytes.get().saturating_add(bytes.len());
+        if used > 16 * 1024 * 1024 { return Err(self.limit()); }
+        self.bytes.set(used);
+        Ok(bytes)
+    }
+}
+
 pub(in crate::native_process) fn bounded_chat_dir(
     home: &std::path::Path, project: &std::path::Path,
 ) -> Result<std::path::PathBuf, RequestError> {
     let metadata = crate::metadata::Metadata {
         home: home.to_path_buf(),
         cwd: std::path::PathBuf::new(),
-        files: crate::runtime::history::HistoryMarkerFiles::new(),
+        files: BoundedSessionMarkers::new(),
     };
     let result = metadata.process_chat_dir(&project.to_string_lossy())
         .map_err(|error| RequestError::new(error.to_string()));
@@ -178,18 +230,12 @@ impl Requests {
             offset: Some(offset),
             include_internal: false,
         };
+        let (chat_dir, permit) = resolve_chat_dir(home, std::path::PathBuf::from(project_root.as_str())).await?;
         let mut sessions = tokio::task::spawn_blocking(move || {
-            let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(move |key: &ProjectKey| {
-                    crate::session_chat_dir(
-                        &home,
-                        &key.project_root,
-                        &key.project_root.to_string_lossy(),
-                    )
-                }),
-            );
-            let catalog = Arc::new(TranscriptSessionCatalog::new(Arc::new(adapter)));
+            let _permit = permit;
+            let catalog = Arc::new(TranscriptSessionCatalog::new_bounded(
+                move |_: &ProjectKey| Ok(chat_dir.clone())
+            ));
             GatewaySessionCatalogConsumer::new(catalog).list(&input)
         })
         .await
