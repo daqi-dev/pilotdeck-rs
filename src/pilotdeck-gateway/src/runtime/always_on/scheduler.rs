@@ -13,9 +13,8 @@
 //! insertion order the `d1` baseline pinned (its debounce cleared the
 //! pending tick timer first).
 //!
-//! The tick bodies use the same synchronous fs stores as the rest of the
-//! family (`state.rs`/`cycles.rs`), so no timer test needs the in-memory
-//! substitution the TS probe documented — the Rust runtime runs them inline.
+//! Native store operations run in bounded owned blocking jobs. Signals keep
+//! their reschedule order while stop drains an accepted state-clear job.
 use std::{
     io,
     path::Path,
@@ -97,6 +96,12 @@ struct SchedulerShared {
     notify: tokio::sync::Notify,
     watcher: std::sync::Mutex<Option<SignalWatcher>>,
     task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    signal_task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+struct StartAdmission<'a> { started: &'a AtomicBool, committed: bool }
+impl Drop for StartAdmission<'_> {
+    fn drop(&mut self) { if !self.committed { self.started.store(false, Ordering::SeqCst); } }
 }
 
 pub(crate) struct DiscoveryScheduler {
@@ -115,6 +120,7 @@ impl DiscoveryScheduler {
                 notify: tokio::sync::Notify::new(),
                 watcher: std::sync::Mutex::new(None),
                 task: std::sync::Mutex::new(None),
+                signal_task: std::sync::Mutex::new(None),
             }),
         }
     }
@@ -127,12 +133,16 @@ impl DiscoveryScheduler {
         {
             return Ok(());
         }
-        self.maybe_restore_dormancy()?;
+        let mut admission = StartAdmission { started: &self.shared.started, committed: false };
+        self.maybe_restore_dormancy().await?;
+        let mut slot = self.shared.task.lock().unwrap_or_else(|e| e.into_inner());
+        if self.shared.stopped.load(Ordering::SeqCst) { self.dispose_watcher(); return Ok(()); }
         let scheduler = Arc::clone(self);
         let task = tokio::spawn(async move {
             scheduler.run_ticker().await;
         });
-        *self.shared.task.lock().unwrap_or_else(|e| e.into_inner()) = Some(task);
+        *slot = Some(task);
+        admission.committed = true;
         Ok(())
     }
 
@@ -155,6 +165,8 @@ impl DiscoveryScheduler {
         if let Some(task) = task {
             let _ = task.await;
         }
+        let signal = self.shared.signal_task.lock().unwrap_or_else(|error| error.into_inner()).take();
+        if let Some(task) = signal { let _ = task.await; }
     }
 
     /// `runTickOnce` (DiscoveryScheduler.ts:70-73), public for tests: after a
@@ -218,7 +230,12 @@ impl DiscoveryScheduler {
     /// always releasing the lock.
     async fn tick(self: &Arc<Self>) -> Result<TickOutcome, TickError> {
         let now_ms = (self.deps.now)();
-        let state = self.deps.state_store.read(now_ms).map_err(TickError::Io)?;
+        let state_store = self.deps.state_store.clone();
+        let project = self.deps.project_key.clone();
+        let lock_path = self.deps.paths.discovery_lock_file.clone();
+        let (state, project_exists, lock_held) = super::storage::run(move || {
+            Ok((state_store.read(now_ms)?, Path::new(&project).exists(), lock_path.exists()))
+        }).await.map_err(TickError::Io)?;
         let fresh = self.deps.leases.list_fresh(
             &self.deps.project_key,
             self.deps.config.heartbeat_stale_seconds,
@@ -230,8 +247,8 @@ impl DiscoveryScheduler {
             state: &state,
             leases: &fresh,
             now_ms,
-            project_exists: Path::new(&self.deps.project_key).exists(),
-            lock_held: self.deps.paths.discovery_lock_file.exists(),
+            project_exists,
+            lock_held,
             session_in_flight: Some((self.deps.is_session_in_flight)()),
         });
 
@@ -242,7 +259,7 @@ impl DiscoveryScheduler {
                     &[("reason", JsValue::String(reason.as_str().into()))],
                 );
                 if reason == GateBlockReason::DormantNoSignal {
-                    self.ensure_dormancy_watcher();
+                    self.ensure_dormancy_watcher().await;
                 }
             }
             return Ok(TickOutcome {
@@ -255,14 +272,10 @@ impl DiscoveryScheduler {
         // cycle must exist, be active, and hold fewer than the bound.
         let active_cycle_id = state
             .get("activeWorkCycleId")
-            .and_then(JsValue::as_string)
-            .and_then(|value| value.to_utf8().ok());
+            .and_then(JsValue::as_string).cloned();
         if let Some(cycle_id) = active_cycle_id {
-            let active_cycle = self
-                .deps
-                .cycle_store
-                .get_record(&cycle_id)
-                .map_err(TickError::Io)?;
+            let store = self.deps.cycle_store.clone();
+            let active_cycle = super::storage::run(move || store.get_record_js(&cycle_id)).await.map_err(TickError::Io)?;
             if active_cycle.is_some_and(|cycle| {
                 cycle.status == "active" && cycle.plan_ids.len() >= DEFAULT_MAX_PLANS_PER_CYCLE
             }) {
@@ -279,13 +292,11 @@ impl DiscoveryScheduler {
 
         let run_id = (self.deps.uuid)();
         let started_at_ms = (self.deps.now)();
-        let acquired = acquire_discovery_lock(
-            &self.deps.paths,
-            std::process::id(),
-            &run_id,
-            &iso_from_epoch_ms(started_at_ms),
-        )
-        .map_err(TickError::Io)?;
+        let paths = self.deps.paths.clone();
+        let lock_run_id = run_id.clone();
+        let acquired = super::storage::run(move || acquire_discovery_lock(
+            &paths, std::process::id(), &lock_run_id, &iso_from_epoch_ms(started_at_ms),
+        )).await.map_err(TickError::Io)?;
         if !acquired {
             self.log_info(
                 "always-on lock_busy",
@@ -301,14 +312,13 @@ impl DiscoveryScheduler {
         // pre-fire writes, the run, and the crash path that preserves the
         // AlwaysOnError code — an io failure in here wraps as `internal`.
         let fired = async {
-            self.deps
-                .state_store
-                .mark_fire_started(&run_id, started_at_ms)
-                .map_err(TickError::Io)?;
-            self.deps
-                .state_store
-                .clear_dormant(started_at_ms)
-                .map_err(TickError::Io)?;
+            let store = self.deps.state_store.clone();
+            let state_run_id = run_id.clone();
+            super::storage::run(move || {
+                store.mark_fire_started(&state_run_id, started_at_ms)?;
+                store.clear_dormant(started_at_ms)?;
+                Ok(())
+            }).await.map_err(TickError::Io)?;
             self.dispose_watcher();
             let result = self
                 .deps
@@ -332,9 +342,10 @@ impl DiscoveryScheduler {
                     ],
                 );
                 if result.outcome == "no_plan" {
-                    self.ensure_dormancy_watcher();
+                    self.ensure_dormancy_watcher().await;
                 }
-                release_discovery_lock(&self.deps.paths);
+                let paths = self.deps.paths.clone();
+                let _ = super::storage::run(move || { release_discovery_lock(&paths); Ok(()) }).await;
                 Ok(TickOutcome {
                     outcome: "fired",
                     reason: None,
@@ -349,7 +360,8 @@ impl DiscoveryScheduler {
                         ("error", JsValue::String(message.clone().into())),
                     ],
                 );
-                release_discovery_lock(&self.deps.paths);
+                let paths = self.deps.paths.clone();
+                let _ = super::storage::run(move || { release_discovery_lock(&paths); Ok(()) }).await;
                 Err(match error {
                     TickError::Fire(fire) => TickError::Fire(fire),
                     TickError::Io(_) => TickError::Fire(AlwaysOnError::new("internal", message)),
@@ -359,7 +371,7 @@ impl DiscoveryScheduler {
     }
 
     /// `ensureDormancyWatcher` (DiscoveryScheduler.ts:173-190).
-    fn ensure_dormancy_watcher(self: &Arc<Self>) {
+    async fn ensure_dormancy_watcher(self: &Arc<Self>) {
         if self
             .shared
             .watcher
@@ -402,7 +414,10 @@ impl DiscoveryScheduler {
             .watcher
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(watcher.clone());
-        watcher.start();
+        if let Err(error) = super::storage::run(move || { watcher.start(); Ok(()) }).await {
+            self.dispose_watcher();
+            self.log_warn("always-on signal watcher error", &[("error", JsValue::String(error.to_string().as_str().into()))]);
+        }
     }
 
     /// `handleSignal` (DiscoveryScheduler.ts:192-201): clear the dormancy,
@@ -410,10 +425,14 @@ impl DiscoveryScheduler {
     /// one. A clearDormant fs failure is swallowed the way the TS `void`
     /// leaves it an unhandled rejection — the reschedule still happens.
     fn handle_signal(&self) {
-        if self.shared.stopped.load(Ordering::SeqCst) {
-            return;
+        let mut slot = self.shared.signal_task.lock().unwrap_or_else(|error| error.into_inner());
+        if self.shared.stopped.load(Ordering::SeqCst) { return; }
+        if slot.as_ref().is_none_or(|task| task.is_finished()) {
+            let store = self.deps.state_store.clone();
+            let now = (self.deps.now)();
+            *slot = Some(tokio::spawn(async move { let _ = store.clear_dormant_async(now).await; }));
         }
-        let _ = self.deps.state_store.clear_dormant((self.deps.now)());
+        drop(slot);
         self.dispose_watcher();
         self.shared.reschedule.store(true, Ordering::SeqCst);
         self.shared.notify.notify_one();
@@ -433,13 +452,13 @@ impl DiscoveryScheduler {
     }
 
     /// `maybeRestoreDormancy` (DiscoveryScheduler.ts:208-213).
-    fn maybe_restore_dormancy(self: &Arc<Self>) -> io::Result<()> {
-        let state = self.deps.state_store.read((self.deps.now)())?;
+    async fn maybe_restore_dormancy(self: &Arc<Self>) -> io::Result<()> {
+        let state = self.deps.state_store.read_async((self.deps.now)()).await?;
         if !matches!(
             state.get("dormant"),
             None | Some(JsValue::Undefined) | Some(JsValue::Null)
         ) {
-            self.ensure_dormancy_watcher();
+            self.ensure_dormancy_watcher().await;
         }
         Ok(())
     }
@@ -1270,7 +1289,7 @@ mod tests {
         let harness = Harness::new("rearm", 41);
         let scheduler = harness.scheduler(harness.config(true, &[("tickIntervalMinutes", 0.0)]));
         std::fs::remove_dir_all(&harness.project_root).expect("#2294 root rm");
-        scheduler.ensure_dormancy_watcher();
+        scheduler.ensure_dormancy_watcher().await;
         let slot_empty = scheduler
             .shared
             .watcher
@@ -1282,7 +1301,7 @@ mod tests {
             .iter()
             .any(|line| line.starts_with("warn:always-on signal watcher error:"));
         std::fs::create_dir_all(&harness.project_root).expect("#2294 root mkdir");
-        scheduler.ensure_dormancy_watcher();
+        scheduler.ensure_dormancy_watcher().await;
         let re_armed = scheduler
             .shared
             .watcher

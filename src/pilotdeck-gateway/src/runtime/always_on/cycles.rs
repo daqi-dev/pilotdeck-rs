@@ -30,7 +30,7 @@ pub(crate) struct WorkCycleWorkspace {
     /// the fire seam (explicitly unported in this PR).
     #[allow(dead_code)]
     pub strategy: String,
-    pub cwd: String,
+    pub cwd: JsString,
     #[allow(dead_code)]
     pub metadata: JsObject,
 }
@@ -41,20 +41,21 @@ pub(crate) struct WorkCycleWorkspace {
 /// unported.
 #[derive(Clone, Debug)]
 pub(crate) struct WorkCycleRecord {
-    pub id: String,
+    pub raw: JsObject,
+    pub id: JsString,
     /// Wire-shape fields the fire seam and its reports read; the read side
     /// lands with the explicitly unported fire half.
     #[allow(dead_code)]
-    pub project_key: String,
+    pub project_key: JsString,
     pub status: String,
     pub workspace: Option<WorkCycleWorkspace>,
-    pub plan_ids: Vec<String>,
+    pub plan_ids: Vec<JsString>,
     /// Wire-shape fields the fire seam and its reports read; the read side
     /// lands with the explicitly unported fire half.
     #[allow(dead_code)]
-    pub created_at: String,
+    pub created_at: JsString,
     #[allow(dead_code)]
-    pub created_by_run_id: String,
+    pub created_by_run_id: JsString,
 }
 
 /// `DiscoveryPlanRecord` as the control surface reads it: `rerunPlan`'s early
@@ -63,14 +64,16 @@ pub(crate) struct WorkCycleRecord {
 /// seam.
 #[derive(Clone, Debug)]
 pub(crate) struct DiscoveryPlanRecord {
-    pub id: String,
-    pub title: Option<String>,
+    pub raw: JsObject,
+    pub id: JsString,
+    pub title: Option<JsString>,
 }
 
-fn js_string(value: Option<&JsValue>) -> Option<String> {
-    value
-        .and_then(JsValue::as_string)
-        .and_then(|value| value.to_utf8().ok())
+fn js_string(value: Option<&JsValue>) -> Option<JsString> {
+    value.and_then(JsValue::as_string).cloned()
+}
+fn native_tag(value: Option<&JsValue>) -> String {
+    value.and_then(JsValue::as_string).and_then(|value| value.to_utf8().ok()).unwrap_or_default()
 }
 
 /// `readIndex` tolerance (WorkCycleStore.ts:20-44 / DiscoveryPlanStore.ts:
@@ -87,12 +90,10 @@ fn read_index_object(file: &Path, entries_key: &str) -> io::Result<JsObject> {
         index.insert(entries_key.into(), JsValue::Array(Vec::new()));
         index
     };
-    let raw = match std::fs::read(file) {
-        Ok(raw) => raw,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(default()),
-        Err(error) => return Err(error),
-    };
+    let root = super::storage::root_for(file);
+    let Some(raw) = super::storage::read(&root, file, super::storage::INDEX_BYTES)? else { return Ok(default()); };
     let raw = String::from_utf8_lossy(&raw);
+    super::storage::check_json(&raw)?;
     let parsed = match parse_json(&raw) {
         Ok(parsed) => parsed,
         Err(_) => return Ok(default()),
@@ -112,10 +113,10 @@ fn read_index_object(file: &Path, entries_key: &str) -> io::Result<JsObject> {
 /// `writeIndex` (WorkCycleStore.ts:46-53): `mkdir -p` then the two-space
 /// `JSON.stringify` bytes, no trailing newline.
 fn write_index_object(file: &Path, index: &JsObject) -> io::Result<()> {
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(file, stringify_pretty(&JsValue::Object(index.clone())))
+    super::storage::check_object(index)?;
+    let text = stringify_pretty(&JsValue::Object(index.clone()));
+    super::storage::check_json(&text)?;
+    super::storage::write(&super::storage::root_for(file), file, text.as_bytes(), super::storage::INDEX_BYTES)
 }
 
 /// The TS `find` over the entries: match on the raw entry before any typed
@@ -139,7 +140,7 @@ fn cycle_record(entry: &JsObject) -> WorkCycleRecord {
         .get("workspace")
         .and_then(JsValue::as_object)
         .map(|workspace| WorkCycleWorkspace {
-            strategy: js_string(workspace.get("strategy")).unwrap_or_default(),
+            strategy: native_tag(workspace.get("strategy")),
             cwd: js_string(workspace.get("cwd")).unwrap_or_default(),
             metadata: match workspace.get("metadata") {
                 Some(JsValue::Object(metadata)) => metadata.clone(),
@@ -151,14 +152,15 @@ fn cycle_record(entry: &JsObject) -> WorkCycleRecord {
     let plan_ids = match entry.get("planIds") {
         Some(JsValue::Array(items)) => items
             .iter()
-            .filter_map(|item| js_string(Some(item)))
+            .filter_map(|item| item.as_string().cloned())
             .collect(),
         _ => Vec::new(),
     };
     WorkCycleRecord {
-        id: js_string(entry.get("id")).unwrap_or_default(),
+        raw: entry.clone(),
+        id: entry.get("id").and_then(JsValue::as_string).cloned().unwrap_or_default(),
         project_key: js_string(entry.get("projectKey")).unwrap_or_default(),
-        status: js_string(entry.get("status")).unwrap_or_default(),
+        status: native_tag(entry.get("status")),
         workspace,
         plan_ids,
         created_at: js_string(entry.get("createdAt")).unwrap_or_default(),
@@ -168,13 +170,15 @@ fn cycle_record(entry: &JsObject) -> WorkCycleRecord {
 
 fn plan_record(entry: &JsObject) -> DiscoveryPlanRecord {
     DiscoveryPlanRecord {
-        id: js_string(entry.get("id")).unwrap_or_default(),
-        title: js_string(entry.get("title")),
+        raw: entry.clone(),
+        id: entry.get("id").and_then(JsValue::as_string).cloned().unwrap_or_default(),
+        title: entry.get("title").and_then(JsValue::as_string).cloned(),
     }
 }
 
 /// `WorkCycleStore` (WorkCycleStore.ts:17-18): one `cycles/index.json` per
 /// project directory.
+#[derive(Clone)]
 pub(crate) struct WorkCycleStore {
     paths: AlwaysOnPaths,
 }
@@ -191,11 +195,14 @@ impl WorkCycleStore {
     /// `getRecord` (WorkCycleStore.ts:55-58): first entry whose `id` equals
     /// the query.
     pub(crate) fn get_record(&self, cycle_id: &str) -> io::Result<Option<WorkCycleRecord>> {
+        self.get_record_js(&JsString::from(cycle_id))
+    }
+
+    pub(crate) fn get_record_js(&self, cycle_id: &JsString) -> io::Result<Option<WorkCycleRecord>> {
         let index = self.read_index()?;
         Ok(find_entry(&index, "cycles", |entry| {
-            js_string(entry.get("id")).as_deref() == Some(cycle_id)
-        })
-        .map(|entry| cycle_record(&entry)))
+            entry.get("id").and_then(JsValue::as_string) == Some(cycle_id)
+        }).map(|entry| cycle_record(&entry)))
     }
 
     /// `getActiveCycle` (WorkCycleStore.ts:60-63): first entry whose `status`
@@ -203,14 +210,78 @@ impl WorkCycleStore {
     pub(crate) fn get_active_cycle(&self) -> io::Result<Option<WorkCycleRecord>> {
         let index = self.read_index()?;
         Ok(find_entry(&index, "cycles", |entry| {
-            js_string(entry.get("status")).as_deref() == Some("active")
+            entry.get("status").and_then(JsValue::as_string).is_some_and(|status| status.equals_str("active"))
         })
         .map(|entry| cycle_record(&entry)))
+    }
+
+    pub(crate) async fn read_apply(&self, cycle_id: JsString) -> io::Result<Option<(WorkCycleRecord, Vec<DiscoveryPlanRecord>)>> {
+        let store = self.clone();
+        super::storage::run(move || {
+            let Some(cycle) = store.get_record_js(&cycle_id)? else { return Ok(None); };
+            let plans = DiscoveryPlanStore::new(store.paths.clone()).list_records()?.into_iter()
+                .filter(|plan| cycle.plan_ids.iter().any(|id| id == &plan.id)).collect();
+            Ok(Some((cycle, plans)))
+        }).await
+    }
+
+    pub(crate) fn write_index(&self, index: &JsObject) -> io::Result<()> {
+        write_index_object(&self.paths.cycle_index_file, index)
+    }
+
+    pub(crate) fn create(&self, workspace: &JsObject, run_id: JsString, cycle_id: JsString, now_ms: f64) -> io::Result<WorkCycleRecord> {
+        let mut index = self.read_index()?;
+        let mut record = JsObject::new();
+        record.insert("id".into(), JsValue::String(cycle_id));
+        record.insert("projectKey".into(), self.paths.project_key.as_str().into());
+        record.insert("status".into(), "active".into());
+        record.insert("workspace".into(), JsValue::Object(workspace.clone()));
+        record.insert("planIds".into(), JsValue::Array(Vec::new()));
+        record.insert("createdAt".into(), JsValue::String(crate::runtime::cron::iso_from_epoch_ms(now_ms).as_str().into()));
+        record.insert("createdByRunId".into(), JsValue::String(run_id));
+        let Some(JsValue::Array(cycles)) = index.get("cycles") else { unreachable!() };
+        let mut cycles = cycles.clone(); cycles.push(JsValue::Object(record.clone()));
+        index.insert("cycles".into(), JsValue::Array(cycles));
+        self.write_index(&index)?;
+        Ok(cycle_record(&record))
+    }
+
+    pub(crate) fn update_status(&self, cycle_id: &JsString, status: &str, now_ms: f64) -> io::Result<Option<WorkCycleRecord>> {
+        let mut index = self.read_index()?;
+        let Some(JsValue::Array(entries)) = index.get("cycles") else { unreachable!() };
+        let mut entries = entries.clone(); let mut result = None;
+        for entry in &mut entries {
+            let JsValue::Object(record) = entry else { continue; };
+            if record.get("id").and_then(JsValue::as_string) != Some(cycle_id) { continue; }
+            record.insert("status".into(), status.into());
+            let field = match status { "applied" => Some("appliedAt"), "archived" => Some("archivedAt"), _ => None };
+            if let Some(field) = field { record.insert(field.into(), crate::runtime::cron::iso_from_epoch_ms(now_ms).as_str().into()); }
+            result = Some(cycle_record(record)); break;
+        }
+        if result.is_some() { index.insert("cycles".into(), JsValue::Array(entries)); self.write_index(&index)?; }
+        Ok(result)
+    }
+
+    pub(crate) fn add_plan(&self, cycle_id: &JsString, plan_id: JsString) -> io::Result<()> {
+        let mut index = self.read_index()?;
+        let Some(JsValue::Array(entries)) = index.get("cycles") else { unreachable!() };
+        let mut entries = entries.clone();
+        for entry in &mut entries {
+            let JsValue::Object(record) = entry else { continue; };
+            if record.get("id").and_then(JsValue::as_string) != Some(cycle_id) { continue; }
+            let mut ids = match record.get("planIds") { Some(JsValue::Array(ids)) => ids.clone(), _ => Vec::new() };
+            if ids.iter().any(|id| id.as_string() == Some(&plan_id)) { return Ok(()); }
+            ids.push(JsValue::String(plan_id)); record.insert("planIds".into(), JsValue::Array(ids));
+            index.insert("cycles".into(), JsValue::Array(entries));
+            return self.write_index(&index);
+        }
+        Ok(())
     }
 }
 
 /// `DiscoveryPlanStore` (DiscoveryPlanStore.ts:8-9): one `plans/index.json`
 /// per project directory.
+#[derive(Clone)]
 pub(crate) struct DiscoveryPlanStore {
     paths: AlwaysOnPaths,
 }
@@ -224,13 +295,56 @@ impl DiscoveryPlanStore {
         read_index_object(&self.paths.plan_index_file, "plans")
     }
 
+    pub(crate) fn write_index(&self, index: &JsObject) -> io::Result<()> {
+        write_index_object(&self.paths.plan_index_file, index)
+    }
+
+    pub(crate) fn upsert(&self, record: &JsObject) -> io::Result<DiscoveryPlanRecord> {
+        let mut index = self.read_index()?;
+        super::storage::check_object(record)?;
+        let mut record = record.clone();
+        for field in ["planFilePath", "reportFilePath"] {
+            let original = record.get(field).cloned().unwrap_or(JsValue::Undefined);
+            let transformed = match original.as_string() {
+                Some(value) if field == "planFilePath" || !value.is_empty() => {
+                    let root = JsString::from(self.paths.project_dir().to_string_lossy().as_ref());
+                    let relative = crate::runtime::tools::builtin::relative(&root, value);
+                    if relative.is_empty() || relative.units().starts_with(&[46, 46]) { original }
+                    else { JsValue::String(relative) }
+                }
+                _ => JsValue::Undefined,
+            };
+            record.insert(field.into(), transformed);
+        }
+        let id = record.get("id").cloned().unwrap_or(JsValue::Undefined);
+        let Some(JsValue::Array(entries)) = index.get("plans") else { unreachable!() };
+        let mut entries = entries.clone();
+        if let Some(existing) = entries.iter_mut().find(|entry| entry.as_object().is_some_and(|entry| entry.get("id") == Some(&id))) {
+            *existing = JsValue::Object(record.clone());
+        } else { entries.push(JsValue::Object(record.clone())); }
+        index.insert("plans".into(), JsValue::Array(entries));
+        self.write_index(&index)?;
+        Ok(plan_record(&record))
+    }
+
+    pub(crate) fn write_plan_markdown(&self, plan_id: &JsString, markdown: &JsString) -> io::Result<std::path::PathBuf> {
+        let path = plan_markdown_path(&self.paths, plan_id);
+        // Node's UTF-8 filesystem writer replaces unpaired surrogates.
+        let text = String::from_utf16_lossy(markdown.units());
+        super::storage::write(&super::storage::root_for(&self.paths.state_file), &path, text.as_bytes(), super::storage::MARKDOWN_BYTES)?;
+        Ok(path)
+    }
+
     /// `getRecord` (DiscoveryPlanStore.ts:98-101).
     pub(crate) fn get_record(&self, plan_id: &str) -> io::Result<Option<DiscoveryPlanRecord>> {
+        self.get_record_js(&JsString::from(plan_id))
+    }
+
+    pub(crate) fn get_record_js(&self, plan_id: &JsString) -> io::Result<Option<DiscoveryPlanRecord>> {
         let index = self.read_index()?;
         Ok(find_entry(&index, "plans", |entry| {
-            js_string(entry.get("id")).as_deref() == Some(plan_id)
-        })
-        .map(|entry| plan_record(&entry)))
+            entry.get("id").and_then(JsValue::as_string) == Some(plan_id)
+        }).map(|entry| plan_record(&entry)))
     }
 
     /// The plans array as typed views — the `applyCycle` projection source
@@ -251,12 +365,13 @@ impl DiscoveryPlanStore {
     /// `None`; the body decodes UTF-8 with replacement, like the Node utf8
     /// read.
     pub(crate) fn read_plan_markdown(&self, plan_id: &str) -> io::Result<Option<String>> {
-        let path = plan_markdown_path(&self.paths, &JsString::from(plan_id));
-        match std::fs::read(&path) {
-            Ok(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error),
-        }
+        self.read_plan_markdown_js(&JsString::from(plan_id))
+    }
+
+    pub(crate) fn read_plan_markdown_js(&self, plan_id: &JsString) -> io::Result<Option<String>> {
+        let path = plan_markdown_path(&self.paths, plan_id);
+        Ok(super::storage::read(&super::storage::root_for(&self.paths.state_file), &path, super::storage::MARKDOWN_BYTES)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
     }
 
     /// `updateStatus(planId, { status })` (DiscoveryPlanStore.ts:69-96) — the
@@ -279,7 +394,7 @@ impl DiscoveryPlanStore {
             let JsValue::Object(entry) = item else {
                 continue;
             };
-            if js_string(entry.get("id")).as_deref() != Some(plan_id) {
+            if entry.get("id").and_then(JsValue::as_string) != Some(&JsString::from(plan_id)) {
                 continue;
             }
             entry.insert("status".into(), JsValue::String(JsString::from(status)));
@@ -430,8 +545,8 @@ mod tests {
         negative_assert_eq!(record.plan_ids.len(), 3, "#2294 t10 planIds");
         negative_assert_eq!(record.status, "active", "#2294 status");
         negative_assert_eq!(
-            record.workspace.as_ref().map(|ws| ws.cwd.as_str()),
-            Some("/w"),
+            record.workspace.as_ref().map(|ws| ws.cwd.to_utf8().unwrap()),
+            Some("/w".to_owned()),
             "#2294 workspace cwd"
         );
         // A record without a string id never matches (the TS find compares
@@ -502,8 +617,8 @@ mod tests {
             .get_record("p1")
             .expect("#2294 read")
             .expect("#2294 p1");
-        negative_assert_eq!(record.id, "p1", "#2294 id");
-        negative_assert_eq!(record.title.as_deref(), Some("T"), "#2294 title");
+        negative_assert_eq!(record.id, JsString::from("p1"), "#2294 id");
+        negative_assert_eq!(record.title.as_ref().map(|title| title.to_utf8().unwrap()), Some("T".to_owned()), "#2294 title");
         negative_assert_eq!(
             store.get_record("p-missing").expect("#2294 read").is_none(),
             true,
@@ -511,7 +626,7 @@ mod tests {
         );
         let listed = store.list_records().expect("#2294 list");
         negative_assert_eq!(
-            listed.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            listed.iter().map(|r| r.id.to_utf8().unwrap()).collect::<Vec<_>>(),
             vec!["p1"],
             "#2294 list_records projects id and title"
         );
@@ -560,7 +675,7 @@ mod tests {
             .update_status("p1", "ready")
             .expect("#2294 update")
             .expect("#2294 p1");
-        negative_assert_eq!(updated.id, "p1", "#2294 updated view");
+        negative_assert_eq!(updated.id, JsString::from("p1"), "#2294 updated view");
         let on_disk = std::fs::read_to_string(&paths.plan_index_file).expect("#2294 read");
         negative_assert_eq!(
             on_disk,
@@ -593,5 +708,47 @@ mod tests {
             before,
             "#2294 missing plan writes nothing"
         );
+    }
+}
+
+#[cfg(test)]
+mod native_storage_tests {
+    use super::*;
+    use std::path::PathBuf;
+    struct Scratch(PathBuf);
+    impl Drop for Scratch { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+    fn paths(root: &Path) -> AlwaysOnPaths { AlwaysOnPaths {
+        project_key: "/fixture-project".into(), state_file: root.join("state.json"),
+        plans_dir: root.join("plans"), plan_index_file: root.join("plans/index.json"),
+        cycle_index_file: root.join("cycles/index.json"), reports_dir: root.join("reports"), discovery_lock_file: root.join("locks/discovery.lock"),
+    } }
+    #[tokio::test]
+    async fn apply_snapshot_preserves_utf16_and_plan_index_order_and_unknown_fields() {
+        let root = Scratch(std::env::temp_dir().join(format!("pdrs-always-storage-{}", uuid::Uuid::new_v4())));
+        let paths = paths(&root.0);
+        let cycle_id = JsString::from_utf16(vec![99, 0xd800]);
+        let plan_id = JsString::from_utf16(vec![112, 0xdc00]);
+        let paths_for_job = paths.clone(); let query_cycle = cycle_id.clone(); let query_plan = plan_id.clone();
+        super::super::storage::run(move || {
+            let cycles = WorkCycleStore::new(paths_for_job.clone());
+            let mut workspace = JsObject::new(); workspace.insert("strategy".into(), "snapshot-copy".into());
+            workspace.insert("cwd".into(), JsValue::String(JsString::from_utf16(vec![47, 0xd800])));
+            let created = cycles.create(&workspace, "run".into(), query_cycle.clone(), 0.0)?;
+            assert_eq!(created.id, query_cycle);
+            cycles.add_plan(&created.id, query_plan.clone())?; cycles.add_plan(&created.id, "second".into())?;
+            let plans = DiscoveryPlanStore::new(paths_for_job);
+            for id in [JsString::from("second"), JsString::from("outside"), query_plan] {
+                let mut record = JsObject::new(); record.insert("id".into(), JsValue::String(id));
+                record.insert("title".into(), JsValue::String(JsString::from_utf16(vec![0xd800])));
+                record.insert("fixtureUnknown".into(), JsValue::Bool(true)); plans.upsert(&record)?;
+            }
+            Ok(())
+        }).await.unwrap();
+        let (cycle, selected) = WorkCycleStore::new(paths).read_apply(cycle_id.clone()).await.unwrap().unwrap();
+        assert_eq!(cycle.id, cycle_id);
+        assert_eq!(cycle.workspace.unwrap().cwd.units(), &[47, 0xd800]);
+        assert_eq!(selected.iter().map(|record| record.id.clone()).collect::<Vec<_>>(), vec![JsString::from("second"), plan_id]);
+        assert_eq!(selected[1].title.as_ref().unwrap().units(), &[0xd800]);
+        assert_eq!(selected[1].raw.get("fixtureUnknown"), Some(&JsValue::Bool(true)));
     }
 }

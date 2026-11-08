@@ -58,9 +58,6 @@ pub(crate) fn acquire_discovery_lock(
     run_id: &str,
     started_at: &str,
 ) -> io::Result<bool> {
-    if let Some(parent) = paths.discovery_lock_file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
     let mut payload = JsObject::new();
     payload.insert("pid".into(), JsValue::Number(f64::from(pid)));
     payload.insert("runId".into(), JsValue::String(JsString::from(run_id)));
@@ -69,25 +66,15 @@ pub(crate) fn acquire_discovery_lock(
         JsValue::String(JsString::from(started_at)),
     );
     let bytes = stringify_pretty(&JsValue::Object(payload));
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&paths.discovery_lock_file)
-    {
-        Ok(mut file) => {
-            use std::io::Write;
-            file.write_all(bytes.as_bytes())?;
-            Ok(true)
-        }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(error),
-    }
+    let root = super::storage::root_for(&paths.state_file);
+    super::storage::create_new(&root, &paths.discovery_lock_file, bytes.as_bytes())
 }
 
 /// `releaseDiscoveryLock` (DiscoveryFire.ts:1161-1163): the unlink swallows
 /// every error, a missing lock included.
 pub(crate) fn release_discovery_lock(paths: &AlwaysOnPaths) {
-    let _ = std::fs::remove_file(&paths.discovery_lock_file);
+    let root = super::storage::root_for(&paths.state_file);
+    let _ = super::storage::remove(&root, &paths.discovery_lock_file);
 }
 
 /// The `DiscoveryFireResult` slice the scheduler reads: `outcome`, which
@@ -452,6 +439,7 @@ mod tests {
         let paths = paths(&home);
         let fire = DiscoveryFire::new(Arc::new(DiscoveryPlanStore::new(paths)));
         let workspaceless = WorkCycleRecord {
+            raw: JsObject::new(),
             id: "c1".into(),
             project_key: "/proj/a".into(),
             status: "active".into(),

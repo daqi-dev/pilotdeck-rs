@@ -22,14 +22,19 @@
 // inline with their own `#[allow(dead_code)]`; this umbrella covers the
 // rest of the unported surface (paths, mutators, tick entries).
 #![allow(dead_code)]
+mod apply;
+mod standalone;
 mod control;
 mod report_contract;
+mod plan_contract;
 mod cycles;
 mod fire;
 mod gates;
 mod leases;
 mod manager;
 mod paths;
+mod reports;
+pub(crate) mod storage;
 mod scheduler;
 mod state;
 mod watcher;
@@ -55,6 +60,7 @@ pub use manager::AlwaysOnManager;
 pub(crate) use paths::{AlwaysOnPaths, resolve_always_on_paths};
 pub(crate) use scheduler::{ALWAYS_ON_METHODS, DiscoveryScheduler, SchedulerDeps};
 pub(crate) use state::DiscoveryStateStore;
+pub(crate) use reports::DiscoveryReportStore;
 pub(crate) use watcher::{SignalWatcher, SignalWatcherOptions};
 
 use std::sync::Arc;

@@ -188,6 +188,7 @@ fn reset_daily_budget(state: &mut JsObject, now_ms: f64) {
 
 /// The state store (DiscoveryStateStore.ts:17-18): one `state.json` per
 /// project directory.
+#[derive(Clone)]
 pub(crate) struct DiscoveryStateStore {
     paths: AlwaysOnPaths,
 }
@@ -203,14 +204,9 @@ impl DiscoveryStateStore {
     /// an invalid byte becomes U+FFFD, which fails `JSON.parse` and reads
     /// as the default, not an `InvalidData` error (`read_to_string`).
     pub(crate) fn read(&self, now_ms: f64) -> io::Result<JsObject> {
-        let raw = match std::fs::read(&self.paths.state_file) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(default_state(now_ms));
-            }
-            Err(error) => return Err(error),
-        };
+        let Some(raw) = super::storage::read(&super::storage::root_for(&self.paths.state_file), &self.paths.state_file, super::storage::INDEX_BYTES)? else { return Ok(default_state(now_ms)); };
         let raw = String::from_utf8_lossy(&raw);
+        super::storage::check_json(&raw)?;
         let mut state = match parse_json(&raw) {
             Ok(parsed) => normalize_state(&parsed, now_ms),
             Err(_) => default_state(now_ms),
@@ -222,13 +218,20 @@ impl DiscoveryStateStore {
     /// `write` (DiscoveryStateStore.ts:37-40): `mkdir -p` then the
     /// two-space `JSON.stringify` bytes, no trailing newline.
     pub(crate) fn write(&self, state: &JsObject) -> io::Result<()> {
-        if let Some(parent) = self.paths.state_file.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(
-            &self.paths.state_file,
-            stringify_pretty(&JsValue::Object(state.clone())),
-        )
+        super::storage::check_object(state)?;
+        let text = stringify_pretty(&JsValue::Object(state.clone()));
+        super::storage::check_json(&text)?;
+        super::storage::write(&super::storage::root_for(&self.paths.state_file), &self.paths.state_file, text.as_bytes(), super::storage::INDEX_BYTES)
+    }
+
+    pub(crate) async fn read_async(&self, now_ms: f64) -> io::Result<JsObject> {
+        let store = self.clone();
+        super::storage::run(move || store.read(now_ms)).await
+    }
+
+    pub(crate) async fn clear_dormant_async(&self, now_ms: f64) -> io::Result<JsObject> {
+        let store = self.clone();
+        super::storage::run(move || store.clear_dormant(now_ms)).await
     }
 
     fn set(&self, values: &[(&str, JsValue)], now_ms: f64) -> io::Result<JsObject> {

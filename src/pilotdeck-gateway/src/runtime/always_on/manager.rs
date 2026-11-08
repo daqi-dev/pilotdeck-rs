@@ -562,10 +562,9 @@ impl AlwaysOnRuntime {
         let project_name = input.project_name.clone();
         let project_root = input.project_key.clone();
         let cycle_store = self.cycle_store.clone();
-        let plan_store = self.plan_store.clone();
         let fire_run_id = run_id.clone();
         self.track_control_run(run_id, session_keys, async move {
-            let Some(cycle) = cycle_store.get_record(&work_cycle_id)? else {
+            let Some((cycle, plans)) = cycle_store.read_apply(work_cycle_id.as_str().into()).await? else {
                 return Ok(ApplyResult {
                     session_key: String::new(),
                     error: Some(ControlError {
@@ -574,13 +573,6 @@ impl AlwaysOnRuntime {
                     }),
                 });
             };
-            // The `{ id, title }` projection of the cycle's plan ids
-            // (AlwaysOnRuntime.ts:348-351).
-            let plans: Vec<DiscoveryPlanRecord> = plan_store
-                .list_records()?
-                .into_iter()
-                .filter(|plan| cycle.plan_ids.iter().any(|id| id == &plan.id))
-                .collect();
             let result = fire
                 .run_apply_phase(ApplyPhaseInput {
                     run_id: &fire_run_id,
