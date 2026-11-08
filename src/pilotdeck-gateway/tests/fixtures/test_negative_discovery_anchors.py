@@ -97,6 +97,7 @@ Run from this directory, no cargo and no tree lock::
     python3 -B -m unittest -v test_negative_discovery_anchors
 """
 import ast
+import fnmatch
 from pathlib import Path
 import tempfile
 import unittest
@@ -132,7 +133,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 260 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 184 blind only, 3 with unresolvable shapes only, 73 in both; 1361 keys: 372 bare-filename joins and 989 shared-helper import keys.
+# 261 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 185 blind only, 3 with unresolvable shapes only, 73 in both; 1362 keys: 372 bare-filename joins and 990 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -286,6 +287,7 @@ KNOWN_BLIND = {
     'negative-adaptive/isolation_negative.py': '2 keys',
     'negative-adaptive/negative_controls.py': '2 keys + 1 unresolvable',
     'negative-output-directory/negative.py': '7 keys',
+    'negative-output-directory/process_probe.py': '1 key',
     'negative_oracle_guard.py': '1 key + 3 unresolvable',
     'negative_scope.py': '1 unresolvable',
     'network-timing/negative_controls.py': '7 keys',
@@ -653,7 +655,9 @@ def _chdir_bindings(tree):
     real ``cd('…')`` call earlier in the file, and the map no longer knew the
     name. The reading is fail-closed — if a name is *ever* bound to a module
     that has ``chdir`` or to ``chdir`` itself, a call through it counts.
-    Assignment aliases (``cd = os.chdir``) are the same edge.
+    Assignment aliases are the same edge on both sides: ``cd = os.chdir`` (the
+    call) and ``m = os`` (the module), including a dotted spelling
+    (``osp = os.path``) and any number of hops (``m2 = m``).
     """
     modules = set()
     names = set()
@@ -679,15 +683,24 @@ def _chdir_bindings(tree):
     while grew:
         grew = False
         for name, value in assigned:
-            if name in names:
-                continue
             spelling = _dotted_spelling(value)
             if spelling is None:
                 continue
             module_part, _, last = spelling.rpartition('.')
-            if ((module_part and last in CHDIR_CALLS and module_part in modules)
-                    or (not module_part and last in names)):
+            if (name not in names
+                    and ((module_part and last in CHDIR_CALLS
+                          and module_part in modules)
+                         or (not module_part and last in names))):
                 names.add(name)
+                grew = True
+            if name in modules:
+                continue
+            if (spelling in CHDIR_MODULES
+                    or (isinstance(value, ast.Name) and value.id in modules)):
+                # ``m = os`` / ``osp = os.path`` / ``m2 = m``: a module reached
+                # through an assignment alias still has the ``chdir`` attribute,
+                # so the alias is a module edge exactly like an import alias.
+                modules.add(name)
                 grew = True
     return modules, names
 
@@ -759,11 +772,14 @@ def _mutated_containers(tree):
     ``ALIAS = CH``, ``SUB = CH['a']`` (the *same* nested object, so
     ``SUB['b'] = ...`` rewrites what ``CH['a']['b']`` reads), and
     ``CP = CH.copy()`` — the copy is shallow, so a write *through it* into a
-    nested container still rewrites the literal behind ``CH``. Following the
-    graph transitively is what closes ``A = CH; B = A['a']; B['b'] = ...``;
-    the earlier reading only paired a subscript whose root was itself bound to
-    a container literal, so a plain alias in between hid the write and the
-    stale key was accepted.
+    nested container still rewrites the literal behind ``CH``. The copy may
+    itself be of a *sub*container (``CP = CH['a'].copy()``): the copy then
+    holds the objects ``CH['a']`` holds, so the edge carries the depth of the
+    copied container as a shift and only writes that deep see the root.
+    Following the graph transitively is what closes ``A = CH; B = A['a'];
+    B['b'] = ...``; the earlier reading only paired a subscript whose root was
+    itself bound to a container literal, so a plain alias in between hid the
+    write and the stale key was accepted.
 
     Deep writes (``CH['a']['b'] = ...``) and mutations of a nested container
     (``CH['a'].update(...)``) are attributed to the outermost name. The point
@@ -819,8 +835,9 @@ def _mutated_containers(tree):
                 record(func.value)
             elif node.args and _dotted_spelling(func) in SETITEM_CALLS:
                 record(node.args[0])
-    # (name, root, levels between them); ``copy_of`` marks shallow copies,
-    # whose top level is a separate object while every nested one is shared.
+    # (name, root, levels between them); ``copy_of`` marks shallow copies —
+    # (name, root, shift), where ``shift`` is the depth of the copied container
+    # — whose top level is a separate object while every nested one is shared.
     aliases = _module_aliases(tree)
     same_object = []
     copy_of = []
@@ -841,20 +858,25 @@ def _mutated_containers(tree):
                     # containers are shared. Reading the slice as the same
                     # object made a top-level write on the copy pollute the
                     # original. The edge is only drawn for a plain container
-                    # name: ``SAVED = sys.path[:]`` snapshots an *attribute*
-                    # chain, and rooting it at ``sys`` made every later
-                    # ``sys.path[:] = SAVED`` restore read as a mutation of
-                    # the snapshot.
-                    if root is not None and isinstance(value.value, ast.Name):
-                        copy_of.append((name, root))
+                    # or a subscript of one: ``SAVED = sys.path[:]`` snapshots
+                    # an *attribute* chain, and rooting it at ``sys`` made
+                    # every later ``sys.path[:] = SAVED`` restore read as a
+                    # mutation of the snapshot. A *sub*container slice
+                    # (``CP = CH['a'][:]``) is a shallow copy one level down,
+                    # so it carries the depth of the sliced container.
+                    if (root is not None
+                            and isinstance(value.value, (ast.Name, ast.Subscript))
+                            and depth is not None):
+                        copy_of.append((name, root,
+                                        _container_depth(value.value)))
                     continue
                 # ``SUB = CH['a']`` names the *same* nested object one level
                 # down; the closure below follows any number of aliases.
                 if root is not None and depth is not None:
                     same_object.append((name, root, min(depth, 2)))
             else:
-                for root in _shallow_copy_roots(value, aliases):
-                    copy_of.append((name, root))
+                for root, shift in _shallow_copy_roots(value, aliases):
+                    copy_of.append((name, root, shift))
     grew = True
     while grew:
         grew = False
@@ -872,15 +894,22 @@ def _mutated_containers(tree):
                     if reached not in depths.setdefault(target, set()):
                         depths[target].add(reached)
                         grew = True
-        for name, root in copy_of:
-            # Only the nested containers survive the copy; a write into the
-            # copy's own top level never reaches the original.
-            for source, target in ((name, root), (root, name)):
-                nested = {depth for depth in depths.get(source, ())
-                          if depth >= NESTED}
-                if not nested <= depths.setdefault(target, set()):
-                    depths[target] |= nested
-                    grew = True
+        for name, root, shift in copy_of:
+            # Only the nested containers survive the copy. A write on the
+            # copy at depth d (d >= 1) reaches the root at depth d + shift; a
+            # root write at depth e reaches the copy only when the mutated
+            # object is one the copy holds, that is e >= shift + 1. The copy's
+            # own top level (depth 0) is a separate object either way.
+            onto_root = {min(depth + shift, 2) for depth in depths.get(name, ())
+                         if depth >= NESTED}
+            onto_name = {depth - shift for depth in depths.get(root, ())
+                         if depth - shift >= NESTED}
+            if not onto_root <= depths.setdefault(root, set()):
+                depths[root] |= onto_root
+                grew = True
+            if not onto_name <= depths.setdefault(name, set()):
+                depths[name] |= onto_name
+                grew = True
     return frozenset(name for name, hits in depths.items() if hits)
 
 
@@ -891,21 +920,32 @@ SHALLOW_COPY_CALLS = frozenset({'dict', 'list', 'tuple', 'set', 'frozenset',
 
 
 def _shallow_copy_roots(value, aliases=None):
-    """Names whose container ``value`` shallow-copies.
+    """``(root name, depth of the copied container)`` pairs for ``value``.
 
     ``CH.copy()``, ``copy.copy(CH)``, ``dict(CH)``, ``list(CH)``, ``tuple(CH)``,
     ``sorted(CH)``, ``{**CH}``, ``[*CH, extra]`` and ``CH + [x]`` all build a
     new top-level object that still holds the very same nested containers, so a
     write through any of them *below its own top level* rewrites what
-    ``CH['a']`` reads. The import alias is resolved for the bare spellings
-    (``from copy import copy as cp2``), ``dict(CH, extra=1)`` keeps the source
-    in its first positional argument, and every ``*`` expansion counts —
-    requiring exactly one element left ``[None, *CH]`` as an edge to nothing. A
-    copy's own top-level key is rebound on the copy alone — replacing
-    ``{**CH}['k']`` leaves ``CH['k']`` untouched — so the edge only carries
-    writes that reach a nested container; see ``_mutated_containers``.
+    ``CH['a']`` reads. The source may be a *sub*container — ``CH['a'].copy()``
+    copies the dict ``CH['a']`` names, so the copy shares the objects one level
+    below that, and the returned depth shifts every write accordingly. The
+    import alias is resolved for the bare spellings (``from copy import copy as
+    cp2``), ``dict(CH, extra=1)`` keeps the source in its first positional
+    argument, and every ``*`` expansion counts — requiring exactly one element
+    left ``[None, *CH]`` as an edge to nothing. A copy's own top-level key is
+    rebound on the copy alone — replacing ``{**CH}['k']`` leaves ``CH['k']``
+    untouched — so the edge only carries writes that reach a nested container;
+    see ``_mutated_containers``.
     """
     aliases = aliases or {}
+
+    def copy_edge(source):
+        root = _container_root_name(source)
+        if root is None:
+            return None
+        depth = _container_depth(source)
+        return None if depth is None else (root, min(depth, 2))
+
     if isinstance(value, ast.Call):
         func = value.func
         if isinstance(func, ast.Name):
@@ -917,47 +957,51 @@ def _shallow_copy_roots(value, aliases=None):
                     sources = [keyword.value for keyword in value.keywords
                                if keyword.arg is None]
                 if sources:
-                    root = _container_root_name(sources[0])
-                    return [root] if root is not None else []
+                    edge = copy_edge(sources[0])
+                    return [edge] if edge is not None else []
             return []
         if isinstance(func, ast.Attribute):
+            if func.attr == 'copy' and not value.args:
+                # ``CH.copy()`` / ``CH['a'].copy()``: a bound-method call on the
+                # container — the receiver is the source, however deep it sits,
+                # and no dotted spelling of it exists to read first.
+                edge = copy_edge(func.value)
+                return [edge] if edge is not None else []
             spelling = _dotted_spelling(func)
             if spelling is None:
-                # ``CH['a'].copy()`` / ``f().copy()``: the receiver is not a
-                # plain name, so no copy spelling can be resolved from it.
+                # ``f().dict(...)``: the receiver is not a name, so no module
+                # spelling can be resolved from it.
                 return []
             head, _, rest = spelling.rpartition('.')
             if head:
                 spelling = f'{aliases.get(head, head)}.{rest}'
-            if spelling in SHALLOW_COPY_CALLS or rest == 'copy':
-                if value.args and spelling in SHALLOW_COPY_CALLS:
-                    # ``copy.copy(CH)``: the module receiver is not a container.
-                    root = _container_root_name(value.args[0])
-                else:
-                    # ``CH.copy()``: a bound-method call on the container.
-                    root = _container_root_name(func.value)
-                return [root] if root is not None else []
+            if spelling in SHALLOW_COPY_CALLS and value.args:
+                # ``copy.copy(CH['a'])``: the module receiver is not a
+                # container; the first argument is the source.
+                edge = copy_edge(value.args[0])
+                return [edge] if edge is not None else []
+            return []
     if isinstance(value, ast.Dict):
-        return [root for key, element in zip(value.keys, value.values)
-                if key is None and (root := _container_root_name(element)) is not None]
+        return [edge for key, element in zip(value.keys, value.values)
+                if key is None and (edge := copy_edge(element)) is not None]
     if isinstance(value, (ast.List, ast.Tuple, ast.Set)):
-        return [root for element in value.elts
+        return [edge for element in value.elts
                 if isinstance(element, ast.Starred)
-                and (root := _container_root_name(element.value)) is not None]
+                and (edge := copy_edge(element.value)) is not None]
     if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add):
         # ``CH + [x]`` / ``[x] + CH``: list concatenation copies the top level
         # and keeps every element object. An operand that is itself a plain
-        # container (``CH``) is not a copy expression, so it has no roots of its
-        # own — read it as the container it names.
+        # container (``CH['a']``) is not a copy expression, so it has no roots
+        # of its own — read it as the container it names.
         roots = []
         for operand in (value.left, value.right):
             found = _shallow_copy_roots(operand, aliases)
             if found:
                 roots.extend(found)
                 continue
-            root = _container_root_name(operand)
-            if root is not None:
-                roots.append(root)
+            edge = copy_edge(operand)
+            if edge is not None:
+                roots.append(edge)
         return roots
     return []
 
@@ -1874,6 +1918,34 @@ def _indexes_a_path_container(node, constants):
     return False
 
 
+def _single_component_directory(node, constants):
+    """Whether ``node`` reads a one-component directory out of a container.
+
+    ``MODES = {'fast': 'fast'}`` then ``Path(MODES['fast']) / name`` starts at
+    a directory whose only component the container spells: the file name is
+    runtime, so the ``fast/<file>`` key is unknowable — the same hole as a
+    runtime file name behind a spelled-out directory. The value has to be a
+    string a bare component could name; a table of numbers or labels with
+    separators is not a directory lookup and stays silent. An f-string
+    interpolating such an index is the same build, exactly as in
+    ``_indexes_a_path_container``.
+    """
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in ('str', 'Path') and len(node.args) == 1
+            and not node.keywords):
+        node = node.args[0]
+    if isinstance(node, ast.Subscript):
+        element = _container_element(node.value, node.slice, constants)
+        return (isinstance(element, ast.Constant)
+                and isinstance(element.value, str)
+                and _is_bare_component(element.value))
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(part, ast.FormattedValue)
+                   and _single_component_directory(part.value, constants)
+                   for part in node.values)
+    return False
+
+
 def _binding_before(pairs, name, position):
     """``(index, value)`` for the binding ``name`` has at ``position``.
 
@@ -1933,6 +2005,45 @@ def _levels_above_file(node, pairs, position, seen=()):
     return None
 
 
+def _runtime_parents_index(node, pairs, position, seen=()):
+    """Whether ``node`` takes ``.parents`` through an index this scanner cannot read.
+
+    Walks the same binding chain ``_levels_above_file`` walks, so the two
+    cannot disagree about what a name meant at a given statement. ``parents[-
+    1]`` and other *literal* indexes are not runtime values — the depth check
+    keeps its old reading for them — and a value that never spells ``.parents``
+    answers False, keeping the historic assumption for shapes that were never
+    statically visible at all.
+    """
+    if isinstance(node, ast.Name):
+        if node.id == '__file__' or node.id in seen:
+            return False
+        binding = _binding_before(pairs, node.id, position)
+        if binding is None:
+            return False
+        index, value = binding
+        return _runtime_parents_index(value, pairs, index, seen + (node.id,))
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == 'Path' and len(node.args) == 1):
+        return _runtime_parents_index(node.args[0], pairs, position, seen)
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ('resolve', 'absolute', 'expanduser')
+            and not node.args):
+        return _runtime_parents_index(node.func.value, pairs, position, seen)
+    if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
+            and node.value.attr == 'parents'):
+        index = node.slice
+        if isinstance(index, ast.UnaryOp) and isinstance(index.op, (ast.UAdd, ast.USub)):
+            # ``parents[-1]`` spells its literal through a unary op; it is not
+            # a runtime value, and the depth check keeps its old silent
+            # reading for it (``_levels_above_file`` cannot verify it either).
+            index = index.operand
+        if not isinstance(index, ast.Constant) or not isinstance(index.value, int):
+            return True
+        return _runtime_parents_index(node.value.value, pairs, position, seen)
+    return False
+
+
 def _root_definition_problems(tree, self_path, root):
     """Report a module-level ``ROOT`` that does not name the repository root.
 
@@ -1942,7 +2053,11 @@ def _root_definition_problems(tree, self_path, root):
     ``<file>`` — one component, dropped as "no discovery key", with no anchor
     demanded and nothing reported. The depth is checked only where it is
     statically visible from ``__file__``; every other spelling keeps the old
-    assumption, because guessing would fail legitimate tables.
+    assumption, because guessing would fail legitimate tables. The one
+    exception is a ``.parents`` reached through a runtime index
+    (``parents[int('4')]``, ``parents[IDX]``): the depth is not merely
+    invisible but unverifiable, and assuming the root keyed joins from a
+    directory the runtime may not have used, so it is reported instead.
     """
     if root != FIXTURES:
         # ``self_path`` is relative to ``root``, so it only has repository
@@ -1966,6 +2081,19 @@ def _root_definition_problems(tree, self_path, root):
             spelling = ast.unparse(value)
             levels = _levels_above_file(value, pairs, position)
             if levels is None or levels == expected:
+                if levels is None and _runtime_parents_index(value, pairs,
+                                                             position):
+                    # ``ROOT = Path(__file__).resolve().parents[int('4')]``:
+                    # the depth is behind a runtime index, so assuming the
+                    # repository root here keyed every join from a directory
+                    # the runtime may not have used. The depth is unverifiable
+                    # rather than merely invisible, which fails closed.
+                    message = (f'{name} reaches .parents through a runtime '
+                               f'index (unresolvable depth, this scanner '
+                               f'cannot verify it names the repository root): '
+                               f'{spelling}')
+                    if message not in problems:
+                        problems.append(message)
                 continue
             message = (f'{name} does not name the repository root (it resolves '
                        f'{levels} levels above this file, expected {expected}): '
@@ -2426,8 +2554,12 @@ def _carries_a_directory_literal(value, constants, changes_directory=False,
     absolute literal that *does* name one of the repository's own trees is a
     real helper directory, and the same goes for a bare single component once
     the table has changed directory (``os.chdir('…/fixtures');
-    sys.path.insert(0, '_shared')``). A ``..``-prefixed literal is read against
-    the repository root the host starts tables in, so it points outside.
+    sys.path.insert(0, '_shared')``). A ``..``-prefixed literal is resolved
+    against the current working directory the host starts tables in, and
+    climbing out of the repository root says nothing about where the entry
+    ends up: ``../<checkout>/src/…`` re-enters this very tree through a
+    sibling copy or worktree, so the insertion is reported rather than assumed
+    harmless.
     """
     aliases = aliases or {}
     text = _string_value(value, constants)
@@ -2447,8 +2579,12 @@ def _carries_a_directory_literal(value, constants, changes_directory=False,
                                                    changes_directory, aliases)
                        for element in _joined_elements(value))
     if text is not None:
-        if text.startswith('..'):
-            return False
+        if text == '..' or text.startswith('../') or text.startswith('..\\'):
+            # ``..`` may climb right back into this repository (a sibling
+            # worktree or another checkout under the same parent); the
+            # directory it ends up in is unknowable, so the insertion fails
+            # closed like a repository directory.
+            return True
         if (text.startswith('/') or text.startswith('\\')
                 or _is_drive_prefixed(text)):
             return _is_inside_the_repository_text(text)
@@ -2960,7 +3096,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         if not (relative_directory(base) is not None
                 or bare_literal_directory(base)
                 or _is_repo_rooted(base, constants, shadowed=shadowed)
-                or _indexes_a_path_container(base, constants)):
+                or _indexes_a_path_container(base, constants)
+                or _single_component_directory(base, constants)):
             return False
         return any(join_piece_is_opaque(element) for element in elements[1:])
 
@@ -3096,7 +3233,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         if _segments(node.right, constants, self_path) is not None:
             return
         if not (repo_rooted(node) or relative_directory(node.left) is not None
-                or bare_literal_directory(node.left)):
+                or bare_literal_directory(node.left)
+                or _single_component_directory(node.left, constants)):
             return
         ambiguous = ambiguous_names(node)
         if ambiguous:
@@ -3157,6 +3295,7 @@ def bare_concat_keys(tree, table, root=FIXTURES):
         if not (_is_repo_rooted(base, constants, shadowed=shadowed)
                 or _carries_repository_path(node, tainted, repository_returns)
                 or _indexes_a_path_container(base, constants)
+                or _single_component_directory(base, constants)
                 or relative_directory(base) is not None
                 or bare_literal_directory(base)):
             return
@@ -3215,7 +3354,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                     target = current.value
                     if not ((_segments(target, constants, self_path) is not None
                              and _is_repo_rooted(target, constants))
-                            or _indexes_a_path_container(target, constants)):
+                            or _indexes_a_path_container(target, constants)
+                            or _single_component_directory(target, constants)):
                         continue
                     if (isinstance(following, ast.Constant)
                             and isinstance(following.value, str)
@@ -3232,7 +3372,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                             joined = True
                             break
             if joined and (repo_rooted(node)
-                           or _indexes_a_path_container(node, constants)):
+                           or _indexes_a_path_container(node, constants)
+                           or _single_component_directory(node, constants)):
                 problems.append('unsupported f-string path of a repository path '
                                 f'(use ``/`` joins): {ast.unparse(node)}')
             self.generic_visit(node)
@@ -3474,14 +3615,29 @@ def declared_anchors(tree):
     ``anchors`` is None when the table declares none, or when the declaration is
     not a flat tuple of strings. A second ``DISCOVERY_ANCHORS`` assignment is a problem:
     ``_constants`` and Python itself would honour the last one while a reader
-    (and the first version of this guard) would see the first.
+    (and the first version of this guard) would see the first. Every binding
+    form counts — ``Assign``, an ``AnnAssign`` with a value and an ``AugAssign``
+    — matching the register check that already collected the annotated
+    spelling; a bare annotation (``DISCOVERY_ANCHORS: tuple``) binds nothing
+    at runtime and is not a declaration.
     """
     found = []
     for statement in tree.body:
-        if not isinstance(statement, ast.Assign):
-            continue
-        if not any(isinstance(target, ast.Name) and target.id == 'DISCOVERY_ANCHORS'
-                   for target in statement.targets):
+        if isinstance(statement, ast.Assign):
+            if not any(isinstance(target, ast.Name)
+                       and target.id == 'DISCOVERY_ANCHORS'
+                       for target in statement.targets):
+                continue
+        elif isinstance(statement, ast.AnnAssign):
+            if not (isinstance(statement.target, ast.Name)
+                    and statement.target.id == 'DISCOVERY_ANCHORS'
+                    and statement.value is not None):
+                continue
+        elif isinstance(statement, ast.AugAssign):
+            if not (isinstance(statement.target, ast.Name)
+                    and statement.target.id == 'DISCOVERY_ANCHORS'):
+                continue
+        else:
             continue
         found.append(statement)
     if not found:
@@ -3570,7 +3726,12 @@ def sweep(root=FIXTURES):
     blind, unresolvable = {}, {}
     for path in sorted(root.rglob('*.py')):
         rel = path.relative_to(root).as_posix()
-        if 'negative' not in path.name or rel in TABLES:
+        # The whole relative path is matched, not only the basename: the host
+        # pathspec (``"$FX/**/*negative*.py"``) is a git default pathspec whose
+        # ``*`` crosses ``/``, so ``x-negative/run.py`` is scheduled while
+        # ``'negative' in path.name`` never saw it (fnmatch has no
+        # FNM_PATHNAME, which is the same cross-separator semantics).
+        if not fnmatch.fnmatch(rel, '*negative*.py') or rel in TABLES:
             continue
         if path.name in HOST_FILTERED or path.name.startswith('test_'):
             # The two exclusions the host applies to its own output list, no
@@ -3638,15 +3799,23 @@ class DiscoveryAnchorTests(unittest.TestCase):
         the register could be diluted one row at a time without a red test.
         """
         declared = set()
-        for path in sorted(FIXTURES.rglob('*negative*.py')):
+        for path in sorted(FIXTURES.rglob('*.py')):
             rel = path.relative_to(FIXTURES).as_posix()
+            # The same whole-path pattern ``sweep`` uses: the host pathspec's
+            # ``*`` crosses ``/``, so a table in ``x-negative/`` declaring
+            # anchors is scheduled by the host and must be registered here
+            # even when its own basename carries no marker.
+            if not fnmatch.fnmatch(rel, '*negative*.py'):
+                continue
             if path.name in HOST_FILTERED or path.name.startswith('test_'):
                 continue
             tree = ast.parse(path.read_text(encoding='utf-8'))
             for statement in tree.body:
                 if isinstance(statement, ast.Assign):
                     targets = statement.targets
-                elif isinstance(statement, ast.AnnAssign):
+                elif isinstance(statement, ast.AnnAssign) and statement.value is not None:
+                    # A bare annotation (``DISCOVERY_ANCHORS: tuple``) binds
+                    # nothing, the same reading ``declared_anchors`` takes.
                     targets = [statement.target]
                 else:
                     continue
@@ -3751,6 +3920,34 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 encoding='utf-8')
             blind, _ = sweep(Path(workspace))
         self.assertEqual(sorted(blind), ['_private/negative_controls.py'])
+
+    def test_a_directory_named_table_is_swept_like_a_basename_named_one(self):
+        """``x-negative/run.py`` is scheduled by the host and must be scanned.
+
+        The host pathspec ``"$FX/**/*negative*.py"`` uses git's default
+        pathspec, whose ``*`` crosses ``/``; a table whose *directory* carries
+        the marker reaches the discovery loop even when its basename does not.
+        Filtering on the basename never measured such a file, so a new blind
+        table there would not have raised (r24, review P2). The unresolvable
+        half of the scan follows the same filter.
+        """
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            table = root / 'x-negative' / 'run.py'
+            table.parent.mkdir()
+            table.write_text(
+                "from pathlib import Path\n"
+                "ROOT = Path(__file__).resolve().parents[5]\n"
+                "PICK = {'dir': 'src/pilotdeck-gateway/src/channel/sms'}\n"
+                "def row(key):\n"
+                "    return ROOT / PICK[key] / 'mod.rs'\n",
+                encoding='utf-8')
+            blind, unresolvable = sweep(root)
+        self.assertEqual(
+            sorted(unresolvable), ['x-negative/run.py'],
+            '#24-P2 the sweep filtered on the basename and missed a '
+            'directory-named table')
+        self.assertEqual(blind, {})
 
     def test_known_blind_entries_name_a_real_table(self):
         for rel, reason in KNOWN_BLIND.items():
@@ -4329,17 +4526,93 @@ class DiscoveryAnchorTests(unittest.TestCase):
     def test_a_container_of_plain_values_stays_silent(self):
         """The reverse control for the container rule.
 
-        Only a *path* literal inside the container counts. A lookup table of
-        ordinary words is not a directory, and joining on it must not report.
+        Only a *string* component can name a directory. A lookup table of
+        numbers is not a directory, and joining on it must not report. (A table
+        of one-word strings did stay silent once, on the theory that mode
+        labels are not directories — but a single component is exactly how a
+        top-level repository directory is spelled, so r24 made that direction
+        fail closed; see ``_single_component_directory``.)
         """
         synthetic = (
             "ROOT = Path(__file__).resolve().parents[5]\n"
             "DISCOVERY_ANCHORS = ()\n"
-            "MODES = {'fast': 'fast', 'safe': 'safe'}\n"
+            "MODES = {'fast': 1, 'safe': 2}\n"
             "def row(name):\n"
             "    return Path(MODES['fast']) / name\n"
         )
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_single_component_head_with_a_runtime_tail_fails_closed(self):
+        """``Path(MODES['fast']) / name`` starts at a real, unknowable directory.
+
+        A single component is exactly how a top-level repository directory is
+        spelled, and the file name is runtime, so the ``fast/<file>`` key can
+        be neither derived nor trusted — the join must be reported like
+        ``SMS / name`` is, not dropped out of the parsing family (r24, review
+        P1-2). Every path-building spelling follows.
+        """
+        shapes = {
+            'division': (
+                "MODES = {'fast': 'fast'}\n"
+                "def row(name):\n"
+                "    return Path(MODES['fast']) / name\n"
+            ),
+            'bare subscript': (
+                "MODES = {'fast': 'fast'}\n"
+                "def row(name):\n"
+                "    return MODES['fast'] / name\n"
+            ),
+            'joinpath': (
+                "MODES = {'fast': 'fast'}\n"
+                "def row(name):\n"
+                "    return Path(MODES['fast']).joinpath(name)\n"
+            ),
+            'os.path.join': (
+                "import os\n"
+                "MODES = {'fast': 'fast'}\n"
+                "def row(name):\n"
+                "    return os.path.join(MODES['fast'], name)\n"
+            ),
+            'f-string': (
+                "MODES = {'fast': 'fast'}\n"
+                "def row(name):\n"
+                "    return f\"{MODES['fast']}/{name}\"\n"
+            ),
+            'Path call': (
+                "MODES = {'fast': 'fast'}\n"
+                "def row(name):\n"
+                "    return Path(MODES['fast'], name)\n"
+            ),
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = ("from pathlib import Path\n" + body)
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem
+                        or 'unsupported f-string path' in problem
+                        for problem in problems),
+                    '#24-P1-2 the single-component directory head with a '
+                    'runtime tail was dropped silently: ' + repr(problems))
+
+    def test_a_single_component_head_with_a_literal_tail_still_keys(self):
+        """The consistency half: the literal tail is keyed from the head.
+
+        ``Path(MODES['fast']) / 'mod.rs'`` builds ``fast/mod.rs``, and if that
+        key is derived it must also be schedulable — the fail-closed rule and
+        the keying rule have to agree on what the head means.
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "MODES = {'fast': 'fast'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(MODES['fast']) / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('missing anchor: fast/mod.rs' in problem for problem in problems),
+            '#24-P1-2 the single-component directory head no longer keys the '
+            'literal tail: ' + repr(problems))
 
     def test_a_duplicate_container_key_takes_the_last_value(self):
         """``{'k': x, 'k': y}`` builds ``y`` at runtime, so the guard must too.
@@ -4582,6 +4855,67 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertTrue(
             any('does not name the repository root' in problem for problem in problems),
             problems)
+
+    def test_a_runtime_parents_index_fails_closed(self):
+        """``ROOT = …parents[int('4')]`` cannot be verified to name the root.
+
+        The depth check only refused *wrong* literal depths; a runtime index
+        was read as "not statically visible" and the root assumption stood, so
+        every join after it was keyed from a directory the runtime may not
+        have used (r24, review P1-2).
+        """
+        shapes = {
+            'int() call': "ROOT = Path(__file__).resolve().parents[int('4')]\n",
+            'name index': "IDX = 4\nROOT = Path(__file__).resolve().parents[IDX]\n",
+            'through an alias': (
+                "BASE = Path(__file__).resolve().parents[int('4')]\n"
+                "ROOT = BASE\n"
+            ),
+            'conditional': (
+                "FLAG = True\n"
+                "ROOT = Path(__file__).resolve().parents[4 if FLAG else 5]\n"
+            ),
+        }
+        for label, rootline in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = ("from pathlib import Path\n" + rootline
+                             + "DISCOVERY_ANCHORS = ()\n"
+                             + "rows = [ROOT / 'src/example/named.rs']\n")
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('reaches .parents through a runtime index' in problem
+                        for problem in problems),
+                    '#24-P1-2 the runtime .parents index kept the root '
+                    'assumption standing: ' + repr(problems))
+
+    def test_a_literal_parents_index_still_reports_only_the_depth(self):
+        """The reverse controls: literal and negative-literal indexes stay keyed.
+
+        ``parents[4]`` is the checked wrong depth and ``parents[-1]`` is the
+        absolute root; neither is a runtime index, so both keep their
+        existing verdicts instead of the new unresolvable one.
+        """
+        shapes = {
+            'negative literal': (
+                "from pathlib import Path\n"
+                "ROOT = Path(__file__).resolve().parents[-1]\n"
+                "DISCOVERY_ANCHORS = ()\n"
+                "rows = [ROOT / 'Cargo.toml']\n"
+            ),
+            'correct literal': (
+                "from pathlib import Path\n"
+                "ROOT = Path(__file__).resolve().parents[5]\n"
+                "DISCOVERY_ANCHORS = ()\n"
+                "rows = [ROOT / 'Cargo.toml']\n"
+            ),
+        }
+        for label, synthetic in shapes.items():
+            with self.subTest(shape=label):
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    all('runtime index' not in problem for problem in problems),
+                    '#24-P1-2 a literal .parents index was misread as '
+                    'runtime: ' + repr(problems))
 
     def test_filesystem_joins_of_relative_literals_are_keyed(self):
         """``os.path.join('sms', 'mod.rs')`` hides the key the loop greps for.
@@ -5816,6 +6150,39 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertTrue(any('DISCOVERY_ANCHORS assigned 2 times' in problem for problem in problems),
                         problems)
 
+    def test_a_rebound_anchors_assignment_in_an_annotated_spelling_counts(self):
+        """``= (...)`` then ``: tuple = (...)`` is still two assignments.
+
+        ``declared_anchors`` only collected plain ``Assign`` nodes, so an
+        annotated or augmented re-binding was not counted while the register
+        check collected ``AnnAssign`` — the two disagreed on what a
+        declaration is (r24, review P3).
+        """
+        shapes = {
+            'annotated': (
+                "from pathlib import Path\n"
+                "DISCOVERY_ANCHORS = ()\n"
+                "DISCOVERY_ANCHORS: tuple = ('x/mod.rs',)\n"
+                "rows = [Path('x/mod.rs')]\n"
+            ),
+            'augmented': (
+                "from pathlib import Path\n"
+                "DISCOVERY_ANCHORS = ()\n"
+                "DISCOVERY_ANCHORS += ('x/mod.rs',)\n"
+                "rows = [Path('x/mod.rs')]\n"
+            ),
+        }
+        for label, synthetic in shapes.items():
+            with self.subTest(shape=label):
+                _, problems = declared_anchors(ast.parse(synthetic))
+                self.assertTrue(
+                    any('assigned 2 times' in problem for problem in problems),
+                    '#24-P3 the re-binding of DISCOVERY_ANCHORS was not '
+                    'counted: ' + repr(problems))
+        # A bare annotation binds nothing, so it is not a declaration.
+        _, problems = declared_anchors(ast.parse("DISCOVERY_ANCHORS: tuple\n"))
+        self.assertEqual(problems, [])
+
     def test_a_write_through_a_nested_alias_invalidates_the_container(self):
         """``A = CH; B = A['a']; B['b'] = ...`` rewrites ``CH['a']['b']``.
 
@@ -5963,6 +6330,46 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 self.assertTrue(
                     any('unresolvable repository path' in problem for problem in problems),
                     problems)
+
+    def test_a_module_assignment_alias_reaches_chdir(self):
+        """``m = os; m.chdir(...)`` moves the directory like ``os.chdir``.
+
+        The import map only knows import aliases, so a chdir-capable module
+        reached through a plain assignment left the repository-root premise
+        standing and the relative join after it was keyed from a directory
+        the runtime had left (r24, review P0-1). Every spelling of the alias
+        counts: a dotted module, a second hop and an unpacking.
+        """
+        shapes = {
+            'assignment alias': "import os\nm = os\nm.chdir('src/x')\n",
+            'os.path then alias': "import os.path\no = os\no.chdir('src/x')\n",
+            'dotted alias': "import os\nm = os.path\nm.chdir('src/x')\n",
+            'two hops': "import os\nm = os\nm2 = m\nm2.chdir('src/x')\n",
+            'unpacked alias': "import os\nm, s = os, sys\nm.chdir('src/x')\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = (
+                    "from pathlib import Path\n"
+                    "DISCOVERY_ANCHORS = ()\n" + body
+                    + "rows = [Path('mod.rs')]\n"
+                )
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem for problem in problems),
+                    '#24-P0-1 the module assignment alias did not invalidate the '
+                    'working directory: ' + repr(problems))
+
+    def test_a_module_assignment_alias_without_chdir_stays_silent(self):
+        """The reverse control: ``m = os`` then ``m.path.join(...)`` moves nothing."""
+        synthetic = (
+            "import os\n"
+            "from pathlib import Path\n"
+            "m = os\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [m.path.join('sms', 'mod.rs')]\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
     def test_a_sys_path_insertion_of_a_repository_directory_is_reported(self):
         """A module imported from an inserted directory is invisible here.
@@ -6198,6 +6605,93 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 self.assertEqual(
                     violations(synthetic, 'example/negative_controls.py'), [])
 
+    def test_a_copy_of_a_subcontainer_carries_the_nested_write_back(self):
+        """``CP = CH['a'].copy()`` shares what ``CH['a']`` holds.
+
+        The shallow-copy edges only started at the root container, so a copy
+        of a *sub*container left ``CH`` looking unmutated and the join was
+        keyed from a literal the runtime had already replaced through the
+        copy (r24, review P0-2). Every copy spelling of a sub-container is an
+        edge, and the same goes for the list-shaped family.
+        """
+        prefix = (
+            "from pathlib import Path\n"
+            "CH = {'a': {'b': {'p': 'src/pilotdeck-gateway/src/channel/sms'}}}\n"
+            "SEQ = [[{'p': 'src/pilotdeck-gateway/src/channel/sms'}]]\n"
+            "DISCOVERY_ANCHORS = ('sms/mod.rs',)\n"
+        )
+        shapes = {
+            "CH['a'].copy()": ("CP = CH['a'].copy()\n",
+                               "CP['b']['p'] = "
+                               "'src/pilotdeck-gateway/src/channel/mms'\n"
+                               "rows = [Path(CH['a']['b']['p']) / 'mod.rs']\n"),
+            'copy.copy(CH[\'a\'])': ("import copy\nCP = copy.copy(CH['a'])\n",
+                                     "CP['b']['p'] = "
+                                     "'src/pilotdeck-gateway/src/channel/mms'\n"
+                                     "rows = [Path(CH['a']['b']['p']) / 'mod.rs']\n"),
+            'copy.deepcopy(CH[\'a\'])': ("import copy\nCP = copy.deepcopy(CH['a'])\n",
+                                         "CP['b']['p'] = "
+                                         "'src/pilotdeck-gateway/src/channel/mms'\n"
+                                         "rows = [Path(CH['a']['b']['p']) / 'mod.rs']\n"),
+            "dict(CH['a'])": ("CP = dict(CH['a'])\n",
+                              "CP['b']['p'] = "
+                              "'src/pilotdeck-gateway/src/channel/mms'\n"
+                              "rows = [Path(CH['a']['b']['p']) / 'mod.rs']\n"),
+            "{**CH['a']}": ("CP = {**CH['a']}\n",
+                             "CP['b']['p'] = "
+                             "'src/pilotdeck-gateway/src/channel/mms'\n"
+                             "rows = [Path(CH['a']['b']['p']) / 'mod.rs']\n"),
+            "CH['a'][:]": ("CP = CH['a'][:]\n",
+                           "CP['b']['p'] = "
+                           "'src/pilotdeck-gateway/src/channel/mms'\n"
+                           "rows = [Path(CH['a']['b']['p']) / 'mod.rs']\n"),
+            "SEQ[0].copy()": ("CP = SEQ[0].copy()\n",
+                              "CP[0]['p'] = "
+                              "'src/pilotdeck-gateway/src/channel/mms'\n"
+                              "rows = [Path(SEQ[0][0]['p']) / 'mod.rs']\n"),
+            "SEQ[0][:]": ("CP = SEQ[0][:]\n",
+                          "CP[0]['p'] = "
+                          "'src/pilotdeck-gateway/src/channel/mms'\n"
+                          "rows = [Path(SEQ[0][0]['p']) / 'mod.rs']\n"),
+            "list(SEQ[0])": ("CP = list(SEQ[0])\n",
+                             "CP[0]['p'] = "
+                             "'src/pilotdeck-gateway/src/channel/mms'\n"
+                             "rows = [Path(SEQ[0][0]['p']) / 'mod.rs']\n"),
+            "[*SEQ[0]]": ("CP = [*SEQ[0]]\n",
+                          "CP[0]['p'] = "
+                          "'src/pilotdeck-gateway/src/channel/mms'\n"
+                          "rows = [Path(SEQ[0][0]['p']) / 'mod.rs']\n"),
+            "SEQ[0] + [{}]": ("CP = SEQ[0] + [{}]\n",
+                              "CP[0]['p'] = "
+                              "'src/pilotdeck-gateway/src/channel/mms'\n"
+                              "rows = [Path(SEQ[0][0]['p']) / 'mod.rs']\n"),
+        }
+        for label, (copy, write) in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = prefix + copy + write
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem for problem in problems),
+                    '#24-P0-2 the nested write through the sub-container copy '
+                    'did not reach the root container: ' + repr(problems))
+
+    def test_a_subcontainer_copys_own_top_level_write_stays_silent(self):
+        """The reverse control: a *copy*'s top level is a separate object.
+
+        ``CP = CH['a'].copy(); CP['b'] = ...`` rebinds only the copy's own
+        top level, so ``CH['a']['b']`` keeps its literal and the key still
+        follows it — reporting this would turn every copy into a false red.
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "CH = {'a': {'b': {'p': 'src/pilotdeck-gateway/src/channel/x'}}}\n"
+            "DISCOVERY_ANCHORS = ('x/mod.rs',)\n"
+            "CP = CH['a'].copy()\n"
+            "CP['b'] = {'p': 'src/pilotdeck-gateway/src/channel/sms'}\n"
+            "rows = [Path(CH['a']['b']['p']) / 'mod.rs']\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
     def test_whitespace_in_an_inline_spelled_key_is_reported(self):
         """A key with a space is unschedulable however its directory is spelled.
 
@@ -6265,6 +6759,53 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "DISCOVERY_ANCHORS = ()\n"
             "sys.path.insert(0, '/tmp/thirdparty')\n"
             "import negative_control\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
+    def test_a_dotdot_prefixed_sys_path_entry_is_reported(self):
+        """``sys.path.insert(0, '../…')`` can climb right back into this repo.
+
+        A relative entry resolves against the working directory the host
+        starts tables in (the repository root), so ``../<sibling>/…`` ends up
+        inside this very tree; the directory it names is not statically
+        knowable, so the insertion is reported rather than read as outside
+        (r24, review P0-3).
+        """
+        shapes = {
+            'insert': (
+                "import sys\n"
+                "sys.path.insert(0, "
+                "'../wt-2133/src/pilotdeck-gateway/tests/fixtures/native-entry-authority')\n"
+            ),
+            'append': "import sys\nsys.path.append('../sibling/fixtures-helpers')\n",
+            'bare ..': "import sys\nsys.path.insert(0, '..')\n",
+            'join spelling': (
+                "import os, sys\n"
+                "sys.path.insert(0, os.path.join('..', 'helpers'))\n"
+            ),
+            'slice assignment': "import sys\nsys.path[:0] = ['../helpers']\n",
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = "DISCOVERY_ANCHORS = ()\n" + body + "import helper\n"
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unsupported sys.path' in problem for problem in problems),
+                    '#24-P0-3 the dot-dot-prefixed entry was read as outside '
+                    'the repository: ' + repr(problems))
+
+    def test_a_non_parent_dotdot_named_entry_stays_silent(self):
+        """``'..foo'`` is a plain component, not a parent step.
+
+        Only ``..`` / ``../`` / ``..\\`` climb; a component merely *starting*
+        with the two dots is an ordinary relative name and the insertion of
+        it stays as silent as the absolute third-party entry.
+        """
+        synthetic = (
+            "import sys\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "sys.path.insert(0, '..foo')\n"
+            "import helper\n"
         )
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
