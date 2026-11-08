@@ -3977,6 +3977,71 @@ class RetirementScoring(unittest.TestCase):
             self.assertTrue(any('not real pids' in problem
                                 for problem in verdict['problems']), verdict)
 
+    def test_host_census_fails_closed_on_nonpositive_or_oversized_pids(self):
+        # fix-r8 (DS boundary r7 P0, probe-verified — fix-r8-audit/probe-r8-mm-
+        # before.out P0/P0b): ``0``/negative/oversized pids are not real pids
+        # either — ``{'rows': [{'pid': 0}], 'declared': [0]}`` read as a fully
+        # established census and PASS, and no pid producer (ps rows, listener
+        # pids) can emit one, so the only source is a corrupt artifact, exactly
+        # the threat model this face fail-closes on.  The int32 ceiling covers
+        # every OS pid space (Linux pid_max <= 2**22).
+        for census in ({'rows': [{'pid': 0}], 'declared': [0], 'declaredAlive': True},
+                       {'rows': [{'pid': -1}], 'declared': [-1], 'declaredAlive': True},
+                       {'rows': [{'pid': 2 ** 63}], 'declared': [2 ** 63],
+                        'declaredAlive': True}):
+            verdict = self.session._retirement_census_verdict(census)
+            self.assertEqual(verdict['status'], 'FAIL', census)
+            self.assertEqual(len(verdict['undeclared']), 1, census)
+        # The healthy small-int shape stays a PASS, and a declared 0 beside a
+        # real row pid is an untrustworthy declared entry, not a match.
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 7}], 'declared': [7], 'declaredAlive': True})['status'],
+            'PASS')
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': 7}], 'declared': [7, 0], 'declaredAlive': True})
+        self.assertEqual(verdict['status'], 'FAIL')
+        self.assertTrue(any('not real pids' in problem
+                            for problem in verdict['problems']), verdict)
+
+    def test_host_census_control_fails_closed_on_corrupt_row_or_gateway_pids(self):
+        # fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-mm-
+        # before.out C2): the class-2 row-side pid read was a bare ``==``,
+        # the one place fix-r7's "row side always goes through
+        # ``_retirement_real_pid``" rule did not reach — ``{'pid': true}``
+        # matched a gateway pid of 1 under ``==`` and the control credited
+        # the corrupt row with the mutation's FAIL that pre-existed it (a
+        # false PASS of the negative control).  A corrupt gateway listener
+        # pid proves nothing about the declared set either, so both shapes
+        # read unestablished.
+        expected = ['submit_turn', 'run_get']
+        for tag, rows, listener in (
+                ('bool row pid', [{'pid': True}], 1),
+                ('float row pid', [{'pid': 7.0}], 7),
+                ('nonpositive row pid', [{'pid': 0}], 0)):
+            row = self._stream_ok_round_row()
+            row['census'] = {'rows': rows, 'declared': [listener],
+                            'declaredAlive': True}
+            row['listeners'] = {'pid': listener, 'addresses': ['127.0.0.1:28762'],
+                                'loopbackOnly': True}
+            controls = self.session._retirement_controls(row, expected)
+            class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+            self.assertEqual(class2['status'], 'NOT_APPLICABLE', f'{tag}: {class2}')
+            self.assertIn('absent from the census rows', class2['reason'])
+        # A corrupt gateway listener pid against a healthy census.
+        row = self._stream_ok_round_row()
+        row['listeners'] = {'pid': True, 'addresses': ['127.0.0.1:28762'],
+                            'loopbackOnly': True}
+        controls = self.session._retirement_controls(row, expected)
+        class2 = next(c for c in controls['classes'] if c['class'] == 'TS_HOST')
+        self.assertEqual(class2['status'], 'NOT_APPLICABLE', class2)
+        self.assertIn('absent from the census rows', class2['reason'])
+        # fix-r8 (MM boundary r7 P2, probe-verified — M3): a bool observation
+        # must not collapse with the integer it equals in the attribution
+        # projection.
+        self.assertNotEqual(self.session._retirement_hashable(True), 1)
+        self.assertEqual(self.session._retirement_hashable(True), 'True')
+        self.assertEqual(self.session._retirement_hashable(1), 1)
+
     def test_network_verdict_fails_closed_on_empty_unparsed_or_failed_samples(self):
         # R3: an empty, unparsed or failed lsof sample cannot prove loopback.
         # #1588 r1 §4: the verdict is the single source of truth for whether

@@ -1736,8 +1736,18 @@ def _retirement_real_pid(value):
     observation that is not a real pid (a bool is an int under ``==``, a
     float compares equal to its int) is an *undeclared* observation, exactly
     like a row that names no pid.
+
+    fix-r8 (DS boundary r7 P0, probe-verified — fix-r8-audit/probe-r8-mm-
+    before.out P0/P0b): ``0``/negative pids are not real either —
+    ``{'rows': [{'pid': 0}], 'declared': [0]}`` read as a fully established
+    census and PASS, and no pid producer (``ps -axo pid=`` rows, listener
+    pids) can ever emit one, so the only source is a corrupt artifact —
+    exactly the threat model this face fail-closes on.  Same for an
+    oversized int beyond any OS pid space (Linux pid_max <= 2**22, macOS
+    pids fit int32), so the bound is the int32 ceiling.
     """
-    return isinstance(value, int) and not isinstance(value, bool)
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and 0 < value <= 2 ** 31 - 1)
 
 
 def _retirement_hashable(value):
@@ -1748,8 +1758,17 @@ def _retirement_hashable(value):
     own verdict.  Project it to its repr so the control attributions' set
     arithmetic cannot raise (which would collapse the whole 16-face report
     into a ROUND_EVIDENCE stub) while distinct unhashable shapes stay distinct.
+
+    fix-r8 (MM boundary r7 P2, probe-verified — probe-r8-mm-before.out M3):
+    a bool walked the int branch, and ``hash(True) == hash(1)`` with
+    ``True == 1`` collapsed ``{True} | {1}`` in the control attributions —
+    the projection must keep the corrupt bool observation distinct from the
+    integer it equals, so a bool walks the repr path with the other corrupt
+    shapes.
     """
-    return value if isinstance(value, (int, str)) else repr(value)
+    if isinstance(value, (int, str)) and not isinstance(value, bool):
+        return value
+    return repr(value)
 
 
 def _retirement_list_rows(value):
@@ -1816,9 +1835,13 @@ def _retirement_census_verdict(census):
     # round into the ROUND_EVIDENCE stub.  Same projection as the control
     # attributions (fix-r3), and a repr sort key so bool/str mixes stay
     # orderable: the face reads FAIL, it never collapses.
+    # fix-r8 (DS boundary r7 P0): the untrustworthy predicate now delegates
+    # to ``_retirement_real_pid`` wholesale, so a declared 0 / -1 / 2**63 —
+    # an int that is not a pid at all — is untrustworthy exactly like a
+    # bool or a string entry instead of reading as an established set.
     untrustworthy_declared = sorted(
         {_retirement_hashable(pid) for pid in declared
-         if not isinstance(pid, int) or isinstance(pid, bool)}, key=repr)
+         if not _retirement_real_pid(pid)}, key=repr)
     problems = []
     if undeclared:
         problems.append(f'{len(undeclared)} undeclared TS host rows: '
@@ -2378,8 +2401,20 @@ def _retirement_controls(round_row, expected, verdict=None):
     census_rows = census.get('rows')
     census_rows = census_rows if isinstance(census_rows, list) else []
     gateway_pid = _retirement_gateway_pid(round_row)
-    if gateway_pid is None or not any(_retirement_census_pid(row) == gateway_pid
-                                      for row in census_rows):
+    # fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-mm-
+    # before.out C2): the row-side pid read here was a bare ``==``, the one
+    # place fix-r7's "row side always goes through ``_retirement_real_pid``"
+    # rule did not reach.  ``{'rows': [{'pid': true}]}`` against a gateway
+    # pid of 1 matched under ``==`` (and ``{True} | {1}`` collapsed in the
+    # attribution), so the class-2 control credited a corrupt row with the
+    # mutation's FAIL that pre-existed it (false PASS), or broke the
+    # attribution the other way (false FAIL).  The gateway pid itself must
+    # be a real pid too — a corrupt listener pid proves nothing about the
+    # declared set, so the class reads unestablished.
+    if not _retirement_real_pid(gateway_pid) or not any(
+            _retirement_real_pid(_retirement_census_pid(row))
+            and _retirement_census_pid(row) == gateway_pid
+            for row in census_rows):
         # P2a (#1355 fix-r4c, anthropic sibling #2): the injection is "the
         # gateway pid stays in the census but leaves the declared set".  With
         # the pid absent from the census the mutation proves nothing — it
@@ -2398,7 +2433,11 @@ def _retirement_controls(round_row, expected, verdict=None):
         # attribute the verdict to that pid.
         declared_original = census.get('declared')
         declared_original = declared_original if isinstance(declared_original, list) else []
-        if gateway_pid not in declared_original:
+        # fix-r8 (MM sibling r7 P1): same real-pid predicate on the declared
+        # side — a declared ``True`` is not a declaration of pid 1, so the
+        # "the round never declared this pid" gate must not read it as one.
+        if not any(_retirement_real_pid(pid) and pid == gateway_pid
+                   for pid in declared_original):
             unavailable('TS_HOST', 'gateway pid present in the census but removed from the declared owned set',
                         'HOST_CENSUS',
                         f'gateway pid {gateway_pid} is not in the round\'s declared owned set '

@@ -2018,6 +2018,32 @@ def summary_unpack_shared_call_bypass(rows):
                   'flagged, passed=False')
 
 
+def summary_name_relay_shared_call_bypass(rows):
+    """#1652 fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-
+    mm-before.out M1): the dead-arm shared call behind a *name* relay —
+    ``status = 'PASS' or common.aggregate_status(overall)`` followed by
+    ``{'status': status}`` is the same unconditional clean status the direct
+    spelling wrote (pinned by ``summary-status-shared-call-bypass``), but the
+    slot value is now an ``ast.Name`` and the relay family's full-tree
+    exemption used to mark the binding shared-derived.  The relay exemption is
+    judged on the exit arms like every other shared-call exemption."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    # The slot here is the local variable ``status`` (an ``ast.Name``), which
+    # unparses without quotes.
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        'status slot status at line', 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: name-relay shared-call BoolOp bypass '
+                  'flagged, passed=False')
+
+
 def controls_nested_same_name(rows):
     """#892 r3: a nested ``def main`` must not shadow or duplicate the
     registered point name (MiniMax/DeepSeek boundary P2)."""
@@ -2319,6 +2345,15 @@ MUTATIONS = [
     ('summary-unpack-shared-call-bypass', SOURCE,
      "        'status': overall,\n",
      "        **{'status': 'PASS' or common.aggregate_status(overall)},\n"),
+    # #1652 fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-
+    # mm-before.out M1): the same dead-arm shared call behind a *name* relay —
+    # the relay family's exemption is judged on the exit arms, so a binding
+    # whose only call sits in the dead operand may not mark the name
+    # shared-derived and exempt the slot it relays into.
+    ('summary-name-relay-shared-call-bypass', SOURCE,
+     "    return {\n        'status': overall,\n",
+     "    status = 'PASS' or common.aggregate_status(overall)\n"
+     "    return {\n        'status': status,\n"),
     ('controls-nested-same-name', CONTROLS_SOURCE,
      "    report['cleanup'] = cleanup\n",
      "    def main():\n"
@@ -4721,6 +4756,8 @@ JUDGES = {
         'aggregation-audit', summary_status_shared_call_bypass, False, ()),
     'summary-unpack-shared-call-bypass': (
         'aggregation-audit', summary_unpack_shared_call_bypass, False, ()),
+    'summary-name-relay-shared-call-bypass': (
+        'aggregation-audit', summary_name_relay_shared_call_bypass, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
     'calibrate-shared-excuse': (

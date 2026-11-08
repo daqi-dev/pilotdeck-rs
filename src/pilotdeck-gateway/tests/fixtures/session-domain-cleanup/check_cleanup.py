@@ -1055,16 +1055,26 @@ def _folded_string_fold(node):
             # inserts at most max(explicit width, len(right)); the count
             # over ``%`` characters overestimates conversions (``%%``
             # included), which only makes the bound tighter.
+            # fix-r8 (probe-verified — fix-r8-audit/probe-r8-mm-before.out
+            # W1/W1b): the scan treated ``'0'`` in ``'-+ #0'`` as a flag
+            # character even *between* digits, so ``'%100000000s'`` read
+            # width 1 (every zero skipped as a flag) and the bound passed
+            # while the interpreter built the 100 MB result.  Flags are only
+            # legal before the first digit, but instead of parsing them the
+            # scan now accumulates *every* digit run — width digits merged
+            # with the ``0`` flag (``'%030s'``) still read 30, precision
+            # digits (``'%.100000000f'``) join the same max, and an
+            # overestimate only tightens the bound.
             width = 0
             for spec in left.split('%')[1:]:
                 digits = ''
                 for ch in spec:
-                    if ch in '-+ #0':
-                        continue
                     if ch.isdigit():
                         digits += ch
                         continue
-                    break
+                    if digits:
+                        width = max(width, int(digits))
+                        digits = ''
                 if digits:
                     width = max(width, int(digits))
             if len(left) + left.count('%') * max(len(right), width) > _FOLD_MAX_ITEMS:
@@ -3925,6 +3935,21 @@ def _calls_aggregate(node, shared=None, rebound=frozenset()):
     return any(_is_shared_call(n, shared, rebound) for n in ast.walk(node))
 
 
+def _calls_aggregate_live(node, shared=None, rebound=frozenset()):
+    """A shared call on an arm the interpreter can actually take.
+
+    fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-mm-
+    before.out M1): the relay family's exemption used the full-tree scan,
+    the exact shape fix-r7 closed for the direct spellings — a
+    ``common.aggregate_status`` call sitting in an operand short-circuit
+    semantics never reach (``'PASS' or <call>``) still marked a locally
+    bound name "shared-derived" and exempted the slot it relayed into.
+    The exemption is judged on the exit arms only, and an empty arm set
+    (an unresolvable pure-literal test) certifies nothing.
+    """
+    return any(_calls_aggregate(arm, shared, rebound) for arm in _exit_arms(node))
+
+
 # #892 r20: the module that owns the one shared aggregator.  A file that
 # rebinds the name loses the trust (``_module_shared_names``).
 _SHARED_MODULES = frozenset({'common'})
@@ -4051,13 +4076,21 @@ def _container_relays(node, bindings, seen=None):
         # boundary P1-2: ``report['status'] = md['status']`` walked through).
         return False
     for _lineno, value in values:
-        if _calls_aggregate(value):
-            continue
+        # fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-mm-
+        # before.out M1): the shared-call exemption is judged on the arms the
+        # interpreter can take — a binding whose only call sits in a dead
+        # operand ('PASS' or <call>) is not shared-derived.  A dict literal
+        # is judged by its own status slots (the ``**``-unpack rule): a call
+        # buried anywhere inside it may not mark the whole container
+        # shared-derived, because the arm split cannot see inside a dict.
         if isinstance(value, ast.Dict):
             slots = _status_slot_values(value)
-            if slots and all(_relays_status(slot, bindings, seen) or _calls_aggregate(slot)
+            if slots and all(_relays_status(slot, bindings, seen)
+                             or _calls_aggregate_live(slot)
                              for slot in slots):
                 continue
+        elif _calls_aggregate_live(value):
+            continue
         if isinstance(value, (ast.Attribute, ast.Subscript)) \
                 and _container_relays(value, bindings, seen):
             continue
@@ -4116,7 +4149,7 @@ def _name_relays(name, bindings, seen=None):
     if not values:
         return False  # nothing in this function proves where it came from
     for _lineno, value in values:
-        if _calls_aggregate(value):
+        if _calls_aggregate_live(value):
             continue
         if isinstance(value, (ast.Attribute, ast.Subscript)) \
                 and _container_relays(value, bindings, seen):
@@ -4320,10 +4353,18 @@ def _literal_test_value(node):
     the limit at every recursion level (internal recursion goes through
     it), so the deep shape degrades to ``_LITERAL_TEST_UNRESOLVED`` and
     fails closed on its own.
+
+    fix-r8 (MM sibling r7 P2, aligned with the ``_folded_string`` wrapper
+    fix-r7 already gave this family): the sibling fold's wrapper catches
+    the five-exception family while this one still caught only the
+    recursion limit, so any fold-level error raised outside the BinOp
+    branch's own ``try`` (the container-literal branches have none) escapes
+    the whole audit the same way.  Same family, same fail-closed value.
     """
     try:
         return _literal_test_value_fold(node)
-    except RecursionError:
+    except (ArithmeticError, TypeError, ValueError, MemoryError,
+            RecursionError):
         return _LITERAL_TEST_UNRESOLVED
 
 
@@ -4480,6 +4521,57 @@ def _literal_test_value_fold(node):
                 and isinstance(right, (str, bytes, list, tuple))
                 and len(left) + len(right) > _FOLD_MAX_ITEMS):
             return _LITERAL_TEST_UNRESOLVED
+        # fix-r8 (MM boundary r7 P2, probe-verified — probe-r8-mm-before.out
+        # A1): int Add/Sub judged nothing, so a chain of at-cap operands
+        # (``(1 << 999999) + (1 << 999999) + ...``) summed past
+        # ``_FOLD_MAX_BITS`` — every other int op keeps the invariant that a
+        # folded int result stays under the cap, and each Add can only add
+        # ``log2(#terms)`` bits over the largest operand, so the cap keeps
+        # the whole family's result-size invariant here too.
+        if (isinstance(node.op, (ast.Add, ast.Sub))
+                and isinstance(left, int) and isinstance(right, int)
+                and max(left.bit_length(), right.bit_length()) + 1
+                > _FOLD_MAX_BITS):
+            return _LITERAL_TEST_UNRESOLVED
+        # fix-r8 (DS sibling/boundary/concurrency r7 P2 + MM concurrency r7
+        # P2, four blocks, probe-verified — probe-r8-mm-before.out W2): the
+        # string-format fold had no bound at all — ``'%100000000s' % 'x'``,
+        # star width ``'%*s' % (100000000, 'x')`` and precision
+        # ``'%.500000000e' % 1.5`` all made the interpreter materialise the
+        # result first.  Same rule as ``_folded_string_fold`` (fix-r7/r8):
+        # every digit run in each spec joins one max (width merged with the
+        # ``0`` flag, precision included), a ``*`` width is resolved from
+        # int operands of the tuple (anything else is unresolved), and the
+        # bound is checked before the interpreter is asked to build
+        # anything.  A non-str left formats a number at most as long as
+        # ``str(right)``, which the sequence bound above already caps.
+        if isinstance(node.op, ast.Mod) and isinstance(left, str):
+            width = 0
+            for spec in left.split('%')[1:]:
+                digits = ''
+                for ch in spec:
+                    if ch.isdigit():
+                        digits += ch
+                        continue
+                    if digits:
+                        width = max(width, int(digits))
+                        digits = ''
+                if digits:
+                    width = max(width, int(digits))
+            if any('*' in spec for spec in left.split('%')[1:]):
+                # A star width is one int operand of the tuple, in a position
+                # the format string determines; every int element is a
+                # candidate width (overestimate, fail-closed), and a star
+                # with no int operand raises at runtime into the except
+                # below and resolves the same way.
+                operands = right if isinstance(right, tuple) else (right,)
+                width = max([width] + [abs(operand) for operand in operands
+                                       if isinstance(operand, int)
+                                       and not isinstance(operand, bool)])
+            payload = (len(right) if isinstance(right, (str, bytes, list, tuple))
+                       else len(str(right)))
+            if len(left) + left.count('%') * max(payload, width) > _FOLD_MAX_ITEMS:
+                return _LITERAL_TEST_UNRESOLVED
         try:
             if isinstance(node.op, ast.Add):
                 return left + right
@@ -7355,6 +7447,82 @@ def aggregation_audit():
         if _literal_test_value(ast.parse(_source, mode='eval').body) != _expected:
             failures.append('#892 aggregation-audit: the arithmetic fold rejected '
                             f'a bounded literal {_source!r} (#1652)')
+    # #1652 fix-r8 (DS sibling/boundary/concurrency r7 P2 + MM concurrency r7
+    # P2, four blocks, probe-verified — fix-r8-audit/probe-r8-mm-before.out
+    # W1/W2): the string-format folds bound the result before the
+    # interpreter builds it.  ``_literal_test_value_fold`` had no ``%`` bound
+    # at all, and the ``_folded_string_fold`` width scan ate digit zeros as
+    # flag characters (``'%100000000s'`` read width 1) — an explicit
+    # oversized width, a star width and a precision each materialised the
+    # whole result first.
+    for _source in ("'%100000000s' % 'x'", "'%-100000000s' % 'x'",
+                    "'%*s' % (100000000, 'x')",
+                    "'%.500000000e' % 1.5", "'%999999999d' % 1"):
+        if (_literal_test_value(ast.parse(_source, mode='eval').body)
+                is not _LITERAL_TEST_UNRESOLVED):
+            failures.append('#892 aggregation-audit: the format fold computed '
+                            f'an unbounded literal {_source!r} instead of failing '
+                            'closed (#1652)')
+    for _source in ("'%100000000s' % 'x'", "'%-100000000s' % 'x'"):
+        if _folded_string(ast.parse(_source, mode='eval').body) is not None:
+            failures.append('#892 aggregation-audit: the string fold computed an '
+                            f'unbounded format result {_source!r} instead of '
+                            'failing closed (#1652)')
+    # The bounded formats still fold (the fix must not over-fold), including
+    # a width merged with the ``0`` flag and a bounded star width.
+    for _source, _expected in (
+            ("'%10s' % 'x'", '         x'), ("'%-10s' % 'x'", 'x         '),
+            ("'%030s' % 'x'", 'x'.rjust(30)), ("'%.3f' % 1.5", '1.500'),
+            ("'%*s' % (5, 'x')", '    x'), ("'%d' % 12345", '12345'),
+            ("'%s and %s' % ('x', 'y')", 'x and y')):
+        if _literal_test_value(ast.parse(_source, mode='eval').body) != _expected:
+            failures.append('#892 aggregation-audit: the format fold rejected a '
+                            f'bounded format {_source!r} (#1652)')
+    # #1652 fix-r8 (MM boundary r7 P2, probe-verified — A1): int Add/Sub
+    # keeps the result-size invariant every other int op already kept —
+    # at-cap operands chained by ``+`` used to sum past the cap.
+    if (_literal_test_value(ast.parse('(1 << 999999) + (1 << 999999)',
+                                       mode='eval').body)
+            is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: the arithmetic fold computed '
+                        'an int sum past the bit cap instead of failing '
+                        'closed (#1652)')
+    if _literal_test_value(ast.parse('(1 << 500000) + (1 << 500000)',
+                                      mode='eval').body) != 2 ** 500001:
+        failures.append('#892 aggregation-audit: the arithmetic fold rejected '
+                        'a bounded int sum (#1652)')
+    # #1652 fix-r8 (MM sibling r7 P1, probe-verified — M1/M1c): the relay
+    # family's shared-call exemption is judged on the exit arms — a name
+    # (or a local dict slot) bound to a dead-arm BoolOp
+    # (``'PASS' or <shared call>``) is not shared-derived, while a live
+    # relay still is.
+    _name_relay = ast.parse(
+        "def _name_relay_dead_arm(overall):\n"
+        "    status = 'PASS' or common.aggregate_status(overall)\n"
+        "    return {'status': status}\n").body[0]
+    if not _summary_slot_violations(_name_relay.body[1].value,
+                                    _name_bindings(_name_relay),
+                                    _name_relay.body[1].lineno):
+        failures.append('#892 aggregation-audit: the name-relay exemption '
+                        'still trusts a dead shared-call operand (#1652)')
+    _name_relay_live = ast.parse(
+        "def _name_relay_live(overall):\n"
+        "    status = common.aggregate_status(overall)\n"
+        "    return {'status': status}\n").body[0]
+    if _summary_slot_violations(_name_relay_live.body[1].value,
+                                _name_bindings(_name_relay_live),
+                                _name_relay_live.body[1].lineno):
+        failures.append('#892 aggregation-audit: the name-relay exemption '
+                        'dropped a live shared relay (#1652)')
+    _container_relay = ast.parse(
+        "def _container_relay_dead_arm(overall):\n"
+        "    holder = {'status': 'PASS' or common.aggregate_status(overall)}\n"
+        "    return {'status': holder['status']}\n").body[0]
+    if not _summary_slot_violations(_container_relay.body[1].value,
+                                   _name_bindings(_container_relay),
+                                   _container_relay.body[1].lineno):
+        failures.append('#892 aggregation-audit: the container-relay exemption '
+                        'still trusts a dead shared-call operand (#1652)')
     # #1652 fix-r6 (MiniMax boundary P0): the nested-slot shared-call
     # exemption follows short-circuit reachability — a dead
     # ``common.aggregate_status`` operand may not exempt the slot, while a
