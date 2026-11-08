@@ -659,7 +659,8 @@ impl Requests {
         // Acquire may read configuration synchronously (management.rs:118-125),
         // so the blocking job stays off the async executor.
         let project = self.project.clone();
-        let lease = tokio::task::spawn_blocking(move || project.acquire(None))
+        let root = self.options.project.clone();
+        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&root)))
             .await
             .map_err(|e| RequestError::new(e.to_string()))?
             .map_err(runtime_error)?;
@@ -729,10 +730,9 @@ impl Requests {
             })?;
         let context = SessionContext {
             session_key: session_key.clone(),
-            project_key: params
-                .get("projectKey")
-                .and_then(JsValue::as_string)
-                .cloned(),
+            project_key: Some(JsString::from(
+                self.options.project.to_string_lossy().as_ref(),
+            )),
             channel_key: params
                 .get("channelKey")
                 .and_then(JsValue::as_string)
@@ -2101,6 +2101,7 @@ mod tests {
     #[tokio::test]
     async fn seed_read_state_applies_and_validates() {
         let (_scratch, r) = setup_fixture();
+        r.owner.enforce_project_binding();
         let file = r.options.project.join("seeded.txt");
         std::fs::write(&file, "seeded\n").expect("#1457 seeded file");
         let mtime_ms = std::fs::metadata(&file)
@@ -2127,6 +2128,18 @@ mod tests {
             Some(&JsValue::Bool(true)),
             "#1457 exact mtime applies"
         );
+        assert_eq!(
+            r.owner.project_key(&"cfg-seed-1".into()),
+            Some(JsString::from(r.options.project.to_string_lossy().as_ref())),
+            "omitted project must pin the selected request view"
+        );
+        assert!(
+            r.owner
+                .reserve_project(&"cfg-seed-1".into(), Some(&"other".into()), &"other".into())
+                .is_err(),
+            "a different project must not reuse the seeded session"
+        );
+
         let applied = r
             .session_config_request(
                 "seed_read_state".into(),
@@ -2445,6 +2458,36 @@ mod tests {
         storage
             .restore()
             .expect("#1457 the concurrently written transcript still loads");
+        teardown(&r).await;
+    }
+    #[tokio::test]
+    async fn selected_project_output_styles_do_not_read_fallback_generation() {
+        let (_scratch, r) = setup_fixture();
+        let a = r.options.project.clone();
+        let b = a.parent().unwrap().join("styles-only-B");
+        std::fs::create_dir_all(&b).unwrap();
+        let mut view = r.clone();
+        view.options.project = b.clone();
+        crate::native_process::assembly::register_project(&view.options).unwrap();
+        write_probe_plugin(&view);
+        let styles = view
+            .session_config_request("output_styles_list".into(), object([]))
+            .await
+            .unwrap();
+        assert!(
+            array_field(&styles, "styles")
+                .iter()
+                .any(|item| item.get("name") == Some(&"probe:compact".into()))
+        );
+        let fallback = r
+            .session_config_request("output_styles_list".into(), object([]))
+            .await
+            .unwrap();
+        assert!(
+            !array_field(&fallback, "styles")
+                .iter()
+                .any(|item| item.get("name") == Some(&"probe:compact".into()))
+        );
         teardown(&r).await;
     }
 }
