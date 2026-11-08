@@ -280,7 +280,10 @@ panic 用例
   `#1409 a zombie leader with a live group has not released its descriptors`。
   **#2142 起 `Z`/`X` 判据收口为单一函数 `terminal_state`**（枚举首查与收尾重查
   都调它，此前两处各写一遍、可对同一 pid 给出相反结论），本变异体锚点随迁到
-  该函数本体——删掉组死检查即在**两个入口**同时 fail-open。
+  该函数本体——把组死检查换成永真第二合取（`(pid.is_empty() || true)`，语义仍是
+  「state 单方面决定」）即在**两个入口**同时 fail-open；替换文本刻意保留 `pid`
+  引用，否则 runner 继承的 `RUSTFLAGS=-D warnings` 宿主会把变异体编译成未用变量
+  失败、整行 INVALID（fix-r1 boundary #3）。
 - `thread-group-dead-ignores-live-tasks`（#1409 第 1 条，同上）：判定函数
   `thread_group_is_dead` 对活任务视而不见——只要列出一个任务就判组已死，运行中
   的进程一旦 fd 目录被藏起来就变成可跳过。同一单元测试判杀。
@@ -321,9 +324,15 @@ panic 用例
   `SCAN_WINDOW` 的释放。绑定新用例
   `a_probe_that_dies_before_the_pid_line_takes_its_group_with_it`（探针父进程
   不打印直接退出、子进程关掉 stdout 让 EOF 真到达、把自己停进毒状态并把 pid
-  发到收据文件，存活线程 10s 硬上界）的 `#2154 the poison group must not
-  outlive the guard's kill`——删掉 kill 后毒组要活满 10s，5s 判杀截止先红；
-  变异体在盘上的残留同样被 10s 上界兜住。探针从此各自成组
+  发到收据文件）的 `#2154 the poison group must not outlive the guard's kill`。
+  **判杀依赖的实际路径时长**（fix-r1，concurrency #1 / boundary #2 收口）：收据
+  等待 10s + 变 Z 等待 10s + 判杀窗口 5s = 25s，三段各有自己的 deadline 断言、
+  超时先红，全在存活线程 30s 上界内——慢宿主上前置循环的时钟吃不掉判杀余量；
+  窗口超时分支另有一行**独立于锚点**的显式 killpg，把变异体的盘上残留当场收掉。
+  真实组长探针的子进程同样首句 `os.close(1)`（fix-r1 boundary #1，实测
+  `_tmp/20261026-issue-2142/fix-r1/oom-eof-probe-ab.log`：不关 fd 1 时 OOM 杀掉
+  父进程后 read_line 要等存活线程满 30s 才见 EOF——「空 pid 行 panic」的 OOM
+  机理此前对真实探针不成立），此后该机理对两个探针同形。探针各自成组
   （`process_group(0)`），组长用例的健康路径仍先按 pid 精确 kill
   （`KillOnDrop`），组守卫只是断后。
 

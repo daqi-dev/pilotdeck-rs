@@ -867,6 +867,20 @@ fn thread_group_is_dead(pid: &str) -> bool {
     seen != 0
 }
 
+/// #2138 (#2142 fix-r1, boundary r1 #4): the one definition of "this state
+/// means the source is terminal" — `Z`/`X` alone proves nothing (a zombie
+/// leader with a live thread group still shares its fd table, see
+/// [`thread_group_is_dead`]), only a dead thread group behind the state does.
+/// [`blind_source`] and [`settles_into_a_terminal_source`] both end here, so
+/// the first check and the settle re-check cannot disagree on the same pid —
+/// the criterion used to be written out twice at those two call sites. The
+/// publication tests keep their own copy
+/// (`tests/scratch_publication.rs`, same name): change the two together.
+#[cfg(target_os = "linux")]
+fn terminal_state(pid: &str, state: char) -> bool {
+    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+}
+
 /// #2138: how long a related source may still be finishing its exit before its
 /// unreadable entries count as hidden while alive. `exit_files()` runs before
 /// `exit_notify()` marks the task a zombie, and in that window the descriptor
@@ -1033,7 +1047,7 @@ fn blind_source(pid: &str) -> BlindSource {
     };
     // A zombie leader with a live group has not released its descriptors, so
     // "terminal" is the whole group being dead, not one task reporting `Z`.
-    if matches!(state, 'Z' | 'X') && thread_group_is_dead(pid) {
+    if terminal_state(pid, state) {
         return BlindSource::Terminal;
     }
     if descended_from_this_process(pid) {
@@ -1052,7 +1066,7 @@ fn settles_into_a_terminal_source(pid: &str) -> BlindSource {
     loop {
         match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
             Ok(stat) => match stat_fields(&stat) {
-                Some(('Z' | 'X', _)) if thread_group_is_dead(pid) => {
+                Some((state, _)) if terminal_state(pid, state) => {
                     return BlindSource::Terminal;
                 }
                 Some(_) => {}
