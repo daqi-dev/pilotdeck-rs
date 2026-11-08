@@ -1023,6 +1023,38 @@ def _folded_string(node):
         return None
 
 
+def _format_max_width(fmt):
+    """The largest width/precision an old-style ``%`` format can request.
+
+    fix-r9 (DS simplify r8 P2): the digit-run scan existed twice — in
+    ``_folded_string_fold`` and ``_literal_test_value_fold`` — and the r8
+    W1 fix (``'0'`` eaten as a flag between digits) had to be applied to
+    both; one implementation now serves both fold sites.  fix-r9 (DS
+    boundary/concurrency r8 P2): bytes left values (PEP 461) format with
+    the same spec grammar, so they are read through a 1:1 ``latin-1``
+    decode and judged by the same scan instead of going around the bound
+    entirely.  Every digit run in each spec joins one max (width merged
+    with the ``0`` flag, precision included); an overestimate only
+    tightens the bound.  Returns ``(width, specs)``.
+    """
+    if isinstance(fmt, bytes):
+        fmt = fmt.decode('latin-1')
+    specs = fmt.split('%')[1:]
+    width = 0
+    for spec in specs:
+        digits = ''
+        for ch in spec:
+            if ch.isdigit():
+                digits += ch
+                continue
+            if digits:
+                width = max(width, int(digits))
+                digits = ''
+        if digits:
+            width = max(width, int(digits))
+    return width, specs
+
+
 def _folded_string_fold(node):
     if isinstance(node, ast.Constant):
         return node.value if isinstance(node.value, str) else None
@@ -1065,19 +1097,10 @@ def _folded_string_fold(node):
             # with the ``0`` flag (``'%030s'``) still read 30, precision
             # digits (``'%.100000000f'``) join the same max, and an
             # overestimate only tightens the bound.
-            width = 0
-            for spec in left.split('%')[1:]:
-                digits = ''
-                for ch in spec:
-                    if ch.isdigit():
-                        digits += ch
-                        continue
-                    if digits:
-                        width = max(width, int(digits))
-                        digits = ''
-                if digits:
-                    width = max(width, int(digits))
-            if len(left) + left.count('%') * max(len(right), width) > _FOLD_MAX_ITEMS:
+            # fix-r9 (DS simplify r8 P2): the scan lives in
+            # ``_format_max_width`` — one implementation for both folds.
+            width, specs = _format_max_width(left)
+            if len(left) + len(specs) * max(len(right), width) > _FOLD_MAX_ITEMS:
                 return None
             try:
                 return left % right
@@ -4368,6 +4391,27 @@ def _literal_test_value(node):
         return _LITERAL_TEST_UNRESOLVED
 
 
+def _folded_size(value):
+    """The element/character count a folded value contributes to a container cap.
+
+    fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/probe-r9-ds-
+    before.out B): the container branches folded every element first and
+    built the container with no *total* size judgment, so n elements each
+    individually at the cap (``['x' * 999999, 'x' * 999999, ...]``, a
+    ~100 KB source) summed to n x the cap in folded memory.  Strings and
+    bytes count their characters, containers the sum of their folded
+    children, scalars 1.
+    """
+    if isinstance(value, (str, bytes)):
+        return len(value)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return sum(_folded_size(element) for element in value)
+    if isinstance(value, dict):
+        return sum(_folded_size(key) + _folded_size(item)
+                   for key, item in value.items())
+    return 1
+
+
 def _literal_test_value_fold(node):
     """Value of an expression built only from literals and operators.
 
@@ -4456,9 +4500,22 @@ def _literal_test_value_fold(node):
             left = right
         return True
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        elements = [_literal_test_value(element) for element in node.elts]
-        if any(element is _LITERAL_TEST_UNRESOLVED for element in elements):
-            return _LITERAL_TEST_UNRESOLVED
+        # fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/
+        # probe-r9-ds-before.out B): each element is individually in-cap
+        # (the fix-r6 result-size invariant), but the *container* had no
+        # total bound — the running total is judged per element, so the
+        # fold stops at the first element that crosses ``_FOLD_MAX_ITEMS``
+        # instead of materialising the rest of the pile.
+        elements = []
+        total = 0
+        for element_node in node.elts:
+            element = _literal_test_value(element_node)
+            if element is _LITERAL_TEST_UNRESOLVED:
+                return _LITERAL_TEST_UNRESOLVED
+            total += _folded_size(element)
+            if total > _FOLD_MAX_ITEMS:
+                return _LITERAL_TEST_UNRESOLVED
+            elements.append(element)
         if isinstance(node, ast.Tuple):
             return tuple(elements)
         if isinstance(node, ast.List):
@@ -4468,7 +4525,10 @@ def _literal_test_value_fold(node):
         except TypeError:
             return _LITERAL_TEST_UNRESOLVED
     if isinstance(node, ast.Dict):
+        # fix-r9 (DS boundary r8 P1): same running-total bound over the
+        # folded keys and values.
         entries = []
+        total = 0
         for key, value in zip(node.keys, node.values):
             if key is None:  # a ``**`` spread is not a constant key
                 return _LITERAL_TEST_UNRESOLVED
@@ -4476,6 +4536,9 @@ def _literal_test_value_fold(node):
             folded_value = _literal_test_value(value)
             if (_LITERAL_TEST_UNRESOLVED in (folded_key, folded_value)
                     or not isinstance(folded_key, (str, int, float, bool, type(None)))):
+                return _LITERAL_TEST_UNRESOLVED
+            total += _folded_size(folded_key) + _folded_size(folded_value)
+            if total > _FOLD_MAX_ITEMS:
                 return _LITERAL_TEST_UNRESOLVED
             entries.append((folded_key, folded_value))
         return dict(entries)
@@ -4495,9 +4558,16 @@ def _literal_test_value_fold(node):
         # so a chain that stays under the cap at every node can never exceed
         # it overall (each operand is itself a previous in-cap result); the
         # shapes over it stay unresolved and fail closed instead of being
-        # computed.  int left ** int right with right < 0, and float Pow,
-        # raise (ZeroDivisionError/OverflowError/ValueError) into the except
-        # below and resolve the same way.
+        # computed.  Float Pow raises (ZeroDivisionError/OverflowError/
+        # ValueError) into the except below and resolves the same way; int
+        # left ** int right with right < 0 does *not* raise — fix-r9
+        # (DS concurrency r8 P1, measured — fix-r9-audit/probe-r9-ds-
+        # before.out B): CPython computes it as a float power directly
+        # (``2 ** -1000000000`` returns a float immediately, no large
+        # intermediate), and an oversized left (``(1 << 999999) ** -3``)
+        # raises OverflowError into the except below, so the negative
+        # exponent resolves to a bounded float or fail-closes with no guard
+        # needed — the r8 comment that claimed it raises was wrong.
         if (isinstance(node.op, ast.Pow) and isinstance(left, int)
                 and isinstance(right, int) and right >= 0
                 and max(left.bit_length(), 1) * right > _FOLD_MAX_BITS):
@@ -4545,20 +4615,15 @@ def _literal_test_value_fold(node):
         # bound is checked before the interpreter is asked to build
         # anything.  A non-str left formats a number at most as long as
         # ``str(right)``, which the sequence bound above already caps.
-        if isinstance(node.op, ast.Mod) and isinstance(left, str):
-            width = 0
-            for spec in left.split('%')[1:]:
-                digits = ''
-                for ch in spec:
-                    if ch.isdigit():
-                        digits += ch
-                        continue
-                    if digits:
-                        width = max(width, int(digits))
-                        digits = ''
-                if digits:
-                    width = max(width, int(digits))
-            if any('*' in spec for spec in left.split('%')[1:]):
+        # fix-r9 (DS boundary/concurrency r8 P2): bytes left (PEP 461)
+        # went around the bound entirely — ``b'%100000000s' % b'x'`` made
+        # the interpreter materialise the result; the scan is shared with
+        # ``_folded_string_fold`` (``_format_max_width``), which reads bytes
+        # through a 1:1 latin-1 decode so both spellings judge the same
+        # digit runs.
+        if isinstance(node.op, ast.Mod) and isinstance(left, (str, bytes)):
+            width, specs = _format_max_width(left)
+            if any('*' in spec for spec in specs):
                 # A star width is one int operand of the tuple, in a position
                 # the format string determines; every int element is a
                 # candidate width (overestimate, fail-closed), and a star
@@ -4570,7 +4635,7 @@ def _literal_test_value_fold(node):
                                        and not isinstance(operand, bool)])
             payload = (len(right) if isinstance(right, (str, bytes, list, tuple))
                        else len(str(right)))
-            if len(left) + left.count('%') * max(payload, width) > _FOLD_MAX_ITEMS:
+            if len(left) + len(specs) * max(payload, width) > _FOLD_MAX_ITEMS:
                 return _LITERAL_TEST_UNRESOLVED
         try:
             if isinstance(node.op, ast.Add):
@@ -7491,6 +7556,58 @@ def aggregation_audit():
                                       mode='eval').body) != 2 ** 500001:
         failures.append('#892 aggregation-audit: the arithmetic fold rejected '
                         'a bounded int sum (#1652)')
+    # #1652 fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/
+    # probe-r9-ds-before.out B): the container folds judge the *total*
+    # folded size — elements individually at the cap used to pile up to
+    # n x the cap (100 elements of 'x' * 999999 folded to a ~100 MB list
+    # from a ~1.5 KB source).  A single at-cap element still folds (the
+    # tighter semantics must not over-fold).
+    for _source in ("('x' * 999999, 'x' * 999999)",
+                    "['x' * 999999, 'x' * 999999]",
+                    "{'k' * 999999: 'v' * 999999}",
+                    "('x' * 999999, ['x' * 999999])"):
+        if (_literal_test_value(ast.parse(_source, mode='eval').body)
+                is not _LITERAL_TEST_UNRESOLVED):
+            failures.append('#892 aggregation-audit: the container fold '
+                            f'computed a past-cap total {_source!r} instead '
+                            'of failing closed (#1652)')
+    for _source, _expected in (
+            ("('x' * 999999,)", ('x' * 999999,)),
+            ("['x' * 400000, 'x' * 400000]", ['x' * 400000, 'x' * 400000]),
+            ("{'a': 1}", {'a': 1})):
+        if _literal_test_value(ast.parse(_source, mode='eval').body) != _expected:
+            failures.append('#892 aggregation-audit: the container fold rejected '
+                            f'an in-cap container {_source!r} (#1652)')
+    # #1652 fix-r9 (DS concurrency r8 P1, measured — fix-r9-audit/
+    # probe-r9-ds-before.out B): a negative int exponent does not raise —
+    # CPython resolves it as a float power with no large intermediate
+    # (``2 ** -1000000000`` is an instant float), and an oversized left
+    # raises OverflowError into the fold's fail-closed except.  Both pins
+    # hold the r9 comment to the measured behavior (the r8 comment claimed
+    # int ** negative-int raises, which ``2 ** -1`` = 0.5 disproves).
+    if not isinstance(_literal_test_value(
+            ast.parse('2 ** -1000000000', mode='eval').body), float):
+        failures.append('#892 aggregation-audit: the arithmetic fold changed '
+                        'the measured negative-exponent resolution (a bounded '
+                        'float, never a materialised power) (#1652)')
+    if (_literal_test_value(ast.parse('(1 << 999999) ** -3', mode='eval').body)
+            is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: the arithmetic fold computed '
+                        'an oversized-left negative exponent instead of '
+                        'failing closed (#1652)')
+    # #1652 fix-r9 (DS boundary/concurrency r8 P2): bytes formats (PEP 461)
+    # join the str bound — the same width/precision/star scan through
+    # ``_format_max_width``'s 1:1 latin-1 read.
+    for _source in ("b'%100000000s' % b'x'", "b'%*s' % (100000000, b'x')",
+                    "b'%.500000000e' % 1.5"):
+        if (_literal_test_value(ast.parse(_source, mode='eval').body)
+                is not _LITERAL_TEST_UNRESOLVED):
+            failures.append('#892 aggregation-audit: the format fold computed '
+                            f'an unbounded bytes format {_source!r} instead '
+                            'of failing closed (#1652)')
+    if _literal_test_value(ast.parse("b'%10s' % b'x'", mode='eval').body) != b'         x':
+        failures.append('#892 aggregation-audit: the format fold rejected a '
+                        'bounded bytes format (#1652)')
     # #1652 fix-r8 (MM sibling r7 P1, probe-verified — M1/M1c): the relay
     # family's shared-call exemption is judged on the exit arms — a name
     # (or a local dict slot) bound to a dead-arm BoolOp

@@ -1176,7 +1176,10 @@ def audit_native(evidence, contract):
     require(evidence['execWitness']['complete'] is True and evidence['execWitness']['source'] == 'exec-monitor',
             'PROCESS_WITNESS', 'complete exec/exit witness required, not sampled ps')
     actual_pids = [p['pid'] for p in processes]
-    require(all(type(pid) is int and pid > 0 for pid in actual_pids)
+    # fix-r9 (DS sibling r8 P2): the witness gate follows the census's real-pid
+    # rule (fix-r8, ``_retirement_real_pid``) — an oversized int beyond any OS
+    # pid space is a corrupt artifact, not a witnessed process.
+    require(all(_retirement_real_pid(pid) for pid in actual_pids)
             and len(set(actual_pids)) == len(actual_pids), 'PROCESS_WITNESS', 'invalid/duplicate PID')
     roles = Counter(p['role'] for p in processes)
     require(roles == Counter(contract['processRoles']), 'NATIVE_PROCESS', 'unexpected/missing process roles')
@@ -1750,6 +1753,23 @@ def _retirement_real_pid(value):
             and 0 < value <= 2 ** 31 - 1)
 
 
+def _retirement_real_port(value):
+    """True when *value* can be a TCP port at all (#1355 r1 fix-r9, DS boundary r8 P0).
+
+    The pid twin of fix-r8, on the port side: the listener face only judged
+    ``isinstance(gateway_port, int)``, so a corrupt artifact recording
+    ``ports.gateway = 0`` (or ``true``, or ``70000``) together with a matching
+    ``listeners.addresses`` read as the loopback-only binding and PASSed — but
+    no port producer (lsof ``-Fn`` addresses, the ``RETIREMENT_PORT_SETS``
+    allocation) can ever emit one: 0 is the *bind-time* wildcard spelling
+    that never appears in a sampled address, a bool is not a port, and a
+    TCP port tops out at 65535.  The only source is a corrupt artifact —
+    exactly the threat model this face fail-closes on.
+    """
+    return (isinstance(value, int) and not isinstance(value, bool)
+            and 0 < value <= 65535)
+
+
 def _retirement_hashable(value):
     """Set-safe projection of an observation value (#1588 r1 fix-r3, DS concurrency).
 
@@ -1995,6 +2015,14 @@ def _retirement_listener_verdict(listeners, gateway_port):
     """
     listeners = listeners if isinstance(listeners, dict) else {}
     addresses = listeners.get('addresses')
+    # fix-r9 (DS boundary r8 P0): the port is judged too, not only the
+    # addresses — a self-consistent corrupt round (``ports.gateway = 0``
+    # plus ``addresses = ['127.0.0.1:0']``) must not read as the binding.
+    if not _retirement_real_port(gateway_port):
+        return {'status': 'FAIL', 'rule': 'LISTENER_EXPOSURE', 'addresses': addresses,
+                'expected': None, 'loopbackOnly': listeners.get('loopbackOnly'),
+                'detail': f'gateway port {gateway_port!r} is not a real port, so the '
+                          'loopback-only listener binding cannot be judged'}
     expected = [f'127.0.0.1:{gateway_port}']
     if listeners.get('loopbackOnly') is not True or addresses != expected:
         return {'status': 'FAIL', 'rule': 'LISTENER_EXPOSURE', 'addresses': addresses,
@@ -2772,9 +2800,15 @@ def _retirement_entry_inventory(baseline, round_row):
     # guard the path side already had — only a true int (never a bool, never a
     # JSON string "404") is a usable probe status; anything else is an
     # unusable probe (None → NO_HIT), not a HIT.
+    # fix-r9 (DS boundary r8 P0 + DS sibling r8 P1, probe-verified —
+    # fix-r9-audit/probe-r9-ds-before.out S1): an out-of-domain int is the
+    # same unusable shape — the producer (retirement_driver.mts) only ever
+    # records a real HTTP status (100-599) or null, so a 0/-1/999 can only
+    # come from a corrupt artifact, and pre-fix it read as a HIT.
     probe_rows = [(probe.get('path') if isinstance(probe.get('path'), str) else '',
                    probe.get('status') if isinstance(probe.get('status'), int)
-                   and not isinstance(probe.get('status'), bool) else None)
+                   and not isinstance(probe.get('status'), bool)
+                   and 100 <= probe.get('status') <= 599 else None)
                   for probe in _retirement_list_rows(round_row.get('http')) if isinstance(probe, dict)]
     executed = {row.get('method') for row in _retirement_list_rows(round_row.get('outcomes'))
                 if isinstance(row, dict) and row.get('outcome') in ('ok', 'error')
@@ -2825,8 +2859,15 @@ def _retirement_entry_inventory(baseline, round_row):
             # upgrade — the wire pass already treats non-dict rows as carrying
             # no frame (#1588 r1 §1), so the hit reading agrees instead of
             # passing on any truthy value.
+            # fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/
+            # probe-r9-ds-before.out S3): a dict row whose 'frame' is not a
+            # dict carries no frame either — ``_retirement_wire_backing``
+            # only counts rows with a dict 'frame', so ``[{}]`` or
+            # ``[{'frame': None}]`` must not HIT here either.
             frames = round_row.get('frames')
-            hit = isinstance(frames, list) and any(isinstance(frame, dict) for frame in frames)
+            hit = (isinstance(frames, list)
+                   and any(isinstance(frame, dict) and isinstance(frame.get('frame'), dict)
+                           for frame in frames))
             reason = None if hit else 'no websocket frames recorded'
         else:
             hit = any(p[1] not in (None, 404) for p in matched)
@@ -3168,13 +3209,15 @@ def _retirement_report(output, baseline):
         # #1588 r1 §1: a round that recorded no gateway port cannot have its
         # listener binding judged — the face FAILs on the missing observation,
         # never a KeyError out of the report path.
+        # fix-r9 (DS boundary r8 P0): the gate judges a *real* port, not
+        # just an int — bool/0/70000 are the same missing observation.
         gateway_port = _retirement_round_ports(row).get('gateway')
         listener_verdicts.append(
             _retirement_listener_verdict(row.get('listeners'), gateway_port)
-            if isinstance(gateway_port, int) else
+            if _retirement_real_port(gateway_port) else
             {'status': 'FAIL', 'rule': 'LISTENER_EXPOSURE',
-             'reason': 'the round recorded no gateway port, so the loopback-only listener '
-                       'binding cannot be judged'})
+             'reason': 'the round recorded no real gateway port, so the loopback-only '
+                       'listener binding cannot be judged'})
     host_status = common.aggregate_status(*(verdict['status'] for verdict in
                                             census_verdicts + network_verdicts + listener_verdicts))[0]
     cold_restart = {'status': 'BLOCKED', 'rule': 'COLD_RESTART_PENDING',

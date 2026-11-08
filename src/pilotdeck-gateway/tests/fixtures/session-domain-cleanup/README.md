@@ -331,7 +331,7 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `nested-shared-call-boolop-bypass`,
 `calibrate-status-write-is-literal-bypass`,
 `calibrate-exit-is-literal-bypass`, `summary-status-shared-call-bypass`,
-`summary-unpack-shared-call-bypass`,
+`summary-unpack-shared-call-bypass`, `summary-name-relay-shared-call-bypass`,
 `calibrate-exit-name-is-literal-bypass`, `controls-nested-same-name`,
 `calibrate-shared-excuse`, `calibrate-status-setdefault`,
 `calibrate-status-update-kwarg`, `calibrate-early-return-branch`,
@@ -1204,3 +1204,22 @@ joined the five-exception family `_folded_string` got in fix-r7 (its
 container-literal branches have no `try` of their own).  The in-file
 aggregation-audit self-tests pin every one of these shapes, bounded
 formats included.
+
+fix-r9 (DS r8, probe-verified) added no mutants — the face-side fixes are
+pinned by `test_safety` (probe-status domain, gateway-port domain, the
+`/ws` frame-dict requirement, the witness pid ceiling) and the fold fixes
+by the in-file aggregation-audit self-tests, both the established r6-r8
+precedent.  The fold work: the container branches gained the *total*
+running bound (`_folded_size`, judged per element with an early exit, so
+`['x' * 999999, …]` piles can no longer sum to n × the cap — measured
+100 × 999999 chars folded to ~100 MB pre-fix and UNRESOLVED at ~51 MB RSS
+post-fix), the negative-int exponent comment was corrected to the measured
+behavior (CPython resolves `int ** negative-int` as a float power with no
+large intermediate; an oversized left raises `OverflowError` into the
+fail-closed except — the r8 comment's "raises" claim was wrong, and two
+self-tests pin it), bytes `%` formats joined the str bound through
+`_format_max_width` (a 1:1 latin-1 read; `b'%100000000s' % b'x'` no longer
+materialises), and the duplicated width scan was extracted into that one
+shared helper.  The enumeration list above also gained the
+`summary-name-relay-shared-call-bypass` row the r8 table add had missed
+(DS boundary r8 P3 — count 238 was already right).

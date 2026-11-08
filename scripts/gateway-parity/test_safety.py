@@ -3716,6 +3716,11 @@ class RetirementScoring(unittest.TestCase):
         # fix-r2 (DS boundary P2): only a true int is a usable probe status —
         # a JSON string ``"404"`` (or a boolean) is an unusable probe and must
         # never be read as a HIT by the ``not in (None, 404)`` check.
+        # fix-r9 (DS boundary r8 P0 + DS sibling r8 P1, probe-verified —
+        # fix-r9-audit/probe-r9-ds-before.out S1): an out-of-domain int is the
+        # same unusable shape — the producer only ever records a real HTTP
+        # status (100-599) or null, so 0/-1/999 can only come from a corrupt
+        # artifact, and pre-fix each read as a HIT.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             baseline = self._fake_baseline(root)
@@ -3729,7 +3734,8 @@ class RetirementScoring(unittest.TestCase):
                         'outcomes': [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
                         'runtime': {'pilotHome': str(home)}}
 
-            for tag, bad_status in (('json string', '404'), ('boolean', True)):
+            for tag, bad_status in (('json string', '404'), ('boolean', True),
+                                    ('zero', 0), ('negative', -1), ('oversized', 999)):
                 inventory = self.session._retirement_entry_inventory(
                     baseline, round_row('round-01', bad_status))
                 health = next(entry for entry in inventory['entries']
@@ -3737,6 +3743,15 @@ class RetirementScoring(unittest.TestCase):
                 self.assertTrue(health['status'] == 'NO_HIT',
                                 f'#47 {tag} status is an unusable probe: {health}')
                 self.assertIn('/health', inventory['unhit'])
+            # The in-domain statuses still HIT (the guard must not over-fold).
+            for good_status in (100, 200, 404, 599):
+                inventory = self.session._retirement_entry_inventory(
+                    baseline, round_row('round-02', good_status))
+                health = next(entry for entry in inventory['entries']
+                              if entry['entry'] == '/health')
+                expected = 'NO_HIT' if good_status == 404 else 'HIT'
+                self.assertEqual(health['status'], expected,
+                                 f'#47 status {good_status} must read {expected}: {health}')
 
     def test_entry_inventory_ws_hit_requires_list_frames(self):
         # fix-r3 (DS r2 boundary/sibling): the /ws hit is proven by wire
@@ -3745,6 +3760,11 @@ class RetirementScoring(unittest.TestCase):
         # ``unhit`` instead of HITting on any truthy value (pre-fix-r3 the
         # face could PASS on a corrupt artifact while the wire pass had
         # already treated those rows as carrying no frame).
+        # fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/
+        # probe-r9-ds-before.out S3): a dict row whose 'frame' is not a dict
+        # carries no frame either (``_retirement_wire_backing`` only counts
+        # dict 'frame' rows), so ``[{}]`` / ``[{'frame': None}]`` must read
+        # NO_HIT too, not HIT.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             baseline = self._fake_baseline(root)
@@ -3759,7 +3779,9 @@ class RetirementScoring(unittest.TestCase):
                         'runtime': {'pilotHome': str(home)}}
 
             for tag, bad_frames in (('truthy non-list', {'a': 1}),
-                                    ('all non-dict rows', [None, 123, 'x'])):
+                                    ('all non-dict rows', [None, 123, 'x']),
+                                    ('frameless dict row', [{}]),
+                                    ('null frame row', [{'frame': None}])):
                 inventory = self.session._retirement_entry_inventory(
                     baseline, round_row('round-01', bad_frames))
                 ws = next(entry for entry in inventory['entries']
@@ -4108,6 +4130,61 @@ class RetirementScoring(unittest.TestCase):
             verdict = self.session._retirement_listener_verdict(listeners, 28762)
             self.assertEqual(verdict['status'], 'FAIL', listeners)
             self.assertEqual(verdict['rule'], 'LISTENER_EXPOSURE')
+
+    def test_listener_gate_rejects_out_of_domain_gateway_ports(self):
+        # fix-r9 (DS boundary r8 P0, probe-verified — fix-r9-audit/
+        # probe-r9-ds-before.out S2): only a real port (a true int, non-bool,
+        # 0 < p <= 65535) can be the judged loopback binding — a corrupt
+        # *self-consistent* artifact (``ports.gateway`` = 0/true/70000 plus
+        # matching addresses) read as the PASS binding pre-fix, but no port
+        # producer (lsof ``-Fn`` addresses, the port-set allocation) can
+        # ever emit one.
+        for tag, port, addresses in (
+                ('zero', 0, ['127.0.0.1:0']),
+                ('boolean', True, ['127.0.0.1:True']),
+                ('oversized', 70000, ['127.0.0.1:70000'])):
+            verdict = self.session._retirement_listener_verdict(
+                {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}, port)
+            self.assertEqual(verdict['status'], 'FAIL', f'#49 {tag}: {verdict}')
+            self.assertEqual(verdict['rule'], 'LISTENER_EXPOSURE', f'#49 {tag}')
+            self.assertIn('not a real port', verdict['detail'], f'#49 {tag}')
+        # The report gate reads the same shapes as a missing observation.
+        expected = ['submit_turn', 'run_get']
+        for tag, port, addresses in (
+                ('zero', 0, ['127.0.0.1:0']),
+                ('boolean', True, ['127.0.0.1:True']),
+                ('oversized', 70000, ['127.0.0.1:70000'])):
+            row = self._stream_ok_round_row()
+            row['ports'] = {'mock': 28761, 'gateway': port}
+            row['listeners'] = {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}
+            report = self._report_for(row, expected)
+            face = report['hostAudit']['listeners'][0]
+            self.assertEqual(face['status'], 'FAIL', f'#49 report {tag}: {face}')
+        row = self._stream_ok_round_row()
+        report = self._report_for(row, expected)
+        self.assertEqual(report['hostAudit']['listeners'][0]['status'], 'PASS',
+                         '#49 the healthy port still judges PASS')
+
+    def test_audit_native_rejects_oversized_witness_pids(self):
+        # fix-r9 (DS sibling r8 P2, probe-verified — fix-r9-audit/
+        # probe-r9-ds-before.out S4): the witness gate follows the census's
+        # real-pid rule — an int past the int32 pid ceiling is a corrupt
+        # artifact, not a witnessed process, so the capture FAILs at
+        # PROCESS_WITNESS instead of comparing the forged pid downstream.
+        evidence = {'topology': 'native',
+                    'processes': [{'pid': 2 ** 63, 'argv': ['pilotdeck'], 'role': 'host'}],
+                    'execWitness': {'complete': True, 'source': 'exec-monitor'}}
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust'})
+        self.assertEqual(raised.exception.rule, 'PROCESS_WITNESS')
+        self.assertIn('invalid/duplicate PID', str(raised.exception))
+        # The in-domain pid survives the gate and fails later on the honest
+        # contract mismatch instead (the rule differs — never PROCESS_WITNESS
+        # again for a legal pid shape).
+        evidence['processes'] = [{'pid': 4242, 'argv': ['pilotdeck'], 'role': 'host'}]
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust', 'processRoles': []})
+        self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS')
 
     def _fake_baseline(self, root, break_route=False, drop_listener=False):
         """Synthetic baseline whose parse reproduces the real 13/4 entry set."""
