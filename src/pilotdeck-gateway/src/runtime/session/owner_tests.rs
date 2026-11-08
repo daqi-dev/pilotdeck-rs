@@ -2297,3 +2297,40 @@ async fn native_project_request_scope_pins_absent_owner_until_handler_finishes()
     drop(third);
     bounded(owner.shutdown()).await.unwrap();
 }
+
+#[tokio::test]
+async fn native_owner_close_keeps_retained_replay_scoped_to_original_project() {
+    use crate::runtime::turn::{
+        coordinator::TurnEventCoordinator, read, replay::ActiveTurnSnapshotInput,
+    };
+    let mut options = SessionOwnerOptions::new(Arc::new(Probe::default()));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner.enforce_project_binding();
+    let mut a = context("shared");
+    a.project_key = Some("A".into());
+    bounded(owner.get_or_create(a)).await.unwrap();
+    let coordinator = TurnEventCoordinator::new();
+    let reg = coordinator.start_for_project(&"shared".into(), &"run".into(), &"A".into(), |_| {});
+    coordinator.record(
+        &"shared".into(),
+        &parse_json(r#"{"type":"model_event","runId":"run","text":"A-secret"}"#).unwrap(),
+    );
+    coordinator.retain_terminal(&"shared".into(), &"run".into());
+    drop(reg);
+    bounded(owner.close(&"shared".into())).await.unwrap();
+    let scope = owner
+        .reserve_project(&"shared".into(), Some(&"B".into()), &"B".into())
+        .unwrap();
+    let input = ActiveTurnSnapshotInput::new("shared".into());
+    let b = read::active_turn_snapshot_for_project(&coordinator, &input, scope.project_key());
+    assert!(!b.active && !b.terminal && b.events.is_empty());
+    let a = read::active_turn_snapshot_for_project(&coordinator, &input, &"A".into());
+    assert!(a.terminal && !a.events.is_empty());
+    assert!(
+        read::active_turn_snapshot(&coordinator, &input).terminal,
+        "generic replay remains unfiltered"
+    );
+    drop(scope);
+    bounded(owner.shutdown()).await.unwrap();
+}

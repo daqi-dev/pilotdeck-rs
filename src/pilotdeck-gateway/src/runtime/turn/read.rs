@@ -284,6 +284,25 @@ pub fn active_turn_snapshot(
     coordinator.snapshot(input)
 }
 
+/// Native request view: a missing, foreign or unbound replay is an empty
+/// snapshot. Project provenance is checked under the replay store lock.
+pub(crate) fn active_turn_snapshot_for_project(
+    coordinator: &TurnEventCoordinator,
+    input: &ActiveTurnSnapshotInput,
+    project: &JsString,
+) -> ActiveTurnSnapshot {
+    coordinator
+        .snapshot_for_project(input, project)
+        .unwrap_or_else(|| ActiveTurnSnapshot {
+            active: false,
+            session_key: input.session_key.clone(),
+            run_id: None,
+            events: Vec::new(),
+            truncated: false,
+            terminal: false,
+        })
+}
+
 /// InProcessGateway.ts:2841-2861. `history` is the host-owned durable reader;
 /// `None` is the unconfigured gateway. `input` is the caller's
 /// `read_session_messages` request, passed through unchanged. Three attempts,
@@ -309,16 +328,7 @@ pub(crate) async fn read_session_messages_for_project(
     project: &JsString,
 ) -> Result<JsValue, TurnReadError> {
     read_session_messages_with_snapshot(history, input, |request| {
-        coordinator
-            .snapshot_for_project(request, project)
-            .unwrap_or_else(|| ActiveTurnSnapshot {
-                active: false,
-                session_key: request.session_key.clone(),
-                run_id: None,
-                events: Vec::new(),
-                truncated: false,
-                terminal: false,
-            })
+        active_turn_snapshot_for_project(coordinator, request, project)
     })
     .await
 }
