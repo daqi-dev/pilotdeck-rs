@@ -790,6 +790,15 @@ async fn gates_pump_starts_only_after_the_gate_commits(case: &str) {
         usize::from(case == "open"),
         "#855 [{case}]: the pump must start only after the gate commits"
     );
+    // #1770: post-cleanup re-check — the durable count measured in the cell
+    // body is the scenario's final state; the owned cleanup that just ran
+    // (the handler dispose the wait above observed) must not append a
+    // compensating turn_result after that snapshot.
+    assert_eq!(
+        store.completes.load(Ordering::SeqCst),
+        usize::from(case != "reject"),
+        "#1770 [{case}]: owned cleanup must not append a compensating turn_result"
+    );
     std::fs::remove_dir_all(root).expect("#855: pump gate setup/read/cleanup must succeed");
 }
 
