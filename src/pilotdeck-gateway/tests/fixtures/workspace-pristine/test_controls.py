@@ -485,15 +485,23 @@ class WorkspacePristine(unittest.TestCase):
 
     def test_conditional_nonliteral_paths_remain_rejected(self):
         for key in ('path', 'r#path'):
-            failure = None
-            try:
-                self.commit_source(f'#[cfg_attr(all(), {key} = concat!("x", ".rs"))] mod child;',
-                                   {'src/pilotdeck-cli/src/child.rs': '// default decoy'})
-                api._workspace_literal_inputs(self.root, 'HEAD')
-            except api.SourceBaselineError as error:
-                failure = str(error)
-            self.assertTrue(failure is not None and 'conditional path attribute' in failure,
-                            '#132 conditional nonliteral paths must fail closed')
+            # #1249: a conditional path attribute must keep its own rejection
+            # in every shape that resolves to it: the plain nonliteral value,
+            # and the mixed attribute whose metadata literal path is visited
+            # first but is outranked by the attribute-level path key.
+            for source in (f'#[cfg_attr(all(), {key} = concat!("x", ".rs"))] mod child;',
+                           f'#[cfg_attr(all(), databake(path = "x.rs"), {key} = "child.rs")] mod child;'):
+                with self.subTest(key=key, source=source):
+                    failure = None
+                    try:
+                        self.commit_source(source,
+                                           {'src/pilotdeck-cli/src/child.rs': '// default decoy'})
+                        api._workspace_literal_inputs(self.root, 'HEAD')
+                    except api.SourceBaselineError as error:
+                        failure = str(error)
+                    self.assertTrue(failure is not None and 'conditional path attribute' in failure
+                                    and 'literal path attribute' not in failure,
+                                    '#132 conditional nonliteral paths must fail closed')
 
     def test_metadata_string_paths_remain_rejected(self):
         for key in ('path', 'r#path'):

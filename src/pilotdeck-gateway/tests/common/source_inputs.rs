@@ -928,6 +928,13 @@ mod tests {
                 "#[cfg_attr(all(), path = concat!(\"x\", \".rs\"))] mod renamed;",
                 "#1166 conditional path attribute cannot be resolved statically",
             ),
+            // #1249: the mixed shape - a metadata literal key first, then an
+            // attribute-level path key in the same attribute - must report the
+            // stricter conditional reason, not whichever key was visited first.
+            (
+                "#[cfg_attr(all(), databake(path = \"x.rs\"), path = \"source_inputs.rs\")] mod renamed;",
+                "#1166 conditional path attribute cannot be resolved statically",
+            ),
         ] {
             let tokens = lex_source(source).expect("#1249 rejection fixture must lex");
             let mut scanner = EdgeScanner {

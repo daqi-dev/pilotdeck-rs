@@ -88,6 +88,17 @@ cases = [
      'PathKeyKind::Conditional => {\n                        "#1249 literal path attribute treated as a file edge"\n                    }',
      'WorkspacePristine.test_conditional_nonliteral_paths_remain_rejected',
      '#132 conditional nonliteral paths must fail closed'),
+    # #1249 r2: the attribute-over-metadata precedence itself. Dropping the
+    # file_attribute term leaves the first-visited kind in place, so a mixed
+    # attribute (metadata literal key first, attribute-level path key second)
+    # flips from the conditional rejection to the metadata text - the exact
+    # mirror of the issue. Single-kind shapes keep their classification under
+    # this mutant, so the kill rides on the mixed shape the bound test commits.
+    ('attribute-kind-priority-dropped', SCANNER,
+     '        if file_attribute || kind.is_none() {',
+     '        if kind.is_none() {',
+     'WorkspacePristine.test_conditional_nonliteral_paths_remain_rejected',
+     '#132 conditional nonliteral paths must fail closed'),
     ('model-factory-cargo-env-omitted', MODEL_FACTORY,
      'cwd=root, env=env, timeout=100', 'cwd=root, timeout=100',
      'RunnerTargets.test_model_factory_target_admission', '#1166 model-factory runner shares the admissible target'),
