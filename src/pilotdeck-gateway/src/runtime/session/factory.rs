@@ -562,6 +562,7 @@ pub struct PreparedResources {
     // Opt-in session composition: storage is selected from the same prepared
     // project generation as model/tools, rather than resolving a second one.
     storage_factory: Option<CreateStorage>,
+    admission: Option<Admission>,
 }
 impl PreparedResources {
     /// Register cleanup on the executor captured by the first registration.
@@ -586,6 +587,17 @@ impl PreparedResources {
         self.storage_factory = Some(storage);
         Ok(())
     }
+    /// Bind original admission to the same immutable project generation that
+    /// prepared this session. Generic callers retain FactoryOptions.admission.
+    pub fn set_admission(&mut self, admission: Admission) -> RuntimeResult {
+        if self.admission.is_some() {
+            return Err(RuntimeError::new(
+                "Prepared session admission is already selected.",
+            ));
+        }
+        self.admission = Some(admission);
+        Ok(())
+    }
     pub fn retain_lease(&mut self, mut lease: RuntimeLease) {
         self.push(move || Box::pin(async move { lease.release().await }));
     }
@@ -593,6 +605,7 @@ impl PreparedResources {
         // An unused callback can own a reference to a prepared generation.
         // Drop it before release callbacks that wait for that lease to drain.
         drop(self.storage_factory.take());
+        drop(self.admission.take());
         release_all(std::mem::take(&mut self.releases)).await
     }
 }
@@ -600,6 +613,7 @@ impl Drop for PreparedResources {
     fn drop(&mut self) {
         // Cancellation obeys the same ordering as explicit release.
         drop(self.storage_factory.take());
+        drop(self.admission.take());
         // A runtime that rejects or drops the spawned task also drops the
         // releases inside it; their own synchronous Drop semantics (lease
         // counts, WriterCloseGuard threads) still run. The async custom
@@ -680,19 +694,36 @@ pub(crate) struct SopStorage {
 impl SopStorage {
     pub(crate) fn close(self) -> BoxFuture<RuntimeResult> {
         let closing = self.storage.close_owned();
-        Box::pin(async move { let owner = self; let result = closing.await; drop(owner); result })
+        Box::pin(async move {
+            let owner = self;
+            let result = closing.await;
+            drop(owner);
+            result
+        })
     }
 }
 impl FactoryStorage {
-    pub(crate) async fn open_sop(self, writer_wait: std::time::Duration, generation: Arc<RuntimeLease>) -> Result<SopStorage, RuntimeError> {
+    pub(crate) async fn open_sop(
+        self,
+        writer_wait: std::time::Duration,
+        generation: Arc<RuntimeLease>,
+    ) -> Result<SopStorage, RuntimeError> {
         let storage = Arc::new(self);
-        let deadline = tokio::time::Instant::now().checked_add(writer_wait).ok_or_else(|| RuntimeError::new("SOP writer wait is outside the supported range."))?;
+        let deadline = tokio::time::Instant::now()
+            .checked_add(writer_wait)
+            .ok_or_else(|| RuntimeError::new("SOP writer wait is outside the supported range."))?;
         let lease = acquire_writer(storage.recorder.writer().path().to_owned(), deadline).await?;
         *lock(&storage.writer_lease) = Some(lease);
-        let mut writer = storage.take_writer_lease(); writer.owner = Some(generation);
-        let owner = SopStorage { _writer: writer, storage };
+        let mut writer = storage.take_writer_lease();
+        writer.owner = Some(generation);
+        let owner = SopStorage {
+            _writer: writer,
+            storage,
+        };
         let path = owner.storage.recorder.writer().path().to_owned();
-        let _fence = super::transcript_locks::acquire(&path).await.map_err(|error| RuntimeError::new(String::from_utf16_lossy(error.message.units())))?;
+        let _fence = super::transcript_locks::acquire(&path)
+            .await
+            .map_err(|error| RuntimeError::new(String::from_utf16_lossy(error.message.units())))?;
         owner.storage.restore().await?;
         Ok(owner)
     }
@@ -1086,7 +1117,11 @@ impl ProjectSessionFactory {
                     RuntimeError::new(String::from_utf16_lossy(error.message.units()))
                 })?;
             if previous.is_none()
-                && let Some(admission) = &self.options.admission
+                && let Some(admission) = prepared
+                    .resources
+                    .admission
+                    .as_ref()
+                    .or(self.options.admission.as_ref())
             {
                 let read = storage.restore().await?;
                 if read.entries.is_empty()

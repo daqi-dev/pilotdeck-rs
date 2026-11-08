@@ -7885,3 +7885,131 @@ async fn cancelled_prepared_storage_capture_drops_before_generation_release() {
     })
     .await;
 }
+
+#[tokio::test]
+async fn prepared_admission_is_the_real_fenced_original_metadata_source() {
+    let h = Harness::new("prepared-admission");
+    let prepare = h.factory.options.prepare.clone();
+    let options = &h.factory.options;
+    let factory = ProjectSessionFactory::new(FactoryOptions {
+        writer_busy_wait_timeout: options.writer_busy_wait_timeout,
+        prepare: Arc::new(move |context, mcp| {
+            let preparing = prepare(context, mcp);
+            Box::pin(async move {
+                let mut prepared = preparing.await?;
+                prepared.resources.set_admission(Arc::new(|context| {
+                    Box::pin(async move {
+                        Ok(Some(crate::metadata::object([
+                            (
+                                "projectKey",
+                                context
+                                    .project_key
+                                    .map(JsValue::String)
+                                    .unwrap_or(JsValue::Undefined),
+                            ),
+                            ("generation", "prepared-original".into()),
+                        ])))
+                    })
+                }))?;
+                Ok(prepared)
+            })
+        }),
+        create_storage: options.create_storage.clone(),
+        admission: Some(Arc::new(|_| {
+            Box::pin(async {
+                Err(RuntimeError::new(
+                    "unselected global admission must not run",
+                ))
+            })
+        })),
+        diagnostic: options.diagnostic.clone(),
+        tool_results_dir: options.tool_results_dir.clone(),
+    });
+    let handle = bounded(
+        "prepared admission create",
+        factory.create(h.context(), None),
+    )
+    .await
+    .unwrap();
+    let path = lock(&h.observed.bindings)
+        .last()
+        .unwrap()
+        .recorder
+        .writer()
+        .path()
+        .to_owned();
+    let read = crate::storage::read_transcript_bounded(&path).unwrap().read;
+    let admission = read
+        .entries
+        .iter()
+        .filter(|e| e.get("turnId") == Some(&JsValue::from("host-admission")))
+        .collect::<Vec<_>>();
+    assert_eq!(admission.len(), 1, "one durable original admission");
+    assert_eq!(
+        admission[0]
+            .get("metadata")
+            .and_then(|v| v.get("staffDeckAdmission"))
+            .and_then(|v| v.get("generation")),
+        Some(&JsValue::from("prepared-original"))
+    );
+    bounded(
+        "prepared admission drain",
+        handle.dispose("fixture_complete".into()),
+    )
+    .await
+    .unwrap();
+    drop(handle);
+    bounded("prepared admission factory drain", factory.dispose())
+        .await
+        .unwrap();
+    h.finish("prepared admission original harness").await;
+}
+fn unused_admission_capture(flag: Arc<std::sync::atomic::AtomicBool>) -> Admission {
+    let capture = StorageCaptureDropped(flag);
+    Arc::new(move |_| {
+        let _capture = &capture;
+        Box::pin(async { Err(RuntimeError::new("unused admission must not run")) })
+    })
+}
+#[tokio::test]
+async fn prepared_admission_drops_before_explicit_and_cancelled_lease_release() {
+    for cancel in [false, true] {
+        let captured = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observed = captured.clone();
+        let completed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let released = completed.clone();
+        let mut resources = PreparedResources::default();
+        resources
+            .set_admission(unused_admission_capture(captured))
+            .unwrap();
+        assert!(
+            resources
+                .set_admission(unused_admission_capture(Arc::default()))
+                .is_err()
+        );
+        resources.push(move || {
+            Box::pin(async move {
+                assert!(
+                    observed.load(Ordering::SeqCst),
+                    "admission cannot pin its own retired generation drain"
+                );
+                released.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        });
+        if cancel {
+            drop(resources);
+            bounded("cancelled admission cleanup", async {
+                while !completed.load(Ordering::SeqCst) {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+        } else {
+            bounded("explicit admission cleanup", resources.release())
+                .await
+                .unwrap();
+            assert!(completed.load(Ordering::SeqCst));
+        }
+    }
+}

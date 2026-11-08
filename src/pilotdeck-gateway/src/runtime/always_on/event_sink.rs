@@ -10,7 +10,7 @@ struct Pending { count: AtomicUsize, changed: tokio::sync::Notify }
 struct Ticket(Arc<Pending>);
 impl Drop for Ticket {
     fn drop(&mut self) {
-        if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 { self.0.changed.notify_one(); }
+        if self.0.count.fetch_sub(1, Ordering::AcqRel) == 1 { self.0.changed.notify_waiters(); }
     }
 }
 
@@ -37,6 +37,8 @@ impl PhaseEventSink {
         if let Some(last) = last && last.await.is_err() { Self::diagnose(&self.failures, &self.diagnostic); }
         loop {
             let wake = self.pending.changed.notified();
+            tokio::pin!(wake);
+            wake.as_mut().enable();
             if self.pending.count.load(Ordering::Acquire) == 0 { return; }
             wake.await;
         }
@@ -106,6 +108,34 @@ impl PhaseObserver for PhaseEventSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn final_ticket_wakes_every_concurrent_drainer() {
+        let root = std::env::temp_dir().join(format!("pdrs-event-drain-{}", uuid::Uuid::new_v4()));
+        let metadata = crate::metadata::Metadata { home: root.clone(), cwd: Default::default(), files: crate::metadata::NativeFiles };
+        let paths = super::super::paths::resolve_always_on_paths(&root, "/fixture/project", &metadata).unwrap();
+        let sink = PhaseEventSink::new("/fixture/project".into(), DiscoveryReportStore::new(paths), None, Arc::new(|_| {}));
+        let ticket = sink.ticket();
+        let mut tasks = Vec::new();
+        for _ in 0..3 {
+            let sink = sink.clone();
+            let (ready, parked) = tokio::sync::oneshot::channel();
+            tasks.push(tokio::spawn(async move {
+                let drain = sink.drain();
+                tokio::pin!(drain);
+                std::future::poll_fn(|cx| {
+                    assert!(drain.as_mut().poll(cx).is_pending());
+                    std::task::Poll::Ready(())
+                }).await;
+                ready.send(()).unwrap();
+                drain.await;
+            }));
+            parked.await.unwrap();
+        }
+        drop(ticket);
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            for task in tasks { task.await.unwrap(); }
+        }).await.expect("the final write must release every waiter, including stop");
+    }
     #[tokio::test]
     async fn observer_and_synthetic_events_are_persisted_and_drained() {
         let root = std::env::temp_dir().join(format!("pdrs-always-on-events-{}", uuid::Uuid::new_v4()));

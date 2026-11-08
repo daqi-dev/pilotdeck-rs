@@ -38,7 +38,7 @@ impl PhaseRunner {
         let request = PhaseRequest { project_key: self.project.clone(), session_key: spec.session_key.as_str().into(),
             channel_key: spec.channel_key, run_id: spec.phase_run, message: spec.message, cwd: spec.cwd,
             permission_mode: "bypassPermissions".into(), bypass_available: true, can_prompt: false,
-            exclude_tools: ["enter_plan_mode", "exit_plan_mode", "ask_user_question"].into_iter().map(JsString::from).collect(),
+            exclude_tools: crate::config::session_overrides::UNATTENDED_SESSION_EXCLUDED_TOOLS.into_iter().map(JsString::from).collect(),
             permission_deny: spec.deny, context_registry: self.contexts.clone(),
             register_automation_tools: true, observer: self.observer.clone() };
         let result = self.gateway.run_phase(request).await;

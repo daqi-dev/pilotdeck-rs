@@ -86,11 +86,13 @@ impl NativeFire {
         self.reports.append_history(event).await.map_err(|e| failure("internal", e.to_string()))?;
         Ok(())
     }
+    fn chinese(&self) -> bool { self.input.config.language.as_deref() == Some("zh-CN") }
     fn discovery_prompt(&self, digest: &ChatDigest, plans: &[super::DiscoveryPlanRecord]) -> JsString {
-        let mut out = format!("Inspect project {} and propose at most one useful plan with always_on_discovery_plan.\n", self.input.project_key).encode_utf16().collect::<Vec<_>>();
-        for plan in plans { out.extend("Existing plan: ".encode_utf16()); out.extend_from_slice(plan.id.units());
+        let intro = if self.chinese() { format!("检查项目 {}，使用 always_on_discovery_plan 提出最多一个有用计划。请用简体中文撰写计划。\n", self.input.project_key) } else { format!("Inspect project {} and propose at most one useful plan with always_on_discovery_plan.\n", self.input.project_key) };
+        let mut out = intro.encode_utf16().collect::<Vec<_>>();
+        for plan in plans { out.extend(if self.chinese() { "已有计划：" } else { "Existing plan: " }.encode_utf16()); out.extend_from_slice(plan.id.units());
             if let Some(title) = &plan.title { out.extend(" — ".encode_utf16()); out.extend_from_slice(title.units()); } out.push(10); }
-        for session in &digest.sessions { out.extend("Session ".encode_utf16()); out.extend_from_slice(session.alias.units());
+        for session in &digest.sessions { out.extend(if self.chinese() { "会话 " } else { "Session " }.encode_utf16()); out.extend_from_slice(session.alias.units());
             out.extend(" — ".encode_utf16()); out.extend_from_slice(session.title.units()); out.extend(" [".encode_utf16());
             out.extend_from_slice(session.modified.units()); out.extend("]\n".encode_utf16());
             for prompt in &session.prompts { out.extend("  > ".encode_utf16()); out.extend_from_slice(prompt.units()); out.push(10); } }
@@ -144,7 +146,7 @@ impl NativeFire {
         let cycles = self.input.cycle_store.clone(); let cycle = ws.cycle.id.clone(); let id = plan.id.clone();
         storage::run(move || cycles.add_plan(&cycle, id)).await.map_err(|e| failure("internal", e.to_string()))?;
         let cwd = PathBuf::from(js(&ws.handle.cwd)?);
-        let mut body = "Execute this plan in the current isolated workspace. Do not push or change remotes.\n\n".encode_utf16().collect::<Vec<_>>();
+        let mut body = if self.chinese() { "在当前隔离工作区执行这个计划。禁止推送或更改远端。请用简体中文说明执行结果。\n\n" } else { "Execute this plan in the current isolated workspace. Do not push or change remotes.\n\n" }.encode_utf16().collect::<Vec<_>>();
         body.extend_from_slice(markdown.units());
         self.emit(run, "execution_started", Some(&plan.id), Some(&title), None, None);
         let result = self.phase_runner().run(self.phase_spec(run, "execute", cwd.clone(), JsString::from_utf16(body), Arc::new(PhaseHandlers::Execution))).await?;
@@ -162,7 +164,7 @@ impl NativeFire {
         let handler = Arc::new(ReportHandler { run_id: run.into(), plan_id: plan.id.clone(), started_at: Some(iso(started)),
             workspace_strategy: ws.handle.strategy.as_str().into(), workspace_handle: ws.handle.cwd.clone(),
             store: self.reports.clone(), state: report_state.clone(), pending: Arc::<ReportPending>::default() });
-        let mut prompt = "Describe the completed work and use always_on_report to save the report.\n\n".encode_utf16().collect::<Vec<_>>();
+        let mut prompt = if self.chinese() { "用简体中文描述已完成的工作，并使用 always_on_report 保存报告。\n\n" } else { "Describe the completed work and use always_on_report to save the report.\n\n" }.encode_utf16().collect::<Vec<_>>();
         prompt.extend_from_slice(markdown.units());
         let result = self.phase_runner().run(self.phase_spec(run, "report", cwd, JsString::from_utf16(prompt), Arc::new(PhaseHandlers::Report(handler)))).await?;
         let mut report = report_state.lock().await.report.clone();
@@ -311,7 +313,7 @@ mod tests {
             })
         }
     }
-    struct FullRun(std::sync::Mutex<Vec<String>>);
+    struct FullRun(std::sync::Mutex<Vec<String>>, bool);
     impl super::super::AlwaysOnAgentGateway for FullRun {
         fn abort_turn<'a>(&'a self, _: GatewayAbortInput<'a>) -> Pin<Box<dyn Future<Output=Result<(), JsString>> + Send + 'a>> { Box::pin(async { Ok(()) }) }
         fn run_phase<'a>(&'a self, request: PhaseRequest) -> Pin<Box<dyn Future<Output=Result<PhaseResult, ControlError>> + Send + 'a>> {
@@ -319,6 +321,15 @@ mod tests {
                 use crate::{host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext}, runtime::tools::{ToolRegistry, ToolRunContext}};
                 let phase = request.channel_key.to_utf8().unwrap();
                 self.0.lock().unwrap().push(phase.clone());
+                let prompt = request.message.to_utf8().unwrap();
+                let expected = match (phase.as_str(), self.1) {
+                    ("always-on/discovery", true) => "检查项目", ("always-on/discovery", false) => "Inspect project",
+                    ("always-on/workspace", true) => "创建隔离工作区", ("always-on/workspace", false) => "Prepare an isolated workspace",
+                    ("always-on/execute", true) => "在当前隔离工作区", ("always-on/execute", false) => "Execute this plan",
+                    ("always-on/report", true) => "用简体中文描述", ("always-on/report", false) => "Describe the completed work",
+                    _ => panic!("unexpected phase"),
+                };
+                assert!(prompt.contains(expected), "actual {phase} request: {prompt}");
                 let registry = ToolRegistry::default();
                 super::super::tools::register_tools(&registry, request.context_registry.clone(), &request.session_key)
                     .map_err(|e| failure("tool_registry", e.to_string()))?;
@@ -350,7 +361,10 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn real_stores_and_phase_tools_complete_a_full_fire() {
+    async fn real_stores_and_phase_tools_complete_a_full_fire() { full_fire(false).await; }
+    #[tokio::test]
+    async fn chinese_language_reaches_every_actual_phase_request() { full_fire(true).await; }
+    async fn full_fire(chinese: bool) {
         let root = std::env::temp_dir().join(format!("pdrs-native-fire-full-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap(); let root = root.canonicalize().unwrap();
         let project = root.join("project"); let home = root.join("home");
@@ -366,8 +380,10 @@ mod tests {
         let plans = Arc::new(super::super::DiscoveryPlanStore::new(paths.clone()));
         let cycles = Arc::new(super::super::WorkCycleStore::new(paths.clone()));
         let sink = Arc::new(PhaseEventSink::new(project.to_str().unwrap().into(), DiscoveryReportStore::new(paths.clone()), None, Arc::new(|_| {})));
-        let gateway = Arc::new(FullRun(std::sync::Mutex::new(Vec::new())));
-        let input = FireInputs { config: AlwaysOnConfig::default_config(), project_key: project.to_str().unwrap().into(),
+        let gateway = Arc::new(FullRun(std::sync::Mutex::new(Vec::new()), chinese));
+        let mut config = AlwaysOnConfig::default_config();
+        if chinese { config.language = Some("zh-CN".into()); }
+        let input = FireInputs { config, project_key: project.to_str().unwrap().into(),
             paths: paths.clone(), state_store: state.clone(), plan_store: plans.clone(), cycle_store: cycles.clone(),
             contexts: Arc::new(AlwaysOnRunContextRegistry::new()), gateway: gateway.clone(), now: Arc::new(|| 1_000.0), uuid: Arc::new(|| "cycle".into()) };
         let fire = NativeFire::new(input, workspace, sink, HistoryFiles { home: home.clone(), project: project.clone() },

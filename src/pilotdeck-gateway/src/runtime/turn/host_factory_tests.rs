@@ -2215,7 +2215,7 @@ async fn sop_cancel_drains_the_real_node_and_retains_the_old_generation() {
     let mut stream = session.submit_turn_for_test(parse_json(r#"{"type":"text","text":"cancel node"}"#).unwrap(), wire()).unwrap();
     loop { let event = bounded_liveness(stream.next()).await.unwrap().unwrap(); if event.get("type") == Some(&"model_request_started".into()) { break; } }
     bounded(registry.reload()).await.unwrap(); assert!(old.lease_count() > 0);
-    session.abort("cancel probe".into()).unwrap();
+    session.abort(&"cancel probe".into()).unwrap();
     let mut terminal = None; while let Some(event) = bounded_liveness(stream.next()).await.unwrap() { if event.get("type") == Some(&"turn_completed".into()) { terminal = Some(event); } }
     drop(stream); bounded(session.dispose()).await.unwrap(); bounded(registry.dispose()).await.unwrap();
     assert_eq!(terminal.unwrap().get("result").and_then(|result| result.get("type")), Some(&"aborted".into()));

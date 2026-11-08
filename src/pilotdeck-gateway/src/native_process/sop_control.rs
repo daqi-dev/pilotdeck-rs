@@ -22,7 +22,7 @@ use crate::{
     runtime::{
         connection::RequestError,
         manager::{SessionCatalogListInput, SessionCatalogPort, TranscriptSessionCatalog},
-        project::{ProjectRuntimeRegistry, RuntimeLease, factory::ProjectResources},
+        project::{ProjectRuntimeRegistry, RuntimeLease, ProjectResources},
     },
 };
 use pilotdeck_protocol::{JsString, JsValue};
@@ -203,7 +203,7 @@ impl NativeSopControl {
         if value(wait, "kind") == &JsValue::from("external_task") {
             let mut output = pilotdeck_protocol::JsObject::new();
             if let Some(object) = snapshot.as_object() {
-                for (k, v) in object {
+                for (k, v) in object.own_entries() {
                     if !k.equals_str("approval") && !k.equals_str("approvalError") {
                         output.insert(k.clone(), v.clone());
                     }
@@ -636,7 +636,7 @@ mod tests {
         let file = root.join("staffdeck/project-bindings.json");
         let row = |status: &str| {
             crate::metadata::object([
-                ("version", 1.0.into()),
+                ("version", JsValue::Number(1.0)),
                 ("installationId", "fixture-install".into()),
                 (
                     "projects",
@@ -662,7 +662,7 @@ mod tests {
         }
         std::fs::write(
             &file,
-            pilotdeck_protocol::stringify_json(&row("bound")).unwrap(),
+            pilotdeck_protocol::stringify_json(&row("bound")).unwrap().unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -676,7 +676,7 @@ mod tests {
         );
         std::fs::write(
             &file,
-            pilotdeck_protocol::stringify_json(&row("revoked")).unwrap(),
+            pilotdeck_protocol::stringify_json(&row("revoked")).unwrap().unwrap(),
         )
         .unwrap();
         let original = std::fs::read(&file).unwrap();

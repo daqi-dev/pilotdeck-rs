@@ -593,7 +593,7 @@ impl AlwaysOnRuntime {
         let plan_id = input.plan_id.clone();
         let now = self.now.clone();
         let fire_run_id = run_id.clone();
-        self.track_control_run(run_id, session_keys, async move {
+        self.track_control_run(run_id, session_keys, not_ready_rerun, async move {
             let started_at_ms = (now)();
             let result = fire
                 .rerun_plan(RerunFireInput {
@@ -629,7 +629,7 @@ impl AlwaysOnRuntime {
         let project_root = input.project_key.clone();
         let cycle_store = self.cycle_store.clone();
         let fire_run_id = run_id.clone();
-        self.track_control_run(run_id, session_keys, async move {
+        self.track_control_run(run_id, session_keys, not_ready_apply, async move {
             let Some((cycle, plans)) = cycle_store.read_apply(work_cycle_id.as_str().into()).await? else {
                 return Ok(ApplyResult {
                     session_key: String::new(),
@@ -741,20 +741,23 @@ impl AlwaysOnRuntime {
         &self,
         run_id: String,
         session_keys: Vec<String>,
+        not_ready: fn() -> T,
         run: impl Future<Output = io::Result<T>> + Send + 'static,
     ) -> io::Result<T> {
         let (finished_tx, finished) = tokio::sync::watch::channel(false);
-        self.shared
-            .active_control_runs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(
+        {
+            let mut active = self.shared.active_control_runs.lock().unwrap_or_else(|e| e.into_inner());
+            // Stop publishes `stopping` before taking this same registry.
+            // Admission either precedes its drain or observes the closed gate.
+            if self.shared.stopping.load(Ordering::SeqCst) { return Ok(not_ready()); }
+            active.insert(
                 run_id.clone(),
                 ActiveControlRun {
                     session_keys,
                     finished,
                 },
             );
+        }
         let shared = self.shared.clone();
         let task = tokio::spawn(async move {
             let result = run.await;
@@ -1547,6 +1550,35 @@ mod tests {
         assert!(runtime.stop_checked().await.unwrap_err().to_string().contains("workspace close failed"));
         let repeated = tokio::time::timeout(std::time::Duration::from_secs(1), runtime.stop_checked()).await.expect("repeat must not hang");
         assert!(repeated.unwrap_err().to_string().contains("workspace close failed"));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_between_control_precheck_and_registration_rejects_late_run() {
+        let home = scratch("stop-before-registration");
+        let key = home.join("proj").to_string_lossy().into_owned();
+        let (entered_tx, entered) = tokio::sync::oneshot::channel();
+        let entered_tx = Mutex::new(Some(entered_tx));
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let parked = release.clone();
+        let uuid = Arc::new(move || {
+            entered_tx.lock().unwrap().take().unwrap().send(()).unwrap();
+            let (lock, changed) = &*parked;
+            let (ready, _) = changed.wait_timeout_while(lock.lock().unwrap(), std::time::Duration::from_secs(5), |ready| !*ready).unwrap();
+            assert!(*ready, "test must release the parked control request");
+            "late-run".into()
+        });
+        let runtime = Arc::new(AlwaysOnRuntime::new(config(&key), &home, &key, None, None, Some(uuid), None, None).unwrap());
+        runtime.swap_fire_for_test(Arc::new(DiscoveryFire::new(runtime.plan_store.clone())));
+        let task_runtime = runtime.clone();
+        let request = tokio::spawn(async move { task_runtime.rerun_plan(&RerunInput { project_key: key, plan_id: "missing".into() }).await });
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered).await.unwrap().unwrap();
+        runtime.stop_checked().await.unwrap();
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        let result = request.await.unwrap().unwrap();
+        assert_eq!(result.error.unwrap().code, "not_ready");
+        assert!(runtime.shared.active_control_runs.lock().unwrap().is_empty());
+        std::fs::remove_dir_all(home).unwrap();
     }
 
     // Matrix §三 r3 / AlwaysOnRuntime.ts:296-315: stop waits out an in-flight

@@ -86,7 +86,7 @@ impl ApplyPhase {
             permission_mode: "bypassPermissions".into(),
             bypass_available: true,
             can_prompt: false,
-            exclude_tools: ["enter_plan_mode", "exit_plan_mode", "ask_user_question"].into_iter().map(JsString::from).collect(),
+            exclude_tools: crate::config::session_overrides::UNATTENDED_SESSION_EXCLUDED_TOOLS.into_iter().map(JsString::from).collect(),
             permission_deny: Vec::new(),
             context_registry: self.contexts.clone(),
             observer: self.observer.clone(),
