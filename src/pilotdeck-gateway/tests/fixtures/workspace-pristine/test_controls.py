@@ -487,10 +487,12 @@ class WorkspacePristine(unittest.TestCase):
         for key in ('path', 'r#path'):
             # #1249: a conditional path attribute must keep its own rejection
             # in every shape that resolves to it: the plain nonliteral value,
-            # and the mixed attribute whose metadata literal path is visited
-            # first but is outranked by the attribute-level path key.
+            # and the mixed attribute in either visit order - metadata literal
+            # path first or attribute-level path key first - so the precedence
+            # cannot depend on which key the walker reaches first or last.
             for source in (f'#[cfg_attr(all(), {key} = concat!("x", ".rs"))] mod child;',
-                           f'#[cfg_attr(all(), databake(path = "x.rs"), {key} = "child.rs")] mod child;'):
+                           f'#[cfg_attr(all(), databake(path = "x.rs"), {key} = "child.rs")] mod child;',
+                           f'#[cfg_attr(all(), {key} = "child.rs", databake(path = "x.rs"))] mod child;'):
                 with self.subTest(key=key, source=source):
                     failure = None
                     try:
