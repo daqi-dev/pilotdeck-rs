@@ -196,6 +196,16 @@ def _loop(evidence, phase, key=None, site='loop'):
             and (key is None or receipt.get('key') == key)]
 
 
+def _numeric_seq(value):
+    """A numeric seq, excluding bool (``isinstance(True, int)`` is True).
+
+    The frozen projection types the field as a plain int
+    (``native_evidence.py``); a boolean must never satisfy a seq edge or
+    match a release record (#2396 fix-r4, DS boundary P2#2).
+    """
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _seq_lt(before, after):
     """True only when both receipts carry a numeric seq in strict order.
 
@@ -204,7 +214,7 @@ def _seq_lt(before, after):
     crashing the ruler (#2396 fix-r2, anthropic boundary P1).
     """
     a, b = before.get('seq'), after.get('seq')
-    return isinstance(a, (int, float)) and isinstance(b, (int, float)) and a < b
+    return _numeric_seq(a) and _numeric_seq(b) and a < b
 
 
 def _storage(evidence, site, phase, key):
@@ -428,7 +438,23 @@ def _target_witnesses(stimulus, target, evidence):
         # Product-side sequence edges (#2396 fix-r1): the status append
         # blocks, the error append queues behind it, the status append
         # releases, and only then does the re-armed error barrier block.
-        if not special:
+        if special:
+            # The failed status store prevents its registry status append,
+            # so the error append owns the first barrier: the same
+            # block→fifo→release seq/order edges apply to it, minus the
+            # status-append and rearm edges that do not exist in this
+            # single-barrier flow (codex r3 sibling P1#2 — the `not
+            # special` gate used to skip every storage-order check).
+            base = variant['slowAppend']
+            error_block = _storage(evidence, 'registry', 'block', 'error:' + base)
+            error_release = _storage(evidence, 'registry', 'release', 'error:' + base)
+            queued = _queued(evidence, 'registry')
+            if error_block and queued and not _seq_lt(error_block[0], queued[0]):
+                absent.append('registry.persist.block.seq < queued.seq (FIFO follower)')
+            if error_block and error_release \
+                    and not _seq_lt(error_block[0], error_release[0]):
+                absent.append('error block.seq < release.seq')
+        else:
             base = variant['slowAppend']
             status_block = _storage(evidence, 'registry', 'block', 'agent_status:' + base)
             status_release = _storage(evidence, 'registry', 'release', 'agent_status:' + base)
@@ -448,14 +474,22 @@ def _target_witnesses(stimulus, target, evidence):
                 absent.append('error block.seq < release.seq')
             # Collector-side edge: the second barrier is armed before the
             # first is released, so the driver's fifo sighting precedes the
-            # re-arm, which precedes the first barrier's release.
+            # re-arm, which precedes the first barrier's release.  The
+            # driver always re-arms in this branch (every non-special
+            # slowAppend variant has a second barrier), so a missing rearm
+            # or a missing matching release-storage control record is
+            # incomplete evidence, not an edge to silently skip (#2396
+            # fix-r4, codex sibling P1#1 + DS boundary P2#1 — two
+            # families).
             fifo_action = _actions(evidence, 'control.registry.fifo.checked')
             rearm = _actions(evidence, 'rearm-storage')
+            if not rearm:
+                absent.append('rearm-storage (the second barrier armed before the first release)')
             if fifo_action and rearm and not fifo_action[0]['monotonic'] < rearm[0]['monotonic']:
                 absent.append('control.registry.fifo.checked before rearm-storage')
             if rearm and status_block:
                 seq = status_block[0].get('seq')
-                if not isinstance(seq, (int, float)):
+                if not _numeric_seq(seq):
                     # The rearm-before-release edge needs the block's numeric
                     # seq to find the matching release; a receipt without one
                     # never attests it — the edge lands in `absent`, the same
@@ -463,11 +497,11 @@ def _target_witnesses(stimulus, target, evidence):
                     # silent skip (#2396 fix-r3, DS concurrency P2).
                     absent.append('rearm-storage before the first registry release (seq absent)')
                 else:
-                    first_release = [
-                        action for action in evidence.get('controlActions', [])
-                        if action.get('action') == 'release-storage'
-                        and action.get('detail', {}).get('seq') == seq]
-                    if first_release and not rearm[0]['monotonic'] < first_release[0]['monotonic']:
+                    first_release = _actions(evidence, 'release-storage', seq=seq)
+                    if not first_release:
+                        absent.append(
+                            'rearm-storage before the first registry release (release record absent)')
+                    elif not rearm[0]['monotonic'] < first_release[0]['monotonic']:
                         absent.append('rearm-storage before the first registry release')
         found += _queued(evidence, 'registry')[:1]
         found += _actions(evidence, 'control.registry.fifo.checked')[:1]

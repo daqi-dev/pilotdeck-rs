@@ -896,6 +896,116 @@ class AdapterTests(unittest.TestCase):
                                 in row for row in verdict['missing']), marker
                         + ': ' + json.dumps(verdict['missing']))
 
+    def test_plan_missing_control_records_attest_no_rearm_edge(self):
+        marker = ('#2396 fix-r4: a missing rearm-storage or a missing matching '
+                  'release-storage control record lands the edge in missing, '
+                  'not a silent skip (codex sibling P1#1 + DS boundary P2#1)')
+        case = 'registry-slow/status-fast-append-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: p.storage('registry', 'block', 'agent_status:turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('registry', 'queued', 'error:turn_timeout', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: p.storage('registry', 'release', 'agent_status:turn_timeout', 3),
+            lambda p: p.storage('registry', 'block', 'error:turn_timeout', 4, boundMs=8000),
+            lambda p: p.storage('registry', 'release', 'error:turn_timeout', 5),
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        baseline = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(baseline['status'] == 'WITNESSED', marker + ': baseline must be green first')
+        no_rearm = copy.deepcopy(evidence)
+        no_rearm['controlActions'] = [action for action in no_rearm['controlActions']
+                                      if action.get('action') != 'rearm-storage']
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], no_rearm)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('rearm-storage (the second barrier armed before the '
+                                'first release)' in row for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+        no_release = copy.deepcopy(evidence)
+        no_release['controlActions'] = [action for action in no_release['controlActions']
+                                        if not (action.get('action') == 'release-storage'
+                                                and action.get('detail', {}).get('seq') == 1)]
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], no_release)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('rearm-storage before the first registry release '
+                                '(release record absent)' in row
+                                for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+
+    def test_plan_special_variant_seq_edges_attest(self):
+        marker = ('#2396 fix-r4: the special single-barrier slowAppend variant '
+                  'keeps its error block→fifo→release seq edges — the `not special` '
+                  'gate used to skip every storage-order check (codex sibling P1#2)')
+        case = 'registry-failure/timeout-status-fails-append-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        timeout = frame('case-01', 1, {'type': 'agent_status', 'event': 'turn_timeout'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: p.storage('writer', 'fault', 'turn_timeout', 1),
+            lambda p: p.storage('registry', 'block', 'error:turn_timeout', 2, boundMs=8000),
+            lambda p: p.storage('registry', 'queued', 'error:turn_timeout', 3),
+            lambda p: (self._assert_outcome_released(p, 'unknown'), timeout)[1],
+            lambda p: (p.storage('registry', 'release', 'error:turn_timeout', 4), final)[1],
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        # The failed status store prevents its registry status append, so the
+        # registry surface carries only the prefix event.
+        evidence = drive_case(case, steps, registry_events=[{'type': 'model_request_started'}])
+        baseline = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(baseline['status'] == 'WITNESSED', marker + ': ' + json.dumps(baseline['missing']))
+        for receipt in evidence['storageReceipts']:
+            if receipt.get('phase') == 'block' and receipt.get('key') == 'error:turn_timeout':
+                receipt['seq'] = 9  # after the queued (3) and the release (4)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('registry.persist.block.seq < queued.seq (FIFO follower)'
+                                in row for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+
+    def test_plan_bool_seq_never_attests_order_edge(self):
+        marker = ('#2396 fix-r4: a boolean seq never attests an ordering edge — '
+                  'the frozen projection types the field as a plain int (DS '
+                  'boundary P2#2)')
+        case = 'registry-slow/status-fast-append-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: p.storage('registry', 'block', 'agent_status:turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('registry', 'queued', 'error:turn_timeout', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: p.storage('registry', 'release', 'agent_status:turn_timeout', 3),
+            lambda p: p.storage('registry', 'block', 'error:turn_timeout', 4, boundMs=8000),
+            lambda p: p.storage('registry', 'release', 'error:turn_timeout', 5),
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        baseline = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(baseline['status'] == 'WITNESSED', marker + ': baseline must be green first')
+        # True == 1 in Python, so `isinstance(x, (int, float))` alone would
+        # accept the boolean as the status block's seq, match it against the
+        # driver's release-storage record (detail.seq == 1 == True) and keep
+        # attesting the rearm edge — WITNESSED instead of the (seq absent)
+        # fail-closed row.
+        for receipt in evidence['storageReceipts']:
+            if receipt.get('phase') == 'block' and receipt.get('key') == 'agent_status:turn_timeout':
+                receipt['seq'] = True
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and any('rearm-storage before the first registry release '
+                                '(seq absent)' in row
+                                for row in verdict['missing']), marker
+                        + ': ' + json.dumps(verdict['missing']))
+
     def test_driver_pidless_loop_receipts_do_not_attest(self):
         marker = '#2396 fix-r3: a pid-less loop receipt never attests the held return'
         # The driver-side _plan_pids mirrored the ruler's cross-case pid
