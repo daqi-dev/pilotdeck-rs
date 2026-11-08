@@ -990,7 +990,65 @@ fn twiml_response() -> Response<Full<Bytes>> {
         .expect("#1339 static response parts")
 }
 
+/// Node answers every HTTP/1.0 request with an `HTTP/1.1` status line,
+/// `Connection: close` and a close-delimited body (no `content-length`), even
+/// when the request asks to keep alive — measured on the pinned Node v22.22.0
+/// (`_tmp/20261108-sms-residual/probe-sms-http10.out`, the #1913 probe), the
+/// same shape the webhook lane measured for its own handler in #1684. Pinning
+/// the response version to `HTTP_10` keeps hyper's `fix_keep_alive` in its
+/// HTTP/1.0 branch, so the socket closes instead of staying open waiting out
+/// the keep-alive the request carried; hyper's `HTTP/1.0` status line against
+/// Node's `HTTP/1.1` is the accepted-diff entry A8.3-CH-SMS-015, the same
+/// class as the webhook lane's A8.3-CH-WEBHOOK-004. The body is also made
+/// unsized: this channel answers with known-length bodies ([`sized`]), which
+/// hyper frames with `content-length` on any version, while Node's 1.0
+/// replies are close-delimited — with an unknown size hyper cannot chunk a
+/// 1.0 connection, so it writes the body and closes, matching Node's bytes.
+fn finalize(mut response: Response<crate::Body>, version: hyper::Version) -> Response<crate::Body> {
+    if version != hyper::Version::HTTP_10 {
+        return response;
+    }
+    *response.version_mut() = hyper::Version::HTTP_10;
+    let body = std::mem::replace(response.body_mut(), crate::native_http::streamed(None));
+    *response.body_mut() = Unsized(body).boxed();
+    response
+}
+
+/// A body whose size hyper cannot know (#1913): everything else delegates, so
+/// the frames and the end-of-stream flag are unchanged.
+struct Unsized(crate::Body);
+
+impl hyper::body::Body for Unsized {
+    type Data = Bytes;
+    type Error = crate::ProxyError;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        hyper::body::SizeHint::default()
+    }
+}
+
 async fn handle_request(
+    request: Request<Incoming>,
+    shared: Arc<SmsShared>,
+) -> Result<Response<crate::Body>, DestroyConnection> {
+    let version = request.version();
+    route_request(request, shared)
+        .await
+        .map(|response| finalize(response, version))
+}
+
+async fn route_request(
     request: Request<Incoming>,
     shared: Arc<SmsShared>,
 ) -> Result<Response<crate::Body>, DestroyConnection> {
