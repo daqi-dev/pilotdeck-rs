@@ -157,10 +157,22 @@ class CoverageControls(unittest.TestCase):
         # table is a table — review P2: range-only fallback is a false PASS)
         self.assertEqual(literal_table_lines(['pub const T: &[&str] = &[', '    "a",', '];']),
                          {2, 3})
-        # non-binding arrays (let locals, for-in iteration lists) stay out
+        # a wrapped opener (rustfmt) and an opener with a trailing comment
+        # are still tables (fix-r2, DS boundary P0 / sibling P2)
+        self.assertEqual(literal_table_lines(
+            ['pub const T: &[&str] =', '    &[', '    "a",', '    "b",', '];']), {3, 4, 5})
+        self.assertEqual(literal_table_lines(
+            ['pub const T: &[&str] = &[ // keep sorted', '    "a",', '];']), {2, 3})
+        # a wrapped `&[` under a non-binding line stays out
+        self.assertEqual(literal_table_lines(
+            ['let xs =', '    &[', '    "a",', '];']), set())
+        # non-binding arrays (let locals, for-in iteration lists, the
+        # &'static lifetime) stay out
         self.assertEqual(literal_table_lines(['let xs = [', '    "a",', '];']), set())
         self.assertEqual(
             literal_table_lines(['for name in [', '    "a",', '] {']), set())
+        self.assertEqual(
+            literal_table_lines(["let xs: &'static [&str] = &[", '    "a",', '];']), set())
 
     def test_channel_key_literal_drift_with_interior_comment_fails(self):
         # The P0 negative control: the #2283-style adjacent-key drift on a
@@ -169,7 +181,14 @@ class CoverageControls(unittest.TestCase):
         loader = "src/pilotdeck-gateway/src/channel/loader.rs"
         path = (ROOT / loader).resolve()
         noisy = split_lines(path.read_text())
-        noisy.insert(46, "    // churn")  # inside UNMIGRATED_CHANNEL_KEYS
+        # Anchor the interior comment to the table's own opening line, not
+        # to a file-level absolute offset: any edit above UNMIGRATED_
+        # CHANNEL_KEYS would silently push the insert outside the table and
+        # turn this control into a no-comment rerun (#2286 fix-r2,
+        # anthropic boundary P2 / simplify P2, two families).
+        header = next(i for i, line in enumerate(noisy)
+                      if "UNMIGRATED_CHANNEL_KEYS" in line)
+        noisy.insert(header + 1, "    // churn")
         tables = {path: (noisy, literal_table_lines(noisy))}
         current = {row["id"]: int(row["evidence"].rsplit(":", 1)[1])
                    for row in self.data["entries"]
@@ -186,10 +205,31 @@ class CoverageControls(unittest.TestCase):
         for key, number in current.items():  # +1 (comment shift) restores green
             with self.subTest(key=key, form="restored"):
                 self.assertIsNone(key_literal_error(key, f"{loader}:{number + 1}", tables))
+        # A member line carrying a trailing // comment must stay green too:
+        # literal_member admits it into the table, so the comparison has to
+        # strip the comment instead of flagging a mismatch (fix-r2, DS
+        # boundary P1 / sibling P1).
+        annotated = split_lines(path.read_text())
+        annotated.insert(header + 1, "    // churn")
+        whatsapp = current["gateway.channel:whatsapp"] + 1  # on-key after shift
+        annotated[whatsapp - 1] += "  // keep last"
+        tables_annotated = {path: (annotated, literal_table_lines(annotated))}
+        self.assertIsNone(key_literal_error(
+            "gateway.channel:whatsapp", f"{loader}:{whatsapp}", tables_annotated))
+        self.assertEqual(key_literal_error(
+            "gateway.channel:whatsapp", f"{loader}:{whatsapp + 1}", tables_annotated),
+            "evidence key literal mismatch: gateway.channel:whatsapp")
 
     def test_for_in_arrays_stay_range_only(self):
-        # Non-binding arrays (a for-in list) never trigger the assertion:
-        # pinning the P2 mitigation on the real http_proxy.rs block.
+        # Non-binding arrays (a for-in list) never trigger the assertion.
+        # The 1268 probe is the discriminating one: it anchors the
+        # MISMATCHED key 'connection' on the "keep-alive" member line —
+        # if the const/static gate were dropped and the list re-entered
+        # the table, this would flag a mismatch (fix-r2; the old probe
+        # keyed 1267, whose literal matches, and could never turn red).
+        self.assertIsNone(key_literal_error(
+            "gateway.header:connection",
+            "src/pilotdeck-gateway/src/http_proxy.rs:1268"))
         self.assertIsNone(key_literal_error(
             "gateway.header:connection",
             "src/pilotdeck-gateway/src/http_proxy.rs:1267"))
