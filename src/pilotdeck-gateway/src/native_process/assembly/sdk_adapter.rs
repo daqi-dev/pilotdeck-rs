@@ -30,7 +30,7 @@ impl SdkRuntimeResolver for NativeSdkResolver {
         let root = project_key
             .map(|key| super::super::project_scope::resolve(key))
             .transpose()
-            .map_err(|error| SdkSessionError::raw("Error", error.message))?;
+            .map_err(|error| SdkSessionError::raw("Error", String::from_utf16_lossy(error.message.units())))?;
         let lease = self
             .project
             .acquire(root.as_deref())

@@ -114,7 +114,7 @@ pub(super) fn upload_store(home: PathBuf) -> std::sync::Arc<crate::upload::Uploa
                         "Unsafe project marker.",
                     ));
                 }
-                let JsValue::Array(projects) = listed else {
+                let JsValue::Array(projects) = &listed else {
                     return Ok(Vec::new());
                 };
                 Ok(projects
@@ -146,7 +146,7 @@ mod tests {
             .unwrap()
             .join("unregistered-B");
         let raw = object([
-            ("projectKey", b.to_string_lossy().into_owned().into()),
+            ("projectKey", JsValue::String(b.to_string_lossy().into_owned().into())),
             ("sessionKey", "same".into()),
         ]);
         let selected = select(&requests.owner, &requests.options, &raw, false).unwrap();
@@ -166,12 +166,12 @@ mod tests {
         let conflicting = object([
             (
                 "projectKey",
-                requests
+                JsValue::String(requests
                     .options
                     .project
                     .to_string_lossy()
                     .into_owned()
-                    .into(),
+                    .into()),
             ),
             ("sessionKey", "same".into()),
         ]);
@@ -213,7 +213,7 @@ mod tests {
             upload_store: upload_store(requests.options.home.clone()),
         };
         let mut input = object([
-            ("projectKey", b.to_string_lossy().into_owned().into()),
+            ("projectKey", JsValue::String(b.to_string_lossy().into_owned().into())),
             ("sessionKey", "services".into()),
             (
                 "modelSelection",
