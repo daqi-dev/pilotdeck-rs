@@ -21,19 +21,28 @@ null 格定向负控形状均已变化，逐项见「机器判据」）。纯冻
 `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`（`resources/PilotDeck`，只读）。TS 侧
 nullish 读法与 R9 / #2272 登记一致：`createLocalGateway` 的 `delete/rename/tag`
 包装读 `input.projectKey ?? fallbackProjectRoot`（编译产物
-`dist/src/cli/createLocalGateway.js` 的同名实现，与 R9 登记的源
-`createLocalGateway.ts:1116/1129/1142` 同形），`resume/close` 不读 `projectKey`。
+`dist/src/cli/createLocalGateway.js` 的同名实现，与 R9:31 登记的源
+`createLocalGateway.ts:1117/1130/1143`（`??` 读行）同形），`resume/close` 不读
+`projectKey`。
 #2272 r2 的 40 条真实链路复跑登记于
-`_tmp/20261108-issue-2272-r2/ts-probe/probe-null.out`；fix-r1 的
-mcp_server_status 线路实测登记于
-`_tmp/20261108-issue-2272-fix1/ts-probe/probe-null.out`。本件开单点（origin/main
+`_tmp/20261109-archive-wt-2272/20261108-issue-2272-r2/ts-probe/probe-null.out`
+（wt-2272 回收后的归档址，原件路径已失效）；fix-r1 的 mcp_server_status 线路
+实测登记于
+`_tmp/20261109-archive-wt-2272/20261108-issue-2272-fix1/ts-probe/probe-null.out`。本件开单点（origin/main
 `de1a7e894`）在固定基线上按 #2272 探针同形复测 12 条（场景 A：五方法 ×
 `projectKey:null` / 未给，加 `delete` 空白键 × `projectKey:null` / 未给；Node
 v22.22.0 / ICU 78.2）：`null` 与未给逐格同答——`resume` 回显（null 格回显
 `projectKey:null`）、`close` `undefined`、`delete` `SESSION_NOT_FOUND` / 空白键
 `INVALID_SESSION_KEY` / `sessionKey is required.`、`rename`/`tag`
 `{"updated":true}`；原始输出
-`_tmp/20261026-issue-2563/ts-probe/probe-null-r11.out`。
+`_tmp/20261026-issue-2563/ts-probe/probe-null-r11.out`（worker 沙箱树，探针
+import 指向其 runner 副本）。收货复跑补溯源（#2601 评审 ds/boundary#4）：同
+版本 Node v22.22.0 / ICU 78.2 在主仓冻结基线 `resources/PilotDeck`
+（`cc7c4e653`）上同形复测 12 格，探针 import 直指其
+`dist/src/cli/createLocalGateway.js`（sha256
+`eb8ee430b7f03bee4cd28c0367d606484f066873c2ae246286ae46aae5ce37b0`），输出与
+原始记录逐条一致，复跑输出
+`_tmp/20261109-2563-harvest/ts-probe/probe-null-r11-repro.out`（主仓）。
 
 ## Rust 行为
 
@@ -51,11 +60,15 @@ JsValue::Null)`（`native_process/requests.rs:212-223`，现行 `requests.rs` sh
 
 - `projectKey:null` + 空白 `sessionKey`：回退配置项目后由方法各自的
   `require_session_key` 答 `INVALID_SESSION_KEY` / `sessionKey is required.`（与
-  未给 `projectKey` 的空白键同答；TS 场景 A 同形）；
+  未给 `projectKey` 的空白键同答；TS 场景 A 的 delete 家族同形——`resume`/`close`
+  的空白键格按 R9 差异 ① 由 provider 成功处理，不在本件同形主张内，比较层为
+  IPG 直调）；
 - `projectKey:null` + 合法 `sessionKey`：在配置项目上执行方法——`resume_session`
   回显 `{sessionKey:…}`（仍无 `projectKey` 字段，R9 登记的回显形状差异保留）、
   `close_session` `undefined`、`delete_session` `SESSION_NOT_FOUND`、
-  `rename`/`tag` `{"updated":true}`（TS 场景 A 同形，唯 `resume` 回显形状除外）；
+  `rename`/`tag` `{"updated":true}`（TS 场景 A 在 IPG 直调层同形，唯 `resume`
+  回显形状除外；`close` 的 `undefined` 与 WS 帧层 `{"ok":true}` 包装差别按 R9
+  登记保留）；
 - fix-r1 补钉的共享 config 线路：`mcp_server_status` 对 `{"projectKey":null}`
   与未给同答 `{"servers":[]}`（非字符串 `projectKey` 仍被准入拒，见「机器
   判据」的用例与 #1432 登记）。
@@ -109,12 +122,19 @@ R9 五条差异的其余四条（① `resume/close` 上 Rust 多出的 `sessionK
   gate answers the blank key`（绑定测试先死在 (1b) 空白键 null 格）。锚点静态
   核：`python3 -I negative_controls.py --check` → `#1457 46 mutation anchors OK;
   #2065 36 literal anchors OK`（本件开单点实测，工作目录
-  `tests/fixtures/native-config/`）。改坏红 / 还原绿的协议跑按 #2272 的登记由
-  协调者在宿主 HEAD 上执行（runner never-bypass-HEAD 拒未提交树，本件开单时
-  无法代跑）。R9:121 的 null 格定向负控（把用例里的 `JsValue::Null` 改成
-  `JsValue::Undefined`，变异体 `session_dir.rs` sha256 `9b3c9f81…`）自 #2272 起
-  失去判别力——null 与 undefined 现同为 nullish，该变异会让用例照常通过
-  （SURVIVED），已被上面的源码侧负控 `admission-null-refused` 取代。
+  `tests/fixtures/native-config/`；静态核与负控变异跑互斥——两者都是对同一批
+  源文件的锁外读，须在无并发负控的树上执行）。改坏红 / 还原绿的协议跑按
+  #2272 的登记由协调者在宿主 HEAD 上执行（runner never-bypass-HEAD 拒未提交
+  树，本件开单时无法代跑）；前置条件：宿主树该时段无其它 cargo / 负控共用
+  （变异体是对 `requests.rs` 的就地改写，harness 的树锁与原子还原只挡走
+  harness 的跑者），或改在独占副本上跑；跑完核 `requests.rs` sha256 回
+  `8deee51240ad155bc090d6bc3cb62fd41f70053b72101e15253bc677318dc9c2` 且
+  `git status` 干净。R9:121 的 null 格定向负控（把用例里的 `JsValue::Null`
+  改成 `JsValue::Undefined`，变异体 `session_dir.rs` sha256 `9b3c9f81…`）自
+  #2272 起失去判别力——null 与 undefined 现同为 nullish，该变异会让用例照常
+  通过（SURVIVED）；其判别力由 `admission-null-refused` 在准入层 (1b) 格
+  取代，(3) 各方法成功形状仅由绿跑正控钉住（Null→Undefined 变异与 null
+  同义，定向负控自收敛起结构上不可造）。
 - 绿跑（本树，HEAD `de1a7e894`，工作树干净，源 sha256 与
   `git show HEAD:…` 相同）：`cargo test --offline -p pilotdeck-gateway --lib
   native_process::methods::session_dir::tests` → `19 passed; 0 failed; 0
@@ -128,6 +148,9 @@ R9 五条差异的其余四条（① `resume/close` 上 Rust 多出的 `sessionK
   `--write` 重登记、报告的 `entries` 计数不变（仍是 30）；`check_frozen.py`
   的 `check_diffs` 规则要求更正件 frontmatter `original` 写基础 ID
   （`A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001`），写 `-R10` 会被该检查拒。
+  闸门复算读工作树当前字节且不持 ruler 租约：核闸门前确认无负控在改
+  `scripts/gateway-parity/**`，任何由「hash list differs」触发的 `--write` 须
+  先复核工作树与 HEAD 一致再执行（装置侧缺租约已开 #2603 跟进）。
 
 ## 批准记录
 
