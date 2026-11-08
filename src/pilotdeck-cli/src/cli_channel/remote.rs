@@ -27,15 +27,23 @@ fn is_field(frame: &JsValue, key: &str, expected: &str) -> bool {
         .and_then(JsValue::as_string)
         .is_some_and(|s| s.equals_str(expected))
 }
-pub(super) async fn connect(env: &Env, cwd: &Path) -> Option<Remote> {
+pub(super) async fn connect(env: &Env, cwd: &Path) -> Result<Option<Remote>, Failure> {
     if !gateway_probe::healthy().await {
-        return None;
+        return Ok(None);
     }
-    let bytes = std::fs::read(paths::gateway_token_path(env, cwd).ok()?).ok()?;
-    let token = paths::js_trim(&String::from_utf8_lossy(&bytes)).to_owned();
+    let Ok(path) = paths::gateway_token_path(env, cwd) else {
+        return Ok(None);
+    };
+    // Reuse the SDK file-source policy: ordinary IO/empty tokens keep the
+    // legacy fallback, while special/oversized files are explicit errors and
+    // must not silently start a different local host.
+    let token = super::super::sdk::token::read(&path)?;
     if token.is_empty() {
-        return None;
+        return Ok(None);
     }
+    Ok(connect_with_token(token).await)
+}
+async fn connect_with_token(token: String) -> Option<Remote> {
     let (mut socket, _) = connect_async_with_config(
         "ws://127.0.0.1:18789/ws",
         Some(pilotdeck_cli::ws_config::websocket_config()),

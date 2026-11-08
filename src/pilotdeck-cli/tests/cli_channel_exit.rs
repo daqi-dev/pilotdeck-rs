@@ -5,7 +5,7 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, Output, Stdio},
     time::Duration,
 };
 use tokio::{
@@ -105,7 +105,15 @@ fn child(root: &Path, project: &Path, argv: &[&str], input: &str) -> ChildOwner 
         .unwrap();
     ChildOwner(child)
 }
-async fn finish(mut child: ChildOwner) -> (bool, String, String) {
+async fn finish(child: ChildOwner) -> (bool, String, String) {
+    let output = finish_output(child).await;
+    (
+        output.status.success(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+async fn finish_output(mut child: ChildOwner) -> Output {
     let deadline = Instant::now() + Duration::from_secs(8);
     while child.0.try_wait().unwrap().is_none() {
         assert!(Instant::now() < deadline, "channel did not exit");
@@ -123,7 +131,11 @@ async fn finish(mut child: ChildOwner) -> (bool, String, String) {
         .unwrap()
         .read_to_string(&mut err)
         .unwrap();
-    (child.0.wait().unwrap().success(), out, err)
+    Output {
+        status: child.0.wait().unwrap(),
+        stdout: out.into_bytes(),
+        stderr: err.into_bytes(),
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -501,5 +513,250 @@ async fn rejected_submit_exits_without_waiting_for_final_or_peer_close() {
             "{case}"
         );
         assert_eq!(stderr, expected, "{case}");
+    }
+}
+
+/// Default-channel file policy is shared with the SDK but selected only after
+/// this entry's actual discovery health check. Never contact an existing host.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn default_channel_token_files_are_bounded_and_preserve_ordinary_wire() {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::unix::process::ExitStatusExt;
+    let _lease = Lease::acquire().await;
+    let listener = TcpListener::bind("127.0.0.1:18789")
+        .await
+        .expect("owned token regression requires port 18789 free");
+    let oracle: Value =
+        serde_json::from_str(include_str!("fixtures/cli-channel/ts-oracle.json")).unwrap();
+    let baseline = &oracle["cases"]["argv"];
+    for kind in [
+        "fifo-empty",
+        "fifo-held-writer",
+        "over-limit",
+        "sparse-large",
+        "valid-trim",
+        "valid-boundary",
+        "cancel",
+    ] {
+        let base = std::env::temp_dir().join(format!(
+            "pdrs-default-token-{kind}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir(&base).unwrap();
+        let base = fs::canonicalize(base).unwrap();
+        let _scratch = Scratch(base.clone());
+        let home = base.join("home");
+        let project = base.join("project");
+        fs::create_dir(&home).unwrap();
+        fs::create_dir(&project).unwrap();
+        let bundled = base.join("bundled");
+        fs::create_dir_all(bundled.join("fixture")).unwrap();
+        fs::write(
+            bundled.join("fixture/SKILL.md"),
+            "---\nname: fixture\ndescription: Offline token regression.\n---\nNo operation.\n",
+        )
+        .unwrap();
+        fs::write(
+            home.join(".legacy-bundled-skills-migrated-v1"),
+            "completed\n",
+        )
+        .unwrap();
+        let yaml = b"schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: fake-only\n      models: {mock: {}}\n";
+        fs::write(home.join("pilotdeck.yaml"), yaml).unwrap();
+        let token = home.join("server-token");
+        let mut held_writer = None;
+        if kind.starts_with("fifo-") {
+            assert!(
+                Command::new("/usr/bin/mkfifo")
+                    .arg(&token)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            if kind == "fifo-held-writer" {
+                held_writer = Some(
+                    fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .custom_flags(libc::O_NONBLOCK)
+                        .open(&token)
+                        .unwrap(),
+                );
+            }
+        } else if kind == "over-limit" || kind == "sparse-large" {
+            fs::File::create(&token)
+                .unwrap()
+                .set_len(if kind == "over-limit" {
+                    65_537
+                } else {
+                    32 * 1024 * 1024
+                })
+                .unwrap();
+        } else if kind == "valid-boundary" {
+            let mut bytes = vec![b' '; 65_536];
+            let value = b"channel-fake-token";
+            bytes[1..1 + value.len()].copy_from_slice(value);
+            fs::write(&token, bytes).unwrap();
+        } else {
+            fs::write(&token, "\u{feff}\t channel-fake-token \r\n").unwrap();
+        }
+        let identity = |path: &Path| {
+            let m = fs::symlink_metadata(path).unwrap();
+            (m.ino(), m.mode(), m.len(), m.mtime(), m.mtime_nsec())
+        };
+        let before = identity(&token);
+        let process = ChildOwner(
+            Command::new(env!("CARGO_BIN_EXE_pilotdeck"))
+                .env_clear()
+                .env("HOME", &home)
+                .env("PILOT_HOME", &home)
+                .env("PILOTDECK_BUNDLED_SKILLS_DIR", &bundled)
+                // A regression to fallback must neither launch a helper nor
+                // contact the fixture model URL; this path intentionally is absent.
+                .env("PILOTDECK_RS_SIDECAR", base.join("must-not-launch-sidecar"))
+                .current_dir(&project)
+                .args(["hello", "--strange", " world "])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        let (mut health, _) = timeout(Duration::from_secs(5), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            request_head(&mut health)
+                .await
+                .starts_with(b"GET /health HTTP/1.1\r\n")
+        );
+        timeout(
+            Duration::from_secs(3),
+            health.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(health);
+        if kind.starts_with("fifo-") || kind == "over-limit" || kind == "sparse-large" {
+            let output = finish_output(process).await;
+            assert_eq!(output.status.code(), Some(1), "{kind}");
+            assert!(output.stdout.is_empty(), "{kind}");
+            let expected = if kind.starts_with("fifo-") {
+                "Gateway auth token file must be a regular file.\n"
+            } else {
+                "Gateway auth token file exceeds the 65536-byte limit.\n"
+            };
+            assert_eq!(
+                output.stderr,
+                expected.as_bytes(),
+                "{kind}: explicit error without local fallback"
+            );
+            assert!(
+                timeout(Duration::from_millis(150), listener.accept())
+                    .await
+                    .is_err(),
+                "{kind}: special file must fail before WebSocket connection"
+            );
+        } else {
+            let (socket, _) = timeout(Duration::from_secs(5), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut ws = timeout(Duration::from_secs(5), accept_async(socket))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                next(&mut ws).await,
+                baseline["wire"][0],
+                "{kind}: same trimmed TS auth token"
+            );
+            send(&mut ws,json!({"type":"hello_ok","protocolVersion":"1.2","serverVersion":"fixture","serverInfo":{"capabilities":[]}})).await;
+            let mut request = next(&mut ws).await;
+            let id = request["id"].as_str().unwrap().to_owned();
+            assert_eq!(uuid::Uuid::parse_str(&id).unwrap().get_version_num(), 4);
+            request["id"] = "<uuid>".into();
+            let mut expected = baseline["wire"][1].clone();
+            expected["params"]["sessionKey"] =
+                format!("cli:project={}:default", project.display()).into();
+            assert_eq!(request, expected, "{kind}: unchanged TS submit request");
+            if kind == "cancel" {
+                rustix::process::kill_process(
+                    rustix::process::Pid::from_raw(process.0.id() as i32).unwrap(),
+                    rustix::process::Signal::TERM,
+                )
+                .unwrap();
+                let output = finish_output(process).await;
+                assert_eq!(
+                    output.status.signal(),
+                    Some(15),
+                    "owned legacy channel receives SIGTERM"
+                );
+                assert!(output.stdout.is_empty());
+                assert!(output.stderr.is_empty());
+                assert!(
+                    matches!(
+                        timeout(Duration::from_secs(3), ws.next()).await.unwrap(),
+                        None | Some(Ok(Message::Close(_))) | Some(Err(_))
+                    ),
+                    "cancelled owner must close its one WebSocket"
+                );
+            } else {
+                let events = [
+                    json!({"type":"assistant_text_delta","text":"A"}),
+                    json!({"type":"assistant_thinking_delta","text":"h"}),
+                    json!({"type":"tool_call_started","name":"read","argsPreview":"p"}),
+                    json!({"type":"tool_call_finished","toolCallId":"t","ok":true,"resultPreview":"yes"}),
+                    json!({"type":"permission_request","toolName":"read","requestId":"r"}),
+                    json!({"type":"structured_output","payload":{"x":1}}),
+                    json!({"type":"plan_mode_changed","mode":"plan"}),
+                    json!({"type":"error","code":"E","message":"bad"}),
+                    json!({"type":"unknown","text":"ignored"}),
+                ];
+                for (seq, event) in events.into_iter().enumerate() {
+                    send(
+                        &mut ws,
+                        json!({"type":"event","id":id,"seq":seq,"final":false,"event":event}),
+                    )
+                    .await;
+                }
+                send(&mut ws,json!({"type":"event","id":id,"seq":9,"final":true,"event":{"type":"assistant_text_delta","text":"FINAL-OMIT"}})).await;
+                assert!(matches!(
+                    timeout(Duration::from_secs(5), ws.next()).await.unwrap(),
+                    None | Some(Ok(Message::Close(_)))
+                ));
+                let output = finish_output(process).await;
+                assert_eq!(
+                    output.status.code(),
+                    Some(0),
+                    "{kind}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert_eq!(
+                    output.stdout,
+                    baseline["stdout"].as_str().unwrap().as_bytes(),
+                    "{kind}: fixed TS stdout bytes"
+                );
+                assert!(output.stderr.is_empty(), "{kind}: {:?}", output.stderr);
+            }
+        }
+        assert_eq!(
+            identity(&token),
+            before,
+            "{kind}: rejected/read token identity unchanged"
+        );
+        assert_eq!(
+            fs::read(home.join("pilotdeck.yaml")).unwrap(),
+            yaml,
+            "{kind}: configuration unchanged"
+        );
+        assert!(
+            !home.join("projects").exists(),
+            "{kind}: no in-process host state"
+        );
+        drop(held_writer);
     }
 }

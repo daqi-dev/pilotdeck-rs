@@ -21,7 +21,7 @@ pub(crate) fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure>
 }
 
 async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    let mut remote = if let Some(remote) = remote::connect(env, cwd).await {
+    let mut remote = if let Some(remote) = remote::connect(env, cwd).await? {
         Channel::Remote(Box::new(remote))
     } else {
         stderr_line("[pilotdeck] gateway server unavailable; using in-process mode.");

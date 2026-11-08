@@ -14,7 +14,7 @@ fn decode(bytes: &[u8]) -> String {
     paths::js_trim(&String::from_utf8_lossy(bytes)).to_owned()
 }
 #[cfg(not(unix))]
-pub(super) fn read(path: &Path) -> Result<String, Failure> {
+pub(crate) fn read(path: &Path) -> Result<String, Failure> {
     // Keep the existing platform behavior; this patch does not invent an
     // unverified Windows special-file reader or claim the Unix guarantee.
     Ok(std::fs::read(path)
@@ -22,7 +22,7 @@ pub(super) fn read(path: &Path) -> Result<String, Failure> {
         .unwrap_or_default())
 }
 #[cfg(unix)]
-pub(super) fn read(path: &Path) -> Result<String, Failure> {
+pub(crate) fn read(path: &Path) -> Result<String, Failure> {
     use std::os::unix::fs::OpenOptionsExt;
     let file = match std::fs::OpenOptions::new()
         .read(true)
