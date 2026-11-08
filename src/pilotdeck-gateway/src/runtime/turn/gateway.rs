@@ -472,9 +472,11 @@ impl TurnGateway {
                 // ceiling (`TICK_CONVERSION_HEADROOM`), is the #1949 waiver —
                 // see `declared_cleanup_budget` — so the drain is awaited
                 // without scheduling one. Tokio's own `timeout` saturates an
-                // overflowing budget into a far-future timer and never panics
-                // on a near-full one; the explicit spelling takes the waiver
-                // branch for both, matching `dispose_initialization`'s bound.
+                // overflowing budget into a far-future timer and panics on
+                // a near-full one just as `timeout_at` does — both register
+                // through the same unchecked tick conversion; the explicit
+                // spelling instead takes the waiver branch for both, matching
+                // `dispose_initialization`'s bound.
                 let result = match budget
                     .and_then(|budget| tokio::time::Instant::now().checked_add(budget))
                     .filter(|deadline| deadline.checked_add(TICK_CONVERSION_HEADROOM).is_some())
@@ -819,11 +821,15 @@ const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_millis(10);
 /// deadline that fits the clock but sits within that addition of its ceiling
 /// panics on registration instead of saturating. Measured on this tree's
 /// tokio: `timeout_at` at the maximal fitting deadline panics
-/// "overflow when adding duration to instant" where the old
-/// `timeout(budget, …)` call survives the very same budget. One second is
-/// far more than the nanoseconds tokio adds, so both poll sites that hand a
-/// deadline to `timeout_at` require this much room past it and treat
-/// anything closer to the ceiling as the same #1949 waiver.
+/// "overflow when adding duration to instant", and a `timeout(budget, …)`
+/// call on a budget that fits but lands inside the same band panics there
+/// too (an earlier probe that showed the old call surviving at the maximal
+/// fitting budget was measuring the overflow tier: `timeout`'s own later
+/// clock read pushed that budget past the ceiling, taking the far-future
+/// branch). One second is far more than the nanoseconds tokio adds, so
+/// both poll sites that hand a deadline to `timeout_at` require this much
+/// room past it and treat anything closer to the ceiling as the same
+/// #1949 waiver.
 const TICK_CONVERSION_HEADROOM: Duration = Duration::from_secs(1);
 
 /// The deadline a host actually gets out of an embedding-declared teardown
