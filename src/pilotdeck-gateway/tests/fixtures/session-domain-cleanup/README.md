@@ -308,7 +308,7 @@ the pre-existing race with a suite that is already waiting on the same lease
 with its own 30 s deadline; shrinking the lease to the rewrite window needs the
 shared `mutating_sources` change tracked in #1719. `MUTATIONS` is a literal `(name, source, old, new)` table
 read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
-`JUDGES`, keyed by the same names. The current table has 226 mutants:
+`JUDGES`, keyed by the same names. The current table has 234 mutants:
 `empty-group-probe-removed`, `cleanup-status-write-removed`,
 `top-level-mapping-relaxed`, `sigterm-removed`, `blocked-branch-removed`,
 `sigkill-escalation-removed`, `top-level-wiring-relaxed`,
@@ -325,7 +325,12 @@ read by #820's anchor selfcheck; per-mutant mode/judge metadata lives in
 `controls-return-none`, `controls-system-exit-none`,
 `calibrate-exit-code-relayed`, `controls-status-slot-subscript`,
 `controls-aggregate-lookalike`, `calibrate-status-update`,
-`retirement-duplicate-status-key`, `controls-nested-same-name`,
+`retirement-duplicate-status-key`, `nested-status-slot-bypass`,
+`nested-constant-conditional-bypass`, `nested-not-false-conditional-bypass`,
+`nested-boolop-value-bypass`, `nested-is-literal-bypass`,
+`nested-shared-call-boolop-bypass`,
+`calibrate-status-write-is-literal-bypass`,
+`calibrate-exit-is-literal-bypass`, `controls-nested-same-name`,
 `calibrate-shared-excuse`, `calibrate-status-setdefault`,
 `calibrate-status-update-kwarg`, `calibrate-early-return-branch`,
 `calibrate-two-hop-zero`, `calibrate-int-call-code`,
@@ -1087,7 +1092,34 @@ dedup equal constants in one code object — ``1.0 is 1.0`` is `True` at runtime
 measured), so an identity test fails closed with no certified arm; the
 arithmetic fold also grew bounds (exponents, shift widths and string repeats
 past fixed caps resolve to nothing) so an adversarial literal cannot hang or
-OOM the audit.  Names, calls and
+OOM the audit.  fix-r6 (DS + MiniMax r5, both families) corrected three
+directions of that settlement.  First, the shared-call exemption now follows
+the same short-circuit reachability: a `common.aggregate_status` operand the
+interpreter can never reach (`'PASS' or common.aggregate_status(…)`) is dead
+spelling, not a relay, and may not exempt the nested slot — the exemption is
+judged on the exit arms only (`_nested_slot_fail_closed`, MiniMax boundary
+P0, probe-verified).  Second, "no certified arm" is *not* "no clean write /
+no zero exit": the write, exit-call, return and nested-slot presence scans
+all treat an unresolvable identity test as cannot-rule-out, because at
+runtime the identity spelling takes the clean arm (DS boundary P1;
+`_assigns_clean_status`, `_helper_exits_zero`, `_exit_provenance`, the
+unshared-slot element loop).  Third, the collectors walk the same reachable
+arms the value fold certifies — `_nested_status_slots`,
+`_returned_summary_dicts` and `_returned_names` no longer expand dead BoolOp
+operands into nested slots / returned summaries (false red), with an
+unresolved test falling back to every operand so the walk can only
+over-collect (MiniMax sibling P1).  The arithmetic bounds were re-cut onto
+the *folded result's* size (`_FOLD_MAX_BITS` / `_FOLD_MAX_ITEMS`, both
+1 000 000): fix-r5 judged each node's own operands, so a nested chain
+(`((2**64)**64)**64`) stayed inside every per-node cap while its result grew
+without one, and `bytes`/`list`/`tuple` repetition was not bounded at all;
+the caps are pre-checked before each op, so an under-cap chain can never
+exceed them overall, and a single node whose folded result is under the cap
+now computes (`2 ** 100` is a 101-bit int, not a hang) — the fold's
+`RecursionError` also resolves to the unresolved sentinel at every level
+instead of collapsing the whole audit (MiniMax concurrency P2).  The
+string fold (`_folded_string`) grew the same result-size caps on
+concatenation and repetition.  Names, calls and
 comprehensions stay opaque
 to the recursion — a Name is resolved by the write families, a callee by the
 delegation registries, and a comprehension body is its own scope; walking them
@@ -1101,9 +1133,15 @@ literal spread, and the legal trio — an `IfExp` face that keeps its fail-close
 arm, a bare fail-closed literal, and a `BoolOp` value with a runtime operand
 beside its fail-closed operand.  The `nested-status-slot-bypass`,
 `nested-constant-conditional-bypass`, `nested-not-false-conditional-bypass`,
-`nested-boolop-value-bypass` and `nested-is-literal-bypass` mutants
+`nested-boolop-value-bypass`, `nested-is-literal-bypass` and
+`nested-shared-call-boolop-bypass` mutants
 (the retirement report's `cleanupAudit` face hard-written to `PASS`, the
 same face written as `'PASS' if True else 'FAIL'`, as
-`'PASS' if not False else 'FAIL'`, as `'PASS' or 'FAIL'`, and as
-`'PASS' if 1.0 is 1.0 else 'FAIL'`) pin the
-detector from the mutation side.
+`'PASS' if not False else 'FAIL'`, as `'PASS' or 'FAIL'`, as
+`'PASS' if 1.0 is 1.0 else 'FAIL'`, and as
+`'PASS' or common.aggregate_status('PASS')`) pin the
+detector from the mutation side, with the write/exit identity spellings
+pinned by `calibrate-status-write-is-literal-bypass`
+(`report['status'] = 'PASS' if 1.0 is 1.0 else 'FAIL'`) and
+`calibrate-exit-is-literal-bypass` (`sys.exit(0 if 1.0 is 1.0 else 1)`)
+in the same family.

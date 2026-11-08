@@ -3643,7 +3643,11 @@ class RetirementScoring(unittest.TestCase):
                   # fix-r5 (DS r4 concurrency P1): copy.deepcopy on a deeply
                   # nested artifact (600-deep, measured) overflows before
                   # json.loads ever would — the same full-face refusal.
-                  RecursionError('maximum recursion depth exceeded'))
+                  RecursionError('maximum recursion depth exceeded'),
+                  # fix-r6 (DS r5 concurrency P2): a corrupted artifact
+                  # sized past the host's memory must report the same
+                  # full-face BLOCKED instead of crashing the report path.
+                  MemoryError())
         for error in errors:
             with patch.object(self.session, '_retirement_report', side_effect=error):
                 report = self.session.retirement_report(Path('out'), Path('baseline'))
@@ -3856,6 +3860,42 @@ class RetirementScoring(unittest.TestCase):
         verdict = self.session._retirement_census_verdict(
             {'rows': [{'pid': 7, 'argvText': 'node pilotdeck.js server'}], 'declared': [8]})
         self.assertEqual(verdict['status'], 'FAIL')
+
+    def test_host_census_fails_closed_on_pidless_rows_and_null_declared(self):
+        # fix-r6 (DS boundary P0 + MiniMax boundary P0, both families,
+        # probe-verified): ``None`` cannot double as "this row names no pid"
+        # and as a declared entry — membership by ``==`` let a corrupt
+        # ``{'rows': [{'pid': null}], 'declared': [null], 'declaredAlive':
+        # True}`` read as a fully established census and PASS, contradicting
+        # the face's own rule that a pid-less row is an undeclared
+        # observation.  The declared side is also untrustworthy when an
+        # entry is not a real pid (null, bool, string), while the healthy
+        # int-pid shape and the real producer shape stay stable.
+        for census in ({'rows': [{'pid': None}], 'declared': [None], 'declaredAlive': True},
+                       {'rows': [{'argvText': 'node pilotdeck.js server'}],
+                        'declared': [None], 'declaredAlive': True},
+                       {'rows': [{'pid': None}, {'pid': 7}], 'declared': [None, 7],
+                        'declaredAlive': True},
+                       {'rows': [{'pid': 7}], 'declared': [None, 7], 'declaredAlive': True},
+                       {'rows': [{'pid': 7}], 'declared': [True], 'declaredAlive': True},
+                       {'rows': [{'pid': 7}], 'declared': ['7'], 'declaredAlive': True}):
+            verdict = self.session._retirement_census_verdict(census)
+            self.assertEqual(verdict['status'], 'FAIL', census)
+            self.assertTrue(any('not real pids' in problem or 'undeclared' in problem
+                                for problem in verdict['problems']), verdict)
+        # A pid-less row alongside an honest declared int is still an
+        # undeclared observation, and the absent declared pid is reported
+        # as missing — neither PASSes.
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': None}], 'declared': [4242], 'declaredAlive': True})
+        self.assertEqual(verdict['status'], 'FAIL')
+        self.assertEqual(len(verdict['undeclared']), 1)
+        # The healthy shape is unchanged.
+        verdict = self.session._retirement_census_verdict(
+            {'rows': [{'pid': 4242, 'argvText': 'node pilotdeck.js server'}],
+             'declared': [4242], 'declaredAlive': True})
+        self.assertEqual(verdict['status'], 'PASS')
+        self.assertEqual(verdict['undeclared'], [])
 
     def test_network_verdict_fails_closed_on_empty_unparsed_or_failed_samples(self):
         # R3: an empty, unparsed or failed lsof sample cannot prove loopback.

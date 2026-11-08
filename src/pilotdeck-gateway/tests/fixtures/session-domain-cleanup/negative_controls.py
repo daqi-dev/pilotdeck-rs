@@ -511,6 +511,19 @@ def calibrate_status_update(rows):
                   'passed=False')
 
 
+def calibrate_status_write_is_literal_bypass(rows):
+    """#1652 fix-r6 (DS boundary P1): ``report['status'] = 'PASS' if 1.0 is
+    1.0 else 'FAIL'`` is not a branch the audit can fold — the interpreter
+    may share one object between equal constants in the same code object
+    (``1.0 is 1.0`` is True at runtime, measured), so the write takes the
+    clean arm and the presence scan must treat the unresolvable test as
+    cannot-rule-out."""
+    return _controls_main_needle(
+        rows, "inline status/exit assignment 'PASS' if 1.0 is 1.0 else 'FAIL'",
+        'aggregation-audit: identity-literal status write flagged, '
+        'passed=False')
+
+
 def calibrate_shared_excuse(rows):
     """#892 r4: a zero branch is still inline when the other branch is shared
     (DeepSeek boundary P0-1 / concurrency P1-1)."""
@@ -758,6 +771,18 @@ def calibrate_exit_conditional(rows):
     return _controls_main_needle(
         rows, 'inline exit code 0 if',
         'aggregation-audit: conditional exit argument flagged, passed=False')
+
+
+def calibrate_exit_is_literal_bypass(rows):
+    """#1652 fix-r6 (DS boundary P1): ``sys.exit(0 if 1.0 is 1.0 else 1)``
+    takes the zero arm at runtime (equal constants in one code object share
+    an object, measured) — the identity test is unresolvable for the fold,
+    so the exit scan must treat "no certified arm" as cannot-rule-out
+    instead of walking past the call."""
+    return _controls_main_needle(
+        rows, 'inline exit code 0 if 1.0 is 1.0 else 1',
+        'aggregation-audit: identity-literal exit argument flagged, '
+        'passed=False')
 
 
 def calibrate_return_exit_call(rows):
@@ -1902,6 +1927,28 @@ def nested_not_false_conditional_bypass(rows):
                   'flagged, passed=False')
 
 
+def nested_shared_call_boolop_bypass(rows):
+    """#1652 fix-r6 (MiniMax boundary P0): the cleanupAudit face written as
+    ``'PASS' or common.aggregate_status('PASS')`` is an unconditional clean
+    status by short-circuit semantics — the shared call in the dead operand
+    never runs, so its spelling may not exempt the nested slot the way a
+    live relay does."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' or common.aggregate_status('PASS')",
+        'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested shared-call BoolOp bypass '
+                  'flagged, passed=False')
+
+
 def controls_nested_same_name(rows):
     """#892 r3: a nested ``def main`` must not shadow or duplicate the
     registered point name (MiniMax/DeepSeek boundary P2)."""
@@ -2136,6 +2183,12 @@ MUTATIONS = [
     ('calibrate-status-update', SOURCE,
      "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
      "                report.update({'status': 'PASS'})\n"),
+    # #1652 fix-r6 (DS boundary P1): the write-side identity spelling — the
+    # unresolvable test takes the clean arm at runtime, so an empty certified
+    # arm set fails closed instead of certifying "no clean write".
+    ('calibrate-status-write-is-literal-bypass', SOURCE,
+     "                report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'\n",
+     "                report['status'] = 'PASS' if 1.0 is 1.0 else 'FAIL'\n"),
     ('retirement-duplicate-status-key', SOURCE,
      "        'status': overall,\n",
      "        'status': 'BLOCKED', 'status': 'PASS',\n"),
@@ -2175,6 +2228,14 @@ MUTATIONS = [
      "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
      "            for row in rounds) else 'FAIL'},\n",
      "        'cleanupAudit': {'status': 'PASS' if 1.0 is 1.0 else 'FAIL'},\n"),
+    # #1652 fix-r6 (MiniMax boundary P0): the shared-call exemption follows
+    # short-circuit reachability — a ``common.aggregate_status`` operand the
+    # interpreter can never reach may not exempt the nested slot.
+    ('nested-shared-call-boolop-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' or common.aggregate_status('PASS')},\n"),
     ('controls-nested-same-name', CONTROLS_SOURCE,
      "    report['cleanup'] = cleanup\n",
      "    def main():\n"
@@ -2285,6 +2346,13 @@ MUTATIONS = [
      CT_EXIT,
      "        if report.get('special'):\n"
      "            sys.exit(0 if report.get('cells') else 1)\n" + CT_EXIT),
+    # #1652 fix-r6 (DS boundary P1): the exit-side identity spelling — the
+    # unresolvable test takes the zero arm at runtime, so an empty certified
+    # arm set fails closed instead of walking past the call.
+    ('calibrate-exit-is-literal-bypass', CONTROLS_SOURCE,
+     CT_EXIT,
+     "        if report.get('special'):\n"
+     "            sys.exit(0 if 1.0 is 1.0 else 1)\n" + CT_EXIT),
     ('calibrate-return-exit-call', CONTROLS_SOURCE,
      CT_EXIT,
      "        if report.get('special'):\n"
@@ -4542,6 +4610,8 @@ JUDGES = {
         'aggregation-audit', controls_aggregate_lookalike, False, ()),
     'calibrate-status-update': (
         'aggregation-audit', calibrate_status_update, False, ()),
+    'calibrate-status-write-is-literal-bypass': (
+        'aggregation-audit', calibrate_status_write_is_literal_bypass, False, ()),
     'retirement-duplicate-status-key': (
         'aggregation-audit', retirement_duplicate_status_key, False, ()),
     'nested-status-slot-bypass': (
@@ -4554,6 +4624,10 @@ JUDGES = {
         'aggregation-audit', nested_boolop_value_bypass, False, ()),
     'nested-is-literal-bypass': (
         'aggregation-audit', nested_is_literal_bypass, False, ()),
+    'nested-shared-call-boolop-bypass': (
+        'aggregation-audit', nested_shared_call_boolop_bypass, False, ()),
+    'calibrate-exit-is-literal-bypass': (
+        'aggregation-audit', calibrate_exit_is_literal_bypass, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
     'calibrate-shared-excuse': (
@@ -4598,6 +4672,8 @@ JUDGES = {
         'aggregation-audit', calibrate_update_expansion, False, ()),
     'calibrate-exit-conditional': (
         'aggregation-audit', calibrate_exit_conditional, False, ()),
+    'calibrate-exit-is-literal-bypass': (
+        'aggregation-audit', calibrate_exit_is_literal_bypass, False, ()),
     'calibrate-return-exit-call': (
         'aggregation-audit', calibrate_return_exit_call, False, ()),
     'calibrate-ann-rebuilt': (

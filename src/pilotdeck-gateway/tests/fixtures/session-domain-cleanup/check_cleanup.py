@@ -1020,6 +1020,11 @@ def _folded_string(node):
         left = _folded_string(node.left)
         right = _folded_string(node.right)
         if isinstance(node.op, ast.Add) and left is not None and right is not None:
+            # fix-r6 (DS sibling r5 P2-2): the concat fold had no cap, so a
+            # chain of ``+`` on constant strings grew the folded string
+            # without one.  Over cap, the shape is not a known literal.
+            if len(left) + len(right) > _FOLD_MAX_ITEMS:
+                return None
             return left + right
         if isinstance(node.op, ast.Mod) and left is not None and right is not None:
             try:
@@ -1029,6 +1034,10 @@ def _folded_string(node):
         if (isinstance(node.op, ast.Mult) and left is not None
                 and isinstance(node.right, ast.Constant)
                 and isinstance(node.right.value, int)):
+            # fix-r6 (DS sibling r5 P2-2): same cap for repetition, judged
+            # on the folded result's length.
+            if len(left) * abs(node.right.value) > _FOLD_MAX_ITEMS:
+                return None
             return left * node.right.value
     return None
 
@@ -1105,7 +1114,14 @@ def _returned_summary_dicts(value):
     if isinstance(value, ast.IfExp):
         arms = (value.body, value.orelse)
     elif isinstance(value, ast.BoolOp):
-        arms = value.values
+        # fix-r6 (MiniMax sibling r5 P1, take-high with boundary P3): the
+        # BoolOp value folds by short-circuit reachability in ``_exit_arms``
+        # (fix-r5), so the collector must walk the same reachable arms —
+        # walking every operand judged dead arms as returned dicts (false
+        # red).  An unresolved test certifies no arm (``[]``), and the
+        # conservative fallback is to walk every operand: that can only
+        # over-collect, never hide one.
+        arms = _exit_arms(value) or value.values
     elif isinstance(value, ast.Dict):
         return [value] if _dict_has_status(value) else []
     elif isinstance(value, ast.Tuple):
@@ -3881,6 +3897,20 @@ _CLEAN_STATUS_LITERALS = frozenset({'PASS', 'PASS_WITH_SKIPS',
                                     'PASS_WITH_CLEANUP_UNVERIFIED'})
 _FAIL_CLOSED_LITERALS = STATUS_WORDS - _CLEAN_STATUS_LITERALS
 
+# fix-r6 (DS + MiniMax r5, boundary/concurrency, two families): caps on what
+# the literal fold may materialize.  fix-r5's bounds judged each node's own
+# operands, so a nested chain stayed inside every per-node cap while its
+# folded result grew without one (``((2**64)**64)**64``: every level's
+# exponent is a legal 64, the result is GB-scale).  The caps are therefore
+# on the *folded result's* size -- bits for ints, elements for sequences --
+# and are pre-checked before the op runs, so a chain that stays under the
+# cap at every node can never exceed it overall (each operand is itself a
+# previous in-cap result).  Over-cap shapes resolve to
+# ``_LITERAL_TEST_UNRESOLVED`` (or ``None`` for the string fold) and fail
+# closed instead of being computed.
+_FOLD_MAX_BITS = 1_000_000
+_FOLD_MAX_ITEMS = 1_000_000
+
 # A call is only a proven slot source when its callee's own return path is
 # audited -- i.e. the callee is one of the registered points above.  Any other
 # call is opaque and fails closed (MiniMax boundary r11 P0-1).  The exemption
@@ -4093,7 +4123,10 @@ def _returned_names(value):
     if isinstance(value, ast.IfExp):
         arms = (value.body, value.orelse)
     elif isinstance(value, ast.BoolOp):
-        arms = value.values
+        # fix-r6 (MiniMax sibling r5 P1, take-high with boundary P3): walk
+        # the same reachable arms ``_exit_arms`` certifies; unresolved falls
+        # back to every operand, which can only over-collect.
+        arms = _exit_arms(value) or value.values
     elif isinstance(value, ast.Tuple):
         arms = value.elts
     else:
@@ -4232,6 +4265,24 @@ def _test_is_runtime(node):
 
 
 def _literal_test_value(node):
+    """``_literal_test_value_fold`` with the recursion limit made fail-closed.
+
+    fix-r6 (MiniMax concurrency P2, in-round): a pure-literal tree nested
+    past the interpreter's recursion limit is an unresolvable constant —
+    not an exception that escapes the fold, takes the whole
+    ``aggregation_audit()`` down with it and collapses every other verdict
+    of the pattern into one ``control_failure`` line.  The wrapper catches
+    the limit at every recursion level (internal recursion goes through
+    it), so the deep shape degrades to ``_LITERAL_TEST_UNRESOLVED`` and
+    fails closed on its own.
+    """
+    try:
+        return _literal_test_value_fold(node)
+    except RecursionError:
+        return _LITERAL_TEST_UNRESOLVED
+
+
+def _literal_test_value_fold(node):
     """Value of an expression built only from literals and operators.
 
     ``ast.literal_eval`` folds ``True`` but rejects ``not False``, ``1 == 1``,
@@ -4347,24 +4398,43 @@ def _literal_test_value(node):
         right = _literal_test_value(node.right)
         if _LITERAL_TEST_UNRESOLVED in (left, right):
             return _LITERAL_TEST_UNRESOLVED
-        # fix-r5 (DS boundary P2, in-round a): the fold runs on audited source
-        # text, so an adversarial or corrupted literal must not be able to
-        # hang or OOM the audit — the unbounded shapes stay unresolved and
-        # fail closed instead of being computed.
-        if isinstance(node.op, ast.Pow):
-            if (isinstance(left, (int, float)) and isinstance(right, int)
-                    and abs(right) > 64):
-                return _LITERAL_TEST_UNRESOLVED
-        if isinstance(node.op, (ast.LShift, ast.RShift)):
-            if not isinstance(right, int) or not -256 <= right <= 256:
-                return _LITERAL_TEST_UNRESOLVED
+        # fix-r6 (DS boundary P2 + MiniMax boundary P1/concurrency P1, both
+        # families): the fix-r5 bounds judged each node's *own operands*, so
+        # a nested chain stayed inside every per-node cap while its folded
+        # result grew without one — ``((2**64)**64)**64`` has a legal 64 as
+        # every level's exponent and GB-scale results, ``(1<<256)<<256``
+        # doubles its width each level, and ``b'x' * n`` / ``[0] * n`` /
+        # tuple repetition were not bounded at all.  The caps below judge
+        # the *folded result's* size and are pre-checked before the op runs,
+        # so a chain that stays under the cap at every node can never exceed
+        # it overall (each operand is itself a previous in-cap result); the
+        # shapes over it stay unresolved and fail closed instead of being
+        # computed.  int left ** int right with right < 0, and float Pow,
+        # raise (ZeroDivisionError/OverflowError/ValueError) into the except
+        # below and resolve the same way.
+        if (isinstance(node.op, ast.Pow) and isinstance(left, int)
+                and isinstance(right, int) and right >= 0
+                and max(left.bit_length(), 1) * right > _FOLD_MAX_BITS):
+            return _LITERAL_TEST_UNRESOLVED
+        if (isinstance(node.op, ast.LShift) and isinstance(left, int)
+                and isinstance(right, int) and right >= 0
+                and max(left.bit_length(), 1) + right > _FOLD_MAX_BITS):
+            return _LITERAL_TEST_UNRESOLVED
         if isinstance(node.op, ast.Mult):
-            if (isinstance(left, str) and isinstance(right, int)
-                    and len(left) * abs(right) > 1_000_000):
+            for sequence, count in ((left, right), (right, left)):
+                if (isinstance(sequence, (str, bytes, list, tuple))
+                        and isinstance(count, int)
+                        and len(sequence) * abs(count) > _FOLD_MAX_ITEMS):
+                    return _LITERAL_TEST_UNRESOLVED
+            if (isinstance(left, int) and isinstance(right, int)
+                    and left.bit_length() + right.bit_length()
+                    > _FOLD_MAX_BITS):
                 return _LITERAL_TEST_UNRESOLVED
-            if (isinstance(right, str) and isinstance(left, int)
-                    and len(right) * abs(left) > 1_000_000):
-                return _LITERAL_TEST_UNRESOLVED
+        if (isinstance(node.op, ast.Add)
+                and isinstance(left, (str, bytes, list, tuple))
+                and isinstance(right, (str, bytes, list, tuple))
+                and len(left) + len(right) > _FOLD_MAX_ITEMS):
+            return _LITERAL_TEST_UNRESOLVED
         try:
             if isinstance(node.op, ast.Add):
                 return left + right
@@ -4514,8 +4584,17 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
     registered point to ``'PASS'`` is otherwise a silent bypass (DeepSeek
     sibling P1-2).  A relay, a shared call and a non-batch label such as
     ``'PENDING_REVIEW'`` stay legal.
+
+    fix-r6 (DS boundary r5 P1): an unresolvable pure-literal test
+    certifies no arm, and for this presence scan "no certified arm" is
+    *not* "no clean write" — ``report['status'] = 'PASS' if 1.0 is 1.0 else
+    'FAIL'`` takes the clean arm at runtime, so an empty arm set fails
+    closed here too.
     """
-    for arm in _exit_arms(value):
+    arms = _exit_arms(value)
+    if not arms:
+        return True
+    for arm in arms:
         if isinstance(arm, ast.NamedExpr):
             # ``report['status'] = (status := 'PASS')`` writes the same value
             # through a walrus target (MiniMax sibling P1-2).  A miss may not
@@ -4661,11 +4740,25 @@ def _summary_slot_violations(summary, bindings, lineno):
 # sources stay legal exactly as everywhere else.
 def _nested_slot_fail_closed(value, bindings):
     """True when a nested status slot relays a shared verdict or keeps a
-    fail-closed arm (#1652)."""
-    if _relays_status(value, bindings) or _calls_aggregate(value):
+    fail-closed arm (#1652).
+
+    fix-r6 (MiniMax boundary P0, single-family, probe-verified —
+    ``fix-r6-audit/probe-before.out`` B1): the shared-call exemption must
+    follow the same short-circuit reachability semantics fix-r5 established
+    for values, or it swallows them whole.  A ``common.aggregate_status``
+    call sitting in an operand the interpreter can never reach
+    (``'PASS' or common.aggregate_status(row)`` — the call is dead spelling)
+    used to exempt the slot via the full-tree ``_calls_aggregate`` scan that
+    ran *before* the arms were computed.  The exemption is now judged on
+    the exit arms only; a live arm that is a shared call still relays.
+    """
+    if _relays_status(value, bindings):
+        return True
+    arms = _exit_arms(value)
+    if any(_calls_aggregate(arm) for arm in arms):
         return True
     return any(_folded_string(arm) in _FAIL_CLOSED_LITERALS
-               for arm in _exit_arms(value))
+               for arm in arms)
 
 
 def _nested_status_slots(value):
@@ -4697,7 +4790,15 @@ def _nested_status_slots(value):
         for arm in (value.body, value.orelse):
             slots.extend(_nested_status_slots(arm))
     elif isinstance(value, ast.BoolOp):
-        for arm in value.values:
+        # fix-r6 (MiniMax sibling r5 P1, take-high with boundary P3): the
+        # BoolOp value folds by short-circuit reachability (fix-r5's
+        # ``_exit_arms``), so the collector walks the same reachable arms —
+        # pre-fix, a dead arm's ``{'status': 'PASS'}`` was collected as a
+        # slot the report can never produce (false red).  An unresolved
+        # test certifies no arm; the conservative fallback walks every
+        # operand, which can only over-collect, never hide one.
+        arms = _exit_arms(value) or value.values
+        for arm in arms:
             slots.extend(_nested_status_slots(arm))
     elif isinstance(value, ast.Starred):
         # fix-r2 (DS boundary observation): ``[*[{'status': 'PASS'}]]`` spreads
@@ -4933,6 +5034,13 @@ def _helper_exits_zero(target, lookup, seen, aliases=None):
                 return True
             if _calls_aggregate(item.value):
                 continue  # this return routes its own code through the map
+            # fix-r6 (DS boundary r5 P1): an unresolvable pure-literal test
+            # certifies no arm, and for this presence scan that is "an
+            # exit-zero path cannot be ruled out", not "there is none" --
+            # ``return 0 if 1.0 is 1.0 else 1`` takes the zero arm at
+            # runtime, so the empty arm set fails closed here too.
+            if not _exit_arms(item.value):
+                return True
             if _constant_exit_zero(item.value) or any(
                     _constant_exit_zero(arm) for arm in _exit_arms(item.value)):
                 return True
@@ -5153,8 +5261,16 @@ def _exit_provenance(argument, bindings, function, module, point,
     walked straight through the exit-call branches (GLM sibling P1-2/P1-3).
     A literal zero and a status literal are reported by the caller with its own
     wording, so they are skipped here.
+
+    fix-r6 (DS boundary r5 P1): an unresolvable pure-literal test certifies
+    no arm, and for this presence scan that is "an inline-code path cannot
+    be ruled out" — ``sys.exit(0 if 1.0 is 1.0 else 1)`` takes the zero arm
+    at runtime, so the empty arm set fails closed here too.
     """
-    for arm in _exit_arms(argument):
+    arms = _exit_arms(argument)
+    if not arms:
+        return True
+    for arm in arms:
         if _calls_aggregate(arm):
             continue
         if _status_literals(arm) or _has_passed_aggregate(arm):
@@ -5983,7 +6099,18 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
                     summary is _nearest_binding(element.id, bindings, node.lineno)
                     for summary in bound.get(element.id, ())):
                 continue  # its dict is already checked above
-            for arm in _exit_arms(element):
+            # fix-r6 (DS boundary r5 P1): an unresolvable pure-literal test
+            # certifies no arm, and for this presence scan that is "an
+            # inline status/exit path cannot be ruled out" — ``return 'PASS'
+            # if 1.0 is 1.0 else report`` takes the status arm at runtime,
+            # so the empty arm set fails closed here too.
+            element_arms = _exit_arms(element)
+            if not element_arms:
+                violations.append(
+                    f'inline status/exit (unresolvable arm test) '
+                    f'{ast.unparse(element)[:60]} at line {node.lineno}')
+                continue
+            for arm in element_arms:
                 if (_status_literals(arm) or _has_passed_aggregate(arm)):
                     # A dict arm is judged by ``_summary_slot_violations`` above
                     # -- but only the dicts this return actually hands back, not
@@ -7125,19 +7252,83 @@ def aggregation_audit():
             is not _LITERAL_TEST_UNRESOLVED):
         failures.append('#892 aggregation-audit: the constant fold judged an '
                         'identity test instead of failing closed (#1652)')
-    # #1652 fix-r5 (DS boundary P2, in-round a): the arithmetic fold stays
-    # bounded — an adversarial literal cannot hang or OOM the audit.
-    for _source in ('2 ** 100', '1 << 300', "'x' * 10 ** 7"):
+    # #1652 fix-r6 (DS + MiniMax r5 boundary/concurrency, both families): the
+    # fold stays bounded by judging the *folded result's* size, not each
+    # node's own operands — fix-r5's per-node caps let a nested chain
+    # (``((2**64)**64)**64``, ``(1<<300)<<300``, bytes/list/tuple repeats)
+    # grow without one while staying per-node legal.  A single node whose
+    # folded result is under the cap now computes (that is the whole point
+    # of the tighter semantics: ``2 ** 100`` is a 101-bit int, not a hang).
+    for _source in ('2 ** 2_000_000', '1 << 1_000_001', "'x' * 10 ** 7",
+                    "b'x' * 10 ** 7", '[0] * 10 ** 7', '(0,) * 10 ** 7',
+                    "'ab' + 'x' * 10 ** 7"):
         if (_literal_test_value(ast.parse(_source, mode='eval').body)
                 is not _LITERAL_TEST_UNRESOLVED):
             failures.append('#892 aggregation-audit: the arithmetic fold computed '
                             f'an unbounded literal {_source!r} instead of failing '
                             'closed (#1652)')
+    for _source in ('(((2**64)**64)**64)**64', '(1 << 999999) << 2',
+                    '((1 << 700000) << 400000)'):
+        if (_literal_test_value(ast.parse(_source, mode='eval').body)
+                is not _LITERAL_TEST_UNRESOLVED):
+            failures.append('#892 aggregation-audit: the arithmetic fold computed '
+                            f'a nested per-node-legal chain {_source!r} whose folded '
+                            'result grows without a cap (#1652)')
     for _source, _expected in (('2 ** 10', 1024), ('1 << 10', 1024),
+                               ('2 ** 100', 2 ** 100), ('1 << 300', 1 << 300),
                                ("'x' * 3", 'xxx')):
         if _literal_test_value(ast.parse(_source, mode='eval').body) != _expected:
             failures.append('#892 aggregation-audit: the arithmetic fold rejected '
                             f'a bounded literal {_source!r} (#1652)')
+    # #1652 fix-r6 (MiniMax boundary P0): the nested-slot shared-call
+    # exemption follows short-circuit reachability — a dead
+    # ``common.aggregate_status`` operand may not exempt the slot, while a
+    # live relay still does.
+    if _nested_slot_fail_closed(
+            ast.parse("'PASS' or common.aggregate_status(row)",
+                      mode='eval').body, {}):
+        failures.append('#892 aggregation-audit: the nested-slot exemption '
+                        'still trusts a dead shared-call operand (#1652)')
+    if not _nested_slot_fail_closed(
+            ast.parse("common.aggregate_status(row) or 'FAIL'",
+                      mode='eval').body, {}):
+        failures.append('#892 aggregation-audit: the nested-slot exemption '
+                        'dropped a live shared relay (#1652)')
+    # #1652 fix-r6 (DS boundary P1): an unresolvable pure-literal test
+    # certifies no arm, and the write/exit presence scans treat "no
+    # certified arm" as cannot-rule-out — the identity spelling takes the
+    # clean arm at runtime (measured).
+    if not _assigns_clean_status(
+            ast.parse("'PASS' if 1.0 is 1.0 else 'FAIL'",
+                      mode='eval').body, {}):
+        failures.append('#892 aggregation-audit: the write scan walked past '
+                        'an unresolvable identity conditional (#1652)')
+    if not _exit_provenance(
+            ast.parse('0 if 1.0 is 1.0 else 1', mode='eval').body,
+            {}, None, None, 'P'):
+        failures.append('#892 aggregation-audit: the exit scan walked past '
+                        'an unresolvable identity conditional (#1652)')
+    # #1652 fix-r6 (MiniMax sibling P1, take-high with boundary P3): the
+    # collectors walk the same reachable arms the value fold certifies — a
+    # dead arm's dict is not a summary the function can return, and an
+    # unresolved BoolOp falls back to every operand (over-collect, never
+    # hide).
+    boolop_dead_arm = ast.parse(
+        "def _boolop_dead_arm_summary(report):\n"
+        "    return 'FAIL' or {'status': 'PASS'}\n")
+    if _returned_summary_dicts(boolop_dead_arm.body[0].body[0].value):
+        failures.append('#892 aggregation-audit: detector self-test judged '
+                        'the dead arm of a constant BoolOp on the return '
+                        'path (#1652)')
+    boolop_live_arm = ast.parse(
+        "def _boolop_live_arm_summary(report):\n"
+        "    return runtime_choice or {'status': 'PASS'}\n")
+    if not _returned_summary_dicts(boolop_live_arm.body[0].body[0].value):
+        failures.append('#892 aggregation-audit: detector self-test let '
+                        'reachability folding hide a live BoolOp arm (#1652)')
+    if _nested_status_slots(boolop_dead_arm.body[0].body[0].value):
+        failures.append('#892 aggregation-audit: detector self-test collected '
+                        'a nested slot from a dead BoolOp arm (#1652)')
     # #1652 fix-r2 (DS boundary observation): a starred literal spread is
     # walked — the clean status inside ``[*[{'status': 'PASS'}]]`` must be
     # flagged, while spreading a name stays opaque by design.

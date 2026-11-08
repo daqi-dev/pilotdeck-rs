@@ -1771,12 +1771,27 @@ def _retirement_census_verdict(census):
     rows = rows if isinstance(rows, list) else []
     declared = census.get('declared')
     declared = declared if isinstance(declared, list) else []
-    undeclared = [row for row in rows if _retirement_census_pid(row) not in declared]
+    # fix-r6 (DS boundary P0 + MiniMax boundary P0, both families,
+    # probe-verified — ``fix-r6-audit/probe-before.out`` A1/A2): ``None``
+    # cannot double as "this row names no pid" and as a declared entry —
+    # membership by ``==`` let a corrupt ``declared: [null]`` with pid-less
+    # rows (``{'rows': [{'pid': null}], 'declared': [null],
+    # 'declaredAlive': True}``) read as a fully established census and
+    # PASS, contradicting this face's own rule that a pid-less row is an
+    # undeclared observation.  A row naming no pid now always counts as
+    # undeclared, and a declared entry that is not a real pid (null, bool,
+    # float, string) makes the declared set untrustworthy outright.
+    undeclared = [row for row in rows
+                  if _retirement_census_pid(row) is None
+                  or _retirement_census_pid(row) not in declared]
     # fix-r2 (anthropic boundary P2): membership by equality, not by a set —
     # a corrupt row carrying an unhashable pid must not turn the census face
     # into a TypeError out of the report path.
     missing_declared = [pid for pid in declared
                         if not any(_retirement_census_pid(row) == pid for row in rows)]
+    untrustworthy_declared = sorted(
+        {pid for pid in declared
+         if not isinstance(pid, int) or isinstance(pid, bool)})
     problems = []
     if undeclared:
         problems.append(f'{len(undeclared)} undeclared TS host rows: '
@@ -1784,6 +1799,9 @@ def _retirement_census_verdict(census):
     if missing_declared:
         problems.append(f'declared pids absent from the census rows: {missing_declared} '
                         f'(rows sampled: {len(rows)})')
+    if untrustworthy_declared:
+        problems.append(f'declared pid entries are not real pids: {untrustworthy_declared}; '
+                        'a corrupt declared set cannot prove a clean host audit')
     if not declared or not rows:
         problems.append('the census recorded no sampled rows or no declared owned pids; '
                         'an unestablished census is not a clean host audit')
@@ -1871,7 +1889,11 @@ def _retirement_network_verdict(connections):
     face read the ``observable`` field instead of re-deriving the shape from
     the raw observation.  A missing ``commandStatus`` is a probe that never
     reported success: BLOCKED, not a sample that passes merely because it
-    forgot to say it failed.
+    forgot to say it failed.  fix-r6 (MiniMax boundary P2, in-round, comment
+    corrected): that BLOCKED branch is deliberately judged *before* the
+    undeclared-peer FAIL — unobservable is neither clean nor a peer judgment
+    — so "a probe that never reported success" never surfaces as FAIL and a
+    non-loopback peer FAIL requires a successfully probed sample below.
     """
     connections = connections if isinstance(connections, dict) else {}
     rows = connections.get('rows')
@@ -3058,8 +3080,13 @@ def _retirement_report(output, baseline):
     # R5 (#1355 fix-r2): the network face reads as what it is — one
     # post-driver sample of the gateway pid's own established peers (provider
     # egress included); it does not cover other TS hosts.  The rule itself is
-    # deliberately not relaxed: a non-loopback peer still FAILs, and the
-    # structural provider-egress FAIL is registered as a known boundary (#1478).
+    # deliberately not relaxed: a non-loopback peer in a successfully probed
+    # sample still FAILs, and the structural provider-egress FAIL is
+    # registered as a known boundary (#1478).  fix-r6 (MiniMax boundary P2,
+    # in-round, comment corrected): a probe that never reported success
+    # ('commandStatus != ok') BLOCKS the face before the peer judgment —
+    # unobservable is not clean — but it is also not a peer FAIL; the
+    # judgment order is that of ``_retirement_network_verdict``.
     network_verdicts = []
     for row in rounds:
         connections = row.get('connections')
@@ -3208,7 +3235,7 @@ def retirement_report(output, baseline):
         # wrapper's budget branch was fixed to remove.
         return _retirement_budget_blocked(baseline, error, rule=error.rule)
     except (KeyError, TypeError, AttributeError, ValueError, OSError,
-            RecursionError) as error:
+            RecursionError, MemoryError) as error:
         # fix-r2 (DS concurrency P2 / boundary P2): a corrupted or truncated
         # driver artifact (a half-written methods.json, a frames.jsonl line
         # that is valid JSON but not an object) raised before any source
@@ -3220,6 +3247,9 @@ def retirement_report(output, baseline):
         # RecursionError joins — copy.deepcopy on a deeply nested artifact
         # (600-deep, measured) overflows before json.loads ever would (the
         # C scanner handles 50000-deep) and used to reach main's stub here.
+        # fix-r6 (DS concurrency P2, in-round): MemoryError joins — a
+        # corrupted artifact sized past the host's memory would otherwise
+        # crash the report path itself instead of reporting BLOCKED.
         return _retirement_budget_blocked(baseline, error, rule='ROUND_EVIDENCE')
 
 
@@ -3364,7 +3394,8 @@ def main():
                     report['freezeStatus'] = 'BLOCKED'
                     report['failure'] = {'rule': 'FROZEN', 'detail': 'measurements completed; see frozen check output; no acceptance PASS'}
             except (EvidenceError, OSError, ValueError, KeyError, TypeError, AttributeError, IndexError, StopIteration,
-                    subprocess.SubprocessError, TimeoutError, RuntimeError, KeyboardInterrupt) as error:
+                    subprocess.SubprocessError, TimeoutError, RuntimeError, MemoryError,
+                    KeyboardInterrupt) as error:
                 report['status'] = 'BLOCKED' if isinstance(error, BLOCKED_APPARATUS_ERRORS) else 'FAIL'
                 if args.suite == 'deadline':
                     report.pop('cells', None)  # No consumable partial score after failed final verification.
@@ -3375,7 +3406,8 @@ def main():
             print(json.dumps({'status': report['status'], 'suite': args.suite, 'report': str(output / 'report.json'),
                               'failure': report.get('failure'), 'acceptanceStatus': report['acceptanceStatus']}, ensure_ascii=False))
             return code
-    except (TimeoutError, KeyboardInterrupt, ValueError, OSError, subprocess.SubprocessError) as error:
+    except (TimeoutError, KeyboardInterrupt, ValueError, OSError, MemoryError,
+            subprocess.SubprocessError) as error:
         print(json.dumps({'suite': args.suite, 'status': 'BLOCKED', 'error': str(error)}, ensure_ascii=False))
         return 2
 
