@@ -111,6 +111,17 @@ mod tests {
             storage_root: None,
         }
     }
+    #[test]
+    fn isolated_options_preserve_explicit_tcp_profile() {
+        let options = options();
+        let inherited = env(&[
+            ("PILOTDECK_AGENT_LOOP_TRANSPORT", "\u{a0}TCP\u{a0}"),
+            ("PILOTDECK_AGENT_LOOP_TCP_HOST", "127.0.0.1"),
+            ("PILOTDECK_AGENT_LOOP_TCP_PORT", "4321"),
+        ]);
+        let captured = options.environment(inherited);
+        assert!(matches!(resolve(&options, &captured).unwrap(), Deployment::Tcp { port: 4321, .. }));
+    }
     fn env(entries: &[(&str, &str)]) -> Env {
         entries
             .iter()

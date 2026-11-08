@@ -93,13 +93,23 @@ impl ConnectionOwner {
             queue_capacity: queue_capacity.max(1),
         }))
     }
-    pub(crate) fn with_budget(binding: SidecarBinding, queue_capacity: usize, budget: Arc<crate::server::TransportBudget>) -> Self {
+    pub(crate) fn with_budget(
+        binding: SidecarBinding,
+        queue_capacity: usize,
+        budget: Arc<crate::server::TransportBudget>,
+    ) -> Self {
         let mut owner = Self::new(binding, queue_capacity);
-        Arc::get_mut(&mut owner.0).expect("new connection has one owner").budget = Some(budget);
+        Arc::get_mut(&mut owner.0)
+            .expect("new connection has one owner")
+            .budget = Some(budget);
         owner
     }
     fn charge(&self, value: &JsValue) -> io::Result<Option<Arc<crate::server::TransportLease>>> {
-        self.0.budget.as_ref().map(|budget| budget.acquire(value)).transpose()
+        self.0
+            .budget
+            .as_ref()
+            .map(|budget| budget.acquire(value))
+            .transpose()
     }
     pub fn binding(&self) -> &SidecarBinding {
         &self.0.binding
@@ -982,23 +992,35 @@ mod reconciliation_tests {
     fn tcp_outbound_budget_is_shared_and_released_after_last_record_owner() {
         let budget = Arc::new(crate::server::TransportBudget::default());
         let binding = SidecarBinding {
-            module_id: "test".into(), module_instance_id: "instance".into(),
-            connection_generation: "generation".into(), capabilities_version: "1".into(),
+            module_id: "test".into(),
+            module_instance_id: "instance".into(),
+            connection_generation: "generation".into(),
+            capabilities_version: "1".into(),
         };
         let a = ConnectionOwner::with_budget(binding.clone(), 64, budget.clone());
         let b = ConnectionOwner::with_budget(binding, 64, budget);
-        let payload = JsValue::from("x".repeat(1024 * 1024));
+        let payload = JsValue::String("x".repeat(1024 * 1024).into());
         let mut holds = Vec::new();
         // UTF-16 payload and retained-object charge leave fewer than eight leases.
-        for _ in 0..7 { holds.push(a.charge(&payload).unwrap().unwrap()); }
-        assert!(b.charge(&payload).is_err(), "one connection cannot evade the shared budget");
+        for _ in 0..7 {
+            holds.push(a.charge(&payload).unwrap().unwrap());
+        }
+        assert!(
+            b.charge(&payload).is_err(),
+            "one connection cannot evade the shared budget"
+        );
         let last = holds[0].clone();
         holds.remove(0);
-        assert!(b.charge(&payload).is_err(), "a retained call still owns its lease");
+        assert!(
+            b.charge(&payload).is_err(),
+            "a retained call still owns its lease"
+        );
         drop(last);
         assert!(b.charge(&payload).is_ok(), "last owner releases capacity");
         drop(holds);
-        for _ in 0..16 { assert!(a.charge(&payload).is_ok()); }
+        for _ in 0..16 {
+            assert!(a.charge(&payload).is_ok());
+        }
     }
 
     struct Recorder {

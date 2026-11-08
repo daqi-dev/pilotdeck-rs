@@ -31,7 +31,10 @@ fn main() -> ExitCode {
     let port_text = port_value.as_ref().map(|value| value.to_string_lossy());
     let tcp_port = match pilotdeck_transport::tcp::optional_port(port_text.as_deref()) {
         Ok(port) => port,
-        Err(error) => { eprintln!("{error}"); return ExitCode::from(2); }
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::from(2);
+        }
     };
     // #1371: an armed controlled loop resolves and validates its plan before
     // the server advertises readiness, so an invalid control directory fails
@@ -94,20 +97,34 @@ fn main() -> ExitCode {
     if let Some(port) = tcp_port {
         let host_value = std::env::var("PILOTDECK_AGENT_LOOP_TCP_HOST").ok();
         let host = pilotdeck_transport::tcp::listen_host(host_value.as_deref());
-        let listener = match pilotdeck_transport::tcp::TcpExecutionServer::bind((host, port), binding, factory, clock) {
+        let listener = match pilotdeck_transport::tcp::TcpExecutionServer::bind(
+            (host, port),
+            binding,
+            factory,
+            clock,
+        ) {
             Ok(listener) => listener,
-            Err(error) => { eprintln!("Sidecar TCP initialization failed: {error}"); return ExitCode::from(2); }
+            Err(error) => {
+                eprintln!("Sidecar TCP initialization failed: {error}");
+                return ExitCode::from(2);
+            }
         };
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         #[cfg(unix)]
         let _signals = match Signals::new(stop.clone()) {
             Ok(signals) => signals,
-            Err(error) => { eprintln!("Sidecar signal initialization failed: {error}"); return ExitCode::from(2); }
+            Err(error) => {
+                eprintln!("Sidecar signal initialization failed: {error}");
+                return ExitCode::from(2);
+            }
         };
         // No readiness line on stdout: the protocol begins on accepted sockets.
         return match listener.serve(stop, Duration::from_secs(5)) {
             Ok(()) => ExitCode::SUCCESS,
-            Err(error) => { eprintln!("Sidecar TCP shutdown failed: {error}"); ExitCode::from(3) }
+            Err(error) => {
+                eprintln!("Sidecar TCP shutdown failed: {error}");
+                ExitCode::from(3)
+            }
         };
     }
     let server = ExecutionServer::new(ConnectionOwner::new(binding, 64), factory, clock, 32);
@@ -136,7 +153,9 @@ impl Signals {
     fn new(stop: Arc<std::sync::atomic::AtomicBool>) -> io::Result<Self> {
         let mut signals = Self(Vec::new());
         for signal in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
-            signals.0.push(signal_hook::flag::register(signal, stop.clone())?);
+            signals
+                .0
+                .push(signal_hook::flag::register(signal, stop.clone())?);
         }
         Ok(signals)
     }
@@ -144,7 +163,9 @@ impl Signals {
 #[cfg(unix)]
 impl Drop for Signals {
     fn drop(&mut self) {
-        for signal in self.0.drain(..) { signal_hook::low_level::unregister(signal); }
+        for signal in self.0.drain(..) {
+            signal_hook::low_level::unregister(signal);
+        }
     }
 }
 // A single nonempty path is only a launch placeholder for the TS gateway;

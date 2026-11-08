@@ -11,7 +11,11 @@ use pilotdeck_protocol::wire::{EnvelopeRef, MessageRef, RequestBodyRef, RequestR
 use pilotdeck_protocol::{JsObject, JsString, JsValue, MODULE_PROTOCOL_VERSION, parse_json};
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, Write};
-use std::sync::{Arc, Mutex, mpsc, atomic::{AtomicUsize, Ordering}};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+    mpsc,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -24,8 +28,15 @@ impl TimerBudget {
     fn acquire(self: &Arc<Self>) -> Option<TimerLease> {
         let mut current = self.0.load(Ordering::SeqCst);
         loop {
-            if current >= TCP_TIMER_LIMIT { return None; }
-            match self.0.compare_exchange_weak(current, current + 1, Ordering::SeqCst, Ordering::SeqCst) {
+            if current >= TCP_TIMER_LIMIT {
+                return None;
+            }
+            match self.0.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
                 Ok(_) => return Some(TimerLease(self.clone())),
                 Err(observed) => current = observed,
             }
@@ -33,7 +44,9 @@ impl TimerBudget {
     }
 }
 impl Drop for TimerLease {
-    fn drop(&mut self) { self.0.0.fetch_sub(1, Ordering::SeqCst); }
+    fn drop(&mut self) {
+        self.0.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 static TCP_TIMERS: std::sync::LazyLock<Arc<TimerBudget>> =
     std::sync::LazyLock::new(|| Arc::new(TimerBudget::default()));
@@ -46,38 +59,66 @@ fn spawn_deadline_timer(
 ) -> io::Result<thread::JoinHandle<()>> {
     spawn(Box::new(move || {
         let _lease = lease;
-        if matches!(cancellation.wait_until(deadline), Some(CancelCause::Deadline)) {
+        if matches!(
+            cancellation.wait_until(deadline),
+            Some(CancelCause::Deadline)
+        ) {
             cancellation.cancel(CancelCause::Deadline);
         }
     }))
 }
 
+fn reserve_bytes(counter: &AtomicUsize, bytes: usize, limit: usize) -> Result<(), ()> {
+    let mut current = counter.load(Ordering::SeqCst);
+    loop {
+        let next = current.checked_add(bytes).filter(|next| *next <= limit).ok_or(())?;
+        match counter.compare_exchange_weak(current, next, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Ok(()),
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 const TCP_INPUT_BYTES: usize = 8 * 1024 * 1024;
 const TCP_LEDGER_BYTES: usize = 64 * 1024 * 1024;
-struct IncomingQuota { used: Arc<AtomicUsize>, held: usize }
+struct IncomingQuota {
+    used: Arc<AtomicUsize>,
+    held: usize,
+}
 impl IncomingQuota {
-    fn new(used: Arc<AtomicUsize>) -> Self { Self { used, held: 0 } }
+    fn new(used: Arc<AtomicUsize>) -> Self {
+        Self { used, held: 0 }
+    }
     fn acquire(&mut self, bytes: usize) -> io::Result<()> {
-        self.used.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |used| {
-            used.checked_add(bytes).filter(|used| *used <= TCP_INPUT_BYTES)
-        }).map_err(|_| io::Error::other("TCP input budget exceeded."))?;
+        reserve_bytes(&self.used, bytes, TCP_INPUT_BYTES)
+            .map_err(|_| io::Error::other("TCP input budget exceeded."))?;
         self.held += bytes;
         Ok(())
     }
 }
 impl Drop for IncomingQuota {
-    fn drop(&mut self) { self.used.fetch_sub(self.held, Ordering::SeqCst); }
+    fn drop(&mut self) {
+        self.used.fetch_sub(self.held, Ordering::SeqCst);
+    }
 }
-fn read_tcp_line(input: &mut impl BufRead, bytes: &mut Vec<u8>, quota: &mut IncomingQuota) -> io::Result<usize> {
+fn read_tcp_line(
+    input: &mut impl BufRead,
+    bytes: &mut Vec<u8>,
+    quota: &mut IncomingQuota,
+) -> io::Result<usize> {
     loop {
         let buffer = input.fill_buf()?;
-        if buffer.is_empty() { return Ok(bytes.len()); }
+        if buffer.is_empty() {
+            return Ok(bytes.len());
+        }
         let end = buffer.iter().position(|byte| *byte == b'\n').map(|n| n + 1);
         let length = end.unwrap_or(buffer.len());
         quota.acquire(length)?;
         bytes.extend_from_slice(&buffer[..length]);
         input.consume(length);
-        if end.is_some() { return Ok(bytes.len()); }
+        if end.is_some() {
+            return Ok(bytes.len());
+        }
     }
 }
 /// Conservative retained representation charge; the multiplier at admission
@@ -88,21 +129,31 @@ pub(crate) fn retained_cost(value: &JsValue) -> Option<usize> {
     while let Some(value) = pending.pop() {
         total = total.checked_add(128)?;
         match value {
-            JsValue::String(text) => total = total.checked_add(text.units().len().checked_mul(2)?)?,
+            JsValue::String(text) => {
+                total = total.checked_add(text.units().len().checked_mul(2)?)?
+            }
             JsValue::Array(items) => {
-                if items.len() > TCP_LEDGER_BYTES / 128 { return None; }
+                if items.len() > TCP_LEDGER_BYTES / 128 {
+                    return None;
+                }
                 pending.extend(items.iter());
             }
             JsValue::Object(fields) => {
                 for (key, value) in fields.own_entries() {
-                    total = total.checked_add(128)?.checked_add(key.units().len().checked_mul(2)?)?;
-                    if total > TCP_LEDGER_BYTES { return None; }
+                    total = total
+                        .checked_add(128)?
+                        .checked_add(key.units().len().checked_mul(2)?)?;
+                    if total > TCP_LEDGER_BYTES {
+                        return None;
+                    }
                     pending.push(value);
                 }
             }
             _ => {}
         }
-        if total > TCP_LEDGER_BYTES { return None; }
+        if total > TCP_LEDGER_BYTES {
+            return None;
+        }
     }
     Some(total)
 }
@@ -110,19 +161,27 @@ pub(crate) fn retained_cost(value: &JsValue) -> Option<usize> {
 #[derive(Debug, Default)]
 pub(crate) struct TransportBudget(AtomicUsize);
 #[derive(Debug)]
-pub(crate) struct TransportLease { budget: Arc<TransportBudget>, bytes: usize }
+pub(crate) struct TransportLease {
+    budget: Arc<TransportBudget>,
+    bytes: usize,
+}
 impl TransportBudget {
     pub(crate) fn acquire(self: &Arc<Self>, value: &JsValue) -> io::Result<Arc<TransportLease>> {
-        let bytes = retained_cost(value).and_then(|cost| cost.checked_mul(4))
+        let bytes = retained_cost(value)
+            .and_then(|cost| cost.checked_mul(4))
             .ok_or_else(|| io::Error::other("TCP transport memory budget exceeded."))?;
-        self.0.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |used| {
-            used.checked_add(bytes).filter(|used| *used <= TCP_LEDGER_BYTES)
-        }).map_err(|_| io::Error::other("TCP transport memory budget exceeded."))?;
-        Ok(Arc::new(TransportLease { budget: self.clone(), bytes }))
+        reserve_bytes(&self.0, bytes, TCP_LEDGER_BYTES)
+            .map_err(|_| io::Error::other("TCP transport memory budget exceeded."))?;
+        Ok(Arc::new(TransportLease {
+            budget: self.clone(),
+            bytes,
+        }))
     }
 }
 impl Drop for TransportLease {
-    fn drop(&mut self) { self.budget.0.fetch_sub(self.bytes, Ordering::SeqCst); }
+    fn drop(&mut self) {
+        self.budget.0.fetch_sub(self.bytes, Ordering::SeqCst);
+    }
 }
 
 /// Implementations must declare their actual original-engine date profile.
@@ -614,8 +673,11 @@ impl ExecutionServer {
                 return self.reject(request, "OPERATION_ALREADY_ACTIVE", false);
             }
             if prior.connection_generation != self.owner.binding().connection_generation {
-                let code = if prior.terminal.is_none() { "OPERATION_ALREADY_ACTIVE" }
-                    else { "OPERATION_REQUIRES_RECONCILIATION" };
+                let code = if prior.terminal.is_none() {
+                    "OPERATION_ALREADY_ACTIVE"
+                } else {
+                    "OPERATION_REQUIRES_RECONCILIATION"
+                };
                 drop(state);
                 return self.reject(request, code, false);
             }
@@ -646,12 +708,18 @@ impl ExecutionServer {
             drop(state);
             return self.reject(request, code, false);
         }
-        if self.operation_limit.is_some_and(|limit| state.operations.len() >= limit) {
+        if self
+            .operation_limit
+            .is_some_and(|limit| state.operations.len() >= limit)
+        {
             drop(state);
             return self.reject(request, "EXECUTION_LEDGER_FULL", false);
         }
-        if state.queues.get(&self.owner.binding().connection_generation)
-            .is_some_and(|queue| queue.len() >= self.queue_capacity) {
+        if state
+            .queues
+            .get(&self.owner.binding().connection_generation)
+            .is_some_and(|queue| queue.len() >= self.queue_capacity)
+        {
             drop(state);
             return self.reject(request, "EXECUTION_QUEUE_FULL", false);
         }
@@ -682,29 +750,37 @@ impl ExecutionServer {
                         return self.reject(request, "EXECUTION_TIMER_LIMIT", false);
                     }
                 }
-            } else { None };
+            } else {
+                None
+            };
             let cancellation = cancellation.clone();
-            match spawn_deadline_timer(deadline, cancellation, timer_lease,
-                |job| thread::Builder::new().spawn(job)) {
+            match spawn_deadline_timer(deadline, cancellation, timer_lease, |job| {
+                thread::Builder::new().spawn(job)
+            }) {
                 Ok(timer) => Some(timer),
                 Err(_) => {
                     drop(state);
                     return self.reject(request, "EXECUTION_TIMER_UNAVAILABLE", false);
                 }
             }
-        } else { None };
+        } else {
+            None
+        };
         let accepted = JsValue::Object(accepted);
         if self.operation_limit.is_some() {
             // Account for the retained request plus worker/context clones, and
             // reserve room for a small truthful terminal on budget exhaustion.
-            let cost = retained_cost(&input.boundary).and_then(|n| n.checked_mul(8))
+            let cost = retained_cost(&input.boundary)
+                .and_then(|n| n.checked_mul(8))
                 .and_then(|n| n.checked_add(4096));
             let total = cost.and_then(|n| state.retained_bytes.checked_add(n));
             let Some(total) = total.filter(|n| *n <= TCP_LEDGER_BYTES) else {
                 // No operation was accepted, and no timer may be left detached.
                 cancellation.cancel(CancelCause::OwnerRetired);
                 drop(state);
-                if let Some(timer) = timer { let _ = timer.join(); }
+                if let Some(timer) = timer {
+                    let _ = timer.join();
+                }
                 return self.reject(request, "EXECUTION_LEDGER_FULL", false);
             };
             state.retained_bytes = total;
@@ -742,16 +818,25 @@ impl ExecutionServer {
         }
         if !expired {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            if self.owner.is_closed() { return Err(io::Error::new(io::ErrorKind::BrokenPipe, "Execution connection closed.")); }
-            state.queues.entry(self.owner.binding().connection_generation.clone()).or_default().push_back(Work {
-                request: input,
-                stream_id,
-                sequence,
-                control: CallControl {
-                    cancellation,
-                    deadline,
-                },
-            });
+            if self.owner.is_closed() {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "Execution connection closed.",
+                ));
+            }
+            state
+                .queues
+                .entry(self.owner.binding().connection_generation.clone())
+                .or_default()
+                .push_back(Work {
+                    request: input,
+                    stream_id,
+                    sequence,
+                    control: CallControl {
+                        cancellation,
+                        deadline,
+                    },
+                });
             drop(state);
             self.ready.notify();
         }
@@ -820,25 +905,41 @@ impl ExecutionServer {
                 terminal
             };
             if self.operation_limit.is_some() {
-                let payload = JsValue::Object(std::mem::take(&mut terminal.payload));
-                let error = terminal.error.take().map(JsValue::Object);
+                let mut payload = JsValue::Object(std::mem::take(&mut terminal.payload));
+                let mut error = terminal.error.take().map(JsValue::Object);
                 let cost = retained_cost(&payload)
-                    .and_then(|n| retained_cost(error.as_ref().unwrap_or(&JsValue::Undefined)).and_then(|e| n.checked_add(e)))
+                    .and_then(|n| {
+                        retained_cost(error.as_ref().unwrap_or(&JsValue::Undefined))
+                            .and_then(|e| n.checked_add(e))
+                    })
                     .and_then(|n| n.checked_mul(4));
                 let admitted = {
                     let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-                    if let Some(total) = cost.and_then(|n| state.retained_bytes.checked_add(n)).filter(|n| *n <= TCP_LEDGER_BYTES) {
-                        state.retained_bytes = total; true
-                    } else { false }
+                    if let Some(total) = cost
+                        .and_then(|n| state.retained_bytes.checked_add(n))
+                        .filter(|n| *n <= TCP_LEDGER_BYTES)
+                    {
+                        state.retained_bytes = total;
+                        true
+                    } else {
+                        false
+                    }
                 };
                 if admitted {
-                    if let JsValue::Object(mut fields) = payload { terminal.payload = std::mem::take(&mut fields); }
-                    if let Some(JsValue::Object(mut fields)) = error { terminal.error = Some(std::mem::take(&mut fields)); }
+                    if let JsValue::Object(fields) = &mut payload {
+                        terminal.payload = std::mem::take(fields);
+                    }
+                    if let Some(JsValue::Object(fields)) = &mut error {
+                        terminal.error = Some(std::mem::take(fields));
+                    }
                 } else {
                     terminal.outcome = ModuleOutcome::ResultUnknown;
                     terminal.error = Some(object([
                         ("code", "EXECUTION_LEDGER_FULL".into()),
-                        ("message", "Execution result exceeded the TCP ledger budget.".into()),
+                        (
+                            "message",
+                            "Execution result exceeded the TCP ledger budget.".into(),
+                        ),
                     ]));
                 }
             }
@@ -902,12 +1003,10 @@ impl ExecutionServer {
     pub fn retire(&self) {
         self.owner.close();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        for op in state
-            .operations
-            .values_mut()
-            .filter(|op| op.terminal.is_none()
-                && op.connection_generation == self.owner.binding().connection_generation)
-        {
+        for op in state.operations.values_mut().filter(|op| {
+            op.terminal.is_none()
+                && op.connection_generation == self.owner.binding().connection_generation
+        }) {
             op.cancellation.cancel(CancelCause::TransportClosed);
             op.phase = OperationPhase::Resolving;
             op.outcome = Some(ModuleOutcome::ResultUnknown);
@@ -936,7 +1035,9 @@ impl ExecutionServer {
                 ])),
             ));
         }
-        state.queues.remove(&self.owner.binding().connection_generation);
+        state
+            .queues
+            .remove(&self.owner.binding().connection_generation);
         drop(state);
         self.ready.notify();
         let timers: Vec<_> = {
@@ -967,11 +1068,17 @@ impl ExecutionServer {
     ) -> ShutdownReport {
         // OS thread creation can fail. No partially spawned owner may be
         // reported as reusable even if Rust's thread::spawn panics.
-        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.serve_inner(input, output, grace))) {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.serve_inner(input, output, grace)
+        })) {
             Ok(report) => report,
             Err(_) => {
                 self.retire();
-                ShutdownReport { reader_joined: false, writer_joined: false, worker_joined: false }
+                ShutdownReport {
+                    reader_joined: false,
+                    writer_joined: false,
+                    worker_joined: false,
+                }
             }
         }
     }
@@ -985,7 +1092,10 @@ impl ExecutionServer {
         let reader_server = self.clone();
         let reader_done = done_tx.clone();
         let reader = thread::spawn(move || {
-            let _completion = ServeThreadGuard { server: reader_server.clone(), done: reader_done };
+            let _completion = ServeThreadGuard {
+                server: reader_server.clone(),
+                done: reader_done,
+            };
             while !reader_server.owner.is_closed() {
                 // Drop the allocation and its quota together after each frame.
                 let mut quota = reader_server.incoming.clone().map(IncomingQuota::new);
@@ -1022,12 +1132,18 @@ impl ExecutionServer {
         let writer_server = self.clone();
         let writer_done = done_tx.clone();
         let writer = thread::spawn(move || {
-            let _completion = ServeThreadGuard { server: writer_server.clone(), done: writer_done };
+            let _completion = ServeThreadGuard {
+                server: writer_server.clone(),
+                done: writer_done,
+            };
             let _ = writer_server.owner.drive_writer(output);
         });
         let worker_server = self.clone();
         let worker = thread::spawn(move || {
-            let _completion = ServeThreadGuard { server: worker_server.clone(), done: done_tx };
+            let _completion = ServeThreadGuard {
+                server: worker_server.clone(),
+                done: done_tx,
+            };
             worker_server.worker();
         });
         let _ = done_rx.recv();
@@ -1266,7 +1382,9 @@ mod tcp_liveness_tests {
     #[test]
     fn tcp_timer_limit_is_shared_and_releases_on_drop() {
         let budget = Arc::new(TimerBudget::default());
-        let mut leases: Vec<_> = (0..TCP_TIMER_LIMIT).map(|_| budget.acquire().unwrap()).collect();
+        let mut leases: Vec<_> = (0..TCP_TIMER_LIMIT)
+            .map(|_| budget.acquire().unwrap())
+            .collect();
         assert!(budget.acquire().is_none());
         drop(leases.pop());
         assert!(budget.acquire().is_some());
@@ -1278,44 +1396,67 @@ mod tcp_liveness_tests {
     fn timer_spawn_failure_releases_slot() {
         let budget = Arc::new(TimerBudget::default());
         let lease = budget.acquire().unwrap();
-        let result = spawn_deadline_timer(
-            Instant::now(), Cancellation::default(), Some(lease),
-            |_| Err(io::Error::other("injected thread spawn failure")),
-        );
+        let result =
+            spawn_deadline_timer(Instant::now(), Cancellation::default(), Some(lease), |_| {
+                Err(io::Error::other("injected thread spawn failure"))
+            });
         assert!(result.is_err());
         assert_eq!(budget.0.load(Ordering::SeqCst), 0);
     }
 
     struct BrokenInput;
     impl std::io::Read for BrokenInput {
-        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> { panic!("injected reader panic") }
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            panic!("injected reader panic")
+        }
     }
     impl BufRead for BrokenInput {
-        fn fill_buf(&mut self) -> io::Result<&[u8]> { panic!("injected reader panic") }
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            panic!("injected reader panic")
+        }
         fn consume(&mut self, _: usize) {}
     }
     struct UnusedFactory;
     impl ExecutionFactory for UnusedFactory {
-        fn execute(&self, _: &ExecuteRequest, _: &mut ExecutionContext) -> PortResult<ExecutionTerminal> {
+        fn execute(
+            &self,
+            _: &ExecuteRequest,
+            _: &mut ExecutionContext,
+        ) -> PortResult<ExecutionTerminal> {
             unreachable!("reader panics before execute")
         }
     }
     struct Clock;
     impl ExecutionClock for Clock {
-        fn now_epoch_ms(&self) -> f64 { 0.0 }
-        fn now_iso(&self) -> JsString { "1970-01-01T00:00:00.000Z".into() }
-        fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> { Ok(None) }
+        fn now_epoch_ms(&self) -> f64 {
+            0.0
+        }
+        fn now_iso(&self) -> JsString {
+            "1970-01-01T00:00:00.000Z".into()
+        }
+        fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> {
+            Ok(None)
+        }
     }
     #[test]
     fn reader_panic_retires_and_reports_incomplete_without_hanging() {
-        let owner = ConnectionOwner::new(SidecarBinding {
-            module_id: "m".into(), module_instance_id: "i".into(),
-            connection_generation: "g".into(), capabilities_version: "1".into(),
-        }, 8);
+        let owner = ConnectionOwner::new(
+            SidecarBinding {
+                module_id: "m".into(),
+                module_instance_id: "i".into(),
+                connection_generation: "g".into(),
+                capabilities_version: "1".into(),
+            },
+            8,
+        );
         let server = ExecutionServer::new(owner, Arc::new(UnusedFactory), Arc::new(Clock), 8);
         let (tx, rx) = mpsc::channel();
-        thread::spawn(move || { let _ = tx.send(server.serve(BrokenInput, io::sink(), Duration::from_secs(2))); });
-        let report = rx.recv_timeout(Duration::from_secs(4)).expect("reader panic stranded server");
+        thread::spawn(move || {
+            let _ = tx.send(server.serve(BrokenInput, io::sink(), Duration::from_secs(2)));
+        });
+        let report = rx
+            .recv_timeout(Duration::from_secs(4))
+            .expect("reader panic stranded server");
         assert!(!report.reader_joined);
         assert!(report.writer_joined && report.worker_joined);
     }

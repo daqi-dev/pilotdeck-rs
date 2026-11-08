@@ -265,8 +265,11 @@ impl Options {
         );
         inherited.remove("PILOTDECK_PROXY_UPSTREAM");
         inherited.remove("PILOTDECK_CONFIG_PATH");
-        inherited.remove("PILOTDECK_AGENT_LOOP_TCP_HOST");
-        inherited.remove("PILOTDECK_AGENT_LOOP_TCP_PORT");
+        if !inherited.get("PILOTDECK_AGENT_LOOP_TRANSPORT")
+            .is_some_and(|value| crate::metadata::js_trim(value).eq_ignore_ascii_case("tcp")) {
+            inherited.remove("PILOTDECK_AGENT_LOOP_TCP_HOST");
+            inherited.remove("PILOTDECK_AGENT_LOOP_TCP_PORT");
+        }
         match &self.storage_root {
             Some(root) => {
                 inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());
