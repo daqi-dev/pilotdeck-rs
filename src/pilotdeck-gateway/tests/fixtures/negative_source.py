@@ -15,14 +15,17 @@ def assertion_message_present(source, message):
 
     Whitespace around ``assert!``, the comparison, the comma and the closing
     parenthesis may differ (rustfmt). The literal itself is matched byte for
-    byte, so a drift inside the message is rejected.
+    byte, so a drift inside the message is rejected. The match runs on
+    ``squeeze(source)``, which drops comments while keeping literal bytes, so a
+    commented-out copy of the assertion -- a line the compiler ignores -- does
+    not count as present (#2102 P2-1).
     """
     pattern = (
         r'assert!\s*\(\s*selected\s*>\s*0\s*,\s*"'
         + re.escape(message)
         + r'"\s*\)\s*;'
     )
-    return re.search(pattern, source) is not None
+    return re.search(pattern, squeeze(source)) is not None
 
 
 def _line_comment_end(source, start):

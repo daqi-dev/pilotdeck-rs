@@ -107,6 +107,8 @@ BUDGET_ELAPSED = (
     '        "the total budget ends a talkative child: {elapsed:?}"\n'
     '    );'
 )
+SILENCE_INPUT = '    let silence = std::time::Duration::from_millis(50);'
+BUDGET_INPUT = '    let budget = std::time::Duration::from_secs(5);'
 REJECTS_ASSERTION = (
     '        negative_assert!(!advertised, "#1261 native entry rejects inherited {key}");'
 )
@@ -272,6 +274,20 @@ class BindingDrift(unittest.TestCase):
 
     def test_a_missing_budget_elapsed_bound_is_unbound(self):
         self.assertDrift(BUDGET_ELAPSED, '', 'total budget elapsed bound')
+
+    # #2102 P2-2: the two duration inputs. Shrunk to 500 ms, both keep every
+    # elapsed bound green at runtime (500 ms is still under 1 s), and from
+    # then on a `timeout(left, ...)` that lost `silence.min(left)` only ever
+    # costs the budget -- only the input needles notice (#1989 item 5).
+    def test_a_shortened_budget_input_is_unbound(self):
+        self.assertDrift(BUDGET_INPUT,
+                         '    let budget = std::time::Duration::from_millis(500);',
+                         'total budget input')
+
+    def test_a_widened_silence_input_is_unbound(self):
+        self.assertDrift(SILENCE_INPUT,
+                         '    let silence = std::time::Duration::from_millis(500);',
+                         'silence bound input')
 
     # The case inputs and the rejects test's observation, kept from the old
     # per-script tables: a verdict assertion alone cannot tell which bytes it
