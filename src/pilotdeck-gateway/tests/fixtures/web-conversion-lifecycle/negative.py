@@ -14,6 +14,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (
     CARGO_SLOTS_WAIT_SECONDS, mutating_sources, new_output_directory, run_owned, wait_for_slot,
+    write_source_atomic,
 )
 from negative_suite import Case, classify, passed
 
@@ -108,7 +109,10 @@ def main():
                 # Restore and re-run inside the source guard: the restored
                 # control compiles the tree, so it must never race another
                 # runner that takes the same .negative-source.lock (#1440).
-                path.write_bytes(originals[path])
+                # #1908: one atomic rename; a truncating write_bytes here
+                # has the same SIGKILL half-write window as the mutation
+                # write itself.
+                write_source_atomic(root, path, originals[path])
                 if not passed(run(name + '-restored', arguments), test):
                     status, reason = 'INVALID', 'restored control did not pass the bound test'
         except Exception as error:
