@@ -1268,15 +1268,33 @@ fn default_mode_unchanged() {
     // hashing every legacy byte; the real executable test checks both paths.
     // #1131 intentionally replaced the A4 stderr `proxy listening` line with
     // the TS stdout address lines (actual bound port); re-pinned for that diff.
-    const OPT_IN: &str = "    let mut args = std::env::args_os().skip(1);\n    if pilotdeck_gateway::native_process::native_requested(args.next().as_deref()) {\n        return pilotdeck_gateway::native_process::run(\n            pilotdeck_gateway::native_process::Options::parse(args)?,\n        )\n        .await;\n    }\n";
+    // #1354 grew the opt-in into the entry's routing region: the explicit
+    // `--native` argument plus the `PILOTDECK_GATEWAY_MODE` config item. Both
+    // the region and its argv plumbing helper are removed before hashing, so
+    // the residual hash still pins every byte outside them to the A4
+    // executable; the executable-level routing matrix is tests/mode_routing.rs.
+    const ROUTING: &str = "    let mut args = std::env::args_os().skip(1);\n    let first = args.next();\n    let explicit_native = pilotdeck_gateway::native_process::native_requested(first.as_deref());\n    // #1354 A8.5-pr3: the main entry's routing. The explicit `--native`\n    // argument (#1071) wins over the `PILOTDECK_GATEWAY_MODE` config item —\n    // the per-invocation flag outranks the deployment default, like the TS\n    // baseline's `readStringFlag(argv, \"--host\") ?? env.PILOTDECK_GATEWAY_HOST`\n    // (src/cli/pilotdeck.ts:213). The config item is still judged *before*\n    // the flag short-circuits anything, so an invalid value fails closed at\n    // startup even when `--native` is present (#1369 shape). The config\n    // item's default is proxy mode (#1303 option A), so without either\n    // explicit switch the entry below is the unchanged A4 proxy: the\n    // rollback target stage A keeps.\n    let mode_native = pilotdeck_gateway::native_process::gateway_mode(\n        std::env::var_os(\"PILOTDECK_GATEWAY_MODE\").as_deref(),\n    )?;\n    if explicit_native || mode_native {\n        return pilotdeck_gateway::native_process::run(\n            pilotdeck_gateway::native_process::Options::parse(native_arguments(\n                explicit_native,\n                first,\n                args,\n            ))?,\n        )\n        .await;\n    }\n";
+    const ARGV_PLUMBING: &str = "/// #1354: `--native` is consumed by the router itself, so only the remaining\n/// arguments reach the native options parser; the config item's routing\n/// leaves every argument — `first` included — to that parser.\nfn native_arguments(\n    explicit: bool,\n    first: Option<std::ffi::OsString>,\n    rest: impl Iterator<Item = std::ffi::OsString>,\n) -> impl Iterator<Item = std::ffi::OsString> {\n    if explicit { None } else { first }.into_iter().chain(rest)\n}\n\n";
     let source = include_str!("../main.rs");
     negative_assert_eq!(
-        source.matches(OPT_IN).count(),
+        source.matches(ROUTING).count(),
         1,
-        "#1071 exact explicit opt-in branch"
+        "#1354 exact entry routing region"
     );
     negative_assert_eq!(
-        format!("{:x}", Sha256::digest(source.replacen(OPT_IN, "", 1))),
+        source.matches(ARGV_PLUMBING).count(),
+        1,
+        "#1354 exact argv plumbing helper"
+    );
+    negative_assert_eq!(
+        format!(
+            "{:x}",
+            Sha256::digest(
+                source
+                    .replacen(ROUTING, "", 1)
+                    .replacen(ARGV_PLUMBING, "", 1)
+            )
+        ),
         "02613cf4a756f4e9cfdb59c5356961798244feb209bf53a5485491c8b7dd4622",
         "#749 A4 executable remains unchanged"
     );

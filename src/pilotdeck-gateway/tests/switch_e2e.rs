@@ -7,7 +7,7 @@
 //! status, not exit 0); a halting machine prints "native switch halted" and
 //! exits nonzero; a machine that hangs is bounded by its own face budgets
 //! (the `--drain-ms` spelling below) and still exits.
-use std::{path::PathBuf, process::Stdio, time::Duration};
+use std::{path::PathBuf, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
     net::TcpStream,
@@ -20,44 +20,14 @@ use tokio::{
 #[path = "common/native_ws_sample.rs"]
 mod native_ws_sample;
 use native_ws_sample::RFC6455_SAMPLE_NONCE;
-
-// The child's own stderr line once it is serving, exactly as the product
-// writes it (`eprintln!("native listening {address}")` in
-// src/native_process.rs), and the one after the signal
-// (`eprintln!("native stopping")`) — the machine's S2 has begun.
-const NATIVE_LISTENING: &str = "native listening";
-const NATIVE_STOPPING: &str = "native stopping";
-// A slow host still reaches the advertisement eventually; silence past this
-// bound is a launch failure, never a pass.
-const ADVERTISEMENT_BUDGET: Duration = Duration::from_secs(120);
-// The whole switch on an idle server: every face is empty or immediate, but
-// the S4 teardown still flushes durable channel state and disposes the
-// project, so a slow host needs room. The faces' own bounds (production
-// timeouts over the `--drain-ms` budget below) bound a hung face first.
-const SWITCH_DEADLINE: Duration = Duration::from_secs(60);
-// The child prints a handful of lines; past this the read stops instead of
-// growing without bound.
-const STDERR_LIMIT: usize = 64 * 1024;
-
-// One complete valid profile: nothing but the signal and the switch itself
-// may decide the exit status, so the child must not fail on anything else.
-// Same shape as tests/native_process.rs's VALID_HOME_CONFIG (no `cron:`
-// section — S1 has nothing to stop in this embedding).
-const VALID_HOME_CONFIG: &str = "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n";
-
-// Whether one *finished* stderr line is the product's listening
-// advertisement: the phrase, a space, then a non-empty address with no
-// whitespace of its own. A diagnostic that merely mentions the phrase is not
-// proof that something is serving (the #1401 rule the entry tests anchor on).
-fn advertises(line: &str) -> bool {
-    match line
-        .strip_prefix(NATIVE_LISTENING)
-        .map(|rest| rest.strip_prefix(' '))
-    {
-        Some(Some(address)) => !address.is_empty() && !address.contains(char::is_whitespace),
-        _ => false,
-    }
-}
+// The constants shared with `tests/mode_routing.rs`, the same native entry's
+// sibling test (#1354): one spelling per product fact.
+#[path = "common/native_entry.rs"]
+mod native_entry;
+use native_entry::{
+    ADVERTISEMENT_BUDGET, NATIVE_LISTENING, NATIVE_STOPPING, STDERR_LIMIT, SWITCH_DEADLINE,
+    VALID_HOME_CONFIG,
+};
 
 // Removed with the test's scratch tree once the child has been reaped: the
 // path is unique per run and nothing else ever writes it.
@@ -118,7 +88,7 @@ async fn sigterm_runs_the_switch_and_exits_clean() {
         .stderr
         .take()
         .expect("#1353 switch e2e child stderr pipe");
-    let mut lines = BufReader::new(stderr).take(STDERR_LIMIT as u64).lines();
+    let mut lines = BufReader::new(stderr).take(STDERR_LIMIT).lines();
     // Wait for the child's own listening advertisement: past this point the
     // assembly is up and the signal handlers are registered.
     let mut advertisement = String::new();
@@ -128,7 +98,7 @@ async fn sigterm_runs_the_switch_and_exits_clean() {
             .await
             .expect("#1353 switch e2e stderr read")
         {
-            if advertises(&line) {
+            if native_entry::advertises(&line) {
                 advertisement = line;
                 return true;
             }
