@@ -26,7 +26,7 @@ NODE_CONTRACT = 'v22.22.0'
 source = root / 'src/pilotdeck-gateway/src/runtime/plugins/catalog.rs'
 bundle = root / 'src/pilotdeck-gateway/src/runtime/plugins.rs'
 tests = root / 'src/pilotdeck-gateway/src/runtime/plugins/catalog_tests.rs'
-locale = root / 'src/pilotdeck-gateway/src/node_locale.rs'
+locale = root / 'src/pilotdeck-transport/src/node_collation.rs'
 runtime_tests = root / 'src/pilotdeck-gateway/tests/plugin_runtime.rs'
 baseline = root / 'src/pilotdeck-gateway/tests/common/baseline.rs'
 # Explicit tables are also checked by anchor_selfcheck.py without executing us.
