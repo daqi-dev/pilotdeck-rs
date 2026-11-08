@@ -5049,3 +5049,9 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-09 能力包 PR 收口（Codex）
 
 Refs #2540。139127 两家四角色正式审查已收齐，7类P2本轮处置：截断算法改单源委托且保原port结构；空白全UTF16/真值边界补pin；consumer根目录显式target和locked；变异注明源码独占并用已有原子写/原子还原；恢复wrapper保原HostError签名；重复signedzero删去、原负控绑定保留。3包和Protocol strict Clippy已通过，README改中文。正在以指定ed748c375（相对f50仅board）整理提交并做最终针对性回归/单家增量审查，未push/开PR。
+
+### 2026-11-09 能力包 PR CI 最小修复（Codex）
+
+Refs #2540。#2549 CI 的 gateway strict Clippy 抓到原budget-only helper迁出后孤立doc空行；删误贴注释。checkpoint_prefix_len逐字等价副本改由Context提供同一纯helper，gateway原调用委托；仅这两处生产修复。此前新包strict Clippy不覆盖gateway，正在补gateway all-targets严格检查及原rolling-checkpoint/context回归。另4fixture旧截断写按#2550跟进，不扩大本轮。
+
+补记：gateway all-targets strictClippy实际覆盖后再抓到本PR故障测试2处clone_on_copy，去冗余clone不改断言；首失败保留，修后全target -D warnings exit0。

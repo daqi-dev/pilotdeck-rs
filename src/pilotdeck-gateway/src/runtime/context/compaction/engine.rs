@@ -586,23 +586,7 @@ pub fn truncate_checkpoint_with_change(
         changed: result.changed,
     }
 }
-fn checkpoint_prefix_len(messages: &[JsValue]) -> usize {
-    let has = |m: &JsValue, role, prefix| {
-        is_role(m, role)
-            && content(m).iter().any(|b| {
-                is_block(b, "text")
-                    && string_field(b, "text").is_some_and(|s| starts_with(s, prefix))
-            })
-    };
-    let mut i = 0;
-    while i + 1 < messages.len()
-        && has(&messages[i], "user", "<compact-boundary")
-        && has(&messages[i + 1], "assistant", SUMMARY_PREFIX)
-    {
-        i += 2;
-    }
-    i
-}
+use pilotdeck_context::summary::checkpoint_prefix_len;
 fn positive(value: Option<f64>) -> Option<f64> {
     value.filter(|n| n.is_finite() && *n > 0.0).map(f64::floor)
 }
