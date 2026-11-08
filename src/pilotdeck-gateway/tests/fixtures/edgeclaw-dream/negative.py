@@ -36,7 +36,7 @@ from negative_process import mutating_sources, run_owned, wait_for_slot
 root = Path(__file__).resolve().parents[5]
 fixtures = Path(__file__).resolve().parent
 helpers = root / 'src/pilotdeck-gateway/src/runtime/memory/edgeclaw/dream/helpers.rs'
-js_value = root / 'src/pilotdeck-gateway/src/js_value.rs'
+js_value = root / 'src/pilotdeck-protocol/src/coercion.rs'
 out = Path(sys.argv[1]).resolve()
 target = os.environ.get('CARGO_TARGET_DIR')
 assert target, 'negative.py requires CARGO_TARGET_DIR from the caller'

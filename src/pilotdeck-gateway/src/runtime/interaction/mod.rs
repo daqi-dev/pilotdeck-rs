@@ -46,6 +46,7 @@ struct State {
     requests: Vec<Replay>,
     // TS creates the reconnect owner bucket before payload conversion can throw.
     replay_owners: std::collections::HashSet<JsString>,
+    external_pending: std::collections::HashSet<JsString>,
     bindings: Vec<(JsString, InteractionBinding)>,
     last: Vec<(JsString, InteractionBinding)>,
     buckets: Vec<Bucket>,

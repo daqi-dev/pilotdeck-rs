@@ -194,6 +194,15 @@ fn require_step(turn: &DomainTurn, entry: &JsValue, kind: &str) -> RecorderResul
     Ok(turn.open_step.unwrap())
 }
 impl DomainState {
+    pub(super) fn ensure_quiescent(&self) -> RecorderResult<()> {
+        if !self.queue.is_empty() || self.turns.iter().any(|(_, turn)| !turn.closed) {
+            return Err(domain(
+                "history_source_not_quiescent",
+                "History source has an open turn or queued work.",
+            ));
+        }
+        Ok(())
+    }
     /// Oracle-harness fold entry: advance in place; an entry the validator
     /// rejects leaves the caller's state exactly where it was (the pre-fix
     /// implementation achieved the same by cloning and discarding).

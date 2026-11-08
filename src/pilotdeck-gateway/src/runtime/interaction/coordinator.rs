@@ -116,7 +116,8 @@ impl GatewayInteractionCoordinator {
         let disconnected = self.reconnect_port.disconnect(owner, binding)?;
         let preserve = disconnected
             && (self.elicitation_bus.has_pending_session(owner)
-                || self.permission_bus.has_pending_session(owner));
+                || self.permission_bus.has_pending_session(owner)
+                || self.reconnect_port.has_external_pending(owner));
         Ok(object([
             ("disconnected", JsValue::Bool(disconnected)),
             ("preserveTurn", JsValue::Bool(preserve)),

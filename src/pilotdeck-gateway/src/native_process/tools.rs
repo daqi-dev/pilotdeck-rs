@@ -629,6 +629,7 @@ impl SessionMcpRelease {
                 ),
                 causes: failures,
                 js_error: None,
+                kernel_failure: None,
             }),
         }
     }

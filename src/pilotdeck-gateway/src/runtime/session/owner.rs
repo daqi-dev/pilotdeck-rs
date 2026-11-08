@@ -405,6 +405,7 @@ impl SessionOwner {
                     ),
                     causes: vec![cause, error],
                     js_error: None,
+                    kernel_failure: None,
                 },
             });
         }

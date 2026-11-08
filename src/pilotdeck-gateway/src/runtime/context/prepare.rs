@@ -5,10 +5,7 @@
 //! attachment builder and session prompt-cache plans. Memory retrieval and
 //! prompt contributions are injected independently of concrete providers.
 use super::{
-    compaction::{
-        is_direct_tool_result, is_media_reference_with_id, is_real_user_request_message,
-        is_tool_result_only,
-    },
+    compaction::is_real_user_request_message,
     instructions::{InstructionDiscovery, Layer},
     prompt::{
         ContributionContext, ExtensionResolver, PromptAssembler, PromptContributionRegistry,
@@ -486,22 +483,10 @@ impl DefaultContextRuntime {
                 .unwrap_or_else(|error| Err(error.to_string()));
             match result {
                 Ok(layers) => {
-                    if !layers.is_empty() {
-                        let blocks = layers
-                            .iter()
-                            .map(|layer| {
-                                format!(
-                                    "Contents of {}{}:\n\n{}",
-                                    layer.path,
-                                    layer.scope.description(),
-                                    layer.content
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join("\n\n");
-                        parts.push(format!(
-                            "<project-instructions>\nProject instructions are shown below. Adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior.\n\n{blocks}\n</project-instructions>"
-                        ));
+                    if let Some(instructions) =
+                        pilotdeck_context::instructions::format_layers(&layers)
+                    {
+                        parts.push(instructions);
                     }
                     instruction_layers = Some(layers);
                 }
@@ -991,192 +976,26 @@ fn project(
     messages: &[JsValue],
     max_messages: Option<&MaxMessages>,
 ) -> Result<Projection, HostError> {
-    let mut warnings = Vec::new();
-    let mut projected = messages.to_vec();
-    let mut dropped_count = 0.0;
-    if let Some(max) = max_messages
-        && projected.len() as f64 > max.value
-        && !has_compaction_checkpoint(&projected)
-    {
-        let (kept, dropped) = tool_pair_safe_truncate(projected, max)?;
-        projected = kept;
-        dropped_count = dropped;
-        if dropped > 0.0 {
-            warnings.push(Warning {
-                code: "context_truncated",
-                message: format!(
-                    "Truncated {} message(s) to respect maxMessages={}.",
-                    crate::js_value::number_string(dropped),
-                    max.raw
-                ),
-            });
-        }
-    }
-    projected = repair_tool_result_pairing(projected, &mut warnings);
+    let maximum = max_messages.map(|m| pilotdeck_context::projection::MaxMessages {
+        value: m.value,
+        raw: m.raw.clone(),
+    });
+    let result = pilotdeck_context::projection::project(messages, maximum.as_ref())
+        .map_err(|e| ModuleError::new(e.message))?;
     Ok(Projection {
-        messages: projected,
-        dropped_count,
-        warnings,
+        messages: result.messages,
+        dropped_count: result.dropped_count,
+        warnings: result
+            .warnings
+            .into_iter()
+            .map(|w| Warning {
+                code: w.code,
+                message: w.message,
+            })
+            .collect(),
     })
 }
 
-fn tool_pair_safe_truncate(
-    messages: Vec<JsValue>,
-    max: &MaxMessages,
-) -> Result<(Vec<JsValue>, f64), HostError> {
-    let length = messages.len();
-    if length as f64 <= max.value || max.value.is_nan() {
-        return Ok((messages, 0.0));
-    }
-    // `messages.length - maxMessages` in JS. A fractional cut only reaches the
-    // `messages[cutIndex]` read when it is below the array length (positive
-    // limit); that read is `undefined` and `.content` throws, as in TS.
-    let cut = length as f64 - max.value;
-    if cut < length as f64 {
-        if cut.fract() != 0.0 {
-            return Err(ModuleError::new(
-                "Cannot read properties of undefined (reading 'content')",
-            )
-            .into());
-        }
-        let mut cut = cut as usize;
-        while cut < length && is_tool_result_only(&messages[cut]) {
-            cut += 1;
-        }
-        return Ok((messages[cut..].to_vec(), cut as f64));
-    }
-    // `slice(cutIndex)` with a cut at or past the end is empty. JS keeps the
-    // unclamped cut as `droppedCount` (including `Infinity` for -Infinity).
-    Ok((Vec::new(), cut))
-}
-
-fn repair_tool_result_pairing(messages: Vec<JsValue>, warnings: &mut Vec<Warning>) -> Vec<JsValue> {
-    let mut output = Vec::new();
-    let mut pending: Vec<JsString> = Vec::new();
-    let mut visible = HashSet::new();
-    for message in &messages {
-        if is_assistant(message) {
-            for id in collect_tool_call_ids(message) {
-                visible.insert(id);
-            }
-        }
-    }
-    for message in messages {
-        if is_assistant(&message) {
-            if !pending.is_empty() {
-                inject_placeholder_results(&pending, &mut output, warnings);
-                pending.clear();
-            }
-            pending = collect_tool_call_ids(&message);
-            output.push(message);
-            continue;
-        }
-        let pending_set: HashSet<JsString> = pending.iter().cloned().collect();
-        let mut seen: Vec<JsString> = Vec::new();
-        let mut media_refs: Vec<JsString> = Vec::new();
-        for block in message_content(&message) {
-            if is_direct_tool_result(block) {
-                if let Some(id) = object_string(block, "toolCallId")
-                    && !seen.contains(id)
-                {
-                    seen.push(id.clone());
-                }
-            } else if let Some(id) = media_reference_id(block)
-                && !media_refs.contains(id)
-            {
-                media_refs.push(id.clone());
-            }
-        }
-        let has_orphans = seen.iter().any(|id| !pending_set.contains(id))
-            || media_refs.iter().any(|id| !visible.contains(id));
-        let mut cleaned = message.clone();
-        if has_orphans {
-            let mut kept = Vec::new();
-            for block in message_content(&message) {
-                let direct_orphan = is_direct_tool_result(block)
-                    && object_string(block, "toolCallId")
-                        .is_some_and(|id| !pending_set.contains(id));
-                let media_orphan =
-                    media_reference_id(block).is_some_and(|id| !visible.contains(id));
-                if direct_orphan || media_orphan {
-                    warn_orphan(block, warnings);
-                } else {
-                    kept.push(block.clone());
-                }
-            }
-            if kept.is_empty() {
-                for id in &seen {
-                    pending.retain(|pending_id| pending_id != id);
-                }
-                continue;
-            }
-            if let JsValue::Object(object) = &mut cleaned {
-                object.insert("content".into(), JsValue::Array(kept));
-            }
-        }
-        pending.retain(|id| !seen.contains(id));
-        output.push(cleaned);
-    }
-    if !pending.is_empty() {
-        inject_placeholder_results(&pending, &mut output, warnings);
-    }
-    output
-}
-
-fn inject_placeholder_results(
-    ids: &[JsString],
-    output: &mut Vec<JsValue>,
-    warnings: &mut Vec<Warning>,
-) {
-    let blocks = ids
-        .iter()
-        .map(|id| {
-            object(vec![
-                ("type", JsValue::String("tool_result".into())),
-                ("toolCallId", JsValue::String(id.clone())),
-                (
-                    "content",
-                    JsValue::Array(vec![object(vec![
-                        ("type", JsValue::String("text".into())),
-                        ("text", JsValue::String("[result truncated]".into())),
-                    ])]),
-                ),
-            ])
-        })
-        .collect();
-    output.push(object(vec![
-        ("role", JsValue::String("user".into())),
-        ("content", JsValue::Array(blocks)),
-    ]));
-    for id in ids {
-        warnings.push(Warning {
-            code: "tool_result_injected",
-            message: format!(
-                "Injected placeholder tool_result for unmatched tool_call {}.",
-                String::from_utf16_lossy(id.units())
-            ),
-        });
-    }
-}
-fn warn_orphan(block: &JsValue, warnings: &mut Vec<Warning>) {
-    let id = object_string(block, "toolCallId")
-        .map(|id| String::from_utf16_lossy(id.units()))
-        .unwrap_or_else(|| "undefined".into());
-    warnings.push(Warning {
-        code: "tool_result_orphaned",
-        message: format!("tool_result {id} has no matching tool_call — removed."),
-    });
-}
-
-fn has_compaction_checkpoint(messages: &[JsValue]) -> bool {
-    messages.len() >= 2
-        && message_has_text_prefix(&messages[0], "user", "<compact-boundary")
-        && message_has_text_prefix(
-            &messages[1],
-            "assistant",
-            "[CONTEXT COMPACTION - REFERENCE ONLY]",
-        )
-}
 fn checkpoint_boundary(message: Option<&JsValue>) -> bool {
     message.is_some_and(|message| message_has_text_prefix(message, "user", "<compact-boundary"))
 }
@@ -1314,21 +1133,7 @@ fn is_runtime_context_message(message: &JsValue) -> bool {
         .and_then(JsValue::as_string)
         .is_some_and(|purpose| purpose.equals_str("runtime_context"))
 }
-fn collect_tool_call_ids(message: &JsValue) -> Vec<JsString> {
-    message_content(message)
-        .iter()
-        .filter(|block| is_block_type(block, "tool_call"))
-        .filter_map(|block| object_string(block, "id").cloned())
-        .collect()
-}
-fn media_reference_id(block: &JsValue) -> Option<&JsString> {
-    is_media_reference_with_id(block)
-        .then(|| object_string(block, "toolCallId"))
-        .flatten()
-}
-fn is_assistant(message: &JsValue) -> bool {
-    is_role(message, "assistant")
-}
+
 fn is_role(message: &JsValue, role: &str) -> bool {
     message
         .as_object()

@@ -815,8 +815,36 @@ impl ExecutionFactory for OriginalAgentFactory {
         request: &ExecuteRequest,
         context: &mut ExecutionContext,
     ) -> PortResult<ExecutionTerminal> {
+        self.execute_with_decoder(request, context, &OriginalFactoryPayloadDecoder)
+    }
+}
+/// Native host composition runs the same original owning turn implementation;
+/// it only retains explicit Kernel display provenance while reseeding history.
+pub struct NativeHistoryAgentFactory {
+    pub original: OriginalAgentFactory,
+}
+impl ExecutionFactory for NativeHistoryAgentFactory {
+    fn execute(
+        &self,
+        request: &ExecuteRequest,
+        context: &mut ExecutionContext,
+    ) -> PortResult<ExecutionTerminal> {
+        self.original.execute_with_decoder(
+            request,
+            context,
+            &crate::execute::NativeHistoryFactoryPayloadDecoder,
+        )
+    }
+}
+impl OriginalAgentFactory {
+    fn execute_with_decoder(
+        &self,
+        request: &ExecuteRequest,
+        context: &mut ExecutionContext,
+        decoder: &dyn FactoryPayloadDecoder,
+    ) -> PortResult<ExecutionTerminal> {
         context.control.check()?;
-        let mut decoded = OriginalFactoryPayloadDecoder
+        let mut decoded = decoder
             .decode(&request.boundary, &self.process_cwd)
             .map_err(|error| {
                 let message = match error {

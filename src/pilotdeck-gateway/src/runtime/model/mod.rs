@@ -6,6 +6,7 @@ pub mod fallback;
 pub mod health;
 pub mod http;
 mod json_walk;
+#[cfg(test)]
 mod jsonrepair;
 pub mod provider_registry;
 pub(crate) mod providers;

@@ -1226,36 +1226,7 @@ pub(crate) fn normalize_stream_event(
     state: &mut StreamState,
 ) -> Result<Vec<JsValue>, ModelStreamError> {
     let chunk = as_record(raw);
-    // Baseline cc7c4e6: `const error = asRecord(chunk.error);
-    // if (Object.keys(error).length > 0)`. This is deliberately not
-    // `if (chunk.error)`: `{}`, `"boom"`, `[]` and `null` are swallowed by TS
-    // too (node probe `fix1-probe.mts`; fixtures `stream-error-shapes`).
-    let error = as_record(field(chunk, "error"));
-    if error.as_object().is_some_and(|error| !error.is_empty()) {
-        // No `retryAfterMs`: only anthropic/stream.ts parses a hint out of the
-        // message. openai/stream.ts does not, so the retry loop uses the
-        // header/default backoff (`stream-error-rate-limit-hint` pins it).
-        let code = read_non_empty_string(field(error, "type"))
-            .or_else(|| read_non_empty_string(field(error, "code")))
-            .unwrap_or_else(|| "provider_error".into());
-        let message = read_non_empty_string(field(error, "message"))
-            .unwrap_or_else(|| "OpenAI stream request failed.".into());
-        let code_text = String::from_utf16_lossy(code.units());
-        let retryable = [
-            "rate_limit_error",
-            "overloaded_error",
-            "server_error",
-            "timeout_error",
-        ]
-        .iter()
-        .any(|kind| code_text == *kind);
-        let mut canonical = JsObject::new();
-        canonical.insert("provider".into(), "openai".into());
-        canonical.insert("protocol".into(), "openai".into());
-        canonical.insert("code".into(), JsValue::String(code));
-        canonical.insert("message".into(), JsValue::String(message));
-        canonical.insert("retryable".into(), JsValue::Bool(retryable));
-        canonical.insert("raw".into(), raw.clone());
+    if let Some(canonical) = pilotdeck_model_anthropic::errors::openai_stream_error(raw) {
         return Ok(vec![event([
             ("type", "error".into()),
             ("error", JsValue::Object(canonical)),

@@ -28,6 +28,9 @@ pub use methods::registered_methods;
 pub(crate) use methods::METHODS as SETTINGS_FAMILY_METHODS;
 #[cfg(test)]
 mod channels_tests;
+#[cfg(unix)]
+mod compaction;
+pub mod kernel_profile;
 #[cfg(test)]
 mod management_tests;
 #[cfg(test)]
@@ -321,7 +324,13 @@ impl Options {
             return Err("native listen requires 127.0.0.1 and a high port (or 0)".into());
         }
         let token_file = file(Path::new(take("--token-file")?), "token file")?;
-        let sidecar = file(Path::new(take("--sidecar")?), "sidecar")?;
+        let sidecar = if values.contains_key("--sidecar") {
+            file(Path::new(take("--sidecar")?), "sidecar")?
+        } else {
+            // Backend ownership is known only when a session is opened. A
+            // Kernel-owned session must not require an unused sidecar binary.
+            PathBuf::new()
+        };
         // #2036: `assembly` builds the child's command line from this path with
         // `to_string_lossy` (assembly.rs:398). Accepting raw bytes would launch
         // a different executable than the canonical path validated above, with

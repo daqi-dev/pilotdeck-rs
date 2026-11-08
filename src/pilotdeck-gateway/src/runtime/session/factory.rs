@@ -3,7 +3,10 @@
 //! generations; the session owner still serializes publication by key.
 use super::{
     HandleState, LiveSession, LiveSessionHandle, LiveTurn, SessionContext, SessionFactory,
+    backend::{BackendContext, SessionBackend, SessionBackendFactory},
 };
+#[cfg(test)]
+use crate::runtime::turn::host_factory::TurnHostFactory;
 use crate::{
     host::modules::tool_context::{HostToolCheckpoint, SeedState},
     runtime::{
@@ -14,11 +17,7 @@ use crate::{
             DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult, persistence::SessionRecording,
         },
         refresh::BoxFuture,
-        turn::{
-            host_factory::TurnHostFactory,
-            live::LiveSessionAdapter,
-            runner::tail::{SessionTail, TailConfig},
-        },
+        turn::runner::tail::{SessionTail, TailConfig},
     },
     storage::{
         Diagnostic, TranscriptKey, TranscriptRead, TranscriptStore, WriterState,
@@ -502,6 +501,26 @@ impl TranscriptStore for ProjectedStore {
         }
         Ok(())
     }
+    fn replace(
+        &self,
+        key: &TranscriptKey,
+        entries: &[JsValue],
+    ) -> Option<crate::storage::StoreResult<()>> {
+        let result = self.inner.replace(key, entries)?;
+        if result.is_ok() && key == &self.key {
+            let projected = project(entries);
+            let mut current = lock(&self.projection.entries);
+            *current = entries.to_vec();
+            lock(&self.projection.completed_turns).clear();
+            if let Ok(state) = projected {
+                *lock(&self.projection.last_valid) = state;
+                self.projection.valid.store(true, Ordering::SeqCst);
+            } else {
+                self.projection.valid.store(false, Ordering::SeqCst);
+            }
+        }
+        Some(result)
+    }
     fn read(
         &self,
         key: &TranscriptKey,
@@ -582,7 +601,7 @@ async fn release_all(mut releases: Vec<Release>) -> RuntimeResult {
 /// The prepared runtime creates the existing production host after restoration,
 /// so all session ports can bind this exact checkpoint and recorder.
 pub type HostBuilder =
-    Box<dyn FnOnce(SessionBinding) -> Result<TurnHostFactory, RuntimeError> + Send>;
+    Box<dyn FnOnce(SessionBinding) -> Result<Box<dyn SessionBackendFactory>, RuntimeError> + Send>;
 pub struct PreparedSession {
     pub resources: PreparedResources,
     pub host: HostBuilder,
@@ -591,6 +610,7 @@ pub struct PreparedSession {
 #[derive(Clone)]
 pub struct SessionBinding {
     pub context: SessionContext,
+    pub historical_transcript: bool,
     pub recorder: Arc<Recorder>,
     pub checkpoint: HostToolCheckpoint,
     pub projection: Arc<SessionProjection>,
@@ -989,6 +1009,9 @@ impl ProjectSessionFactory {
                 .map_err(|error| {
                     RuntimeError::new(String::from_utf16_lossy(error.message.units()))
                 })?;
+            let historical_transcript = std::fs::metadata(storage.recorder.writer().path())
+                .map(|metadata| metadata.len() > 0)
+                .unwrap_or(false);
             if previous.is_none()
                 && let Some(admission) = &self.options.admission
             {
@@ -1021,6 +1044,7 @@ impl ProjectSessionFactory {
                 .map_err(|e| RuntimeError::new(e.to_string()))?;
             let binding = SessionBinding {
                 context: context.clone(),
+                historical_transcript,
                 recorder: storage.recorder.clone(),
                 checkpoint: checkpoint.clone(),
                 projection: storage.projection.clone(),
@@ -1072,11 +1096,13 @@ impl ProjectSessionFactory {
                 file_state: Arc::new(move || Ok(lock(&reload_files).clone())),
             };
             Ok::<_, RuntimeError>((
-                host.into_live_session(storage.recorder.clone(), move || {
-                    lock(&projection.last_valid).messages.clone()
+                host.build(BackendContext {
+                    recorder: storage.recorder.clone(),
+                    history: Arc::new(move || lock(&projection.last_valid).messages.clone()),
+                    tail,
+                    reload_source: source.clone(),
                 })
-                .with_tail(tail)
-                .with_reload_source(source.clone()),
+                .await?,
                 checkpoint,
                 saved_files,
                 source,
@@ -1139,6 +1165,7 @@ impl ProjectSessionFactory {
                         ),
                         causes: vec![error, rollback],
                         js_error: None,
+                        kernel_failure: None,
                     }),
                 }
             }
@@ -1215,7 +1242,7 @@ impl Drop for PendingSession {
     }
 }
 struct OwnedSession {
-    adapter: LiveSessionAdapter,
+    adapter: Box<dyn SessionBackend>,
     reload_source: ReloadSource,
     checkpoint: HostToolCheckpoint,
     saved_files: Arc<Mutex<SeedState>>,
@@ -1242,9 +1269,19 @@ impl LiveSession for OwnedSession {
             turn,
             checkpoint: self.checkpoint.clone(),
             saved: self.saved_files.clone(),
-            started: self.adapter.reload_execution_started(),
+            started: self.adapter.execution_started(),
             finished: false,
         }))
+    }
+    fn backend_kind(&self) -> &'static str {
+        self.adapter.backend_kind()
+    }
+    fn backend_request(
+        &self,
+        method: String,
+        params: JsValue,
+    ) -> BoxFuture<Result<Option<JsValue>, RuntimeError>> {
+        self.adapter.backend_request(method, params)
     }
     fn snapshot(&self) -> JsValue {
         // The TS AgentSession snapshot carries the session's cwd, and the
@@ -1631,7 +1668,7 @@ fn real_user(message: &JsValue) -> bool {
             !text.is_empty() && text != "[system: the conversation above has been compacted. please continue with the current task.]" && !["<compact-boundary","<snip-boundary","<memory-context>","<internal-compaction-control","<hook_context"].iter().any(|p| text.starts_with(p))
         }))
 }
-fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
+pub fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
     #[cfg(test)]
     PROJECTION_VISITS.with(|visits| visits.set(visits.get() + entries.len()));
     let completed: HashSet<_> = entries
@@ -1684,7 +1721,7 @@ fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
         .iter()
         .any(|s| is(kind, s))
             && !before
-            && done
+            && (done || field(entry, "kernelProjection").as_object().is_some())
         {
             let message = field(entry, "message");
             if field(field(message, "metadata"), "compactReplacement") != &JsValue::Bool(true) {

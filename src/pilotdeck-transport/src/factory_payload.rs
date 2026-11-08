@@ -676,7 +676,7 @@ fn blocks(values: &[JsValue]) -> Vec<JsValue> {
     }
     output.pop().expect("root output")
 }
-fn message_metadata(value: Option<&JsValue>) -> Option<JsValue> {
+fn message_metadata(value: Option<&JsValue>, native_origins: bool) -> Option<JsValue> {
     let o = record(value)?;
     let mut out = JsObject::new();
     copy_string(&mut out, o, "model");
@@ -695,12 +695,20 @@ fn message_metadata(value: Option<&JsValue>) -> Option<JsValue> {
         copy_string(&mut carry, fork, "sourceTurnId");
         out.insert("forkCarryover".into(), JsValue::Object(carry));
     }
+    if native_origins {
+        for key in ["kernelMessageId", "turnId", "createdAt", "kernelSteerItems"] {
+            if let Some(value) = o.get(key) {
+                out.insert(key.into(), value.clone());
+            }
+        }
+    }
     (!out.is_empty()).then_some(JsValue::Object(out))
 }
 fn initial_messages(
     task: Option<&JsObject>,
     value: Option<&JsValue>,
     explicit: bool,
+    native_origins: bool,
 ) -> Result<Vec<BoundarySnapshot>, FactoryPayloadError> {
     let mut messages = vec![];
     if let Some(JsValue::Array(values)) = value {
@@ -731,7 +739,7 @@ fn initial_messages(
                     ),
                     ("content", JsValue::Array(content)),
                 ]);
-                if let Some(metadata) = message_metadata(o.get("metadata")) {
+                if let Some(metadata) = message_metadata(o.get("metadata"), native_origins) {
                     message.insert("metadata".into(), metadata);
                 }
                 messages.push(BoundarySnapshot::capture(&JsValue::Object(message)));
@@ -768,6 +776,21 @@ fn initial_messages(
 pub fn decode(
     execute: &JsValue,
     process_cwd: &JsString,
+) -> Result<FactoryPayload, FactoryPayloadError> {
+    decode_with_origins(execute, process_cwd, false)
+}
+/// Explicit native composition retains only the owning invocation's display
+/// provenance. The original decoder's whitelist remains unchanged by default.
+pub fn decode_with_native_origins(
+    execute: &JsValue,
+    process_cwd: &JsString,
+) -> Result<FactoryPayload, FactoryPayloadError> {
+    decode_with_origins(execute, process_cwd, true)
+}
+fn decode_with_origins(
+    execute: &JsValue,
+    process_cwd: &JsString,
+    native_origins: bool,
 ) -> Result<FactoryPayload, FactoryPayloadError> {
     if matches!(execute, JsValue::Null | JsValue::Undefined) {
         let receiver = if matches!(execute, JsValue::Null) {
@@ -896,6 +919,7 @@ pub fn decode(
             get(payload, "messages")
         },
         override_messages,
+        native_origins,
     )?;
     Ok(FactoryPayload {
         config,

@@ -5038,6 +5038,50 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 现场指针：`_tmp/20261109-2498-2501-harvest/`（#2498 评审 + 补捞证据）· `_tmp/20261109-2532-fixr2-harvest/`（task2.md 收货续单）· `_tmp/20261107-coord/sweep-0305.md`（六灯 sweep 正本）· `_tmp/20261107-coord/patrol-0231.md`（沿 02:3x 段）。
 
+### 2026-11-09 独立能力包提取（Codex）
+
+从固定 main e8d80 提取 Budget、Context 纯算法、Anthropic 协议及必要 Protocol coercion，gateway 保留 I/O/状态/权限；不含 Kernel backend/BOOT/CLI 路由。包级首轮62通过/1原忽略，原 gateway context 首轮72通过/3原忽略；正在收窄未消费API并升级到本批新基线 f50ad6c84。dev-launch 本机技能缺失已检索，不冒充双谱系评审；正式独立评审由协调者/C接续。变异锚点按实际算法迁移，原冻结 oracle 不改。下一步：新基线定向回归、独立consumer、负控与评审。
+
+### 2026-11-09 能力包提取修复轮（Codex）
+
+固定新基线 f50ad6c84；独立consumer已运行，最终gateway context 71通过/3原忽略。独立审查抓到分组估计错误降格与NEL误作JS whitespace：前者实际负控失败后泛型透传原HostError正控通过，后者Node边界与候选负控证实后复用原metadata精确字符集；保留日志。删除未消费Budget policy/模型errors与header API，必要helper和coercion由gateway委托单一实现，原负控只迁源码锚、原oracle不改。当前在完成修复后回归/负控，前次审查混入WIP只记发现清单，最终clean候选另作双谱系审查。
+
+### 2026-11-09 能力包 PR 收口（Codex）
+
+Refs #2540。139127 两家四角色正式审查已收齐，7类P2本轮处置：截断算法改单源委托且保原port结构；空白全UTF16/真值边界补pin；consumer根目录显式target和locked；变异注明源码独占并用已有原子写/原子还原；恢复wrapper保原HostError签名；重复signedzero删去、原负控绑定保留。3包和Protocol strict Clippy已通过，README改中文。正在以指定ed748c375（相对f50仅board）整理提交并做最终针对性回归/单家增量审查，未push/开PR。
+
+### 2026-11-09 能力包 PR CI 最小修复（Codex）
+
+Refs #2540。#2549 CI 的 gateway strict Clippy 抓到原budget-only helper迁出后孤立doc空行；删误贴注释。checkpoint_prefix_len逐字等价副本改由Context提供同一纯helper，gateway原调用委托；仅这两处生产修复。此前新包strict Clippy不覆盖gateway，正在补gateway all-targets严格检查及原rolling-checkpoint/context回归。另4fixture旧截断写按#2550跟进，不扩大本轮。
+
+补记：gateway all-targets strictClippy实际覆盖后再抓到本PR故障测试2处clone_on_copy，去冗余clone不改断言；首失败保留，修后全target -D warnings exit0。
+
+### 2026-11-09 能力包 PR 新main组合（Codex）
+
+Refs #2540。固定f04ecd0b新基线，只有board冲突保留上游+本轮记录，原4834保独立ref及全部证据。重基前后src/.github提取补丁SHA256完全相同（725201c4…），不把旧CI冒充新组合通过。CI真实发现独立smoke/probe锁缺3包：仅补3本地包与gateway边，无外部依赖版本/校验和变化；正在跑实际--locked probe及新版HTTP1.0/脚本/原能力回归。未push，不改冻结oracle。
+
+
+### 2026-11-09 Kernel 接入源码跨仓 Draft 归属
+
+以固定 f04 主线和已审 #2549 为基础，三方引入原 a9 本地接入源码，保留当前 coercion/HostError/consumer 纠正。Module2 与公共 SDK 正在独立拆 PR；产品 backend、入口与 BOOT 为依赖 Draft，未宣称新组合完整验收或默认切换。原源码/证据保留，具体清单见正式 integration 仓 docs/upstream-source-register.json。
+
+本轮接续（Refs #2571）：三方冲突逐块核对，保留 #2549 精确 coercion 与泛型 HostError，恢复 jsonrepair 深度回归；适配新主线 RuntimeError 与 live_e2e 工厂类型。CLI 原生 abort ACK 后真实本地 WS EOF/deadline/Completed 定向回归15通过/1原忽略，Unknown保持原run且退出1，不计真实Kernel组合验收。接下来升级固定43a历史事务优化，再合入独立Module2切片并复验。
+
+
+### 2026-11-09 #2549 固定主线基线升级（Codex）
+
+已保留原审查头 `789fd64fc76bbb59ae7e2f0642c6c4e07a54765c`，归档旧 CI run42516196226 的最终成功日志；七提交无源码冲突重基至固定主线 `43a1e5b50da71eb64a985e689eb299182f25a1b3`。`src/.github` binary patch 逐字节相同（SHA256 `725201c483a31415e0064d56c74035439454982b4fbaeb1599615021c553b0e0`）。新组合 locked 三库+Protocol 58通过/1忽略、独立consumer通过、gateway storage 178通过/6忽略、fmt通过。旧CI不背书新组合；本轮未重跑旧HTTP1.0、context与integration选集，当前完整CI与外部增量评审仍待收口，不宣称新组合完整验收。原双家库审查仅为前置，本轮只审基线等价与board增量。未push、未扩大已审源码范围。
+
+Refs #2540 / #2549；#2550 继续跟进四fixture既有截断写与SIGKILL/并发未验边界（GitHub issue已确认OPEN）。原负控仅迁实现锚点，oracle不改；不以本机技能缺失代替双家完整评审。现场指针：`_tmp/20261109-capability-rebase-43a/`（原/新manifest、补丁、命令退出码与GLM真实原件）；历史完整库证据仍在 `_tmp/20261109-capability-extraction/`。
+
+### 2026-11-09 Module2-host 上游切片（Codex）
+
+固定f04基线，仅新增pilotdeck-module2-host及workspace/lock注册，不依赖#2549、Kernel SDK或gateway。保原24HostCall清单/路由、共享driver的KernelClient/LcError端口；无效/未支持lifecycle明确拒绝。实际UTF16差分负控发现旧serde投影把原合法帧误报INVALID_JSON，按协调者边界新增原Protocol无损入口，serde互操作无法表达时独立UNREPRESENTABLE_FRAME，未全DTO重写。Module2 12测试/原Protocol45测试通过（1原忽略），strictClippy通过，独立consumer已实际运行，正在收锁/最终提交交协调者review。未push/开PR。
+
+### 2026-11-09 Module2-host 初审修复（Codex，Refs #2570）
+
+保留94e审查ref后重基固定43a，src提取补丁逐字等价；按原payload.operation权威修复顶层方言，已接收module_call拒绝改关联response并保requestId/error明细。旧实现两项有效失败及枚举词表漂移负控保留，修后Module2/Protocol、strict与实际独立locked consumer通过；无损验证入口不声称直接可执行完整UTF16域，秒级UTC工具不冒充事件时间。consumer CI归#2560；本轮交两家增量复审，未push/开PR。
+
 ### 03:2x–03:3x（缺块四 PR 全部派动 + 三 PR 入队段，接 03:13 段；下一段 04:30）
 
 **做了什么**：
@@ -5064,3 +5108,14 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | #2498/#1891/#2547 哨兵三班照旧（到期续挂） | 协调者 | 04:0x–04:30 |
 
 现场指针：`_tmp/20261109-2425-harvest/report.md`（#2544 收货正本）· `_tmp/20261109-2387-reviewgap/` `_tmp/20261109-2417-reviewgap/` `_tmp/20261109-2397-rebase-review/`（三车道任务书）· `_tmp/20261109-2543-fixr1-harvest/task.md`（c2 fix-r1 收货任务书）。
+
+
+### 2026-11-09 #2549 固定b9主线适配（Codex）
+
+保留c831审查ref与旧CI/43a证据，受控重基到固定 `b9fa7b69b676b93f1a396a47340ad9a59da05e57`，不追后续主线。唯一源码冲突为gateway js_value的公共实现归属：将新main null-prototype验证及number_conversion_error迁入Protocol唯一实现（getter公开、gateway reexport），保新main完整原测试以及既有NEL/泛型HostError/checkpoint单源修复。旧validate语义负控实际None≠TypeError失败；修后js_value6、config32、channel39通过，locked三库+Protocol58通过/1忽略，独立consumer通过，五包含gateway all-targets strict通过；anchors checked243/5852/errors0，未改fixture/oracle。新双家增量审查与新完整CI仍待，不把历史CI冒充当前。未push。
+
+Refs #2540 / #2549；#2550四fixture旧截断写/SIGKILL并发与#2560独立consumer持续CI前置维持原范围。现场指针：`_tmp/20261109-capability-rebase-b9/`；旧 `_tmp/20261109-capability-rebase-43a/` 保留。
+
+### 2026-11-09 Module2-host 固定新基线（Codex，Refs #2570）
+
+Module2独立切片保留原539审查引用，重基固定b9fa7b69；src/.github完整补丁逐字保持，路由/关联修复与已登记P2范围不变。board保留新main原文，本轮仅追加此段；补验Module2/Protocol与独立locked consumer，随后交单家非作者小增量复审。未push，正式PR #2576由协调者更新。

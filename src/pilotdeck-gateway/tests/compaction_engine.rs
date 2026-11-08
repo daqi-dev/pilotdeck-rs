@@ -853,3 +853,59 @@ fn generator_twice_is_byte_identical() {
     assert_eq!(outputs[0], outputs[1]);
     assert_eq!(outputs[0], ORACLE.as_bytes());
 }
+
+#[tokio::test]
+async fn grouped_estimate_preserves_original_host_failure() {
+    use pilotdeck_gateway::host::HostErrorKind;
+    for kind in [HostErrorKind::Timeout, HostErrorKind::ResultUnknown] {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let model = Arc::new(MockModel {
+            scenario: JsValue::Null,
+            requests: requests.clone(),
+            pass: Arc::new(AtomicUsize::new(0)),
+            usage: false,
+            signal: Arc::new(Mutex::new(None)),
+        });
+        let mut options =
+            CompactionEngineOptions::new(model, "fixture".into(), "summary-model".into());
+        let estimates = Arc::new(AtomicUsize::new(0));
+        let observed = estimates.clone();
+        let expected_kind = kind;
+        options.estimate_messages = Some(Arc::new(move |_| {
+            if observed.fetch_add(1, Ordering::SeqCst) == 0 {
+                return Ok(100.0);
+            }
+            let mut error = HostError::new(expected_kind, "original grouped estimate");
+            error.accepted = true;
+            error.stream_id = Some("original-stream".into());
+            error.last_applied_sequence = Some(7.0);
+            let mut detail = ModuleError::new("original module detail");
+            detail.code = Some("ORIGINAL_ESTIMATE".into());
+            detail.retryable = Some(false);
+            error.module_error = Some(Box::new(detail));
+            error.diagnostic = "original diagnostic".into();
+            Err(error)
+        }));
+        let engine = CompactionEngine::new(options);
+        let input = CompactionInput::new(
+            "manual",
+            vec![obj([
+                ("role", "user".into()),
+                ("content", "original input".into()),
+            ])],
+        );
+        let error = engine.run(input).await.unwrap_err();
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.message, "original grouped estimate");
+        assert!(error.accepted);
+        assert_eq!(error.stream_id, Some("original-stream".into()));
+        assert_eq!(error.last_applied_sequence, Some(7.0));
+        assert_eq!(error.diagnostic, "original diagnostic");
+        let detail = error.module_error.unwrap();
+        assert_eq!(detail.message, JsString::from("original module detail"));
+        assert_eq!(detail.code, Some("ORIGINAL_ESTIMATE".into()));
+        assert_eq!(detail.retryable, Some(false));
+        assert_eq!(estimates.load(Ordering::SeqCst), 2);
+        assert!(requests.lock().unwrap().is_empty());
+    }
+}

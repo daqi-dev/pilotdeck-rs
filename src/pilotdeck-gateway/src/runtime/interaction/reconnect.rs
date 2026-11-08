@@ -68,6 +68,29 @@ pub struct InteractionReconnectPort {
     pub(super) state: Shared,
 }
 impl InteractionReconnectPort {
+    /// Pending work owned outside the gateway (for example a native Kernel
+    /// wait). This retains only reconnect identity; it grants no execution or
+    /// approval authority and installs no placeholder resolver.
+    pub fn set_external_pending(&self, owner: &JsString, pending: bool) {
+        let mut state = self.state.lock().unwrap();
+        if pending {
+            state.external_pending.insert(owner.clone());
+        } else {
+            state.external_pending.remove(owner);
+            if current(&state, owner).is_none() && !state.replay_owners.contains(owner) {
+                state.last.retain(|(key, _)| key != owner);
+            }
+        }
+    }
+    pub fn has_external_pending(&self, owner: &JsString) -> bool {
+        self.state.lock().unwrap().external_pending.contains(owner)
+    }
+    /// Volatile identity is absent after a process restart. A native owner can
+    /// rebind observation without treating an old browser binding as consent.
+    pub fn has_binding_history(&self, owner: &JsString) -> bool {
+        let state = self.state.lock().unwrap();
+        current(&state, owner).is_some() || lookup(&state.last, owner).is_some()
+    }
     pub fn current_binding(&self, owner: &JsString) -> Option<InteractionBinding> {
         current(&self.state.lock().unwrap(), owner)
     }
@@ -161,7 +184,7 @@ impl InteractionReconnectPort {
                 request.binding = None;
             }
         }
-        if !state.replay_owners.contains(owner) {
+        if !state.replay_owners.contains(owner) && !state.external_pending.contains(owner) {
             state.last.retain(|(key, _)| key != owner);
         }
         Ok(true)
@@ -173,6 +196,7 @@ impl InteractionReconnectPort {
         let mut state = self.state.lock().unwrap();
         state.requests.retain(|request| &request.owner != owner);
         state.replay_owners.remove(owner);
+        state.external_pending.remove(owner);
         state.bindings.retain(|(key, _)| key != owner);
         state.last.retain(|(key, _)| key != owner);
     }
@@ -181,6 +205,7 @@ impl InteractionReconnectPort {
         let mut state = self.state.lock().unwrap();
         state.requests.clear();
         state.replay_owners.clear();
+        state.external_pending.clear();
         state.bindings.clear();
         state.last.clear();
     }
@@ -336,4 +361,38 @@ pub(super) fn replay_payload(value: Option<JsValue>) -> Option<JsValue> {
     value
         .filter(|v| !v.is_undefined())
         .map(|value| replay(&value))
+}
+
+#[cfg(test)]
+mod kernel_pending_tests {
+    use super::*;
+    #[test]
+    fn native_wait_preserves_connection_replay_identity_without_a_fake_resolver() {
+        let coordinator = GatewayInteractionCoordinator::default();
+        let owner = JsString::from("native");
+        let first = InteractionBinding {
+            connection_id: "first".into(),
+            generation: 1,
+        };
+        coordinator
+            .reconnect_for_turn(&owner, first.clone())
+            .unwrap();
+        coordinator
+            .reconnect_port()
+            .set_external_pending(&owner, true);
+        let disconnected = coordinator.disconnect(&owner, &first).unwrap();
+        assert_eq!(disconnected.get("preserveTurn"), Some(&JsValue::Bool(true)));
+        let next = InteractionBinding {
+            connection_id: "next".into(),
+            generation: 2,
+        };
+        let replay = coordinator
+            .reconnect(&owner, Some(next), Some(&first))
+            .unwrap();
+        assert_eq!(replay.get("outcome"), Some(&JsValue::from("reconnected")));
+        assert!(
+            coordinator.permission_bus().snapshot(&owner).is_empty(),
+            "Kernel remains the only approval owner"
+        );
+    }
 }

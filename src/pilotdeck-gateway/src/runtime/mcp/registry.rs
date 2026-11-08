@@ -56,6 +56,7 @@ fn aggregate(message: &str, mut failures: Vec<RuntimeError>) -> Result<(), Runti
             message: message.into(),
             causes: failures,
             js_error: None,
+            kernel_failure: None,
         }),
     }
 }

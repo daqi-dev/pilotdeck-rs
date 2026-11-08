@@ -245,13 +245,13 @@ impl Harness {
                 }
                 let host: HostBuilder = Box::new(move |binding| {
                     lock(&obs.bindings).push(binding);
-                    Ok(TurnHostFactory::new(
+                    Ok(Box::new(TurnHostFactory::new(
                         registry,
                         Deployment::Native,
                         crate::host::Limits::default(),
                         None,
                         |_, _| panic!("#745 native transport cannot request ports"),
-                    ))
+                    )))
                 });
                 Ok(PreparedSession {
                     resources,
@@ -3932,6 +3932,7 @@ async fn stale_handoff_retry_is_limited_to_one() {
                     } else {
                         Err(RuntimeError {
                             message: "second stale rejection".into(),
+                            kernel_failure: None,
                             causes: vec![RuntimeError::new("second stale cause")],
                             js_error: Some(Box::new(crate::runtime::project::RuntimeJsError {
                                 name: "Error".into(),

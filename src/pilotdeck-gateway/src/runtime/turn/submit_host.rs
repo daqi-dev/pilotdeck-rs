@@ -260,7 +260,7 @@ impl SubmitHost for GatewaySubmitHost {
                 .await?;
             let model_selection = self.services.resolve_model_selection(input).await?;
             let plan = field(input, "mode") == &JsValue::from("plan");
-            Ok(PreparedTurn {
+            let mut prepared = PreparedTurn {
                 model_selection,
                 input: agent_input,
                 options: crate::metadata::object([
@@ -310,7 +310,20 @@ impl SubmitHost for GatewaySubmitHost {
                         ]),
                     ),
                 ]),
-            })
+            };
+            if field(&prepared.model_selection, "source") == &JsValue::from("kernel_assembly")
+                && let JsValue::Object(options) = &mut prepared.options
+            {
+                for key in ["mode", "basePermissionMode"] {
+                    if let Some(value) = input
+                        .get(key)
+                        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+                    {
+                        options.insert(key.into(), value.clone());
+                    }
+                }
+            }
+            Ok(prepared)
         })
     }
     fn commit_accepted_input<'a>(

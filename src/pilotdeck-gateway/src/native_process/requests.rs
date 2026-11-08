@@ -152,11 +152,44 @@ impl Requests {
         }))
     }
 }
+impl Requests {
+    pub(in crate::native_process) fn kernel_owned(
+        &self,
+        session: &JsString,
+    ) -> Result<bool, RequestError> {
+        if let Some(handle) = self.owner.current_handle(session) {
+            return Ok(handle.backend_kind() == "kernel");
+        }
+        let transcript = super::assembly::transcript_path(&self.options, session);
+        let mut path = transcript.as_os_str().to_os_string();
+        path.push(".backend.json");
+        match crate::runtime::session::kernel::persisted_owner(&std::path::PathBuf::from(path))
+            .map_err(RequestError::from_runtime)?
+        {
+            Some(owner) => Ok(owner["backend"] == "kernel"),
+            None => Ok(!std::fs::metadata(transcript).is_ok_and(|m| m.len() > 0)
+                && self
+                    .env
+                    .get("PILOTDECK_SESSION_BACKEND")
+                    .map(String::as_str)
+                    == Some("kernel")),
+        }
+    }
+}
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
             Ok(object([
                 ("mode", "in_process".into()),
+                (
+                    "sessionBackendDefault",
+                    self.env
+                        .get("PILOTDECK_SESSION_BACKEND")
+                        .map(String::as_str)
+                        .unwrap_or("legacy")
+                        .into(),
+                ),
+                ("kernelProfile", super::kernel_profile::description()),
                 (
                     "sessionCount",
                     JsValue::Number(self.owner.cached_session_count() as f64),
@@ -217,6 +250,224 @@ impl GatewayRequests for Requests {
             let method = method
                 .to_utf8()
                 .map_err(|_| RequestError::new("Unknown native gateway method."))?;
+            if super::kernel_profile::BOUND_CONFIG_METHODS.contains(&method.as_str())
+                && let Some(session) = params.get("sessionKey").and_then(JsValue::as_string)
+                && self.kernel_owned(session)?
+            {
+                let handle = if let Some(handle) = self.owner.current_handle(session) {
+                    handle
+                } else {
+                    self.owner
+                        .get_or_create(crate::runtime::session::SessionContext {
+                            session_key: session.clone(),
+                            project_key: Some(
+                                self.options.project.to_string_lossy().into_owned().into(),
+                            ),
+                            channel_key: "configuration".into(),
+                            allowed_tools: None,
+                            disallowed_tools: None,
+                        })
+                        .await
+                        .map_err(RequestError::from_runtime)?
+                };
+                let snapshot = handle
+                    .backend_request("active_turn_snapshot".into(), params.clone())
+                    .await
+                    .map_err(RequestError::from_runtime)?
+                    .ok_or_else(|| RequestError::new("Kernel state is unavailable."))?;
+                if snapshot
+                    .get("status")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|state| {
+                        ["accepted", "running", "needs_human"]
+                            .iter()
+                            .any(|expected| state.equals_str(expected))
+                    })
+                {
+                    return Err(RequestError{code:"SESSION_BUSY".into(),message:"Cannot change native turn preferences while the original Kernel execution is active.".into(),details:Some(Box::new(snapshot)),validation:None});
+                }
+            }
+            if super::kernel_profile::UNSUPPORTED_SESSION_METHODS.contains(&method.as_str()) {
+                let kernel = match params.get("sessionKey").and_then(JsValue::as_string) {
+                    Some(session) => self.kernel_owned(session)?,
+                    None => {
+                        self.env
+                            .get("PILOTDECK_SESSION_BACKEND")
+                            .map(String::as_str)
+                            == Some("kernel")
+                    }
+                };
+                if kernel {
+                    return Err(RequestError {code:"CAPABILITY_UNAVAILABLE".into(),message:format!("Kernel session profile does not support {method}; its assembly/configuration is pinned. No legacy storage or runtime was changed.").into(),details:Some(Box::new(super::kernel_profile::description())),validation:None});
+                }
+            }
+            if super::kernel_profile::BACKEND_METHODS.contains(&method.as_str())
+                && let Some(session) = params.get("sessionKey").and_then(JsValue::as_string)
+            {
+                let handle = if let Some(handle) = self.owner.current_handle(session) {
+                    Some(handle)
+                } else {
+                    let mut path =
+                        super::assembly::transcript_path(&self.options, session).into_os_string();
+                    path.push(".backend.json");
+                    let kernel_owned = crate::runtime::session::kernel::persisted_owner(
+                        &std::path::PathBuf::from(path),
+                    )
+                    .map_err(RequestError::from_runtime)?
+                    .is_some_and(|owner| owner["backend"] == "kernel");
+                    if kernel_owned {
+                        Some(
+                            self.owner
+                                .get_or_create(crate::runtime::session::SessionContext {
+                                    session_key: session.clone(),
+                                    project_key: Some(
+                                        self.options.project.to_string_lossy().into_owned().into(),
+                                    ),
+                                    channel_key: "gateway".into(),
+                                    allowed_tools: None,
+                                    disallowed_tools: None,
+                                })
+                                .await
+                                .map_err(RequestError::from_runtime)?,
+                        )
+                    } else {
+                        None
+                    }
+                };
+                if let Some(handle) = &handle
+                    && handle.backend_kind() == "kernel"
+                {
+                    if method == "permission_decide" {
+                        let received = params.get("interactionBinding").and_then(|v| {
+                            crate::runtime::interaction::InteractionBinding::from_value(v).ok()
+                        });
+                        if received != self.interactions.get_binding(session) {
+                            return Ok(object([("delivered", JsValue::Bool(false))]));
+                        }
+                    }
+                    if method == "reconnect_interaction" {
+                        let next = params
+                            .get("nextBinding")
+                            .map(crate::runtime::interaction::InteractionBinding::from_value)
+                            .transpose()
+                            .map_err(RequestError::new)?;
+                        let previous = params.get("previousBinding").and_then(|v| {
+                            crate::runtime::interaction::InteractionBinding::from_value(v).ok()
+                        });
+                        let gate = self
+                            .interactions
+                            .reconnect(
+                                session,
+                                next,
+                                if self
+                                    .interactions
+                                    .reconnect_port()
+                                    .has_binding_history(session)
+                                {
+                                    previous.as_ref()
+                                } else {
+                                    None
+                                },
+                            )
+                            .map_err(RequestError::new)?;
+                        if gate
+                            .get("outcome")
+                            .and_then(JsValue::as_string)
+                            .is_some_and(|v| v.equals_str("stale_binding"))
+                        {
+                            return Ok(gate);
+                        }
+                    }
+                }
+                if let Some(handle) = handle
+                    && let Some(mut value) = handle
+                        .backend_request(method.clone(), params.clone())
+                        .await
+                        .map_err(RequestError::from_runtime)?
+                {
+                    if method == "reconnect_interaction"
+                        && let JsValue::Object(ref mut output) = value
+                    {
+                        output.insert(
+                            "binding".into(),
+                            self.interactions
+                                .get_binding(session)
+                                .map(|binding| binding.to_value())
+                                .unwrap_or(JsValue::Null),
+                        );
+                    }
+                    if method == "run_get" || method == "run_reattach" || method == "run_events" {
+                        let native = value;
+                        let mut projected =
+                            methods::request(self, method.clone(), params.clone()).await?;
+                        if let JsValue::Object(ref mut p) = projected {
+                            p.insert("nativeExecution".into(), native.clone());
+                            if method != "run_events"
+                                && let Some(state) = native
+                                    .get("state")
+                                    .and_then(JsValue::as_string)
+                                    .and_then(|s| s.to_utf8().ok())
+                            {
+                                let state = match state.as_str() {
+                                    "needs_human" => "running",
+                                    "cancelled" => "aborted",
+                                    "unknown" => "interrupted",
+                                    other => other,
+                                };
+                                p.insert("state".into(), state.into());
+                            }
+                        }
+                        value = projected;
+                    } else if method == "active_turn_snapshot" {
+                        if value.get("attached") != Some(&JsValue::Bool(true)) {
+                            return crate::runtime::session::kernel_replay::snapshot(
+                                &value,
+                                &String::from_utf16_lossy(session.units()),
+                                &self.options.home,
+                            )
+                            .map_err(|e| RequestError::new(e.message));
+                        }
+                        let mut projection = self
+                            .coordinator
+                            .snapshot(&crate::runtime::turn::replay::ActiveTurnSnapshotInput::new(
+                                session.clone(),
+                            ))
+                            .to_json();
+                        if let JsValue::Object(ref mut p) = projection {
+                            p.insert("nativeExecution".into(), value);
+                        }
+                        value = projection;
+                    } else if method == "read_session_messages" {
+                        let native = handle
+                            .backend_request("active_turn_snapshot".into(), params.clone())
+                            .await
+                            .map_err(RequestError::from_runtime)?
+                            .ok_or_else(|| {
+                                RequestError::new("Native active state is unavailable.")
+                            })?;
+                        let stream = if native.get("attached") == Some(&JsValue::Bool(true)) {
+                            self.coordinator
+                                .snapshot(
+                                    &crate::runtime::turn::replay::ActiveTurnSnapshotInput::new(
+                                        session.clone(),
+                                    ),
+                                )
+                                .to_json()
+                        } else {
+                            crate::runtime::session::kernel_replay::snapshot(
+                                &native,
+                                &String::from_utf16_lossy(session.units()),
+                                &self.options.home,
+                            )
+                            .map_err(RequestError::from_runtime)?
+                        };
+                        if let JsValue::Object(ref mut history) = value {
+                            history.insert("stream".into(), stream);
+                        }
+                    }
+                    return Ok(value);
+                }
+            }
             methods::request(self, method, params).await
         })
     }
