@@ -183,6 +183,18 @@ mod tests {
     use tokio::io::AsyncReadExt;
     use tokio::net::TcpListener;
 
+    /// #2285 r4 ⑤: the keeper's release flag as a scope guard — any exit
+    /// path (including a failing assertion's unwind) releases the paused
+    /// clock, so a failing verdict can never leave a keeper spinning on
+    /// one core.
+    struct ClockRelease(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for ClockRelease {
+        fn drop(&mut self) {
+            self.0.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     #[test]
     fn encodes_like_encode_uri_component() {
         assert_eq!(
@@ -204,7 +216,10 @@ mod tests {
     // socket; only then may Tokio auto-advance, straight to the 300 s
     // deadline — the wall-clock cost stays in the milliseconds. The outer
     // 400 s bound only fires for the unbounded mutant and turns the hang
-    // into a named assertion. The elapsed pin closes the call-site blind
+    // into a named assertion. The receipt wait itself races the request
+    // task with a 10 s wall-clock watchdog (#2285 r4 ⑤), so a request that
+    // dies before writing any bytes fails namedly instead of hanging the
+    // paused-clock test forever. The elapsed pin closes the call-site blind
     // spot of the `unbounded-timeout-dropped` negative control (any
     // deadline drift inside (300 s, 400 s) settles the outcome assertion
     // but not the elapsed one), and the folded constant pin keeps the
@@ -236,6 +251,7 @@ mod tests {
                 }
             })
         };
+        let _clock_release = ClockRelease(clock_held.clone());
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("#1343 silent accept");
             // Signal once the request head arrived; drain the rest and
@@ -269,10 +285,34 @@ mod tests {
         });
         // Real I/O first (the keeper holds the clock), the receipt before
         // any verdict: without it a paused-clock auto-advance could settle
-        // the timeout before the request ever left the client.
-        receipt_rx
-            .await
-            .expect("#1343 the silent server saw the request");
+        // the timeout before the request ever left the client. #2285 r4 ⑤:
+        // the wait races the request task with a wall-clock watchdog — a
+        // bare `receipt_rx.await` is unbounded and the test's only other
+        // bound (400 s) rides the paused clock the keeper holds, so a
+        // request that dies before writing any bytes would hang the test
+        // forever with the keeper spinning on one core. `std::time::Instant`
+        // is real wall clock, unaffected by the pause.
+        {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let mut receipt = receipt_rx;
+            let saw_receipt = loop {
+                if let Ok(()) = receipt.try_recv() {
+                    break true;
+                }
+                if request.is_finished() {
+                    break false;
+                }
+                crate::negative_assert!(
+                    std::time::Instant::now() < deadline,
+                    "#1343 server never saw the request"
+                );
+                tokio::task::yield_now().await;
+            };
+            crate::negative_assert!(
+                saw_receipt,
+                "#1343 the request task ends only after the server saw the request"
+            );
+        }
         clock_held.store(false, std::sync::atomic::Ordering::SeqCst);
         let bounded = request.await.expect("#1343 poll GET task");
         let elapsed = started.elapsed();
@@ -287,9 +327,12 @@ mod tests {
             Some("TypeError: fetch failed".to_owned()),
             "#1343 a silent server settles the no-signal poll GET at the undici default"
         );
-        crate::negative_assert_eq!(
-            elapsed,
-            UNDICI_DEFAULT_TIMEOUT,
+        // Tolerance band (#2285 comment 4/⑤): the paused clock auto-advances
+        // exactly to the deadline, measured precise — the band guards
+        // against a future tokio leaving a nanosecond residue, and still
+        // kills any drift into the (300 s, 400 s) blind window.
+        crate::negative_assert!(
+            elapsed >= UNDICI_DEFAULT_TIMEOUT && elapsed < Duration::from_secs(301),
             "#1343 the settle deadline is the undici default, not a later bound"
         );
     }
