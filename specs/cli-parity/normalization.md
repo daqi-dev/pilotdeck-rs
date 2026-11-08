@@ -21,7 +21,7 @@
 
    本轮仅接受真实 Node v22.22.0 原件已见的 `PilotDeckError`：`file:///…/packages/sdk/dist/transport.js:<ASCII 行号>` 源位置行、一个以空格缩进、正文首字符非空格/Tab 的源码摘录行、只含空格及单个 `^` 的箭头行、空行、`PilotDeckError: <msg>`、至少一个以四个空格加 `at ` 开头、正文首字符非空格/Tab 的栈帧。最后栈帧以 ` {` 结束，随后对象展开必须按顺序为 `code`（`timeout` / `authentication_error` / `server_error` / `transport_error`）、`requestId: undefined`、`details: undefined`、`retryable: true|false`、`[cause]: undefined`，保持 Node 原件的两个空格缩进、逗号和单引号；再接独占一行的 `}`、空行、`Node.js v22.22.0` 与最终 LF。错误 `<msg>` 必须逐字等于前置业务行（不含该 LF），全段不允许 CR。
 
-   缺业务行、源位置、箭头、空行、栈帧、任一对象字段、结束版本行，或版本不符、CRLF、对象字段增减、尾后文字、重复尾段，一律保留比较。业务行被改不得靠堆栈归一化掩盖。当前 96 格原件中 16 格符合此形状；另外 8 格只有未处理异常、没有业务行，不属于本条授权边界。原始 `source.json` / `oracle.json` / stderr 文件不写回。
+   缺业务行、源位置、箭头、空行、栈帧、任一对象字段、结束版本行，或版本不符、CRLF、对象字段增减、尾后文字、重复尾段，一律保留比较。业务行被改不得靠堆栈归一化掩盖。当前 100 格原件中 20 格符合此形状（#1178 的 4 个 abort-rst 格入此形状）；另外 8 格只有未处理异常、没有业务行，不属于本条授权边界。原始 `source.json` / `oracle.json` / stderr 文件不写回。
 
 8. **有实证的场景按流比较**：仅在同一场景已有两轮真实 TS 运行、证明 stdout / stderr 各自字节相同而有效跨流顺序不同后，才可在 `scenarios.json` 为该场景登记 `"streamOrder": "per-stream"`，并填写非空字符串 `streamOrderReason`，说明原因及两轮原件证据路径。合法声明仅跳过该场景的跨流 `order` 比较；stdout、stderr 各自的完整字节仍逐字节比较，TS 对独立期望及 Rust 对 TS 均适用。TS 自比与 Rust 配对共用同一比较路径；原始 events 与每路 `.bin` 的一致性、退出码、完整树、隔离和身份检查照常执行。
 
