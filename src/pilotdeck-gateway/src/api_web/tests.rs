@@ -1013,11 +1013,14 @@ fn write_nul_path_with_both_quotes_renders_the_backtick_tier() {
         false,
     );
     match result {
-        Err(files::FilesError::Message(message)) => assert_eq!(
-            message,
+        Err(files::FilesError::MessageUnits(message)) => assert_eq!(
+            message.units(),
             format!(
                 "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received `{root_text}/a'b\"c\\x00d.txt`"
-            ),
+            )
+            .encode_utf16()
+            .collect::<Vec<_>>()
+            .as_slice(),
             "#2354 both quote kinds render the backtick tier like node v22.22.0"
         ),
         Err(_) => panic!("#2354 a NUL path answers the argument-validation message"),
@@ -1050,12 +1053,17 @@ fn write_nul_path_beyond_128_units_truncates_like_node() {
         .collect();
     inspected.truncate(128);
     match result {
-        Err(files::FilesError::Message(message)) => assert_eq!(
-            message,
-            format!(
-                "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}...",
-                String::from_utf16_lossy(&inspected)
-            ),
+        Err(files::FilesError::MessageUnits(message)) => assert_eq!(
+            message.units(),
+            {
+                let mut expected: Vec<u16> = "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received "
+                    .encode_utf16()
+                    .collect();
+                expected.extend_from_slice(&inspected);
+                expected.extend("...".encode_utf16());
+                expected
+            }
+            .as_slice(),
             "#2354 the received value is cut at 128 UTF-16 units like node v22.22.0"
         ),
         Err(_) => panic!("#2354 a NUL path answers the argument-validation message"),
@@ -1064,11 +1072,223 @@ fn write_nul_path_beyond_128_units_truncates_like_node() {
     let _ = fs::remove_dir_all(&parent);
 }
 
+/// #2455: a NUL path whose non-BMP character straddles the 128-unit cut.
+/// Node's slice cuts between the halves of the surrogate pair, so the message
+/// keeps a lone high surrogate, and `JSON.stringify` renders it as the
+/// well-formed `\ud83d` escape — node v22.22.0 measured,
+/// `_tmp/20261108-p2batch-c1/s2-ts-probe/probe-output.txt` (response hex
+/// tail `…5c75643833642e2e2e` = `\ud83d...`; the pre-fix replica folded the
+/// lone surrogate to U+FFFD, `…efbfbd2e2e2e`).
+#[test]
+fn write_nul_path_surrogate_pair_straddling_the_cut_keeps_the_lone_surrogate() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#2455 the fixture root is UTF-8"));
+    // The inspected value is quote + root + `/` + an N-run + the pair; the
+    // run length puts the pair's high surrogate at unit 127, so the 128-unit
+    // cut keeps it and drops the low half.
+    let run = 125usize
+        .checked_sub(root_text.encode_utf16().count())
+        .expect("#2455 the fixture root is short enough to place the cut");
+    let relative = format!("{}😀\u{0}.txt", "N".repeat(run));
+    let result = service.write_file(&relative, &pilotdeck_protocol::JsString::from("x"), false);
+    let message = match result {
+        Err(files::FilesError::MessageUnits(message)) => message,
+        Err(_) => panic!("#2455 a NUL path answers the argument-validation message"),
+        Ok(()) => panic!("#2455 a NUL path must be refused"),
+    };
+    let expected: Vec<u16> = format!(
+        "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received '{root_text}/{}",
+        "N".repeat(run)
+    )
+    .encode_utf16()
+    .chain([0xd83d])
+    .chain("...".encode_utf16())
+    .collect();
+    assert_eq!(
+        message.units(),
+        expected.as_slice(),
+        "#2455 the cut keeps the lone high surrogate and drops the low half, like node v22.22.0"
+    );
+    // The rendered body keeps JSON.stringify's well-formed escape for the
+    // lone surrogate instead of a U+FFFD byte.
+    let body = super::error_body_units("internal_error", &message);
+    assert!(
+        body.contains(r"\ud83d"),
+        "#2455 the wire keeps the well-formed lone-surrogate escape: {body:?}"
+    );
+    assert!(
+        !body
+            .as_bytes()
+            .windows(3)
+            .any(|window| window == [0xef, 0xbf, 0xbd]),
+        "#2455 the wire never folds the lone surrogate to U+FFFD: {body:?}"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #2456: a project key pointing at a nonexistent absolute path plus
+/// `path: "."`. TS's `mkdir(dirname(target), {recursive: true})` creates
+/// only the root's *ancestors*, and the write's own open then creates the
+/// root as a regular file and answers 200 — node v22.22.0 measured,
+/// `_tmp/20261108-p2batch-c1/s3-ts-probe/probe-output.txt` (status 200,
+/// `{"ok":true}`, side effect REGULAR FILE size 1, parents directories).
+/// The pre-fix armed walk `mkdir`-ed the root itself and answered the
+/// EISDIR 500 with the root created as a directory instead.
+#[test]
+fn write_dot_on_a_missing_root_creates_the_root_file_like_node() {
+    let (parent, _root) = fixture();
+    let fresh = parent.join("does").join("not").join("exist");
+    let service =
+        files::ProjectFileService::new(fresh.to_str().expect("#2456 the fresh root is UTF-8"));
+    service
+        .write_file(".", &pilotdeck_protocol::JsString::from("x"), false)
+        .expect("#2456 a `path: \".\"` write on a missing root creates the root file like node");
+    let stats = fs::metadata(&fresh).expect("#2456 the root exists after the write");
+    assert!(
+        stats.is_file(),
+        "#2456 the missing root becomes the write's own regular file, not a directory"
+    );
+    assert_eq!(
+        stats.len(),
+        1,
+        "#2456 the write's bytes are the root file's"
+    );
+    assert!(
+        fs::metadata(parent.join("does"))
+            .expect("#2456 the ancestors exist")
+            .is_dir(),
+        "#2456 the mkdir(dirname) half created the ancestors as directories"
+    );
+    assert!(
+        fs::metadata(&fresh)
+            .expect("#2456 re-stat the root")
+            .is_file(),
+        "#2456 the finished root is still a file, not a directory"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #2456, the HTTP surface: the same missing-root `path: "."` write answers
+/// 200 with the fixed `{"ok":true}` body and keeps the connection open, and
+/// the bytes land in the root file itself.
+#[tokio::test]
+async fn write_dot_on_a_missing_root_answers_200_like_node() {
+    let (parent, _root) = fixture();
+    let fresh = parent.join("missing-root");
+    let root_text = fresh.to_string_lossy().into_owned();
+    let body = r#"{"path":".","content":"x"}"#;
+    let request = format!(
+        "POST /api/web/projects/{}/files/write HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        percent_encode(&root_text),
+        body.len(),
+        body
+    );
+    let (raw, closed) = exchange(
+        replay_config(&root_text),
+        native_config(),
+        request.as_bytes(),
+        "write-missing-root-dot",
+    )
+    .await;
+    let response = latin1_string(&raw);
+    assert!(
+        response.starts_with("HTTP/1.1 200"),
+        "#2456 the missing-root dot write answers the 200: {response:?}"
+    );
+    assert!(
+        response.contains("{\"ok\":true}"),
+        "#2456 the 200 carries the fixed body: {response:?}"
+    );
+    assert!(
+        !closed,
+        "#2456 the write 200 keeps the connection open like Node"
+    );
+    let stats = fs::metadata(&fresh).expect("#2456 the root exists after the write");
+    assert!(
+        stats.is_file(),
+        "#2456 the side effect is a regular file at the key: {stats:?}"
+    );
+    assert_eq!(
+        fs::read(&fresh).expect("#2456 read the created root file"),
+        b"x",
+        "#2456 the write's bytes are the root file's"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #2455 adjacent cell, the registered residual of
+/// `specs/gateway-parity/diffs/A8.4-API-WEB-002-R3.md`: a path whose lone
+/// surrogate was already folded to U+FFFD at the handler's JS-to-fs boundary
+/// (the JSON spelling `"a\ud83d\u0000b.txt"`). Node's validation inspects the
+/// raw JS string and renders the lone surrogate as the ASCII `\ud83d` escape;
+/// this replica's message keeps the boundary's U+FFFD byte. The
+/// pair-straddling cut cell itself is fixed above (`MessageUnits`), this
+/// input-lone-surrogate cell stays at the registered bytes.
+#[test]
+fn write_nul_path_with_a_boundary_fffd_answers_the_registered_residual() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#2455 the fixture root is UTF-8"));
+    let result = service.write_file(
+        "a\u{FFFD}\u{0}b.txt",
+        &pilotdeck_protocol::JsString::from("x"),
+        false,
+    );
+    let message = match result {
+        Err(files::FilesError::MessageUnits(message)) => message,
+        Err(_) => panic!("#2455 a NUL path answers the argument-validation message"),
+        Ok(()) => panic!("#2455 a NUL path must be refused"),
+    };
+    let text = String::from_utf16_lossy(message.units());
+    assert!(
+        text.contains(&format!("{root_text}/a\u{FFFD}\\x00b.txt")),
+        "#2455 the inspected value keeps the boundary's U+FFFD, per the R3 residual: {text:?}"
+    );
+    assert!(
+        !text.contains(r"\ud83d"),
+        "#2455 the registered residual keeps the FFFD form, not Node's ASCII escape: {text:?}"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #2456 adjacent cell, the registered residual of
+/// `specs/gateway-parity/diffs/A8.4-API-WEB-002-R3.md`: with the root an
+/// existing regular file (the shape a missing-root `path: "."` write now
+/// leaves), TS's `writeFile(target)` overwrites the file and answers 200; the
+/// armed walk's root open answers its registered `ENOTDIR … open '<root>'`
+/// diagnostic instead, per 002's root-open registration as corrected by R3.
+#[cfg(unix)]
+#[test]
+fn write_dot_on_a_file_root_answers_the_registered_enotdir_residual() {
+    let (parent, _root) = fixture();
+    let fresh = parent.join("file-root");
+    fs::write(&fresh, b"old").expect("#2456 create the regular-file root");
+    let service =
+        files::ProjectFileService::new(fresh.to_str().expect("#2456 the file root is UTF-8"));
+    let result = service.write_file(".", &pilotdeck_protocol::JsString::from("y"), false);
+    match result {
+        Err(files::FilesError::Message(message)) => assert!(
+            message.starts_with("ENOTDIR") && message.contains(&*fresh.to_string_lossy()),
+            "#2456 the file-root dot write keeps the registered root-open diagnostic: {message:?}"
+        ),
+        Err(_) => panic!("#2456 a file root answers the root-open diagnostic"),
+        Ok(()) => panic!("#2456 the file-root residual answers 500, not the TS overwrite"),
+    }
+    assert_eq!(
+        fs::read(&fresh).expect("#2456 read the file root"),
+        b"old",
+        "#2456 the refused write leaves the file root's bytes alone"
+    );
+    let _ = fs::remove_dir_all(&parent);
+}
+
 /// #2354 fix-r1: Node's EISDIR names the literal target — node v22.22.0
 /// measured (`fix-r1/ts-probe/node-write-refusal.txt`): a write whose path
 /// goes through an in-root directory symlink answers `open '<root>/link'`,
-/// not the canonical `<root>/sub` the armed walk resolves the link to.
-#[cfg(unix)]
+/// not the canonical `<root>/sub` the armed walk resolves the link to.#[cfg(unix)]
 #[test]
 fn write_to_an_in_root_directory_link_reports_the_literal_path() {
     let (parent, root) = fixture();
@@ -1177,7 +1397,7 @@ fn read_limit_is_exclusive_at_one_mib() {
             .unwrap_or_else(|_| panic!("#1348 read the file at the limit")),
     );
     assert!(
-        exact.contains("\"size\":1048576"),
+        exact.contains("\"size\":1048576,"),
         "#1348 boundary pin: the exact-limit file reports its size: {exact}"
     );
     assert!(
@@ -1191,7 +1411,7 @@ fn read_limit_is_exclusive_at_one_mib() {
             .unwrap_or_else(|_| panic!("#1348 read the file over the limit")),
     );
     assert!(
-        over.contains("\"size\":1048577"),
+        over.contains("\"size\":1048577,"),
         "#1348 boundary pin: the over-limit file reports its size: {over}"
     );
     assert!(
@@ -1791,6 +2011,9 @@ fn write_follows_a_link_that_stays_inside_the_root() {
                 format!("#1675 an in-root link was refused as a boundary escape: {raw}")
             }
             files::FilesError::Message(text) => format!("#1675 the in-root write failed: {text}"),
+            files::FilesError::MessageUnits(text) => {
+                format!("#1675 the in-root write failed: {text:?}")
+            }
         })
         .expect("#1675 an in-root link keeps TS's write-through");
     assert_eq!(
@@ -1828,6 +2051,9 @@ fn write_creates_below_a_directory_link_that_stays_inside_the_root() {
                 format!("#1675 an in-root directory link was refused as a boundary escape: {raw}")
             }
             files::FilesError::Message(text) => format!("#1675 the in-root write failed: {text}"),
+            files::FilesError::MessageUnits(text) => {
+                format!("#1675 the in-root write failed: {text:?}")
+            }
         })
         .expect("#1675 an in-root directory link keeps TS's behavior");
     assert_eq!(
