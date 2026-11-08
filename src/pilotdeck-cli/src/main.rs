@@ -202,7 +202,7 @@ fn tui_stderr_nonblocking(message: &str) {
 }
 
 fn run_tui(env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    let home = paths::pilot_home(env, cwd)?;
+    let home = paths::resolve(cwd, &paths::pilot_home(env, cwd)?);
     #[cfg(unix)]
     let load_snapshot = pilotdeck_gateway::config::load_snapshot_bounded;
     #[cfg(not(unix))]
@@ -277,7 +277,7 @@ fn run_local_cli_channel(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, F
         .map(|exe| std::fs::canonicalize(&exe).unwrap_or(exe));
     let exe_dir = exe.as_deref().and_then(Path::parent);
     let builtin_root = skills::builtin_skills_root(env, cwd, exe_dir)?;
-    let migration = skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin_root)?;
+    let migration = skills::migrate_legacy_bundled_skill_copies(&pilot_home, &builtin_root, cwd)?;
     if let Some(notice) = migration.notice {
         stdout_line(&notice);
     }

@@ -108,6 +108,30 @@ pub fn resolve(cwd: &Path, path: &Path) -> PathBuf {
     out
 }
 
+/// Node path.join spelling for labels: normalize lexical dot components but
+/// preserve a relative result. IO callers separately resolve against cwd.
+pub fn join(base: &Path, name: &str) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in base.join(name).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if out.file_name().is_some_and(|name| name != "..") {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push("..");
+                }
+            }
+            component => out.push(component.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        out
+    }
+}
+
 /// os.homedir(): an existing HOME (including empty/relative) always wins.
 /// Only a real process snapshot may request the platform account fallback.
 pub fn homedir(env: &Env) -> Result<PathBuf, Failure> {
@@ -164,7 +188,7 @@ pub fn pilot_home(env: &Env, cwd: &Path) -> Result<PathBuf, Failure> {
     let raw = env.get("PILOT_HOME").unwrap_or(OsStr::new("~/.pilotdeck"));
     let bytes = raw.as_bytes();
     if bytes == b"~" {
-        return Ok(resolve(cwd, &homedir(env)?));
+        return homedir(env);
     }
     if let Some(rest) = bytes.strip_prefix(b"~/") {
         return Ok(resolve(cwd, &homedir(env)?.join(OsStr::from_bytes(rest))));
@@ -177,10 +201,13 @@ pub fn pilot_home(env: &Env, cwd: &Path) -> Result<PathBuf, Failure> {
 /// resolvePilotHome is "" only for PILOT_HOME="~" with an empty $HOME, because
 /// normalizeHomePath returns os.homedir() for "~" without resolving it.
 pub fn gateway_token_path(env: &Env, cwd: &Path) -> Result<PathBuf, Failure> {
-    if env.get("PILOT_HOME") == Some(OsStr::new("~")) && homedir(env)?.as_os_str().is_empty() {
-        return Ok(resolve(cwd, Path::new("~/.pilotdeck/server-token")));
-    }
-    Ok(pilot_home(env, cwd)?.join("server-token"))
+    let home = pilot_home(env, cwd)?;
+    let home = if home.as_os_str().is_empty() {
+        Path::new("~/.pilotdeck")
+    } else {
+        &home
+    };
+    Ok(resolve(cwd, &home.join("server-token")))
 }
 
 /// ECMAScript WhiteSpace + LineTerminator, as used by String.prototype.trim.
@@ -310,6 +337,62 @@ mod tests {
     }
 
     #[test]
+    fn raw_tilde_and_consumer_paths_match_fixed_node_rows() {
+        let oracle: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/startup-home/paths-oracle.json"
+        ))
+        .unwrap();
+        let cases = oracle["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 14);
+        let cwd = Path::new("/isolated/cwd");
+        for case in cases {
+            let mut pairs = vec![("HOME", case["HOME"].as_str().unwrap())];
+            if let Some(pilot) = case["pilotHome"].as_str() {
+                pairs.push(("PILOT_HOME", pilot));
+            }
+            let env = Env::from_pairs(&pairs);
+            let home = pilot_home(&env, cwd).unwrap();
+            let expected = |key: &str| {
+                PathBuf::from(
+                    case[key]
+                        .as_str()
+                        .unwrap()
+                        .replace("<CWD>", cwd.to_str().unwrap()),
+                )
+            };
+            assert_eq!(home, expected("home"), "{case} raw home");
+            assert_eq!(
+                gateway_token_path(&env, cwd).unwrap(),
+                expected("token"),
+                "{case} token"
+            );
+            assert_eq!(
+                resolve(cwd, &home.join("pilotdeck.yaml")),
+                expected("config"),
+                "{case} config IO"
+            );
+            assert_eq!(
+                join(&home, "skills"),
+                expected("joinedSkills"),
+                "{case} raw label"
+            );
+            assert_eq!(
+                resolve(cwd, &home.join("skills")),
+                expected("resolvedSkills"),
+                "{case} skill IO"
+            );
+        }
+        for (base, expected) in [
+            ("relative/./home", "relative/home/x"),
+            ("../home/..", "../x"),
+            ("/a/../../b", "/b/x"),
+            ("", "x"),
+        ] {
+            assert_eq!(join(Path::new(base), "x"), PathBuf::from(expected));
+        }
+    }
+
+    #[test]
     fn resolve_normalizes_like_node() {
         let cwd = Path::new("/a/b");
         assert_eq!(resolve(cwd, Path::new("")), PathBuf::from("/a/b"));
@@ -342,7 +425,7 @@ mod tests {
         // resolve("", "x") and resolve("") both land on cwd.
         assert!(matches!(pilot_home(&home(None), cwd), Ok(p) if p == Path::new("/w/.pilotdeck")));
         assert!(matches!(pilot_home(&home(Some("~/x")), cwd), Ok(p) if p == Path::new("/w/x")));
-        assert!(matches!(pilot_home(&home(Some("~")), cwd), Ok(p) if p == Path::new("/w")));
+        assert!(matches!(pilot_home(&home(Some("~")), cwd), Ok(p) if p.as_os_str().is_empty()));
         assert!(matches!(pilot_home(&home(Some("~/")), cwd), Ok(p) if p == Path::new("/w")));
         assert!(matches!(gateway_token_path(&home(Some("~/")), cwd),
             Ok(p) if p == Path::new("/w/server-token")));

@@ -1,0 +1,165 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "rawSha256": {
+    "relative": "3e48793427018902faf5d2bde3e979b3da2c1afe97fc39fc7845c484ea81b8a4",
+    "empty": "56633b5de9f836fe2aa0b64366fc27133bdc36e93e48f2291d33ef6aa82f0006"
+  },
+  "cases": [
+    {
+      "HOME": "relative-home",
+      "pilotHome": null,
+      "homedir": "relative-home",
+      "home": "<CWD>/relative-home/.pilotdeck",
+      "config": "<CWD>/relative-home/.pilotdeck/pilotdeck.yaml",
+      "token": "<CWD>/relative-home/.pilotdeck/server-token",
+      "setupHome": "relative-home/.pilotdeck",
+      "joinedSkills": "<CWD>/relative-home/.pilotdeck/skills",
+      "resolvedSkills": "<CWD>/relative-home/.pilotdeck/skills"
+    },
+    {
+      "HOME": "relative-home",
+      "pilotHome": "",
+      "homedir": "relative-home",
+      "home": "<CWD>",
+      "config": "<CWD>/pilotdeck.yaml",
+      "token": "<CWD>/server-token",
+      "setupHome": "relative-home/.pilotdeck",
+      "joinedSkills": "<CWD>/skills",
+      "resolvedSkills": "<CWD>/skills"
+    },
+    {
+      "HOME": "relative-home",
+      "pilotHome": "~",
+      "homedir": "relative-home",
+      "home": "relative-home",
+      "config": "<CWD>/relative-home/pilotdeck.yaml",
+      "token": "<CWD>/relative-home/server-token",
+      "setupHome": "relative-home/.pilotdeck",
+      "joinedSkills": "relative-home/skills",
+      "resolvedSkills": "<CWD>/relative-home/skills"
+    },
+    {
+      "HOME": "relative-home",
+      "pilotHome": "~/",
+      "homedir": "relative-home",
+      "home": "<CWD>/relative-home",
+      "config": "<CWD>/relative-home/pilotdeck.yaml",
+      "token": "<CWD>/relative-home/server-token",
+      "setupHome": "relative-home/.pilotdeck",
+      "joinedSkills": "<CWD>/relative-home/skills",
+      "resolvedSkills": "<CWD>/relative-home/skills"
+    },
+    {
+      "HOME": "relative-home",
+      "pilotHome": "~/x",
+      "homedir": "relative-home",
+      "home": "<CWD>/relative-home/x",
+      "config": "<CWD>/relative-home/x/pilotdeck.yaml",
+      "token": "<CWD>/relative-home/x/server-token",
+      "setupHome": "relative-home/.pilotdeck",
+      "joinedSkills": "<CWD>/relative-home/x/skills",
+      "resolvedSkills": "<CWD>/relative-home/x/skills"
+    },
+    {
+      "HOME": "relative-home",
+      "pilotHome": "relative",
+      "homedir": "relative-home",
+      "home": "<CWD>/relative",
+      "config": "<CWD>/relative/pilotdeck.yaml",
+      "token": "<CWD>/relative/server-token",
+      "setupHome": "relative-home/.pilotdeck",
+      "joinedSkills": "<CWD>/relative/skills",
+      "resolvedSkills": "<CWD>/relative/skills"
+    },
+    {
+      "HOME": "relative-home",
+      "pilotHome": "/isolated/absolute",
+      "homedir": "relative-home",
+      "home": "/isolated/absolute",
+      "config": "/isolated/absolute/pilotdeck.yaml",
+      "token": "/isolated/absolute/server-token",
+      "setupHome": "relative-home/.pilotdeck",
+      "joinedSkills": "/isolated/absolute/skills",
+      "resolvedSkills": "/isolated/absolute/skills"
+    },
+    {
+      "HOME": "",
+      "pilotHome": null,
+      "homedir": "",
+      "home": "<CWD>/.pilotdeck",
+      "config": "<CWD>/.pilotdeck/pilotdeck.yaml",
+      "token": "<CWD>/.pilotdeck/server-token",
+      "setupHome": ".pilotdeck",
+      "joinedSkills": "<CWD>/.pilotdeck/skills",
+      "resolvedSkills": "<CWD>/.pilotdeck/skills"
+    },
+    {
+      "HOME": "",
+      "pilotHome": "",
+      "homedir": "",
+      "home": "<CWD>",
+      "config": "<CWD>/pilotdeck.yaml",
+      "token": "<CWD>/server-token",
+      "setupHome": ".pilotdeck",
+      "joinedSkills": "<CWD>/skills",
+      "resolvedSkills": "<CWD>/skills"
+    },
+    {
+      "HOME": "",
+      "pilotHome": "~",
+      "homedir": "",
+      "home": "",
+      "config": "<CWD>/pilotdeck.yaml",
+      "token": "<CWD>/~/.pilotdeck/server-token",
+      "setupHome": ".pilotdeck",
+      "joinedSkills": "skills",
+      "resolvedSkills": "<CWD>/skills"
+    },
+    {
+      "HOME": "",
+      "pilotHome": "~/",
+      "homedir": "",
+      "home": "<CWD>",
+      "config": "<CWD>/pilotdeck.yaml",
+      "token": "<CWD>/server-token",
+      "setupHome": ".pilotdeck",
+      "joinedSkills": "<CWD>/skills",
+      "resolvedSkills": "<CWD>/skills"
+    },
+    {
+      "HOME": "",
+      "pilotHome": "~/x",
+      "homedir": "",
+      "home": "<CWD>/x",
+      "config": "<CWD>/x/pilotdeck.yaml",
+      "token": "<CWD>/x/server-token",
+      "setupHome": ".pilotdeck",
+      "joinedSkills": "<CWD>/x/skills",
+      "resolvedSkills": "<CWD>/x/skills"
+    },
+    {
+      "HOME": "",
+      "pilotHome": "relative",
+      "homedir": "",
+      "home": "<CWD>/relative",
+      "config": "<CWD>/relative/pilotdeck.yaml",
+      "token": "<CWD>/relative/server-token",
+      "setupHome": ".pilotdeck",
+      "joinedSkills": "<CWD>/relative/skills",
+      "resolvedSkills": "<CWD>/relative/skills"
+    },
+    {
+      "HOME": "",
+      "pilotHome": "/isolated/absolute",
+      "homedir": "",
+      "home": "/isolated/absolute",
+      "config": "/isolated/absolute/pilotdeck.yaml",
+      "token": "/isolated/absolute/server-token",
+      "setupHome": ".pilotdeck",
+      "joinedSkills": "/isolated/absolute/skills",
+      "resolvedSkills": "/isolated/absolute/skills"
+    }
+  ]
+}

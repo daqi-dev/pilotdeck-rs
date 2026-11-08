@@ -495,7 +495,7 @@ fn report(argv: &[String], env: &Env, cwd: &Path) -> Result<JsValue, Failure> {
     includes(flag(argv, "--from"))?;
     let pilot_home = match flag(argv, "--pilot-home") {
         Some(raw) => paths::resolve(cwd, Path::new(raw)),
-        None => paths::pilot_home(env, cwd)?,
+        None => paths::resolve(cwd, &paths::pilot_home(env, cwd)?),
     };
     let root = pilot_home.join("skills");
     let execute = has(argv, "--execute");

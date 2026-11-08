@@ -63,7 +63,15 @@ pub struct LegacyMigrationReport {
 pub fn migrate_legacy_bundled_skill_copies(
     pilot_home: &Path,
     builtin_root: &Path,
+    cwd: &Path,
 ) -> Result<LegacyMigrationReport, Failure> {
+    // The migration port resolves its IO roots, while createLocalGateway's
+    // notice independently joins the original (possibly empty/relative) home.
+    let notice_backup_root = paths::join(pilot_home, "skill-backups/legacy-bundled-v1");
+    let io_home = paths::resolve(cwd, pilot_home);
+    let pilot_home = io_home.as_path();
+    let builtin = paths::resolve(cwd, builtin_root);
+    let builtin_root = builtin.as_path();
     let mut report = LegacyMigrationReport::default();
     let marker = pilot_home.join(MARKER);
     if marker.exists() {
@@ -116,7 +124,7 @@ pub fn migrate_legacy_bundled_skill_copies(
         report.notice = Some(format!(
             "[pilotdeck] Activated bundled skills directly; moved {moved} unchanged legacy {} to {}.",
             if moved == 1 { "copy" } else { "copies" },
-            backup_root.display()
+            notice_backup_root.display()
         ));
     }
     if report.warnings.is_empty() {
@@ -337,11 +345,15 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn migration_report(home: &Path, root: &Path) -> Result<LegacyMigrationReport, Failure> {
+        super::migrate_legacy_bundled_skill_copies(home, root, Path::new("/"))
+    }
+
     fn migrate_legacy_bundled_skill_copies(
         home: &Path,
         root: &Path,
     ) -> Result<Vec<String>, Failure> {
-        super::migrate_legacy_bundled_skill_copies(home, root).map(|report| report.warnings)
+        migration_report(home, root).map(|report| report.warnings)
     }
 
     fn temp_home(name: &str) -> PathBuf {
@@ -450,7 +462,7 @@ mod tests {
             .expect("child test runtime")
             .block_on(async { pilotdeck_gateway::ensure_sigxfsz_ignored() });
         let home = PathBuf::from(home);
-        let report = super::migrate_legacy_bundled_skill_copies(&home, &home.join("bundled"))
+        let report = migration_report(&home, &home.join("bundled"))
             .expect("the migration itself must not fail");
         let warning = report
             .warnings
@@ -861,12 +873,41 @@ mod tests {
     }
 
     #[test]
+    fn raw_empty_and_relative_homes_use_explicit_cwd_for_io_and_relative_notice() {
+        for (name, raw, label) in [
+            ("bare-empty", "", "skill-backups/legacy-bundled-v1"),
+            (
+                "bare-relative",
+                "relative/./home",
+                "relative/home/skill-backups/legacy-bundled-v1",
+            ),
+        ] {
+            let cwd = temp_home(name);
+            let home = paths::resolve(&cwd, Path::new(raw));
+            let root = bundled_root(&cwd);
+            fs::create_dir_all(home.join("skills/docx")).unwrap();
+            fs::write(home.join("skills/docx/SKILL.md"), "x").unwrap();
+            let report =
+                super::migrate_legacy_bundled_skill_copies(Path::new(raw), &root, &cwd).unwrap();
+            assert!(report.warnings.is_empty());
+            assert_eq!(report.notice.as_deref(), Some(format!("[pilotdeck] Activated bundled skills directly; moved 1 unchanged legacy copy to {label}.").as_str()));
+            assert!(!home.join("skills/docx").exists());
+            assert_eq!(
+                fs::read(home.join("skill-backups/legacy-bundled-v1/docx/SKILL.md")).unwrap(),
+                b"x"
+            );
+            assert_eq!(fs::read(home.join(MARKER)).unwrap(), b"completed\n");
+            fs::remove_dir_all(cwd).unwrap();
+        }
+    }
+
+    #[test]
     fn successful_moves_emit_the_exact_stdout_notice() {
         let home = temp_home("notice");
         let root = bundled_root(&home);
         fs::create_dir_all(home.join("skills/docx")).unwrap();
         fs::write(home.join("skills/docx/SKILL.md"), "x").unwrap();
-        let report = super::migrate_legacy_bundled_skill_copies(&home, &root).unwrap();
+        let report = migration_report(&home, &root).unwrap();
         assert!(report.warnings.is_empty());
         assert_eq!(
             report.notice,
@@ -875,12 +916,7 @@ mod tests {
                 home.join("skill-backups/legacy-bundled-v1").display()
             ))
         );
-        assert!(
-            super::migrate_legacy_bundled_skill_copies(&home, &root)
-                .unwrap()
-                .notice
-                .is_none()
-        );
+        assert!(migration_report(&home, &root).unwrap().notice.is_none());
         fs::remove_dir_all(home).unwrap();
     }
 
@@ -897,7 +933,7 @@ mod tests {
         }
         let backup = home.join("skill-backups/legacy-bundled-v1");
         fs::create_dir_all(backup.join(&long)).unwrap();
-        let report = super::migrate_legacy_bundled_skill_copies(&home, &root).unwrap();
+        let report = migration_report(&home, &root).unwrap();
         assert_eq!(report.warnings.len(), 1);
         assert!(report.warnings[0].contains("ENAMETOOLONG: name too long, rename"));
         assert!(
@@ -920,7 +956,7 @@ mod tests {
         fs::create_dir_all(home.join("skills/docx")).unwrap();
         fs::write(home.join("skills/docx/SKILL.md"), "x").unwrap();
         symlink("skill-backups", home.join("skill-backups")).unwrap();
-        let report = super::migrate_legacy_bundled_skill_copies(&home, &root).unwrap();
+        let report = migration_report(&home, &root).unwrap();
         assert_eq!(report.warnings.len(), 1);
         assert!(report.warnings[0].contains("ELOOP: too many symbolic links encountered, mkdir"));
         assert!(report.notice.is_none());

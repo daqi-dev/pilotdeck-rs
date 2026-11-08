@@ -93,7 +93,7 @@ pub fn run(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let has = |name: &str| argv.iter().any(|arg| arg == name);
     let home = match flag("--pilot-home") {
         Some(path) => resolve(cwd, Path::new(path)),
-        None => pilot_home(env, cwd)?,
+        None => resolve(cwd, &pilot_home(env, cwd)?),
     };
     let all_projects = has("--all-projects");
     let project = flag("--project").unwrap_or_else(|| cwd.to_str().unwrap_or(""));

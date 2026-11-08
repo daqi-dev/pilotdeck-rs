@@ -1,15 +1,15 @@
 //! Shared loadPilotConfig validation; CLI-only unsupported branches stay explicit.
 use crate::Failure;
-use crate::paths::Env;
+use crate::paths::{self, Env};
 use std::path::Path;
 
 pub fn check(env: &Env, cwd: &Path, pilot_home: &Path) -> Result<(), Failure> {
+    let io_home = paths::resolve(cwd, pilot_home);
     #[cfg(unix)]
     let loaded =
-        pilotdeck_gateway::config::load_project_bounded(pilot_home, cwd, &env.strings(), Some("."));
+        pilotdeck_gateway::config::load_project_bounded(&io_home, cwd, &env.strings(), Some("."));
     #[cfg(not(unix))]
-    let loaded =
-        pilotdeck_gateway::config::load_project(pilot_home, cwd, &env.strings(), Some("."));
+    let loaded = pilotdeck_gateway::config::load_project(&io_home, cwd, &env.strings(), Some("."));
     loaded.map(|_| ()).map_err(|error| {
         if error.requires_host {
             Failure::Todo("config requiring JavaScript host support")
