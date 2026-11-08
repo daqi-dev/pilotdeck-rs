@@ -86,6 +86,19 @@ class EnvironmentControls(unittest.TestCase):
         # 必需检查必须无条件跑：`if` / `needs` 都不在白名单里。
         'gateway-schema-baseline': ({'env', 'runs-on', 'steps'}, None, None),
     }
+    # #1809 r8（评审 P1-1）：uses step 的 `with` 键集合按 action 逐键钉死——与
+    # self_check.WORKFLOW_USE_WITH_KEYS 同一登记（兄弟守卫两处同步）。给
+    # `actions/checkout@v4` 加 `with: {ref: …}` 会让该 job 的闸门跑另一棵树的
+    # 脚本，而每个被比对的 `run` 标量逐字不变；r7 只钉了 retirement job 的两个
+    # uses step。checkout 有两种合法形态（深克隆 `fetch-depth: 0` 与默认检出），
+    # 登记为「允许的键集合族」。
+    ci_use_with_registry = {
+        'actions/checkout@v4': {frozenset(), frozenset({'fetch-depth'})},
+        'actions/setup-node@v4': {frozenset({'node-version'})},
+        'actions/cache@v4': {frozenset({'path', 'key'})},
+        'Swatinem/rust-cache@v2.9.2': {frozenset({'workspaces', 'cache-bin'})},
+        'actions/upload-artifact@v4': {frozenset({'name', 'path', 'if-no-files-found'})},
+    }
     nextest_success_output_filter = (
         'test(=case_insensitive_cwd_spelling_writes_and_edits) | '
         'test(=nfd_directory_with_nfc_cwd_writes_and_edits) | '
@@ -612,6 +625,98 @@ class EnvironmentControls(unittest.TestCase):
                    '        working-directory: src/pilotdeck-gateway/tests\n',
                    '#1809 the metadata-observer run step pins `shell: bash` (parsed)')
         self.check_ci_mutations(cases, 'test_ci_every_run_step_pins_bash_shell', '#1809')
+
+    def test_ci_uses_steps_pin_their_with_keys(self):
+        # #1809 r8（评审 P1-1）：uses step 的 `with` 逐键钉死的镜像守卫（与 self_check
+        # 的全 workflow 巡走同口径）。同一攻击换一个 job 照样成立：checkout 加
+        # `with: {ref: …}` 让该 job 的闸门跑另一棵树的脚本，而所有被比对的 `run`
+        # 标量与 job 级键逐字不变——必须逐个 uses step 巡走，不限于 retirement job。
+        yaml, parsed = self.ci_parsed_jobs(issue='#1809')
+        checked = {}
+        for name, fields in parsed.items():
+            steps_node = fields.get('steps')
+            self.assertIsInstance(steps_node, yaml.SequenceNode,
+                                  f'#1809 the {name} job has a step sequence')
+            for item in steps_node.value:
+                self.assertIsInstance(item, yaml.MappingNode,
+                                      f'#1809 every {name} step is a mapping')
+                step = {}
+                for field, node in item.value:
+                    step[field.value] = node
+                if 'uses' not in step:
+                    continue
+                uses = step['uses']
+                self.assertIsInstance(uses, yaml.ScalarNode,
+                                     f'#1809 the {name} uses step is a scalar action')
+                families = self.ci_use_with_registry.get(uses.value)
+                self.assertIsNotNone(
+                    families,
+                    f'#1809 the {name} uses step `{uses.value}` is in the registered '
+                    'action registry; `with` content is only pinned for registered '
+                    'actions')
+                with_node = step.get('with')
+                if with_node is None:
+                    with_keys = frozenset()
+                else:
+                    self.assertIsInstance(with_node, yaml.MappingNode,
+                                         f'#1809 the {name} uses step `{uses.value}` '
+                                         'has a mapping `with`')
+                    with_keys = frozenset(
+                        key.value for key, _ in with_node.value)
+                self.assertIn(
+                    with_keys, families,
+                    f'#1809 the {name} uses step `{uses.value}` carries the '
+                    f'unregistered `with` keys {sorted(with_keys)} (registered '
+                    f'families: {sorted(sorted(f) for f in families)}); an added '
+                    '`with: ref/repository` on a checkout makes the gates run '
+                    'scripts from a different tree while every pinned `run` scalar '
+                    'stays verbatim-identical')
+                checked[name] = checked.get(name, 0) + 1
+        # 除聚合 `check` job（只有 Require step，无任何 uses step）外，每个 job 都
+        # 至少有一个 uses step 被巡到：某 job 的 uses step 被整体删空不能让本守卫
+        # 对着剩余 job 空转（job 清单另由 exact job inventory 钉死）。
+        self.assertEqual(sorted(checked),
+                         sorted(name for name in parsed if name != 'check'),
+                         '#1809 every CI job except the aggregate check has uses '
+                         'steps under the with-key guard')
+
+    def test_ci_rejects_uses_with_key_drift(self):
+        workflow = self.ci_workflow_fixture()
+        jobs = self.ci_jobs()
+        cases = []
+
+        def change_job(label, owner, old, new, message):
+            self.assertEqual(jobs[owner].count(old), 1, f'#1809 unique {owner} anchor: {label}')
+            cases.append((label, workflow.replace(
+                jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
+
+        # 三个此前无人拦截的 job（r7 只钉了 retirement job）：同一手法换一个 job 的
+        # checkout 加 `with: {ref: …}`——闸门跑另一棵树的脚本，被比对标量逐字不变。
+        # negative-controls 的 checkout 本就带 `fetch-depth: 0`，往那个 `with` 块里加。
+        change_job('observer-checkout-with-ref', 'metadata-observer',
+                   '      - uses: actions/checkout@v4\n'
+                   '      - uses: actions/setup-node@v4\n',
+                   '      - uses: actions/checkout@v4\n'
+                   '        with:\n          ref: attacker-branch\n'
+                   '      - uses: actions/setup-node@v4\n',
+                   '#1809 the metadata-observer uses step `actions/checkout@v4` '
+                   'carries the unregistered `with` keys')
+        change_job('negative-controls-checkout-with-ref', 'negative-controls',
+                   '          # 变异前要按 git show HEAD:<path> 证明源码未被改动\n'
+                   '          fetch-depth: 0\n',
+                   '          # 变异前要按 git show HEAD:<path> 证明源码未被改动\n'
+                   '          fetch-depth: 0\n          ref: attacker-branch\n',
+                   '#1809 the negative-controls uses step `actions/checkout@v4` '
+                   'carries the unregistered `with` keys')
+        change_job('baseline-checkout-with-ref', 'gateway-schema-baseline',
+                   '      - uses: actions/checkout@v4\n'
+                   '      - uses: actions/setup-node@v4\n',
+                   '      - uses: actions/checkout@v4\n'
+                   '        with:\n          ref: attacker-branch\n'
+                   '      - uses: actions/setup-node@v4\n',
+                   '#1809 the gateway-schema-baseline uses step `actions/checkout@v4` '
+                   'carries the unregistered `with` keys')
+        self.check_ci_mutations(cases, 'test_ci_uses_steps_pin_their_with_keys', '#1809')
 
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()

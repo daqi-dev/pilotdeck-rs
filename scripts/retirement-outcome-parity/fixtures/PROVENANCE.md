@@ -18,11 +18,16 @@
   `raw` 与 `frame` 保持自洽。因此 `rounds.files[].framesSha256` 与原始件**完全相同**。
 - `driver/methods.json`：**逐字节照搬**原始件（r7，评审 P1）。r1–r6 曾只保留判据消费的
   5 个字段、去掉 `check_outcome_parity.py` 不读的四个容差字段（`elapsedMs` /
-  `lastEventType` / `finalSeen` / `error`）——去掉容差字段后 5 轮内容相同，
-  `methodsSha256` 五轮一致，P7 跨轮稳定性在入库夹具上**退化成空判**而
-  `p7Evaluated` 仍报 true。r7 起改回照搬：5 轮 `methodsSha256` 互不相同（5 份独立
-  采集的原始哈希），P7 在入库夹具上非退化；判据消费的字段子集没变，容差字段只是
-  留在文件里不被读。体积增量在预算内（见下）。
+  `lastEventType` / `finalSeen` / `error`）——去掉容差字段后 5 轮内容相同、
+  `methodsSha256` 五轮一致。**判据本身没有变松**：P7 仍逐轮比对解析后的
+  `(outcome, errorCode)`、`p7Evaluated` 仍为 true（评估只要求轮数 >1，容差字段与文件
+  哈希都不进判据），但 5 轮已不是 5 份独立采集、而是同一份数据的五个副本，跨轮稳定性变成
+  「数据与自身比对」，`p7Evaluated=true` 所传递的「跨轮稳定已核」失去证据力（评审 r8 勘误
+  措辞：此处曾写作「退化成空判」，不准确——P7 被评估了，只是评估对象塌缩）。r7 起改回
+  照搬：5 轮 `methodsSha256` 互不相同（5 份独立采集的原始哈希），非退化由
+  `../self_check.py` 的 `check` 用例**机检**（对入库夹具复算 5 轮 `methods.json` /
+  `frames.jsonl` 的 sha256 并断言互异，r8——切回去掉容差字段的切片当场红）；判据消费的
+  字段子集没变，容差字段只是留在文件里不被读。体积增量在预算内（见下）。
 
 ## 体积（`du -sk` 原始值，2026-11-07 r7 实测）
 

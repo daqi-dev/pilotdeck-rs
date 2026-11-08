@@ -135,13 +135,32 @@ def _output_lock_guard_fd(out_root):
     还是会误删）。
     """
     path = os.path.join(os.fspath(out_root), '.retirement-outcome-parity.lock')
+    # 与 check_outcome_parity.output_lock 同一口径打开（评审 r8 P2）：O_RDONLY|
+    # O_CREAT|O_NOFOLLOW|O_NONBLOCK + fchmod 0644 + S_ISREG。分叉会让「守卫」与
+    # 「真锁」对同一个目录各执一词：守卫用 0600 建出锁文件会挡住跨账号共享目录里
+    # 后来者的 O_RDONLY；守卫不带 O_NONBLOCK 的 O_RDONLY 在预置同名 FIFO 上挂死
+    # （这段在模块体最前面，挂死等于整个执行器连同 CI job 一起起不来）。
+    nonblock = getattr(os, 'O_NONBLOCK', None)
+    nofollow = getattr(os, 'O_NOFOLLOW', None)
+    if nonblock is None or nofollow is None:
+        return None, True
     try:
-        fd = os.open(path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_NOFOLLOW', 0),
-                     0o600)
+        fd = os.open(path, os.O_RDONLY | os.O_CREAT | nofollow | nonblock
+                     | getattr(os, 'O_CLOEXEC', 0), 0o644)
     except (OSError, ValueError):
         return None, True
     try:
         import fcntl
+        import stat as stat_module
+        info = os.fstat(fd)
+        if not stat_module.S_ISREG(info.st_mode):
+            # 目录 / FIFO / 设备都不是锁文件：与真锁同一判法，fail-closed 当被占。
+            os.close(fd)
+            return None, True
+        try:
+            os.fchmod(fd, 0o644)
+        except OSError:  # pragma: no cover - 同真锁：权限修复失败不影响互斥语义
+            pass
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:

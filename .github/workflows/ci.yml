@@ -224,10 +224,13 @@ jobs:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    # 外层预算必须**大于**装置内部预算之和（emit 300 s + check 300 s + 负控 1800 s
-    # + 锁探针 ~180 s + 余量），否则内部超时永远打不着、失败退化为平台硬杀
-    # （cancelled，summary 不发布）——与 negative-controls job 的既有口径一致。
-    timeout-minutes: 45
+    # 外层预算必须**大于**装置内部预算之和（评审 r8 P2）：七项自检 worst-case
+    # emit 300 s + check 300 s + 负控 1800 s + 锁探针 180 s（2×60 s 等锁 + 3×20 s
+    # 敌意锁）+ 敌意写目标 4×20 s = 2660 s，变异自检再加 control_lock 的两趟锁探针
+    # 2×180 s = 360 s → 全 job ≈ 3020 s ≈ 50.3 min，45 min 装不下——内部超时
+    # 永远打不着、失败退化为平台硬杀（cancelled，summary 不发布）；55 min 给足
+    # 余量——与 negative-controls job 的既有口径一致。
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       # #2017-A：接线守卫（r5 起）按 PyYAML 解析后的完整标量判，解析器版本钉死
