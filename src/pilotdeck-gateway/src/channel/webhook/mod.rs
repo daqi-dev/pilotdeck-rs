@@ -269,6 +269,19 @@ impl WebhookChannel {
     }
 }
 
+/// Loader mount: builds the adapter from the `webhook` loader option object
+/// (`build_options` already forwarded `extra.port` / `extra.secret`;
+/// [`WebhookChannel::from_options`] applies the TS constructor's
+/// nullish-then-`Number()` coercions field by field).
+pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
+    mounts.register(
+        "webhook",
+        Arc::new(|options: &JsObject| {
+            Ok(Arc::new(WebhookChannel::from_options(options)) as Arc<dyn ChannelAdapter>)
+        }),
+    );
+}
+
 fn log(ctx: &Ctx, level: &str, text: &str) {
     let logger = ctx
         .state

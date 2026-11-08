@@ -779,3 +779,170 @@ async fn startup_accepts_configs_without_an_unmigrated_channel() {
         "#1763 a disabled implemented bundle channel starts",
     );
 }
+
+// --------------------------------------------------------------- #2301 loader
+
+// #2301: the production wiring closes the #1853 silent skip. Every loader key
+// that has left the unmigrated rejection table must have a mount in
+// `production_loader_mounts`, or an enabled config for it would construct
+// nothing — no rejection, no adapter, no TS fallback. The reverse direction
+// is structural: `load_enabled_channels` iterates `CHANNEL_LOADER_KEYS`, so
+// a mount for a key outside the table can never be reached, and the pin in
+// `channel::tests::loader_keys_partition_rejected_and_implemented` keeps the
+// implemented set identical to the non-rejected table tail.
+#[test]
+fn production_mounts_cover_every_non_rejected_loader_key() {
+    let mounts = super::channels::production_loader_mounts();
+    for key in crate::channel::loader::CHANNEL_LOADER_KEYS {
+        if crate::channel::loader::UNMIGRATED_CHANNEL_KEYS.contains(&key) {
+            continue;
+        }
+        crate::negative_assert!(
+            mounts.is_registered(key),
+            "#2301 loader key \"{key}\" is neither rejected nor mounted in production"
+        );
+    }
+}
+
+/// A started host whose channels stay alive: `start_channels` runs each
+/// key's startup in the background, so the observable effects (runtime-status
+/// entries, listener ports) land only while the host runs. The caller stops
+/// the host through [`AliveAssembly::stop`], which also releases the scratch
+/// directory.
+struct AliveAssembly {
+    /// Keeps the test registry directory until the host has shut down.
+    _scratch: super::management_tests::Scratch,
+    home: PathBuf,
+    host: crate::runtime::turn::gateway::TurnGateway,
+    drain_budget: Duration,
+}
+
+impl AliveAssembly {
+    async fn stop(self) {
+        crate::test_negative_receipt::expect_ok(
+            self.host.shutdown(self.drain_budget).await,
+            "#2301 started host stopped",
+        );
+    }
+}
+
+/// [`start_with_adapters`] with the started host kept alive and its home
+/// directory handed back (the runtime-status sink's root).
+async fn start_with_adapters_alive(adapters_yaml: &str) -> AliveAssembly {
+    let (scratch, requests) = super::management_tests::setup();
+    crate::test_negative_receipt::expect_ok(
+        requests.project.dispose().await,
+        "#2301 dispose unused test registry",
+    );
+    crate::test_negative_receipt::expect_ok(
+        requests.owner.shutdown().await,
+        "#2301 shutdown unused test owner",
+    );
+    let config = requests.options.home.join("pilotdeck.yaml");
+    let mut body = crate::test_negative_receipt::expect_ok(
+        std::fs::read_to_string(&config),
+        "#2301 base config readable",
+    );
+    body.push_str("adapters:\n");
+    body.push_str(adapters_yaml);
+    crate::test_negative_receipt::expect_ok(
+        std::fs::write(&config, body),
+        "#2301 config with adapters",
+    );
+    let host = crate::test_negative_receipt::expect_ok(
+        super::assembly::start(requests.options.clone(), requests.env.clone()).await,
+        "#2301 assembly start",
+    );
+    AliveAssembly {
+        _scratch: scratch,
+        home: requests.options.home.clone(),
+        host,
+        drain_budget: requests.options.drain_budget,
+    }
+}
+
+// #2301: the production startup constructs the configured loader channels
+// (pilotdeckServer.ts:288-296 through `loadEnabledChannels`): every enabled
+// implemented key reaches the channel server and gets its lifecycle entry —
+// including the keys whose real credentials are absent, whose `start` logs
+// the visible failure line and returns the missing-config handle, the TS
+// error-then-continue startup shape (`sms: twilio not installed…`,
+// `slack: SLACK_BOT_TOKEN not set`). The two listener channels own their
+// configured ports for real. The ports are fixed rather than the 8642 /
+// 8770 defaults so a stray listener from the environment cannot make the
+// connect assertions pass against something else.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn startup_builds_the_enabled_loader_channels() {
+    const API_SERVER_PORT: u16 = 28642;
+    const WEBHOOK_PORT: u16 = 28643;
+    let adapters = format!(
+        "  slack: {{enabled: true}}\n  bluebubbles: {{enabled: true}}\n  \
+         wecomCallback: {{enabled: true}}\n  sms: {{enabled: true}}\n  \
+         apiServer: {{enabled: true, extra: {{port: {API_SERVER_PORT}}}}}\n  \
+         webhook: {{enabled: true, extra: {{port: {WEBHOOK_PORT}}}}}\n"
+    );
+    let alive = start_with_adapters_alive(&adapters).await;
+    // The status-entry key is the adapter's channel key (loader camelCase
+    // keys map to the module's own key, e.g. `apiServer` → `api_server`).
+    let expected = [
+        "slack",
+        "bluebubbles",
+        "wecom_callback",
+        "sms",
+        "api_server",
+        "webhook",
+    ];
+    let polled = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let snapshot = JsValue::Object(read_snapshot(&alive.home));
+            let channels = snapshot.get("channels");
+            let entries: Vec<(String, String)> = expected
+                .iter()
+                .filter_map(|key| {
+                    let entry = channels.and_then(|channels| channels.get(key))?;
+                    Some((
+                        field_text(entry, "state").unwrap_or_default(),
+                        field_text(entry, "message").unwrap_or_default(),
+                    ))
+                })
+                .collect();
+            if entries.len() == expected.len()
+                && entries
+                    .iter()
+                    .all(|(state, message)| state == "connected" && message.ends_with(": started"))
+            {
+                return entries;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await;
+    crate::negative_assert!(
+        polled.is_ok(),
+        "#2301 all six loader channels report their lifecycle entry"
+    );
+    let started = polled.expect("#2301 all six loader channels report their lifecycle entry");
+    for (state, message) in started {
+        crate::negative_assert_eq!(
+            state,
+            "connected".to_owned(),
+            "#2301 {message} — the entry is the connected lifecycle state"
+        );
+    }
+    // The listener channels actually listen on their configured ports.
+    for port in [API_SERVER_PORT, WEBHOOK_PORT] {
+        crate::test_negative_receipt::expect_ok(
+            tokio::net::TcpStream::connect(("127.0.0.1", port)).await,
+            "#2301 loader-built listener accepts connections",
+        );
+    }
+    alive.stop().await;
+    for port in [API_SERVER_PORT, WEBHOOK_PORT] {
+        crate::negative_assert!(
+            tokio::net::TcpStream::connect(("127.0.0.1", port))
+                .await
+                .is_err(),
+            "#2301 the loader-built listeners are gone after stop"
+        );
+    }
+}

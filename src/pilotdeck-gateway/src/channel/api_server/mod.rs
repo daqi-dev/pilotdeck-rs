@@ -12,7 +12,7 @@ mod tests;
 
 use self::mapper::SessionMapper;
 use super::protocol::*;
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsObject, JsValue};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -389,4 +389,28 @@ fn noop_handle() -> Arc<dyn ChannelHandle> {
         }
     }
     Arc::new(Noop)
+}
+
+/// Loader mount: builds the adapter from the `apiServer` loader option object
+/// (`build_options` already forwarded `extra.port` / `apiKey`). Absent values
+/// stay present-but-undefined like the TS literal's, and `resolve`'s nullish
+/// filters fold them back into the env / `DEFAULT_PORT` chain — the TS
+/// `Number(options.port ?? process.env.API_SERVER_PORT ?? DEFAULT_PORT)` /
+/// `options.apiKey ?? process.env.API_SERVER_KEY ?? ""` order. Only a real
+/// string `apiKey` maps: the landed `resolve` seam treats any other type as
+/// unset on the config path, and the mount keeps the two paths agreeing.
+pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
+    mounts.register(
+        "apiServer",
+        Arc::new(|options: &JsObject| {
+            Ok(Arc::new(ApiServerChannel::new(ApiServerOptions {
+                port: options.get("port").cloned(),
+                api_key: options
+                    .get("apiKey")
+                    .and_then(JsValue::as_string)
+                    .map(js_string_value),
+                ..ApiServerOptions::default()
+            })) as Arc<dyn ChannelAdapter>)
+        }),
+    );
 }

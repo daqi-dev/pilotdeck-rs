@@ -815,7 +815,11 @@ async fn start_assembly(
                 weixin: crate::channel::weixin::WeixinChannelOptions::default(),
                 weixin_maker: None,
                 feishu: crate::channel::feishu::FeishuOptions::default(),
-                log: None,
+                // #2301: TS `consoleLogger` (pilotdeckServer.ts:67-72) — the
+                // channel log the loader-table adapters' visible start lines
+                // (`api-server: listening on …`, `sms: twilio not installed…`)
+                // and the lifecycle core's startup lines go through.
+                log: Some(super::channels::console_channel_log()),
                 report_status: None,
                 close_host: None,
             },
@@ -1059,7 +1063,11 @@ async fn start_assembly(
     match host {
         Ok(host) => {
             // #1328: start config-enabled channels (pilotdeckServer.ts:288-296)
-            // once the builder has published the gateway port.
+            // once the builder has published the gateway port. #2301: the
+            // configured half — `loadEnabledChannels(config.adapters)` — joins
+            // the loop after the bundle keys, in the TS startup order
+            // (feishu, weixin, qq, then `channels`;
+            // `ChannelAdapterBundle.createStartupAdapters`).
             let mut startup = Vec::new();
             if let Some(feishu) = channel_assembly.create_startup_feishu().await {
                 startup.push(feishu);
@@ -1067,6 +1075,7 @@ async fn start_assembly(
             if let Some(weixin) = channel_assembly.create_startup_weixin().await {
                 startup.push(weixin);
             }
+            startup.extend(channel_assembly.create_startup_configured());
             if !startup.is_empty() {
                 channel_assembly.server().start_channels(startup);
             }
