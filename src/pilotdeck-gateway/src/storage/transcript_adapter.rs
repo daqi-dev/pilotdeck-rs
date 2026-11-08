@@ -21,7 +21,7 @@ use super::{
     LedgerError, TranscriptRead, WriterState, invalid,
     ledger::field,
     recorder::{RecorderClock, RecorderError, RecorderResult, RecorderUuid},
-    session_domain::DomainState,
+    session_domain::{DomainState, Undo},
     transcript::{
         LedgerLock, create_temporary, private_dirs, private_open, read_transcript_limited_at, uuid,
     },
@@ -671,6 +671,18 @@ impl TranscriptWriter {
         });
         Self::new(base, key.transcript_path, SubagentLayout::Default)
     }
+    /// SessionRuntime.restore's domain half (`validateSessionDomainLog`):
+    /// fold the whole log into a fresh state before anything is installed; the
+    /// first invalid entry fails the restore. One shared fold for both restore
+    /// paths (`restore_entries` and `restore_recorder_entries`) — the two Rust
+    /// halves of the same TS call must not drift apart again (#297 P2#3).
+    fn fold_domain(entries: &[JsValue]) -> RecorderResult<DomainState> {
+        let mut domain = DomainState::default();
+        for entry in entries {
+            domain.next(entry)?;
+        }
+        Ok(domain)
+    }
     /// #297: `true` when the caller may re-seed its own projection — the
     /// snapshot is not stale. `false` only when the snapshot is strictly older
     /// than what this writer already committed, in which case the caller must
@@ -683,10 +695,7 @@ impl TranscriptWriter {
             .map(materialize)
             .collect::<AdapterResult<Vec<_>>>()?;
         let (state, ids) = validate_event_log(&entries)?;
-        let mut domain = DomainState::default();
-        for entry in &entries {
-            domain = domain.next(entry)?;
-        }
+        let domain = Self::fold_domain(&entries)?;
         // #297 a caller's snapshot can be older than what this shared writer has
         // already committed (a producer appended between its read and this
         // restore). Rewinding sequence/last_entry_id/entry_ids here makes the
@@ -728,7 +737,7 @@ impl TranscriptWriter {
                 Some((clock, uuid)) => Ok((clock()?, uuid()?)),
                 None => self.sources().map_err(RecorderError::from),
             },
-            DomainState::next,
+            DomainState::advance,
         )
     }
     fn lock(&self) -> MutexGuard<'_, WriterInner> {
@@ -792,10 +801,7 @@ impl TranscriptWriter {
         // validateSessionEventLog runs over the whole log before domain checks.
         let (state, ids) = validate_event_log(entries)?;
         // Then validateSessionDomainLog; then storage.restore hydrates projections.
-        let mut domain = DomainState::default();
-        for entry in entries {
-            domain = domain.next(entry)?;
-        }
+        let domain = Self::fold_domain(entries)?;
         // SessionRuntime.restore installs validated state before hydrate; a
         // projection error must still leave subsequent appends on this chain.
         inner.sequence = state.sequence;
@@ -1045,7 +1051,7 @@ impl TranscriptWriter {
                     "Kernel UI cache cannot contain execution lifecycle records.".into(),
                 ));
             }
-            domain = domain.next(entry)?;
+            domain.next(entry)?;
         }
         let key = self.base.key(&self.path);
         self.base
@@ -1102,8 +1108,12 @@ impl TranscriptWriter {
         let now = (self.base.now)();
         Ok((now, uuid().map_err(|e| AdapterError::Store(e.into()))?))
     }
-    fn adapter_domain(domain: &DomainState, entry: &JsValue) -> AdapterResult<DomainState> {
-        domain.next(entry).map_err(AdapterError::from)
+    fn adapter_domain(
+        domain: &mut DomainState,
+        entry: &JsValue,
+        undo: &mut Vec<Undo>,
+    ) -> AdapterResult<()> {
+        domain.advance(entry, undo).map_err(AdapterError::from)
     }
     fn append_with<E: From<AdapterError>>(
         &self,
@@ -1111,7 +1121,7 @@ impl TranscriptWriter {
         turn_id: &JsString,
         draft: JsObject,
         sources: impl FnOnce() -> Result<(String, String), E>,
-        validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
+        validate: impl FnOnce(&mut DomainState, &JsValue, &mut Vec<Undo>) -> Result<(), E>,
     ) -> Result<(), E> {
         self.append_with_policy(session_id, turn_id, draft, false, sources, validate)
     }
@@ -1126,7 +1136,7 @@ impl TranscriptWriter {
         draft: JsObject,
         reject_closed: bool,
         sources: impl FnOnce() -> Result<(String, String), E>,
-        validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
+        validate: impl FnOnce(&mut DomainState, &JsValue, &mut Vec<Undo>) -> Result<(), E>,
     ) -> Result<(), E> {
         self.check_retired()?;
         if self.closed.load(Ordering::SeqCst) {
@@ -1193,7 +1203,7 @@ impl TranscriptWriter {
         &self,
         inner: &mut WriterInner,
         entry: JsValue,
-        validate: impl FnOnce(&DomainState, &JsValue) -> Result<DomainState, E>,
+        validate: impl FnOnce(&mut DomainState, &JsValue, &mut Vec<Undo>) -> Result<(), E>,
     ) -> Result<(), E> {
         validate_envelope(&entry)?;
         let seq = field(&entry, "sequence").as_number().unwrap();
@@ -1220,12 +1230,22 @@ impl TranscriptWriter {
             )
             .into());
         }
-        let domain = validate(&inner.recorder_domain, &entry)?;
-        self.base
-            .store
-            .append(&self.base.key(&self.path), &entry)
-            .map_err(AdapterError::Store)?;
-        inner.recorder_domain = domain;
+        // #297 P2#2: TS SessionRuntime.commit validates into a new state,
+        // publishes, and only then assigns this.domainState — a publish that
+        // throws leaves the runtime on the old state. The in-place advance
+        // holds the same boundary with the undo journal: the store failure
+        // (before or after its write) rolls the writer's domain back, so the
+        // next append re-validates against the state the log actually holds.
+        let mut undo = Vec::new();
+        if let Err(error) = validate(&mut inner.recorder_domain, &entry, &mut undo) {
+            inner.recorder_domain.rollback(&mut undo);
+            return Err(error);
+        }
+        if let Err(error) = self.base.store.append(&self.base.key(&self.path), &entry) {
+            inner.recorder_domain.rollback(&mut undo);
+            return Err(E::from(AdapterError::Store(error)));
+        }
+        drop(undo);
         inner.sequence = seq as u64;
         if let Some(id) = id {
             inner.last_entry_id = Some(id.clone());

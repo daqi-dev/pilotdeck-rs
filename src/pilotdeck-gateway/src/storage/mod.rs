@@ -153,7 +153,7 @@ pub(crate) fn verify_history_quiescent(
                 ));
             }
         }
-        state = state
+        state
             .next(entry)
             .map_err(|error| invalid(error.to_string()))?;
         if entry
