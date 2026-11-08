@@ -428,9 +428,18 @@ async fn a_hung_channel_stop_exceeds_the_halt_close_bound() {
             .contains("channel close: exceeded the halt close bound")),
         "#2363 the hung channel stop is reported as exceeding the halt close bound"
     );
+    // The lower bound carries the same tick-conversion headroom the
+    // production filter uses as its epsilon (#2363 fix-r2): the shared
+    // deadline is computed from an `Instant::now()` read taken before
+    // `timeout_at` registers its timer, so the firing instant can land that
+    // read-to-registration skew below the nominal bound measured from this
+    // test's own earlier anchor. The paused clock keeps the wait itself
+    // deterministic — the deadline timer is the only one on the test runtime.
     assert!(
-        elapsed >= close_bound,
-        "#2363 the walk waits out the full close bound {close_bound:?}, got {elapsed:?}"
+        elapsed
+            >= close_bound.saturating_sub(crate::runtime::turn::gateway::TICK_CONVERSION_HEADROOM),
+        "#2363 the walk waits out the full close bound {close_bound:?} (minus the \
+         tick-conversion epsilon), got {elapsed:?}"
     );
     assert!(
         elapsed < close_bound + Duration::from_secs(2),
@@ -608,4 +617,115 @@ async fn an_interrupted_owner_finish_is_not_rerun_by_the_revisit() {
             .contains("native WS owner finish was interrupted")),
         "#2363 the interrupted owner finish is reported, not re-run"
     );
+}
+
+/// #2363 fix-r2: the wiring harness over both a caller-supplied host and a
+/// caller-pre-seeded channel — the double-hung walk needs the hanging channel
+/// stop (the close half's hang) and the blocked host cleanup (the S4 half's)
+/// in the one assembly. A separate construction, not a refactor of
+/// `wiring_harness_over` / `wiring_harness_with_host`: those two are
+/// r1/fix-r1-delivered and stay byte-for-byte as they were.
+async fn wiring_harness_with_host_and_channel(
+    drain_budget: Duration,
+    host: crate::runtime::turn::gateway::TurnGateway,
+    extra: Arc<dyn crate::channel::protocol::ChannelAdapter>,
+) -> (SocketAddr, ProductionFaces, Scratch) {
+    let home = Scratch::new("1353-switch-harness");
+    let server = NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#2363 harness listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#2363 harness bind");
+    let address = server.local_addr().expect("#2363 harness address");
+    let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        pilot_home: home.path().to_owned(),
+        config: Arc::new(parse_json("{}").expect("#2363 harness config JSON")),
+        weixin: crate::channel::weixin::WeixinChannelOptions::default(),
+        weixin_maker: None,
+        feishu: crate::channel::feishu::FeishuOptions::default(),
+        log: None,
+        report_status: None,
+        close_host: None,
+    }));
+    channels
+        .server()
+        .hot_start_channel(extra)
+        .await
+        .expect("#2363 the pre-seeded harness channel starts");
+    let (trigger, trigger_rx) = watch::channel(false);
+    let phased = Arc::new(server.run_phased(trigger_stop(trigger_rx), drain_budget));
+    let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased);
+    (address, faces, home)
+}
+
+/// #2363 fix-r2 (review codex#2): the double-hung walk — a hanging channel
+/// stop on the close half and a host teardown that never answers on the S4
+/// half, in the one walk. Both halves spend the one owner-scale deadline, so
+/// the walk still terminates within that single bound and reports both
+/// bounds as its aggregated failure. An implementation that re-arms a fresh
+/// full owner timeout for the S4 half after the close join's bound expired
+/// runs the walk out to twice the scale — the elapsed upper bound below is
+/// the deterministic kill (no negative-control row: the table stays at the
+/// fix-r1 ten). Runs on the paused clock like item 4's: the only timer on
+/// the test runtime is the walk's shared deadline itself (the blocked host
+/// thread and its drain run on their own real-clock thread).
+#[tokio::test(start_paused = true)]
+async fn a_hung_channel_and_a_hung_owner_finish_share_one_owner_bound() {
+    let release = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let blocked = release.clone();
+    let host = native_ws_fixture_with_cleanup(Arc::new(WiringRequests), async move {
+        while !blocked.load(std::sync::atomic::Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    });
+    let (_, faces, _home) = wiring_harness_with_host_and_channel(
+        Duration::from_millis(250),
+        host,
+        Arc::new(HangingChannel {
+            key: crate::channel::protocol::ChannelKey::new("hanging"),
+        }),
+    )
+    .await;
+    let owner_bound = Duration::from_millis(250 + crate::switch::BACKSTOP_SLACK_MS);
+    let started = tokio::time::Instant::now();
+    let teardown = faces.finish_after_halt().await;
+    let elapsed = started.elapsed();
+    let report = teardown
+        .expect_err("#2363 the double-hung walk reports the two bounds")
+        .to_string();
+    assert!(
+        report.contains("channel close: exceeded the halt close bound"),
+        "#2363 the double-hung walk reports the close bound, got {report}"
+    );
+    assert!(
+        report.contains("owner finish: exceeded the halt owner bound"),
+        "#2363 the double-hung walk reports the owner bound, got {report}"
+    );
+    assert_eq!(
+        report,
+        "channel close: exceeded the halt close bound; \
+         owner finish: exceeded the halt owner bound",
+        "#2363 the two bounds are the walk's whole aggregated failure"
+    );
+    // The one-owner-scale band, same epsilon spelling as the close-bound
+    // test's: the shared deadline is computed before the timer registration,
+    // so the firing instant can land the read-to-registration skew below the
+    // nominal bound; the upper bound is the re-armed-timeout kill.
+    assert!(
+        elapsed
+            >= owner_bound.saturating_sub(crate::runtime::turn::gateway::TICK_CONVERSION_HEADROOM),
+        "#2363 the double-hung walk waits out the one owner bound {owner_bound:?} \
+         (minus the tick-conversion epsilon), got {elapsed:?}"
+    );
+    assert!(
+        elapsed < owner_bound + Duration::from_secs(2),
+        "#2363 the double-hung walk terminates within the one owner bound's \
+         delivery slack, got {elapsed:?}"
+    );
+    // Release the blocked host thread so it can finish its drain and exit.
+    release.store(true, std::sync::atomic::Ordering::SeqCst);
 }

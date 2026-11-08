@@ -826,8 +826,10 @@ const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_millis(10);
 /// branch). One second is far more than the nanoseconds tokio adds, so
 /// both poll sites that hand a deadline to `timeout_at` require this much
 /// room past it and treat anything closer to the ceiling as the same
-/// #1949 waiver.
-const TICK_CONVERSION_HEADROOM: Duration = Duration::from_secs(1);
+/// #1949 waiver. `pub(crate)`: the post-halt walk (`switch_wiring.rs`)
+/// filters its own shared deadline with the same slack instead of spelling
+/// the literal a second time (#2363 fix-r2).
+pub(crate) const TICK_CONVERSION_HEADROOM: Duration = Duration::from_secs(1);
 
 /// #1949: the tier decision both poll sites share — the deadline a budget
 /// would be awaited under, or `None` for the waiver (the waiver rule itself

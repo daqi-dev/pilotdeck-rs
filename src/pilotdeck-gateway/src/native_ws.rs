@@ -422,6 +422,13 @@ impl PhasedInner {
             // finish() was cancelled mid-body (see the field's doc): S4 must
             // not re-run. The interrupted verdict is recorded, so every
             // later caller observes the same result.
+            // #2363 fix-r2: the cancelled run may have been dropped before
+            // it reached the shutdown request below (a drop inside the
+            // close-notice window never got there), which would leave the
+            // host teardown to `StopHost::drop` — a request nothing awaits.
+            // Re-issue it here: synchronous and idempotent, a no-op when
+            // the cancelled run already sent it.
+            self.host.request_shutdown(self.drain_budget);
             let result = Err("native WS owner finish was interrupted".to_owned());
             self.finished = Some(result.clone());
             return result.map_err(ProxyError::from);
@@ -443,6 +450,16 @@ impl PhasedInner {
         }
         // Aborting transport waiters never cancels business jobs on the serial
         // host. Its shutdown cancels owned turns and waits for finally fences.
+        // #2363 fix-r2: the shutdown request goes out here, before the abort
+        // join's first await — a first finish() dropped inside the join (an
+        // un-abortable connection parked there) or inside `host.shutdown`
+        // would otherwise leave the teardown request to `StopHost::drop`,
+        // which nothing awaits. Synchronous and idempotent (`send_if_modified`
+        // keeps the first budget), so the `host.shutdown` below just awaits
+        // the drain it already started — the graceful close-notice window
+        // above has already closed by this point, so nothing observes the
+        // earlier request.
+        self.host.request_shutdown(self.drain_budget);
         if crate::mutants::on("native-ws-handshake-leak") {
             self.connections.detach_all();
         } else {

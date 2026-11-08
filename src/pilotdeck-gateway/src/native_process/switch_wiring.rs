@@ -130,15 +130,22 @@ impl ProductionFaces {
     /// honors the budget is still joined to completion.
     ///
     /// #2363: the S4 half (`PhasedRun::finish`) spends the same owner-scale
-    /// deadline. A hung finish — a host teardown that never answers, an
-    /// un-abortable connection parked in the abort join — must not keep a
-    /// halted process alive either: the timeout is reported as the walk's
-    /// own failure and the walk returns, leaving the exit to the embedding.
+    /// deadline — one `Option<Instant>` walks both halves (the close join and
+    /// the finish), the waiver band included. A hung finish — a host teardown
+    /// that never answers, an un-abortable connection parked in the abort
+    /// join — must not keep a halted process alive either: the timeout is
+    /// reported as the walk's own failure and the walk returns, leaving the
+    /// exit to the embedding.
     pub(crate) async fn finish_after_halt(&self) -> Result<(), crate::ProxyError> {
         let close = self.admission.seal();
         let drained = self.phased.drained().await;
-        let close_bound =
-            self.phased.drain_budget() + Duration::from_millis(crate::switch::BACKSTOP_SLACK_MS);
+        // `saturating_add`, not `+`: a `Duration::MAX` drain budget must reach
+        // the waiver branch below (saturated to `MAX`, which `checked_add`
+        // then overflows on) rather than panicking here on the way in.
+        let close_bound = self
+            .phased
+            .drain_budget()
+            .saturating_add(Duration::from_millis(crate::switch::BACKSTOP_SLACK_MS));
         // #2363: one owner-scale deadline for the whole walk — the close join
         // and the S4 half spend the same bound, and the S4 half does not
         // re-arm a fresh one. A halted process must not be kept alive longer
@@ -148,16 +155,24 @@ impl ProductionFaces {
         // is cut short by the walk's deadline, not waited out on top of it).
         // A deadline that does not fit the clock is awaited without one —
         // the #1949 waiver spelling the host drain itself uses
-        // (`gateway.rs`); the 1s here is the same tick-conversion headroom.
+        // (`gateway.rs`); the filter's headroom is that same
+        // tick-conversion slack, the shared constant.
         let deadline = tokio::time::Instant::now()
             .checked_add(close_bound)
-            .filter(|deadline| deadline.checked_add(Duration::from_secs(1)).is_some());
-        let close_result = tokio::time::timeout(close_bound, close).await;
+            .filter(|deadline| {
+                deadline
+                    .checked_add(crate::runtime::turn::gateway::TICK_CONVERSION_HEADROOM)
+                    .is_some()
+            });
+        let close_result = match deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline, close).await,
+            // The waiver band: a drain budget too large for the clock keeps
+            // both halves' pre-#2363 unbounded await rather than panicking at
+            // timer registration.
+            None => Ok(close.await),
+        };
         let finish_result = match deadline {
             Some(deadline) => tokio::time::timeout_at(deadline, self.phased.finish()).await,
-            // The waiver band: a drain budget too large for the clock keeps
-            // the pre-#2363 unbounded S4 await rather than panicking at
-            // timer registration.
             None => Ok(self.phased.finish().await),
         };
         let mut failures = Vec::new();
