@@ -176,7 +176,7 @@ pub(super) fn apply_prompt_config(target: &mut pilotdeck_protocol::JsObject, sdk
     if let Some(skills) = sdk.get("skills").filter(|value| !value.is_undefined()) {
         target.insert("nativeSkillSelection".into(), skills.clone());
     }
-    for key in ["systemPrompt", "appendSystemPrompt", "planModeInstructions"] {
+    for key in ["systemPrompt", "appendSystemPrompt", "planModeInstructions", "userDialogKinds"] {
         if let Some(value) = sdk.get(key).filter(|value| !value.is_undefined()) {
             target.insert(key.into(), value.clone());
         }
@@ -192,6 +192,17 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
     })?;
     super::sdk_hooks::validate(config)?;
     validate_agents(object.get("agents"))?;
+    if let Some(value) = object.get("userDialogKinds").filter(|v| !v.is_undefined()) {
+        let valid = match value {
+            JsValue::Array(kinds) if !kinds.is_empty() => kinds.iter().enumerate().all(|(index, kind)|
+                kind.as_string().is_some_and(|s| ["input", "select", "confirm", "form"].iter().any(|allowed| s.equals_str(allowed)))
+                && !kinds[..index].contains(kind)),
+            _ => false,
+        };
+        if !valid { return Err(SubmitError::new("INVALID_SDK_SESSION_CONFIG",
+            "userDialogKinds must be a non-empty unique array containing only input, select, confirm, or form.")); }
+    }
+
     if let Some(skills) = object.get("skills").filter(|value| !value.is_undefined())
         && !valid_skill_selector(skills)
     {
@@ -216,6 +227,7 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
             "permissionMode",
             "hooks",
             "includeHookEvents",
+            "userDialogKinds",
             "agents",
             "skills",
             "systemPrompt",
@@ -676,5 +688,23 @@ mod tests {
                 .code,
             "CAPABILITY_UNAVAILABLE"
         );
+    }
+}
+
+#[cfg(test)]
+mod user_dialog_config_tests {
+    use super::*;
+    use crate::metadata::object;
+    #[test]
+    fn dialog_kinds_are_unique_nonempty_and_projected_without_loss() {
+        for raw in ["null", "[]", "[false]", "[\"input\",\"input\"]", "[\"other\"]", "\"input\""] {
+            let value = pilotdeck_protocol::parse_json(raw).unwrap();
+            let error = validate_supported_config(&object([("userDialogKinds", value)])).unwrap_err();
+            assert_eq!(error.code, "INVALID_SDK_SESSION_CONFIG");
+        }
+        let kinds = pilotdeck_protocol::parse_json("[\"form\",\"input\",\"select\",\"confirm\"]").unwrap();
+        let config = object([("userDialogKinds", kinds.clone())]);assert!(validate_supported_config(&config).is_ok());
+        let mut projected = pilotdeck_protocol::JsObject::new();apply_prompt_config(&mut projected, &config);
+        assert_eq!(projected.get("userDialogKinds"),Some(&kinds));
     }
 }

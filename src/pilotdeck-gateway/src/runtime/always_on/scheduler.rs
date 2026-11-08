@@ -500,6 +500,17 @@ mod tests {
     const GOLDEN: &str = include_str!("../../../tests/fixtures/always-on-2294/oracle.json");
     const NOW_MS: f64 = 1_767_225_900_000.0;
 
+    // Keep the paused clock fixed while real spawn_blocking storage completes.
+    // A runnable waiter prevents Tokio from automatically advancing virtual
+    // time; the real deadline makes a stuck worker fail rather than hang.
+    async fn wait_real(mut ready: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !ready() {
+            assert!(std::time::Instant::now() < deadline, "storage milestone timed out");
+            tokio::task::yield_now().await;
+        }
+    }
+
     fn golden(id: &str) -> serde_json::Value {
         let records: Vec<serde_json::Value> =
             serde_json::from_str(GOLDEN).expect("#2294 golden parses");
@@ -1124,6 +1135,7 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(119_999)).await;
         let before = harness.fire_calls().len();
         tokio::time::sleep(std::time::Duration::from_millis(1_001)).await;
+        wait_real(|| harness.log().iter().any(|line| line.contains("always-on fire complete"))).await;
         let after = harness.fire_calls().len();
         negative_assert_eq!(
             serde_json::json!({"before": before, "after": after}),
@@ -1248,6 +1260,7 @@ mod tests {
         // start() restores the dormancy watcher (its baseline at t=0).
         scheduler.start().await.expect("#2294 start");
         tokio::time::sleep(std::time::Duration::from_millis(1_600)).await;
+        wait_real(|| harness.log().iter().any(|line| line.contains("dormant_no_signal"))).await;
         let fired_while_dormant = harness.fire_calls().len();
         let blocked = harness.log().iter().any(|line| {
             line.contains("always-on gate blocked") && line.contains("dormant_no_signal")
@@ -1256,7 +1269,16 @@ mod tests {
         // The poll (1s) sees it, the debounce (2s) settles, the signal clears
         // the dormancy and drops the pending tick, and the fresh interval's
         // next two ticks fire.
-        tokio::time::sleep(std::time::Duration::from_millis(4_500)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+        wait_real(|| harness.log().iter().filter(|line| line.contains("dormant_no_signal")).count() >= 2).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
+        wait_real(|| harness.log().iter().filter(|line| line.contains("dormant_no_signal")).count() >= 3).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
+        wait_real(|| harness.read_json(&harness.paths.state_file).get("dormant").is_none_or(serde_json::Value::is_null)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
+        wait_real(|| harness.log().iter().filter(|line| line.contains("always-on fire complete")).count() >= 1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
+        wait_real(|| harness.log().iter().filter(|line| line.contains("always-on fire complete")).count() >= 2).await;
         let dormant_after = harness
             .read_json(&harness.paths.state_file)
             .get("dormant")

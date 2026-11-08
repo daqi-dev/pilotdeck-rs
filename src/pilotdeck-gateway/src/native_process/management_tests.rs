@@ -247,6 +247,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             // case relying on "the bus is unavailable" here would test a state
             // that no longer exists. A case that genuinely needs the
             // unconnected state builds it explicitly.
+            dialog_recovery: None,
             user_dialog_bus: Arc::new(std::sync::Mutex::new(
                 crate::user_dialog::GatewayUserDialogBus::connected(
                     crate::user_dialog::DialogRuntime::default(),

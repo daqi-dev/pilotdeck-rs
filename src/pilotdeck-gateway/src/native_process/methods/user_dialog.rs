@@ -133,10 +133,13 @@ impl Requests {
                         (dialogs, outbox)
                     };
                     outbox.deliver();
-                    Ok(crate::metadata::object([(
-                        "dialogs",
-                        JsValue::Array(dialogs),
-                    )]))
+                    let mut dialogs = dialogs;
+                    if let Some(recovery) = &self.dialog_recovery {
+                        let recovered = recovery.list(self, &params, &session_key).await?;
+                        let ids: Vec<_> = dialogs.iter().filter_map(|v| v.get("requestId").and_then(JsValue::as_string)).cloned().collect();
+                        dialogs.extend(recovered.into_iter().filter(|v| v.get("request").and_then(|v| v.get("requestId")).and_then(JsValue::as_string).is_none_or(|id| !ids.contains(id))));
+                    }
+                    Ok(crate::metadata::object([("dialogs", JsValue::Array(dialogs))]))
                 }
 
                 "user_dialog_claim" => {
@@ -402,7 +405,11 @@ impl Requests {
                     outbox.deliver();
 
                     let answered = answer.to_value().get("behavior") == Some(&"answered".into());
-                    if answered && snapshot.is_none() {
+                    if snapshot.is_none() {
+                        if let Some(recovery) = &self.dialog_recovery
+                            && recovery.recover_answer(self, &params, &session_key, &request_id, &answer).await? {
+                            return Ok(crate::metadata::object([("delivered", true.into()), ("recovered", true.into()), ("reason", "gateway_restarted".into())]));
+                        }
                         // TS validates on the peeked entry and delivers
                         // nothing when there is none (InProcessGateway.ts:2668-2674).
                         // Falling through with no snapshot would consume and

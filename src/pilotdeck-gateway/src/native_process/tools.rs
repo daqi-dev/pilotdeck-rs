@@ -62,6 +62,7 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    user_dialog: Option<super::assembly::user_dialog::NativeDialogConfig>,
     automation: Option<super::session_overrides::AutomationOverrides>,
     pinned_steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
     session_emit: Option<super::session_events::SessionEmit>,
@@ -123,6 +124,7 @@ impl SessionTools {
             binding.projection.clone(),
         );
         Ok(Self {
+            user_dialog: None,
             automation: None,
             pinned_steer: None,
             session_emit: None,
@@ -153,6 +155,11 @@ impl SessionTools {
             #[cfg(unix)]
             native_sandbox: None,
         })
+    }
+
+    pub(super) fn with_user_dialog(mut self, config: Option<super::assembly::user_dialog::NativeDialogConfig>) -> Self {
+        self.user_dialog = config;
+        self
     }
 
     fn execution_cwd(&self) -> JsString {
@@ -385,6 +392,11 @@ impl SessionTools {
             self.lsp.clone(),
             &self.mcp,
         );
+        if self.user_dialog.is_some() && let Some(JsValue::Array(kinds)) = self.config.get("userDialogKinds") {
+            let kinds: Vec<_> = kinds.iter().filter_map(JsValue::as_string).cloned().collect();
+            builtin::user_dialog::register_user_dialog_tools(&tools, &kinds)
+                .expect("native opt-in dialog tool names are unique");
+        }
         tools
             .register(Arc::new(builtin::send_attachment::SendAttachmentTool::new(
                 self.binding.checkpoint.clone(),
@@ -600,7 +612,15 @@ impl SessionTools {
             Arc::new(crate::runtime::tools::builtin::FileUpdateNotifier(callback))
                 as capability::RuntimeContext
         });
+        let user_dialog = self.user_dialog.as_ref().map(|dialog| {
+            let emit = permission_emit.clone();
+            let mut options = crate::user_dialog::ChannelOptions::new(identity.session_id.clone(), dialog.bus.clone(),
+                Arc::new(move |event| if emit(event) { Ok(()) } else { Err(crate::user_dialog::DialogError::Invalid("User dialog event owner is no longer active.".into())) }));
+            options.journal = dialog.journal.clone();
+            Arc::new(builtin::user_dialog::NativeUserDialogPort::new(options)) as capability::RuntimeContext
+        });
         let tool_ports = ToolContextPorts {
+            user_dialog,
             file_update_notifier: sdk_file_notifier,
             subagent: fork_turn.as_ref().map(|turn| {
                 Arc::new(super::agent::ForkPort(turn.clone())) as Arc<dyn OneShotSubagent>

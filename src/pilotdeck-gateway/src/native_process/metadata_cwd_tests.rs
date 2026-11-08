@@ -178,6 +178,7 @@ async fn observe(name: &str) -> (Value, Value) {
         async_hook_registry: None,
         // #1600: match production (connected), not the retired
         // observer-coupled bus.
+        dialog_recovery: None,
         user_dialog_bus: Arc::new(std::sync::Mutex::new(
             crate::user_dialog::GatewayUserDialogBus::connected(
                 crate::user_dialog::DialogRuntime::default(),
@@ -568,6 +569,7 @@ async fn observe_archive(name: &str) {
         async_hook_registry: None,
         // #1600: match production (connected), not the retired
         // observer-coupled bus.
+        dialog_recovery: None,
         user_dialog_bus: Arc::new(std::sync::Mutex::new(
             crate::user_dialog::GatewayUserDialogBus::connected(
                 crate::user_dialog::DialogRuntime::default(),

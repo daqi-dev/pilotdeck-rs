@@ -556,6 +556,7 @@ async fn start_assembly(
     } else {
         Arc::new(std::sync::OnceLock::new())
     };
+    let prepare_user_dialog_bus = user_dialog_bus.clone();
     let storage_project = project.clone();
     let storage_options = options.clone();
     // #897: the composition-time budget preflight resolves the same directory
@@ -580,6 +581,7 @@ async fn start_assembly(
             let mcp_diagnostic = prepare_mcp_diagnostic.clone();
             let session_overrides = prepare_overrides.clone();
             let sdk = prepare_sdk.clone();
+            let dialog_bus = prepare_user_dialog_bus.clone();
             Box::pin(async move {
                 let fork_scope = forks.scope(&context);
                 let lease = match &fork_scope {
@@ -1012,6 +1014,11 @@ async fn start_assembly(
                     title_provider: (!loop_planned && fork_scope.is_none()).then_some(title),
                     ..Default::default()
                 };
+                let native_dialog = if fork_scope.is_none() && config.get("userDialogKinds").is_some() {
+                    let ephemeral = sdk.registry.lock().await.is_ephemeral_session(&context.session_key);
+                    Some(user_dialog::prepare_dialogs(options.home.clone(), options.project.clone(),
+                        context.session_key.clone(), ephemeral, dialog_bus).await?)
+                } else { None };
                 let session = context.session_key;
                 let session_emit = {
                     let owner = Arc::downgrade(&fork_owner);
@@ -1080,6 +1087,7 @@ async fn start_assembly(
                             lsp,
                             session_mcp,
                         )?
+                        .with_user_dialog(native_dialog)
                         .with_session_emitter(session_emit)
                         .with_pinned_steer(pinned_steer)
                         .with_permission_mode_source(permission_source.clone())
@@ -1406,14 +1414,12 @@ async fn start_assembly(
                 budget.as_millis() as u64,
                 None,
             ));
+            let dialog_recovery = Arc::new(dialog_recovery::NativeDialogRecovery::new(
+                options.home.clone(), options.project.clone(), sdk_port.clone()));
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),
                 sdk_config: Some(sdk_port.clone()),
-                dialog_recovery: Some(Arc::new(dialog_recovery::NativeDialogRecovery::new(
-                    options.home.clone(),
-                    options.project.clone(),
-                    sdk_port.clone(),
-                ))),
+                dialog_recovery: Some(dialog_recovery.clone()),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
             let services = Arc::new(super::services::Services {
@@ -1520,6 +1526,7 @@ async fn start_assembly(
                 mcp: mcp_gateway,
                 async_hook_registry,
                 user_dialog_bus: user_dialog_bus.clone(),
+                dialog_recovery: Some(dialog_recovery.clone()),
                 upload_gateway: upload_gateway.clone(),
                 // The CLI `prepareWeixinLogin` callback (pilotdeck.ts:240-247):
                 // hot-start the weixin channel on request, after the same

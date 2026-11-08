@@ -1,5 +1,6 @@
 //! Native callback for createLocalGateway's clearRecoveredUserDialogs. It runs
 //! in the existing admitted-preflight window before any refresh/session stage.
+mod recovery;
 use super::sdk_adapter::NativeSdkPort;
 use crate::runtime::turn::{
     admission::SubmitDialogRecovery,
@@ -11,7 +12,9 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-pub(super) struct NativeDialogRecovery {
+pub(crate) struct NativeDialogRecovery {
+    cache: Arc<std::sync::Mutex<std::collections::HashMap<(PathBuf, JsString), Vec<JsValue>>>>,
+    flights: std::sync::Mutex<std::collections::HashMap<(PathBuf, JsString, JsString), tokio::sync::watch::Receiver<Option<Result<bool, crate::runtime::connection::RequestError>>>>>,
     home: PathBuf,
     fallback: PathBuf,
     sdk: Arc<NativeSdkPort>,
@@ -19,6 +22,8 @@ pub(super) struct NativeDialogRecovery {
 impl NativeDialogRecovery {
     pub(super) fn new(home: PathBuf, fallback: PathBuf, sdk: Arc<NativeSdkPort>) -> Self {
         Self {
+            cache: Arc::default(),
+            flights: Default::default(),
             home,
             fallback,
             sdk,
@@ -38,7 +43,12 @@ impl NativeDialogRecovery {
             }
             let home = self.home.clone();
             let session = session.clone();
-            blocking(move || clear_journal(&home, &root, &session)).await
+            let cache = self.cache.clone();
+            blocking(move || {
+                clear_journal(&home, &root, &session)?;
+                cache.lock().unwrap_or_else(|e| e.into_inner()).remove(&(root, session));
+                Ok(())
+            }).await
         })
     }
 }
@@ -143,7 +153,7 @@ fn clear_journal(home: &Path, project: &Path, session: &JsString) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn recovery(requests: &crate::native_process::requests::Requests) -> NativeDialogRecovery {
+    pub(super) fn recovery(requests: &crate::native_process::requests::Requests) -> NativeDialogRecovery {
         let options = crate::runtime::sdk_session::SdkSessionOptions::new(
             requests.options.project.clone(),
             requests.options.project.clone(),

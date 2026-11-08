@@ -284,6 +284,7 @@ fn harness() -> Harness {
         mcp,
         async_hook_registry: None,
         // #1600: production assembles a connected bus; this stub must match.
+        dialog_recovery: None,
         user_dialog_bus: Arc::new(Mutex::new(
             crate::user_dialog::GatewayUserDialogBus::connected(
                 crate::user_dialog::DialogRuntime::default(),
