@@ -523,9 +523,21 @@ async fn a_hung_host_teardown_exceeds_the_halt_owner_bound() {
             .contains("owner finish: exceeded the halt owner bound")),
         "#2363 the hung owner finish is reported as exceeding the halt owner bound"
     );
+    // The lower bound carries the same tick-conversion headroom the
+    // production filter uses as its epsilon (#2363 fix-r3): the shared
+    // deadline is computed from an `Instant::now()` read taken before
+    // `timeout_at` registers its timer, so the firing instant can land that
+    // read-to-registration skew below the nominal bound measured from this
+    // test's own earlier anchor — the same `Option<Instant>`, the same
+    // read-to-registration spelling the close-bound and double-hung cases
+    // already carry. (Measured 3/3 runs at exactly the nominal bound in this
+    // tree; the relaxation is for the three same-source assertions' one
+    // convergence, not an observed shortfall.)
     assert!(
-        elapsed >= owner_bound,
-        "#2363 the walk waits out the full owner bound {owner_bound:?}, got {elapsed:?}"
+        elapsed
+            >= owner_bound.saturating_sub(crate::runtime::turn::gateway::TICK_CONVERSION_HEADROOM),
+        "#2363 the walk waits out the full owner bound {owner_bound:?} (minus the \
+         tick-conversion epsilon), got {elapsed:?}"
     );
     assert!(
         elapsed < owner_bound + Duration::from_secs(2),
@@ -728,4 +740,25 @@ async fn a_hung_channel_and_a_hung_owner_finish_share_one_owner_bound() {
     );
     // Release the blocked host thread so it can finish its drain and exit.
     release.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+/// #2363 fix-r3 (review DS concurrency#1 + boundary#1): the waiver band's
+/// regression case — a `Duration::MAX` drain budget must reach the walk's
+/// waiver branch and walk to completion instead of panicking at the bound
+/// assembly. `close_bound` is built with `saturating_add` for exactly this
+/// tier (the saturated sum overflows `Instant::checked_add`, so the deadline
+/// is `None` and both halves keep their unbounded await), and this test is
+/// the kill for reverting that to the bare `+`: `Duration` addition panics on
+/// overflow in release builds too, right at the bound assembly, before the
+/// waiver branch is ever reached — and no other case in this module drives
+/// `finish_after_halt` on a budget that does not fit the clock. The idle
+/// assembly settles at once through both unbounded halves (the empty drain,
+/// the instantly-completing host cleanup), so the guard deadline below is
+/// only a hang fence, never the bound under test.
+#[tokio::test]
+async fn a_maximal_drain_budget_walks_to_completion() {
+    let (_, faces, _home) = wiring_harness(Duration::MAX).await;
+    let teardown = timeout(DEADLINE, faces.finish_after_halt()).await;
+    let teardown = teardown.expect("#2363 the waiver-band walk settles within the guard");
+    teardown.expect("#2363 a maximal drain budget walks the idle assembly to completion");
 }
