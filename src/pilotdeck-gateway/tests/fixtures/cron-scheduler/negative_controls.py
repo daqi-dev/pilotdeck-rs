@@ -5,9 +5,10 @@ Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUT [mutation ...]
 Commit the tests and this script first. CARGO_TARGET_DIR is caller-owned.
 Every selected row is reported, including anchor/build/source-guard failures.
-`--check` only proves each mutation anchor is unique; it cannot prove the row's
-assertion string ever reaches a panic payload, so a full run is the only proof
-that a row can go KILLED.
+`--check` proves each mutation anchor is unique and that the README manifest
+hand-copies (mutation count, Rows list, bound test names) still equal this
+file's sources; it cannot prove the row's assertion string ever reaches a
+panic payload, so a full run is the only proof that a row can go KILLED.
 
 Rows bind one mutation to one lib test (run with `--exact`); the kill evidence
 is that test's own panic payload carrying its `#2295` message. Four rows bind
@@ -42,6 +43,7 @@ hot-loops the now seam past the 700ms bound).
 from pathlib import Path
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -257,6 +259,47 @@ def check_anchor(row, original):
         raise ValueError(f'{row[0]}: stale or unchanged anchor (count={original.count(row[2])})')
 
 
+readme = Path(__file__).with_name('README.md')
+
+
+def check_manifest():
+    """Every hand-copied number must equal the artifact it describes.
+
+    The README's mutation count and `Rows:` list, and the `--exact` test name
+    of each mutation, are hand-maintained copies of this file's `mutations`
+    table and of `scheduler_tests.rs`. A copy that drifts is invisible until
+    the row it names is deleted, so `--check` derives them from the sources.
+    """
+    errors = []
+    # The count lives in the negative_controls.py bullet of this README's
+    # Chinese file list (cron-schedule has a per-section counts table instead).
+    text = readme.read_text(encoding='utf-8')
+    match = re.search(r'`negative_controls\.py` — (\d+) 变异负控', text)
+    if not match:
+        errors.append('README: no count row for negative_controls.py mutations')
+    elif int(match.group(1)) != len(mutations):
+        errors.append(f'README: negative_controls.py says {match.group(1)} mutations, '
+                      f'script has {len(mutations)}')
+    # The list lives in its own paragraph (`Rows: `a`, `b`, …`), so scope the
+    # scan to that paragraph: prose elsewhere in the README that mentions the
+    # list would otherwise be swept into `listed` and compared as rows.
+    blocks = [block for block in re.split(r'\n\s*\n', text) if 'Rows:' in block]
+    listed = (re.findall(r'`([a-z0-9-]+)`', blocks[0].split('Rows:', 1)[1])
+              if len(blocks) == 1 else [])
+    if len(blocks) != 1:
+        errors.append(f'README: expected exactly one Rows paragraph, found {len(blocks)}')
+    expected_rows = [row[0] for row in mutations]
+    if listed != expected_rows:
+        errors.append(f"README: Rows list {listed} != mutations {expected_rows}")
+    scheduler_test_source = tests.read_text()
+    for row in mutations:
+        ident = row[4].rsplit('::', 1)[-1]
+        if not re.search(rf'\bfn {re.escape(ident)}\(', scheduler_test_source) \
+                and not re.search(rf'^\s+{re.escape(ident)} => "', scheduler_test_source, re.M):
+            errors.append(f'{row[0]}: bound test {ident} is not defined in scheduler_tests.rs')
+    return errors
+
+
 def main():
     args = sys.argv[1:]
     if args == ['--check']:
@@ -266,7 +309,9 @@ def main():
                 check_anchor(row, row[1].read_text())
             except Exception as error:
                 errors.append(str(error))
-        print('\n'.join(errors) if errors else f'#2295 {len(mutations)} unique anchors checked')
+        errors.extend(check_manifest())
+        print('\n'.join(errors) if errors else
+               f'#2295 {len(mutations)} unique anchors and fixture manifest checked')
         return int(bool(errors))
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg != '--compile-only']
