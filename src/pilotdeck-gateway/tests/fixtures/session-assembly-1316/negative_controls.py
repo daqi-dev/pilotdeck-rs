@@ -157,8 +157,8 @@ mutations = [
      'Capability { name: "supported_agents", methods: &[], wired: compiled_in },',
      'Capability { name: "supported_agents", methods: &[], wired: compiled_in },\n'
      '    Capability { name: "always_on_apply", methods: &[], wired: compiled_in },',
-     'native_process::methods::always_on::tests::always_on_methods_are_not_advertised',
-     '#1313 always_on_apply must not be advertised in describe'),
+     'native_process::methods::always_on::tests::always_on_methods_are_not_advertised_without_a_manager',
+     '#2294 always_on_apply must not be advertised without an always-on manager'),
     ('describe-drops-async-hook-result',
      'native_process/capabilities.rs',
      'name: "async_hook_result",',
