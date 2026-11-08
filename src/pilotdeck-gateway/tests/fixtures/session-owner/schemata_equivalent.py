@@ -25,6 +25,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from _negkit import non_head
 from _shared import mutant_switch
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -50,6 +51,7 @@ GUARDED = [
     ROOT / 'src/Cargo.lock',
     FIXTURES / 'session-owner/oracle.json',
     FIXTURES / '_shared/mutant_switch.py',
+    FIXTURES / '_negkit/non_head.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',
     Path(__file__).resolve(),
@@ -73,6 +75,13 @@ def main():
         if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
             raise ValueError('NEW_OUTPUT_DIR and caller CARGO_TARGET_DIR are required')
         output = Path(args.output).resolve()
+        # #1540: the compile-time-switch executor always runs the working
+        # tree, so a pinned PDRS_NEGATIVE_BASELINE cannot be honoured: the
+        # request is announced as ignored and a green run is still downgraded
+        # (exit 42) — it cannot certify the caller-named tree, which is the
+        # mistake exit 0 invited (network-timing precedent).
+        baseline_source, _ignored_ref, baseline_sha = non_head.gate(
+            ROOT, ignored=True)
         output.mkdir(parents=True, exist_ok=False)
         mutant_switch.run(ROOT, output, chosen,
                           mutant_switch.clean_environment(os.environ),
@@ -82,22 +91,26 @@ def main():
         # is the verdict, not that code.
         summary = json.loads((output / 'summary.json').read_text())
         results = summary['controls']
+        verdict = 1
         if len(results) != 1:
             print(f'equivalent summary: expected one row, got {len(results)}',
                   file=sys.stderr)
-            return 1
-        row = results[0]
-        if row['status'] == 'SURVIVED':
-            print('equivalent summary: SURVIVED=1, INVALID=0 '
-                  '(registered equivalent survives)')
-            return 0
-        print(f"equivalent summary: {row['status']}: {row['reason']}",
-              file=sys.stderr)
-        if row['status'] == 'KILLED':
-            print('registered equivalent is now killed by its bound test; '
-                  'promote it to the must-kill set '
-                  '(schemata_close_shutdown.py)', file=sys.stderr)
-        return 1
+        else:
+            row = results[0]
+            if row['status'] == 'SURVIVED':
+                print('equivalent summary: SURVIVED=1, INVALID=0 '
+                      '(registered equivalent survives)')
+                verdict = 0
+            else:
+                print(f"equivalent summary: {row['status']}: {row['reason']}",
+                      file=sys.stderr)
+                if row['status'] == 'KILLED':
+                    print('registered equivalent is now killed by its bound '
+                          'test; promote it to the must-kill set '
+                          '(schemata_close_shutdown.py)', file=sys.stderr)
+        return non_head.non_head_exit(baseline_source, baseline_sha,
+                                      code=verdict, evidence=output,
+                                      ignored=True)
     except (ValueError, OSError) as error:
         print(f'preflight: {error}', file=sys.stderr)
         return 2

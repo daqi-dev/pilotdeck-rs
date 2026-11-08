@@ -125,8 +125,12 @@ GUARDED = [
     # backs test_baseline::oracle(); host_factory_tests.rs (registered
     # above) bakes host-factory/oracle.json (:463/:562/:614),
     # tool-budget-cwd/oracle.json (:803) and host-manifest/oracle.json
-    # (:1495). Concurrent edits to any of them during a run must be caught
-    # by the source guard.
+    # (:1495). The source guard hashes these at entry and re-verifies at
+    # exit: an edit that persists to the end of the run is caught. It is a
+    # working-tree hash guard, not a HEAD comparison — dirt already present
+    # at entry is accepted as the baseline, and a transient edit that is
+    # reverted before the exit check is not (source.json leaves the
+    # working-tree hashes on record).
     FIXTURES / 'live-e2e/terminal-boundaries/oracle.json',
     ROOT / 'src/pilotdeck-gateway/tests/common/baseline.rs',
     ROOT / 'src/pilotdeck-gateway/tests/common/regeneration_masks.rs',
