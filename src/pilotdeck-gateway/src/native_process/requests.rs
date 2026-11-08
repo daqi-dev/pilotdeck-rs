@@ -204,7 +204,14 @@ impl GatewayRequests for Requests {
             // `projectKey` is refused as any other unserved key, and the
             // registered residual — a lossy form naming a configured path
             // that contains U+FFFD — is admitted on both layers alike.
-            if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())
+            // #2272: the filter skips `undefined` *and* `null` — TS reads
+            // `input.projectKey ?? fallback` (createLocalGateway.ts), so an
+            // explicit null is "not provided" and takes the handler-side
+            // configured-project fallback like `resolve_project` does, not
+            // the unserved-key refusal.
+            if let Some(project) = params
+                .get("projectKey")
+                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
                 && !project.as_string().is_some_and(|key| {
                     let lossy = String::from_utf16_lossy(key.units());
                     self.options.serves_project(&lossy)

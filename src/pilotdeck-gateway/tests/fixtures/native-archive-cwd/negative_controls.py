@@ -47,9 +47,18 @@ MUTATIONS = [
      'None | Some(JsValue::Undefined | JsValue::Null)',
      'None | Some(JsValue::Undefined | JsValue::Null | JsValue::String(_))',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
+    # #2272: the admission filter now skips `undefined` and `null` together
+    # (nullish "not provided"), so the anchor follows the new multi-line
+    # gate shape; the mutation itself is unchanged — the whole admission arm
+    # is switched off with `&& false`.
     ('isolated-admission-skipped', REQUESTS,
-     'if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())',
-     'if let Some(project) = params.get("projectKey").filter(|v| !v.is_undefined())\n                && false',
+     'if let Some(project) = params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'if let Some(project) = params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))\n'
+     '                && false',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
     ('archive-empty-matrix', REGRESSION,
      'let oracle = archive_fixture();\n    negative_assert_eq!(oracle["node"]',

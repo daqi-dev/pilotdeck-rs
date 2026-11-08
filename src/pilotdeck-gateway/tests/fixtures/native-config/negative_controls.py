@@ -28,6 +28,11 @@ from negative_suite import Case, classify, invalidate_completed, passed, publish
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
 SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir.rs'
+# #2272: the isolated-project admission source. The row below mutates it while
+# its bound assertion lives in the session directory's gate-order tests — the
+# #1864 read-side precedent (mutate the writer, assert on the reader) — so the
+# path joins SOURCE_TEXTS / LITERAL_ANCHORS below like LIVE and TOOLS did.
+REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 # #1604: `require_text` / `trim_guard` — the guard the session directory now
 # delegates to. Two mutants below target it; the bound tests stay the
 # session-directory ones.
@@ -284,6 +289,22 @@ mutations = [
      '            .map_err(|_| RequestError::new("projectKey is required."))?;',
      DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
      '#2083 the surrogate projectKey reaches the capability gate'),
+    # ── #2272: the admission filter skips `undefined` AND `null` (the TS
+    # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
+    # Dropping the null arm restores the pre-#2272 shape where an explicit
+    # null was refused as an unserved project even with a valid sessionKey,
+    # so the session directory's null-cell gate-order expectations must die.
+    # The bound test fails first at its blank-key null cell, before the
+    # per-method valid-key cells that follow it.
+    ('admission-null-refused', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'resume_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -412,6 +433,8 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
     (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
+    (SESSION_DIR, '#2272 a null projectKey falls back like a missing one, '
+                  'so the sessionKey gate answers the blank key'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
@@ -424,7 +447,7 @@ LITERAL_ANCHORS = [
 # not name a path outside this tuple (checked below) -- a pin the completeness
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
-                REVIEW_TESTS, FACTORY, FACTORY_TESTS)
+                REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS)
 
 
 def _assertions(case):

@@ -591,8 +591,8 @@ impl Requests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::negative_assert_eq;
     use crate::storage::recorder::Recorder;
+    use crate::{negative_assert, negative_assert_eq};
 
     /// #1457 fix-r2: a loaded session owns the transcript writer, so the rename
     /// append goes through its recorder instead of a second writer restored
@@ -855,16 +855,16 @@ mod tests {
     // #2090: request-level gate order for the session_dir family, measured on
     // both sides (`_tmp/20261107-issue-2090/`). Two gates can answer a bad or
     // absent key: the request-level isolated-project admission
-    // (`native_process/requests.rs:311-320`) and this family's
+    // (`native_process/requests.rs`) and this family's
     // `require_session_key` (`:180` / `:215` / `:232` / `:301`). Admission runs
     // before the method dispatch, so a `projectKey` the process does not serve
     // is answered as `gateway_request_failed` even when `sessionKey` is blank;
     // with the project admitted (or omitted, which falls back to the configured
-    // one) the missing or blank key answers `INVALID_SESSION_KEY`. An explicit
-    // `projectKey: null` counts as "not served" here — `requests.rs:311-320`
-    // only skips `undefined` — while TS reads null as nullish and falls back to
-    // its project root. That shape, and the resume/close divergence, are
-    // registered in
+    // one) the missing or blank key answers `INVALID_SESSION_KEY`. #2272: an
+    // explicit `projectKey: null` is "not provided" for that admission (the
+    // same nullish read TS gives it), so it falls back to the configured
+    // project exactly like an omitted key; the resume/close blank-key
+    // divergence stays registered in
     // `specs/gateway-parity/diffs/A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R9.md`.
     const BLANK_KEY_MESSAGE: &str = "sessionKey is required.";
     const ISOLATED_PROJECT_MESSAGE: &str =
@@ -901,12 +901,31 @@ mod tests {
             );
         }
 
+        // (1b) #2272: an explicit `projectKey: null` is "not provided" for the
+        // admission too, so the fallback is the configured project and the
+        // family's sessionKey gate answers the blank key exactly as (1).
+        {
+            let params = object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]);
+            let error =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await
+                    .expect_err("#2272 the blank sessionKey is rejected under a null projectKey");
+            negative_assert_eq!(
+                error.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key"
+            );
+            negative_assert_eq!(
+                key_message(&error),
+                BLANK_KEY_MESSAGE,
+                "#2272 the gate message matches the TS provider gate under a null projectKey"
+            );
+        }
+
         // (2) Project outside the configured one: request admission answers
         // before the method dispatch, so the first code is the admission one.
         // The valid-key control answering identically is what proves admission
-        // — not the key — decides here; the `null` cells are the registered
-        // shape where Rust and TS part ways (`projectKey: null` is nullish for
-        // TS, "not served" for this admission).
+        // — not the key — decides here.
         for (label, params) in [
             (
                 "blank key + unserved project",
@@ -920,17 +939,6 @@ mod tests {
                 object([
                     ("sessionKey", "pdrs-2090-control".into()),
                     ("projectKey", UNSERVED_PROJECT.into()),
-                ]),
-            ),
-            (
-                "blank key + null project",
-                object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]),
-            ),
-            (
-                "valid key + null project",
-                object([
-                    ("sessionKey", "pdrs-2090-control".into()),
-                    ("projectKey", JsValue::Null),
                 ]),
             ),
         ] {
@@ -949,6 +957,71 @@ mod tests {
                 ISOLATED_PROJECT_MESSAGE,
                 "#2090 the admission message is the isolated-project one"
             );
+        }
+
+        // (3) #2272: a valid sessionKey with `projectKey: null` runs the
+        // method on the configured project — the fallback the handler's
+        // `resolve_project` gives a nullish key. Rust has no
+        // unresolvable-fallback shape (the fallback is always the configured
+        // project, R9 difference 4), so this is TS scenario A only; resume's
+        // echo missing `projectKey` and close answering `undefined` are the
+        // registered R9 divergences, kept as they are.
+        {
+            let params = object([
+                ("sessionKey", "pdrs-2090-control".into()),
+                ("projectKey", JsValue::Null),
+            ]);
+            let result =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await;
+            match method {
+                "resume_session" => {
+                    let value = result
+                        .expect("#2272 resume_session answers a valid key under a null projectKey");
+                    let echoed = value
+                        .get("sessionKey")
+                        .and_then(JsValue::as_string)
+                        .cloned()
+                        .expect(
+                            "#2272 resume_session echoes the sessionKey under a null projectKey",
+                        );
+                    negative_assert_eq!(
+                        String::from_utf16_lossy(echoed.units()),
+                        "pdrs-2090-control",
+                        "#2272 resume_session echoes the key it was given under a null projectKey"
+                    );
+                    negative_assert!(
+                        value.get("projectKey").is_none(),
+                        "#2272 resume_session keeps the registered R9 echo shape with no projectKey"
+                    );
+                }
+                "close_session" => {
+                    negative_assert!(
+                        matches!(result, Ok(JsValue::Undefined)),
+                        "#2272 close_session answers undefined for a valid key under a null projectKey"
+                    );
+                }
+                "delete_session" => {
+                    let error = result.expect_err(
+                        "#2272 delete_session looks for a valid key in the configured project under a null projectKey",
+                    );
+                    negative_assert_eq!(
+                        error.code.as_str(),
+                        "SESSION_NOT_FOUND",
+                        "#2272 delete_session answers SESSION_NOT_FOUND, not an admission refusal"
+                    );
+                }
+                "rename_session" | "tag_session" => {
+                    let value = result
+                        .expect("#2272 rename/tag answers a valid key under a null projectKey");
+                    negative_assert_eq!(
+                        value.get("updated").and_then(JsValue::as_bool),
+                        Some(true),
+                        "#2272 rename/tag reports updated:true on the configured project"
+                    );
+                }
+                _ => unreachable!("blank_key_gate_order called for an unknown method"),
+            }
         }
 
         r.owner.shutdown().await.expect("#2090 shutdown");
