@@ -58,12 +58,6 @@ impl Requests {
                     "restore_session_transcript",
                 )),
                 "read_session_messages" => {
-                    if let Some(project) = params.get("projectKey").and_then(JsValue::as_string) {
-                        let project = String::from_utf16_lossy(project.units());
-                        if !options.serves_project(&project) {
-                            return Err(RequestError {code:"CAPABILITY_UNAVAILABLE".into(),message:"The isolated native process serves only its configured project.".into(),details:None,validation:None});
-                        }
-                    }
                     let history = crate::runtime::history::NativeHistoryReader {
                         files: crate::runtime::history::HistoryFiles {
                             home: options.home.clone(),
@@ -90,23 +84,15 @@ impl Requests {
                         validation: None,
                     })
                 }
-                "read_subagent_messages" => {
-                    if let Some(project) = params.get("projectKey").and_then(JsValue::as_string) {
-                        let project = String::from_utf16_lossy(project.units());
-                        if !options.serves_project(&project) {
-                            return Err(RequestError { code: "CAPABILITY_UNAVAILABLE".into(), message: "The isolated native process serves only its configured project.".into(), details: None, validation: None });
-                        }
-                    }
-                    crate::runtime::history::read_subagent_messages(
-                        crate::runtime::history::HistoryFiles {
-                            home: options.home.clone(),
-                            project: options.project.clone(),
-                        },
-                        params,
-                    )
-                    .await
-                    .map_err(RequestError::new)
-                }
+                "read_subagent_messages" => crate::runtime::history::read_subagent_messages(
+                    crate::runtime::history::HistoryFiles {
+                        home: options.home.clone(),
+                        project: options.project.clone(),
+                    },
+                    params,
+                )
+                .await
+                .map_err(RequestError::new),
                 "fork_session" => replacement
                     .fork_session(params)
                     .await

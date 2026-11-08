@@ -350,7 +350,7 @@ fn sanitize_session_units(s: &JsString) -> Vec<u16> {
         trimmed.to_vec()
     }
 }
-fn path_argument(v: &JsValue) -> Error {
+pub(crate) fn path_argument(v: &JsValue) -> Error {
     match crate::metadata::argument_received(v) {
         crate::metadata::ArgumentReceived::Text(received) => error(
             "ERR_INVALID_ARG_TYPE",

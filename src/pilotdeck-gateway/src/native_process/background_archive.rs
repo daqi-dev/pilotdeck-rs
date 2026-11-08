@@ -92,6 +92,7 @@ pub(super) struct NativeArchive {
     output: File,
     path: PathBuf,
     process_lock: File,
+    deferred_owner: Mutex<Weak<DeferredArchive>>,
     state: Mutex<State>,
     status: watch::Sender<Status>,
 }
@@ -101,16 +102,22 @@ pub(super) struct ArchiveHandle {
     readonly: Mutex<HashSet<String>>,
 }
 impl NativeArchive {
+    #[cfg(test)]
     pub(super) fn open(project: &Path) -> io::Result<Arc<Self>> {
         // The caller selected this project root. Resolve its trusted aliases
         // (including Darwin /var -> /private/var) before pinning the directory.
         // Only descendants of that root are archive-controlled components;
         // their NOFOLLOW checks remain unchanged.
         let project = project.canonicalize()?;
+        let selected = crate::project_files::open_directory_beneath(&project, &project)?;
+        Self::open_selected(&project, &selected)
+    }
+    fn open_selected(project: &Path, selected: &File) -> io::Result<Arc<Self>> {
         let path = project.join(".pilotdeck/background-tasks");
-        crate::project_files::create_directories_beneath(&project, &path.join("output"))?;
-        let root = crate::project_files::open_directory_beneath(&project, &path)?;
-        let output = crate::project_files::open_directory_beneath(&project, &path.join("output"))?;
+        crate::project_files::create_directories_at(selected, Path::new(".pilotdeck/background-tasks/output"), Mode::from_raw_mode(0o700))?;
+        let pilot = archive_directory_at(selected, ".pilotdeck")?;
+        let root = archive_directory_at(&pilot, "background-tasks")?;
+        let output = archive_directory_at(&root, "output")?;
         let process_lock = open_file(&root, ".lock", OFlags::RDWR | OFlags::CREATE)?;
         rustix::fs::flock(
             &process_lock,
@@ -157,6 +164,7 @@ impl NativeArchive {
             output,
             path,
             process_lock,
+            deferred_owner: Mutex::new(Weak::new()),
             state: Mutex::new(State {
                 records,
                 revision: 0,
@@ -255,6 +263,7 @@ impl NativeArchive {
             let guard = WriterGuard {
                 archive: self.clone(),
                 armed: true,
+                _deferred_owner: lock(&self.deferred_owner).upgrade(),
             };
             tokio::spawn(guard.run());
         }
@@ -355,6 +364,9 @@ impl NativeArchive {
 struct WriterGuard {
     archive: Arc<NativeArchive>,
     armed: bool,
+    // Only an in-flight writer holds this strong retain. NativeArchive's
+    // back-reference is weak, so no idle archive/deferred-owner cycle forms.
+    _deferred_owner: Option<Arc<DeferredArchive>>,
 }
 impl WriterGuard {
     // An async method taking the whole guard owns it before its first poll.
@@ -375,6 +387,53 @@ impl Drop for WriterGuard {
                     .to_owned(),
             );
         }
+    }
+}
+impl ArchiveHandle {
+    fn write_task_pending(
+        &self,
+        task: BackgroundBashTask,
+        output: PersistedOutput,
+        seq: u64,
+        failure_reason: Option<JsString>,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'static>> {
+        let record = Record {
+            snapshot: PersistedBackgroundTask {
+                task: persist_task(&task),
+                output,
+            },
+            identity: TaskSnapshotIdentity::of(&task),
+            failure: failure_reason,
+            owner: None,
+        };
+        match self.archive.update(self, record, seq) {
+            Ok(revision) => self.archive.wait(revision),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
+    }
+    fn write_pending(
+        &self,
+        snapshot: PersistedBackgroundTask,
+        seq: u64,
+    ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'static>> {
+        let identity = identity_from_snapshot(&snapshot);
+        match self.archive.update(
+            self,
+            Record {
+                snapshot,
+                identity,
+                failure: None,
+                owner: None,
+            },
+            seq,
+        ) {
+            Ok(revision) => self.archive.wait(revision),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
+    }
+    fn flush_pending(&self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'static>> {
+        let revision = lock(&self.archive.state).revision;
+        self.archive.wait(revision)
     }
 }
 impl BackgroundTaskSnapshotStore for ArchiveHandle {
@@ -426,43 +485,17 @@ impl BackgroundTaskSnapshotStore for ArchiveHandle {
         seq: u64,
         failure_reason: Option<JsString>,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
-        let record = Record {
-            snapshot: PersistedBackgroundTask {
-                task: persist_task(&task),
-                output,
-            },
-            identity: TaskSnapshotIdentity::of(&task),
-            failure: failure_reason,
-            owner: None,
-        };
-        match self.archive.update(self, record, seq) {
-            Ok(revision) => self.archive.wait(revision),
-            Err(error) => Box::pin(async move { Err(error) }),
-        }
+        self.write_task_pending(task, output, seq, failure_reason)
     }
     fn write(
         &self,
         snapshot: PersistedBackgroundTask,
         seq: u64,
     ) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
-        let identity = identity_from_snapshot(&snapshot);
-        match self.archive.update(
-            self,
-            Record {
-                snapshot,
-                identity,
-                failure: None,
-                owner: None,
-            },
-            seq,
-        ) {
-            Ok(revision) => self.archive.wait(revision),
-            Err(error) => Box::pin(async move { Err(error) }),
-        }
+        self.write_pending(snapshot, seq)
     }
     fn flush(&self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
-        let revision = lock(&self.archive.state).revision;
-        self.archive.wait(revision)
+        self.flush_pending()
     }
 }
 #[allow(clippy::unnecessary_cast)] // stat device/inode types vary between Darwin and Linux.
@@ -542,6 +575,144 @@ impl NativeOutputStorage for ArchiveHandle {
         }
     }
 }
+
+fn archive_directory_at(parent: &File, name: &str) -> io::Result<File> {
+    #[cfg(target_os = "linux")]
+    let access = OFlags::PATH;
+    #[cfg(target_vendor = "apple")]
+    let access = OFlags::from_bits_retain(libc::O_SEARCH as u32);
+    #[cfg(not(any(target_os = "linux", target_vendor = "apple")))]
+    let access = OFlags::RDONLY;
+    Ok(File::from(openat(parent, name, access | OFlags::DIRECTORY | OFlags::CLOEXEC | OFlags::NOFOLLOW, Mode::empty())?))
+}
+
+struct DeferredState {
+    archive: Option<Arc<NativeArchive>>,
+    error: Option<String>,
+}
+/// The family keeps this owner in its existing per-project Weak map. A
+/// missing archive owns only the selected project fd, never a mkdir/flock.
+pub(super) struct DeferredArchive {
+    project: PathBuf,
+    selected: File,
+    state: Mutex<DeferredState>,
+}
+pub(super) struct DeferredHandle {
+    shared: Arc<DeferredArchive>,
+    resolved: Mutex<Option<Arc<ArchiveHandle>>>,
+}
+impl DeferredArchive {
+    pub(super) fn new(project: &Path) -> io::Result<Arc<Self>> {
+        let project = project.canonicalize()?;
+        let selected = crate::project_files::open_directory_beneath(&project, &project)?;
+        Ok(Arc::new(Self { project, selected, state: Mutex::new(DeferredState { archive: None, error: None }) }))
+    }
+    pub(super) fn prepare_existing(self: &Arc<Self>) -> io::Result<()> {
+        let mut state = lock(&self.state);
+        if let Some(error) = &state.error { return Err(io::Error::other(error.clone())); }
+        if state.archive.is_some() { return Ok(()); }
+        // Probe relative to the pinned selected project, following no archive
+        // component. Only a genuinely missing directory remains dormant.
+        let pilot = match archive_directory_at(&self.selected, ".pilotdeck") {
+            Ok(directory) => directory,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        match archive_directory_at(&pilot, "background-tasks") {
+            Ok(_) => {},
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        }
+        // The existing path retains the old lock/read/restore contract.
+        let archive = NativeArchive::open_selected(&self.project, &self.selected)?;
+        *lock(&archive.deferred_owner) = Arc::downgrade(self);
+        state.archive = Some(archive);
+        Ok(())
+    }
+    fn for_write(self: &Arc<Self>) -> io::Result<Arc<NativeArchive>> {
+        let mut state = lock(&self.state);
+        if let Some(error) = &state.error { return Err(io::Error::other(error.clone())); }
+        if let Some(archive) = &state.archive { return Ok(archive.clone()); }
+        // Open/flock/recovery completes synchronously before any metadata is
+        // queued. A newly created foreign archive cannot be bypassed.
+        let archive = NativeArchive::open_selected(&self.project, &self.selected)?;
+        *lock(&archive.deferred_owner) = Arc::downgrade(self);
+        state.archive = Some(archive.clone());
+        Ok(archive)
+    }
+    pub(super) fn handle(self: &Arc<Self>) -> Arc<DeferredHandle> {
+        let initial = lock(&self.state).archive.as_ref().map(|archive| archive.handle());
+        Arc::new(DeferredHandle { shared: self.clone(), resolved: Mutex::new(initial) })
+    }
+    fn failed(&self, message: String) {
+        let mut state = lock(&self.state);
+        if let Some(archive) = &state.archive {
+            let archive = archive.clone();drop(state);archive.failed(message);
+        } else if state.error.is_none() { state.error = Some(message); }
+    }
+}
+impl DeferredHandle {
+    fn existing(&self) -> Option<Arc<ArchiveHandle>> {
+        let mut resolved = lock(&self.resolved);
+        if resolved.is_none() {
+            // Another live generation may have activated the shared owner.
+            *resolved = lock(&self.shared.state).archive.as_ref().map(|archive| archive.handle());
+        }
+        resolved.clone()
+    }
+    fn for_write(&self) -> io::Result<Arc<ArchiveHandle>> {
+        let mut resolved = lock(&self.resolved);
+        if let Some(handle) = &*resolved { return Ok(handle.clone()); }
+        let handle = self.shared.for_write()?.handle();
+        *resolved = Some(handle.clone());
+        Ok(handle)
+    }
+}
+impl BackgroundTaskSnapshotStore for DeferredHandle {
+    fn load(&self) -> Vec<PersistedBackgroundTask> {
+        // prepare_existing already propagated all existing-archive errors at
+        // stage. An absent archive linearizes as empty here without writes.
+        self.existing().map(|handle| handle.load()).unwrap_or_default()
+    }
+    fn original_fields(&self, task_id: &str) -> Option<TaskSnapshotIdentity> {
+        self.existing().and_then(|handle| handle.original_fields(task_id))
+    }
+    fn failure_reason(&self, task_id: &str) -> Option<JsString> {
+        self.existing().and_then(|handle| handle.failure_reason(task_id))
+    }
+    fn report_failure(&self, message: String) { self.shared.failed(message); }
+    fn write_task(&self, task: BackgroundBashTask, output: PersistedOutput, seq: u64, failure_reason: Option<JsString>) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+        match self.for_write() {
+            Ok(handle) => handle.write_task_pending(task, output, seq, failure_reason),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
+    }
+    fn write(&self, snapshot: PersistedBackgroundTask, seq: u64) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+        match self.for_write() {
+            Ok(handle) => handle.write_pending(snapshot, seq),
+            Err(error) => Box::pin(async move { Err(error) }),
+        }
+    }
+    fn flush(&self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + '_>> {
+        if let Some(handle) = self.existing() { return handle.flush_pending(); }
+        let error = lock(&self.shared.state).error.clone();
+        Box::pin(async move { error.map(io::Error::other).map_or(Ok(()), Err) })
+    }
+}
+impl NativeOutputStorage for DeferredHandle {
+    fn create(&self, task_id: &JsString) -> io::Result<NativeOutputFile> {
+        self.for_write()?.create(task_id)
+    }
+    fn restore(&self, task_id: &JsString, expected_bytes: u64) -> io::Result<Option<NativeOutputFile>> {
+        if let Some(handle) = self.existing() { return handle.restore(task_id, expected_bytes); }
+        if expected_bytes > NativeTaskLimits::CLI.output_bytes as u64 {
+            return Err(invalid(format!("Native task output exceeds its {} MiB limit.", NativeTaskLimits::CLI.output_bytes / (1024 * 1024))));
+        }
+        id_text(task_id)?;
+        if expected_bytes == 0 { Ok(None) } else { Err(io::Error::new(io::ErrorKind::NotFound, "Native background archive is not initialized.")) }
+    }
+}
+
 fn identity_from_snapshot(snapshot: &PersistedBackgroundTask) -> TaskSnapshotIdentity {
     let task = &snapshot.task;
     TaskSnapshotIdentity {

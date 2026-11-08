@@ -156,6 +156,22 @@ impl Requests {
         }))
     }
 }
+// GatewaySessionHistoryBundle.{readSessionMessages,readSubagentMessages,
+// forkSession,replaceLastTurn,finalizeLastTurnReplacement} all call its one
+// projectRoot(projectKey), whose guard is truthy rather than nullish.
+pub(super) fn empty_project_is_default(method: &JsString) -> bool {
+    method.equals_str("reload_output_styles")
+        || [
+            "read_session_messages",
+            "read_subagent_messages",
+            "fork_session",
+            "replace_last_turn",
+            "finalize_last_turn_replacement",
+        ]
+        .iter()
+        .any(|name| method.equals_str(name))
+}
+
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async {
@@ -195,7 +211,7 @@ impl GatewayRequests for Requests {
                 &self.owner,
                 &self.options,
                 &params,
-                method.equals_str("reload_output_styles"),
+                empty_project_is_default(&method),
             )?;
             let _reservation = selected.reservation;
             let mut view = self.clone();

@@ -46,6 +46,10 @@ async fn native_project_background_owner_is_shared_with_sdk_and_drained_on_dispo
     std::os::unix::fs::symlink(&project, &alias).unwrap();
     let alternate = registry.resolve(Some(&alias)).unwrap();
     assert!(!Arc::ptr_eq(&runtime, &alternate));
+    assert!(
+        !project.join(".pilotdeck/background-tasks").exists(),
+        "staging two aliases without tasks must not create an archive"
+    );
 
     let resource = runtime
         .resources()
@@ -135,4 +139,45 @@ async fn native_project_background_owner_is_shared_with_sdk_and_drained_on_dispo
             .join(".pilotdeck/background-tasks/state.json")
             .is_file()
     );
+}
+
+#[tokio::test]
+async fn readonly_unregistered_project_stage_leaves_no_archive_and_existing_foreign_lock_is_rejected() {
+    let scratch = Scratch(
+        std::env::temp_dir().join(format!("pdrs-native-background-readonly-{}", uuid::Uuid::new_v4())),
+    );
+    let project = scratch.0.join("project-a");
+    let other = scratch.0.join("unregistered-b");
+    let locked = scratch.0.join("unregistered-locked");
+    let home = scratch.0.join("home");
+    for path in [&project, &other, &locked, &home] {
+        std::fs::create_dir_all(path).unwrap();
+    }
+    std::fs::write(home.join("pilotdeck.yaml"), "schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models:\n        mock: {}\n").unwrap();
+    let options = Options {
+        home,
+        project: project.clone(),
+        listen: "127.0.0.1:0".parse().unwrap(),
+        token_file: scratch.0.join("unused-token"),
+        sidecar: scratch.0.join("unused-sidecar"),
+        sidecar_args: vec![],
+        drain_budget: Duration::from_secs(2),
+        storage_root: None,
+    };
+    let registry =
+        assembly::project_registry(&options, &options.environment(crate::config::Env::new()));
+    let other_runtime = registry.resolve(Some(&other));
+    let untouched_after_stage = !other.join(".pilotdeck").exists();
+    // This archive existed before the runtime was staged, so staging must
+    // retain eager foreign-lock admission rather than pretending it is empty.
+    let foreign = super::super::background_archive::NativeArchive::open(&locked).unwrap();
+    let locked_result = registry.resolve(Some(&locked));
+    let closed = tokio::time::timeout(Duration::from_secs(10), registry.dispose()).await;
+    assert!(closed.unwrap().is_ok());
+    assert!(other_runtime.is_ok(), "an unregistered read-only project must stage normally");
+    assert!(untouched_after_stage, "read-only staging wrote into the unregistered project");
+    assert!(!other.join(".pilotdeck").exists(), "read-only disposal created an archive");
+    let error = locked_result.err().expect("existing foreign archive lock must reject staging");
+    assert!(error.to_string().contains("Another process owns this project's background archive."));
+    drop(foreign);
 }

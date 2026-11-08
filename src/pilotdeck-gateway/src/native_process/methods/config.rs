@@ -137,22 +137,31 @@ fn replacement_error(error: crate::runtime::replacement::ReplacementError) -> Re
     }
 }
 
-/// Resolves `projectKey` from params, falling back to the configured project.
-/// The session_dir slice owns the family's copy of this resolution; a local
-/// one keeps the config family inside its sanctioned file set.
-fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
-    let project = params
-        .get("projectKey")
-        .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .unwrap_or_else(|| requests.options.project.to_string_lossy().into_owned());
-    if !requests.options.serves_project(&project) {
-        return Err(gateway_error(
-            "CAPABILITY_UNAVAILABLE",
-            "The isolated native process serves only its configured project.",
-        ));
+/// Preserve each callback's project contract: model mutations require dialog
+/// registration; style callbacks resolve lexical roots without that registry.
+fn lexical_project(requests: &Requests, params: &JsValue) -> Result<PathBuf, RequestError> {
+    match super::input_property(params, "projectKey")?.as_ref() {
+        None | Some(JsValue::Null | JsValue::Undefined) => Ok(requests.options.project.clone()),
+        Some(JsValue::String(key)) => super::super::project_scope::resolve(key),
+        Some(other) => Err(config_error(crate::session_model::path_argument(other))),
     }
-    Ok(project)
+}
+async fn model_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
+    let fallback = JsValue::from(requests.options.project.to_string_lossy().as_ref());
+    let raw = super::input_property(params, "projectKey")?
+        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+        .unwrap_or(fallback);
+    let home = requests.options.home.clone();
+    let permit = super::session_dir::session_io_permit().await?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let root = super::super::project_scope::registered(&home, &raw)?;
+        root.to_str().map(str::to_owned).ok_or_else(|| {
+            RequestError::new("Project root is not valid UTF-8 for the config loader.")
+        })
+    })
+    .await
+    .map_err(|error| RequestError::new(error.to_string()))?
 }
 
 /// Hold the reservation through the owned async operation and any detached
@@ -239,7 +248,7 @@ impl Requests {
         params: &JsValue,
         reservation: Option<Arc<ModelWriteReservation>>,
     ) -> Result<JsValue, RequestError> {
-        let project_key = resolve_project(self, params)?;
+        let project_key = model_project(self, params).await?;
         if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
             && self.owner.has_active_turn(key)
         {
@@ -256,6 +265,8 @@ impl Requests {
             ));
         }
         validate_selection_shape(selection)?;
+        // TS listModelCatalog intentionally reads the global catalog even
+        // though project defaults and transcript ownership are per project.
         let config =
             bounded_model_config(self.options.home.clone(), self.env.clone(), None).await?;
         let catalog = crate::model_catalog::execute_loaded(config, &object([]), &self.env)
@@ -320,7 +331,7 @@ impl Requests {
         params: &JsValue,
         reservation: Option<Arc<ModelWriteReservation>>,
     ) -> Result<JsValue, RequestError> {
-        let project_key = resolve_project(self, params)?;
+        let project_key = model_project(self, params).await?;
         let session_key = require_session_key(params)?;
         if self.owner.has_active_turn(&session_key) {
             return Err(gateway_error(
@@ -548,8 +559,8 @@ impl Requests {
     /// ProjectRuntimeRegistry.outputStylesListForSdk refreshes the plugin
     /// runtime and lists the project's (plus session's) style contributions.
     async fn output_styles_list(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let _project = resolve_project(self, params)?;
-        let styles = self.plugin_styles().await?;
+        let project = lexical_project(self, params)?;
+        let styles = self.plugin_styles(&project).await?;
         let mut style_values = Vec::with_capacity(styles.len());
         for style in &styles {
             let mut entry = pilotdeck_protocol::JsObject::new();
@@ -616,8 +627,9 @@ impl Requests {
                 ));
             }
         };
+        let project = lexical_project(self, params)?;
+        let styles = self.plugin_styles(&project).await?;
         if let Some(name) = &name {
-            let styles = self.plugin_styles().await?;
             if !styles
                 .iter()
                 .any(|style| JsString::from(style.name.as_str()) == *name)
@@ -655,11 +667,12 @@ impl Requests {
     /// cannot retire the runtime mid-refresh.
     async fn plugin_styles(
         &self,
+        root: &std::path::Path,
     ) -> Result<Vec<crate::runtime::plugins::PluginOutputStyleContribution>, RequestError> {
         // Acquire may read configuration synchronously (management.rs:118-125),
         // so the blocking job stays off the async executor.
         let project = self.project.clone();
-        let root = self.options.project.clone();
+        let root = root.to_path_buf();
         let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&root)))
             .await
             .map_err(|e| RequestError::new(e.to_string()))?
@@ -2495,3 +2508,7 @@ mod tests {
 #[cfg(all(test, unix))]
 #[path = "config_model_bounded_tests.rs"]
 mod bounded_native_write_tests;
+
+#[cfg(test)]
+#[path = "../multi_project_alias_tests.rs"]
+mod multi_project_alias_tests;

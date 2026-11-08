@@ -371,6 +371,7 @@ fn archive_writer_guard_reports_an_unpolled_future_drop() {
     let guard = WriterGuard {
         archive: archive.clone(),
         armed: true,
+        _deferred_owner: None,
     };
     let future = guard.run();
     drop(future);
@@ -388,6 +389,7 @@ fn archive_writer_guard_disarms_only_after_an_explicit_normal_completion() {
     let mut guard = WriterGuard {
         archive: archive.clone(),
         armed: true,
+        _deferred_owner: None,
     };
     guard.disarm();
     drop(guard);
@@ -563,4 +565,106 @@ async fn stale_unknown_view_cannot_take_over_dead_owners_final_record_and_fresh_
     assert_eq!(record.task.status, "completed");
     assert!(record.output.total_bytes > 0);
     assert_eq!(fresh, Some(TaskStatus::Completed));
+}
+
+fn deferred_runtime(project: &Path, store: Arc<DeferredHandle>) -> BackgroundTaskRuntime {
+    BackgroundTaskRuntime::new_native(
+        BackgroundTaskRuntimeOptions { disk_spill_dir: Some(project.join(".pilotdeck/background-tasks")), snapshot_store: Some(store.clone()), ..Default::default() },
+        Arc::new(NativeSandbox::new(SandboxMode::DangerFullAccess, std::env::temp_dir())),
+        store, NativeTaskLimits::CLI,
+    )
+}
+
+#[tokio::test]
+async fn absent_archive_load_and_dispose_are_read_only() {
+    let root = fixture();
+    let shared = DeferredArchive::new(&root.0).unwrap();
+    shared.prepare_existing().unwrap();
+    let store = shared.handle();
+    let rt = deferred_runtime(&root.0, store.clone());
+    assert!(store.load().is_empty());
+    assert!(lock(&shared.state).archive.is_none());
+    assert!(!root.0.join(".pilotdeck").exists(), "read-only background construction must not create archive paths");
+    store.flush().await.unwrap();
+    rt.dispose().await.unwrap();
+    assert!(!root.0.join(".pilotdeck").exists(), "read-only background disposal must not create archive paths");
+}
+
+#[tokio::test]
+async fn deferred_first_write_queues_synchronously_and_retains_weak_owner_until_writer_finishes() {
+    let root = fixture();
+    let shared = DeferredArchive::new(&root.0).unwrap();
+    shared.prepare_existing().unwrap();
+    let weak = Arc::downgrade(&shared);
+    let store = shared.handle();
+    let id = uuid::Uuid::new_v4().to_string();
+    let task = BackgroundBashTask {
+        task_id: id.as_str().into(), agent_id: JsValue::Undefined, session_id: "owner".into(), kind: "bash".into(),
+        command: "fixture metadata only".into(), cwd: root.0.to_string_lossy().as_ref().into(), pid: None,
+        status: TaskStatus::Pending, exit_code: None, interrupted: false, started_at: 0.0, ended_at: None, output_bytes: 0,
+    };
+    let pending = store.write_task(task, PersistedOutput { total_bytes: 0, persisted: false }, 0, None);
+    // No await or poll occurred: open/flock and metadata queue must already
+    // be complete, just as for the original ArchiveHandle.
+    let archive = lock(&shared.state).archive.clone().unwrap();
+    assert_eq!(lock(&archive.state).records.len(), 1, "first deferred write must synchronously admit metadata");
+    assert!(root.0.join(".pilotdeck/background-tasks/.lock").is_file());
+    drop(pending);drop(archive);drop(store);drop(shared);
+    assert!(weak.upgrade().is_some(), "pending writer must retain the same Weak cache owner");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while weak.upgrade().is_some() && tokio::time::Instant::now() < deadline { tokio::task::yield_now().await; }
+    assert!(weak.upgrade().is_none(), "completed writer must release its temporary lazy owner retain");
+    let text = std::fs::read_to_string(root.0.join(".pilotdeck/background-tasks/state.json")).unwrap();
+    assert!(text.contains(&id), "unpolled caller future must not discard the queued native snapshot");
+}
+
+#[tokio::test]
+async fn deferred_first_real_task_is_durable_and_a_second_generation_reuses_the_archive() {
+    let root = fixture();
+    let shared = DeferredArchive::new(&root.0).unwrap();
+    shared.prepare_existing().unwrap();
+    let first_store = shared.handle();
+    let first = deferred_runtime(&root.0, first_store.clone());
+    let one = first.start(spec(&root.0, "printf FIRST-DURABLE")).await.unwrap();
+    let first_status = wait(&first, &one.task_id).await;
+    shared.prepare_existing().unwrap();
+    let second_store = shared.handle();
+    let second = deferred_runtime(&root.0, second_store.clone());
+    let restored = second.get(&one.task_id, None).map(|task| task.status);
+    let same = Arc::ptr_eq(&first_store.existing().unwrap().archive, &second_store.existing().unwrap().archive);
+    let two = second.start(spec(&root.0, "printf SECOND-DURABLE")).await;
+    let second_status = if let Ok(task) = &two { wait(&second, &task.task_id).await } else { Err(io::Error::other("second generation start failed")) };
+    let second_closed = second.dispose().await;
+    let first_closed = first.dispose().await;
+    assert!(second_closed.is_ok());assert!(first_closed.is_ok());
+    assert_eq!(first_status.unwrap(), TaskStatus::Completed);
+    assert_eq!(restored, Some(TaskStatus::Completed));
+    assert!(same, "overlapping generations must use the same concrete native archive");
+    assert_eq!(second_status.unwrap(), TaskStatus::Completed);
+    let two = two.unwrap();
+    let state = std::fs::read_to_string(root.0.join(".pilotdeck/background-tasks/state.json")).unwrap();
+    assert!(state.contains(&one.task_id.to_utf8().unwrap()) && state.contains(&two.task_id.to_utf8().unwrap()));
+    let output = root.0.join(".pilotdeck/background-tasks/output").join(format!("{}.log", one.task_id.to_utf8().unwrap()));
+    assert_eq!(std::fs::read(output).unwrap(), b"FIRST-DURABLE");
+}
+
+#[tokio::test]
+async fn deferred_archive_refuses_existing_and_late_foreign_lock_before_spawning() {
+    let root = fixture();
+    let shared = DeferredArchive::new(&root.0).unwrap();
+    shared.prepare_existing().unwrap();
+    let rt = deferred_runtime(&root.0, shared.handle());
+    // Another process/owner creates the archive after our empty load. Its
+    // lock must still be checked by the first real metadata write.
+    let foreign = NativeArchive::open(&root.0).unwrap();
+    let separate = DeferredArchive::new(&root.0).unwrap();
+    let initial_error = separate.prepare_existing().unwrap_err();
+    let started = rt.start(spec(&root.0, "printf SHOULD-NOT-RUN > forbidden-child.txt")).await;
+    let closed = rt.dispose().await;
+    assert!(closed.is_ok());
+    assert_eq!(initial_error.kind(), io::ErrorKind::WouldBlock);
+    let error = started.unwrap_err();
+    assert!(error.message.to_utf8().unwrap().contains("Another process owns this project's background archive."));
+    assert!(!root.0.join("forbidden-child.txt").exists(), "foreign archive lock refusal must precede native child spawn");
+    assert!(lock(&foreign.state).records.is_empty());
 }

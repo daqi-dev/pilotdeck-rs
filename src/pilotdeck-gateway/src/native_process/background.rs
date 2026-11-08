@@ -15,7 +15,7 @@ use std::{
 
 #[derive(Default)]
 struct NativeExecutionWorldFamily {
-    archives: Mutex<HashMap<PathBuf, Weak<super::background_archive::NativeArchive>>>,
+    archives: Mutex<HashMap<PathBuf, Weak<super::background_archive::DeferredArchive>>>,
 }
 impl ResourceFamilySource for NativeExecutionWorldFamily {
     fn family(&self) -> Family {
@@ -43,7 +43,7 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
             if let Some(archive) = archives.get(&archive_project).and_then(Weak::upgrade) {
                 archive
             } else {
-                let archive = super::background_archive::NativeArchive::open(&archive_project)
+                let archive = super::background_archive::DeferredArchive::new(&archive_project)
                     .map_err(|error| {
                         crate::runtime::project::RuntimeError::new(error.to_string())
                     })?;
@@ -51,6 +51,9 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
                 archive
             }
         };
+        // Existing archives keep their original eager lock/restore contract.
+        // An absent archive remains dormant through this read-only stage.
+        archive.prepare_existing().map_err(|error| crate::runtime::project::RuntimeError::new(error.to_string()))?;
         let store = archive.handle();
         let resource = Arc::new(crate::runtime::background::BackgroundExecutionWorld {
             resources: BackgroundResources {
