@@ -4,29 +4,23 @@
 //! exit. Every way the wiring can break has its own observation here: a
 //! signal path that never reaches the machine leaves the default SIGTERM
 //! disposition in place, so the child dies as a signal death (a failed
-//! status, not exit 0); a halting machine prints "native switch halted" and
-//! exits nonzero; a machine that hangs is bounded by its own face budgets
-//! (the `--drain-ms` spelling below) and still exits.
+//! status, not exit 0); a halting machine prints the shared
+//! `NATIVE_SWITCH_HALTED` line and exits nonzero; a machine that hangs is
+//! bounded by its own face budgets (the `--drain-ms` spelling below) and
+//! still exits.
 use std::{path::PathBuf, process::Stdio};
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader},
-    net::TcpStream,
+    io::{AsyncBufReadExt, AsyncReadExt, BufReader},
     process::Command,
     time::timeout,
 };
 
-// The RFC 6455 public handshake sample key, shared with the crate-side
-// tests through the same common file.
-#[path = "common/native_ws_sample.rs"]
-mod native_ws_sample;
-use native_ws_sample::RFC6455_SAMPLE_NONCE;
-// The constants shared with `tests/mode_routing.rs`, the same native entry's
-// sibling test (#1354): one spelling per product fact.
+// The constants and stop-side timing segments shared with
+// `tests/mode_routing.rs`, the same native entry's sibling test (#1354 /
+// #2511): one spelling per product fact, one copy per shared segment.
 #[path = "common/native_entry.rs"]
 mod native_entry;
-use native_entry::{
-    ADVERTISEMENT_BUDGET, NATIVE_STOPPING, STDERR_LIMIT, SWITCH_DEADLINE, VALID_HOME_CONFIG,
-};
+use native_entry::{ADVERTISEMENT_BUDGET, STDERR_LIMIT, SWITCH_DEADLINE, VALID_HOME_CONFIG};
 
 // Removed with the test's scratch tree once the child has been reaped: the
 // path is unique per run and nothing else ever writes it.
@@ -87,6 +81,9 @@ async fn sigterm_runs_the_switch_and_exits_clean() {
         .stderr
         .take()
         .expect("#1353 switch e2e child stderr pipe");
+    // This consumer's spelling of the shared `STDERR_LIMIT` (#2511 item 2):
+    // `take` bounds the read itself — the sibling in `tests/mode_routing.rs`
+    // keeps draining and bounds only retention instead.
     let mut lines = BufReader::new(stderr).take(STDERR_LIMIT).lines();
     // Wait for the child's own listening advertisement: past this point the
     // assembly is up and the signal handlers are registered.
@@ -115,55 +112,17 @@ async fn sigterm_runs_the_switch_and_exits_clean() {
     // accept loop is live from launch — the phased run the switch later
     // drives is constructed before the signal wait, so serving must not
     // wait for SIGTERM (a regression here hangs the upgrade instead of the
-    // clean exit below).
+    // clean exit below). The probe itself is the shared segment (#2511
+    // item 1); it drops the client on the way out, so the switch below
+    // still runs over an idle server (a still-connected client would expire
+    // the drain budget and halt — a different cell).
     let address = native_entry::advertised_address(&advertisement)
         .expect("#1353 switch e2e advertised address");
-    let mut client = timeout(ADVERTISEMENT_BUDGET, TcpStream::connect(address))
-        .await
-        .expect("#1353 switch e2e steady-state connect deadline")
-        .expect("#1353 switch e2e steady-state connect");
-    client
-        .write_all(
-            format!(
-                "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\n\
-                 Upgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\n\r\n"
-            )
-            .as_bytes(),
-        )
-        .await
-        .expect("#1353 switch e2e steady-state upgrade write");
-    let mut header = Vec::new();
-    timeout(ADVERTISEMENT_BUDGET, async {
-        while !header.ends_with(b"\r\n\r\n") {
-            let mut byte = [0u8; 1];
-            client
-                .read_exact(&mut byte)
-                .await
-                .expect("#1353 switch e2e steady-state upgrade byte");
-            header.push(byte[0]);
-        }
-    })
-    .await
-    .expect("#1353 switch e2e steady-state upgrade deadline");
-    assert!(
-        header.starts_with(b"HTTP/1.1 101"),
-        "#1353 switch e2e steady-state upgrade status, got {}",
-        String::from_utf8_lossy(&header)
-    );
-    // The client's whole job is the upgrade: drop it before the signal, so
-    // the switch below still runs over an idle server (a still-connected
-    // client would expire the drain budget and halt — a different cell).
-    drop(client);
-    // The signal the production entry is built around. `kill_on_drop` only
-    // SIGKILLs, so the wait below observes the machine's own exit, not this.
-    // rustix's safe `kill` wrapper: the workspace forbids `unsafe`, so the
-    // raw `libc::kill` call is made through the same syscall's wrapper (the
-    // `handle_path.rs` precedent).
-    let pid =
-        rustix::process::Pid::from_raw(child.id().expect("#1353 switch e2e child pid") as i32)
-            .expect("#1353 switch e2e child pid in range");
-    rustix::process::kill_process(pid, rustix::process::Signal::TERM)
-        .expect("#1353 switch e2e SIGTERM delivery");
+    native_entry::steady_state_ws_upgrade(address).await;
+    // The signal the production entry is built around (the shared handoff,
+    // #2511 item 1): `kill_on_drop` only SIGKILLs, so the wait below
+    // observes the machine's own exit, not this.
+    native_entry::sigterm_child(&mut child).await;
     // Read to EOF (the child's exit ends the pipe) under the switch bound:
     // the tail is the evidence for which exit path ran.
     let mut tail = Vec::new();
@@ -178,25 +137,10 @@ async fn sigterm_runs_the_switch_and_exits_clean() {
         .await
         .expect("#1353 switch e2e child exit deadline")
         .expect("#1353 switch e2e child exit status");
-    // The machine's S2 began — the signal reached the switch, not a default
-    // disposition death (which would print nothing more and fail below).
-    assert!(
-        tail.iter().any(|line| line == NATIVE_STOPPING),
-        "#1353 the child never announced the switch; tail: {tail:?}"
-    );
-    // An idle server has nothing to halt on: a halt here means the machine
-    // or its teardown is broken, and the tail names which step.
-    assert!(
-        !tail
-            .iter()
-            .any(|line| line.starts_with("native switch halted")),
-        "#1353 the switch over an idle server must complete, not halt; tail: {tail:?}"
-    );
-    // A13: the completed machine is the clean exit. A signal death, a halt
-    // ("native switch halted" in the tail) and a teardown failure all land
-    // here as a failed status with the tail as evidence.
-    assert!(
-        status.success(),
-        "#1353 the completed switch exits 0, got {status}; tail: {tail:?}"
-    );
+    // The machine's S2 began, never halted, and the completed machine is the
+    // clean exit — the shared verdicts, with the tail asserted non-empty
+    // first so the "no halt line" judgement cannot pass over zero output
+    // (#2511 item 1). A signal death, a halt and a teardown failure all land
+    // there as a failed status with the tail as evidence.
+    native_entry::assert_completed_switch(&tail, &status);
 }
