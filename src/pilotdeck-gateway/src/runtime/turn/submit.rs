@@ -809,12 +809,26 @@ impl TurnSubmitter {
                         set(&mut failure, "detail", detail);
                         let record = object([("event", "turn_timeout".into()), ("kind", "error".into()),
                             ("text", message.as_str().into()), ("detail", field(&failure, "detail").clone())]);
-                        if self.host.record_failure(&run, &record).await.is_ok() {
-                            publisher.gateway_event(with_run(failure, &run));
-                        }
-                        let mut event = error_event(&run, "turn_timeout", &message, false);
-                        set(&mut event, "userHint", hint.into());
-                        publisher.gateway_event(event);
+                        // #2498 fix-r2: the timer winner's durable record is a
+                        // host future like the panic arm's — an unbounded await
+                        // here parks the manage arm (and with it the settlement
+                        // the worker parks on, the `close_live`, admission and
+                        // the completion fence) forever, exactly the hang TS
+                        // exhibits on the same shape. Same budget as the panic
+                        // arm: the record and both terminal frames share one
+                        // abort budget, and whatever has not settled by the
+                        // budget is abandoned to the close below — a record
+                        // that settles later never enqueues its frames.
+                        let budget = self.abort_budget();
+                        let _ = tokio::time::timeout(budget, async {
+                            if self.host.record_failure(&run, &record).await.is_ok() {
+                                publisher.gateway_event(with_run(failure, &run));
+                            }
+                            let mut event = error_event(&run, "turn_timeout", &message, false);
+                            set(&mut event, "userHint", hint.into());
+                            publisher.gateway_event(event);
+                        })
+                        .await;
                     }
                     // The settlement lets a worker that observed the timeout
                     // drain and finish (which closes delivery itself).

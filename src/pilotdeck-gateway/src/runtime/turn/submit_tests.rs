@@ -899,6 +899,8 @@ async fn replay_case(case: &Value) {
                 || s.as_str() == Some("panic-close")
                 || s.as_str() == Some("panic-stuck")
                 || s.as_str() == Some("panic-record-stuck")
+                || s.as_str() == Some("panic-record-slow-release")
+                || s.as_str() == Some("timer-record-stuck")
         });
     if controlled_clock {
         tokio::time::pause();
@@ -1228,6 +1230,57 @@ async fn replay_case(case: &Value) {
                     tokio::task::yield_now().await;
                 }
                 tokio::time::advance(Duration::from_millis(1100)).await;
+            }
+            // #2498 fix-r2: the failure record settles, but only after the
+            // budget — the third cell the shared budget introduces. The close
+            // must happen while the record is still gated, and releasing the
+            // record afterwards must not enqueue its frames: the budget
+            // abandoned the record, so the terminal frames never enter the
+            // queue (the wire assertion below pins the empty queue).
+            "panic-record-slow-release" => {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while host_count(&log, "failure_enter") == 0 {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "#2498 {name}: the panicked arm never entered the slow failure record (host={:?})",
+                        log.host.lock().expect("#748 submit fixture prerequisite")
+                    );
+                    tokio::task::yield_now().await;
+                }
+                tokio::time::advance(Duration::from_millis(1100)).await;
+                await_panic_closure(
+                    || panic_turn_closed(&log, &owner),
+                    name,
+                    "the hard close must end the turn while the slow failure record is still gated",
+                )
+                .await;
+                session.failure_gate.open();
+            }
+            // #2498 fix-r2: the timer winner's durable `turn_timeout` record
+            // hangs — before the fix the manage arm parked on it ahead of the
+            // settlement and the `close_live`, the same shape the panic arm
+            // had before fix-r1 (and the same shape TS exhibits: its
+            // `settleTimeout` awaits the record and the pump finally awaits
+            // that settlement). The record now shares the panic arm's abort
+            // budget; the stuck record is abandoned at the budget and the
+            // close ends the turn with no terminal frame on the wire.
+            "timer-record-stuck" => {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while host_count(&log, "failure_enter") == 0 {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "#2498 {name}: the timer arm never entered the stuck failure record (host={:?})",
+                        log.host.lock().expect("#748 submit fixture prerequisite")
+                    );
+                    tokio::task::yield_now().await;
+                }
+                tokio::time::advance(Duration::from_millis(1100)).await;
+                await_panic_closure(
+                    || panic_turn_closed(&log, &owner),
+                    name,
+                    "the timer arm must close the turn without waiting for the stuck failure record",
+                )
+                .await;
             }
             other => panic!("unknown fixture step: {other}"),
         }
@@ -1799,6 +1852,58 @@ async fn stuck_failure_record_still_closes_the_panic_turn() {
     tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
         .await
         .unwrap_or_else(|_| panic!("panic-record-stuck deadlocked"));
+}
+/// #2498 fix-r2: the third cell the shared abort budget introduces — the
+/// failure record settles, but only after the budget has expired. TS has no
+/// budget at all: the record and the appends share one unbounded wait chain
+/// (probe C, `_tmp/20261026-issue-2498/fix-r2/ts-probe-2498-r2.out`), so both
+/// failure frames are delivered once the slow record settles. Rust abandons
+/// the record at the budget, so the terminal frames never enter the queue —
+/// a wire-visible divergence registered in
+/// `specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`.
+#[tokio::test]
+async fn slow_failure_record_settling_after_budget_drops_the_failure_frames() {
+    let case = json!({
+        "name": "panic-record-slow-release",
+        "setup": {"pumpPanic": true, "failureGate": true},
+        "steps": ["panic-record-slow-release"],
+        "native": [],
+        "results": [],
+        "orderOnly": true,
+        "panicWire": "dropped",
+    });
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .unwrap_or_else(|_| panic!("panic-record-slow-release deadlocked"));
+}
+/// #2498 fix-r2: the timer winner's durable `turn_timeout` record was an
+/// unbounded host future ahead of the settlement and the `close_live` — a
+/// stuck record parked the manage arm forever (and the worker parks on the
+/// settlement), the same hang shape the panic arm had before fix-r1. TS
+/// exhibits the same hang (`settleTimeout` awaits the record; the pump
+/// finally awaits that settlement), so bounding it is the registered
+/// "close over hang" trade-off, not a TS-matching fix
+/// (`specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001-R3.md`).
+#[tokio::test]
+async fn stuck_timer_record_still_closes_the_turn() {
+    let case = json!({
+        "name": "timer-record-stuck",
+        "setup": {"input": {"timeoutMs": 100}, "failureGate": true},
+        // #2498: `observe` first so the settle after it starts the spawned
+        // worker and the turn timer registers its deadline before the
+        // `timeout` step's clock advance — advancing first would strand the
+        // deadline past the (already moved) clock and the timer would never
+        // fire, exactly the shape the #727 timer cells avoid with their
+        // leading `observe`.
+        "steps": ["observe", "timeout", "timer-record-stuck"],
+        "native": [],
+        "results": [],
+        "orderOnly": true,
+        "panicWire": "dropped",
+    });
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .unwrap_or_else(|_| panic!("timer-record-stuck deadlocked"));
 }
 #[tokio::test]
 async fn unavailable_capabilities_are_explicitly_refused() {
