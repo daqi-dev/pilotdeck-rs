@@ -12,9 +12,11 @@ TS 真实传入的字段）、BlueBubbles 服务器（`serverUrl` 指向 127.0.0
 `fetch`，本金样是 #1786 的无 stub 对照。不启动真实服务器、账号或网络。
 每个用例一个新的 BlueBubblesChannel 实例；mapper 用真 uuid（记录时遮罩）。
 
-端口段：环回假服务 **19461**（与 feishu 的 18960-18999、weixin 的
-18800-18921、wecom 的 18900-18921 区间均不重叠）。重放前若端口被占，测试
-报的是金样失败而不是被测代码回归，先 `lsof -nP -iTCP:19461` 核占用方。
+端口段：环回假服务 **19461**（主 replay）与组件钉 **19462-19465**（stop 闸门
+钉 / drop 钉 / panic 钉 / stray 钉各一；同一测试二进制并行跑，互不重叠，且与
+feishu 的 18960-18999、weixin 的 18800-18921、wecom 的 18900-18921 区间均不
+重叠）。重放前若端口被占，测试报的是金样失败而不是被测代码回归，先
+`lsof -nP -iTCP:19461` 核占用方。
 
 16 个场景的输入步骤与 TS 结果都在 `oracle.json`：缺配置（无 serverUrl）只报
 error 不起轮询、首轮回合-回复闭环、同 guid 二次投递不重执行、行过滤全集
@@ -83,8 +85,9 @@ submitTurn 报错（"Error: boom" 日志 + 兜底文案）、sendReply 500（mes
 ## 已登记差异与本金样的关系
 
 差异编号见 `specs/gateway-parity/`（002 无生产 InteractionPort · 003 stop 不
-drain · 004 restart 同 guid 通道层再派发 · 005 非法 serverUrl 不炸进程 ·
-006 无信号轮询 GET 的 300 s 总界；001-R2 摘除拒绝表条目）：
+drain，003-R1 更正其 Rust 侧收口描述 · 004 restart 同 guid 通道层再派发 ·
+005 非法 serverUrl 不炸进程 · 006 无信号轮询 GET 的 300 s 总界 · 007 未 stop
+丢弃即停 + poll 任务 panic 无 `poll error` 日志；001-R2 摘除拒绝表条目）：
 
 - **002**：生产装载挂载装 `no_interaction()`，elicitation/permission 应答链在
   生产不可达；金样回放装真实 helper 支撑的 `HelperInteraction` + 脚本
@@ -120,23 +123,45 @@ drain · 004 restart 同 guid 通道层再派发 · 005 非法 serverUrl 不炸�
   路径行为不变（16 用例全绿）。
 - **③ JoinHandle / panic 检测**：interval 任务句柄保留（api_server
   `Listener.task` 形态），`stop` 先 abort 再有界 await（20 s 上界，不引入
-  无界等待）；panic 早于 stop 时记 `error` 日志。per-tick 轮询任务保持
-  TS `void this.pollMessages()` 的逐字 fire-and-forget 形态。**已登记偏差**：
-  TS 侧 `pollMessages` 的 try/catch 把失败记成 `poll error` 日志后继续轮询，
-  Rust 侧 poll 任务 panic 被 tokio 吞掉、无日志（句柄按 TS 形态不保留），
-  但 interval 继续轮询、`stop` 仍返回 Ok——行为面（轮询不停、running 闸门、
+  无界等待）；panic 早于 stop 时记 `error` 日志（stop 收口描述的更正见
+  003-R1）。per-tick 轮询任务保持 TS `void this.pollMessages()` 的逐字
+  fire-and-forget 形态。**已登记偏差（A8.3-CH-BLUEBUBBLES-007）**：TS 侧
+  `pollMessages` 的 try/catch 把失败记成 `poll error` 日志后继续轮询，Rust
+  侧 poll 任务 panic 被 tokio 吞掉、无日志（句柄按 TS 形态不保留），但
+  interval 继续轮询、`stop` 仍返回 Ok——行为面（轮询不停、running 闸门、
   stop 可收）一致，仅缺错误日志；`poll_task_panic_does_not_stop_the_driver`
-  用脚本网关 turn-index 互斥量投毒注入 panic 钉该行为面。
+  用脚本网关 turn-index 互斥量投毒注入 panic 钉该行为面（毒行排在脚本
+  槽位 1、落在 driver 首 tick 的 spawn 任务里，等到第 3 次 poll 才证明
+  interval 存活；gateway 投影为空证明投毒路径走到；停后窗口镜像 drop 钉
+  的「排空后基线 + 完整 POLL_MS 窗口」逻辑），负控
+  `poll-task-inlined-into-driver`（per-tick spawn 改 inline → panic 落进
+  driver 任务 → 第 3 次 poll 永不到达）必被杀。未 stop 丢弃即停（比 TS 严）
+  一并登记在 007。
 - **① SEND_TIMEOUT**：`sendReply` 的 `AbortSignal.timeout(120_000)` 与
   `MESSAGE_LIMIT` 同为进请求字节的常量，同口径处理——常量钉
   `send_timeout_is_the_ts_abort_deadline` + 负控 `send-timeout-changed`。
+  **仅常量钉、调用点不钉**（豁免依据：`SEND_TIMEOUT` 全仓唯一使用点在
+  `mod.rs` 的 `request_bearer` 调用，常量钉 + 唯一使用点已由编译器接线
+  锁死；调用点行为钉需要暂停时钟 + 静默 POST 服务器 + keeper/receipt
+  看门狗整套装置（http_client 同款钉历经 #2285 r4 两轮才稳），超出本轮
+  预算，登记为 P2 跟进候选）。
 - **r2 ④ arm 清空 strays**：`arm()` 不再清 strays、改记用例纪元
   （`strays: Vec<(epoch, request)>`），断言「stray 的 epoch == 观察到它的
-  用例」+「本纪元无 stray」；上一用例泄漏的晚到 poll 具名失败而不是被
-  下一 `arm()` 静默清掉。负控 `strays-foreign-epoch` 注入外纪元 stray。
-- **r2 ⑤ SETTLE**：disarm 前的排空从固定 50 ms 改为自扩展重试（50 ms
-  一轮、计数仍在动则续等、上限 4 轮 = 200 ms）：慢机 / 重负载下回环套接字
-  里已在途的字节仍落在自己用例的 armed 窗口；超脚本槽位的轮询只拿兜底
+  用例」+「本纪元无 stray」。负控三条：`strays-foreign-epoch` 注入外纪元
+  stray（钉断言存在）；`arm-clear-reinserted` 回插 arm 内清空——由
+  `late_stray_survives_the_next_arm` 杀：真实迟请求（走环回 socket 进
+  disarmed 服务端、经 `mock.stray()` 落账，与泄漏 poll 同路径）必须存活过
+  下一次 arm 并保持原纪元；`late-stray-real-path` 在 replay 末尾 disarm
+  之后注入同样的真实迟请求——由第一个用例的「本纪元无 stray」杀，证明
+  真实路径的迟到请求会被具名记到用例头上。
+- **r2 ⑤ SETTLE（fix-r1 收口）**：disarm 前的排空从固定 50 ms 改为自扩展
+  重试（50 ms 一轮、**连续 2 轮静默**才终止、计数仍在动则续等、上限 6 轮
+  = 300 ms）：单个 50 ms 静默窗口不再终止排空——服务端任务被负载饿过第一
+  窗口时，已在途字节仍落在自己用例的 armed 窗口，而不是排空过早退出后
+  落成 stray（r1 假 FAIL 窗口收窄；仍是启发式，连续两轮饿住仍会掐断）。
+  终止语义由 `drained_holds_through_a_single_silent_window`（暂停时钟：
+  到达落在第一、二窗口之间时必须被观察到且等待 ≥150 ms）钉住，负控
+  `drained-single-quiet` 回退单窗终止必被杀。超脚本槽位的轮询只拿兜底
   `{}`、在去重投影里不可见，扩展窗口不会改变绿快照；整体仍受 `DEADLINE`
   20 s 总界约束（排空后的静默检查仍为固定 SETTLE，其语义是断言「 arrivals
   停止」而非等待排空）。
@@ -185,5 +210,7 @@ v22.22.0 实测字面量。
 改值（#2285 ①）、driver 强引用回退（#2285 ②）、拒绝表回插 bluebubbles、
 无信号轮询 GET 的 300 s 总界删除、(300 s, 400 s) 漂移 350 s 与常量改值
 （#2285 r4 ④）、receipt 看门狗「字节前停摆 / 到达前死亡」两支（#2285 r4 ⑤）、
-strays 外纪元（#2285 r2 ④），以及 oracle 三重校验各一
-条；先 `--compile-only` 全过再交协调者跑 OUT。
+strays 外纪元（#2285 r2 ④）、arm 清空回插与 replay 末尾真实迟请求
+（#2285 fix-r1 boundary #1）、per-tick 轮询 inline 进 driver（#2285 fix-r1
+sibling #2）、排空单窗终止回退（#2285 fix-r1 boundary #2），以及 oracle
+三重校验各一条；先 `--compile-only` 全过再交协调者跑 OUT。
