@@ -5079,3 +5079,7 @@ r80编译/快照/submit/management/首次owned cwd/FIFO/strict/四bin及实际na
 ### 2026-11-09 01:31 · CLI 真回归与最后入口收口
 
 r82完整CLI实际542通过、0失败、140忽略，四bin/strict通过；新增owned-cwd测试首次误将整个含孤立UTF16的oracle转serde，06365只转目标case后r83真实1PASS，plugin旧hooks拒绝断言也已实测修正并1PASS，精确marker父测试1PASS。TCP三格r82真两轮均完成，同driver旧r80仍第二轮身份冲突；正常probe与主动SIGTERM清理原件见主仓 `_tmp/20261108-cli-completion/tcp-r82/`。r80全Gateway被测试夹具资源累积拖至252FD/236KQUEUE后挂起，已保现场并SIGTERM，不报整轮通过；d9已有factory观察强环经b059清理，实际同173测试前后均PASS且FD峰197→25，r84同256limit全量5580重跑中。双谱系新审发现cron/TUI同源token读器遗漏，52c9已源码修并补真实PTY八格待mbp2编译；只新增R2范围，不回写旧差异。优先17个实际负控在独立validation副本串跑，完整负控计划153个控制待执行，不以5805静态锚0错代KILL。仅本机提交，Rust只mbp2；本机归属明确材料约1.82GiB、无target/_build。完整CLI工程及阶段D人签尚未完成，下个02:41交接后继续。
+
+### 2026-11-09 01:56 · CLI 范围复核后继续补实质缺口
+
+d2c4已整合插件诊断/空hooks测试及token回退四格、TCP清理候选，仍未编译不记通过；r84全Gateway和17优先实际负控继续，已有4项KILLED，当前进程FD约30。最新独审另报TCP清理提前close引发ValueError假FAIL，mbp2 barrier已重现，Terra修shutdown/join顺序并复验，未宣称终审通过。完整范围审计确认同宿主多项目、plugin-owned commands/skills/MCP声明尚有实际差额，不能以单项目/受限JS文案当人已豁免；Sol转多项目租约，audit转有界贡献加载，root负责实际消费和串行集成，保留正在运行两验证副本。32项旧默认技能没有被外部root选项等价替代，已向用户询问合法资产来源选择，其余产品工作继续。依据主仓 `_tmp/20261108-cli-completion/scope-audit-terra-20261109/assessment.md`，原交付草稿非完成结论；只本机提交、所有Rust仅mbp2、无GitHub写，02:41交接后继续。
