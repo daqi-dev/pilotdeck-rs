@@ -85,8 +85,9 @@ shasum -a 256 <PD>/tools/agent-loop-parity/trace.py
 
 verify（任何人可复算；`--evidence` 指向 #1841 证据目录，不重录；登记件与 corpus manifest
 默认取 verify 脚本同目录的 `20261108-1841.md` / `20261108-1841-corpus-manifest.txt`，
-也可用 `--manifest` 显式指定；**`--out` 必须落在 `--evidence` 之外**——判据 0 是精确文件
-集，结果 JSON 写进证据目录会让下一次复算报「unexpected file」假 FAIL）：
+也可用 `--manifest` 显式指定；**`--out` 与 `--manifest` 都必须落在 `--evidence` 之外**
+——判据 0 是精确文件集，结果 JSON 写进证据目录会让下一次复算报「unexpected file」假
+FAIL；fix-r3 起这是入口机械断言，落内即 FAIL-CLOSED）：
 
 ```bash
 python3 -I specs/parity/device-patches/20261108-1841-verify.py \
@@ -99,7 +100,9 @@ python3 -I specs/parity/device-patches/20261108-1841-verify.py \
 verify 内部同样 fail-closed：登记件三处 sha 钉（patch / verify 自身 / manifest）与 `Change:`
 old/new 不符拒绝；基线 sha 不符拒绝；`git apply --check` / `git apply` 失败拒绝；apply 后
 sha 不符拒绝；证据语料对照 corpus manifest **缺失、多余、逐件 sha256 不符均 FAIL-CLOSED**
-（不是只核哈希：文件集必须精确相等）、trace 为空、kind 条数直方图偏离写死值、census "n/a"
+（不是只核哈希：文件集必须精确相等；fix-r3 起路径集合比对先于任何字节读取——多余文件在
+被读进内存之前即拒绝，语料读取按 500 MB 累积上限机械断言）、trace 为空、kind 条数直方图
+偏离写死值、census "n/a"
 均拒绝。锚定语义为 **validate-once 全链**（fix-r2）：manifest、patch、每个证据文件各只读
 一次，哈希校验后判分一律消费已核字节（manifest 条目从已核字节解析、`git apply -` 从 stdin
 吃已核 patch 字节、证据语料整树缓存在内存、`load_trace` 从缓存的 scratch 物化副本加载），
