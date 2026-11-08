@@ -255,6 +255,7 @@ struct CompletionOwner {
 #[derive(Default)]
 struct State {
     project_binding: bool,
+    project_scopes: HashMap<JsString, (JsString, usize)>,
     stopped: bool,
     records: HashMap<JsString, Record>,
     completion_owners: HashMap<JsString, CompletionOwner>,
@@ -280,6 +281,40 @@ struct Inner {
 
 #[derive(Clone)]
 pub struct SessionOwner(Arc<Inner>);
+
+fn project_mismatch() -> RuntimeError {
+    RuntimeError::new("PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+}
+
+/// Request identity reservation. It is not a session handle or runtime lease.
+/// Dropping it merely permits a later project to claim an otherwise unowned key.
+pub struct SessionProjectScope {
+    owner: Weak<Inner>,
+    key: JsString,
+    project: JsString,
+}
+impl SessionProjectScope {
+    pub fn project_key(&self) -> &JsString {
+        &self.project
+    }
+}
+impl Drop for SessionProjectScope {
+    fn drop(&mut self) {
+        let Some(owner) = self.owner.upgrade() else {
+            return;
+        };
+        let mut state = owner
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some((_, users)) = state.project_scopes.get_mut(&self.key) {
+            *users -= 1;
+            if *users == 0 {
+                state.project_scopes.remove(&self.key);
+            }
+        }
+    }
+}
 
 impl SessionOwner {
     #[cfg(test)]
@@ -425,6 +460,67 @@ impl SessionOwner {
                     .find(|p| &p.session_key == key && p.completion.borrow().is_none())
                     .and_then(|p| p.project.clone())
             })
+            .or_else(|| {
+                state
+                    .project_scopes
+                    .get(key)
+                    .map(|(project, _)| project.clone())
+            })
+    }
+
+    /// Keep the selected request identity stable across asynchronous handlers.
+    /// No lock is held after return. A same-project request shares the lease;
+    /// an explicit different project cannot replace even an absent owner until
+    /// all such requests finish. Generic callers need not use this opt-in port.
+    pub fn reserve_project(
+        &self,
+        key: &JsString,
+        requested: Option<&JsString>,
+        fallback: &JsString,
+    ) -> Result<SessionProjectScope, RuntimeError> {
+        let mut state = self.0.state.lock().unwrap();
+        let owned = state
+            .records
+            .get(key)
+            .and_then(|r| r.context.project_key.clone())
+            .or_else(|| {
+                state
+                    .pending
+                    .iter()
+                    .find(|p| &p.session_key == key && p.completion.borrow().is_none())
+                    .and_then(|p| p.project.clone())
+            })
+            .or_else(|| {
+                state
+                    .project_scopes
+                    .get(key)
+                    .map(|(project, _)| project.clone())
+            });
+        let selected = requested
+            .cloned()
+            .or_else(|| owned.clone())
+            .unwrap_or_else(|| fallback.clone());
+        if owned.as_ref().is_some_and(|project| project != &selected)
+            || state
+                .project_scopes
+                .get(key)
+                .is_some_and(|(project, _)| project != &selected)
+        {
+            return Err(project_mismatch());
+        }
+        let entry = state
+            .project_scopes
+            .entry(key.clone())
+            .or_insert_with(|| (selected.clone(), 0));
+        entry.1 = entry
+            .1
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::new("Too many project request scopes."))?;
+        Ok(SessionProjectScope {
+            owner: Arc::downgrade(&self.0),
+            key: key.clone(),
+            project: selected,
+        })
     }
 
     /// Starts/tracks the operation before returning the future, just like the
@@ -458,12 +554,12 @@ impl SessionOwner {
                         .as_ref()
                         .is_some_and(|owned| owned != project)
             });
-            if record_mismatch || pending_mismatch {
-                return Box::pin(async {
-                    Err(RuntimeError::new(
-                        "PROJECT_SESSION_MISMATCH: Session belongs to a different project.",
-                    ))
-                });
+            let request_mismatch = state
+                .project_scopes
+                .get(&context.session_key)
+                .is_some_and(|(owned, _)| owned != project);
+            if record_mismatch || pending_mismatch || request_mismatch {
+                return Box::pin(async { Err(project_mismatch()) });
             }
         }
         let ticket = ticket(&mut state, &context.session_key);

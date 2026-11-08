@@ -17,7 +17,7 @@ pub use handle::{
 pub(crate) use owner::{AsyncTurnLookup, CapturedAsyncTurn};
 pub use owner::{
     EvictionReason, MaintenanceReservation, SessionContext, SessionEvictionSnapshot,
-    SessionFactory, SessionOwner, SessionOwnerOptions,
+    SessionFactory, SessionOwner, SessionOwnerOptions, SessionProjectScope,
 };
 
 use pilotdeck_protocol::JsString;

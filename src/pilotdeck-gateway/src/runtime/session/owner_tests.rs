@@ -2266,3 +2266,34 @@ async fn native_project_binding_rejects_pending_and_warm_cross_project_reuse() {
     assert_eq!(owner.project_key(&"shared".into()), Some("B".into()));
     bounded(owner.shutdown()).await.unwrap();
 }
+
+#[tokio::test]
+async fn native_project_request_scope_pins_absent_owner_until_handler_finishes() {
+    let probe = Probe::default();
+    let mut options = SessionOwnerOptions::new(Arc::new(probe));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner.enforce_project_binding();
+    let key = JsString::from("shared");
+    let a = JsString::from("A");
+    let b = JsString::from("B");
+    let first = owner.reserve_project(&key, Some(&a), &a).unwrap();
+    let second = owner.reserve_project(&key, None, &b).unwrap();
+    assert_eq!(second.project_key(), &a);
+    assert!(
+        matches!(owner.reserve_project(&key, Some(&b), &b), Err(ref error) if error.message == "PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+    );
+    let mut context_b = context("shared");
+    context_b.project_key = Some(b.clone());
+    assert!(
+        matches!(bounded(owner.get_or_create(context_b.clone())).await, Err(ref error) if error.message == "PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+    );
+    drop(first);
+    assert!(owner.reserve_project(&key, Some(&b), &b).is_err());
+    drop(second);
+    let third = owner.reserve_project(&key, Some(&b), &a).unwrap();
+    assert_eq!(third.project_key(), &b);
+    bounded(owner.get_or_create(context_b)).await.unwrap();
+    drop(third);
+    bounded(owner.shutdown()).await.unwrap();
+}
