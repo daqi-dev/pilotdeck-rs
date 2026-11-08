@@ -447,6 +447,20 @@ class WitnessTests(unittest.TestCase):
                                 'frame fails the projection instead of being dropped'):
                 c.read_observation(home, str(project), 'session-1', 'run-01',
                                    malformed, request_id='case-01')
+            # #2396 fix-r5, anthropic boundary P2 (empirically pinned): an
+            # empty-string or non-string id is not a well-formed foreign id
+            # either — the predicate keeps the frame and the projection
+            # fails closed on it, exactly like the id-less entry above.
+            for bad_id in ('', 123):
+                with self.assertRaises(w.native.Incomplete, msg='#2396 a '
+                                      + repr(bad_id) + ' id fails the '
+                                      'projection instead of being dropped'):
+                    c.read_observation(home, str(project), 'session-1', 'run-01',
+                                       [own[0],
+                                        {'type': 'event', 'id': bad_id, 'seq': 5,
+                                         'final': False,
+                                         'event': {'type': 'model_request_started'}},
+                                        own[1]], request_id='case-01')
 
     def test_recorder_rows_audit(self):
         # A real loopback WebSocket exchange: every observer row the frozen

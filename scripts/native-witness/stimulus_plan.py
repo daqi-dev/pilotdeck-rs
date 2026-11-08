@@ -197,13 +197,17 @@ def _loop(evidence, phase, key=None, site='loop'):
 
 
 def _numeric_seq(value):
-    """A numeric seq, excluding bool (``isinstance(True, int)`` is True).
+    """A plain int seq, excluding bool (``isinstance(True, int)`` is True).
 
     The frozen projection types the field as a plain int
     (``native_evidence.py``); a boolean must never satisfy a seq edge or
-    match a release record (#2396 fix-r4, DS boundary P2#2).
+    match a release record (#2396 fix-r4, DS boundary P2#2), and neither
+    may a float — the projection never emits one, so a float seq is
+    synthetic or truncated evidence and fails closed (#2396 fix-r5,
+    DS boundary P2#2: the docstring said plain int while the check
+    accepted floats).
     """
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return isinstance(value, int) and not isinstance(value, bool)
 
 
 def _seq_lt(before, after):
@@ -261,6 +265,19 @@ def _actions(evidence, name, **match):
             if action.get('action') == name
             and all(action.get('detail', {}).get(field) == value
                     for field, value in match.items())]
+
+
+def _release_action(evidence, seq):
+    """The release-storage control record that released one barrier.
+
+    ``detail.seq=True`` equals ``1`` under ``==``, so a boolean must not
+    key a release record — a boolean detail never matches (#2396 fix-r5,
+    DS boundary P2#2: the plain ``_actions(..., seq=seq)`` match let
+    ``True`` stand in for seq 1 and attest the rearm edge).
+    """
+    return [action for action in _actions(evidence, 'release-storage')
+            if _numeric_seq(action.get('detail', {}).get('seq'))
+            and action['detail']['seq'] == seq]
 
 
 def _registry_types(evidence):
@@ -323,12 +340,24 @@ def _final_frame(evidence):
             and request is not None and frame.get('id') == request]
 
 
+def _numeric_ms(value):
+    """A measured duration in ms: int or float, excluding bool.
+
+    ``timeoutMs`` arrives as a plain int, ``finalElapsedMs`` is a float by
+    construction (``stimulus_driver.py`` rounds the measured span) — unlike
+    ``seq`` these fields are driver-measured, not projection-typed, so the
+    float stays admissible; only a boolean never is (#2396 fix-r5,
+    anthropic sibling P2).
+    """
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _timer_cleared(evidence):
     """Native `timer.clear`/`timer.fire.skipped`: the release beat the timer."""
     notes = evidence.get('notes', {})
     return (notes.get('noTimeoutFrameBeforeFinal') is True
-            and isinstance(notes.get('timeoutMs'), (int, float))
-            and isinstance(notes.get('finalElapsedMs'), (int, float))
+            and _numeric_ms(notes.get('timeoutMs'))
+            and _numeric_ms(notes.get('finalElapsedMs'))
             and notes['finalElapsedMs'] < notes['timeoutMs'])
 
 
@@ -405,6 +434,29 @@ def _target_witnesses(stimulus, target, evidence):
             absent.append('status.block.seq < queued.seq (FIFO follower)')
         if queued and released and not _seq_lt(queued[0], released[0]):
             absent.append('queued.seq < status.release.seq')
+        # Collector-side edges for the declared (unknown, fifo) and
+        # (fifo, release) pairs (#2396 fix-r5, DS sibling P2#2): the
+        # receipt edges above attest the product side; these pin the
+        # driver's own ordering discipline on its action log — the
+        # timeout-first order target already fails closed on a missing
+        # release-loop/unknown record, so neither requirement is new.
+        release_unknown = _actions(evidence, 'release-loop', stage='outcome',
+                                    outcome='unknown')
+        if release_unknown and fifo \
+                and not release_unknown[0]['monotonic'] < fifo[0]['monotonic']:
+            absent.append('control.release.unknown before control.status.fifo.checked')
+        if fifo and blocked:
+            seq = blocked[0].get('seq')
+            if not _numeric_seq(seq):
+                absent.append(
+                    'control.status.fifo.checked before the status release (seq absent)')
+            else:
+                rel = _release_action(evidence, seq)
+                if not rel:
+                    absent.append('control.status.fifo.checked before the status release '
+                                  '(release record absent)')
+                elif not fifo[0]['monotonic'] < rel[0]['monotonic']:
+                    absent.append('control.status.fifo.checked before the status release')
         found += blocked[:1] + released[:1] + queued[:1] + fifo[:1]
         found += _storage(evidence, 'writer', 'complete', 'turn_timeout')[:1]
     elif name == 'slowCatchStatus':
@@ -451,9 +503,29 @@ def _target_witnesses(stimulus, target, evidence):
             queued = _queued(evidence, 'registry')
             if error_block and queued and not _seq_lt(error_block[0], queued[0]):
                 absent.append('registry.persist.block.seq < queued.seq (FIFO follower)')
+            if queued and error_release and not _seq_lt(queued[0], error_release[0]):
+                absent.append('queued.seq < release.seq (FIFO before release)')
             if error_block and error_release \
                     and not _seq_lt(error_block[0], error_release[0]):
                 absent.append('error block.seq < release.seq')
+            # Collector-side edge on the driver's own action log: the FIFO
+            # sighting precedes the controlled release (#2396 fix-r5, DS
+            # sibling P1 + boundary P1 — two families: the r4 branch
+            # attested block→fifo and block→release but never the declared
+            # (fifo, release) edge itself).
+            fifo_action = _actions(evidence, 'control.registry.fifo.checked')
+            if fifo_action and error_block:
+                seq = error_block[0].get('seq')
+                if not _numeric_seq(seq):
+                    absent.append(
+                        'control.registry.fifo.checked before the error release (seq absent)')
+                else:
+                    rel = _release_action(evidence, seq)
+                    if not rel:
+                        absent.append('control.registry.fifo.checked before the error release '
+                                      '(release record absent)')
+                    elif not fifo_action[0]['monotonic'] < rel[0]['monotonic']:
+                        absent.append('control.registry.fifo.checked before the error release')
         else:
             base = variant['slowAppend']
             status_block = _storage(evidence, 'registry', 'block', 'agent_status:' + base)
@@ -497,7 +569,7 @@ def _target_witnesses(stimulus, target, evidence):
                     # silent skip (#2396 fix-r3, DS concurrency P2).
                     absent.append('rearm-storage before the first registry release (seq absent)')
                 else:
-                    first_release = _actions(evidence, 'release-storage', seq=seq)
+                    first_release = _release_action(evidence, seq)
                     if not first_release:
                         absent.append(
                             'rearm-storage before the first registry release (release record absent)')
