@@ -77,21 +77,28 @@ needle 含调用头 + 条件 + 极性 + 消息；比较前用共享 `negative_so
 正反对照表里的尾部多余内容与 IPv6 输入），`native_listening_observation_needs_a_finished_line`
 绑完整广告 / EOF 残行 / 上限截断 / 静默 / 读错 / 总预算六支的**输入与断言**，加上两条
 `Instant` 上界（静默 50 ms 与预算 5 s 都必须在 1 s 内收口，把调用点两个实参互换变成红）与
-`collected.len() <= CHILD_STDERR_LIMIT`；`advertises` 里的换行守卫按
+`collected.len() <= CHILD_STDERR_LIMIT`；两条 `Instant` 上界的判别力依赖 50 ms ≪ 1 s ≪ 5 s，
+所以两个时长**输入**也按整条 `let` 语句各绑一针（#2102 P2-2）：预算缩到 ≤1 s 后所有运行期
+检查照旧全绿、`timeout(left, …)` 丢 `silence.min(left)` 的实现漂移从此漏判，只有输入针变红，
+且整条语句形式连 `silence` / `budget` 两个变量名互换也算漂移；`advertises` 里的换行守卫按
 `squeeze(test_body(…, 'advertises'))` 整条绑定（`if !line.ends_with(b"\n") { return false; }`），
 短路与返回动作改写都算漂移——两个变异体都只打印拒绝行或一条完整广告，看不出形状被放宽成
 前缀匹配，只有 pin 自己会红（#1401 评审 P2）。整条调用 / 整条守卫的 needle 咬不咬得住由同目录的
-`test_native_entry_binding.py` 逐条变异证明（22 条漂移负控，含 scrub「无法判定」分支的
-极性 / 消息两条与 `early_exit_invalid.py` 自己那根拒绝闸门的短路 / 降级两条；外加真源码满足
+`test_native_entry_binding.py` 逐条变异证明（24 条漂移负控，含 scrub「无法判定」分支的
+极性 / 消息两条、`early_exit_invalid.py` 自己那根拒绝闸门的短路 / 降级两条，与 #2102 P2-2
+的两条时长输入缩水（预算 5 s → 500 ms、静默 50 ms → 500 ms，运行期全绿、只有输入针变红）；
+外加真源码满足
 全部绑定、两个脚本不许再留私有副本——按 AST 收集赋值名，缩进、类型注解、同行多赋值都算——
 两个 runner 真**消费**共享表（用同一个变异驱动各自的 `--check` 体，返回的错里必须点到这根针）、
 runner 源码里不许出现针形字面量（`assert!(` / `if !advertised` / `line.ends_with` 等），
 早退行 ROWS 的 payload 校验也走 `squeeze`（注释掉的 payload 不算）、
-与两处 `--check` 在真树上 rc=0，共 29 条）。纯输入 needle（IPv6、尾部多余内容、
+与两处 `--check` 在真树上 rc=0，共 31 条）。纯输入 needle（IPv6、尾部多余内容、
 `Failed to parse default config YAML.`、`!status.success()`、`leftover.is_empty()`）没有专属
-变异，只由「真源码满足全部绑定」兜底——改动它们要真跑负控才能判；`squeeze` 的**词法切分**（字符字面量 / 普通串 / raw string /
+变异，只由「真源码满足全部绑定」兜底——改动它们要真跑负控才能判；#2102 P2-2 的两条时长
+输入针有自己的变异，属漂移负控而不在此列。`squeeze` 的**词法切分**（字符字面量 / 普通串 / raw string /
 字节与 C 串 / lifetime / 行与嵌套块注释，注释整段丢弃但仍分隔 token）由
-`../test_negative_source.py` 的碰撞反例覆盖（#1989 项 1–4）。切段函数由两个脚本共用
+`../test_negative_source.py` 的碰撞反例覆盖（#1989 项 1–4；#2102 P2-1 起
+`assertion_message_present` 也改在 squeeze 后匹配，行 / 块注释掉的断言不算存在）。切段函数由两个脚本共用
 `negative_source.test_body`，在函数自己的收尾 `}` 处截断，因此最后一个测试之后的辅助
 函数不会被吞进来，`#[tokio::test(flavor = ...)]` 这类属性也不会被漏认。实际负控命令
 为 `python3 -I negative_controls.py NEW_OUTPUT [mutation ...]`，必须由调用方设置
