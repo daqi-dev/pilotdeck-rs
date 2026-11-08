@@ -128,10 +128,19 @@ class WireClient:
         w.need(left > 0, 'native driver deadline')
         return left
 
-    def read(self, count):
+    def read(self, count, until=None):
+        """Buffer exactly `count` bytes; under `until` (a monotonic cap)
+        a timeout returns None and the partial bytes stay buffered."""
         while len(self.buffer) < count:
-            self.socket.settimeout(self.remaining())
-            data = self.socket.recv(max(4096, count - len(self.buffer)))
+            left = (until - time.monotonic()) if until is not None else self.remaining()
+            w.need(left > 0, 'native driver deadline')
+            self.socket.settimeout(left)
+            try:
+                data = self.socket.recv(max(4096, count - len(self.buffer)))
+            except socket.timeout:
+                if until is not None:
+                    return None
+                raise
             w.need(data, 'websocket closed before final')
             self.buffer += data
         value, self.buffer = self.buffer[:count], self.buffer[count:]
@@ -159,16 +168,28 @@ class WireClient:
                                    'payloadLength': size},
                           'frame': payload.decode(), 'connection': 1})
 
-    def receive(self):
-        head = self.read(2)
+    def receive(self, until=None):
+        """One wire frame, or None when `until` (a monotonic cap) expires
+        mid-frame. The single-argument read keeps the read(count) seam the
+        authentication/r11 stubs monkeypatch (#1140/#1809)."""
+        def capped(count):
+            return self.read(count) if until is None else self.read(count, until)
+
+        head = capped(2)
+        if head is None:
+            return None
         w.native.ws_profile('receive', {'opcode': head[0] & 15, 'fin': bool(head[0] & 128),
                                          'rsv': (head[0] >> 4) & 7, 'masked': bool(head[1] & 128)})
         code = head[1] & 127
         length = code
-        extra = self.read(2 if length == 126 else 8) if length >= 126 else b''
+        extra = capped(2 if length == 126 else 8) if length >= 126 else b''
+        if extra is None:
+            return None
         length = int.from_bytes(extra, 'big') if extra else length
         w.need(length <= 4 * 1024 * 1024, 'oversized WS frame')
-        payload = self.read(length)
+        payload = capped(length)
+        if payload is None:
+            return None
         value = json.loads(payload)
         self.rows.append({'direction': 'receive', 'wireHex': (head + extra + payload).hex(),
                           'wire': {'opcode': 1, 'fin': True, 'rsv': 0, 'masked': False,
@@ -189,14 +210,18 @@ class WireClient:
         itself never becomes readable again until they are parsed — are
         drained first; only then is the socket selected on. Reading only after
         select fires keeps the recorder contract: only a complete, parsed
-        frame is ever recorded as a row.
+        frame is ever recorded as a row. A frame that only partially arrives
+        within `timeout` returns None with its bytes left buffered — the
+        poll never blocks past its own cap on the capture deadline
+        (#2396 fix-r1, codex concurrency P1).
         """
+        cap = time.monotonic() + timeout
         if self.buffer:
-            return self.receive()
+            return self.receive(until=cap)
         readable, _, _ = select.select([self.socket], [], [], timeout)
         if not readable:
             return None
-        return self.receive()
+        return self.receive(until=cap)
 
 
 def native_run(gateway, sidecar, output, port=28999, session_domain=False, registry='on'):
@@ -695,6 +720,14 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                             'allowedTools': [], 'timeoutMs': plan['timeoutMs']}})
                         driven = control.drive(case, plan['stimulus'], client, request_id,
                                                deadline, timeout_ms=plan['timeoutMs'])
+                        # Disarm before the settle window, not after it: this
+                        # case's receipts are already in the witness
+                        # directories the evidence harvest reads, and a
+                        # barrier left armed during the settle would hold the
+                        # product's later durable writes (#2396 fix-r1, DS
+                        # boundary). The next case arms only at its own
+                        # prepare.
+                        control.disarm()
                         received = driven['received']
                         # #1363 (#10): a manifest case absent from the frozen
                         # expectations is a structural drift, not a bare KeyError
@@ -704,14 +737,14 @@ def _native_run(gateway, sidecar, output, port, session_domain=False, registry='
                                'session expectations missing manifest case: ' + case)
                         settle = deadline
                         if (registry == 'off' and expectation['registry']['applicable']):
-                            settle = time.monotonic() + SESSION_OFF_REGISTRY_SETTLE_SECONDS
+                            # Bounded by the capture deadline too: the window
+                            # must never extend past what the lease owns
+                            # (#2396 fix-r1, DS boundary).
+                            settle = min(deadline, time.monotonic()
+                                         + SESSION_OFF_REGISTRY_SETTLE_SECONDS)
                         observation, identity, source = wait_observation(
                             home, str(project), key, run_id, received, request_id, settle,
                             expectation=expectation)
-                        # Disarm before the next case arms so a stale barrier
-                        # can never fire on it; this case's receipts are already
-                        # in the witness directories the evidence harvest reads.
-                        control.disarm()
                         # Registry surfaces come from the same settled
                         # observation the scoring reads, unwrapped from their
                         # seq envelopes. The registry-off closure evidence is

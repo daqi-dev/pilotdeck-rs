@@ -14,6 +14,7 @@ gates ``is_planned``. The registry switch is process-wide, so one capture
 carries exactly one on/off setting and the 72-case manifest is still driven
 in full for both settings (two captures, union attribution off-tree).
 """
+import copy
 import json
 import os
 from pathlib import Path
@@ -29,9 +30,13 @@ class StimulusIncomplete(Exception):
 # the product. Milestone waits stay well under the product bounds.
 LOOP_BOUND_MS = 8000
 STORAGE_BOUND_MS = 8000
-CASE_BUDGET_SECONDS = 8.0
 MILESTONE_SECONDS = 1.5
 POLL_SECONDS = 0.02
+# The case budget must out-wait the product's own storage bound plus the
+# final top-up: with 8.0 == 8000 ms the budget raced the bound, so a barrier
+# whose bound expired was cut off before the self-release could be observed
+# (#2396 fix-r1, codex concurrency/DS boundary).
+CASE_BUDGET_SECONDS = STORAGE_BOUND_MS / 1000.0 + 2 * MILESTONE_SECONDS
 
 PREFIX_TYPES = {'model': 'model_request_started', 'tool': 'tool_call_started'}
 
@@ -191,6 +196,13 @@ class StimulusDriver:
     def loop_receipt(self, phase, key):
         return self._receipts('loop', site='loop', phase=phase, key=key)
 
+    def _plan_bound(self, phase, key):
+        """Loop receipts at one phase/key bound to this plan's pids."""
+        pids = self._plan_pids()
+        return [receipt for receipt in self._receipts('loop', site='loop', phase=phase,
+                                                       key=key)
+                if receipt.get('pid') in pids]
+
     def fence_receipt(self, phase, key):
         return self._receipts('loop', site='fence', phase=phase, key=key)
 
@@ -226,24 +238,13 @@ class StimulusDriver:
             raise StimulusIncomplete('#2396 drive without prepare: ' + str(case))
         prefix_type = PREFIX_TYPES[plan['phase']]
         state['notes']['timeoutMs'] = timeout_ms
+        state['requestId'] = request_id
+        state['prefixType'] = prefix_type
         started = time.monotonic()
+        state['startedAt'] = started
         end = min(deadline, started + CASE_BUDGET_SECONDS)
         while time.monotonic() < end:
-            frame = client.receive_poll(POLL_SECONDS)
-            if frame is not None:
-                state['received'].append(frame)
-                event = frame.get('event') if isinstance(frame, dict) else None
-                kind = event.get('type') if isinstance(event, dict) else None
-                if state['prefixIndex'] is None and kind == prefix_type:
-                    state['prefixIndex'] = len(state['received']) - 1
-                if frame.get('id') == request_id and frame.get('final'):
-                    state['final'] = frame
-                    if 'finalAt' not in state:
-                        # The timer.clear observation needs the submit→final
-                        # elapsed time, not just the ordering of the frames.
-                        state['finalAt'] = time.monotonic()
-                        state['notes']['finalElapsedMs'] = round(
-                            (state['finalAt'] - started) * 1000.0, 3)
+            self._ingest(client.receive_poll(POLL_SECONDS))
             self._scan()
             self._settle_milestones(plan)
             if self._turn_complete(plan):
@@ -264,10 +265,13 @@ class StimulusDriver:
             if self._final_seen() and state['outcome'] is not None:
                 break
         # A loop final receipt can trail the last frame by a few polls; give
-        # it the same bounded top-up as any other milestone.
+        # it the same bounded top-up as any other milestone. Frames arriving
+        # during the top-up are ingested through the same path as the main
+        # loop (#2396 fix-r1: the return value used to be dropped, losing a
+        # final that landed just past the case budget).
         topup = min(deadline, time.monotonic() + MILESTONE_SECONDS)
         while time.monotonic() < topup and not self._turn_complete(plan):
-            client.receive_poll(POLL_SECONDS)
+            self._ingest(client.receive_poll(POLL_SECONDS))
             self._scan()
             self._settle_milestones(plan)
         if state['prefixIndex'] is None:
@@ -275,6 +279,31 @@ class StimulusDriver:
         self._observe_orders(plan)
         return {'received': state['received'], 'actions': state['actions'],
                 'notes': state['notes'], 'missed': state['missed']}
+
+    def _ingest(self, frame):
+        """Record one client frame (shared by the drive and top-up loops).
+
+        The final-frame capture binds to this case's request id, so a frame
+        keyed to another request — e.g. one left in the socket buffer by the
+        previous case — is received but never mistaken for this case's
+        final (#2396 fix-r1).
+        """
+        if frame is None:
+            return
+        state = self._active
+        state['received'].append(frame)
+        event = frame.get('event') if isinstance(frame, dict) else None
+        kind = event.get('type') if isinstance(event, dict) else None
+        if state['prefixIndex'] is None and kind == state['prefixType']:
+            state['prefixIndex'] = len(state['received']) - 1
+        if frame.get('id') == state.get('requestId') and frame.get('final'):
+            state['final'] = frame
+            if 'finalAt' not in state:
+                # The timer.clear observation needs the submit→final
+                # elapsed time, not just the ordering of the frames.
+                state['finalAt'] = time.monotonic()
+                state['notes']['finalElapsedMs'] = round(
+                    (state['finalAt'] - state['startedAt']) * 1000.0, 3)
 
     def _wait_receipt_seen(self):
         return bool(self.loop_receipt('wait', self._active['planId']))
@@ -310,8 +339,23 @@ class StimulusDriver:
     def _final_seen(self):
         return self._active['final'] is not None
 
+    def _plan_pids(self):
+        """The pids the plan's own input/wait receipts name (key=planId).
+
+        A trailing receipt from the previous case's turn — published after
+        this case's directory snapshot was taken — carries that turn's pid,
+        so final/return receipts are only this case's when their pid is in
+        this set (#2396 fix-r1, codex boundary/sibling).
+        """
+        state = self._active
+        return {receipt.get('pid') for receipt in state['loopReceipts']
+                if receipt.get('site') == 'loop' and receipt.get('key') == state['planId']
+                and receipt.get('phase') in ('input', 'wait')}
+
     def _loop_final(self):
-        found = self._receipts('loop', site='loop', phase='final')
+        pids = self._plan_pids()
+        found = [receipt for receipt in self._receipts('loop', site='loop', phase='final')
+                 if receipt.get('pid') in pids]
         return found[-1] if found else None
 
     def _settle_milestones(self, plan):
@@ -328,10 +372,12 @@ class StimulusDriver:
                 outcome = 'known'
             self._release_loop('outcome', outcome)
             state['outcome'] = outcome
-        # 2. K-P return release after the timer-decided final frame.
+        # 2. K-P return release after the timer-decided final frame. The held
+        # return is this case's only when its pid matches the plan's own
+        # input/wait receipts (#2396 fix-r1 cross-case binding).
         if (plan['order'] == 'known-final-before-timeout-pending'
                 and not state['returnReleased'] and state['outcome'] == 'known'
-                and self.loop_receipt('return', 'block')
+                and self._plan_bound('return', 'block')
                 and self._final_seen()):
             self._release_loop('return')
             state['returnReleased'] = True
@@ -411,20 +457,24 @@ class StimulusDriver:
                          {'queuedKey': queued[0]['key'], 'blockedKey': arm['key'],
                           'blockSeq': step['blockSeq']})
             step['queued'] = queued[0]['key']
-            self._release_storage(step['blockSeq'])
-            step['phase'] = 'second-arm'
             second = second_append_key(variant)
             if second is not None:
-                # Written immediately after the release, while the product's
-                # 10 ms release poll still separates the released write from
-                # the queued one (plan.md section 1).
-                state['arms'] = json.loads(json.dumps(state['arms']))
+                # The second barrier is armed BEFORE the first is released:
+                # the product re-reads stimulus.json on every append, so the
+                # queued error append must already see the new barrier when
+                # the release lets the status append complete. The first
+                # waiter self-holds its own seq/bound and is unaffected by
+                # the swap (#2396 fix-r1, codex concurrency P1).
+                state['arms'] = copy.deepcopy(state['arms'])
                 state['arms']['registry']['barrier'] = {
                     'id': f"{state['case']}#{state['index']}-r2", 'key': second,
                     'boundMs': STORAGE_BOUND_MS}
                 atomic_write(self.storage_dir / 'stimulus.json', json.dumps(state['arms']))
                 self._action('rearm-storage', state['arms']['registry'])
+                self._release_storage(step['blockSeq'])
+                step['phase'] = 'second-arm'
                 return
+            self._release_storage(step['blockSeq'])
             step['phase'] = 'done'
         if step['phase'] == 'second-arm':
             second = second_append_key(variant)
@@ -473,7 +523,8 @@ class StimulusDriver:
         state['notes']['prefixIndex'] = state['prefixIndex']
         state['notes']['finalIndex'] = next(
             (i for i, frame in enumerate(state['received'])
-             if isinstance(frame, dict) and frame.get('final')), None)
+             if isinstance(frame, dict) and frame.get('final')
+             and frame.get('id') == state.get('requestId')), None)
 
     # ------------------------------------------------------------------
     # evidence assembly
