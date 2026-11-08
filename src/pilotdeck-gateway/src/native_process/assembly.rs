@@ -70,6 +70,7 @@ pub(super) mod dialog_recovery;
 mod mcp;
 mod memory;
 mod sdk_adapter;
+mod sdk_plugins;
 mod prompt_suggestion;
 mod sdk_dispatch;
 pub(super) mod sdk_hooks;
@@ -526,6 +527,7 @@ async fn start_assembly(
         }),
     )
     .with_homedir(options.home.clone())
+    .with_plugin_loader(Arc::new(sdk_plugins::NativeSdkPluginLoader))
     .with_projects(sdk_projects.clone())
     .with_task_budget(budget_ledger.clone());
     let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();

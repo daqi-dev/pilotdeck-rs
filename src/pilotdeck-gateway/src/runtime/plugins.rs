@@ -590,11 +590,12 @@ impl PluginRuntime {
         let mut st = self.state.lock().await;
         let lease = st.registry.acquire()?;
         let mut all_plugins = lease.plugins.clone();
-        all_plugins.extend(additional);
+        all_plugins.extend(additional.iter().cloned());
         let snapshot =
             contributions::create_session_contribution_snapshot(lease.generation, &all_plugins);
         let waiters = Arc::clone(&st.registry.waiters);
         Ok(PluginSessionContributionLease {
+            _additional: additional,
             generation: lease.generation,
             contributions: snapshot,
             state: Arc::clone(&self.state),

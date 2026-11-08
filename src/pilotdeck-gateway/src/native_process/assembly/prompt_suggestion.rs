@@ -215,7 +215,7 @@ mod tests {
     #[tokio::test]
     async fn fixed_ts_generator_oracle_matches_request_and_result() {
         let oracle = pilotdeck_protocol::parse_json(include_str!(
-            "../../tests/fixtures/native-sdk-suggestion/oracle.json"
+            "../../../tests/fixtures/native-sdk-suggestion/oracle.json"
         ))
         .unwrap();
         let Some(JsValue::Array(cases)) = oracle.get("records") else {
@@ -238,7 +238,7 @@ mod tests {
                 assistant_response: value("assistantResponse"),
                 session_id: "session".into(),
                 turn_id: "turn".into(),
-                signal: crate::host::Cancellation::new(),
+                signal: crate::host::Cancellation::default(),
             })
             .await
             .unwrap();

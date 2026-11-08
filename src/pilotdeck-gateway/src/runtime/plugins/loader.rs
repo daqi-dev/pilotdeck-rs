@@ -412,23 +412,52 @@ pub(crate) fn validate_native_style_paths(
     let mut found = Vec::new();
     for (directory, source) in directories {
         // TS discovery treats readdir/stat failures as absent candidates.
-        let Ok(entries) = fs::read_dir(directory) else { continue; };
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
         let mut paths = Vec::new();
         for entry in entries {
             budget.entry()?;
-            let Ok(entry) = entry else { paths.clear(); break; };
-            let Ok(metadata) = fs::metadata(entry.path()) else { continue; };
-            if metadata.is_dir() { paths.push(entry.path()); }
+            let Ok(entry) = entry else {
+                paths.clear();
+                break;
+            };
+            let Ok(metadata) = fs::metadata(entry.path()) else {
+                continue;
+            };
+            if metadata.is_dir() {
+                paths.push(entry.path());
+            }
         }
         paths.sort();
         for path in paths {
-            let manifest = native::read_manifest(&path, budget)
-                .and_then(|raw| parse_plugin_manifest(&raw));
-            if let Err(error) = &manifest && native::fatal(error) { return Err(error.clone()); }
-            found.push(NativePluginManifest { path, source: *source, manifest });
+            let manifest =
+                native::read_manifest(&path, budget).and_then(|raw| parse_plugin_manifest(&raw));
+            if let Err(error) = &manifest
+                && native::fatal(error)
+            {
+                return Err(error.clone());
+            }
+            found.push(NativePluginManifest {
+                path,
+                source: *source,
+                manifest,
+            });
         }
     }
     Ok(found)
+}
+
+/// Load one explicitly selected SDK-local declaration with the same
+/// descriptor-relative IO and aggregate budget as native project plugins.
+pub(crate) fn load_native_session_plugin(
+    path: &Path,
+    budget: &mut StyleBudget,
+) -> Result<LoadedPlugin, PluginRuntimeError> {
+    budget.entry()?;
+    let raw = native::read_manifest(path, budget)?;
+    let manifest = parse_plugin_manifest(&raw)?;
+    native::load_from_manifest(path, PluginSource::Project, &manifest, budget)
 }
 
 /// Test entrypoint for the same manifest and hook loading used by native staging.
@@ -472,7 +501,10 @@ fn load_native_plugin_hooks_from_manifest(
         let mut file = match crate::project_files::open_beneath(parent, &target) {
             Ok(file) => file,
             Err(error) if crate::project_files::nofollow_loop(&error) => {
-                return Err(PluginRuntimeError::gateway("NATIVE_PLUGIN_UNSAFE", error.to_string()));
+                return Err(PluginRuntimeError::gateway(
+                    "NATIVE_PLUGIN_UNSAFE",
+                    error.to_string(),
+                ));
             }
             Err(_) => return Ok(None),
         };
@@ -480,10 +512,13 @@ fn load_native_plugin_hooks_from_manifest(
             Ok(metadata) => metadata,
             Err(_) => return Ok(None),
         };
-        if metadata.is_dir() { return Ok(None); }
+        if metadata.is_dir() {
+            return Ok(None);
+        }
         if !metadata.is_file() {
             return Err(PluginRuntimeError::gateway(
-                "NATIVE_PLUGIN_UNSAFE", "Hook config is not a regular file.",
+                "NATIVE_PLUGIN_UNSAFE",
+                "Hook config is not a regular file.",
             ));
         }
         let text = match budget.read(&mut file) {
@@ -537,13 +572,20 @@ pub(crate) fn stage_native_style_plugins(
         match attempt {
             Ok(plugin) => plugins.push(Arc::new(plugin)),
             Err(error) if native::fatal(&error) => return Err(error),
-            Err(_) => failures.push(PluginRefreshFailure { path: entry.path, source: entry.source, kind: PluginKind::Plugin }),
+            Err(_) => failures.push(PluginRefreshFailure {
+                path: entry.path,
+                source: entry.source,
+                kind: PluginKind::Plugin,
+            }),
         }
     }
     let skills = stage_native_standalone_skills(options)?;
     plugins.extend(skills.plugins);
     failures.extend(skills.staged_failures);
-    Ok(LoadFromDiskResult { plugins, staged_failures: failures })
+    Ok(LoadFromDiskResult {
+        plugins,
+        staged_failures: failures,
+    })
 }
 
 /// Standalone skills are inert markdown: no plugin manifests, hooks, MCP,

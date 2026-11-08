@@ -47,8 +47,19 @@ pub type PluginLoadFuture<'a> =
 /// Path loader supplied by A6.3-pr7b. `resolveSdkSessionPlugins` owns the
 /// realpath/duplicate/stat/name-conflict checks; only the manifest load is
 /// delegated.
+pub type PluginBatchFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<Vec<Arc<LoadedPlugin>>, SdkSessionError>> + Send + 'a>>;
 pub trait SdkPluginLoader: Send + Sync {
     fn load<'a>(&'a self, path: &'a Path) -> PluginLoadFuture<'a>;
+    /// Native hosts can resolve and load the whole selection as one bounded,
+    /// owned IO transaction. Generic embedders retain their legacy path.
+    fn load_session<'a>(
+        &'a self,
+        _requested: &'a [JsValue],
+        _names: &'a [String],
+    ) -> Option<PluginBatchFuture<'a>> {
+        None
+    }
 }
 
 /// Production bridge to the same disk loader used by PluginRuntime.
@@ -73,14 +84,25 @@ impl SdkPluginLoader for DiskSdkPluginLoader {
 
 /// Task-budget operations from A6.4-pr11. A6.3-pr8 decides *when* to call;
 /// the store owns persistence and conflict text.
-pub type SdkBudgetFuture<'a> = Pin<Box<dyn Future<Output = Result<(), TaskBudgetError>> + Send + 'a>>;
+pub type SdkBudgetFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), TaskBudgetError>> + Send + 'a>>;
 
 pub trait SdkTaskBudget: Send + Sync {
-    fn configure_project_async<'a>(&'a self, root: &'a JsString, session: &'a JsString,
-        total: f64, retention: Option<f64>, now: f64) -> SdkBudgetFuture<'a> {
+    fn configure_project_async<'a>(
+        &'a self,
+        root: &'a JsString,
+        session: &'a JsString,
+        total: f64,
+        retention: Option<f64>,
+        now: f64,
+    ) -> SdkBudgetFuture<'a> {
         Box::pin(async move { self.configure_project(root, session, total, retention, now) })
     }
-    fn clear_session_async<'a>(&'a self, root: &'a JsString, session: &'a JsString) -> SdkBudgetFuture<'a> {
+    fn clear_session_async<'a>(
+        &'a self,
+        root: &'a JsString,
+        session: &'a JsString,
+    ) -> SdkBudgetFuture<'a> {
         Box::pin(async move { self.clear_session(root, session) })
     }
 
@@ -652,9 +674,17 @@ impl SdkSessionRegistry {
         self.clear_session_maps(session_key);
         Ok(())
     }
-    pub async fn clear_session_state_async(&mut self, session_key: &JsString) -> Result<(), SdkSessionError> {
-        if let Some(root) = self.session_project(session_key) && let Some(budget) = &self.options.task_budget {
-            budget.clear_session_async(&root, session_key).await.map_err(task_budget_error)?;
+    pub async fn clear_session_state_async(
+        &mut self,
+        session_key: &JsString,
+    ) -> Result<(), SdkSessionError> {
+        if let Some(root) = self.session_project(session_key)
+            && let Some(budget) = &self.options.task_budget
+        {
+            budget
+                .clear_session_async(&root, session_key)
+                .await
+                .map_err(task_budget_error)?;
         }
         self.clear_session_maps(session_key);
         Ok(())
@@ -691,6 +721,11 @@ impl SdkSessionRegistry {
             .iter()
             .map(|plugin| plugin.name.clone())
             .collect();
+        if let Some(loader) = &self.options.plugin_loader
+            && let Some(batch) = loader.load_session(descriptors, &names)
+        {
+            return batch.await;
+        }
         let mut paths: Vec<PathBuf> = Vec::new();
         let mut plugins = Vec::new();
         for descriptor in descriptors {
@@ -972,7 +1007,8 @@ impl SdkSessionRegistry {
             session_key,
             own(&next, "taskBudget"),
             signal,
-        ).await?;
+        )
+        .await?;
         check_abort(signal)?;
         self.set_config(session_key, next.clone());
         if session_plugins.is_empty() {

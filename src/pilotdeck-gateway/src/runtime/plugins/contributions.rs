@@ -86,6 +86,8 @@ pub struct PluginSessionContributionSnapshot {
     pub routers: Vec<PluginRouterContribution>,
     pub commands: Vec<PluginCommandContribution>,
     pub skills: Vec<PluginSkillContribution>,
+    /// Native session-only view, frozen in the same generation as commands and MCP.
+    pub output_styles: Vec<PluginOutputStyleContribution>,
     pub prompts: Vec<String>,
     pub hooks: HooksSettings,
     pub mcp_servers: JsObject,
@@ -242,6 +244,8 @@ impl Drop for PluginCommandCatalogLease {
 
 /// A held lease on one plugin generation (session-contributions flavor).
 pub struct PluginSessionContributionLease {
+    /// SDK-local plugins remain alive through this session, not in the shared registry.
+    pub(crate) _additional: Vec<Arc<LoadedPlugin>>,
     pub generation: u64,
     pub contributions: PluginSessionContributionSnapshot,
     pub(super) state: std::sync::Arc<TokioMutex<PluginRuntimeState>>,
@@ -406,6 +410,7 @@ pub(super) fn create_session_contribution_snapshot(
         routers: collect_router_contributions(plugins),
         commands: collect_command_contributions(plugins),
         skills: collect_skill_contributions(plugins),
+        output_styles: collect_output_styles(plugins),
         prompts: collect_prompt_contributions(plugins),
         hooks: collect_hooks(plugins),
         mcp_servers: collect_mcp_servers(plugins),
