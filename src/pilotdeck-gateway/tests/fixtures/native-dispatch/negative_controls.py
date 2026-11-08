@@ -9,7 +9,7 @@ import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
+from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -27,9 +27,9 @@ mutations = [
     ('omit-sop', SOURCE, '    sop: sop::METHODS,', '    sop: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-config', SOURCE, '    config: config::METHODS,', '    config: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-upload', SOURCE, '    upload: upload::METHODS,', '    upload: &[],', TEST, '#1305 registry contains every wired method'),
-    # #1627: the remaining wired families get the same one-row coverage as
-    # the eight above -- omitting each family's slice must fail the same
-    # registry completeness assertion.
+    # #1627: these rows complete the one-per-family coverage: methods/mod.rs
+    # registers 19 families and this table carries 19 omit-* rows. Omitting
+    # each family's slice must fail the same registry completeness assertion.
     ('omit-history', SOURCE, '    history: history::METHODS,', '    history: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-mcp', SOURCE, '    mcp: mcp::METHODS,', '    mcp: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-tools', SOURCE, '    tools: tools::METHODS,', '    tools: &[],', TEST, '#1305 registry contains every wired method'),
@@ -37,6 +37,11 @@ mutations = [
     ('omit-steer', SOURCE, '    steer: steer::METHODS,', '    steer: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-permission', SOURCE, '    permission: permission::METHODS,', '    permission: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-user-dialog', SOURCE, '    user_dialog: user_dialog::METHODS,', '    user_dialog: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-interaction', SOURCE, '    interaction: interaction::METHODS,', '    interaction: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-always-on', SOURCE, '    always_on: always_on::METHODS,', '    always_on: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-weixin-login', SOURCE, '    weixin_login: weixin_login::METHODS,', '    weixin_login: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-cron', SOURCE, '    cron: cron::METHODS,', '    cron: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-settings', SOURCE, '    settings: settings::METHODS,', '    settings: &[],', TEST, '#1305 registry contains every wired method'),
     ('duplicate-method', SOURCE, '    runs: runs::METHODS,', '    runs: &["run_get", "run_events", "run_reattach", "run_get"],', TEST, '#1305 registry contains no duplicate method'),
     ('management-gate-missing', MANAGEMENT, '                | "snapshot_get"', '                | "snapshot_get_removed"', GATE_TEST, '#1305 management gate matches registered family'),
     ('management-gate-extra', MANAGEMENT, '                | "commands_list"', '                | "commands_list" | "run_get"', GATE_TEST, '#1305 management gate matches registered family'),
@@ -121,7 +126,10 @@ def main():
                     row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
                     phase = 'restore'
-                    case.path.write_bytes(originals[case.path])
+                    # #1908: one atomic rename; a truncating write_bytes here
+                    # has the same SIGKILL half-write window as the mutation
+                    # write itself.
+                    write_source_atomic(ROOT, case.path, originals[case.path])
                     if case.path.read_bytes() != originals[case.path]:
                         raise RuntimeError('#1305 source restoration failed')
                     phase = 'body'
