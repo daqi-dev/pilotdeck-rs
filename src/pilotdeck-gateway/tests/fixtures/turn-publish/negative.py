@@ -75,7 +75,7 @@ with mutating_sources(repo, [source, connection]) as snapshots:
          '                    state.queue.push_back(event);',
          '                    state.queue.push_front(event);', 'file_registry_publication_preserves_fifo_across_workers'),
         ('late-append-not-awaited', source,
-         '                self.publication.wait_for(&writes).await;\n                let _pump = lock(&self.pump);',
+         '                self.publication.wait_for_trailing_writes(&writes).await;\n                let _pump = lock(&self.pump);',
          '                let _ = writes;\n                let _pump = lock(&self.pump);',
          'late_event_while_terminal_append_pending'),
         ('duplicate-terminal-suppressed', source,
