@@ -1015,17 +1015,13 @@ impl TurnSubmitter {
         if recorder.is_some()
             && let Some(workspace) = &workspace_id
         {
-            let snapshot = handle.snapshot();
-            if let Some(cwd) = field(&snapshot, "cwd")
-                .as_string()
-                .filter(|cwd| !cwd.is_empty())
-            {
+            if let Some(cwd) = handle.workspace_cwd().filter(|cwd| !cwd.is_empty()) {
                 progress.lock().unwrap().input = Some(WorkspaceSnapshotInput {
                     workspace_id: display(workspace),
                     session_id: display(&run.session_key),
                     turn_id: display(&run.run_id),
                     run_id: display(&run.run_id),
-                    workspace_dir: display(cwd),
+                    workspace_dir: display(&cwd),
                     workspace_stable: None,
                     failure_kind: None,
                     failure_reason: None,

@@ -1369,6 +1369,12 @@ impl LiveSession for OwnedSession {
             finished: false,
         }))
     }
+    fn workspace_cwd(&self) -> Option<JsString> {
+        // FactoryStorage captures the admitted project's cwd before prepare.
+        // Reading this owned path requires no reload/file IO and cannot borrow
+        // the daemon's cwd or a caller-provided workspace/session identifier.
+        self.storage.cwd.to_str().map(JsString::from)
+    }
     fn snapshot(&self) -> JsValue {
         self.adapter.snapshot()
     }

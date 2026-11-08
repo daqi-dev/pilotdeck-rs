@@ -78,6 +78,15 @@ pub trait LiveSession: Send + Sync {
             "Agent session seed read state is unavailable.",
         ))
     }
+    /// Internal workspace-snapshot admission capability. Preserve the public
+    /// session snapshot contract; existing adapters with a cwd field retain
+    /// their previous behavior, while production owners supply their fixed cwd.
+    fn workspace_cwd(&self) -> Option<JsString> {
+        self.snapshot()
+            .get("cwd")
+            .and_then(JsValue::as_string)
+            .cloned()
+    }
     fn snapshot(&self) -> JsValue;
     /// May be called repeatedly while `dispose()` is in progress and after its
     /// future has completed: the handle remains Draining through the project
@@ -353,6 +362,10 @@ impl LiveSessionHandle {
         }
         drop(progress);
         self.0.changed.send_modify(|version| *version += 1);
+    }
+
+    pub fn workspace_cwd(&self) -> Option<JsString> {
+        self.0.session.workspace_cwd()
     }
 
     pub fn snapshot(&self) -> JsValue {

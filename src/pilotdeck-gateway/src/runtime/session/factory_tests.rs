@@ -7725,3 +7725,31 @@ async fn session_cwd_preflight_worker() {
     harness.finish("#897 preflight").await;
     crate::test_process::receipt(&name);
 }
+
+#[tokio::test]
+async fn production_workspace_cwd_is_storage_owned_without_extending_public_snapshot() {
+    let h = Harness::new("workspace-cwd");
+    let session = h.create("workspace-cwd").await;
+    // No turn has been submitted/prepared. The admitted storage owner already
+    // has the correct project cwd, independently of adapter agent_config.
+    let before = json_value(&session.snapshot());
+    assert_eq!(before, serde_json::json!({"messages":[],"status":"idle"}));
+    assert_eq!(
+        session.workspace_cwd(),
+        Some(JsString::from(h.root.to_str().expect("fixture UTF8 cwd")))
+    );
+    assert_eq!(
+        session
+            .reload_snapshot()
+            .expect("production reload cwd")
+            .cwd,
+        h.root,
+        "the narrow workspace capability must identify the same owned project as runtime reload"
+    );
+    assert_eq!(json_value(&session.snapshot()), before);
+    assert!(
+        session.snapshot().get("cwd").is_none(),
+        "public TS session snapshot stays unchanged"
+    );
+    h.finish("workspace-cwd").await;
+}
