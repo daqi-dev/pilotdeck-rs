@@ -1914,6 +1914,7 @@ pub struct NativeSettingsOptions {
 /// real refresh bundle and config store.
 pub struct NativeSettings {
     pub gateway: Arc<SettingsGateway>,
+    pub(crate) store: ConfigStore,
     // Nothing in production reads the handle yet: the delegates inside the
     // gateway keep the bundle alive. #1320 fix-r1 F2: the production
     // composition never binds a notification server — the isolated native
@@ -1980,7 +1981,7 @@ fn native_settings_with_writer(
         reload_config: Some(bundle.clone()),
         reload_extensions: Some(bundle.clone()),
     }));
-    NativeSettings { gateway, bundle }
+    NativeSettings { gateway, bundle, store }
 }
 
 /// The production composition for the native process

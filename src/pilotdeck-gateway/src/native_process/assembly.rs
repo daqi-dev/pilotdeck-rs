@@ -1460,6 +1460,24 @@ async fn start_assembly(
                     ))),
                 ),
             )?;
+            let config_reload = Arc::downgrade(&build_automation);
+            settings.store.subscribe(Arc::new(move |event| {
+                let changed = |family: &str| event.changed_paths.iter().any(|path|
+                    path.to_utf8().ok().is_some_and(|path| path == family || path.starts_with(&format!("{family}."))));
+                let always_on_changed = changed("alwaysOn");
+                let cron_changed = changed("cron");
+                if !(always_on_changed || cron_changed) { return; }
+                if let Some(owner) = config_reload.upgrade() {
+                    let config = event.next_snapshot.get("config");
+                    owner.request_reload(automation::ProjectAutomationReloadInput {
+                        config: automation::ProjectAutomationConfig {
+                            always_on: (mode == AssemblyMode::Server).then(|| config.and_then(|c| c.get("alwaysOn"))
+                                .map(crate::runtime::always_on::AlwaysOnConfig::from_section)).flatten(),
+                            cron: (mode == AssemblyMode::Server).then(|| config.and_then(|c| c.get("cron")).cloned()).flatten(),
+                        }, always_on_changed, cron_changed,
+                    });
+                }
+            }));
             // #1326 A8 U8: the one `CronManager::new` of the native process.
             // `None` (no `cron:` section) keeps the unconfigured shape — the
             // six names stay out of capabilities and every call answers the

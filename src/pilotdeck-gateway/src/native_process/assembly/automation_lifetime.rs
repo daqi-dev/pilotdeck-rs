@@ -13,12 +13,13 @@ pub(super) struct NativeAutomationLifetime {
     serial: Arc<tokio::sync::Mutex<()>>,
     stopping: AtomicBool,
     stopped: Mutex<Option<Finished>>,
+    reload_tail: Mutex<Option<tokio::task::JoinHandle<()>>>,
     pub shutdown: Cancellation,
 }
 impl NativeAutomationLifetime {
     pub(super) fn new(bundle: Arc<ProjectAutomationBundle>) -> Arc<Self> {
         Arc::new(Self { bundle, runtime: OnceLock::new(), serial: Arc::default(),
-            stopping: AtomicBool::new(false), stopped: Mutex::new(None), shutdown: Cancellation::new() })
+            stopping: AtomicBool::new(false), stopped: Mutex::new(None), reload_tail: Mutex::new(None), shutdown: Cancellation::new() })
     }
     pub(super) fn bind_runtime(&self, runtime: tokio::runtime::Handle) -> std::io::Result<()> {
         self.runtime.set(runtime).map_err(|_| std::io::Error::other("Automation runtime already bound."))
@@ -46,6 +47,20 @@ impl NativeAutomationLifetime {
         });
         receive.await.map_err(|_| "Automation reload worker stopped.".to_owned())?
     }
+    /// Called synchronously by the config-store listener; preserve publication
+    /// order even when several reload RPC callers cancel their awaits.
+    pub(super) fn request_reload(self: &Arc<Self>, input: ProjectAutomationReloadInput) {
+        if self.is_stopping() { return; }
+        let Some(runtime) = self.runtime.get() else { return; };
+        let mut tail = self.reload_tail.lock().unwrap_or_else(|error| error.into_inner());
+        if self.is_stopping() { return; }
+        let previous = tail.take(); let owner = self.clone();
+        *tail = Some(runtime.spawn(async move {
+            if let Some(previous) = previous { let _ = previous.await; }
+            if let Err(error) = owner.reload(input).await { eprintln!("[automation] reload failed: {error}"); }
+        }));
+    }
+
     pub(super) fn stop(self: &Arc<Self>) -> super::automation::AutomationFuture {
         self.stopping.store(true, Ordering::Release);
         self.shutdown.cancel();
@@ -55,7 +70,9 @@ impl NativeAutomationLifetime {
             *stopped = Some(receive.clone());
             if let Some(runtime) = self.runtime.get() {
                 let owner = self.clone();
+                let reload_tail = self.reload_tail.lock().unwrap_or_else(|error| error.into_inner()).take();
                 runtime.spawn(async move {
+                    if let Some(reload_tail) = reload_tail { let _ = reload_tail.await; }
                     let _serial = owner.serial.lock().await;
                     let result = owner.bundle.stop().await.map_err(|error| error.to_string());
                     send.send_replace(Some(result));
