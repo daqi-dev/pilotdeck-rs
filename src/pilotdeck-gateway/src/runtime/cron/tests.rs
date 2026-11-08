@@ -1225,8 +1225,8 @@ enum NonUtf8Probe {
 /// the one that hits the cap (measured on mbp2, darwin 25.6.0: with
 /// `ulimit -n 12` and the table exhausted, both probe shapes — the
 /// create_dir_all chain plus file write, and the file-leaf write — fail
-/// with `Too many open files`, EMFILE; the same family `state/board.md`
-/// records for macmini-01's #816 first run at `ulimit -n=256`). One retry
+/// with `Too many open files`, EMFILE; macmini-01's #816 first run
+/// recorded the same family at `ulimit -n=256`). One retry
 /// lets an fd freed in between through; a persistent limit still fails
 /// closed, but with its own marker instead of the pre-#1672 misdiagnosis
 /// ("a reason other than the file name" on a host whose only problem was
