@@ -239,6 +239,7 @@ struct CreationOutcome {
 }
 
 struct Pending {
+    session_key: JsString,
     project: Option<JsString>,
     completion: watch::Receiver<Option<RuntimeResult>>,
 }
@@ -253,6 +254,7 @@ struct CompletionOwner {
 
 #[derive(Default)]
 struct State {
+    project_binding: bool,
     stopped: bool,
     records: HashMap<JsString, Record>,
     completion_owners: HashMap<JsString, CompletionOwner>,
@@ -402,6 +404,29 @@ impl SessionOwner {
         owner
     }
 
+    /// Opt-in native boundary. Generic SessionRouter callers retain the TS
+    /// merge behavior. Enable before accepting requests, never as a per-call toggle.
+    pub fn enforce_project_binding(&self) {
+        self.0.state.lock().unwrap().project_binding = true;
+    }
+
+    /// Creation context, including detached in-flight construction. This lookup
+    /// selects a default project only; get_or_create's locked check is admission.
+    pub fn project_key(&self, key: &JsString) -> Option<JsString> {
+        let state = self.0.state.lock().unwrap();
+        state
+            .records
+            .get(key)
+            .and_then(|r| r.context.project_key.clone())
+            .or_else(|| {
+                state
+                    .pending
+                    .iter()
+                    .find(|p| &p.session_key == key && p.completion.borrow().is_none())
+                    .and_then(|p| p.project.clone())
+            })
+    }
+
     /// Starts/tracks the operation before returning the future, just like the
     /// synchronous prefix of a TS async function. Dropping the future cannot
     /// abandon an unpublished handle or remove it from shutdown's drain set.
@@ -417,9 +442,38 @@ impl SessionOwner {
         if project_paused(&state, context.project_key.as_ref()) {
             return Box::pin(async { Err(RuntimeError::new("Project is being deleted.")) });
         }
+        if state.project_binding
+            && let Some(project) = context.project_key.as_ref()
+        {
+            let record_mismatch = state
+                .records
+                .get(&context.session_key)
+                .and_then(|record| record.context.project_key.as_ref())
+                .is_some_and(|owned| owned != project);
+            let pending_mismatch = state.pending.iter().any(|pending| {
+                pending.session_key == context.session_key
+                    && pending.completion.borrow().is_none()
+                    && pending
+                        .project
+                        .as_ref()
+                        .is_some_and(|owned| owned != project)
+            });
+            if record_mismatch || pending_mismatch {
+                return Box::pin(async {
+                    Err(RuntimeError::new(
+                        "PROJECT_SESSION_MISMATCH: Session belongs to a different project.",
+                    ))
+                });
+            }
+        }
         let ticket = ticket(&mut state, &context.session_key);
         let (done, completion) = watch::channel(None);
-        track(&mut state, context.project_key.clone(), completion);
+        track(
+            &mut state,
+            context.session_key.clone(),
+            context.project_key.clone(),
+            completion,
+        );
         let (result, completion) = watch::channel(None);
         let owner = self.clone();
         let receiver_owner = self.clone();
@@ -922,7 +976,7 @@ impl SessionOwner {
             .records
             .get(key)
             .and_then(|record| record.context.project_key.clone());
-        track(&mut state, project, completion.clone());
+        track(&mut state, key.clone(), project, completion.clone());
         state.closings.insert(key.clone(), completion.clone());
         let settle = done.clone();
         let owner = self.clone();
@@ -1074,6 +1128,7 @@ impl SessionOwner {
             let (done, completion) = watch::channel(None);
             track(
                 &mut state,
+                key.clone(),
                 record.context.project_key.clone(),
                 completion.clone(),
             );
@@ -1383,6 +1438,7 @@ fn combine_pending_error(
 
 fn track(
     state: &mut State,
+    session_key: JsString,
     project: Option<JsString>,
     completion: watch::Receiver<Option<RuntimeResult>>,
 ) {
@@ -1393,6 +1449,7 @@ fn track(
         .closings
         .retain(|_, closing| closing.borrow().is_none());
     state.pending.push(Pending {
+        session_key,
         project,
         completion,
     });

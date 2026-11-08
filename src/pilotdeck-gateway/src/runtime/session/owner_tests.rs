@@ -2229,3 +2229,40 @@ fn session_shutdown_completion_survives_stopped_executor() {
         assert_eq!(repeated.message, error.message);
     });
 }
+
+#[tokio::test]
+async fn native_project_binding_rejects_pending_and_warm_cross_project_reuse() {
+    let probe = Probe::default();
+    let gate = Gate::new();
+    probe
+        .0
+        .creates
+        .lock()
+        .unwrap()
+        .insert("shared".into(), gate.clone());
+    let mut options = SessionOwnerOptions::new(Arc::new(probe.clone()));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner.enforce_project_binding();
+    let mut a = context("shared");
+    a.project_key = Some("A".into());
+    let mut b = a.clone();
+    b.project_key = Some("B".into());
+    let pending_a = owner.get_or_create(a);
+    assert_eq!(owner.project_key(&"shared".into()), Some("A".into()));
+    let pending_b = bounded(owner.get_or_create(b.clone())).await;
+    assert!(
+        matches!(pending_b, Err(ref error) if error.message == "PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+    );
+    gate.open();
+    let first = bounded(pending_a).await.unwrap();
+    let warm_b = bounded(owner.get_or_create(b.clone())).await;
+    assert!(
+        matches!(warm_b, Err(ref error) if error.message == "PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+    );
+    assert!(first.same_identity(&owner.current_handle(&"shared".into()).unwrap()));
+    bounded(owner.close(&"shared".into())).await.unwrap();
+    bounded(owner.get_or_create(b)).await.unwrap();
+    assert_eq!(owner.project_key(&"shared".into()), Some("B".into()));
+    bounded(owner.shutdown()).await.unwrap();
+}
