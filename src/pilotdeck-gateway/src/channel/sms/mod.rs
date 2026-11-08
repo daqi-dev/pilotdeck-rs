@@ -648,9 +648,33 @@ impl ChannelAdapter for SmsChannel {
                 // in-flight ones — the `wecom_callback` lane's shape
                 // (`wecom_callback/http.rs`).
                 let mut connections = tokio::task::JoinSet::new();
+                // #2257: left the loop through the closed shutdown channel.
+                let mut sender_dropped = false;
                 loop {
                     tokio::select! {
-                        _ = shutdown_rx.changed() => break,
+                        changed = shutdown_rx.changed() => match changed {
+                            // A normal `stop()`: the `ServerEntry` holding the
+                            // sender stays alive until its task is awaited, so
+                            // the drain below runs while somebody observes it.
+                            Ok(()) => break,
+                            // #2257: every sender is gone. Two paths land here:
+                            // a `stop()` whose async block panicked at its
+                            // first log line (the #1339 logger-panic case —
+                            // `server.take()` already ran, so the entry, the
+                            // sender and the task handle drop together in the
+                            // unwind), or a handle dropped without `stop()` at
+                            // all. Nobody awaits this task, so the drain below
+                            // would run unobserved — and it holds the
+                            // listener's port for up to [`STOP_DRAIN_LIMIT`]
+                            // (idle keep-alive connections wait out their head
+                            // deadlines), so a same-port `start` fails its
+                            // bind and silently degrades to a [`NoopHandle`].
+                            // #2026's error-path release delay.
+                            Err(_) => {
+                                sender_dropped = true;
+                                break;
+                            }
+                        },
                         accepted = listener.accept() => match accepted {
                             Ok((stream, _)) => {
                                 let shared = server_shared.clone();
@@ -720,8 +744,20 @@ impl ChannelAdapter for SmsChannel {
                 // what prove both halves load-bearing: `sms-stop-no-drain`
                 // restores the pre-#2026 detach shape (the set is forgotten,
                 // so its aborting drop never runs),
-                // `sms-stop-drain-unbounded` the TS unbounded shape.
-                if crate::mutants::on("sms-stop-no-drain") {
+                // `sms-stop-drain-unbounded` the TS unbounded shape, and
+                // #2269's `sms-stop-drain-predrain-count` the r1 counting
+                // shape (a pre-drain snapshot instead of the post-bound
+                // read).
+                if sender_dropped && !crate::mutants::on("sms-stop-drain-on-sender-drop") {
+                    // #2257: the closed-channel path — skip the drain. The
+                    // set's drop aborts the in-flight connection tasks and the
+                    // listener is released with the task's return, so the port
+                    // is free for a rebind immediately instead of after a
+                    // drain nobody observes. The mutation switch restores the
+                    // pre-#2257 shape (an unconditional drain on the Err path
+                    // too), which the port-rebind case in
+                    // `head_timeout_tests.rs` kills.
+                } else if crate::mutants::on("sms-stop-no-drain") {
                     // The pre-#2026 shape: stop the accept loop and return
                     // with the connections still running. Forgetting the set
                     // leaks it, so the aborting `Drop` of a `JoinSet` never
