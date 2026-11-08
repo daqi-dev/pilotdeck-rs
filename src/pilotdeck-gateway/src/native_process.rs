@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 mod agent;
+mod agent_mcp;
 mod assembly;
 #[cfg(unix)]
 mod background;

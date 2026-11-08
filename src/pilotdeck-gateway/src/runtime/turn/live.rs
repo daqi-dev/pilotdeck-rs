@@ -11,7 +11,7 @@
 //! non-final loop turn_completed. A received final cannot hide queued loop
 //! events dropped during bounded cancellation; both observations must agree.
 
-use super::runner::{Recording, RecordingAction, TurnInput, TurnRunner};
+use super::runner::{AgentInput, Recording, RecordingAction, TurnInput, TurnRunner};
 use crate::{
     host::{
         Cancellation, EventGuard, ExecuteRequest, ExecuteResult, HostClient, HostError,
@@ -2468,6 +2468,18 @@ impl LiveSessionAdapter {
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
         if let Some(config) = &self.agent_config {
             let mut config = config.clone();
+            if config.get("isSubagent") == Some(&JsValue::Bool(true))
+                && let Some(initial) = config.get("initialPrompt").and_then(JsValue::as_string)
+                && let AgentInput::Text(directive) = &input.input
+            {
+                let initial = crate::runtime::memory::js_trim_units(initial.units());
+                if !initial.is_empty() {
+                    input.input = AgentInput::Fork {
+                        initial: JsString::from_utf16(initial.to_vec()),
+                        directive: directive.clone(),
+                    };
+                }
+            }
             // #1864 (b): the stored permission-mode selection is re-read on
             // every run (InProcessGateway.ts:1443). A non-empty
             // managedPermissions.defaultMode still wins — compose priority

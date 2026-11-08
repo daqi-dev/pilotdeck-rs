@@ -46,6 +46,7 @@ fn turn(config: JsObject) -> Arc<ForkTurn> {
         None,
         None,
         ToolRegistry::new(None, None),
+        super::super::skills::NativeSkills::default(),
         #[cfg(unix)]
         None,
     )
@@ -288,4 +289,88 @@ async fn child_close_retains_pending_work_and_returns_sticky_cleanup_failure_to_
     );
     let repeated = turn.clone().close().await.unwrap_err();
     assert_eq!(failure.to_string(), repeated.to_string());
+}
+
+#[test]
+fn sdk_replacement_scope_and_initial_policy_keep_parent_ceiling() {
+    let mut config = JsObject::new();
+    config.insert(
+        "subagentDefinitions".into(),
+        object([(
+            "fixture",
+            object([
+                (
+                    "allowedTools",
+                    JsValue::Array(vec!["read_file".into(), "bash".into()]),
+                ),
+                ("disallowedTools", JsValue::Array(vec!["bash".into()])),
+                ("systemPromptSuffix", "CHILD SUFFIX".into()),
+                ("criticalSystemReminder", "CHILD REMINDER".into()),
+            ]),
+        )]),
+    );
+    let available = definitions(&config);
+    assert!(available.get("general-purpose").is_none());
+    let spec = available.get("fixture").unwrap().as_object().unwrap();
+    assert!(definition_allows(spec, &"read_file".into()));
+    assert!(!definition_allows(spec, &"bash".into()));
+    assert!(!definition_allows(spec, &"write_file".into()));
+    let prompt = definition_prompt("fixture", spec, Some(&"PARENT".into()))
+        .to_utf8()
+        .unwrap();
+    assert!(prompt.contains("CHILD SUFFIX"));
+    assert!(prompt.contains("CHILD REMINDER"));
+    assert!(prompt.ends_with("PARENT"));
+    config.insert(
+        "subagentDefinitions".into(),
+        JsValue::Object(JsObject::new()),
+    );
+    assert!(definitions(&config).entries().is_empty());
+}
+
+#[test]
+fn sdk_initial_prompt_is_durable_before_directive_and_wire_input_cannot_construct_it() {
+    use crate::runtime::turn::runner::{AgentInput, TurnInput};
+    let input = TurnInput {
+        input: AgentInput::Fork {
+            initial: "initial".into(),
+            directive: "directive".into(),
+        },
+        history: vec![],
+        synthetic: vec![],
+        metadata: None,
+    };
+    let accepted = input.accepted_messages();
+    assert_eq!(accepted.len(), 2);
+    assert_eq!(accepted, input.loop_messages());
+    let texts: Vec<_> = accepted
+        .iter()
+        .map(|message| {
+            message
+                .get("content")
+                .and_then(|v| {
+                    if let JsValue::Array(items) = v {
+                        items.first()
+                    } else {
+                        None
+                    }
+                })
+                .and_then(|v| v.get("text"))
+                .unwrap()
+                .clone()
+        })
+        .collect();
+    assert_eq!(texts, vec!["initial".into(), "directive".into()]);
+    assert!(
+        TurnInput::from_agent_input(
+            &object([
+                ("type", "fork".into()),
+                ("initialPrompt", "untrusted".into())
+            ]),
+            &JsValue::Object(JsObject::new()),
+            vec![],
+            vec![]
+        )
+        .is_err()
+    );
 }

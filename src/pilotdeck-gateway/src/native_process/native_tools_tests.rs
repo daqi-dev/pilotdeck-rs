@@ -51,6 +51,17 @@ fn harness_inner(
     provider: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     with_hooks: bool,
 ) -> Harness {
+    harness_with_hook_settings(decision, mode, sandbox, sdk, provider, with_hooks, vec![])
+}
+fn harness_with_hook_settings(
+    decision: &'static str,
+    mode: &'static str,
+    sandbox: Option<&str>,
+    sdk: Option<&str>,
+    provider: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+    with_hooks: bool,
+    settings: crate::hooks::protocol::HooksSettings,
+) -> Harness {
     let coordinator = Arc::new(GatewayInteractionCoordinator::default());
     let answerer = coordinator.clone();
     let answers = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -130,7 +141,7 @@ fn harness_inner(
                     signal: Some(signal.clone()),
                 },
                 identity.run_id.clone(),
-                vec![],
+                settings,
                 Some(permission.clone()),
                 &mut router,
             )
@@ -576,4 +587,49 @@ async fn real_permission_lifecycle_prompts_then_consumes_the_single_call_grant()
     let retry = invoke(&h, "write_file", "same-call", input).await;
     assert_ne!(retry.get("type"), Some(&"success".into()));
     assert!(!h.root.join("prompted.txt").exists());
+}
+
+#[tokio::test]
+async fn tool_lifecycle_blocks_before_execution_and_observes_success_and_failure() {
+    let raw = pilotdeck_protocol::parse_json(r#"{"PreToolUse":[{"matcher":"write_file","hooks":[{"type":"command","command":"printf '%s' '{\"decision\":\"block\",\"reason\":\"blocked by hook\"}'"}]}],"PostToolUse":[{"matcher":"read_file","hooks":[{"type":"command","command":"touch post-ran"}]}],"PostToolUseFailure":[{"matcher":"read_file","hooks":[{"type":"command","command":"touch failure-ran"}]}]}"#).unwrap();
+    let settings = crate::hooks::config::parse_hooks_config(&raw).settings;
+    let h = harness_with_hook_settings(
+        "allow",
+        "bypassPermissions",
+        None,
+        None,
+        None,
+        true,
+        settings,
+    );
+    let write = invoke(
+        &h,
+        "write_file",
+        "write",
+        crate::metadata::object([
+            ("file_path", "blocked.txt".into()),
+            ("content", "bad".into()),
+        ]),
+    )
+    .await;
+    assert_eq!(write.get("type"), Some(&"error".into()), "{write:?}");
+    assert!(!h.root.join("blocked.txt").exists());
+    let read = invoke(
+        &h,
+        "read_file",
+        "read",
+        crate::metadata::object([("file_path", "probe.txt".into())]),
+    )
+    .await;
+    success(&read);
+    assert!(h.root.join("post-ran").exists());
+    let failed = invoke(
+        &h,
+        "read_file",
+        "missing",
+        crate::metadata::object([("file_path", "missing.txt".into())]),
+    )
+    .await;
+    assert_eq!(failed.get("type"), Some(&"error".into()));
+    assert!(h.root.join("failure-ran").exists());
 }

@@ -52,6 +52,73 @@ pub struct ToolRuntime {
     pub mode: SchedulerMode,
 }
 impl ToolRuntime {
+    async fn dispatch_tool_lifecycle(
+        &self,
+        event: &str,
+        name: &JsString,
+        call: &ToolCall,
+        input: &JsValue,
+        context: &ToolRunContext,
+        extra: Option<JsObject>,
+    ) -> Result<Option<crate::runtime::hooks::LifecycleDispatchResult>, HostError> {
+        use crate::host::modules::lifecycle::LifecyclePort;
+        use crate::runtime::hooks::LifecycleDispatchInput;
+        let Some(hooks) = self.turn_hooks.get() else {
+            return Ok(None);
+        };
+        let cwd = context
+            .fields
+            .get("cwd")
+            .and_then(JsValue::as_string)
+            .cloned()
+            .unwrap_or_default();
+        let base_input = object([
+            (
+                "sessionId",
+                context
+                    .fields
+                    .get("sessionId")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            ),
+            ("transcriptPath", "".into()),
+            ("cwd", JsValue::String(cwd.clone())),
+            (
+                "permissionMode",
+                context
+                    .fields
+                    .get("permissionMode")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            ),
+        ]);
+        let mut payload = object([
+            ("toolName", JsValue::String(name.clone())),
+            ("toolInput", input.clone()),
+            ("toolUseId", JsValue::String(call.id.clone())),
+        ]);
+        if let Some(extra) = extra {
+            for (key, value) in extra.entries() {
+                payload.insert(key.clone(), value.clone());
+            }
+        }
+        hooks
+            .dispatch(LifecycleDispatchInput {
+                event: event.into(),
+                base_input,
+                payload: Some(payload),
+                match_query: Some(name.clone()),
+                cwd,
+                env: context
+                    .fields
+                    .get("env")
+                    .and_then(JsValue::as_object)
+                    .cloned(),
+                signal: None,
+            })
+            .await
+            .map(Some)
+    }
     pub fn new(
         registry: ToolRegistry,
         permission: Arc<dyn PermissionDecision>,
@@ -392,8 +459,86 @@ impl ToolRuntime {
                     ),
                 );
             }
+            let mut execute_input = call.input.clone();
+            if let Some(result) = self
+                .dispatch_tool_lifecycle("PreToolUse", &name, &call, &execute_input, &context, None)
+                .await?
+            {
+                use crate::runtime::hooks::HookEffect;
+                if let Some(error) = result
+                    .blocking_errors
+                    .iter()
+                    .find(|error| error.code == "native_hook_output_limit")
+                {
+                    return fail(
+                        &name,
+                        ToolError::new("native_hook_output_limit", error.message.clone()),
+                    );
+                }
+                for effect in &result.effects {
+                    match effect {
+                        HookEffect::Block { reason, .. } => {
+                            return fail(&name, ToolError::new("permission_denied", reason.clone()));
+                        }
+                        HookEffect::PermissionDecision { behavior, reason }
+                            if behavior.equals_str("deny") =>
+                        {
+                            return fail(
+                                &name,
+                                ToolError::new(
+                                    "permission_denied",
+                                    reason.clone().unwrap_or_else(|| {
+                                        "PreToolUse hook denied the tool.".into()
+                                    }),
+                                ),
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(input) = result.effects.iter().find_map(|effect| match effect {
+                    HookEffect::UpdatedToolInput { input } => Some(input.clone()),
+                    _ => None,
+                }) {
+                    execute_input = JsValue::Object(input);
+                    let issues = validate_input(
+                        &execute_input,
+                        tool.fields()
+                            .get("inputSchema")
+                            .unwrap_or(&JsValue::Undefined),
+                    )?;
+                    if !issues.is_empty() {
+                        return fail(&name, validation_error(&name, issues, &context)?);
+                    }
+                    // Recheck restrictions after a hook changes input.
+                    if context
+                        .fields
+                        .get("runMode")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|v| v.equals_str("ask"))
+                        && let Some(message) =
+                            super::ask_mode::violation(tool.as_ref(), &execute_input)
+                    {
+                        return fail(&name, ToolError::new("ask_mode_violation", message));
+                    }
+                    if self.native_sandbox.as_ref().is_some_and(|mode| {
+                        mode.equals_str("read-only") || mode.equals_str("workspace-write")
+                    }) && (name.equals_str("bash")
+                        || !matches!(tool.is_read_only(&execute_input), Ok(JsValue::Bool(true))))
+                        && !native_sandbox_enforced
+                    {
+                        return fail(
+                            &name,
+                            ToolError::new(
+                                "unsupported_tool",
+                                "Native sandbox is unavailable for the updated tool input.",
+                            ),
+                        );
+                    }
+                }
+            }
             match tool
-                .validate_input(call.input.clone(), context.clone())
+                .validate_input(execute_input.clone(), context.clone())
                 .await
             {
                 Err(error) => return fail(&name, error),
@@ -405,7 +550,8 @@ impl ToolRuntime {
             if let Some(plan) = context.host.plan_todo.as_ref().and_then(|value| {
                 value.downcast_ref::<crate::host::modules::capability::PlanTodoContext>()
             }) {
-                let read_only = matches!(tool.is_read_only(&call.input), Ok(JsValue::Bool(true)));
+                let read_only =
+                    matches!(tool.is_read_only(&execute_input), Ok(JsValue::Bool(true)));
                 if let Some(message) = plan.0.blocking_message(name.clone(), read_only).await? {
                     return fail(&name, ToolError::new("tool_execution_failed", message));
                 }
@@ -420,13 +566,13 @@ impl ToolRuntime {
             let definition: Arc<dyn ToolDefinition> = tool.clone();
             let mut decision = if let Some(permission) = self.turn_permission.get() {
                 permission
-                    .decide_for_execution(definition, call.input.clone(), call.id.clone())
+                    .decide_for_execution(definition, execute_input.clone(), call.id.clone())
                     .await?
             } else {
                 self.permission
                     .decide(
                         definition,
-                        call.input.clone(),
+                        execute_input.clone(),
                         Arc::new(context.clone()),
                         call.id.clone(),
                     )
@@ -445,7 +591,7 @@ impl ToolRuntime {
                     permission: permission.clone(),
                     tool: name.clone(),
                     call: call.id.clone(),
-                    input: call.input.clone(),
+                    input: execute_input.clone(),
                 };
                 let cwd = context
                     .fields
@@ -475,7 +621,7 @@ impl ToolRuntime {
                 ]);
                 let payload = object([
                     ("toolName", JsValue::String(name.clone())),
-                    ("toolInput", call.input.clone()),
+                    ("toolInput", execute_input.clone()),
                     ("toolUseId", JsValue::String(call.id.clone())),
                     (
                         "permissionSuggestions",
@@ -512,7 +658,11 @@ impl ToolRuntime {
                         // unsupported unbacked hook allow stays ask/fail-closed.
                         let definition: Arc<dyn ToolDefinition> = tool.clone();
                         decision = permission
-                            .decide_for_execution(definition, call.input.clone(), call.id.clone())
+                            .decide_for_execution(
+                                definition,
+                                execute_input.clone(),
+                                call.id.clone(),
+                            )
                             .await?;
                     } else if behavior.is_some_and(|v| v.equals_str("deny")) {
                         decision = JsValue::Object(object([
@@ -533,6 +683,15 @@ impl ToolRuntime {
                 .unwrap_or_default();
             match kind.map(text).as_deref() {
                 Some("deny") => {
+                    self.dispatch_tool_lifecycle(
+                        "PermissionDenied",
+                        &name,
+                        &call,
+                        &execute_input,
+                        &context,
+                        Some(object([("reason", JsValue::String(message.clone()))])),
+                    )
+                    .await?;
                     let runtime = decision
                         .get("reason")
                         .and_then(|r| r.get("type"))
@@ -579,7 +738,7 @@ impl ToolRuntime {
                 .get("updatedInput")
                 .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
                 .cloned()
-                .unwrap_or_else(|| call.input.clone());
+                .unwrap_or_else(|| execute_input.clone());
             let mut execution = context.clone();
             let runtime = self.clone();
             let mut nested = context.clone();
@@ -626,10 +785,110 @@ impl ToolRuntime {
             }
             let track_progress =
                 !name.equals_str("todo_write") && !truthy(&tool.is_read_only(&input)?);
-            match tool.execute(input, execution).await {
-                Err(error) => fail(&name, error),
+            match tool.execute(input.clone(), execution).await {
+                Err(error) => {
+                    let extra = object([
+                        ("error", JsValue::String(error.message.clone())),
+                        ("isInterrupt", JsValue::Bool(error.code == "tool_aborted")),
+                    ]);
+                    if let Some(result) = self
+                        .dispatch_tool_lifecycle(
+                            "PostToolUseFailure",
+                            &name,
+                            &call,
+                            &input,
+                            &context,
+                            Some(extra),
+                        )
+                        .await?
+                        && result
+                            .blocking_errors
+                            .iter()
+                            .any(|item| item.code == "native_hook_output_limit")
+                    {
+                        return fail(
+                            &name,
+                            ToolError::new(
+                                "native_hook_output_limit",
+                                "The tool failed and its PostToolUseFailure hook exceeded the native output limit.",
+                            ),
+                        );
+                    }
+                    fail(&name, error)
+                }
                 Ok(output) => {
+                    let response = output
+                        .data
+                        .clone()
+                        .unwrap_or_else(|| JsValue::Array(output.content.clone()));
+                    let lifecycle = self
+                        .dispatch_tool_lifecycle(
+                            "PostToolUse",
+                            &name,
+                            &call,
+                            &input,
+                            &context,
+                            Some(object([("toolResponse", response)])),
+                        )
+                        .await?;
                     let mut metadata = output.metadata;
+                    if let Some(lifecycle) = lifecycle {
+                        use crate::runtime::hooks::HookEffect;
+                        if lifecycle
+                            .blocking_errors
+                            .iter()
+                            .any(|error| error.code == "native_hook_output_limit")
+                        {
+                            return fail(
+                                &name,
+                                ToolError::new(
+                                    "native_hook_output_limit",
+                                    "The tool completed, but its PostToolUse hook exceeded the native output limit.",
+                                ),
+                            );
+                        }
+                        let mut info = JsObject::new();
+                        let mut additional = Vec::new();
+                        for effect in lifecycle.effects {
+                            match effect {
+                                HookEffect::Block {
+                                    reason,
+                                    stop_reason,
+                                } if info.get("blocked").is_none() => {
+                                    info.insert(
+                                        "blocked".into(),
+                                        JsValue::Object(object([
+                                            ("reason", JsValue::String(reason)),
+                                            (
+                                                "stopReason",
+                                                stop_reason
+                                                    .map(JsValue::String)
+                                                    .unwrap_or(JsValue::Undefined),
+                                            ),
+                                        ])),
+                                    );
+                                }
+                                HookEffect::AdditionalContext { content, .. } => {
+                                    additional.push(JsValue::String(content))
+                                }
+                                HookEffect::UpdatedMcpToolOutput { output }
+                                    if info.get("updatedMcpToolOutput").is_none() =>
+                                {
+                                    info.insert("updatedMcpToolOutput".into(), output);
+                                }
+                                _ => {}
+                            }
+                        }
+                        if !additional.is_empty()
+                            || info.get("blocked").is_some()
+                            || info.get("updatedMcpToolOutput").is_some()
+                        {
+                            info.insert("additionalContext".into(), JsValue::Array(additional));
+                            metadata
+                                .get_or_insert_with(JsObject::new)
+                                .insert("lifecycle".into(), JsValue::Object(info));
+                        }
+                    }
                     let max_bytes = tool
                         .fields()
                         .get("maxResultBytes")

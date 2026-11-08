@@ -1,5 +1,7 @@
 //! Python orchestration with same-turn, fully gated nested tool calls.
 #![cfg(unix)]
+#[cfg(test)]
+mod boundary_tests;
 mod process;
 mod rpc;
 #[cfg(test)]
@@ -275,6 +277,8 @@ struct Workspace {
     path: PathBuf,
     dev: u64,
     ino: u64,
+    // Keep the original inode alive: an unlink/recreate cannot reuse its ino.
+    directory: fs::File,
 }
 impl Workspace {
     fn create() -> Result<Self, ToolError> {
@@ -284,11 +288,24 @@ impl Workspace {
             .mode(0o700)
             .create(&path)
             .map_err(|e| ToolError::failed(e.to_string()))?;
-        let meta = fs::symlink_metadata(&path).map_err(|e| ToolError::failed(e.to_string()))?;
+        let directory = rustix::fs::open(
+            &path,
+            rustix::fs::OFlags::RDONLY
+                | rustix::fs::OFlags::DIRECTORY
+                | rustix::fs::OFlags::CLOEXEC
+                | rustix::fs::OFlags::NOFOLLOW,
+            rustix::fs::Mode::empty(),
+        )
+        .map(fs::File::from)
+        .map_err(|e| ToolError::failed(e.to_string()))?;
+        let meta = directory
+            .metadata()
+            .map_err(|e| ToolError::failed(e.to_string()))?;
         Ok(Self {
             path,
             dev: meta.dev(),
             ino: meta.ino(),
+            directory,
         })
     }
     fn write(&self, name: &str, bytes: &[u8]) -> Result<(), ToolError> {
@@ -301,17 +318,45 @@ impl Workspace {
         file.write_all(bytes)
             .map_err(|e| ToolError::failed(e.to_string()))
     }
+    fn cleanup(&self) -> Result<(), ToolError> {
+        let changed = || {
+            ToolError::new(
+                "execution_cleanup_failed",
+                "execute_code private workspace identity changed; refusing to remove a replacement or claim successful cleanup.",
+            )
+        };
+        let meta = match fs::symlink_metadata(&self.path) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let original = self
+                    .directory
+                    .metadata()
+                    .map_err(|e| ToolError::failed(e.to_string()))?;
+                return if original.nlink() == 0 {
+                    Ok(())
+                } else {
+                    Err(changed())
+                };
+            }
+            Err(error) => {
+                return Err(ToolError::new(
+                    "execution_cleanup_failed",
+                    error.to_string(),
+                ));
+            }
+        };
+        if !meta.is_dir() || meta.dev() != self.dev || meta.ino() != self.ino {
+            return Err(changed());
+        }
+        fs::remove_dir_all(&self.path)
+            .map_err(|error| ToolError::new("execution_cleanup_failed", error.to_string()))
+    }
 }
 impl Drop for Workspace {
     fn drop(&mut self) {
-        // Never remove a replacement directory or follow a substituted symlink.
-        if let Ok(meta) = fs::symlink_metadata(&self.path)
-            && meta.is_dir()
-            && meta.dev() == self.dev
-            && meta.ino() == self.ino
-        {
-            let _ = fs::remove_dir_all(&self.path);
-        }
+        // Drop is a cancellation backstop. The normal completed path checks
+        // cleanup explicitly and cannot report success on an unremoved root.
+        let _ = self.cleanup();
     }
 }
 fn explicitly_authorized(context: &ToolRunContext) -> bool {
@@ -524,8 +569,10 @@ async fn run(
         }
     };
     let drained = server.shutdown().await;
+    let cleaned = workspace.cleanup();
     let result = result?;
     drained?;
+    cleaned?;
     Ok(finish_execution(result, seconds))
 }
 fn finish_execution(result: process::ResultData, seconds: f64) -> (String, String, Option<String>) {

@@ -1,0 +1,1301 @@
+{
+  "metadata": {
+    "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "typescript": "5.9.3",
+    "esModuleInterop": true,
+    "sourceSha256": {
+      "src/gateway/protocol/types.ts": "e3c9d4e11b3a2acbc3dd5445896bbaef1cef332a82cfe11d4da0668de4de589a",
+      "tsconfig.json": "2911e204056ccad033ca4a60d57accbb4b23b8d9872b7f952c5faeb9e894cc52",
+      "src/gateway/dialog/errors.ts": "20668c4b0074c1cd2b9d375b11a3a8c93c47faddf8264844b6a6206f1630804c",
+      "src/cli/ProjectRuntimeRegistry.ts": "0df6b0e82be872c2a2d57f85e73136d75865ff1fc2c4ded2e5e5550d7a9353d9"
+    },
+    "extraction": {
+      "resolveSdkSubagentMcpServers": {
+        "start": 95099,
+        "end": 96617,
+        "line": 2168,
+        "sha256": "d0b68061369951a01e4b51dbc66bb8c7f9e3fb0cfd09a4839e6e41be1c23d402"
+      },
+      "sessionFactory.getSdkMcpServers": {
+        "start": 16079,
+        "end": 16305,
+        "line": 322,
+        "sha256": "b058b58352db1e59852c8f73879eeb0227777f32335318d0f572bf6e71a1d189"
+      }
+    },
+    "method": "TypeScript AST exact function/callback text transpiled in memory; actual DialogGatewayError class; no full registry/session construction",
+    "errorProjection": "name/code/message/details only; stack excluded before capture",
+    "normalization": "none",
+    "network": "Seatbelt deny all real network and fork; pure function, no default process/provider ports"
+  },
+  "rows": [
+    {
+      "id": "string-enabled",
+      "specs": [
+        "enabled"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {
+          "enabled": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          }
+        },
+        "keys": [
+          "enabled"
+        ]
+      },
+      "clones": {
+        "enabled": {
+          "object": true,
+          "args": true,
+          "env": true
+        }
+      }
+    },
+    {
+      "id": "string-disabled",
+      "specs": [
+        "disabled"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": false,
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "SDK_AGENT_MCP_REFERENCE_DISABLED",
+          "message": "Agent child references SDK-session MCP server disabled, but it is disabled."
+        }
+      }
+    },
+    {
+      "id": "string-missing",
+      "specs": [
+        "missing"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": false,
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "SDK_AGENT_MCP_REFERENCE_NOT_FOUND",
+          "message": "Agent child references SDK-session MCP server missing, but it is not configured for this session."
+        }
+      }
+    },
+    {
+      "id": "string-no-session-map",
+      "specs": [
+        "enabled"
+      ],
+      "sessionServers": null,
+      "output": {
+        "ok": false,
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "SDK_AGENT_MCP_REFERENCE_NOT_FOUND",
+          "message": "Agent child references SDK-session MCP server enabled, but it is not configured for this session."
+        }
+      }
+    },
+    {
+      "id": "inline",
+      "specs": {
+        "local": {
+          "type": "stdio",
+          "command": "/fixture/mcp-one",
+          "args": [
+            "one"
+          ],
+          "env": {
+            "TOKEN": "fixture-only"
+          },
+          "cwd": "/fixture/project",
+          "timeout": 1000
+        }
+      },
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {
+          "local": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          }
+        },
+        "keys": [
+          "local"
+        ]
+      },
+      "clones": {}
+    },
+    {
+      "id": "inline-two-servers",
+      "specs": {
+        "alpha": {
+          "type": "stdio",
+          "command": "/fixture/mcp-one",
+          "args": [
+            "one"
+          ],
+          "env": {
+            "TOKEN": "fixture-only"
+          },
+          "cwd": "/fixture/project",
+          "timeout": 1000
+        },
+        "beta": {
+          "type": "streamable_http",
+          "url": "http://127.0.0.1:1/mcp",
+          "headers": {
+            "Authorization": "Bearer fixture-only"
+          }
+        }
+      },
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {
+          "alpha": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          },
+          "beta": {
+            "type": "streamable_http",
+            "url": "http://127.0.0.1:1/mcp",
+            "headers": {
+              "Authorization": "Bearer fixture-only"
+            }
+          }
+        },
+        "keys": [
+          "alpha",
+          "beta"
+        ]
+      },
+      "clones": {}
+    },
+    {
+      "id": "duplicate-inline",
+      "specs": [
+        {
+          "same": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          }
+        },
+        {
+          "same": {
+            "type": "streamable_http",
+            "url": "http://127.0.0.1:1/mcp",
+            "headers": {
+              "Authorization": "Bearer fixture-only"
+            }
+          }
+        }
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": false,
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "INVALID_MCP_SERVER",
+          "message": "Agent child repeats MCP server same."
+        }
+      }
+    },
+    {
+      "id": "duplicate-string",
+      "specs": [
+        "enabled",
+        "enabled"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {
+          "enabled": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          }
+        },
+        "keys": [
+          "enabled"
+        ]
+      },
+      "clones": {
+        "enabled": {
+          "object": true,
+          "args": true,
+          "env": true
+        }
+      }
+    },
+    {
+      "id": "duplicate-string-three",
+      "specs": [
+        "enabled",
+        "other",
+        "enabled"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {
+          "enabled": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          },
+          "other": {
+            "type": "streamable_http",
+            "url": "http://127.0.0.1:1/mcp",
+            "headers": {
+              "Authorization": "Bearer fixture-only"
+            }
+          }
+        },
+        "keys": [
+          "enabled",
+          "other"
+        ]
+      },
+      "clones": {
+        "enabled": {
+          "object": true,
+          "args": true,
+          "env": true
+        },
+        "other": {
+          "object": true,
+          "args": true,
+          "env": true
+        }
+      }
+    },
+    {
+      "id": "inline-then-string-same",
+      "specs": [
+        {
+          "enabled": {
+            "type": "streamable_http",
+            "url": "http://127.0.0.1:1/mcp",
+            "headers": {
+              "Authorization": "Bearer fixture-only"
+            }
+          }
+        },
+        "enabled"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {
+          "enabled": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          }
+        },
+        "keys": [
+          "enabled"
+        ]
+      },
+      "clones": {
+        "enabled": {
+          "object": true,
+          "args": true,
+          "env": true
+        }
+      }
+    },
+    {
+      "id": "string-then-inline-same",
+      "specs": [
+        "enabled",
+        {
+          "enabled": {
+            "type": "streamable_http",
+            "url": "http://127.0.0.1:1/mcp",
+            "headers": {
+              "Authorization": "Bearer fixture-only"
+            }
+          }
+        }
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": false,
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "INVALID_MCP_SERVER",
+          "message": "Agent child repeats MCP server enabled."
+        }
+      }
+    },
+    {
+      "id": "mixed",
+      "specs": [
+        "enabled",
+        {
+          "inline": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          }
+        },
+        "other"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {
+          "enabled": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          },
+          "inline": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          },
+          "other": {
+            "type": "streamable_http",
+            "url": "http://127.0.0.1:1/mcp",
+            "headers": {
+              "Authorization": "Bearer fixture-only"
+            }
+          }
+        },
+        "keys": [
+          "enabled",
+          "inline",
+          "other"
+        ]
+      },
+      "clones": {
+        "enabled": {
+          "object": true,
+          "args": true,
+          "env": true
+        },
+        "other": {
+          "object": true,
+          "args": true,
+          "env": true
+        }
+      }
+    },
+    {
+      "id": "mixed-disabled",
+      "specs": [
+        {
+          "local": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          }
+        },
+        "disabled"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": false,
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "SDK_AGENT_MCP_REFERENCE_DISABLED",
+          "message": "Agent child references SDK-session MCP server disabled, but it is disabled."
+        }
+      }
+    },
+    {
+      "id": "mixed-missing",
+      "specs": [
+        "enabled",
+        {
+          "local": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          }
+        },
+        "missing"
+      ],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": false,
+        "error": {
+          "name": "DialogGatewayError",
+          "code": "SDK_AGENT_MCP_REFERENCE_NOT_FOUND",
+          "message": "Agent child references SDK-session MCP server missing, but it is not configured for this session."
+        }
+      }
+    },
+    {
+      "id": "empty-array",
+      "specs": [],
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {},
+        "keys": []
+      },
+      "clones": {}
+    },
+    {
+      "id": "empty-inline",
+      "specs": {},
+      "sessionServers": [
+        [
+          "enabled",
+          {
+            "config": {
+              "type": "stdio",
+              "command": "/fixture/mcp-one",
+              "args": [
+                "one"
+              ],
+              "env": {
+                "TOKEN": "fixture-only"
+              },
+              "cwd": "/fixture/project",
+              "timeout": 1000
+            },
+            "enabled": true
+          }
+        ],
+        [
+          "disabled",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": false
+          }
+        ],
+        [
+          "other",
+          {
+            "config": {
+              "type": "streamable_http",
+              "url": "http://127.0.0.1:1/mcp",
+              "headers": {
+                "Authorization": "Bearer fixture-only"
+              }
+            },
+            "enabled": true
+          }
+        ]
+      ],
+      "output": {
+        "ok": true,
+        "servers": {},
+        "keys": []
+      },
+      "clones": {}
+    }
+  ],
+  "sessionFactoryCallback": {
+    "sessionEntries": [
+      [
+        "enabled",
+        {
+          "config": {
+            "type": "stdio",
+            "command": "/fixture/mcp-one",
+            "args": [
+              "one"
+            ],
+            "env": {
+              "TOKEN": "fixture-only"
+            },
+            "cwd": "/fixture/project",
+            "timeout": 1000
+          },
+          "enabled": true
+        }
+      ],
+      [
+        "disabled",
+        {
+          "config": {
+            "type": "streamable_http",
+            "url": "http://127.0.0.1:1/mcp",
+            "headers": {
+              "Authorization": "Bearer fixture-only"
+            }
+          },
+          "enabled": false
+        }
+      ],
+      [
+        "other",
+        {
+          "config": {
+            "type": "streamable_http",
+            "url": "http://127.0.0.1:1/mcp",
+            "headers": {
+              "Authorization": "Bearer fixture-only"
+            }
+          },
+          "enabled": true
+        }
+      ]
+    ],
+    "visible": {
+      "enabled": {
+        "type": "stdio",
+        "command": "/fixture/mcp-one",
+        "args": [
+          "one"
+        ],
+        "env": {
+          "TOKEN": "fixture-only"
+        },
+        "cwd": "/fixture/project",
+        "timeout": 1000
+      },
+      "other": {
+        "type": "streamable_http",
+        "url": "http://127.0.0.1:1/mcp",
+        "headers": {
+          "Authorization": "Bearer fixture-only"
+        }
+      }
+    },
+    "visibleKeys": [
+      "enabled",
+      "other"
+    ],
+    "missing": {},
+    "forwardsConfigIdentity": true
+  }
+}

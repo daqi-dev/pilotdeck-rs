@@ -301,6 +301,7 @@ impl RuntimeState {
     }
 }
 
+#[derive(Clone)]
 pub struct HookRuntimeOptions {
     /// `Date#toISOString()` for `pendingAsyncHooks[].startedAt`.
     pub clock: Arc<dyn Fn() -> JsString + Send + Sync>,

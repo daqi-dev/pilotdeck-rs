@@ -1328,6 +1328,7 @@ pub struct HttpHookOptions {
     pub signal: Option<Cancellation>,
 }
 
+#[derive(Clone)]
 pub struct HttpHookExecutor {
     client: hyper_util::client::legacy::Client<
         ConnectDeadline<hyper_rustls::HttpsConnector<crate::runtime::model::http::ProxyConnect>>,

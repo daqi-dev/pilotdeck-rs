@@ -4972,3 +4972,8 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-08 19:26 · CLI 原生执行与子代理检查点（继续开发）
 
 本轮代码统一保存在 cli-gateway-setup/pilotdeck-rs；r42 已通过编译、agent/interaction/permissions/tool-runtime、execute_code、模型选择、样式、附件、后台只读恢复、Cron退出收尾、Hooks运行器、plugin loader及入口审计测试，CLI全套/strict lint/四bin仍在mbp2继续，不能外推为全过。真实execute_code r37已验证旧CLI stdin、同连接嵌套read/edit二次授权、plan/acceptEdits沙箱拒写与bypass写入、取消Python及孙进程回收（12观察PID全退出，无兜底强杀），原件mbp2 `_tmp/execute-code-host-sol-20261108-r37-contract`。delivery双谱系无P0/P1后补locator/EPIPE/响应上限与BOM修复，GLM增量及端口实证裁决在跑；证据主仓 `_tmp/20261108-cli-completion/review-delivery-r42`。此提交保全当前源再真合最新origin/main183d23ad7；SDK agent定义、fork-local MCP/后台续跑和普通工具Hook派发继续补接，不把配置可解析当完成。无GitHub写；所有Rust/产品探针仅mbp2；旧8e32与两边快照保留。
+
+
+### 2026-11-08 19:41 · CLI 子循环、MCP与Hooks验证检查点
+
+8c9cbdce4已真合origin/main183d23ad7，产品字节与084d5a7a5一致，未重复或覆盖；本轮继续本机保全SDK自定义agent、fork独立MCP owner、工具前后Hook派发、SessionEnd同源沙箱/输出上限和取消drain。mbp2 r45编译/所选实际用例/双strict/四bin全0（逐文件用例数主仓 `_tmp/20261108-cli-completion/verify-r45/test-counts.txt`）；r42/r43部分interaction/switch/review筛选名曾匹配0用例，不计覆盖，现已用正确selector补跑。r42/r43 CLI全套537过140忽略，忽略生成器/子进程helper未冒称运行。真实execute_code、父子4stream+2sidecar+历史、普通/嵌套Pre与Post、HTTP proxy A→B已跑通，最新取消落盘/MCP子端点/SessionEnd溢出实跑继续。独立workflow双谱系找出计划工具文案与旧oracle不一致P1、预算边界/goal只读分类/Cron交付收尾P2，正在逐项修；产品negative fixture7个旧拒绝锚点失配另有P1，属于非冻结产品测试（不在FROZEN inventory），将保覆盖重绑，不改冻结尺子。完整CLI及人签仍未收口，SDK hooks生命周期与后台/续跑继续；唯一正本/旧树快照/本机提交和mbp2构建约束维持。

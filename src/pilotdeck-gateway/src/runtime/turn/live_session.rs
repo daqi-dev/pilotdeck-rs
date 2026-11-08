@@ -72,7 +72,7 @@ impl SessionLifecycle {
             .as_any()
             .downcast_ref::<InteractionHooks>()
             .ok_or_else(|| ModuleError::new("Invalid leased interaction hooks resource."))?;
-        let port = hooks.bind_session(
+        let port = hooks.bind_session_with_options(
             Binding {
                 session_id: identity.session_id.clone(),
                 turn_id: identity.turn_id.clone(),
@@ -83,6 +83,7 @@ impl SessionLifecycle {
             },
             identity.run_id.clone(),
             input.hooks.clone(),
+            input.hook_options.clone().unwrap_or_default(),
         )?;
         Ok(Some(Self {
             port: Arc::new(port),

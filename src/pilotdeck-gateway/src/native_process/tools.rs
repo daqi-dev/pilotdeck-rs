@@ -160,6 +160,16 @@ impl SessionTools {
         self.fork_scope = scope;
         self
     }
+    pub(super) fn with_fork_mcp_names(mut self, names: Vec<JsString>) -> Self {
+        if let Some(allowed) = &mut self.binding.context.allowed_tools {
+            for name in names {
+                if !allowed.contains(&name) {
+                    allowed.push(name);
+                }
+            }
+        }
+        self
+    }
     pub(super) fn with_plugin_hooks(
         mut self,
         hooks: crate::hooks::protocol::HooksSettings,
@@ -376,6 +386,7 @@ impl SessionTools {
                 authority.clone(),
                 self.fork_scope.as_deref(),
                 tools.clone(),
+                self.skills.clone(),
                 #[cfg(unix)]
                 self.native_sandbox.clone(),
             )
@@ -972,6 +983,10 @@ impl SessionMcpTools {
         &self.per_session
     }
 
+    pub(super) fn append_fork(&mut self, tools: Vec<Arc<McpBridgeTool>>) {
+        self.per_session.extend(tools);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.shared.is_empty() && self.per_session.is_empty()
     }
@@ -1189,6 +1204,47 @@ pub async fn session_mcp_tools(
             );
             Ok((tools, release))
         }
+    }
+}
+
+pub(super) async fn fork_mcp_tools(
+    provider: &ProjectMcpRuntimeProvider,
+    registry: &SessionMcpRuntimeRegistry,
+    session: &JsString,
+    servers: &JsObject,
+    definition: &JsObject,
+) -> Result<(Vec<Arc<McpBridgeTool>>, SessionMcpRelease), RuntimeError> {
+    let specs = super::agent_mcp::server_specs(servers)
+        .map_err(|error| RuntimeError::new(error.message))?;
+    let runtime = provider.create_runtime(specs);
+    let registration =
+        registry.register(&String::from_utf16_lossy(session.units()), runtime.clone())?;
+    let release = SessionMcpRelease {
+        per_session: Some(registration),
+        shared: None,
+        executor: Some(tokio::runtime::Handle::current()),
+    };
+    let result = async {
+        runtime.start().await?;
+        create_mcp_tool_definitions_from_runtime(runtime, CreateToolDefinitionsOptions::default())
+            .await
+    }
+    .await;
+    match result {
+        Ok(tools) => Ok((
+            tools
+                .into_iter()
+                .filter(|tool| super::agent::definition_allows(definition, &tool.spec().wire_name))
+                .collect(),
+            release,
+        )),
+        Err(error) => match release.release().await {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(RuntimeError::new(format!(
+                "{}; child MCP cleanup failed: {}",
+                error.message, cleanup.message
+            ))),
+        },
     }
 }
 

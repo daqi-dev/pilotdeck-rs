@@ -42,6 +42,38 @@ impl NativeSkills {
     pub(super) fn disabled() -> Self {
         Self(Arc::default(), false)
     }
+    pub(super) fn select(
+        &self,
+        requested: Option<&JsValue>,
+    ) -> Result<Self, crate::runtime::project::RuntimeError> {
+        let Some(JsValue::Array(names)) = requested else {
+            return Ok(self.clone());
+        };
+        let mut selected = Vec::new();
+        for name in names {
+            let name = name.as_string().ok_or_else(|| {
+                crate::runtime::project::RuntimeError::new(
+                    "Native skill selection must contain strings.",
+                )
+            })?;
+            let skill = self
+                .0
+                .iter()
+                .find(|skill| &skill.name == name)
+                .ok_or_else(|| {
+                    crate::runtime::project::RuntimeError::new(
+                        "Native child skill is outside the retained parent catalog.",
+                    )
+                })?;
+            if !selected
+                .iter()
+                .any(|old: &NativeSkill| old.name == skill.name)
+            {
+                selected.push(skill.clone());
+            }
+        }
+        Ok(Self(selected.into(), self.1))
+    }
     pub(super) fn register(&self, tools: &ToolRegistry) {
         if !self.1 {
             return;
@@ -227,6 +259,44 @@ mod tests;
 #[cfg(test)]
 mod disabled_tests {
     use super::*;
+    #[test]
+    fn selected_catalog_retains_bytes_and_cannot_expand_the_parent() {
+        let catalog = NativeSkills(
+            vec![
+                NativeSkill {
+                    name: "p:a".into(),
+                    description: None,
+                    path: "/fixture/a/SKILL.md".into(),
+                    content: "SELECTED A".into(),
+                },
+                NativeSkill {
+                    name: "p:b".into(),
+                    description: None,
+                    path: "/fixture/b/SKILL.md".into(),
+                    content: "SELECTED B".into(),
+                },
+            ]
+            .into(),
+            true,
+        );
+        let selected = catalog
+            .select(Some(&JsValue::Array(vec!["p:a".into()])))
+            .unwrap();
+        assert_eq!(selected.list_skills().len(), 1);
+        assert_eq!(selected.0[0].content, "SELECTED A".into());
+        assert!(
+            selected
+                .select(Some(&JsValue::Array(vec!["p:b".into()])))
+                .is_err()
+        );
+        assert!(
+            NativeSkills::disabled()
+                .select(Some(&JsValue::Array(vec![])))
+                .unwrap()
+                .list_skills()
+                .is_empty()
+        );
+    }
     #[test]
     fn disabled_skills_remove_both_tool_and_prompt_contributions() {
         let disabled = NativeSkills::disabled();

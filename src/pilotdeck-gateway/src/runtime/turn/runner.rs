@@ -35,6 +35,11 @@ pub(crate) use prompt::PromptHooks;
 pub enum AgentInput {
     Text(JsString),
     Blocks(Vec<JsValue>),
+    /// Host-only SDK fork prelude. Raw AgentInput parsing cannot construct it.
+    Fork {
+        initial: JsString,
+        directive: JsString,
+    },
 }
 
 /// History is loop-only; synthetic input is durable but never acknowledged as

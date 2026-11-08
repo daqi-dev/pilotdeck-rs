@@ -109,6 +109,7 @@ pub(super) struct ForkScope {
     pub prompt_session: JsString,
     pub store: Arc<dyn TranscriptStore>,
     pub key: TranscriptKey,
+    pub skills: super::skills::NativeSkills,
     channel: JsString,
 }
 impl ForkScope {
@@ -149,6 +150,7 @@ pub(super) struct ForkTurn {
     authority: Option<TurnInteractionAuthority>,
     prompt_route: Option<JsString>,
     tools: ToolRegistry,
+    skills: super::skills::NativeSkills,
     #[cfg(unix)]
     sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     events: mpsc::Sender<JsObject>,
@@ -170,6 +172,7 @@ impl ForkTurn {
         authority: Option<TurnInteractionAuthority>,
         scope: Option<&ForkScope>,
         tools: ToolRegistry,
+        skills: super::skills::NativeSkills,
         #[cfg(unix)] sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     ) -> Arc<Self> {
         let (events, events_rx) = mpsc::channel(16);
@@ -183,6 +186,7 @@ impl ForkTurn {
             authority,
             prompt_route: scope.map(|scope| scope.prompt_session.clone()),
             tools,
+            skills,
             #[cfg(unix)]
             sandbox,
             events,
@@ -213,7 +217,7 @@ impl ForkTurn {
     }
     pub(super) fn register(&self, tools: &ToolRegistry) {
         tools
-            .register(Arc::new(AgentTool::new()))
+            .register(Arc::new(AgentTool::for_config(&self.config)))
             .expect("native agent name is unique");
     }
     fn close(self: Arc<Self>) -> HostFuture<()> {
@@ -396,6 +400,19 @@ struct AgentTool {
     fields: JsObject,
 }
 impl AgentTool {
+    fn for_config(config: &JsObject) -> Self {
+        let mut tool = Self::new();
+        if config.get("subagentDefinitions").is_some() {
+            let names = definitions(config)
+                .entries()
+                .iter()
+                .map(|(name, _)| String::from_utf16_lossy(name.units()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            tool.fields.insert("description".into(),JsValue::String(format!("Delegate a bounded task to a real child agent loop. Supply description and prompt. Available subagent types: {names}. Each child inherits the parent policy and recursion cap.").into()));
+        }
+        tool
+    }
     fn new() -> Self {
         let mut fields=object([
             ("name","agent".into()),("aliases",JsValue::Array(vec!["Agent".into(),"Task".into()])),
@@ -518,16 +535,27 @@ impl ForkApi {
         if definition == "general-purpose" && (parent_mode.equals_str("plan") || parent_ask) {
             definition = "explore".into();
         }
-        if !["general-purpose", "explore", "plan", "verify"].contains(&definition.as_str()) {
-            return Err(ToolError::new(
-                "invalid_tool_input",
-                concat(&[
-                    &"Unknown subagent_type \"".into(),
-                    &normalized,
-                    &"\". Available: general-purpose, explore, plan, verify.".into(),
-                ]),
-            ));
-        }
+        let available = definitions(&self.turn.config);
+        let spec = available
+            .get(definition.as_str())
+            .and_then(JsValue::as_object)
+            .cloned()
+            .ok_or_else(|| {
+                let names = available
+                    .entries()
+                    .iter()
+                    .map(|(name, _)| String::from_utf16_lossy(name.units()))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                ToolError::new(
+                    "invalid_tool_input",
+                    concat(&[
+                        &"Unknown subagent_type \"".into(),
+                        &normalized,
+                        &format!("\". Available: {names}.").into(),
+                    ]),
+                )
+            })?;
         let depth = self
             .turn
             .config
@@ -598,6 +626,7 @@ impl ForkApi {
                     .run(
                         factory,
                         definition,
+                        spec,
                         description,
                         directive,
                         parent_mode,
@@ -643,6 +672,7 @@ impl ForkApi {
         self: Arc<Self>,
         factory: Arc<ProjectSessionFactory>,
         definition: String,
+        spec: JsObject,
         description: JsString,
         directive: JsString,
         parent_mode: JsString,
@@ -660,8 +690,10 @@ impl ForkApi {
         let session = concat(&[&cwd, &"::sub::".into(), &subagent]);
         let turn = concat(&[&subagent, &"-t0".into()]);
         let channel: JsString = format!("native-fork:{}", uuid::Uuid::new_v4()).into();
-        let readonly =
-            definition != "general-purpose" || parent_ask || parent_mode.equals_str("plan");
+        let readonly = spec.get("isReadOnly") == Some(&JsValue::Bool(true))
+            || parent_ask
+            || parent_mode.equals_str("plan");
+        let child_mode = string(&spec, "permissionMode").unwrap_or_else(|| parent_mode.clone());
         let allowed: Vec<_> =
             self.turn
                 .tools
@@ -674,18 +706,7 @@ impl ForkApi {
                         .get("name")
                         .and_then(JsValue::as_string)?
                         .clone();
-                    if definition == "plan"
-                        && !["read_file", "grep", "glob"]
-                            .iter()
-                            .any(|v| name.equals_str(v))
-                    {
-                        return None;
-                    }
-                    if (definition == "explore" || definition == "verify")
-                        && !["read_file", "grep", "glob", "bash"]
-                            .iter()
-                            .any(|v| name.equals_str(v))
-                    {
+                    if !definition_allows(&spec, &name) {
                         return None;
                     }
                     let mut capabilities = tool.required_runtime_capabilities().unwrap_or_default();
@@ -729,10 +750,7 @@ impl ForkApi {
         .unwrap()
         .clone();
         let mut config = self.turn.config.clone();
-        config.insert(
-            "permissionMode".into(),
-            JsValue::String(parent_mode.clone()),
-        );
+        config.insert("permissionMode".into(), JsValue::String(child_mode.clone()));
         config.insert("isSubagent".into(), JsValue::Bool(true));
         config.insert("subagentDepth".into(), JsValue::Number(depth + 1.0));
         config.insert("maxSubagentDepth".into(), JsValue::Number(max));
@@ -744,8 +762,9 @@ impl ForkApi {
         if readonly {
             config.insert("runMode".into(), "ask".into());
         }
-        if let Some(model) = config
-            .get("subagentModel")
+        if let Some(model) = spec
+            .get("modelOverride")
+            .or_else(|| config.get("subagentModel"))
             .and_then(JsValue::as_object)
             .cloned()
         {
@@ -757,8 +776,43 @@ impl ForkApi {
             config.insert("maxContextTokens".into(), JsValue::Undefined);
             config.insert("maxOutputTokens".into(), JsValue::Undefined);
         }
-        let prompt = child_prompt(&definition, string(&config, "systemPrompt").as_ref());
+        let prompt =
+            definition_prompt(&definition, &spec, string(&config, "systemPrompt").as_ref());
         config.insert("systemPrompt".into(), JsValue::String(prompt));
+        for key in ["maxTurns", "initialPrompt"] {
+            config.insert(
+                key.into(),
+                spec.get(key).cloned().unwrap_or(JsValue::Undefined),
+            );
+        }
+        config.insert(
+            "nativeMemoryDisabled".into(),
+            JsValue::Bool(
+                config.get("nativeMemoryDisabled") == Some(&JsValue::Bool(true))
+                    || spec
+                        .get("memory")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|value| value.equals_str("disabled")),
+            ),
+        );
+        let skills = self
+            .turn
+            .skills
+            .select(spec.get("skills"))
+            .map_err(|failure| error(failure.to_string()))?;
+        // The selected catalog already enforces the parent ceiling. Reapplying
+        // the parent selector to a narrower child would falsely reject it.
+        config.insert("nativeSkillSelection".into(), JsValue::Undefined);
+        config.insert(
+            "nativeForkMcpServers".into(),
+            spec.get("mcpServers")
+                .cloned()
+                .unwrap_or(JsValue::Undefined),
+        );
+        config.insert(
+            "nativeForkMcpDefinition".into(),
+            JsValue::Object(spec.clone()),
+        );
         let prompt_session = self
             .turn
             .prompt_route
@@ -767,11 +821,12 @@ impl ForkApi {
         let scope = Arc::new(ForkScope {
             config,
             permission_rules: self.turn.rules.clone(),
-            permission_mode: parent_mode,
+            permission_mode: child_mode,
             prompt_session,
             seed,
             store,
             key,
+            skills,
             channel: channel.clone(),
         });
         lock(&self.turn.registry.scopes).insert(session.clone(), scope);
@@ -971,12 +1026,21 @@ impl ForkApi {
                 let mut last_text = JsString::default();
                 let mut failure = None;
                 loop {
-                    let next = tokio::select! {
-                        biased;
-                        _=cancel.cancelled()=>{let _=child.abort(&"parent_cancelled".into());failure=Some(ToolError::aborted());break;},
-                        _=parent_context.cancelled()=>{let _=child.abort(&"parent_cancelled".into());failure=Some(ToolError::aborted());break;},
-                        _=tokio::time::sleep_until(deadline)=>{let _=child.abort(&"subagent_timeout".into());failure=Some(error("Subagent timed out before completion."));break;},
-                        next=stream.next()=>next,
+                    let next = if failure.is_some() {
+                        // abort only requests cancellation. Keep driving the
+                        // actual LiveTurn through its durable terminal and
+                        // SessionEnd before releasing its activity/writer.
+                        // A blocked cleanup remains owned and visible to the
+                        // enclosing session/project drain deadline.
+                        stream.next().await
+                    } else {
+                        tokio::select! {
+                            biased;
+                            _=cancel.cancelled()=>{let _=child.abort(&"parent_cancelled".into());failure=Some(ToolError::aborted());continue;},
+                            _=parent_context.cancelled()=>{let _=child.abort(&"parent_cancelled".into());failure=Some(ToolError::aborted());continue;},
+                            _=tokio::time::sleep_until(deadline)=>{let _=child.abort(&"subagent_timeout".into());failure=Some(error("Subagent timed out before completion."));continue;},
+                            next=stream.next()=>next,
+                        }
                     };
                     match next {
                         Err(e) => {
@@ -999,6 +1063,9 @@ impl ForkApi {
                             {
                                 last_text = text;
                             }
+                            if failure.is_some() {
+                                continue;
+                            }
                             let forwarded = tokio::select! {
                                 _=cancel.cancelled()=>Err(ToolError::aborted()),
                                 _=parent_context.cancelled()=>Err(ToolError::aborted()),
@@ -1008,7 +1075,7 @@ impl ForkApi {
                             if let Err(error) = forwarded {
                                 let _ = child.abort(&"subagent_delivery_cancelled".into());
                                 failure = Some(error);
-                                break;
+                                continue;
                             }
                         }
                     }
@@ -1111,6 +1178,91 @@ fn terminal_is_complete(finish: Option<&JsValue>, kind: Option<&JsString>) -> bo
         .is_some_and(|value| value.equals_str("completed"))
         && !kind.is_some_and(|value| value.equals_str("error") || value.equals_str("aborted"))
 }
+
+fn definitions(config: &JsObject) -> JsObject {
+    if let Some(value) = config
+        .get("subagentDefinitions")
+        .and_then(JsValue::as_object)
+    {
+        return value.clone();
+    }
+    let mut definitions = JsObject::new();
+    for (id, names) in [
+        ("general-purpose", vec!["*"]),
+        ("explore", vec!["read_file", "grep", "glob", "bash"]),
+        ("plan", vec!["read_file", "grep", "glob"]),
+        ("verify", vec!["read_file", "grep", "glob", "bash"]),
+    ] {
+        definitions.insert(
+            id.into(),
+            object([
+                ("id", id.into()),
+                (
+                    "allowedTools",
+                    JsValue::Array(names.into_iter().map(JsValue::from).collect()),
+                ),
+                ("isReadOnly", JsValue::Bool(id != "general-purpose")),
+                (
+                    "omitProjectInstructions",
+                    JsValue::Bool(id != "general-purpose"),
+                ),
+                ("omitGitStatus", JsValue::Bool(id != "general-purpose")),
+            ]),
+        );
+    }
+    definitions
+}
+pub(super) fn definition_allows(spec: &JsObject, name: &JsString) -> bool {
+    let contains = |key: &str, wildcard: bool| {
+        spec.get(key)
+            .and_then(|v| {
+                if let JsValue::Array(items) = v {
+                    Some(items)
+                } else {
+                    None
+                }
+            })
+            .is_some_and(|items| {
+                items
+                    .iter()
+                    .filter_map(JsValue::as_string)
+                    .any(|item| item == name || (wildcard && item.equals_str("*")))
+            })
+    };
+    contains("allowedTools", true) && !contains("disallowedTools", false)
+}
+fn definition_prompt(id: &str, spec: &JsObject, parent: Option<&JsString>) -> JsString {
+    // Built-in wording is self-written. SDK suffix/reminder are caller data.
+    let custom = string(spec, "systemPromptSuffix");
+    let own = child_prompt(id, None);
+    let filtered = parent.map(|parent| {
+        if spec.get("omitProjectInstructions") == Some(&JsValue::Bool(true))
+            || spec.get("omitGitStatus") == Some(&JsValue::Bool(true))
+        {
+            filter_parent_prompt(parent)
+        } else {
+            parent.clone()
+        }
+    });
+    let mut pieces = vec![own];
+    for value in [custom, string(spec, "criticalSystemReminder"), filtered]
+        .into_iter()
+        .flatten()
+    {
+        if !trim(&value).is_empty() {
+            pieces.push(value);
+        }
+    }
+    let mut units = Vec::new();
+    for (index, piece) in pieces.iter().enumerate() {
+        if index > 0 {
+            units.extend([10, 10]);
+        }
+        units.extend_from_slice(piece.units());
+    }
+    JsString::from_utf16(units)
+}
+
 fn normalize_type(value: Option<&JsString>) -> JsString {
     let Some(value) = value else {
         return "general-purpose".into();

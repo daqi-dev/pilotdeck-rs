@@ -78,6 +78,7 @@ impl SdkAbortSignal for CompletionSignal<'_> {
 
 pub(super) struct NativeSdkPort {
     pub registry: Mutex<SdkSessionRegistry>,
+    pub mcp_config: Arc<std::sync::OnceLock<Arc<crate::runtime::mcp::sdk::SdkMcpConfig>>>,
 }
 impl NativeSdkPort {
     /// Read the committed value, including the session's retained configuration
@@ -111,10 +112,14 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
     ) -> SubmitFuture<'a, Result<bool, SubmitError>> {
         Box::pin(async move {
             let signal = CompletionSignal(completion);
-            self.registry
-                .lock()
-                .await
-                .set_session_config(session, config, project, Some(&signal))
+            let mut registry = self.registry.lock().await;
+            let normalized =
+                resolve_native_agents(&registry, session, config, project, self.mcp_config.get())
+                    .await
+                    .map_err(sdk_submit_error)?;
+            signal.throw_if_aborted().map_err(sdk_submit_error)?;
+            registry
+                .set_session_config(session, &normalized, project, Some(&signal))
                 .await
                 .map_err(|e| {
                     SubmitError::new(
@@ -131,6 +136,15 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
 }
 
 pub(super) fn apply_prompt_config(target: &mut pilotdeck_protocol::JsObject, sdk: &JsValue) {
+    if let Some(agents) = sdk.get("agents").and_then(JsValue::as_object) {
+        target.insert(
+            "subagentDefinitions".into(),
+            JsValue::Object(project_agents(agents)),
+        );
+    }
+    if let Some(skills) = sdk.get("skills").filter(|value| !value.is_undefined()) {
+        target.insert("nativeSkillSelection".into(), skills.clone());
+    }
     for key in ["systemPrompt", "appendSystemPrompt", "planModeInstructions"] {
         if let Some(value) = sdk.get(key).filter(|value| !value.is_undefined()) {
             target.insert(key.into(), value.clone());
@@ -145,6 +159,15 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
             "sdkSessionConfig must be an object.",
         )
     })?;
+    validate_agents(object.get("agents"))?;
+    if let Some(skills) = object.get("skills").filter(|value| !value.is_undefined())
+        && !valid_skill_selector(skills)
+    {
+        return Err(SubmitError::new(
+            "INVALID_SDK_SESSION_CONFIG",
+            "skills must be an array of strings or all.",
+        ));
+    }
     for key in ["systemPrompt", "appendSystemPrompt", "planModeInstructions"] {
         if object
             .get(key)
@@ -159,6 +182,8 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
     if object.entries().iter().any(|(key, value)| {
         ![
             "permissionMode",
+            "agents",
+            "skills",
             "systemPrompt",
             "appendSystemPrompt",
             "planModeInstructions",
@@ -185,10 +210,364 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
     Ok(())
 }
 
+fn sdk_submit_error(error: SdkSessionError) -> SubmitError {
+    SubmitError::new(
+        if error.code.is_empty() {
+            "gateway_request_failed"
+        } else {
+            &error.code
+        },
+        error.message,
+    )
+}
+fn valid_skill_selector(value: &JsValue) -> bool {
+    value.as_string().is_some_and(|v| v.equals_str("all"))
+        || matches!(value,JsValue::Array(items) if items.iter().all(|item|item.as_string().is_some()))
+}
+fn validate_agents(value: Option<&JsValue>) -> Result<(), SubmitError> {
+    let Some(value) = value.filter(|value| !value.is_undefined()) else {
+        return Ok(());
+    };
+    let agents = value.as_object().ok_or_else(|| {
+        SubmitError::new("INVALID_SDK_SESSION_CONFIG", "agents must be an object.")
+    })?;
+    if agents.entries().len() > 64 {
+        return Err(SubmitError::new(
+            "CAPABILITY_UNAVAILABLE",
+            "Native SDK supports at most 64 agent definitions.",
+        ));
+    }
+    for (id, definition) in agents.entries() {
+        let invalid = || {
+            SubmitError::new(
+                "INVALID_SDK_SESSION_CONFIG",
+                format!(
+                    "Invalid SDK agent definition: {}.",
+                    String::from_utf16_lossy(id.units())
+                ),
+            )
+        };
+        if id.is_empty() {
+            return Err(invalid());
+        }
+        let fields = definition.as_object().ok_or_else(invalid)?;
+        for name in ["description", "prompt"] {
+            if fields.get(name).and_then(JsValue::as_string).is_none() {
+                return Err(invalid());
+            }
+        }
+        for (name, value) in fields.entries() {
+            if value.is_undefined() {
+                continue;
+            }
+            if [
+                "description",
+                "prompt",
+                "model",
+                "initialPrompt",
+                "criticalSystemReminder_EXPERIMENTAL",
+            ]
+            .iter()
+            .any(|key| name.equals_str(key))
+            {
+                if value.as_string().is_none() {
+                    return Err(invalid());
+                }
+            } else if name.equals_str("tools") || name.equals_str("disallowedTools") {
+                if !matches!(value,JsValue::Array(items) if items.iter().all(|item|item.as_string().is_some()))
+                {
+                    return Err(invalid());
+                }
+            } else if name.equals_str("skills") {
+                if !valid_skill_selector(value) {
+                    return Err(invalid());
+                }
+            } else if name.equals_str("memory") {
+                if !value.as_string().is_some_and(|value| {
+                    value.equals_str("inherit") || value.equals_str("disabled")
+                }) {
+                    return Err(invalid());
+                }
+            } else if name.equals_str("permissionMode") {
+                if !value.as_string().is_some_and(|value| {
+                    ["default", "plan", "bypassPermissions"]
+                        .iter()
+                        .any(|name| value.equals_str(name))
+                }) {
+                    return Err(invalid());
+                }
+            } else if name.equals_str("effort") {
+                if !value.as_string().is_some_and(|value| {
+                    ["low", "medium", "high"]
+                        .iter()
+                        .any(|name| value.equals_str(name))
+                }) {
+                    return Err(invalid());
+                }
+            } else if name.equals_str("maxTurns") {
+                if !value.as_number().is_some_and(|value| {
+                    value.is_finite()
+                        && value > 0.0
+                        && value.fract() == 0.0
+                        && value <= 9_007_199_254_740_991.0
+                }) {
+                    return Err(invalid());
+                }
+            } else if name.equals_str("mcpServers") {
+                super::super::agent_mcp::validate(value).map_err(sdk_submit_error)?;
+            } else if name.equals_str("background") && value == &JsValue::Bool(false) {
+            } else {
+                return Err(SubmitError::new(
+                    "CAPABILITY_UNAVAILABLE",
+                    format!(
+                        "Native SDK agent field {} is unavailable.",
+                        String::from_utf16_lossy(name.units())
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+fn project_agents(agents: &pilotdeck_protocol::JsObject) -> pilotdeck_protocol::JsObject {
+    let mut output = pilotdeck_protocol::JsObject::new();
+    for (id, agent) in agents.entries() {
+        let mut definition = pilotdeck_protocol::JsObject::new();
+        definition.insert("id".into(), JsValue::String(id.clone()));
+        for (source, target) in [
+            ("description", "description"),
+            ("prompt", "systemPromptSuffix"),
+        ] {
+            if let Some(value) = agent.get(source) {
+                definition.insert(target.into(), value.clone());
+            }
+        }
+        definition.insert(
+            "allowedTools".into(),
+            agent
+                .get("tools")
+                .cloned()
+                .unwrap_or_else(|| JsValue::Array(vec!["*".into()])),
+        );
+        if let Some(JsValue::Array(items)) = agent.get("disallowedTools")
+            && !items.is_empty()
+        {
+            definition.insert("disallowedTools".into(), JsValue::Array(items.clone()));
+        }
+        definition.insert("omitProjectInstructions".into(), JsValue::Bool(false));
+        definition.insert("omitGitStatus".into(), JsValue::Bool(false));
+        definition.insert(
+            "isReadOnly".into(),
+            JsValue::Bool(
+                agent
+                    .get("permissionMode")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|value| value.equals_str("plan")),
+            ),
+        );
+        if let Some(model) = agent
+            .get("model")
+            .and_then(JsValue::as_string)
+            .and_then(|value| value.to_utf8().ok())
+            && let Some((provider, model)) = model.split_once('/')
+            && !provider.is_empty()
+            && !model.is_empty()
+        {
+            let mut route = pilotdeck_protocol::JsObject::new();
+            route.insert("provider".into(), provider.into());
+            route.insert("model".into(), model.into());
+            definition.insert("modelOverride".into(), JsValue::Object(route));
+        }
+        for (source, target) in [
+            ("mcpServers", "mcpServers"),
+            ("maxTurns", "maxTurns"),
+            ("effort", "effort"),
+            ("permissionMode", "permissionMode"),
+            ("skills", "skills"),
+            ("memory", "memory"),
+            ("initialPrompt", "initialPrompt"),
+            (
+                "criticalSystemReminder_EXPERIMENTAL",
+                "criticalSystemReminder",
+            ),
+        ] {
+            if let Some(value) = agent.get(source).filter(|value| !value.is_undefined()) {
+                definition.insert(target.into(), value.clone());
+            }
+        }
+        output.insert(id.clone(), JsValue::Object(definition));
+    }
+    output
+}
+async fn resolve_native_agents(
+    registry: &SdkSessionRegistry,
+    session: &JsString,
+    config: &JsValue,
+    project: Option<&JsString>,
+    mcp_config: Option<&Arc<crate::runtime::mcp::sdk::SdkMcpConfig>>,
+) -> Result<JsValue, SdkSessionError> {
+    use crate::runtime::sdk_session::{
+        ModelField, assert_managed_model_allowed, resolve_configured_model, resolve_session_skills,
+    };
+    if config.get("agents").is_none_or(JsValue::is_undefined) {
+        return Ok(config.clone());
+    }
+    let runtime = registry.options().resolver.resolve(project)?;
+    runtime
+        .plugin_runtime
+        .refresh()
+        .await
+        .map_err(|error| SdkSessionError::raw("Error", error.to_string()))?;
+    let view = runtime.plugin_runtime.create_view(vec![]).await;
+    let available = view.all_skills();
+    let parent = match config.get("skills") {
+        Some(JsValue::Array(names)) => Some(resolve_session_skills(names, &available)?),
+        _ => None,
+    };
+    let mut next = config.as_object().cloned().unwrap_or_default();
+    let mut agents = config
+        .get("agents")
+        .and_then(JsValue::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (id, agent) in agents.entries().to_vec() {
+        let mut agent = agent.as_object().cloned().unwrap_or_default();
+        if let Some(requested) = agent.get("model").and_then(JsValue::as_string) {
+            let model = resolve_configured_model(&runtime.snapshot, requested, ModelField::Model)
+                .map_err(|_| {
+                SdkSessionError::new(
+                    "INVALID_SDK_AGENT_MODEL",
+                    format!(
+                        "Agent {} model is not uniquely resolvable from the Gateway catalog: {}",
+                        String::from_utf16_lossy(id.units()),
+                        String::from_utf16_lossy(requested.units())
+                    ),
+                )
+            })?;
+            registry.assert_model_allowed(session, Some(&model), project)?;
+            assert_managed_model_allowed(config.get("managedModels"), &model)?;
+            let mut text = model.provider.units().to_vec();
+            text.push(47);
+            text.extend_from_slice(model.model.units());
+            agent.insert("model".into(), JsValue::String(JsString::from_utf16(text)));
+        }
+        let selected = match agent.get("skills") {
+            Some(JsValue::Array(names)) => Some(resolve_session_skills(names, &available)?),
+            Some(JsValue::String(all)) if all.equals_str("all") => parent.clone(),
+            None | Some(JsValue::Undefined) => parent.clone(),
+            _ => None,
+        };
+        if let Some(JsValue::Array(selected)) = &selected
+            && let Some(JsValue::Array(parent)) = &parent
+            && let Some(escaped) = selected.iter().find(|name| !parent.contains(name))
+        {
+            return Err(SdkSessionError::new(
+                "SDK_AGENT_SKILL_OUT_OF_SCOPE",
+                format!(
+                    "Agent {} skill is not visible to the parent SDK session: {}",
+                    String::from_utf16_lossy(id.units()),
+                    escaped
+                        .as_string()
+                        .map(|value| String::from_utf16_lossy(value.units()))
+                        .unwrap_or_default()
+                ),
+            ));
+        }
+        if let Some(selected) = selected {
+            agent.insert("skills".into(), selected);
+        }
+        if let Some(specs) = agent
+            .get("mcpServers")
+            .filter(|value| !value.is_undefined())
+        {
+            let session_servers = mcp_config
+                .map(|mcp| mcp.session_mcp_servers(&JsValue::String(session.clone())))
+                .unwrap_or_default();
+            let resolved = super::super::agent_mcp::resolve(&id, specs, &session_servers)?;
+            agent.insert("mcpServers".into(), JsValue::Object(resolved));
+        }
+        agents.insert(id, JsValue::Object(agent));
+    }
+    next.insert("agents".into(), JsValue::Object(agents));
+    Ok(JsValue::Object(next))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::metadata::object;
+    #[test]
+    fn actual_ts_sdk_agent_definition_projection_matches() {
+        let oracle =
+            pilotdeck_protocol::parse_json(include_str!("../agent_sdk_oracle.json")).unwrap();
+        let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+            panic!("cases")
+        };
+        let mut count = 0;
+        for case in cases {
+            let sdk = case.get("sdk").unwrap();
+            let mut projected = pilotdeck_protocol::JsObject::new();
+            apply_prompt_config(&mut projected, sdk);
+            if case.get("id") == Some(&"cap-turns".into()) {
+                continue;
+            } // Organization cap composition belongs to its owner, not this unconfigured native profile.
+            assert_eq!(
+                projected.get("subagentDefinitions"),
+                case.get("definitions"),
+                "{:?}",
+                case.get("id")
+            );
+            count += 1;
+        }
+        assert_eq!(count, 6);
+    }
+    #[test]
+    fn custom_agent_fields_fail_closed_until_their_real_owner_exists() {
+        for field in ["observer", "observerMessage"] {
+            let mut agent = crate::metadata::object([
+                ("description", "fixture".into()),
+                ("prompt", "self-written".into()),
+            ])
+            .as_object()
+            .unwrap()
+            .clone();
+            agent.insert(field.into(), "unsupported".into());
+            assert_eq!(
+                validate_agents(Some(&crate::metadata::object([(
+                    "fixture",
+                    JsValue::Object(agent)
+                )])))
+                .unwrap_err()
+                .code,
+                "CAPABILITY_UNAVAILABLE"
+            );
+        }
+        for turns in [0.0, -1.0, 1.5, f64::INFINITY] {
+            assert!(
+                validate_agents(Some(&crate::metadata::object([(
+                    "fixture",
+                    crate::metadata::object([
+                        ("description", "fixture".into()),
+                        ("prompt", "self-written".into()),
+                        ("maxTurns", JsValue::Number(turns))
+                    ])
+                )])))
+                .is_err()
+            );
+        }
+        assert!(validate_agents(Some(&crate::metadata::object([]))).is_ok());
+        assert!(
+            validate_agents(Some(&crate::metadata::object([(
+                "fixture",
+                crate::metadata::object([
+                    ("description", "fixture".into()),
+                    ("prompt", "self-written".into()),
+                    ("tools", JsValue::Array(vec![]))
+                ])
+            )])))
+            .is_ok()
+        );
+    }
     #[test]
     fn prompt_projection_preserves_absent_and_accepts_empty_strings() {
         let mut target = pilotdeck_protocol::JsObject::new();

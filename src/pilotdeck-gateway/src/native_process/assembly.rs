@@ -474,7 +474,9 @@ async fn start_assembly(
     )
     .with_homedir(options.home.clone())
     .with_projects(sdk_projects.clone());
+    let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
     let sdk_port = Arc::new(sdk_adapter::NativeSdkPort {
+        mcp_config: prepare_mcp_config.clone(),
         registry: tokio::sync::Mutex::new(crate::runtime::sdk_session::SdkSessionRegistry::new(
             sdk_options,
         )),
@@ -491,7 +493,6 @@ async fn start_assembly(
     let prepare_permission_rule_sets = permission_rule_sets.clone();
     // Forward reference so the prepare closure can call sync_permission_rules
     // after lease acquire (mirrors ProjectRuntimeRegistry.ts:305-308).
-    let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
     // #1429: report at most once per assembly — a per-acquire stderr write would
     // be unbounded if the publication regressed for good.
     let acquire_miss_report: AcquireMissReport =
@@ -736,11 +737,14 @@ async fn start_assembly(
                 let plugin_hooks = skill_lease.contributions.hooks.clone();
                 let native_skills = if skills_disabled {
                     super::skills::NativeSkills::disabled()
+                } else if let Some(scope) = &fork_scope {
+                    scope.skills.clone()
                 } else {
                     super::skills::NativeSkills::from_contributions(
                         &skill_lease.contributions.skills,
                     )
                 };
+                let native_skills = native_skills.select(config.get("nativeSkillSelection"))?;
                 let context_storage = staged
                     .resource(Resource::InstructionStorage)
                     .ok_or_else(|| RuntimeError::new("Native context storage is missing."))?;
@@ -756,6 +760,8 @@ async fn start_assembly(
                             ),
                             crate::runtime::project::context_storage::SessionContextOptions {
                                 extension: Some(Arc::new(native_skills.clone())),
+                                memory_disabled: config.get("nativeMemoryDisabled")
+                                    == Some(&JsValue::Bool(true)),
                                 ..Default::default()
                             },
                         )?
@@ -807,7 +813,7 @@ async fn start_assembly(
                 // factory's per-session registry. An unpublished config keeps
                 // the empty composition: the ask-rule sync above already
                 // reported that wiring miss for this assembly (#1429).
-                let (session_mcp, session_mcp_release) = match mcp_config_handle.get() {
+                let (mut session_mcp, session_mcp_release) = match mcp_config_handle.get() {
                     Some(mcp_config) => {
                         let provider = staged
                             .owner(Family::McpProvider)
@@ -851,6 +857,42 @@ async fn start_assembly(
                     ),
                 };
                 retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
+                let mut fork_mcp_names = Vec::new();
+                if let Some(servers) = config
+                    .get("nativeForkMcpServers")
+                    .and_then(JsValue::as_object)
+                    .filter(|servers| !servers.entries().is_empty())
+                {
+                    let provider = staged
+                        .owner(Family::McpProvider)
+                        .and_then(|owner| {
+                            owner
+                                .as_any()
+                                .downcast_ref::<McpProviderResource>()
+                                .map(|value| value.provider().clone())
+                        })
+                        .ok_or_else(|| {
+                            RuntimeError::new("Native child MCP provider is missing.")
+                        })?;
+                    let definition = config
+                        .get("nativeForkMcpDefinition")
+                        .and_then(JsValue::as_object)
+                        .ok_or_else(|| {
+                            RuntimeError::new("Native child MCP definition is missing.")
+                        })?;
+                    let (child_tools, release) = super::tools::fork_mcp_tools(
+                        &provider,
+                        &session_mcp_runtimes,
+                        &context.session_key,
+                        servers,
+                        definition,
+                    )
+                    .await?;
+                    fork_mcp_names
+                        .extend(child_tools.iter().map(|tool| tool.spec().wire_name.clone()));
+                    session_mcp.append_fork(child_tools);
+                    retained.push(move || Box::pin(async move { release.release().await }));
+                }
                 let plan_files = Arc::new(
                     super::plan_todo::NativePlanFiles::prepare(options.project.clone())
                         .await
@@ -917,6 +959,7 @@ async fn start_assembly(
                         .with_hook_proxy(hook_proxy)
                         .with_plan_files(plan_files)
                         .with_skills(native_skills, native_context)
+                        .with_fork_mcp_names(fork_mcp_names)
                         .with_forks(forks, fork_scope);
                         #[cfg(unix)]
                         let ports = ports
