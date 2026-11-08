@@ -1426,7 +1426,7 @@ impl SubmitHostServices for Services {
     }
 
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
-        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {
+        if let Some(project) = input.get("projectKey").filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null)) {
             let key = project
                 .as_string()
                 .ok_or_else(|| failure("projectKey must be a valid path string."))?;

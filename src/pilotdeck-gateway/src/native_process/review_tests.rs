@@ -1082,6 +1082,12 @@ async fn project_path_boundaries_worker() {
             "#1137 submit project guard uses process cwd"
         );
     }
+    for params in [
+        pilotdeck_protocol::parse_json("{}").unwrap(),
+        pilotdeck_protocol::parse_json(r#"{"projectKey":null}"#).unwrap(),
+    ] {
+        assert!(services.workspace_id(&params).is_ok(), "nullish project uses selected workspace");
+    }
     std::env::set_current_dir(&scratch.0).expect("#1137 restore path boundary worker");
     services
         .project
