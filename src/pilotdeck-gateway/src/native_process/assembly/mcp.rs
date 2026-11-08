@@ -20,7 +20,7 @@ impl SdkMcpProjectResolver for NativeMcpResolver {
         &'a self,
         project_key: Option<&'a JsString>,
     ) -> SdkMcpFuture<'a, Result<Arc<dyn SdkMcpProject>, SdkMcpError>> {
-        let root = project_key.map(|key| super::super::project_scope::resolve(key));
+        let root = project_key.map(super::super::project_scope::resolve);
         let project = self.project.clone();
         Box::pin(async move {
             let root = root

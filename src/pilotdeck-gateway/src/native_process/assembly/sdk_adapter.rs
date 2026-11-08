@@ -28,7 +28,7 @@ impl SdkRuntimeResolver for NativeSdkResolver {
         project_key: Option<&JsString>,
     ) -> Result<ResolvedSdkRuntime, SdkSessionError> {
         let root = project_key
-            .map(|key| super::super::project_scope::resolve(key))
+            .map(super::super::project_scope::resolve)
             .transpose()
             .map_err(|error| SdkSessionError::raw("Error", String::from_utf16_lossy(error.message.units())))?;
         let lease = self

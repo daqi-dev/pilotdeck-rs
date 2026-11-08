@@ -114,7 +114,7 @@ pub(super) fn upload_store(home: PathBuf) -> std::sync::Arc<crate::upload::Uploa
                         "Unsafe project marker.",
                     ));
                 }
-                let JsValue::Array(projects) = &listed else {
+                let Some(JsValue::Array(projects)) = listed.get("projects") else {
                     return Ok(Vec::new());
                 };
                 Ok(projects
