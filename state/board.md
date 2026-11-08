@@ -5068,9 +5068,11 @@ Refs #2540。固定f04ecd0b新基线，只有board冲突保留上游+本轮记�
 本轮接续（Refs #2571）：三方冲突逐块核对，保留 #2549 精确 coercion 与泛型 HostError，恢复 jsonrepair 深度回归；适配新主线 RuntimeError 与 live_e2e 工厂类型。CLI 原生 abort ACK 后真实本地 WS EOF/deadline/Completed 定向回归15通过/1原忽略，Unknown保持原run且退出1，不计真实Kernel组合验收。接下来升级固定43a历史事务优化，再合入独立Module2切片并复验。
 
 
-## 2026-11-09 #2549 controlled baseline upgrade
+### 2026-11-09 #2549 固定主线基线升级（Codex）
 
-Preserved reviewed 789 and archived its successful CI run42516196226. Rebased the seven extraction commits onto fixed main43a; src/.github binary patch is byte-identical. New-combination locked tests: three libraries + Protocol 58 passed/1 ignored; standalone consumer passed; gateway storage 178 passed/6 ignored; fmt passed. Old CI is not evidence for the new head; full new CI and new external review remain pending. No push or scope expansion.
+已保留原审查头 `789fd64fc76bbb59ae7e2f0642c6c4e07a54765c`，归档旧 CI run42516196226 的最终成功日志；七提交无源码冲突重基至固定主线 `43a1e5b50da71eb64a985e689eb299182f25a1b3`。`src/.github` binary patch 逐字节相同（SHA256 `725201c483a31415e0064d56c74035439454982b4fbaeb1599615021c553b0e0`）。新组合 locked 三库+Protocol 58通过/1忽略、独立consumer通过、gateway storage 178通过/6忽略、fmt通过。旧CI不背书新组合；本轮未重跑旧HTTP1.0、context与integration选集，当前完整CI与外部增量评审仍待收口，不宣称新组合完整验收。原双家库审查仅为前置，本轮只审基线等价与board增量。未push、未扩大已审源码范围。
+
+Refs #2540 / #2549；#2550 继续跟进四fixture既有截断写与SIGKILL/并发未验边界（GitHub issue已确认OPEN）。原负控仅迁实现锚点，oracle不改；不以本机技能缺失代替双家完整评审。现场指针：`_tmp/20261109-capability-rebase-43a/`（原/新manifest、补丁、命令退出码与GLM真实原件）；历史完整库证据仍在 `_tmp/20261109-capability-extraction/`。
 
 ### 2026-11-09 Module2-host 上游切片（Codex）
 
