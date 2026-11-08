@@ -7,8 +7,11 @@ binary. ``tampered-source-hash`` is renamed ``abort-tampered-source-hash`` (the
 session-owner fixture shares the old name for a different oracle): the switch
 zeroes the loaded oracle's recorded hash for src/agent/scope/AgentHandle.ts in
 memory, so the provenance panic fires before the data is read — the same bytes
-the old on-disk mutation wrote. CARGO_TARGET_DIR must be supplied. Use --check
-for a read-only anchor preflight, or NEW_OUTPUT_DIR [switch ...].
+the old on-disk mutation wrote. CARGO_TARGET_DIR and PDRS_BASELINE must be
+supplied (the ``abort-tampered-source-hash`` row only kills with a real
+baseline checkout; the old negative.py failed fast on the same missing
+variable). Use --check for a read-only anchor preflight, or
+NEW_OUTPUT_DIR [switch ...].
 """
 import argparse
 import os
@@ -70,6 +73,9 @@ def main():
             return 0
         if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
             raise ValueError('NEW_OUTPUT_DIR and caller CARGO_TARGET_DIR are required')
+        if not os.environ.get('PDRS_BASELINE'):
+            raise ValueError('PDRS_BASELINE is required: abort-tampered-source-hash '
+                              'only kills against a real baseline checkout')
         output = Path(args.output).resolve()
         output.mkdir(parents=True, exist_ok=False)
         return mutant_switch.run(ROOT, output, chosen,

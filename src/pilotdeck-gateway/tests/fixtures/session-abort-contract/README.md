@@ -51,14 +51,23 @@ cargo test --offline -p pilotdeck-gateway --lib \
   runtime::session::handle::abort_contract_tests:: -- --nocapture
 ```
 
-`negative.py [--compile-only] <new-evidence-directory> [mutation ...]` 需要调用方设置
-CARGO_TARGET_DIR、PDRS_BASELINE。它通过共享 `mutating_sources` 锁定本树并核对 HEAD，
-复用调用方构建目录；不建源码或构建副本。每项先跑原实现、单独编译变异、再跑唯一绑定
-测试，恢复后重跑正控。`--compile-only` 只编译所选变异并逐项恢复。
+负控（#996 起为编译期开关 `schemata.py`，旧的文本替换 `negative.py` 已删）需要
+调用方设置 CARGO_TARGET_DIR 与 PDRS_BASELINE（`abort-tampered-source-hash` 只有
+真实基线检出才能击杀，缺 PDRS_BASELINE 时预检即拒跑）。它预编译一次 feature 库测试
+二进制，逐开关独立进程以 `PDRS_MUTANT` 选择，跑完即弃，全程不改工作区源码；GUARDED
+清单记录相关源文件哈希，跑前跑后核对不变。每个开关先跑正控、再在开关下跑唯一绑定
+测试、恢复后重跑正控。`--check` 为只读锚点预检。用法（从 src/）：
 
-五项变异保留原判据：Draining 时不转发 abort、lease release 前提前标 Disposed、
+```sh
+CARGO_TARGET_DIR="$PWD/_build/cargo-target" \
+PDRS_BASELINE=/absolute/path/to/PilotDeck python3 -I \
+  src/pilotdeck-gateway/tests/fixtures/session-abort-contract/schemata.py \
+  <新证据目录> [switch ...]
+```
+
+五项开关保留原判据：Draining 时不转发 abort、lease release 前提前标 Disposed、
 Disposed 后仍转发 abort、session dispose 先于 lease release，以及 oracle 的
-AgentHandle.ts sourceSha256 置零。行为失败必须来自绑定完整测试名的专属 panic 消息；
-编译错误、无关 panic、外部超时或无测试执行均记 INVALID。所有所选变异跑完才汇总
-KILLED / SURVIVED / INVALID；任一非 KILLED 即非零退出。编译模式要求全部 COMPILED。
-证据目录独占创建，最终 summary.json 在源码恢复核验后原子发布。
+AgentHandle.ts sourceSha256 置零（开关名 abort-tampered-source-hash）。行为失败
+必须来自绑定完整测试名的专属 panic 消息；编译错误、无关 panic、外部超时或无测试
+执行均记 INVALID。所有所选开关跑完才汇总 KILLED / SURVIVED / INVALID；任一非
+KILLED 即非零退出。证据目录独占创建，最终 summary.json 在源码哈希核验后原子发布。
