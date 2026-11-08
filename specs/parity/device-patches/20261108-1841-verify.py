@@ -49,7 +49,14 @@ symlink, in a directory that itself sits inside it, or by resolve() target
 (asserted at entry, fix-r3; the symlink and parent-directory readings are
 fix-r4), or by filesystem identity: two spellings of one directory on a
 case-insensitive volume are one directory, judged by os.path.samefile over the
-nearest existing ancestor chain (the identity reading is fix-r5): criterion 0
+nearest existing ancestor chain (the identity reading is fix-r5) — and since
+fix-r6 that chain starts from the physicalized spelling
+(realpath(abspath(path))), so a `..` over a not-yet-existing directory, a
+relative --out with the cwd inside the tree and a symlink landing inside the
+tree all reduce to the real ancestor chain before the walk; any OSError,
+RuntimeError (resolve() over a symlink loop on Python 3.11/3.12) or ValueError
+(embedded NUL) while judging dies at entry, and a degenerate --out (a
+directory, or a parent that is a regular file) dies at entry too: criterion 0
 pins the exact file set, so a file written there would make the next recompute
 report it as unexpected and FAIL.
 
@@ -895,29 +902,45 @@ def write_result_exclusive(path: Path, text: str) -> Path:
 
 def _sits_in_evidence(path: Path, evidence: Path) -> bool:
     """Identity, not spelling (fix-r5, review #2372 r4 P1 — MiniMax sibling#2 +
-    boundary#1 + DS boundary#1, one cluster, coordinator-reproduced): the three
-    lexical checks below compare strings, and on a case-insensitive volume
-    (darwin's default APFS) two spellings of one directory make all of them
-    False while the write still lands inside the evidence tree. os.path
-    .samefile compares by filesystem identity, so the nearest existing
-    ancestor chain of `path` is walked level by level: a `--out` file that does
-    not exist yet (or sits under directories that do not exist yet — main()
-    only mkdirs its parent at write time) climbs until a level exists, and any
-    existing level that IS the evidence tree means the write lands inside it,
-    at any depth (EvD/evidence/sub/out.json matches only two levels up).
-    A level that still cannot be compared for any other reason (ELOOP, EACCES,
-    ...) counts as inside — fail-closed, the same identity-not-spelling
-    discipline as the sys.path check above (#1033)."""
-    q = path
+    boundary#1 + DS boundary#1, one cluster, coordinator-reproduced; start
+    point physicalized in fix-r6, review #2372 r5 P1 — DS concurrency#1 +
+    boundary#1, coordinator-reproduced): the three lexical checks below
+    compare strings, and on a case-insensitive volume (darwin's default APFS)
+    two spellings of one directory make all of them False while the write
+    still lands inside the evidence tree. os.path.samefile compares by
+    filesystem identity, so the nearest existing ancestor chain of the start
+    point is walked level by level: a `--out` file that does not exist yet (or
+    sits under directories that do not exist yet — main() only mkdirs its
+    parent at write time) climbs until a level exists, and any existing level
+    that IS the evidence tree means the write lands inside it, at any depth
+    (EvD/evidence/sub/out.json matches only two levels up). A level that
+    still cannot be compared for any other reason (ELOOP, EACCES, ...) counts
+    as inside — fail-closed, the same identity-not-spelling discipline as the
+    sys.path check above (#1033).
+    fix-r6: the walk used to start from the literal `path` spelling, so a
+    `..` over a not-yet-existing directory never reached the evidence level
+    (the write-stage mkdir(parents=True) then folded the `..` back into the
+    tree — scenario A) and a relative `--out` with the cwd inside the tree
+    never climbed above Path('.') (scenario B). The start point is now the
+    PHYSICAL spelling: os.path.realpath(os.path.abspath(path)) anchors the
+    path to the cwd and folds `..` and symlinks kernel-side (a symlink loop
+    yields the loop spelling, which the OSError branch below still fails
+    closed on; an embedded NUL raises ValueError, caught by the guard's
+    except), so every start-normalized variant — case aliases, `..` over
+    missing levels, links landing inside the tree — reduces to the real
+    ancestor chain before the samefile walk."""
+    anchor = Path(os.path.realpath(os.path.abspath(path)))
+    q = anchor if anchor.exists() else anchor.parent
     while True:
         try:
             if os.path.samefile(q, evidence):
                 return True
         except FileNotFoundError:
             # This spelling does not exist yet: step up one level towards the
-            # nearest existing ancestor. The lexical checks still cover the
-            # exactly-spelled inside-the-tree case, so stepping up cannot let
-            # a poisoner through (the level that exists decides the identity).
+            # nearest existing ancestor (the level that exists decides the
+            # identity; the fix-r5 claim that the lexical checks cover the
+            # exactly-spelled case was wrong for `..` over missing levels —
+            # realpath has folded those away here already, fix-r6).
             if q.parent == q:
                 return True  # nothing existing to compare against — fail-closed
             q = q.parent
@@ -950,7 +973,6 @@ def main() -> None:
 
     script = Path(__file__).resolve()
     registration = script.parent / REGISTRATION_FILENAME
-    manifest = (args.manifest or script.parent / MANIFEST_FILENAME).resolve()
 
     # fix-r3, P2-a / fix-r4, P1 (review #2372, DS r3 concurrency#3 + MiniMax
     # r3 boundary#2, coordinator e2e reproduced): criterion 0 pins the exact
@@ -973,8 +995,25 @@ def main() -> None:
     # existing ancestor chain), and the whole judgement is fail-closed: any
     # OSError it raises (e.g. resolve() over a symlink loop, on the Python
     # versions where it raises) dies at entry, never a bare traceback.
+    # fix-r6, P1 + P2 (review #2372 r5, DS concurrency#1 + boundary#1 +
+    # sibling#1/concurrency#2/boundary#2 + MM boundary#2, coordinator
+    # reproduced both chains): the identity walk started from the LITERAL
+    # path spelling, so a `..` over a not-yet-existing directory and a
+    # relative --out with the cwd inside the tree both stayed off the
+    # ancestor chain while the write still landed inside. _sits_in_evidence
+    # now starts from the physicalized spelling (realpath(abspath)); the
+    # manifest default-branch resolve() moved into this same fail-closed zone
+    # (a symlink loop raises RuntimeError on Python 3.11/3.12, not OSError;
+    # an embedded NUL raises ValueError on every version), and a degenerate
+    # --out (a directory, or a parent that is a regular file) dies at entry
+    # instead of surfacing as a write-stage traceback.
     # Asserted at entry, before any pin or criterion runs, never narrated
     # only in the README.
+    try:
+        manifest = (args.manifest or script.parent / MANIFEST_FILENAME).resolve()
+    except (OSError, RuntimeError, ValueError) as error:
+        die(f"--manifest placement guard could not resolve {args.manifest}: {error!r} — "
+            f"treating it as inside (fail-closed; criterion 0 pins the exact file set)")
     for name, path in (("--out", args.out), ("--manifest", manifest)):
         try:
             inside = path is not None and (
@@ -983,12 +1022,25 @@ def main() -> None:
                 or path.parent.resolve().is_relative_to(args.evidence)
                 or _sits_in_evidence(path, args.evidence)
             )
-        except OSError as error:
+        except (OSError, RuntimeError, ValueError) as error:
             die(f"{name} placement guard could not resolve {path}: {error!r} — treating it "
                 f"as inside (fail-closed; criterion 0 pins the exact file set)")
         if inside:
             die(f"{name} must not sit inside or resolve inside the --evidence tree: {path} "
                 f"(criterion 0 pins the exact file set)")
+
+    # fix-r6, P2 (review #2372 r5, MM boundary#2): degenerate --out spellings
+    # used to surface as bare write-stage tracebacks — an existing directory
+    # (argparse maps both "" and "." to Path(".")) died in
+    # write_result_exclusive's open("x") with IsADirectoryError, and a parent
+    # that is a regular file died in the mkdir. Both now die at entry, after
+    # the placement guard and before any pin or criterion runs.
+    if args.out is not None:
+        if args.out.is_dir():
+            die(f"--out must name a file, not an existing directory: {args.out}")
+        if args.out.parent.is_file():
+            die(f"--out parent exists and is a regular file: {args.out.parent} "
+                f"(--out must name a file under a directory)")
 
     # Registration pins (fix-r1): the patch file, this script and the corpus
     # manifest are each sha256-anchored by the registration file, which is
