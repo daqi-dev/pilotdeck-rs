@@ -1011,6 +1011,10 @@ fn send_timeout_is_the_ts_abort_deadline() {
 /// proofs, both bounded by `DEADLINE`: the loopback server stops seeing
 /// polls once a full poll interval has had every chance to fire, and the
 /// `Runtime` itself is freed (the driver's `Weak` no longer upgrades).
+/// This pin's mock answers every request; a server whose responses
+/// outlast `POLL_MS` keeps an in-flight poll holding a strong `Arc`, so
+/// that in-flight window is not covered here — the registered TS-leak
+/// shape (007, known gap, no dedicated pin).
 #[tokio::test]
 async fn poll_driver_exits_when_runtime_is_dropped() {
     const CELL: &str = "#2285 dropping a started channel without stop ends the poll driver";

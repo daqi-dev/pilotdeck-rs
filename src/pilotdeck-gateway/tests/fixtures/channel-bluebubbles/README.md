@@ -119,9 +119,12 @@ poll 任务 panic 无 `poll error` 日志；001-R2 摘除拒绝表条目）：
 - **② drop-without-stop**：TS 的形态是泄漏的 `setInterval`（unsupported
   start-without-stop flow，本金样不覆盖）；Rust 收紧为 driver 任务只持
   `Weak<Runtime>`，升级失败即退出——**仅限无在途轮询时**（r2 收窄，见 007）：
-  静默服务器下在途轮询持强 `Arc<Runtime>` 至 300 s 总界定格，下一 tick 升级
-  仍成功、driver 不退出，与 TS 泄漏同形；该形状无专属钉（需要「接受但不
-  回包」的服务器 + 300 s 实时窗口），007 登记为已知缺口。
+  响应时长超过 `POLL_MS` 的服务器下，在途轮询持强 `Arc<Runtime>` 直到
+  `poll_messages` 返回，driver 每 2.5 s 续派、各请求各自 300 s 单次总界
+  （`UNDICI_DEFAULT_TIMEOUT` 是每请求的界不是泄漏的界）——强引用不归零
+  （无界自续）、`Runtime` 永不释放，与 TS 泄漏同形；该形状可钉（响应延迟
+  > `POLL_MS` 的 mock + stop 后轮询停增断言，~5–10 s 实时窗口），登记为
+  跟进（007，r3 修正预算结论）。
   `poll_driver_exits_when_runtime_is_dropped`（用每请求都回包的 mock）钉
   两个观察量（服务端轮询停增 + `Runtime` 释放），负控
   `driver-weak-reverted` 回退强引用必被杀。已 stop / 正常 restart 的金样
@@ -168,9 +171,12 @@ poll 任务 panic 无 `poll error` 日志；001-R2 摘除拒绝表条目）：
   = 300 ms）：单个 50 ms 静默窗口不再终止排空——服务端任务被负载饿过第一
   窗口时，已在途字节仍落在自己用例的 armed 窗口，而不是排空过早退出后
   落成 stray（r1 假 FAIL 窗口收窄；仍是启发式，连续两轮饿住仍会掐断）。
-  终止语义由 `drained_holds_through_a_single_silent_window`（暂停时钟：
-  到达落在第一、二窗口之间时必须被观察到，且排空恰在第 200 ms——连续
-  两个静默窗——终止，钉 `elapsed == SETTLE*4` 精确值）钉住，负控
+  「终止时刻」被钉为 200 ms（`elapsed == SETTLE*4`，连续两个静默窗）：
+  `drained_holds_through_a_single_silent_window`（暂停时钟：到达落在第
+  一、二窗口之间时必须被观察到，且排空恰在第 200 ms 终止）——该判据区分
+  不了「连续静默 + 计数仍在动则续等」与「无条件等 4 轮」（两者都在
+  200 ms 退出），「计数仍在动则续等 / 6 轮上限」的完整语义无判据（无条件
+  4 轮等待变体不被杀），登记为跟进补轨迹钉。负控
   `drained-single-quiet` 回退单窗终止、`drained-quiet-not-reset` 回退连续
   语义（去 `quiet = 0` 重置变累计静默，150 ms 即假终止）必被杀。超脚本
   槽位的轮询只拿兜底 `{}`、在去重投影里不可见，扩展窗口不会改变绿快照；整体仍受 `DEADLINE`
