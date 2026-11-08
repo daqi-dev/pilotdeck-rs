@@ -488,12 +488,19 @@ mod tests {
         project.dispose().await.unwrap();
     }
 
+    fn write_project_memory_config(root: &std::path::Path, enabled: bool) {
+        let dir = root.join(".pilotdeck");
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = if enabled { CONFIG.to_owned() } else { CONFIG.replace("enabled: true", "enabled: false") };
+        std::fs::write(dir.join("pilotdeck.yaml"), config).unwrap();
+    }
+
     #[tokio::test]
     async fn disabled_initial_memory_does_not_hide_other_projects_or_later_generations() {
         let scratch = Scratch::new();
         let a = named("A"); let b = named("B");
         let project = registry_with_providers(&scratch, vec![(scratch.root(), a.clone()), (scratch.other(), b.clone())], None);
-        std::fs::write(scratch.root().join("pilotdeck.yaml"), CONFIG.replace("enabled: true", "enabled: false")).unwrap();
+        write_project_memory_config(&scratch.root(), false);
         let gateway = build_memory_gateway(&options(&scratch), &project).unwrap();
         assert!(gateway.is_enabled(), "native callbacks stay installed independently of A's provider");
         assert_unavailable(&gateway, &scratch.root());
@@ -502,15 +509,15 @@ mod tests {
         let MemoryDispatch::Error(error) = unknown else { panic!("unknown project accepted while A disabled") };
         assert_eq!(error.code(), Some("PROJECT_NOT_FOUND"), "resolution precedes selected capability");
         assert_eq!(error.message(), &JsString::from("Unknown projectKey: /unknown-memory-project"));
-        std::fs::write(scratch.root().join("pilotdeck.yaml"), CONFIG).unwrap();
+        write_project_memory_config(&scratch.root(), true);
         project.invalidate(Some(&scratch.root()));
         assert_list(&gateway, &scratch.root(), "A");
-        std::fs::write(scratch.other().join("pilotdeck.yaml"), CONFIG.replace("enabled: true", "enabled: false")).unwrap();
+        write_project_memory_config(&scratch.other(), false);
         project.invalidate(Some(&scratch.other()));
         assert_unavailable(&gateway, &scratch.other());
         assert_eq!(b.list_calls.load(Ordering::SeqCst), 1, "disabled B must not reuse its retired service");
         assert_eq!(a.list_calls.load(Ordering::SeqCst), 1, "disabled B must not fall back to A");
-        std::fs::write(scratch.other().join("pilotdeck.yaml"), CONFIG).unwrap();
+        write_project_memory_config(&scratch.other(), true);
         project.invalidate(Some(&scratch.other()));
         assert_list(&gateway, &scratch.other(), "B");
         project.dispose().await.unwrap();
