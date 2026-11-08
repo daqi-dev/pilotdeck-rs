@@ -44,8 +44,8 @@ use native_ws_sample::RFC6455_SAMPLE_NONCE;
 #[path = "common/native_entry.rs"]
 mod native_entry;
 use native_entry::{
-    ADVERTISEMENT_BUDGET, NATIVE_LISTENING, NATIVE_STOPPING, STDERR_LIMIT, SWITCH_DEADLINE,
-    VALID_HOME_CONFIG, advertises,
+    ADVERTISEMENT_BUDGET, NATIVE_STOPPING, STDERR_LIMIT, SWITCH_DEADLINE, VALID_HOME_CONFIG,
+    advertised_address,
 };
 
 // The product's own advertisement lines, exactly as it writes them: the A4
@@ -553,12 +553,9 @@ async fn native_child_serves(
     let mut advertisement = String::new();
     let advertised = timeout(ADVERTISEMENT_BUDGET, async {
         while let Some(line) = lines.next_line().await.expect("#1354 native stderr read") {
-            if advertises(&line) {
+            if let Some(address) = advertised_address(&line) {
                 advertisement = line.clone();
-                return line
-                    .strip_prefix(NATIVE_LISTENING)
-                    .and_then(|rest| rest.strip_prefix(' '))
-                    .map(str::to_owned);
+                return Some(address.to_owned());
             }
         }
         None

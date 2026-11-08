@@ -25,8 +25,7 @@ use native_ws_sample::RFC6455_SAMPLE_NONCE;
 #[path = "common/native_entry.rs"]
 mod native_entry;
 use native_entry::{
-    ADVERTISEMENT_BUDGET, NATIVE_LISTENING, NATIVE_STOPPING, STDERR_LIMIT, SWITCH_DEADLINE,
-    VALID_HOME_CONFIG,
+    ADVERTISEMENT_BUDGET, NATIVE_STOPPING, STDERR_LIMIT, SWITCH_DEADLINE, VALID_HOME_CONFIG,
 };
 
 // Removed with the test's scratch tree once the child has been reaped: the
@@ -117,9 +116,7 @@ async fn sigterm_runs_the_switch_and_exits_clean() {
     // drives is constructed before the signal wait, so serving must not
     // wait for SIGTERM (a regression here hangs the upgrade instead of the
     // clean exit below).
-    let address = advertisement
-        .strip_prefix(NATIVE_LISTENING)
-        .and_then(|rest| rest.strip_prefix(' '))
+    let address = native_entry::advertised_address(&advertisement)
         .expect("#1353 switch e2e advertised address");
     let mut client = timeout(ADVERTISEMENT_BUDGET, TcpStream::connect(address))
         .await
