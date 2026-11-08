@@ -58,6 +58,8 @@ impl NodeTemplate {
         }))
     }
     pub(super) async fn prepare(&self, parent: Arc<InteractionTurn>, identity: &ExecutionIdentity, recorder: Arc<Recorder>, plan: &SopNodePlan) -> Result<NodeHost, HostError> {
+        if !plan.instruction.is_empty() && plan.binding.is_none() { return Err(HostError::new(HostErrorKind::Session, "SOP node instruction requires a host context binding.")); }
+        if plan.binding.is_some() && !matches!(&plan.step, JsValue::Object(_)) { return Err(HostError::new(HostErrorKind::Protocol, "SOP prepared step must be an object.")); }
         let lease = parent.fork_generation()?;
         let execution: Arc<dyn capability::ToolExecution> = Arc::new(BorrowedTools(self.execution.clone()));
         let execution = plan.binding.as_ref().map_or_else(|| execution.clone(), |binding| binding.tools(execution.clone()));

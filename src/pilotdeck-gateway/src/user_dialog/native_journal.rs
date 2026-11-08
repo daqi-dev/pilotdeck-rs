@@ -5,9 +5,9 @@ use rustix::fs::{AtFlags, FileType, Mode, OFlags, openat, renameat, statat, unli
 use std::os::unix::fs::MetadataExt;
 
 const MAX_BYTES: usize = 8 * 1024 * 1024;
-pub(super) struct NativeJournalFiles { root: PathBuf, relative: PathBuf }
+pub(crate) struct NativeJournalFiles { root: PathBuf, relative: PathBuf }
 impl NativeJournalFiles {
-    pub(super) fn new(home: &Path, path: &Path) -> io::Result<Self> {
+    pub(crate) fn new(home: &Path, path: &Path) -> io::Result<Self> {
         let root = home.canonicalize()?;
         let relative = path.strip_prefix(home).or_else(|_| path.strip_prefix(&root))
             .map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "Dialog journal is outside the selected home."))?.to_owned();
@@ -25,7 +25,7 @@ impl NativeJournalFiles {
         let parent = crate::project_files::open_directory_beneath(&self.root, &self.root.join(relative))?;
         Ok((parent, self.relative.file_name().ok_or(io::ErrorKind::InvalidInput)?))
     }
-    pub(super) fn read(&self) -> io::Result<Vec<u8>> {
+    pub(crate) fn read_raw(&self) -> io::Result<Vec<u8>> {
         let (parent, leaf) = self.parent(false)?;
         let file = File::from(openat(&parent, leaf,
             OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW | OFlags::NONBLOCK, Mode::empty())?);
@@ -34,27 +34,14 @@ impl NativeJournalFiles {
         if metadata.len() > MAX_BYTES as u64 { return Err(limit()); }
         let mut bytes = Vec::new(); file.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes)?;
         if bytes.len() > MAX_BYTES { return Err(limit()); }
-        // Bound parser depth and work before the boundary parser recurses.
-        let (mut quoted, mut escaped, mut depth, mut tokens) = (false, false, 0usize, 0usize);
-        for byte in &bytes {
-            if quoted {
-                if escaped { escaped = false; }
-                else if *byte == b'\\' { escaped = true; }
-                else if *byte == b'"' { quoted = false; }
-                continue;
-            }
-            match byte {
-                b'"' => { quoted = true; tokens += 1; }
-                b'[' | b'{' => { depth += 1; tokens += 1; }
-                b']' | b'}' => depth = depth.saturating_sub(1),
-                b',' | b':' => tokens += 1,
-                _ => {},
-            }
-            if depth > 128 || tokens > 100_000 { return Err(limit()); }
-        }
         Ok(bytes)
     }
-    pub(super) fn write(&self, bytes: &[u8]) -> io::Result<()> {
+    pub(crate) fn read(&self) -> io::Result<Vec<u8>> {
+        let bytes = self.read_raw()?;
+        check_json_bounds(&bytes)?;
+        Ok(bytes)
+    }
+    pub(crate) fn write(&self, bytes: &[u8]) -> io::Result<()> {
         if bytes.len() > MAX_BYTES { return Err(limit()); }
         let (parent, leaf) = self.parent(true)?;
         match statat(&parent, leaf, AtFlags::SYMLINK_NOFOLLOW) {
@@ -75,11 +62,32 @@ impl NativeJournalFiles {
         if result.is_err() { let _ = unlinkat(&parent, temporary.as_str(), AtFlags::empty()); }
         result
     }
-    pub(super) fn remove(&self) -> io::Result<()> {
+    pub(crate) fn remove(&self) -> io::Result<()> {
         let operation = (|| { let (parent, leaf) = self.parent(false)?;
             unlinkat(&parent, leaf, AtFlags::empty()).map_err(io::Error::from) })();
         match operation { Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()), result => result }
     }
+}
+pub(crate) fn check_json_bounds(bytes: &[u8]) -> io::Result<()> {
+        // Bound parser depth and work before the boundary parser recurses.
+        let (mut quoted, mut escaped, mut depth, mut tokens) = (false, false, 0usize, 0usize);
+        for byte in bytes {
+            if quoted {
+                if escaped { escaped = false; }
+                else if *byte == b'\\' { escaped = true; }
+                else if *byte == b'"' { quoted = false; }
+                continue;
+            }
+            match byte {
+                b'"' => { quoted = true; tokens += 1; }
+                b'[' | b'{' => { depth += 1; tokens += 1; }
+                b']' | b'}' => depth = depth.saturating_sub(1),
+                b',' | b':' => tokens += 1,
+                _ => {},
+            }
+            if depth > 128 || tokens > 100_000 { return Err(limit()); }
+        }
+    Ok(())
 }
 fn limit() -> io::Error { io::Error::new(io::ErrorKind::InvalidData, "User dialog journal exceeds native IO or JSON limits.") }
 

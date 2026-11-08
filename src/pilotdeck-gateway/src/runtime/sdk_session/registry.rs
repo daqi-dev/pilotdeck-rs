@@ -73,7 +73,17 @@ impl SdkPluginLoader for DiskSdkPluginLoader {
 
 /// Task-budget operations from A6.4-pr11. A6.3-pr8 decides *when* to call;
 /// the store owns persistence and conflict text.
+pub type SdkBudgetFuture<'a> = Pin<Box<dyn Future<Output = Result<(), TaskBudgetError>> + Send + 'a>>;
+
 pub trait SdkTaskBudget: Send + Sync {
+    fn configure_project_async<'a>(&'a self, root: &'a JsString, session: &'a JsString,
+        total: f64, retention: Option<f64>, now: f64) -> SdkBudgetFuture<'a> {
+        Box::pin(async move { self.configure_project(root, session, total, retention, now) })
+    }
+    fn clear_session_async<'a>(&'a self, root: &'a JsString, session: &'a JsString) -> SdkBudgetFuture<'a> {
+        Box::pin(async move { self.clear_session(root, session) })
+    }
+
     fn configure_project(
         &self,
         project_root: &JsString,
@@ -639,6 +649,17 @@ impl SdkSessionRegistry {
                 .clear_session(&root, session_key)
                 .map_err(task_budget_error)?;
         }
+        self.clear_session_maps(session_key);
+        Ok(())
+    }
+    pub async fn clear_session_state_async(&mut self, session_key: &JsString) -> Result<(), SdkSessionError> {
+        if let Some(root) = self.session_project(session_key) && let Some(budget) = &self.options.task_budget {
+            budget.clear_session_async(&root, session_key).await.map_err(task_budget_error)?;
+        }
+        self.clear_session_maps(session_key);
+        Ok(())
+    }
+    fn clear_session_maps(&mut self, session_key: &JsString) {
         self.delete_config(session_key);
         self.delete_plugins(session_key);
         self.delete_thinking(session_key);
@@ -647,7 +668,6 @@ impl SdkSessionRegistry {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .clear_session(session_key);
-        Ok(())
     }
 
     async fn resolve_session_plugins(
@@ -755,7 +775,7 @@ impl SdkSessionRegistry {
         Ok(plugins)
     }
 
-    fn configure_project_task_budget(
+    async fn configure_project_task_budget(
         &self,
         project_root: &Path,
         session_key: &JsString,
@@ -783,13 +803,14 @@ impl SdkSessionRegistry {
             .filter(|value| !value.is_undefined())
             .map(number);
         budget
-            .configure_project(
+            .configure_project_async(
                 &path_js(project_root),
                 session_key,
                 total,
                 retention,
                 (self.options.clock)(),
             )
+            .await
             .map_err(task_budget_error)
     }
 
@@ -951,7 +972,7 @@ impl SdkSessionRegistry {
             session_key,
             own(&next, "taskBudget"),
             signal,
-        )?;
+        ).await?;
         check_abort(signal)?;
         self.set_config(session_key, next.clone());
         if session_plugins.is_empty() {

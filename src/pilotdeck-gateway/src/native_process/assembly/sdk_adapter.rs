@@ -191,6 +191,7 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
         )
     })?;
     super::sdk_hooks::validate(config)?;
+    super::task_budget::validate(config)?;
     validate_agents(object.get("agents"))?;
     if let Some(value) = object.get("userDialogKinds").filter(|v| !v.is_undefined()) {
         let valid = match value {
@@ -225,6 +226,7 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
     if object.entries().iter().any(|(key, value)| {
         ![
             "permissionMode",
+            "taskBudget",
             "hooks",
             "includeHookEvents",
             "userDialogKinds",

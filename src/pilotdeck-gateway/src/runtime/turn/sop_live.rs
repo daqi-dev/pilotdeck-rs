@@ -7,7 +7,12 @@ pub(super) struct Prepared {
     pub template: Arc<NodeTemplate>,
     pub parent: Arc<InteractionTurn>,
 }
+pub(super) struct NodeScope {
+    context: SopNodeContext, identity: ExecutionIdentity,
+    runner: TurnRunner, storage: SopStorage, last: SopNodeOutcome,
+}
 pub(super) struct Executor {
+    pub node: tokio::sync::Mutex<Option<NodeScope>>,
     pub prepared: Prepared,
     pub stream: Arc<StreamHandler>,
     pub recorder: Arc<Recorder>,
@@ -63,6 +68,11 @@ impl Executor {
     }
     async fn run_node(&self, mut plan: SopNodePlan) -> Result<SopNodeOutcome, HostError> {
         if self.signal.is_cancelled() { return Err(HostError::new(HostErrorKind::Session, "SOP node was cancelled before execution.")); }
+        let mut node = self.node.lock().await;
+        if node.is_some() && !plan.continuation { return Err(HostError::new(HostErrorKind::Session, "SOP node must finish before another node starts.")); }
+        if plan.continuation && matches!(plan.context, SopNodeContext::Isolated { .. }) && node.as_ref().is_none_or(|scope| scope.context != plan.context || scope.identity.turn_id != self.request.identity.turn_id) {
+            return Err(HostError::new(HostErrorKind::Session, "SOP correction has no matching active isolated node."));
+        }
         let mut isolated = None;
         let mut node_runner = None;
         let mut identity = self.request.identity.clone();
@@ -72,6 +82,12 @@ impl Executor {
         identity.operation_id = plan.request.identity.operation_id.clone();
         let recorder = match &plan.context {
             SopNodeContext::Inherit => self.recorder.clone(),
+            SopNodeContext::Isolated { .. } if plan.continuation => {
+                let scope = node.take().expect("checked active isolated node");
+                identity.session_id = scope.identity.session_id;
+                plan.request.payload.insert("messages".into(), JsValue::Array(scope.last.messages));
+                let recorder = scope.storage.storage.recorder.clone(); node_runner = Some(scope.runner); isolated = Some(scope.storage); recorder
+            }
             SopNodeContext::Isolated { sop, node } => {
                 let (storage, session, history) = self.isolated_storage(sop, node).await?;
                 identity.session_id = session;
@@ -94,6 +110,7 @@ impl Executor {
             for (key, value) in node_route.entries() { merged.insert(key.clone(), value.clone()); }
             plan.request.payload.insert("modelOverride".into(), JsValue::Object(merged.clone())); plan.model_override = Some(merged);
         }
+        let scope_context = plan.context.clone();
         let operation = async {
         let prepared = self.prepared.template.prepare(self.prepared.parent.clone(), &identity, recorder, &plan).await?;
         for (key, value) in prepared.manifest.entries() { plan.request.payload.insert(key.clone(), value.clone()); }
@@ -161,7 +178,6 @@ impl Executor {
         };
         let mut result = terminal.get("result").cloned().unwrap_or(JsValue::Undefined);
         let messages = match terminal.get("messages") { Some(JsValue::Array(messages)) => messages.clone(), _ => return Err(HostError::new(HostErrorKind::Protocol, "SOP node final messages are missing.")) };
-        if let Some(runner) = node_runner.take() { runner.complete(result.clone()).await.map_err(recorder_error)?; }
         if let JsValue::Object(fields) = &mut result { fields.insert("sessionId".into(), JsValue::String(self.request.identity.session_id.clone())); }
         drop(prepared.lease);
         Ok(SopNodeOutcome { result, messages })
@@ -170,6 +186,10 @@ impl Executor {
         // Cleanup runs for every Result path, without replacing the primary
         // failure with a successful close or silently abandoning its writer.
         let mut operation = operation;
+        if let Ok(outcome) = &operation && let Some(storage) = isolated.take() {
+            let runner = node_runner.take().ok_or_else(|| HostError::new(HostErrorKind::Session, "SOP isolated node lost its recording owner."))?;
+            *node = Some(NodeScope { context: scope_context, identity, runner, storage, last: outcome.clone() });
+        }
         if let Some(runner) = node_runner.take() {
             let error = operation.as_ref().err().map(|error| error.message.clone()).unwrap_or_else(|| "SOP node ended without completing its durable turn.".into());
             if let Err(record) = runner.fail(crate::metadata::object([("code", "agent_host_error".into()), ("message", error.as_str().into())])).await {
@@ -184,6 +204,37 @@ impl Executor {
     }
 }
 impl SopNodeExecutor for Executor {
+    fn finish_node<'a>(&'a self, outcome: Option<&'a SopNodeOutcome>) -> SopFuture<'a, Result<(), HostError>> {
+        Box::pin(async move {
+            if outcome.is_some_and(|outcome| !matches!(&outcome.result, JsValue::Object(_))) { return Err(HostError::new(HostErrorKind::Protocol, "SOP node completion result must be an object.")); }
+            if let Some(outcome) = outcome && (outcome.result.get("sessionId") != Some(&JsValue::String(self.request.identity.session_id.clone())) || outcome.result.get("turnId") != Some(&JsValue::String(self.request.identity.turn_id.clone()))) { return Err(HostError::new(HostErrorKind::Protocol, "SOP node completion identity mismatch.")); }
+            let mut node = self.node.lock().await;
+            if let (Some(scope), Some(outcome)) = (node.as_ref(), outcome) && outcome.messages != scope.last.messages { return Err(HostError::new(HostErrorKind::Protocol, "SOP node completion does not match the active node messages.")); }
+            let Some(scope) = node.take() else { return Ok(()); };
+            let mut result = outcome.map(|value| value.result.clone()).unwrap_or_else(|| scope.last.result.clone());
+            let fields = result.as_object().cloned().ok_or_else(|| HostError::new(HostErrorKind::Protocol, "SOP node completion result must be an object."));
+            let completed = match fields {
+                Err(error) => Err(error),
+                Ok(mut fields) => {
+                    fields.insert("sessionId".into(), JsValue::String(scope.identity.session_id.clone()));
+                    fields.insert("turnId".into(), JsValue::String(scope.identity.turn_id.clone()));
+                    if outcome.is_none() {
+                        fields.insert("type".into(), if self.signal.is_cancelled() { "aborted".into() } else { "error".into() });
+                        fields.insert("stopReason".into(), if self.signal.is_cancelled() { "aborted_streaming".into() } else { "model_error".into() });
+                        if !self.signal.is_cancelled() { fields.insert("errors".into(), JsValue::Array(vec![crate::metadata::object([("code", "sop_node_scope_closed".into()), ("message", "SOP node scope closed before logical completion.".into())])])); }
+                    }
+                    result = JsValue::Object(fields); let expected = result.clone();
+                    match scope.runner.complete(result).await.map_err(recorder_error) {
+                        Err(error) => Err(error),
+                        Ok((_, events)) if events.last().and_then(|event| event.get("result")) == Some(&expected) => Ok(()),
+                        Ok((_, events)) => Err(HostError::new(HostErrorKind::Session, format!("SOP node completion persistence failed: {events:?}"))),
+                    }
+                }
+            };
+            let closed = scope.storage.close().await.map_err(storage_error);
+            match (completed, closed) { (Err(error), _) | (_, Err(error)) => Err(error), (Ok(()), Ok(())) => Ok(()) }
+        })
+    }
     fn model_validator(&self) -> Result<super::super::loop_control::SopModelValidator, HostError> { self.prepared.template.model_validator(self.prepared.parent.clone()) }
 
     fn run<'a>(&'a self, plan: SopNodePlan) -> SopFuture<'a, Result<SopNodeOutcome, HostError>> { Box::pin(self.run_node(plan)) }

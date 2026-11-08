@@ -9,6 +9,7 @@ pub(crate) struct SopLoopInput {
     pub signal: crate::host::Cancellation,
     pub visible_messages: Vec<JsValue>,
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SopNodeContext {
     Inherit,
     Isolated { sop: JsString, node: JsString },
@@ -21,6 +22,8 @@ pub(crate) trait SopRunBinding: Send + Sync {
     fn context(&self, base: Arc<dyn context::ContextRuntime>) -> Arc<dyn context::ContextRuntime> { base }
 }
 pub(crate) struct SopNodePlan {
+    /// Same isolated node correction; never another accepted user input.
+    pub continuation: bool,
     pub context: SopNodeContext,
     pub request: ExecuteRequest,
     pub instruction: JsString,
@@ -28,12 +31,15 @@ pub(crate) struct SopNodePlan {
     pub step: JsValue,
     pub binding: Option<Arc<dyn SopRunBinding>>,
 }
+#[derive(Clone)]
 pub(crate) struct SopNodeOutcome {
     pub result: JsValue,
     pub messages: Vec<JsValue>,
 }
 pub(crate) type SopModelValidator = Arc<dyn Fn(JsObject) -> crate::host::HostFuture<()> + Send + Sync>;
 pub(crate) trait SopNodeExecutor: Send + Sync {
+    fn finish_node<'a>(&'a self, _outcome: Option<&'a SopNodeOutcome>) -> SopFuture<'a, Result<(), HostError>> { Box::pin(async { Ok(()) }) }
+
     fn model_validator(&self) -> Result<SopModelValidator, HostError> {
         Err(HostError::new(crate::host::HostErrorKind::Session, "SOP model validation is unavailable."))
     }

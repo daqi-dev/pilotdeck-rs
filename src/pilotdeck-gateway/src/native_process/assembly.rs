@@ -70,6 +70,7 @@ pub(super) mod dialog_recovery;
 mod mcp;
 mod memory;
 mod sdk_adapter;
+mod task_budget;
 mod sdk_dispatch;
 pub(super) mod sdk_hooks;
 pub(crate) mod snapshot;
@@ -507,6 +508,7 @@ async fn start_assembly(
     let session_overrides: Arc<super::SessionOverrides> = Arc::default();
     let prepare_overrides = session_overrides.clone();
     let sdk_projects = SdkSessionProjects::shared();
+    let budget_ledger = task_budget::NativeBudgetLedger::new(options.home.clone());
     let sdk_options = crate::runtime::sdk_session::SdkSessionOptions::new(
         options.project.clone(),
         options.project.clone(),
@@ -516,7 +518,8 @@ async fn start_assembly(
         }),
     )
     .with_homedir(options.home.clone())
-    .with_projects(sdk_projects.clone());
+    .with_projects(sdk_projects.clone())
+    .with_task_budget(budget_ledger.clone());
     let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
     let sdk_registry = crate::runtime::sdk_session::SdkSessionRegistry::new(sdk_options)
         .with_shared_handlers(sdk_handlers.clone());
@@ -1440,6 +1443,7 @@ async fn start_assembly(
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),
                 sdk_config: Some(sdk_port.clone()),
+                task_budget: Some(Arc::new(task_budget::NativeTaskBudget { ledger: budget_ledger.clone(), sdk: sdk_port.clone(), fallback: options.project.clone() })),
                 dialog_recovery: Some(dialog_recovery.clone()),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
@@ -1565,7 +1569,7 @@ async fn start_assembly(
                         sdk.registry
                             .lock()
                             .await
-                            .clear_session_state(&session)
+                            .clear_session_state_async(&session).await
                             .map_err(|error| {
                                 crate::runtime::connection::RequestError::new(error.message)
                             })

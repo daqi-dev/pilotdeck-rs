@@ -2173,9 +2173,20 @@ impl super::super::loop_control::HostLoopController for SopProbeController {
     fn run<'a>(&'a self, input: super::super::loop_control::SopLoopInput, native: &'a dyn super::super::loop_control::SopNodeExecutor) -> super::super::loop_control::SopFuture<'a, Result<crate::host::ExecuteResult, HostError>> {
         Box::pin(async move {
             let mut final_result = None;
+            let mut previous_node: Option<super::super::loop_control::SopNodeOutcome> = None;
             for round in 0..self.rounds {
                 let context = if self.isolated && round > 0 { super::super::loop_control::SopNodeContext::Isolated { sop: "fixture/sop".into(), node: "isolated node".into() } } else { super::super::loop_control::SopNodeContext::Inherit };
-                let output = native.run(super::super::loop_control::SopNodePlan { context, request: input.request.clone(), instruction: "fixture instruction".into(), model_override: None, step: crate::metadata::object([("skillId", "fixture/sop".into()), ("nodeId", "isolated node".into())]), binding: None }).await?;
+                let mut output = native.run(super::super::loop_control::SopNodePlan { continuation: self.isolated && round == 2, context, request: input.request.clone(), instruction: "".into(), model_override: None, step: crate::metadata::object([("skillId", "fixture/sop".into()), ("nodeId", "isolated node".into())]), binding: None }).await?;
+                if self.isolated && round == 2 && let Some(previous) = previous_node.take() {
+                    let mut result = output.result.as_object().unwrap().clone();
+                    result.insert("turns".into(), JsValue::Number(previous.result.get("turns").and_then(JsValue::as_number).unwrap() + output.result.get("turns").and_then(JsValue::as_number).unwrap()));
+                    result.insert("startedAt".into(), previous.result.get("startedAt").unwrap().clone());
+                    let mut usage = JsObject::new();
+                    for key in ["inputTokens", "outputTokens", "totalTokens"] { usage.insert(key.into(), JsValue::Number(previous.result.get("usage").and_then(|usage| usage.get(key)).and_then(JsValue::as_number).unwrap() + output.result.get("usage").and_then(|usage| usage.get(key)).and_then(JsValue::as_number).unwrap())); }
+                    result.insert("usage".into(), JsValue::Object(usage)); output.result = JsValue::Object(result);
+                }
+                if self.isolated && round == 1 { previous_node = Some(output.clone()); }
+                else { native.finish_node(Some(&output)).await?; }
                 self.outcomes.lock().unwrap().push(output.messages.len());
                 let aborted = output.result.get("type") == Some(&"aborted".into());
                 final_result = Some(output.result); if aborted { break; }
@@ -2190,26 +2201,33 @@ async fn sop_real_nodes_share_one_parent_admission_and_restore_isolated_history(
     let scratch = Scratch::new(); let registry = registry(&scratch); let recorder = test_recorder();
     let outcomes = Arc::new(Mutex::new(Vec::new())); let calls = Arc::new(AtomicUsize::new(0)); let invoked = calls.clone();
     let pid = scratch.0.join("sop.pid");
-    let session = TurnHostFactory::new(registry.clone(), peer("success", Some(&pid)), Limits::default(), Some("fixture".into()), move |_, _| { invoked.fetch_add(1, Ordering::SeqCst); ports(None) })
+    let session = TurnHostFactory::new(registry.clone(), peer("sop-success", Some(&pid)), Limits::default(), Some("fixture".into()), move |_, _| { invoked.fetch_add(1, Ordering::SeqCst); ports(None) })
         .with_loop_controller(Arc::new(SopProbeController { isolated: true, rounds: 3, outcomes: outcomes.clone() }))
         .into_live_session(recorder.clone(), || vec![crate::metadata::object([("role", "assistant".into()), ("content", "PARENT HISTORY ONLY".into())])]);
-    let mut stream = session.submit_turn_for_test(parse_json(r#"{"type":"text","text":"user input"}"#).unwrap(), wire()).unwrap();
-    let mut events = Vec::new(); while let Some(event) = bounded_liveness(stream.next()).await.unwrap() { events.push(event); }
-    drop(stream); bounded(session.dispose()).await.unwrap(); bounded(registry.dispose()).await.unwrap();
-    assert_eq!(calls.load(Ordering::SeqCst), 1, "node execution must use the captured outer services");
-    assert_eq!(*outcomes.lock().unwrap(), vec![2, 1, 2], "isolated node must exclude parent history and reopen its own prior accepted input; full parent events: {events:?}");
-    for kind in ["turn_started", "input_accepted", "turn_completed"] { assert_eq!(events.iter().filter(|event| event.get("type") == Some(&kind.into())).count(), 1, "one parent {kind}"); }
-    assert_eq!(events.iter().filter(|event| event.get("type") == Some(&"model_request_started".into())).count(), 3);
+    let mut all_events = Vec::new();
+    for index in 0..2 {
+        let mut options = wire().as_object().unwrap().clone(); options.insert("turnId".into(), format!("sop-parent-{index}").as_str().into());
+        let mut stream = session.submit_turn_for_test(parse_json(r#"{"type":"text","text":"user input"}"#).unwrap(), JsValue::Object(options)).unwrap();
+        let mut events = Vec::new(); while let Some(event) = bounded_liveness(stream.next()).await.unwrap() { events.push(event); }
+        drop(stream);
+        for kind in ["turn_started", "input_accepted", "turn_completed"] { assert_eq!(events.iter().filter(|event| event.get("type") == Some(&kind.into())).count(), 1, "one parent {kind}; events={events:?}"); }
+        assert_eq!(events.last().and_then(|event| event.get("result")).and_then(|result| result.get("type")), Some(&"success".into()), "actual terminal: {events:?}");
+        all_events.extend(events);
+    }
+    bounded(session.dispose()).await.unwrap(); bounded(registry.dispose()).await.unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "each outer turn captures services once");
+    assert_eq!(*outcomes.lock().unwrap(), vec![2, 1, 1, 2, 2, 2], "correction must not accept user input again; next parent turn restores isolated history; events={all_events:?}");
+    assert_eq!(all_events.iter().filter(|event| event.get("type") == Some(&"model_request_started".into())).count(), 6);
     let read = crate::storage::read_transcript(recorder.writer().path()).unwrap();
-    assert_eq!(read.entries.iter().filter(|entry| entry.get("type") == Some(&"accepted_input".into())).count(), 1, "child accepts must never be written to the parent transcript");
+    assert_eq!(read.entries.iter().filter(|entry| entry.get("type") == Some(&"accepted_input".into())).count(), 2, "child accepts must never be written to the parent transcript");
     let executions = std::fs::read_dir(&scratch.0).unwrap().filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().ends_with(".execute")).count();
-    assert_eq!(executions, 3, "exactly three real child processes; no eager unused outer connection");
+    assert_eq!(executions, 6, "exactly six real child processes; no eager unused outer connection");
 }
 #[tokio::test]
 async fn sop_cancel_drains_the_real_node_and_retains_the_old_generation() {
     let scratch = Scratch::new(); let registry = registry(&scratch); let old = registry.resolve(None).unwrap(); let recorder = test_recorder();
     let pid = scratch.0.join("sop-cancel.pid");
-    let session = factory(registry.clone(), peer("hold", Some(&pid)), None)
+    let session = factory(registry.clone(), peer("sop-cancel", Some(&pid)), None)
         .with_loop_controller(Arc::new(SopProbeController { isolated: false, rounds: 1, outcomes: Arc::default() }))
         .into_live_session(recorder.clone(), Vec::new);
     let mut stream = session.submit_turn_for_test(parse_json(r#"{"type":"text","text":"cancel node"}"#).unwrap(), wire()).unwrap();
@@ -2224,4 +2242,23 @@ async fn sop_cancel_drains_the_real_node_and_retains_the_old_generation() {
     let read = crate::storage::read_transcript(recorder.writer().path()).unwrap();
     assert_eq!(read.entries.iter().filter(|entry| entry.get("type") == Some(&"accepted_input".into())).count(), 1);
     assert!(read.entries.iter().any(|entry| entry.get("type") == Some(&"turn_result".into()) && entry.get("result").and_then(|result| result.get("type")) == Some(&"aborted".into())));
+}
+
+#[tokio::test]
+async fn sop_unresponsive_cancel_preserves_unknown_progress_and_reaps_child() {
+    let scratch = Scratch::new(); let registry = registry(&scratch); let recorder = test_recorder(); let pid = scratch.0.join("sop-unknown.pid");
+    let session = factory(registry.clone(), peer("hold", Some(&pid)), None)
+        .with_loop_controller(Arc::new(SopProbeController { isolated: false, rounds: 1, outcomes: Arc::default() }))
+        .into_live_session(recorder.clone(), Vec::new);
+    let mut stream = session.submit_turn_for_test(parse_json(r#"{"type":"text","text":"cancel unknown node"}"#).unwrap(), wire()).unwrap();
+    loop { let event = bounded_liveness(stream.next()).await.unwrap().unwrap(); if event.get("type") == Some(&"model_request_started".into()) { break; } }
+    session.abort(&"cancel probe".into()).unwrap(); let mut terminal = None;
+    while let Some(event) = bounded_liveness(stream.next()).await.unwrap() { if event.get("type") == Some(&"turn_completed".into()) { terminal = Some(event); } }
+    drop(stream); bounded(session.dispose()).await.unwrap(); bounded(registry.dispose()).await.unwrap();
+    let terminal = terminal.unwrap(); assert_eq!(terminal.get("result").and_then(|result| result.get("type")), Some(&"error".into()), "{terminal:?}");
+    let errors = terminal.get("result").and_then(|result| result.get("errors"));
+    let Some(JsValue::Array(errors)) = errors else { panic!("missing actual errors: {terminal:?}"); };
+    assert_eq!(errors[0].get("code"), Some(&"agent_invalid_state".into()));
+    assert_eq!(errors[0].get("message"), Some(&"Host execution failed: Sidecar execute did not reach a terminal within the post-cancel exit deadline; progress is unknown.".into()));
+    assert_peer_reaped(&pid).await;
 }

@@ -32,7 +32,7 @@ mod channel_tests;
 pub mod http_store;
 mod journal;
 #[cfg(unix)]
-mod native_journal;
+pub(crate) mod native_journal;
 mod store;
 
 pub use bus::{

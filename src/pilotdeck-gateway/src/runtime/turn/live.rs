@@ -2825,12 +2825,14 @@ impl LiveSessionAdapter {
                     .insert("messages".into(), JsValue::Array(messages));
                 if let Some(controller) = loop_controller {
                     let prepared = sop.ok_or_else(|| HostError::new(HostErrorKind::Session, "SOP host node executor is unavailable."))?;
-                    let executor = sop::Executor { prepared, stream: handler.clone(), recorder, lease,
+                    let executor = sop::Executor { node: tokio::sync::Mutex::new(None), prepared, stream: handler.clone(), recorder, lease,
                         request: request.clone(), input: sop_input, signal: cancellation.clone(), close_timeout };
                     let identity = request.identity.clone();
                     let visible_messages = match request.payload.get("messages") { Some(JsValue::Array(messages)) => messages.clone(), _ => Vec::new() };
                     let result = handler.with_pump(controller.run(super::loop_control::SopLoopInput { request, signal: cancellation, visible_messages }, &executor), identity).await;
+                    let node_closed = super::loop_control::SopNodeExecutor::finish_node(&executor, None).await;
                     let closed = handler.inner.dispose().await;
+                    let closed = node_closed.and(closed);
                     if let Some(pending) = pending_host.take() { pending.handoff(); }
                     return match (result, closed) { (Err(error), _) | (_, Err(error)) => Err(error), (Ok(result), Ok(())) => Ok(result) };
                 }

@@ -138,6 +138,9 @@ impl SubmitReplacement for NativeSubmitReplacement {
 /// pending-turn rejection. They return wire events (including usage/command
 /// short-circuits); empty means admission may proceed.
 pub trait SubmitAdmission: Send + Sync {
+    fn take_turn_budget(&self, _run: &RunRef)->JsValue { JsValue::Undefined }
+    fn release_turn(&self, _session: &JsString, _run: &JsString) {}
+
     fn normalize<'a>(
         &'a self,
         input: &'a mut JsValue,
@@ -391,7 +394,15 @@ impl SubmitHost for GatewaySubmitHost {
                     ]),
                 ),
             ]);
+            let task_budget = self.admission.take_turn_budget(run);
             if let JsValue::Object(ref mut object) = options {
+                for key in ["maxTurns", "maxBudgetUsd"] {
+                    if let Some(value)=input.get(key).filter(|v|!matches!(v,JsValue::Null|JsValue::Undefined)) { object.insert(key.into(),value.clone()); }
+                }
+                if let Some(total)=task_budget.get("totalUsd") {
+                    object.insert("taskBudgetUsd".into(),total.clone());
+                    object.insert("initialTaskBudgetSpentUsd".into(),field(&task_budget,"spentUsd").clone());
+                }
                 for (source, target) in [
                     ("mode", "permissionMode"),
                     ("basePermissionMode", "basePermissionMode"),
@@ -421,6 +432,7 @@ impl SubmitHost for GatewaySubmitHost {
             .commit_accepted_input(&run.session_key, &run.run_id)
     }
     fn release_claim(&self, session: &JsString, run: &JsString) {
+        self.admission.release_turn(session, run);
         self.replacement.release_claim(session, run)
     }
     fn record_failure<'a>(
