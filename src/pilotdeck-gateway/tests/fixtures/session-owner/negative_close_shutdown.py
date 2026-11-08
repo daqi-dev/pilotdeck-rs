@@ -162,9 +162,9 @@ MUTATIONS = {
     # and the close drains to Ok with the drain's `shutdown` reason.
     "close-call-registration-removed": (
         owner,
-        """        track(&mut state, project, completion.clone());
+        """        track(&mut state, key.clone(), project, completion.clone());
         state.closings.insert(key.clone(), completion.clone());""",
-        """        track(&mut state, project, completion.clone());""",
+        """        track(&mut state, key.clone(), project, completion.clone());""",
         [SECOND_CLOSE, CLOSE_THEN_SHUTDOWN],
         [
             "#1245 each in-flight close of the key must reject with the eviction's "

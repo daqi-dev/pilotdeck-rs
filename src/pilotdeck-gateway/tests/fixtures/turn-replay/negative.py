@@ -121,26 +121,8 @@ DISPOSE_CANCEL_ALL_PLAIN = DISPOSE_CANCEL_ALL_GUARDED.replace(
     "        }",
     "        self.timer.cancel_all();",
 )
-COORDINATOR_START_GUARDED = """        let mut state = lock(&self.state);
-        // The replay store may panic through its injected timer (#805): the
-        // panic surfaces at the call site like a throwing TS call, but the
-        // guard is dropped first so it cannot poison the composite-state
-        // lock for every session.
-        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
-            self.replay.start(session_key, run_id);
-        })) {
-            drop(state);
-            resume_unwind(panic);
-        }"""
-COORDINATOR_START_PLAIN = COORDINATOR_START_GUARDED.replace(
-    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
-    "            self.replay.start(session_key, run_id);\n"
-    "        })) {\n"
-    "            drop(state);\n"
-    "            resume_unwind(panic);\n"
-    "        }",
-    "        self.replay.start(session_key, run_id);",
-)
+COORDINATOR_START_GUARDED = '        let mut state = lock(&self.state);\n        // The replay store may panic through its injected timer (#805): the\n        // panic surfaces at the call site like a throwing TS call, but the\n        // guard is dropped first so it cannot poison the composite-state\n        // lock for every session.\n        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| match project_key {\n            Some(project) => self.replay.start_for_project(session_key, run_id, project),\n            None => self.replay.start(session_key, run_id),\n        })) {\n            drop(state);\n            resume_unwind(panic);\n        }'
+COORDINATOR_START_PLAIN = COORDINATOR_START_GUARDED.replace('        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| match project_key {\n            Some(project) => self.replay.start_for_project(session_key, run_id, project),\n            None => self.replay.start(session_key, run_id),\n        })) {\n            drop(state);\n            resume_unwind(panic);\n        }', '        match project_key {\n            Some(project) => self.replay.start_for_project(session_key, run_id, project),\n            None => self.replay.start(session_key, run_id),\n        };')
 COORDINATOR_RETAIN_GUARDED = """        // The replay store may panic through its injected timer (#805),
         // after the sink removal — the same partial state a throwing TS
         // retainTerminal leaves. The guard is dropped first so the unwind
@@ -363,7 +345,7 @@ mutants = [
     ("coordinator-start-not-atomic", "coordinator.rs",
      COORDINATOR_START_GUARDED + "\n        #[cfg(test)]\n        self.fire_start();\n"
      + START_INSERT_AND_RETURN,
-     "        self.replay.start(session_key, run_id);\n        #[cfg(test)]\n        self.fire_start();\n        let mut state = lock(&self.state);\n"
+     '        match project_key {\n            Some(project) => self.replay.start_for_project(session_key, run_id, project),\n            None => self.replay.start(session_key, run_id),\n        };\n        #[cfg(test)]\n        self.fire_start();\n        let mut state = lock(&self.state);\n'
      + START_INSERT_AND_RETURN,
      "coordinator::tests::concurrent_starts_keep_replay_and_sink_in_the_same_epoch"),
     # codex-r1 P1 #2 and #4: expiry must be timer driven and must not read a
