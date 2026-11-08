@@ -158,12 +158,14 @@ pub(crate) struct AlwaysOnRunContext {
 /// refuses a duplicate key exactly as the TS throw does
 /// (AlwaysOnRunContextRegistry.ts:82-84).
 pub(crate) struct AlwaysOnRunContextRegistry {
-    contexts: Mutex<HashMap<String, AlwaysOnRunContext>>,
+    pub(super) contexts: Mutex<HashMap<String, AlwaysOnRunContext>>,
+    pub(super) tool_handlers: Mutex<HashMap<JsString, Arc<super::tools::PhaseHandlerEntry>>>,
 }
 impl AlwaysOnRunContextRegistry {
     pub(crate) fn new() -> Self {
         Self {
             contexts: Mutex::new(HashMap::new()),
+            tool_handlers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -183,10 +185,12 @@ impl AlwaysOnRunContextRegistry {
     /// with the explicitly unported fire pipeline.
     #[allow(dead_code)]
     pub(crate) fn unregister(&self, session_key: &str) {
-        self.contexts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(session_key);
+        let mut contexts = self.contexts.lock().unwrap_or_else(|e| e.into_inner());
+        contexts.remove(session_key);
+        let mut handlers = self.tool_handlers.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = handlers.remove(&JsString::from(session_key)) {
+            entry.active.store(false, Ordering::Release);
+        }
     }
 
     pub(crate) fn get(&self, session_key: &str) -> Option<AlwaysOnRunContext> {
@@ -199,10 +203,16 @@ impl AlwaysOnRunContextRegistry {
 
     /// The project-scoped sweep of `stop` (AlwaysOnRuntime.ts:304-308).
     pub(crate) fn unregister_project(&self, project_key: &str) {
-        self.contexts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|_, context| context.project_key != project_key);
+        let mut contexts = self.contexts.lock().unwrap_or_else(|e| e.into_inner());
+        let sessions: Vec<JsString> = contexts.iter().filter(|(_, context)| context.project_key == project_key)
+            .map(|(session, _)| JsString::from(session.as_str())).collect();
+        contexts.retain(|_, context| context.project_key != project_key);
+        let mut handlers = self.tool_handlers.lock().unwrap_or_else(|e| e.into_inner());
+        for session in sessions {
+            if let Some(entry) = handlers.remove(&session) {
+                entry.active.store(false, Ordering::Release);
+            }
+        }
     }
 }
 
@@ -349,6 +359,20 @@ impl AlwaysOnRuntime {
             files: crate::metadata::NativeFiles,
         };
         let paths = super::resolve_always_on_paths(pilot_home, project_key, &metadata)?;
+        Self::new_with_paths(config, paths, run_contexts, now, uuid, logger, is_session_in_flight)
+    }
+
+    /// Native callers supply paths resolved by the bounded marker adapter.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_paths(
+        config: AlwaysOnConfig,
+        paths: AlwaysOnPaths,
+        run_contexts: Option<Arc<AlwaysOnRunContextRegistry>>,
+        now: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+        uuid: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+        logger: Option<Arc<dyn AlwaysOnLogger>>,
+        is_session_in_flight: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    ) -> io::Result<Self> {
         let now: Arc<dyn Fn() -> f64 + Send + Sync> = now.unwrap_or_else(|| Arc::new(now_millis));
         let leases = Arc::new(ChannelLeaseRegistry::new(now.clone()));
         let state_store = Arc::new(DiscoveryStateStore::new(paths.clone()));
@@ -773,6 +797,25 @@ impl AlwaysOnManager {
                 .logger
                 .unwrap_or_else(|| Arc::new(super::NoopAlwaysOnLogger)),
         })
+    }
+
+    /// Native construction resolves every enabled project's paths through its
+    /// bounded marker adapter before constructing the shared manager.
+    pub(crate) fn new_with_resolver(
+        options: AlwaysOnManagerOptions,
+        mut resolve: impl FnMut(&str) -> io::Result<AlwaysOnPaths>,
+    ) -> io::Result<Self> {
+        let run_contexts = Arc::new(AlwaysOnRunContextRegistry::new());
+        let mut runtimes = Vec::new();
+        for (project_key, enabled) in &options.config.projects {
+            if !*enabled { continue; }
+            let paths = resolve(project_key)?;
+            runtimes.push(Arc::new(AlwaysOnRuntime::new_with_paths(
+                options.config.clone(), paths, Some(run_contexts.clone()),
+                options.now.clone(), options.uuid.clone(), options.logger.clone(), None,
+            )?));
+        }
+        Ok(Self { runtimes, logger: options.logger.unwrap_or_else(|| Arc::new(super::NoopAlwaysOnLogger)) })
     }
 
     /// `bindAgentGateway` (AlwaysOnManager.ts:147-160): every runtime binds
@@ -1267,6 +1310,22 @@ mod tests {
             }),
             "#2294 r1 gatewayCalls: the abort reached the facade once"
         );
+    }
+
+    #[test]
+    fn native_resolver_rejection_aborts_manager_construction() {
+        let home = scratch("resolver-refusal");
+        let project_key = home.join("proj").to_string_lossy().into_owned();
+        let mut called = 0;
+        let result = AlwaysOnManager::new_with_resolver(AlwaysOnManagerOptions {
+            config: config(&project_key), pilot_home: home, now: None, uuid: None, logger: None,
+        }, |key| {
+            called += 1;
+            assert_eq!(key, project_key);
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, "marker refused"))
+        });
+        assert_eq!(called, 1);
+        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::PermissionDenied));
     }
 
     // r9 (generate.mts:567-588): the manager answers project_not_found for

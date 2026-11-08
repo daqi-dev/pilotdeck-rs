@@ -35,6 +35,12 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
+            if let Some(control) = self.automation.as_ref().and_then(|slot| slot.control()) {
+                let project: pilotdeck_protocol::JsString = self.options.project.to_string_lossy().as_ref().into();
+                return control.dispatch(&method, &project, params).await.map_err(|error| RequestError {
+                    code: error.code.into(), message: error.message.into(), details: None, validation: None,
+                });
+            }
             match method.as_str() {
                 // The only arm that reads `input`: the unconfigured abort
                 // echoes `input.sessionKey` in its return object

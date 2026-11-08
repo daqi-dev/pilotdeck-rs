@@ -78,6 +78,50 @@ pub(super) fn build(
     Ok(Some(manager))
 }
 
+/// Each provider owns one manager and its complete observed stop operation.
+pub(super) fn native_factory() -> super::automation::CronFactory {
+    Arc::new(|input| {
+        let manager = build(Some(&input.section), &input.pilot_home)?
+            .ok_or_else(|| std::io::Error::other("Missing staged cron section."))?;
+        Ok(Arc::new(NativeCronProvider { manager, stop: std::sync::OnceLock::new() }))
+    })
+}
+struct NativeCronProvider {
+    manager: Arc<CronManager>,
+    stop: std::sync::OnceLock<Arc<crate::switch::CronStopHandle>>,
+}
+impl super::automation::ProjectAutomationProvider for NativeCronProvider {
+    fn bind_agent_gateway(&self, gateway: &super::automation::ProjectAutomationAgentGateway,
+        _hooks: Option<super::automation::AlwaysOnBindHooks<'_>>) -> Result<(), std::io::Error> {
+        let stop = if let Some(bind) = &gateway.native_cron_bind {
+            bind(self.manager.clone())?
+        } else {
+            let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(gateway.cron.clone()));
+            self.manager.bind_agent_gateway(recording.clone()).map_err(cron_io_error)?;
+            Arc::new(crate::switch::CronStopHandle::new(self.manager.clone(), recording.failures()))
+        };
+        self.stop.set(stop).map_err(|_| std::io::Error::other("Cron provider already bound."))
+    }
+    fn start(self: Arc<Self>) -> super::automation::AutomationFuture {
+        Box::pin(async move {
+            let manager = self.manager.clone();
+            tokio::task::spawn_blocking(move || manager.start()).await
+                .map_err(|error| error.to_string())?.map_err(|error| cron_io_error(error).to_string())
+        })
+    }
+    fn stop(self: Arc<Self>) -> super::automation::AutomationFuture {
+        Box::pin(async move {
+            let Some(stop) = self.stop.get() else { return Ok(()); };
+            crate::switch::close_cron_management(&self.manager);
+            stop.stop_async().await.map_err(|error| cron_io_error(error).to_string())?;
+            let failures = stop.abort_failures();
+            if failures.is_empty() { Ok(()) } else { Err(failures.join("; ")) }
+        })
+    }
+    fn tools(&self) -> Vec<JsString> { Vec::new() }
+    fn cron_manager(&self) -> Option<Arc<CronManager>> { Some(self.manager.clone()) }
+}
+
 pub(super) fn bind_callbacks(
     manager: &CronManager,
     server: crate::channel::server::ChannelServer,

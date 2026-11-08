@@ -119,6 +119,28 @@ fn write_index_object(file: &Path, index: &JsObject) -> io::Result<()> {
     super::storage::write(&super::storage::root_for(file), file, text.as_bytes(), super::storage::INDEX_BYTES)
 }
 
+fn legacy_object(root: &Path, file: &Path) -> io::Result<Option<JsObject>> {
+    let raw = match super::storage::read(root, file, super::storage::INDEX_BYTES) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return Ok(None),
+        Err(error) if super::storage::is_policy_error(&error) => return Err(error),
+        Err(_) => return Ok(None),
+    };
+    let text = String::from_utf8_lossy(&raw);
+    super::storage::check_json(&text)?;
+    Ok(parse_json(&text).ok().and_then(|value| value.as_object().cloned()))
+}
+fn relative_path(paths: &AlwaysOnPaths, value: &JsString) -> JsString {
+    let root = JsString::from(paths.project_dir().to_string_lossy().as_ref());
+    let relative = crate::runtime::tools::builtin::relative(&root, value);
+    if relative.is_empty() || relative.units().starts_with(&[46, 46]) { value.clone() } else { relative }
+}
+fn without_field(object: &JsObject, field: &str) -> JsObject {
+    let mut result = JsObject::new();
+    for (key, value) in object.entries() { if !key.equals_str(field) { result.insert(key.clone(), value.clone()); } }
+    result
+}
+
 /// The TS `find` over the entries: match on the raw entry before any typed
 /// conversion, so a record without a string `id` (or `status`) never matches.
 fn find_entry(
@@ -246,6 +268,61 @@ impl WorkCycleStore {
         Ok(cycle_record(&record))
     }
 
+    pub(crate) fn migrate_from_legacy(&self, cycle_id: JsString, now_ms: f64) -> io::Result<Option<WorkCycleRecord>> {
+        let mut index = self.read_index()?;
+        let Some(JsValue::Array(existing)) = index.get("cycles") else { unreachable!() };
+        if !existing.is_empty() { return Ok(None); }
+        let root = super::storage::root_for(&self.paths.state_file);
+        let Some(mut state) = legacy_object(&root, &self.paths.state_file)? else { return Ok(None); };
+        let Some(workspace) = state.get("currentWorkspace").and_then(JsValue::as_object).cloned() else { return Ok(None); };
+        let Some(cwd) = workspace.get("cwd").and_then(JsValue::as_string) else { return Ok(None); };
+        let cwd_path = cwd.to_utf8().map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Always-On legacy workspace path is not representable by the native filesystem."))?;
+        if !Path::new(&cwd_path).exists() { return Ok(None); }
+        let mut plans = legacy_object(&root, &self.paths.plan_index_file)?;
+        let plan_ids = plans.as_ref().and_then(|index| index.get("plans")).and_then(|value| {
+            if let JsValue::Array(plans) = value { Some(plans.iter().filter_map(|plan| {
+                let plan = plan.as_object()?;
+                let matches = plan.get("workspace").and_then(JsValue::as_object).and_then(|workspace| workspace.get("cwd")).and_then(JsValue::as_string) == Some(cwd);
+                matches.then(|| plan.get("id").cloned().unwrap_or(JsValue::Undefined))
+            }).collect::<Vec<_>>()) } else { None }
+        }).unwrap_or_default();
+        let mut record = JsObject::new();
+        record.insert("id".into(), JsValue::String(cycle_id.clone()));
+        record.insert("projectKey".into(), self.paths.project_key.as_str().into());
+        record.insert("status".into(), "active".into());
+        let mut selected = JsObject::new();
+        for field in ["strategy", "cwd", "metadata"] {
+            selected.insert(field.into(), workspace.get(field).cloned().unwrap_or_else(|| if field == "metadata" { JsValue::Object(JsObject::new()) } else { JsValue::Undefined }));
+        }
+        record.insert("workspace".into(), JsValue::Object(selected));
+        record.insert("planIds".into(), JsValue::Array(plan_ids.clone()));
+        record.insert("createdAt".into(), crate::runtime::cron::iso_from_epoch_ms(now_ms).as_str().into());
+        record.insert("createdByRunId".into(), workspace.get("runId").cloned().unwrap_or(JsValue::Undefined));
+        index.insert("cycles".into(), JsValue::Array(vec![JsValue::Object(record.clone())]));
+        self.write_index(&index)?;
+        state.insert("activeWorkCycleId".into(), JsValue::String(cycle_id.clone()));
+        state = without_field(&state, "currentWorkspace");
+        if let Err(error) = write_index_object(&self.paths.state_file, &state) {
+            if super::storage::is_policy_error(&error) { return Err(error); }
+        }
+        if !plan_ids.is_empty() && let Some(plan_index) = plans.as_mut() {
+            if let Some(JsValue::Array(entries)) = plan_index.get("plans") {
+                let entries = entries.iter().map(|entry| {
+                    let Some(plan) = entry.as_object() else { return entry.clone(); };
+                    if !plan_ids.iter().any(|id| plan.get("id") == Some(id)) { return entry.clone(); }
+                    let mut plan = without_field(plan, "workspace");
+                    plan.insert("workCycleId".into(), JsValue::String(cycle_id.clone()));
+                    JsValue::Object(plan)
+                }).collect();
+                plan_index.insert("plans".into(), JsValue::Array(entries));
+                if let Err(error) = write_index_object(&self.paths.plan_index_file, plan_index) {
+                    if super::storage::is_policy_error(&error) { return Err(error); }
+                }
+            }
+        }
+        Ok(Some(cycle_record(&record)))
+    }
+
     pub(crate) fn update_status(&self, cycle_id: &JsString, status: &str, now_ms: f64) -> io::Result<Option<WorkCycleRecord>> {
         let mut index = self.read_index()?;
         let Some(JsValue::Array(entries)) = index.get("cycles") else { unreachable!() };
@@ -333,6 +410,33 @@ impl DiscoveryPlanStore {
         let text = String::from_utf16_lossy(markdown.units());
         super::storage::write(&super::storage::root_for(&self.paths.state_file), &path, text.as_bytes(), super::storage::MARKDOWN_BYTES)?;
         Ok(path)
+    }
+
+    pub(crate) fn update(&self, plan_id: &JsString, update: &JsObject) -> io::Result<Option<DiscoveryPlanRecord>> {
+        let mut index = self.read_index()?;
+        let Some(JsValue::Array(entries)) = index.get("plans") else { unreachable!() };
+        let mut entries = entries.clone(); let mut result = None;
+        for entry in &mut entries {
+            let JsValue::Object(record) = entry else { continue; };
+            if record.get("id").and_then(JsValue::as_string) != Some(plan_id) { continue; }
+            if let Some(status) = update.get("status").filter(|value| !value.is_undefined()) {
+                record.insert("status".into(), status.clone());
+                if record.contains_key("executionStatus") && status.as_string().is_some_and(|status| ["completed", "completed_no_report", "failed"].iter().any(|value| status.equals_str(value))) {
+                    record.insert("executionStatus".into(), status.clone());
+                }
+            }
+            if let Some(path) = update.get("reportFilePath").filter(|value| !value.is_undefined()) {
+                let path = path.as_string().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Always-On reportFilePath must be a string."))?;
+                record.insert("reportFilePath".into(), JsValue::String(relative_path(&self.paths, path)));
+            }
+            if let Some(cycle) = update.get("workCycleId").filter(|value| !value.is_undefined()) {
+                record.insert("workCycleId".into(), cycle.clone());
+                *record = without_field(record, "workspace");
+            }
+            result = Some(plan_record(record)); break;
+        }
+        if result.is_some() { index.insert("plans".into(), JsValue::Array(entries)); self.write_index(&index)?; }
+        Ok(result)
     }
 
     /// `getRecord` (DiscoveryPlanStore.ts:98-101).
@@ -750,5 +854,52 @@ mod native_storage_tests {
         assert_eq!(selected.iter().map(|record| record.id.clone()).collect::<Vec<_>>(), vec![JsString::from("second"), plan_id]);
         assert_eq!(selected[1].title.as_ref().unwrap().units(), &[0xd800]);
         assert_eq!(selected[1].raw.get("fixtureUnknown"), Some(&JsValue::Bool(true)));
+    }
+
+    #[tokio::test]
+    async fn legacy_migration_uses_real_workspace_and_preserves_utf16_plan_identity_and_updates() {
+        let root = Scratch(std::env::temp_dir().join(format!("pdrs-always-migrate-{}", uuid::Uuid::new_v4())));
+        let workspace = root.0.join("workspace"); std::fs::create_dir_all(&workspace).unwrap();
+        let paths = paths(&root.0);
+        super::super::storage::run(move || {
+            let mut old_workspace = JsObject::new(); old_workspace.insert("runId".into(), "legacy-run".into());
+            old_workspace.insert("strategy".into(), "snapshot-copy".into()); old_workspace.insert("cwd".into(), workspace.to_string_lossy().as_ref().into());
+            old_workspace.insert("metadata".into(), JsValue::Object(JsObject::new()));
+            let mut state = JsObject::new(); state.insert("schemaVersion".into(), JsValue::Number(1.0));
+            state.insert("fixtureUnknown".into(), JsValue::Bool(true)); state.insert("currentWorkspace".into(), JsValue::Object(old_workspace.clone()));
+            write_index_object(&paths.state_file, &state)?;
+            let id = JsString::from_utf16(vec![112, 0xd800]);
+            let mut plan = JsObject::new(); plan.insert("id".into(), JsValue::String(id.clone()));
+            plan.insert("workspace".into(), JsValue::Object(old_workspace)); plan.insert("executionStatus".into(), "pending".into());
+            let plans = DiscoveryPlanStore::new(paths.clone()); plans.upsert(&plan)?;
+            let cycles = WorkCycleStore::new(paths.clone());
+            let record = cycles.migrate_from_legacy("cycle".into(), 0.0)?.unwrap();
+            assert_eq!(record.plan_ids, vec![id.clone()]);
+            assert!(cycles.migrate_from_legacy("unused".into(), 0.0)?.is_none());
+            let state = legacy_object(&root_for_test(&paths), &paths.state_file)?.unwrap();
+            assert_eq!(state.get("fixtureUnknown"), Some(&JsValue::Bool(true)));
+            assert!(state.get("currentWorkspace").is_none());
+            assert!(state.get("activeWorkCycleId").and_then(JsValue::as_string).unwrap().equals_str("cycle"));
+            let migrated = plans.get_record_js(&id)?.unwrap();
+            assert!(migrated.raw.get("workspace").is_none());
+            assert!(migrated.raw.get("workCycleId").and_then(JsValue::as_string).unwrap().equals_str("cycle"));
+            let mut update = JsObject::new(); update.insert("status".into(), "completed".into());
+            update.insert("reportFilePath".into(), paths.reports_dir.join("run.md").to_string_lossy().as_ref().into());
+            let updated = plans.update(&id, &update)?.unwrap();
+            assert!(updated.raw.get("executionStatus").and_then(JsValue::as_string).unwrap().equals_str("completed"));
+            assert!(updated.raw.get("reportFilePath").and_then(JsValue::as_string).unwrap().equals_str("reports/run.md"));
+            Ok(())
+        }).await.unwrap();
+    }
+    fn root_for_test(paths: &AlwaysOnPaths) -> std::path::PathBuf { super::super::storage::root_for(&paths.state_file) }
+
+    #[tokio::test]
+    async fn legacy_best_effort_does_not_silently_hide_native_regular_file_refusal() {
+        let root = Scratch(std::env::temp_dir().join(format!("pdrs-always-migrate-fifo-{}", uuid::Uuid::new_v4())));
+        std::fs::create_dir_all(&root.0).unwrap(); let paths = paths(&root.0);
+        assert!(std::process::Command::new("/usr/bin/mkfifo").arg(&paths.state_file).status().unwrap().success());
+        let store = WorkCycleStore::new(paths.clone());
+        let result = super::super::storage::run(move || store.migrate_from_legacy("cycle".into(), 0.0)).await;
+        assert!(result.is_err()); assert!(!paths.cycle_index_file.exists());
     }
 }

@@ -22,9 +22,12 @@
 // inline with their own `#[allow(dead_code)]`; this umbrella covers the
 // rest of the unported surface (paths, mutators, tick entries).
 #![allow(dead_code)]
+mod tools;
+pub(crate) use tools::register_tools;
 mod apply;
 mod standalone;
 mod control;
+mod report_tool;
 mod report_contract;
 mod plan_contract;
 mod cycles;

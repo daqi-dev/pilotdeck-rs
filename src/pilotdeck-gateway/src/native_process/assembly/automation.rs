@@ -123,6 +123,10 @@ pub(crate) struct ProjectAutomationAgentGateway {
     pub always_on: Arc<dyn AlwaysOnAgentGateway>,
     /// The cron `submitTurn` / `abortTurn` / `closeSession` face.
     pub cron: Arc<dyn CronAgentGateway>,
+    /// Native provider generations construct their own cancellation and drain
+    /// handle while sharing this host's session owner and turn submitter.
+    pub native_cron_bind: Option<Arc<dyn Fn(Arc<CronManager>)
+        -> io::Result<Arc<crate::switch::CronStopHandle>> + Send + Sync>>,
 }
 
 /// The hooks record the always-on bind signature takes
@@ -179,6 +183,37 @@ pub(crate) struct SubsystemUpdate {
     pub extra_tools: Vec<JsString>,
     pub cron: Option<Arc<dyn ProjectAutomationProvider>>,
     pub always_on_control: Option<Arc<dyn ProjectAutomationProvider>>,
+}
+
+/// One atomic publication of both control families. Requests pin their
+/// current manager before awaiting; retired generations keep owning their runs.
+#[derive(Default)]
+pub(crate) struct PublishedAutomation {
+    state: Mutex<PublishedState>,
+}
+#[derive(Default)]
+struct PublishedState {
+    cron: Option<Arc<CronManager>>,
+    control: Option<Arc<dyn crate::runtime::always_on::AlwaysOnControl>>,
+}
+impl PublishedAutomation {
+    pub(crate) fn publish(&self, update: SubsystemUpdate,
+        standalone: Arc<dyn crate::runtime::always_on::StandaloneApply>) {
+        let manager = update.always_on_control.as_ref().and_then(|p| p.always_on_manager());
+        let control = crate::runtime::always_on::create_control(manager, standalone);
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = PublishedState {
+            cron: update.cron.as_ref().and_then(|p| p.cron_manager()), control: Some(control),
+        };
+    }
+    pub(crate) fn clear(&self) {
+        *self.state.lock().unwrap_or_else(|e| e.into_inner()) = PublishedState::default();
+    }
+    pub(crate) fn cron(&self) -> Option<Arc<CronManager>> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).cron.clone()
+    }
+    pub(crate) fn control(&self) -> Option<Arc<dyn crate::runtime::always_on::AlwaysOnControl>> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).control.clone()
+    }
 }
 
 /// `ProjectAutomationAttachment` (:63-67): the one turn facade plus the
@@ -839,6 +874,13 @@ mod tests {
 
     struct DummyAlwaysOnGateway;
     impl AlwaysOnAgentGateway for DummyAlwaysOnGateway {
+        fn run_phase<'a>(&'a self, _: crate::runtime::always_on::PhaseRequest)
+            -> Pin<Box<dyn Future<Output = Result<crate::runtime::always_on::PhaseResult,
+                crate::runtime::always_on::ControlError>> + Send + 'a>> {
+            Box::pin(async { Err(crate::runtime::always_on::ControlError {
+                code: "unexpected_phase".into(), message: "Lifecycle test cannot execute a phase.".into(),
+            }) })
+        }
         fn abort_turn<'a>(
             &'a self,
             _input: GatewayAbortInput<'a>,
@@ -960,6 +1002,7 @@ mod tests {
                 agent_gateway: ProjectAutomationAgentGateway {
                     always_on: Arc::new(DummyAlwaysOnGateway),
                     cron: Arc::new(DummyCronGateway),
+                    native_cron_bind: None,
                 },
                 is_project_busy: with_busy_hook.then(|| Arc::new(|_: &str| false) as IsProjectBusy),
                 update_subsystems: Arc::new(move |update| {

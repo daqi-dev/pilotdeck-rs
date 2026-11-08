@@ -58,6 +58,7 @@ pub struct Requests {
     /// capabilities and every call answers the `requireCron` gate
     /// (InProcessGateway.ts:3016-3022).
     pub cron: Option<Arc<crate::runtime::cron::CronManager>>,
+    pub(crate) automation: Option<Arc<super::assembly::automation::PublishedAutomation>>,
     /// U7 global settings gateway (#1320): the six settings methods route
     /// here through the #1305 registry. Production binds
     /// [`crate::native_process::services::native_settings`].
@@ -68,6 +69,12 @@ pub struct Requests {
     /// reads back. One instance shared with the factory.
     pub session_overrides: Arc<SessionOverrides>,
     pub clear_sdk_state: Option<SessionStateCleanup>,
+}
+
+impl Requests {
+    pub(crate) fn current_cron(&self) -> Option<Arc<crate::runtime::cron::CronManager>> {
+        self.automation.as_ref().map_or_else(|| self.cron.clone(), |slot| slot.cron())
+    }
 }
 
 #[cfg(test)]

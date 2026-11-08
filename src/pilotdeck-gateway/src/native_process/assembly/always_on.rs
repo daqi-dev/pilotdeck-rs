@@ -28,17 +28,34 @@ use crate::runtime::{
 /// condition is its (:287-288) decision.
 pub(super) fn native_factory() -> AlwaysOnFactory {
     Arc::new(|input| {
-        let manager = AlwaysOnManager::new(AlwaysOnManagerOptions {
+        let home = input.pilot_home.clone();
+        let manager = AlwaysOnManager::new_with_resolver(AlwaysOnManagerOptions {
             config: input.config,
             pilot_home: input.pilot_home,
             now: None,
             uuid: None,
             logger: None,
-        })?;
+        }, |key| bounded_paths(&home, key))?;
         Ok(Arc::new(NativeAlwaysOnProvider {
             manager: Arc::new(manager),
         }))
     })
+}
+
+/// Caller runs on an owned blocking worker. Refused markers must not silently
+/// fall back to an unrelated home project identity.
+pub(super) fn bounded_paths(home: &std::path::Path, project: &str)
+    -> std::io::Result<crate::runtime::always_on::AlwaysOnPaths> {
+    let metadata = crate::metadata::Metadata {
+        home: home.to_path_buf(), cwd: std::path::PathBuf::new(),
+        files: super::super::methods::session_dir::BoundedSessionMarkers::new(),
+    };
+    let result = crate::runtime::always_on::resolve_always_on_paths(home, project, &metadata);
+    if metadata.files.was_refused() {
+        return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied,
+            "Automation project marker was refused by the native storage boundary."));
+    }
+    result
 }
 
 /// The abort face the always-on control half calls

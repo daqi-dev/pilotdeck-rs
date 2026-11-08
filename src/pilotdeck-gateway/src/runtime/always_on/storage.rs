@@ -33,6 +33,15 @@ async fn run_with<T: Send + 'static>(slots: Arc<tokio::sync::Semaphore>, operati
     }).await.map_err(|error| io::Error::other(format!("Always-On storage worker failed: {error}")))?
 }
 
+#[derive(Debug)]
+struct StorageRefusal(&'static str);
+impl std::fmt::Display for StorageRefusal { fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str(self.0) } }
+impl std::error::Error for StorageRefusal {}
+pub(crate) fn is_policy_error(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::InvalidData || error.raw_os_error() == Some(libc::ELOOP)
+        || error.get_ref().is_some_and(|error| error.is::<StorageRefusal>())
+}
+
 pub(crate) fn budget(what: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, format!("Always-On {what} exceeds its native resource limit."))
 }
@@ -78,7 +87,7 @@ fn directory_flags() -> OFlags {
 /// Only the caller-selected home is a trusted alias boundary. Everything
 /// beneath it is opened relative to pinned fds and refuses symlinks.
 fn parent(root: &Path, path: &Path, create: bool) -> io::Result<(File, std::ffi::OsString)> {
-    let relative = path.strip_prefix(root).map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "Always-On path escaped its selected storage root."))?;
+    let relative = path.strip_prefix(root).map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, StorageRefusal("Always-On path escaped its selected storage root.")))?;
     let leaf = relative.file_name().ok_or(io::ErrorKind::InvalidInput)?.to_owned();
     let mut anchor = root;
     loop {
@@ -106,7 +115,7 @@ fn parent(root: &Path, path: &Path, create: bool) -> io::Result<(File, std::ffi:
 fn regular(file: File) -> io::Result<File> {
     let metadata = file.metadata()?;
     if !metadata.is_file() || metadata.nlink() != 1 {
-        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Always-On storage requires a regular file without hard-link aliases."));
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, StorageRefusal("Always-On storage requires a regular file without hard-link aliases.")));
     }
     Ok(file)
 }
@@ -133,7 +142,7 @@ pub(crate) fn write(root: &Path, path: &Path, bytes: &[u8], cap: usize) -> io::R
     let (parent, leaf) = parent(root, path, true)?;
     match statat(&parent, &leaf, AtFlags::SYMLINK_NOFOLLOW) {
         Ok(stat) if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile || stat.st_nlink != 1 => {
-            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Always-On storage target must be a regular file without aliases."));
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, StorageRefusal("Always-On storage target must be a regular file without aliases.")));
         }
         Ok(_) | Err(rustix::io::Errno::NOENT) => {}
         Err(error) => return Err(error.into()),

@@ -1011,6 +1011,7 @@ async fn project_path_boundaries_worker() {
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         prepare_weixin_login: None,
         cron: None,
+        automation: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
         clear_sdk_state: None,

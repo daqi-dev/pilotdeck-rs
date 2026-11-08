@@ -192,7 +192,7 @@ mod tests {
         let cycle = WorkCycleRecord { raw: Default::default(), id: "cycle".into(), project_key: "/project".into(),
             status: "active".into(), workspace: Some(WorkCycleWorkspace { strategy: "git-worktree".into(),
                 cwd: "/workspace".into(), metadata: Default::default() }), plan_ids: Vec::new(),
-            created_at: String::new(), created_by_run_id: String::new() };
+            created_at: "".into(), created_by_run_id: "".into() };
         let result = phase.run(ApplyPhaseInput { run_id: "run", cycle: &cycle, plans: &[],
             project_name: Some("Project"), project_root: "/project" }).await.unwrap();
         assert_eq!(result.session_key, "always-on/apply:project=/project:run=run");
@@ -219,7 +219,7 @@ mod tests {
             events: events.clone(), observer: events.clone(), register_automation_tools: false, chinese: false };
         let cycle = WorkCycleRecord { raw: Default::default(), id: "cycle".into(), project_key: "/project".into(),
             status: "active".into(), workspace: None, plan_ids: Vec::new(),
-            created_at: String::new(), created_by_run_id: String::new() };
+            created_at: "".into(), created_by_run_id: "".into() };
         let result = phase.run(ApplyPhaseInput { run_id: "run", cycle: &cycle, plans: &[],
             project_name: None, project_root: "/project" }).await.unwrap();
         assert_eq!(result.error.unwrap().code, "missing_workspace");
@@ -239,7 +239,7 @@ mod tests {
         let cycle = WorkCycleRecord { raw: Default::default(), id: "cycle".into(), project_key: "/project".into(),
             status: "active".into(), workspace: Some(WorkCycleWorkspace { strategy: "git-worktree".into(),
                 cwd: "/workspace".into(), metadata: Default::default() }), plan_ids: Vec::new(),
-            created_at: String::new(), created_by_run_id: String::new() };
+            created_at: "".into(), created_by_run_id: "".into() };
         let result = phase.run(ApplyPhaseInput { run_id: "run", cycle: &cycle, plans: &[],
             project_name: None, project_root: "/project" }).await.unwrap();
         let error = result.error.unwrap();

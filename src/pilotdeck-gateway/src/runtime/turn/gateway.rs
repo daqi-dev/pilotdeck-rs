@@ -341,6 +341,7 @@ impl TurnGateway {
             INITIALIZATION_TEARDOWN_DEADLINE,
             build,
             Some(Box::pin(cleanup)),
+            None,
         )
     }
     /// [`Self::start_with_cleanup`] for an embedding that bounds its own
@@ -362,6 +363,7 @@ impl TurnGateway {
             declared_cleanup_budget(teardown_budget),
             build,
             Some(Box::pin(cleanup)),
+            None,
         )
     }
     fn start_with_clock(
@@ -377,7 +379,21 @@ impl TurnGateway {
             INITIALIZATION_TEARDOWN_DEADLINE,
             build,
             None,
+            None,
         )
+    }
+    /// Initialize async producers on this same host before publishing readiness.
+    /// Startup failure disposes the constructed owner and embedding resources.
+    pub(crate) fn start_with_initializer(
+        options: TurnReplayOptions,
+        teardown_budget: Duration,
+        build: impl FnOnce(Arc<TurnEventCoordinator>) -> std::io::Result<GatewayServices>
+            + Send + 'static,
+        initialize: impl Future<Output = Result<(), String>> + Send + 'static,
+        cleanup: impl Future<Output = Result<(), String>> + Send + 'static,
+    ) -> std::io::Result<Self> {
+        Self::start_with_clock_and_cleanup(options, None, declared_cleanup_budget(teardown_budget),
+            build, Some(Box::pin(cleanup)), Some(Box::pin(initialize)))
     }
     fn start_with_clock_and_cleanup(
         options: TurnReplayOptions,
@@ -387,6 +403,7 @@ impl TurnGateway {
         + Send
         + 'static,
         cleanup: Option<Call<'static, Result<(), String>>>,
+        initialize: Option<Call<'static, Result<(), String>>>,
     ) -> std::io::Result<Self> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -430,6 +447,15 @@ impl TurnGateway {
                         return;
                     }
                 };
+                if let Some(initialize) = initialize {
+                    let result = tokio::time::timeout(teardown_deadline, initialize).await
+                        .unwrap_or_else(|_| Err("gateway producer initialization deadline exceeded".into()));
+                    if let Err(error) = result {
+                        dispose_initialization(&coordinator, Some(services), cleanup, teardown_deadline).await;
+                        let _ = ready.send(Err(std::io::Error::other(error)));
+                        return;
+                    }
+                }
                 let gateway = Arc::new(ConnectionTurnGateway(services, Arc::default()));
                 if ready.send(Ok(gateway.clone())).is_err() { return; }
                 let mut running = JoinSet::new();

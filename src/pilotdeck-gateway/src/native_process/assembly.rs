@@ -62,6 +62,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+pub(super) mod automation;
+mod always_on;
 mod cron;
 mod dialog_recovery;
 mod mcp;
@@ -1470,6 +1472,7 @@ async fn start_assembly(
                 prepare_weixin_login: (mode == AssemblyMode::Server)
                     .then(|| build_channels.prepare_login_callback()),
                 cron: cron.clone(),
+                automation: None,
                 settings: settings.gateway,
                 session_overrides,
                 clear_sdk_state: Some(Arc::new(move |session| {

@@ -61,7 +61,7 @@ fn memory(requests: &Requests) -> bool {
 
 /// `options.cron`: the six control names need the configured cron runtime.
 fn cron(requests: &Requests) -> bool {
-    requests.cron.is_some()
+    requests.current_cron().is_some()
 }
 
 fn flag_settings(requests: &Requests) -> bool {
