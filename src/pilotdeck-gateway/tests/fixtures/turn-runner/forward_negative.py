@@ -13,6 +13,14 @@ base=root/'src/pilotdeck-gateway/src/runtime/turn'
 ANCHOR_COUNTS = {'status-nullish': 3, 'host-callback-cancel': 2, 'pump-cleanup': 2}
 # id, source, before, after, function scope, full test name, assertion anchor
 test_prefix = 'runtime::turn::live::stream_tests::forwarding::'
+# #1770 fix-r1: the gates shared-tail injection runs in all three cells
+# (reject/cancel/open), and each cell's own test must kill it on that cell's
+# #1770 assertion, so the one mutation is one row per bound test -- the
+# suite's multi-Case form (negative_suite case_labels gives every Case its
+# own evidence stem). The shared anchor text lives once, here.
+gates_prefix = 'runtime::turn::live::stream_tests::gates_tests::'
+gates_wait = '    timeout(Duration::from_secs(15), async {\n        while session\n            .state\n            .lock()\n            .expect("#855: pump gate setup/read/cleanup must succeed")\n            .active\n            .is_some()\n            || runtime.lease_count() != 0\n            || handler.disposed.load(Ordering::SeqCst) == 0\n        {\n            tokio::task::yield_now().await;\n        }\n    })\n    .await\n    .expect("#855: owned cleanup must release slot, lease and handler");'
+gates_compensate = gates_wait + '\n    let _ = crate::storage::TranscriptStore::append(\n        &*store,\n        &key,\n        &crate::metadata::object([\n            ("type", JsValue::String("turn_result".into())),\n            ("result", crate::metadata::object([("type", JsValue::String("error".into()))])),\n        ]),\n    );'
 cases = [
     ('cleanup-skip-lease', base / 'forward_tests.rs',
      '            || runtime.lease_count() != 0', '            || false',
@@ -224,10 +232,21 @@ cases = [
     # Appending after the wait — cleanup already observed done — is
     # deterministic on both sides: the in-band snapshot is long past, and
     # the re-check is the next reader of the counter.
+    # #1770 fix-r1: all three cells run this shared tail, so all three
+    # bind it (reject/cancel/open, same injection, one row each); a
+    # compensating append introduced on any one path dies in that cell's
+    # own test on its own #1770 message.
     ('gates-cleanup-compensates', base / 'gates_tests.rs',
-     '    timeout(Duration::from_secs(15), async {\n        while session\n            .state\n            .lock()\n            .expect("#855: pump gate setup/read/cleanup must succeed")\n            .active\n            .is_some()\n            || runtime.lease_count() != 0\n            || handler.disposed.load(Ordering::SeqCst) == 0\n        {\n            tokio::task::yield_now().await;\n        }\n    })\n    .await\n    .expect("#855: owned cleanup must release slot, lease and handler");',
-     '    timeout(Duration::from_secs(15), async {\n        while session\n            .state\n            .lock()\n            .expect("#855: pump gate setup/read/cleanup must succeed")\n            .active\n            .is_some()\n            || runtime.lease_count() != 0\n            || handler.disposed.load(Ordering::SeqCst) == 0\n        {\n            tokio::task::yield_now().await;\n        }\n    })\n    .await\n    .expect("#855: owned cleanup must release slot, lease and handler");\n    let _ = crate::storage::TranscriptStore::append(\n        &*store,\n        &key,\n        &crate::metadata::object([\n            ("type", JsValue::String("turn_result".into())),\n            ("result", crate::metadata::object([("type", JsValue::String("error".into()))])),\n        ]),\n    );',
-     None, 'runtime::turn::live::stream_tests::gates_tests::gates_pump_open_pins_the_start_order',
+     gates_wait, gates_compensate,
+     None, gates_prefix + 'gates_pump_reject_never_starts_the_pump',
+     '#1770 [reject]: owned cleanup must not append a compensating turn_result'),
+    ('gates-cleanup-compensates', base / 'gates_tests.rs',
+     gates_wait, gates_compensate,
+     None, gates_prefix + 'gates_pump_cancel_never_starts_the_pump',
+     '#1770 [cancel]: owned cleanup must not append a compensating turn_result'),
+    ('gates-cleanup-compensates', base / 'gates_tests.rs',
+     gates_wait, gates_compensate,
+     None, gates_prefix + 'gates_pump_open_pins_the_start_order',
      '#1770 [open]: owned cleanup must not append a compensating turn_result'),
 ]
 

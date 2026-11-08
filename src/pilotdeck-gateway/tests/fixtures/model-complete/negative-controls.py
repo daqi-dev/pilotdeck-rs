@@ -738,6 +738,11 @@ def slots_from_ps() -> tuple[int | None, str]:
     word alone -- what the old docstring claimed was "the same criterion" --
     double counts: `cargo clippy` spawns `cargo-clippy`, which spawns
     `cargo check`, three matches for one slot (#1566 item 1).
+
+    A stdout that is nonempty yet has zero parseable rows is a probe failure,
+    never a zero count: a sandbox/wrapper printing diagnostics with rc=0 (or
+    a ps that ignored the -o format but still exited 0) must not be read as
+    "no cargo" (#1770 fix-r1).
     """
     try:
         result = subprocess.run(
@@ -751,15 +756,23 @@ def slots_from_ps() -> tuple[int | None, str]:
         return None, "ps output empty"
     parent: dict[int, int] = {}
     cargo_pids: set[int] = set()
+    parsed = 0
     for line in result.stdout.splitlines():
         fields = line.split(None, 2)
         if len(fields) < 3 or not fields[0].isdigit() or not fields[1].isdigit():
             continue
+        parsed += 1
         pid, ppid = int(fields[0]), int(fields[1])
         parent[pid] = ppid
         words = fields[2].split()
         if words and re.fullmatch(r"(?:.*/)?cargo(?:-[a-z]+)?", words[0]):
             cargo_pids.add(pid)
+    if not parsed:
+        # #1770 fix-r1: a nonempty stdout with zero parseable rows is a probe
+        # failure, not "no cargo" -- reading it as count=0 would release a
+        # mutation beside a full slot quota, so fail closed like every other
+        # probe failure (fall back / refuse, never treat as zero).
+        return None, "ps output had no parseable rows"
     count = 0
     for pid in cargo_pids:
         ancestor = parent.get(pid)
