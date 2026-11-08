@@ -301,11 +301,12 @@ async fn cancellation_before_and_during_reconnect_uses_original_absolute_deadlin
             assert!(!task.is_finished(), "close was not gated");
             release(&receipt, "close-release");
             drop(clock);
-            // #1891 fix-r1: the settle spans the peer's close handshake and
-            // teardown on a loaded host; `close_timeout` is granted at its
-            // default (5 s per grace phase), so the outer bound stays a
-            // multiple of that, not a race against it.
-            let error = timeout(Duration::from_secs(20), task)
+            // #1891 fix-r1/r2: the settle spans the peer's close handshake
+            // and teardown on a loaded host. fix-r1 sized it against the
+            // granted 5 s close grace alone; fix-r2 (review P2) also counts
+            // the 60 s `io_timeout` flush margin the same spawns grant, so
+            // the outer bound takes the 70 s form (flush + grace + slack).
+            let error = timeout(Duration::from_secs(70), task)
                 .await
                 .expect("cleanup stuck")
                 .unwrap()
@@ -455,9 +456,11 @@ async fn cancellation_bounds_pending_terminal_application_and_preserves_known_te
         );
         release(&receipt, "close-release");
         drop(clock);
-        // #1891 fix-r1: settle spans the peer's close handshake on a loaded
-        // host — a multiple of the granted 5 s close grace, not a race.
-        let result = timeout(Duration::from_secs(20), task)
+        // #1891 fix-r1/r2: settle spans the peer's close handshake on a
+        // loaded host — looser than the granted 60 s io flush margin plus
+        // the 5 s close grace (fix-r1's 20 s raced the flush margin it
+        // grants, review P2).
+        let result = timeout(Duration::from_secs(70), task)
             .await
             .expect("cleanup stuck")
             .unwrap()
@@ -533,9 +536,11 @@ async fn cancellation_terminal_application_released_inside_bound_finishes_normal
         marker(&receipt, "closing").await;
         release(&receipt, "close-release");
         drop(clock);
-        // #1891 fix-r1: settle spans the peer's close handshake on a loaded
-        // host — a multiple of the granted 5 s close grace, not a race.
-        let result = timeout(Duration::from_secs(20), task)
+        // #1891 fix-r1/r2: settle spans the peer's close handshake on a
+        // loaded host — looser than the granted 60 s io flush margin plus
+        // the 5 s close grace (fix-r1's 20 s raced the flush margin it
+        // grants, review P2).
+        let result = timeout(Duration::from_secs(70), task)
             .await
             .unwrap()
             .unwrap()
@@ -616,9 +621,11 @@ async fn completed_application_is_collected_before_the_deadline_exit() {
     );
     release(&receipt, "close-release");
     drop(clock);
-    // #1891 fix-r1: settle spans the peer's close handshake on a loaded host
-    // — a multiple of the granted 5 s close grace, not a race against it.
-    let result = timeout(Duration::from_secs(20), async move {
+    // #1891 fix-r1/r2: settle spans the peer's close handshake on a loaded
+    // host — looser than the granted 60 s io flush margin plus the 5 s
+    // close grace (fix-r1's 20 s raced the flush margin it grants, review
+    // P2).
+    let result = timeout(Duration::from_secs(70), async move {
         loop {
             if let Some(value) = poll_once(&mut run).await {
                 break value;

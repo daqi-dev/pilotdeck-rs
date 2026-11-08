@@ -46,6 +46,7 @@ INTERACTION_HOST = GATEWAY / 'runtime/project/interaction_host_tests.rs'
 LIVE_STREAM = GATEWAY / 'runtime/turn/live_stream_tests.rs'
 RESUME = GATEWAY / 'host/tests/resume.rs'
 HOST_TESTS = GATEWAY / 'host/tests.rs'
+MODULE_HOST_TESTS = GATEWAY / 'module_host/tests.rs'
 
 MUTATIONS = [
     # A-group first-byte capture loops: the margin shrinks to ZERO, so the
@@ -71,6 +72,13 @@ MUTATIONS = [
      'const FIRST_BYTE: Duration = Duration::ZERO;',
      [('native_ws::tests::upgrade_budget_boundary_matches_ts',
        '#1351 every boundary cell produced bytes or closed')]),
+    # fix-r2 (review sibling#6): the fifth same-source FIRST_BYTE site the
+    # fix-r1 table left uncovered, so its margin was advisory here.
+    ('module-host-first-byte-shrunk', MODULE_HOST_TESTS,
+     'const FIRST_BYTE: Duration = Duration::from_secs(60);',
+     'const FIRST_BYTE: Duration = Duration::ZERO;',
+     [('module_host::tests::auth_missing',
+       '#1349 cell auth-missing produced no bytes and stayed open')]),
     # B-group watchdog helpers: the timeout argument itself shrinks, so the
     # first peer-driven await must die on the helper's own panic text.
     ('host-factory-liveness-shrunk', HOST_FACTORY,
@@ -129,6 +137,7 @@ def main():
     return matrix_main(ROOT, __file__, '', MUTATIONS,
                        passed_count=1, child_count=0,
                        paths=[API_WEB, APPROVALS, NATIVE_HTTP, NATIVE_WS,
+                              MODULE_HOST_TESTS,
                               HOST_FACTORY, LIVE_TAIL, INTERACTION_HOST,
                               LIVE_STREAM, RESUME, HOST_TESTS,
                               ROOT / 'src/pilotdeck-gateway/tests/fixtures/'
