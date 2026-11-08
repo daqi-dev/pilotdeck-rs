@@ -1846,12 +1846,16 @@ fn a_maximal_teardown_budget_still_reports_the_builder_error() {
 }
 
 /// #1949: the failed-initialization twin of the clock-edge drain test below
-/// — `dispose_initialization` turns the declared budget back into a deadline
-/// through the same `checked_add` plus tick-conversion headroom, so a budget
-/// that fits the clock but lands within the headroom of its ceiling must be
-/// awaited as the waiver there too. The teardown still completes, the
-/// builder error still reaches the caller verbatim, and the coordinator is
-/// still disposed.
+/// — a budget that fits the clock but lands within the tick-conversion
+/// headroom of its ceiling still gets the waiver, and the teardown still
+/// completes, the builder error still reaches the caller verbatim, and the
+/// coordinator is still disposed. Behavior anchor, not a regression
+/// discriminator (#2501): the teardown site reads its own, later clock, and
+/// this fixture's cleanup is immediately `Ready` — `Timeout::poll` polls the
+/// future before the delay (tokio 1.48), so the timer registration the
+/// headroom guards against is not even reached on this path. The tier
+/// routing itself is pinned deterministically by
+/// `the_clock_edge_tier_decision_is_deterministic` below.
 #[test]
 fn a_clock_edge_teardown_budget_still_reports_the_builder_error() {
     let coordinator_disposed = Arc::new(AtomicBool::new(false));
@@ -2026,22 +2030,18 @@ async fn a_maximal_drain_budget_still_settles_the_drain() {
 }
 
 /// #1949: a budget that fits the clock but lands within the tick-conversion
-/// headroom of its ceiling still gets the waiver. Tokio converts a deadline
-/// into a timer tick through an unchecked `Instant + Duration` (tokio 1.48
-/// `time/instant.rs:169`, fed by `TimeSource::deadline_to_tick`'s
-/// `Duration::from_nanos(999_999)`), so registering a deadline that fits
-/// the clock but lands inside that band panics under either spelling —
-/// `timeout_at` directly, and the old `timeout(budget, …)` through the
-/// same conversion (an overflowing budget is what takes `timeout`'s
-/// far-future branch instead; see `TICK_CONVERSION_HEADROOM`).
-/// Binary-search the maximal budget the clock admits and shut the host
-/// down with one backed off into the middle
-/// of the headroom: the drain site reads its own clock on the host thread
-/// after the caller's, so the exact maximum overflows at that later read
-/// and never reaches the headroom tier, while the backed-off one fits there
-/// and must be routed to the waiver, not `timeout_at`. The fixture cleanup
-/// settles at once, so the drain must settle `Ok` and the host thread must
-/// not panic.
+/// headroom of its ceiling still gets the waiver, and the drain must settle
+/// with its own result (here `Ok`) without panicking the host thread.
+/// Behavior anchor, not a regression discriminator (#2501): the 500 ms
+/// backoff is far outside the ~999_999 ns band tokio actually panics in
+/// (tokio 1.48 `TimeSource::deadline_to_tick`'s unchecked
+/// `Duration::from_nanos(999_999)` addition; see `TICK_CONVERSION_HEADROOM`),
+/// and the drain site reads its own, later clock, so a pre-fix tree that
+/// registered this very deadline through `timeout_at` settles `Ok` too —
+/// the binary search below only keeps the budget off the overflowing tier
+/// at that later read. The tier routing itself is pinned deterministically
+/// by `the_clock_edge_tier_decision_is_deterministic` below, and the panic
+/// band by the registration probe beside it.
 #[tokio::test]
 async fn a_budget_at_the_clock_edge_is_treated_as_the_waiver() {
     let host = native_ws_fixture_with_cleanup(Arc::new(Requests), async { Ok(()) });
@@ -2067,6 +2067,99 @@ async fn a_budget_at_the_clock_edge_is_treated_as_the_waiver() {
         .await
         .expect("#1949 a clock-edge budget must still settle the drain within the guard");
     settled.expect("#1949 a clock-edge budget is the waiver, so the drain keeps its own result");
+}
+
+/// #2501: the clock-edge tier decision is a pure function of one captured
+/// clock read, so its boundaries are testable deterministically — the
+/// e2e twins above cannot do this: each poll site reads its own, later
+/// clock, so their binary searches drift past the exact band, and their
+/// 500 ms backoff lands far outside the ~999_999 ns band tokio actually
+/// panics in, which is why they stay behavior anchors. Binary-search the
+/// maximal budget this very `now` admits: its deadline is the clock's
+/// ceiling, inside the [`super::TICK_CONVERSION_HEADROOM`] waiver tier;
+/// backed off two seconds it is past that headroom and must map back to a
+/// deadline. The same captured `now` makes both boundaries exact — the
+/// window the headroom keeps open covers the `+999_999 ns` tokio adds
+/// unchecked when converting a deadline to a timer tick, which the probe
+/// test below pins directly.
+#[test]
+fn the_clock_edge_tier_decision_is_deterministic() {
+    let now = tokio::time::Instant::now();
+    // Binary-search the maximal duration this very `now` still admits; 512
+    // rounds exhaust the nanosecond resolution long before they run out.
+    let mut lo = std::time::Duration::ZERO;
+    let mut hi = std::time::Duration::MAX;
+    for _ in 0..512 {
+        let mid = lo + (hi - lo) / 2;
+        if now.checked_add(mid).is_some() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    assert!(
+        super::deadline_or_waiver(now, lo).is_none(),
+        "#2501 a budget whose deadline lands within the tick-conversion headroom of the clock's ceiling must take the waiver, not a deadline"
+    );
+    let backed_off = lo - std::time::Duration::from_secs(2);
+    assert!(
+        super::deadline_or_waiver(now, backed_off).is_some(),
+        "#2501 a budget backed off past the tick-conversion headroom must still get its deadline"
+    );
+}
+
+/// #2501: the mechanism the headroom guards against, measured in-tree
+/// instead of asserted by prose. Tokio 1.48 converts a deadline into a
+/// timer tick through `TimeSource::deadline_to_tick`'s unchecked
+/// `deadline + Duration::from_nanos(999_999)` (`src/runtime/time/source.rs`),
+/// so registering a deadline that fits the clock but sits within that band
+/// of its ceiling panics — here, at the maximal fitting deadline itself.
+/// The inner future must be `pending` for the registration to happen at
+/// all: `Timeout::poll` polls the future first and returns on `Ready`
+/// without ever polling the delay, which is why the failed-initialization
+/// twin above, whose cleanup is `async { Ok(()) }`, never reaches the
+/// registration path either. The panic is observed through a spawned
+/// task's join error rather than `#[should_panic]` so the assertion
+/// messages stay bindable for the negative controls, and the guard timeout
+/// turns a non-panicking registration into a marked failure instead of a
+/// hang. If tokio ever stops panicking here, this probe fails and the
+/// headroom can be revisited; until then it is the measured fact
+/// `TICK_CONVERSION_HEADROOM` is sized against.
+#[tokio::test]
+async fn a_maximal_deadline_panics_on_timer_registration() {
+    let now = tokio::time::Instant::now();
+    let mut lo = std::time::Duration::ZERO;
+    let mut hi = std::time::Duration::MAX;
+    for _ in 0..512 {
+        let mid = lo + (hi - lo) / 2;
+        if now.checked_add(mid).is_some() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let registration = tokio::spawn(async move {
+        let _ = tokio::time::timeout_at(now + lo, std::future::pending::<()>()).await;
+    });
+    // The guard bounds the probe: a deadline that no longer lands in the
+    // panic band leaves the registration pending forever, so without it a
+    // mutant would hang the test instead of failing at this marker.
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(5), registration)
+        .await
+        .expect("#2501 the timer-registration probe must settle within the guard");
+    let failure = settled.expect_err("#2501 registering the maximal fitting deadline must panic");
+    let panic = failure
+        .try_into_panic()
+        .expect("#2501 the registration failure must be a panic, not a cancellation");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("#2501 the registration panic carried no message");
+    assert!(
+        message.contains("overflow when adding duration to instant"),
+        "#2501 the registration panic must be the unchecked tick conversion, got {message:?}"
+    );
 }
 
 /// #1949 fixture: a factory whose creation never settles, so the owner's
