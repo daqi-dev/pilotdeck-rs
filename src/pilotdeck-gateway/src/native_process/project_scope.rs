@@ -63,7 +63,12 @@ pub(super) fn select(
     let mut scoped = options.clone();
     scoped.project = reservation
         .as_ref()
-        .map(|scope| PathBuf::from(String::from_utf16_lossy(scope.project_key().units())))
+        .map(|scope| {
+            scope.project_key().to_utf8().map(PathBuf::from).map_err(|_| {
+                RequestError::new("Session project identity cannot be represented by this host.")
+            })
+        })
+        .transpose()?
         .or(requested)
         .unwrap_or_else(|| options.project.clone());
     Ok(SelectedProject {
