@@ -1409,7 +1409,7 @@ async fn validate_profile_inner(
 /// echo either). Any other key is `unknown_project_key` with the caller's raw
 /// UTF-16 (#1441: extracted from the wiring closure so the dual-spelling
 /// acceptance has a direct test).
-fn upload_resolve_project(
+pub(super) fn upload_resolve_project(
     upload_project: &std::path::Path,
     key: &JsString,
 ) -> std::result::Result<PathBuf, crate::upload::UploadError> {
