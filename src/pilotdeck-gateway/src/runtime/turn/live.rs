@@ -2646,19 +2646,9 @@ impl LiveSessionAdapter {
         let mut should_call_model = true;
         if let Some(admission) = &self.input_admission {
             prompt_input = Some(input.input.clone());
-            should_call_model = !is_meta;
-            let text = match &mut input.input {
-                AgentInput::Text(text) => Some(text),
-                AgentInput::Fork { directive, .. } => Some(directive),
-                AgentInput::Blocks(_) => None,
-            };
-            if let Some(text) = text {
-                let processed = admission.process_text(text);
-                // TS TurnInputProcessor forwards messages/shouldCallModel;
-                // it does not emit InputProcessor diagnostics as gateway events.
-                let _ = processed.diagnostics;
-                *text = processed.text;
-            }
+            let (processed, should_call) = admission.process_input(&input.input, is_meta);
+            input.input = processed;
+            should_call_model = should_call;
         }
         let reload_execution = self.reload_execution_started();
         // Read the projection only after admission owns the slot. Rejected

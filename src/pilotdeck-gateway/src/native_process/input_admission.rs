@@ -6,6 +6,7 @@ use pilotdeck_protocol::{JsString, JsValue};
 pub(crate) struct TextResult {
     pub text: JsString,
     pub diagnostics: Vec<JsValue>,
+    pub command: Option<JsValue>,
 }
 #[derive(Clone, Debug, Default)]
 pub(crate) struct InputAdmission {
@@ -25,6 +26,7 @@ impl InputAdmission {
         let passthrough = || TextResult {
             text: text.clone(),
             diagnostics: vec![],
+            command: None,
         };
         if u.first() != Some(&(b'/' as u16)) {
             return passthrough();
@@ -48,6 +50,7 @@ impl InputAdmission {
                     "unknown_command",
                     format!("Slash command /{name} is not registered. Forwarding as plain text."),
                 )],
+                command: Some(command(&name, arg, "unknown")),
             };
         };
         let body = crate::runtime::memory::js_trim_units(body.units());
@@ -64,8 +67,10 @@ impl InputAdmission {
             return TextResult {
                 text: JsString::from_utf16(out),
                 diagnostics: vec![],
+                command: Some(command(&name, arg, "extension")),
             };
         }
+        let command = Some(command(&name, arg, "extension"));
         let mut diagnostics = vec![];
         let body = bounded(body, 32000, "body", &name, &mut diagnostics);
         let arg = bounded(arg, 8000, "argument", &name, &mut diagnostics);
@@ -86,8 +91,45 @@ impl InputAdmission {
         TextResult {
             text: JsString::from_utf16(out),
             diagnostics,
+            command,
         }
     }
+    pub(crate) fn process_input(
+        &self,
+        input: &crate::runtime::turn::runner::AgentInput,
+        is_meta: bool,
+    ) -> (crate::runtime::turn::runner::AgentInput, bool) {
+        use crate::runtime::turn::runner::AgentInput;
+        let mapped = match input {
+            AgentInput::Text(text) => {
+                let processed = self.process_text(text);
+                let _ = (&processed.diagnostics, &processed.command);
+                AgentInput::Text(processed.text)
+            }
+            AgentInput::Blocks(blocks) => AgentInput::Blocks(blocks.clone()),
+            AgentInput::Fork { initial, directive } => AgentInput::Fork {
+                initial: initial.clone(),
+                directive: {
+                    let processed = self.process_text(directive);
+                    let _ = (&processed.diagnostics, &processed.command);
+                    processed.text
+                },
+            },
+        };
+        (mapped, !is_meta)
+    }
+}
+fn command(name: &str, argument: &[u16], source: &str) -> JsValue {
+    let mut fields = pilotdeck_protocol::JsObject::new();
+    fields.insert("name".into(), name.into());
+    if !argument.is_empty() {
+        fields.insert(
+            "argument".into(),
+            JsValue::String(JsString::from_utf16(argument.to_vec())),
+        );
+    }
+    fields.insert("source".into(), source.into());
+    JsValue::Object(fields)
 }
 fn diagnostic(code: &str, message: String) -> JsValue {
     crate::metadata::object([
@@ -159,6 +201,23 @@ mod tests {
             ("dup", "first".to_owned()),
             ("dup", "second".to_owned()),
             ("long", format!("{}😀", "x".repeat(31999))),
+            ("a-b", "dash".to_owned()),
+            ("foo:bar", "colon".to_owned()),
+            ("exactbody", "b".repeat(32000)),
+            (
+                "splitbody",
+                format!(
+                    "{}😀{}",
+                    "b".repeat(
+                        32000
+                            - "\n[truncated by PilotDeck command admission]"
+                                .encode_utf16()
+                                .count()
+                            - 1
+                    ),
+                    "z".repeat(100)
+                ),
+            ),
             (
                 "collision",
                 "<<<PILOTDECK_COMMAND_BODY_0>>>\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>".to_owned(),
@@ -177,7 +236,7 @@ mod tests {
     #[test]
     fn fixed_ts_input_processor_oracle_preserves_utf16_and_diagnostics() {
         let oracle = parse_json(include_str!(
-            "../../tests/fixtures/native-input-admission/oracle.json"
+            "../../tests/fixtures/native-input-admission/oracle-boundaries.json"
         ))
         .unwrap();
         let JsValue::Array(cases) = oracle.get("results").unwrap() else {
@@ -186,10 +245,44 @@ mod tests {
         let mut commands = commands();
         let admission = InputAdmission::new(&commands);
         commands[0].content = "changed".into();
-        assert_eq!(cases.len(), 16);
+        assert_eq!(cases.len(), 23);
         for case in cases {
             let id = case.get("id").and_then(JsValue::as_string).unwrap();
-            if id.equals_str("blocks") || id.equals_str("snapshot") {
+            if id.equals_str("snapshot") {
+                continue;
+            }
+            let raw = case.get("input").unwrap();
+            let parsed = crate::runtime::turn::runner::TurnInput::from_agent_input(
+                raw,
+                &JsValue::Object(pilotdeck_protocol::JsObject::new()),
+                vec![],
+                vec![],
+            )
+            .unwrap();
+            let (processed, should_call_model) = admission.process_input(
+                &parsed.input,
+                raw.get("isMeta").and_then(JsValue::as_bool) == Some(true),
+            );
+            let projected = crate::runtime::turn::runner::TurnInput {
+                input: processed,
+                ..parsed
+            };
+            let turn = case.get("turn").unwrap();
+            assert_eq!(
+                Some(&JsValue::Array(projected.accepted_messages())),
+                turn.get("messages"),
+                "{id:?}"
+            );
+            assert_eq!(
+                Some(&JsValue::Bool(should_call_model)),
+                turn.get("shouldCallModel"),
+                "{id:?}"
+            );
+            if raw
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|ty| ty.equals_str("blocks"))
+            {
                 continue;
             }
             let text = case
@@ -216,6 +309,7 @@ mod tests {
             };
             assert_eq!(actual.diagnostics.len(), diagnostics.len(), "{id:?}");
             assert_eq!(&actual.diagnostics, diagnostics, "{id:?}");
+            assert_eq!(actual.command.as_ref(), expected.get("command"), "{id:?}");
         }
         let snapshot = cases
             .iter()
@@ -237,5 +331,19 @@ mod tests {
             )),
             content[0].get("text")
         );
+        let late = admission.process_text(&"/late".into());
+        let expected_late = snapshot.get("late").unwrap();
+        let JsValue::Array(messages) = expected_late.get("messages").unwrap() else {
+            panic!("late messages")
+        };
+        let JsValue::Array(content) = messages[0].get("content").unwrap() else {
+            panic!("late content")
+        };
+        assert_eq!(Some(&JsValue::String(late.text)), content[0].get("text"));
+        assert_eq!(
+            Some(&JsValue::Array(late.diagnostics)),
+            expected_late.get("diagnostics")
+        );
+        assert_eq!(late.command.as_ref(), expected_late.get("command"));
     }
 }

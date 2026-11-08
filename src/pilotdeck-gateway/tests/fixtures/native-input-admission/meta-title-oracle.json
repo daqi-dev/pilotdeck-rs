@@ -1,0 +1,88 @@
+{
+  "calls": [
+    "start",
+    "accepted",
+    "metadata",
+    "title-model",
+    "complete",
+    "status",
+    "reappend"
+  ],
+  "events": [
+    {
+      "type": "turn_started",
+      "sessionId": "s",
+      "turnId": "t"
+    },
+    {
+      "type": "input_accepted",
+      "sessionId": "s",
+      "turnId": "t",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "meta text"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "user_prompt_submitted",
+      "sessionId": "s",
+      "turnId": "t",
+      "prompt": "meta text"
+    },
+    {
+      "type": "agent_status",
+      "sessionId": "s",
+      "turnId": "t",
+      "event": "turn_failed",
+      "kind": "error",
+      "text": "Input was accepted but model execution was not requested.",
+      "detail": {
+        "message": "Input was accepted but model execution was not requested.",
+        "code": "agent_unsupported_feature",
+        "severity": "error",
+        "visible": true,
+        "userHint": "Retry the turn; if it repeats, check the gateway logs or adjust the request.",
+        "scope": "turn",
+        "source": "agent"
+      }
+    },
+    {
+      "type": "turn_failed",
+      "sessionId": "s",
+      "turnId": "t",
+      "error": {
+        "code": "agent_unsupported_feature",
+        "message": "Input was accepted but model execution was not requested."
+      }
+    },
+    {
+      "type": "turn_completed",
+      "sessionId": "s",
+      "turnId": "t",
+      "result": {
+        "type": "error",
+        "sessionId": "s",
+        "turnId": "t",
+        "stopReason": "model_error",
+        "usage": {},
+        "permissionDenials": [],
+        "turns": 0,
+        "startedAt": "2026-01-02T03:04:05.678Z",
+        "completedAt": "2026-01-02T03:04:05.678Z",
+        "errors": [
+          {
+            "code": "agent_unsupported_feature",
+            "message": "Input was accepted but model execution was not requested."
+          }
+        ]
+      }
+    }
+  ]
+}
