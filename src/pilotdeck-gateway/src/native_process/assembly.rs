@@ -1317,6 +1317,7 @@ async fn start_assembly(
             session_events.install(&coordinator);
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
             lookup_forks.install_session_lookup(owner.weak_handle_lookup());
+            lookup_forks.install_async_turn_lookup(owner.weak_async_turn_lookup());
             let replacement = Arc::new(ReplacementCoordinator::new(
                 Default::default(),
                 Arc::new(owner.clone()),

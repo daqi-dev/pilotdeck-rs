@@ -633,6 +633,9 @@ impl SessionTools {
         // One budget per submit, shared by turn and session projections.
         let projection_budget =
             Arc::new(super::assembly::sdk_hooks::HookProjectionBudget::default());
+        let native_async_turn = self.forks.as_ref().map(|registry| {
+            registry.capture_async_turn(&identity.session_id, self.pinned_steer.clone())
+        });
         let hook_options = crate::runtime::hooks::HookRuntimeOptions {
             on_projection: Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
                 session: identity.session_id.clone(),
@@ -649,6 +652,7 @@ impl SessionTools {
                     registry: sdk.async_registry.clone(),
                     steer: self.pinned_steer.clone(),
                     current_turn: sdk.current_turn.clone(),
+                    native_turn: native_async_turn.clone(),
                 })
                     as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>
             }),
@@ -669,6 +673,15 @@ impl SessionTools {
             ..Default::default()
         };
 
+        if let Some(turn) = &fork_turn {
+            turn.bind_detached_hooks(
+                turn_hooks.clone(),
+                hook_options.clone(),
+                sdk_state.clone(),
+                self.pinned_steer.clone(),
+            )
+            .expect("native detached hooks are bound once");
+        }
         let mut session_hook_options = hook_options.clone();
         session_hook_options.on_projection =
             Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {

@@ -232,6 +232,7 @@ pub(in crate::native_process) struct NativeAsyncRegistration {
     pub registry: crate::runtime::turn::interaction::SdkAsyncRegistrySlot,
     pub steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
     pub current_turn: Option<std::sync::Arc<dyn Fn() -> bool + Send + Sync>>,
+    pub native_turn: Option<Option<crate::runtime::session::CapturedAsyncTurn>>,
 }
 impl crate::runtime::hooks::runtime::AsyncHookRegistrationHandler for NativeAsyncRegistration {
     fn handle(
@@ -245,6 +246,21 @@ impl crate::runtime::hooks::runtime::AsyncHookRegistrationHandler for NativeAsyn
             .ok_or_else(|| {
                 crate::host::ModuleError::new("SDK async hook registry is unavailable.")
             })?;
+        if let Some(native) = &self.native_turn {
+            let Some(native) = native else { return Ok(()) };
+            return registry.register_pinned(
+                crate::runtime::async_hooks::AsyncHookRegistration {
+                    session_key: self.session.clone(),
+                    invocation_id: registration.invocation_id,
+                    hook_name: registration.hook_name,
+                    hook_event: registration.hook_event,
+                    timeout_ms: registration.timeout_ms,
+                    include_hook_events: self.include_events,
+                },
+                native.turn.clone(),
+                native.guard.clone(),
+            );
+        }
         let info = self
             .steer
             .as_ref()
@@ -620,6 +636,7 @@ mod tests {
             registry: slot,
             steer: None,
             current_turn: None,
+            native_turn: None,
         };
         assert!(
             bridge

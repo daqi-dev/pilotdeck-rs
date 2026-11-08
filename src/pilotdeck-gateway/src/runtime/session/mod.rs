@@ -14,6 +14,7 @@ pub use handle::{
     HandleActivity, HandleState, LiveSession, LiveSessionHandle, LiveTurn, SessionNext,
     SessionSubmission,
 };
+pub(crate) use owner::{AsyncTurnLookup, CapturedAsyncTurn};
 pub use owner::{
     EvictionReason, MaintenanceReservation, SessionContext, SessionEvictionSnapshot,
     SessionFactory, SessionOwner, SessionOwnerOptions,

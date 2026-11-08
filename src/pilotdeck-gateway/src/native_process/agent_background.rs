@@ -39,6 +39,7 @@ pub(crate) struct NativeForkOwner {
     drain_done: watch::Sender<Option<RuntimeResult>>,
     cleanup_errors: Mutex<Vec<String>>,
     owned_jobs: Mutex<Vec<OwnedForkJob>>,
+    hook_scopes: Mutex<Vec<super::lifecycle::DetachedHooks>>,
 }
 impl NativeForkOwner {
     pub(in crate::native_process) fn new(lease: RuntimeLease) -> Arc<Self> {
@@ -54,6 +55,7 @@ impl NativeForkOwner {
             drain_done: watch::channel(None).0,
             cleanup_errors: Mutex::default(),
             owned_jobs: Mutex::default(),
+            hook_scopes: Mutex::default(),
         })
     }
     pub(in crate::native_process) fn generation(&self) -> Option<Arc<RuntimeLease>> {
@@ -129,6 +131,20 @@ impl NativeForkOwner {
         tasks.push((runtime, task.task_id.clone()));
         Ok(task)
     }
+    pub(super) fn retain_hooks(
+        &self,
+        hooks: super::lifecycle::DetachedHooks,
+    ) -> Result<(), ToolError> {
+        let mut scopes = lock(&self.hook_scopes);
+        if !self.is_open() {
+            return Err(ToolError::aborted());
+        }
+        if scopes.len() >= 256 {
+            return Err(error("Native detached hook scope budget is full."));
+        }
+        scopes.push(hooks);
+        Ok(())
+    }
     pub(super) fn spawn_owned(
         self: &Arc<Self>,
         run: impl FnOnce(Cancellation) -> BoxFuture<RuntimeResult> + Send + 'static,
@@ -157,6 +173,9 @@ impl NativeForkOwner {
     }
     pub(in crate::native_process) fn close_admission(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        for hooks in lock(&self.hook_scopes).iter() {
+            hooks.cancel();
+        }
         {
             let mut raw = lock(&self.raw);
             raw.events.clear();
@@ -213,6 +232,12 @@ impl NativeForkOwner {
                                     .push("Native session owned job completion lost.".into());
                                 break;
                             }
+                        }
+                    }
+                    let hooks = std::mem::take(&mut *lock(&owner.hook_scopes));
+                    for scope in hooks {
+                        if let Err(error) = scope.close().await {
+                            lock(&owner.cleanup_errors).push(error.to_string());
                         }
                     }
                     let failures = lock(&owner.cleanup_errors).clone();
@@ -527,6 +552,18 @@ impl ForkApi {
         Arc::get_mut(&mut detached)
             .expect("new detached turn has one owner")
             .detached = true;
+        if let Some(source) = self.turn.detached_hook_source.get() {
+            let hooks = source.create(&generation)?;
+            owner.retain_hooks(hooks.clone())?;
+            detached
+                .lifecycle
+                .set(Arc::new(hooks.clone()))
+                .map_err(|_| error("Native detached lifecycle is already bound."))?;
+            detached
+                .owned_hooks
+                .set(hooks)
+                .map_err(|_| error("Native detached lifecycle owner is already bound."))?;
+        }
         detached
             .bind_generation(generation)
             .map_err(|failure| error(failure.to_string()))?;
@@ -586,7 +623,8 @@ impl ForkApi {
                         if request.native_observer {
                             spec.insert("nativeObserver".into(), JsValue::Bool(true));
                         }
-                        api.run(
+                        let cancel = Cancellation::new();
+                        let running = api.run(
                             factory,
                             String::from_utf16_lossy(request.definition_id.units()),
                             spec,
@@ -601,11 +639,25 @@ impl ForkApi {
                             depth,
                             max,
                             context,
-                            Cancellation::new(),
+                            cancel.clone(),
                             deadline,
                             Some(request.subagent_id),
-                        )
-                        .await
+                        );
+                        tokio::pin!(running);
+                        tokio::select! {
+                            biased;
+                            _=signal.cancelled()=>{
+                                if let Some(hooks)=detached.owned_hooks.get(){hooks.cancel();}
+                                cancel.cancel();
+                                running.await
+                            },
+                            _=tokio::time::sleep_until(deadline)=>{
+                                if let Some(hooks)=detached.owned_hooks.get(){hooks.cancel();}
+                                cancel.cancel();
+                                running.await
+                            },
+                            result=&mut running=>result,
+                        }
                     }
                     .await;
                     if let Err(error) = detached.clone().close().await {

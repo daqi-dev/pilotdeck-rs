@@ -78,6 +78,8 @@ fn concat(parts: &[&JsString]) -> JsString {
 mod background;
 #[path = "agent_continuation.rs"]
 mod continuation;
+#[path = "agent_lifecycle.rs"]
+mod lifecycle;
 #[path = "agent_observer.rs"]
 mod observer;
 #[path = "agent_observer_host.rs"]
@@ -86,6 +88,7 @@ pub(super) use background::NativeForkOwner;
 
 pub(super) struct NativeForkRegistry {
     factory: OnceLock<Weak<ProjectSessionFactory>>,
+    async_turn_lookup: OnceLock<crate::runtime::session::AsyncTurnLookup>,
     scopes: Mutex<HashMap<JsString, Arc<ForkScope>>>,
     slots: Arc<Semaphore>,
     background_records: AtomicU64,
@@ -95,11 +98,30 @@ impl NativeForkRegistry {
     pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
             factory: OnceLock::new(),
+            async_turn_lookup: OnceLock::new(),
             scopes: Mutex::default(),
             slots: Arc::new(Semaphore::new(8)),
             background_records: AtomicU64::new(0),
             continuations: Default::default(),
         })
+    }
+    pub(super) fn install_async_turn_lookup(
+        &self,
+        lookup: crate::runtime::session::AsyncTurnLookup,
+    ) {
+        assert!(
+            self.async_turn_lookup.set(lookup).is_ok(),
+            "async admission lookup is installed once"
+        );
+    }
+    pub(super) fn capture_async_turn(
+        &self,
+        session: &JsString,
+        steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+    ) -> Option<crate::runtime::session::CapturedAsyncTurn> {
+        self.async_turn_lookup
+            .get()
+            .and_then(|lookup| lookup(session, steer))
     }
     pub(super) fn install_factory(&self, factory: &Arc<ProjectSessionFactory>) {
         assert!(
@@ -185,6 +207,8 @@ pub(super) struct ForkTurn {
     cleanup_errors: Mutex<Vec<String>>,
     close_done: watch::Sender<Option<Result<(), HostError>>>,
     lifecycle: OnceLock<Arc<dyn crate::host::modules::lifecycle::LifecyclePort>>,
+    detached_hook_source: OnceLock<Arc<lifecycle::DetachedHookSource>>,
+    owned_hooks: OnceLock<lifecycle::DetachedHooks>,
 }
 impl ForkTurn {
     #[allow(clippy::too_many_arguments)]
@@ -228,6 +252,8 @@ impl ForkTurn {
             cleanup_errors: Mutex::default(),
             close_done,
             lifecycle: OnceLock::new(),
+            detached_hook_source: OnceLock::new(),
+            owned_hooks: OnceLock::new(),
         })
     }
     pub(super) fn bind_session_emitter(&self, emit: super::session_events::SessionEmit) {

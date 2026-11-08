@@ -90,6 +90,103 @@ pub struct SessionEvictionSnapshot {
     pub message_count: Option<JsValue>,
 }
 
+/// Captured native Gateway admission, independent of textual run ids. A hook
+/// may register before the turn has bound steer; only delivery requires it.
+#[derive(Clone)]
+pub(crate) struct CapturedAsyncTurn {
+    pub turn: crate::runtime::async_hooks::AsyncHookTurn,
+    pub guard: Arc<dyn Fn() -> bool + Send + Sync>,
+}
+pub(crate) type AsyncTurnLookup = Arc<
+    dyn Fn(
+            &JsString,
+            Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+        ) -> Option<CapturedAsyncTurn>
+        + Send
+        + Sync,
+>;
+struct CompletionSteer {
+    owner: Weak<Inner>,
+    session: JsString,
+    completion: TurnCompletionHandle,
+    identity: Arc<()>,
+    steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+}
+impl CompletionSteer {
+    fn current(&self, inner: &Inner, state: &State) -> bool {
+        !state.stopped
+            && !self.completion.is_cancelled()
+            && !self.completion.is_complete()
+            && inner
+                .turns
+                .completion
+                .is_current(&self.session, &self.completion)
+            && inner
+                .turns
+                .admission
+                .turn_identity(&self.session)
+                .is_some_and(|identity| Arc::ptr_eq(&identity, &self.identity))
+    }
+}
+struct SharedCompletionSteer(Arc<CompletionSteer>);
+impl crate::runtime::async_hooks::AsyncHookTurnHandle for SharedCompletionSteer {
+    fn run_id(&self) -> &JsString {
+        self.0.completion.run_id()
+    }
+    fn identity(&self) -> &Arc<()> {
+        &self.0.identity
+    }
+    fn is_live(&self) -> bool {
+        crate::runtime::async_hooks::AsyncHookTurnHandle::is_live(self.0.as_ref())
+    }
+    fn enqueue(
+        &self,
+        message: crate::runtime::steer::SteerMessage,
+    ) -> crate::host::HostFuture<crate::runtime::steer::EnqueueResult> {
+        crate::runtime::async_hooks::AsyncHookTurnHandle::enqueue(self.0.as_ref(), message)
+    }
+}
+impl crate::runtime::async_hooks::AsyncHookTurnHandle for CompletionSteer {
+    fn run_id(&self) -> &JsString {
+        self.completion.run_id()
+    }
+    fn identity(&self) -> &Arc<()> {
+        &self.identity
+    }
+    fn is_live(&self) -> bool {
+        self.owner.upgrade().is_some_and(|inner| {
+            let state = inner.state.lock().unwrap();
+            self.current(&inner, &state)
+        })
+    }
+    fn enqueue(
+        &self,
+        message: crate::runtime::steer::SteerMessage,
+    ) -> crate::host::HostFuture<crate::runtime::steer::EnqueueResult> {
+        let enqueue = self.owner.upgrade().and_then(|inner| {
+            // Same lock as completion replacement/abort/publication. The
+            // concrete steer call reserves its mailbox placeholder before
+            // releasing this lock, never across an await or user callback.
+            let state = inner.state.lock().unwrap();
+            if !self.current(&inner, &state) {
+                return None;
+            }
+            let info = self.steer.as_ref()?.active_steer_info(&self.session)?;
+            if &info.run_id != self.completion.run_id() {
+                return None;
+            }
+            Some(info.enqueue(message))
+        });
+        enqueue.unwrap_or_else(|| {
+            Box::pin(async {
+                Ok(crate::runtime::steer::EnqueueResult {
+                    accepted: false,
+                    reason: Some(crate::runtime::steer::SteerReason::TurnClosing),
+                })
+            })
+        })
+    }
+}
 pub(crate) type SessionHandleLookup =
     Arc<dyn Fn(&JsString) -> Option<LiveSessionHandle> + Send + Sync>;
 type IdleEvict = Arc<dyn Fn(&JsString, &SessionEvictionSnapshot) + Send + Sync>;
@@ -202,6 +299,44 @@ impl SessionOwner {
         })
     }
 
+    /// Both the lookup and every returned guard hold only Weak<Inner>.
+    /// Main hooks capture once; detached hooks intentionally call per marker.
+    pub(crate) fn weak_async_turn_lookup(&self) -> AsyncTurnLookup {
+        let owner = Arc::downgrade(&self.0);
+        Arc::new(move |session, steer| {
+            let inner = owner.upgrade()?;
+            let state = inner.state.lock().unwrap();
+            if state.stopped {
+                return None;
+            }
+            let current = state.completion_owners.get(session)?;
+            let completion = current.completion.clone();
+            if completion.is_cancelled()
+                || completion.is_complete()
+                || !inner.turns.completion.is_current(session, &completion)
+            {
+                return None;
+            }
+            let identity = current.admission.clone()?;
+            let capture = Arc::new(CompletionSteer {
+                owner: Arc::downgrade(&inner),
+                session: session.clone(),
+                completion,
+                identity,
+                steer,
+            });
+            let guard_capture = capture.clone();
+            let guard = Arc::new(move || {
+                crate::runtime::async_hooks::AsyncHookTurnHandle::is_live(guard_capture.as_ref())
+            });
+            Some(CapturedAsyncTurn {
+                turn: crate::runtime::async_hooks::AsyncHookTurn::new(SharedCompletionSteer(
+                    capture,
+                )),
+                guard,
+            })
+        })
+    }
     pub fn new(options: SessionOwnerOptions) -> Self {
         let interval = options.idle_sweep_interval_ms;
         let owner = Self(Arc::new(Inner {
@@ -1418,5 +1553,70 @@ mod publication_tests {
             "cached gets must not start duplicate pumps"
         );
         owner.shutdown().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod async_capture_tests {
+    use super::*;
+    struct UnusedFactory;
+    impl SessionFactory for UnusedFactory {
+        fn create(
+            &self,
+            _: SessionContext,
+            _: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            Box::pin(async { Err(RuntimeError::new("factory must not run")) })
+        }
+    }
+    fn owner() -> SessionOwner {
+        let mut options = SessionOwnerOptions::new(Arc::new(UnusedFactory));
+        options.idle_sweep_interval_ms = 0;
+        SessionOwner::new(options)
+    }
+    #[tokio::test]
+    async fn admission_capture_exists_before_steer_binding_and_expires_on_slot_release() {
+        let owner = owner();
+        let lookup = owner.weak_async_turn_lookup();
+        let key = "session".into();
+        let run = "same".into();
+        assert!(lookup(&key, None).is_none());
+        let reservation = owner.begin_turn(&key, &run).unwrap();
+        let completion = owner.begin_completion(&key, &run);
+        let capture =
+            lookup(&key, None).expect("admitted registration must not depend on steer bind");
+        assert!((capture.guard)());
+        owner.end_turn(&key, Some(&run), Some(&reservation));
+        assert!(
+            !(capture.guard)(),
+            "slot release revokes before stream/completion EOF"
+        );
+        owner.complete_turn(&key, &completion);
+        assert!(lookup(&key, None).is_none());
+    }
+    #[tokio::test]
+    async fn equal_run_ids_get_distinct_live_fences_and_captures_do_not_retain_owner() {
+        let owner = owner();
+        let lookup = owner.weak_async_turn_lookup();
+        let key = "session".into();
+        let run = "same".into();
+        let first = owner.begin_turn(&key, &run).unwrap();
+        let first_completion = owner.begin_completion(&key, &run);
+        let old = lookup(&key, None).unwrap();
+        owner.end_turn(&key, Some(&run), Some(&first));
+        let _next = owner.begin_turn(&key, &run).unwrap();
+        let next_completion = owner.begin_completion(&key, &run);
+        let current = lookup(&key, None).unwrap();
+        assert!(!(old.guard)());
+        assert!((current.guard)());
+        owner.complete_turn(&key, &first_completion);
+        assert!(
+            (current.guard)(),
+            "stale completion cannot revoke equal-text successor"
+        );
+        owner.complete_turn(&key, &next_completion);
+        assert!(!(current.guard)());
+        drop(owner);
+        assert!(lookup(&key, None).is_none());
     }
 }
