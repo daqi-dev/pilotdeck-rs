@@ -348,17 +348,22 @@ def _assert_run_positive_tail(source):
         tree = ast.parse(source)
     except SyntaxError as error:
         raise CheckFailure(f'negative_controls.py 解析失败：{error!r}') from None
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and node.name == 'run_positive':
-            if (len(node.body) >= 2
-                    and ast.unparse(node.body[-2]) ==
-                    "record.update(verdict='HELD' if ok else 'BROKEN', reason=reason)"
-                    and ast.unparse(node.body[-1]) == 'return record'):
-                return
-            raise CheckFailure('run_positive 尾部 HELD/BROKEN 落判缺失（#2397 rebase 丢行类源码锚点：'
-                                '函数体末两条语句应为 record.update(verdict=...) 与 return record，'
-                                f'实际 {ast.unparse(node.body[-2:])!r}）')
-    raise CheckFailure('negative_controls.py 缺 def run_positive（#2397 源码锚点找不到目标函数）')
+    # 同名 def 只认一份：Python 模块执行时绑定**最后**一份 def，坏合并「保留双方」
+    # 产出两份 run_positive 时，只校验第一份会拿死代码当真身（DS anchor2 boundary P1）。
+    defs = [node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == 'run_positive']
+    if len(defs) != 1:
+        raise CheckFailure(f'negative_controls.py 有 {len(defs)} 份顶层 def run_positive（应为恰 1 份；'
+                           '重复定义即坏合并形态，#2397 源码锚点拒收）')
+    node = defs[0]
+    if (len(node.body) >= 2
+            and ast.unparse(node.body[-2]) ==
+            "record.update(verdict='HELD' if ok else 'BROKEN', reason=reason)"
+            and ast.unparse(node.body[-1]) == 'return record'):
+        return
+    raise CheckFailure('run_positive 尾部 HELD/BROKEN 落判缺失（#2397 rebase 丢行类源码锚点：'
+                        '函数体末两条语句应为 record.update(verdict=...) 与 return record，'
+                        f'实际 {ast.unparse(node.body[-2:])!r}）')
 
 
 def check_negctl():
