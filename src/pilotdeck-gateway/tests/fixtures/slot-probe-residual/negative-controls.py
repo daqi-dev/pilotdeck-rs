@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""#2516 residual controls: four mutants of the model-complete slot probe.
+"""#2516 residual controls: seven mutants of the model-complete slot probe.
 
-Each control re-introduces one of the defects the issue fixed in
-src/pilotdeck-gateway/tests/fixtures/model-complete/negative-controls.py
-(items 1-4: the strip()ed rc=1 stderr gate, the single-sweep pgrep zero, the
-text=True ps sample, the numeral-quantified probe comment) and is killed by
-a named probe test. The tests drive the REAL subprocess machinery: fake
-`ps` / `pgrep` executables are generated per run into a system temporary
-directory and put first on PATH, so the probe under test spawns real
-children through real pipes -- under the text=True mutant the actual
-stdlib universal-newline translation does the row tearing.
+Each control re-introduces one of the defects the issue (items 1-4: the
+strip()ed rc=1 stderr gate, the single-sweep pgrep zero, the text=True ps
+sample, the numeral-quantified probe comment) or the PR #2587 r0 review
+(fix-r1: the pgrep stdout census half, a swallowed ps/pgrep probe timeout)
+fixed in src/pilotdeck-gateway/tests/fixtures/model-complete/negative-controls.py
+and is killed by a named probe test. The tests drive the REAL subprocess
+machinery: fake `ps` / `pgrep` executables are generated per run into a
+system temporary directory and put first on PATH, so the probe under test
+spawns real children through real pipes -- under the text=True mutant the
+actual stdlib universal-newline translation does the row tearing.
+
+The execution table is verified against the static EXPECTED_NAMES roster
+in every mode before anything runs (#2516 fix-r1 P1-2, the #1666 shape):
+with a runtime denominator, a table that lost every row reports "0/0
+killed" and exits 0. The final verdict goes through
+negative_selection.verdict_exit, which no zero-row run can satisfy.
 
 Mutants are never written into the tree. Each one is applied to an
 in-memory publication of the probe module through
@@ -25,7 +32,7 @@ cargo is launched anywhere, so no CARGO_TARGET_DIR is required.
   python3 negative-controls.py --probe-tests [--mutant NAME] TEST...
       internal mode used by the orchestration above; each test prints one
       PASS / FAIL line, and a FAIL line is single-line evidence carrying
-      the control's "#2516-<n>" marker in its assertion message.
+      the control's "#2516…" marker in its assertion message.
 """
 from __future__ import annotations
 
@@ -34,6 +41,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -43,6 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import published_module, run_owned  # noqa: E402
+from negative_selection import registered, verdict_exit  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[5]
 NEGCTL = ROOT / "src/pilotdeck-gateway/tests/fixtures/model-complete/negative-controls.py"
@@ -84,14 +93,22 @@ CONTROLS = [
     (
         # #2516 item 3: the ps sample must be captured as bytes and decoded
         # here; text=True folds a literal \r into \n and tears one row into
-        # two, and the torn tail can forge a parent-map entry.
+        # two, and the torn tail can forge a parent-map entry. fix-r1 P2-a 1
+        # added the bounded timeout; the anchor and the mutant both carry it
+        # so the only restored defect is the text=True capture itself.
         "ps-text-mode-restored",
         NEGCTL,
         """        result = subprocess.run(
-            ["ps", "-Aww", "-o", "pid=,ppid=,args="], capture_output=True
+            ["ps", "-Aww", "-o", "pid=,ppid=,args="], capture_output=True,
+            timeout=PROBE_TIMEOUT_SECONDS,
         )
     except OSError as error:
         return None, f"ps failed: {error}"
+    except subprocess.TimeoutExpired:
+        # #2516 fix-r1 (P2-a 1): a sample that never comes back is a probe
+        # failure, never a count -- reading 0 here would release a mutation
+        # beside a full quota with nobody even looking.
+        return None, f"ps timed out after {PROBE_TIMEOUT_SECONDS}s"
     if result.returncode != 0:
         return None, (
             f"ps exit {result.returncode}: "
@@ -108,10 +125,16 @@ CONTROLS = [
         return None, "ps output contains control characters"
 """,
         """        result = subprocess.run(
-            ["ps", "-Aww", "-o", "pid=,ppid=,args="], capture_output=True, text=True
+            ["ps", "-Aww", "-o", "pid=,ppid=,args="], capture_output=True,
+            text=True, timeout=PROBE_TIMEOUT_SECONDS,
         )
     except OSError as error:
         return None, f"ps failed: {error}"
+    except subprocess.TimeoutExpired:
+        # #2516 fix-r1 (P2-a 1): a sample that never comes back is a probe
+        # failure, never a count -- reading 0 here would release a mutation
+        # beside a full quota with nobody even looking.
+        return None, f"ps timed out after {PROBE_TIMEOUT_SECONDS}s"
     if result.returncode != 0:
         return None, f"ps exit {result.returncode}: {result.stderr.strip()}"
     stdout = result.stdout
@@ -135,21 +158,79 @@ CONTROLS = [
         "probe-comments-drop-numerals",
         "#2516-4",
     ),
+    (
+        # fix-r1 P2-a 4: the pgrep census has two halves (stdout and
+        # stderr); only the stderr half had a test. Dropping the stdout half
+        # alone must still fail the probe on a stdout-borne control byte --
+        # rc=0 with a pid row would otherwise read "alive" off torn output.
+        "pgrep-stdout-census-dropped",
+        NEGCTL,
+        """            if re.search(CONTROL_CHARACTERS, stdout) or re.search(CONTROL_CHARACTERS, stderr):
+""",
+        """            if re.search(CONTROL_CHARACTERS, stderr):
+""",
+        "pgrep-stdout-control-char-fails",
+        "#2516-r1-4",
+    ),
+    (
+        # fix-r1 P2-a 1: a ps sample that never comes back must be a probe
+        # failure. Swallowing the timeout into (0, "") reads "no cargo" off
+        # a wedge and releases a mutation beside a full quota.
+        "ps-timeout-swallowed",
+        NEGCTL,
+        """        return None, f"ps timed out after {PROBE_TIMEOUT_SECONDS}s"
+""",
+        """        return 0, ""
+""",
+        "ps-hang-times-out",
+        "#2516-r1-1ps",
+    ),
+    (
+        # fix-r1 P2-a 1: same reading for the pgrep fallback -- a hung
+        # pgrep is a probe failure, never a clean no-match sweep -> 0.
+        "pgrep-timeout-swallowed",
+        NEGCTL,
+        """                return None, f"pgrep -x {name} timed out after {PROBE_TIMEOUT_SECONDS}s"
+""",
+        """                return 0, ""
+""",
+        "pgrep-hang-times-out",
+        "#2516-r1-1pg",
+    ),
 ]
+
+# fix-r1 P1-2 (#1666 shape): the denominator is this literal roster, not
+# `len(CONTROLS)`. With a runtime denominator, a table that lost every row
+# reports "0/0 killed" and exits 0 -- a fake green. Renaming or dropping a
+# control here is a deliberate edit that must update this tuple too, in the
+# same order as the table.
+EXPECTED_NAMES = (
+    "pgrep-stderr-strip-restored",
+    "pgrep-single-sweep-restored",
+    "ps-text-mode-restored",
+    "numeral-comment-restored",
+    "pgrep-stdout-census-dropped",
+    "ps-timeout-swallowed",
+    "pgrep-timeout-swallowed",
+)
 
 FAKE_PS = '''#!/usr/bin/env python3
 """#2516 slot-probe control fake (generated into a temp dir, never committed).
 
 Prints the scripted sample from the JSON spec so the probe under test keeps
 using the real pipe machinery; {CALLER_PID} is substituted with the calling
-process pid, satisfying the #1770 fix-r2 caller invariant.
+process pid, satisfying the #1770 fix-r2 caller invariant. An optional
+"sleep" field wedges the fake before it writes anything, so the fix-r1
+P2-a 1 timeout branch is driven through a real child that never answers.
 """
 import base64
 import json
 import os
 import sys
+import time
 
 sample = json.loads(open(os.environ["PDRS_2516_FAKE_SPEC"]).read())["ps"]
+time.sleep(sample.get("sleep", 0))
 out = base64.b64decode(sample["stdout_b64"])
 out = out.replace(b"{CALLER_PID}", str(os.getppid()).encode())
 sys.stdout.buffer.write(out)
@@ -164,12 +245,14 @@ FAKE_PGREP = '''#!/usr/bin/env python3
 
 Stateful by invocation count per name: the JSON spec maps a pgrep name to a
 list of responses consumed in order (the last one repeats), so two-sweep
-semantics can be probed deterministically.
+semantics can be probed deterministically. A response may carry a "sleep"
+field that wedges the fake before it writes (fix-r1 P2-a 1).
 """
 import base64
 import json
 import os
 import sys
+import time
 
 spec = json.loads(open(os.environ["PDRS_2516_FAKE_SPEC"]).read())["pgrep"]
 name = sys.argv[sys.argv.index("-x") + 1]
@@ -182,6 +265,7 @@ if os.path.exists(counter):
 open(counter, "w").write(str(seen + 1))
 responses = spec.get(name, spec["default"])
 response = responses[min(seen, len(responses) - 1)]
+time.sleep(response.get("sleep", 0))
 sys.stdout.buffer.write(base64.b64decode(response["stdout_b64"]))
 sys.stdout.buffer.flush()
 sys.stderr.buffer.write(base64.b64decode(response["stderr_b64"]))
@@ -196,14 +280,14 @@ def check(condition, message):
         raise AssertionError(message)
 
 
-def ps_response(rc, stdout=b"", stderr=b""):
+def ps_response(rc, stdout=b"", stderr=b"", sleep=0.0):
     return {"rc": rc, "stdout_b64": base64.b64encode(stdout).decode(),
-            "stderr_b64": base64.b64encode(stderr).decode()}
+            "stderr_b64": base64.b64encode(stderr).decode(), "sleep": sleep}
 
 
-def pgrep_response(rc, stdout=b"", stderr=b""):
+def pgrep_response(rc, stdout=b"", stderr=b"", sleep=0.0):
     return {"rc": rc, "stdout_b64": base64.b64encode(stdout).decode(),
-            "stderr_b64": base64.b64encode(stderr).decode()}
+            "stderr_b64": base64.b64encode(stderr).decode(), "sleep": sleep}
 
 
 CLEAN_NOMATCH = pgrep_response(1)
@@ -310,47 +394,89 @@ def t_pgrep_output_control_char(module, _source):
 
 
 def t_probe_comments_drop_numerals(_module, source):
-    check(b"ten clean" not in source,
-          "#2516-4 numeral-quantified probe wording must stay removed ('ten clean' found)")
-    check(b"nine clean" not in source,
-          "#2516-4 numeral-quantified probe wording must stay removed ('nine clean' found)")
+    # fix-r1 P2-a 3: the guard is a general numeral criterion, not the two
+    # spellings the last defect happened to use ("ten"/"nine" -- the list
+    # had already forced nine -> ten once). Any digit or spelled-out count
+    # directly quantifying the clean-no-match phrasing is the defect shape.
+    match = re.search(
+        rb"\b(?:[0-9]+|zero|one|two|three|four|five|six|seven|eight|nine|ten"
+        rb"|eleven|twelve)\s+clean\s+no-match", source)
+    found = match.group(0).decode() if match else "none"
+    check(match is None,
+          f"#2516-4 numeral-quantified probe wording must stay removed ({found!r} found)")
+
+
+def t_pgrep_stdout_control_char(module, _source):
+    result = module.slots_from_pgrep()
+    check(result[0] is None and "control" in result[1],
+          f"#2516-r1-4 control bytes in pgrep stdout must fail the probe, got {result!r}")
+
+
+def t_pgrep_second_sweep_failure(module, _source):
+    result = module.slots_from_pgrep()
+    check(result[0] is None and "stdout" in result[1],
+          f"#2516-r1-2 a probe failure in the second sweep must fail the probe, got {result!r}")
+
+
+def t_ps_hang_times_out(module, _source):
+    result = module.slots_from_ps()
+    check(result[0] is None and "timed out" in result[1],
+          f"#2516-r1-1ps a ps sample wedged past the probe timeout must fail the probe, got {result!r}")
+
+
+def t_pgrep_hang_times_out(module, _source):
+    result = module.slots_from_pgrep()
+    check(result[0] is None and "timed out" in result[1],
+          f"#2516-r1-1pg a pgrep wedged past the probe timeout must fail the probe, got {result!r}")
 
 
 PROBE_TESTS = [
     ("ps-attack-control-char-fails", {"ps": ps_response(0, ATTACK_TABLE.encode())},
-     t_ps_attack_control_char),
+     t_ps_attack_control_char, None),
     ("ps-tree-counts-roots", {"ps": ps_response(0, BENIGN_TABLE.encode())},
-     t_ps_tree_counts_roots),
+     t_ps_tree_counts_roots, None),
     ("ps-caller-pid-required",
      {"ps": ps_response(0, b"800 999 cargo build\n700 1 /bin/plain\n")},
-     t_ps_caller_pid_required),
+     t_ps_caller_pid_required, None),
     ("ps-zero-parseable-rows", {"ps": ps_response(0, b"diagnostics only\n")},
-     t_ps_zero_parseable_rows),
+     t_ps_zero_parseable_rows, None),
     ("ps-invalid-utf8-argv", {"ps": ps_response(0, INVALID_UTF8_TABLE)},
-     t_ps_invalid_utf8_argv),
+     t_ps_invalid_utf8_argv, None),
+    ("ps-hang-times-out",
+     {"ps": ps_response(0, BENIGN_TABLE.encode(), sleep=3.0)},
+     t_ps_hang_times_out, {"NEGCTL_PROBE_TIMEOUT_SECONDS": "1"}),
     ("pgrep-stderr-whitespace-fails",
      {"pgrep": {"default": [pgrep_response(1, stderr=b"  \n")]}},
-     t_pgrep_stderr_whitespace_fails),
+     t_pgrep_stderr_whitespace_fails, None),
     ("pgrep-second-sweep-sees-late-cargo",
      {"pgrep": {"default": [CLEAN_NOMATCH],
                 "cargo": [CLEAN_NOMATCH, pgrep_response(0, b"4242\n")]}},
-     t_pgrep_second_sweep_sees_late_cargo),
+     t_pgrep_second_sweep_sees_late_cargo, None),
+    ("pgrep-second-sweep-failure",
+     {"pgrep": {"default": [CLEAN_NOMATCH, pgrep_response(1, b"leak\n")]}},
+     t_pgrep_second_sweep_failure, None),
     ("pgrep-both-sweeps-clean",
      {"pgrep": {"default": [CLEAN_NOMATCH]}},
-     t_pgrep_both_sweeps_clean),
+     t_pgrep_both_sweeps_clean, None),
     ("pgrep-first-sweep-alive",
      {"pgrep": {"default": [CLEAN_NOMATCH], "cargo": [pgrep_response(0, b"4242\n")]}},
-     t_pgrep_first_sweep_alive),
+     t_pgrep_first_sweep_alive, None),
     ("pgrep-rc0-without-pid-row",
      {"pgrep": {"default": [pgrep_response(0, b"not-a-pid\n")]}},
-     t_pgrep_rc0_without_pid_row),
+     t_pgrep_rc0_without_pid_row, None),
     ("pgrep-rc1-with-stdout",
      {"pgrep": {"default": [pgrep_response(1, b"leak\n")]}},
-     t_pgrep_rc1_with_stdout),
+     t_pgrep_rc1_with_stdout, None),
     ("pgrep-output-control-char",
      {"pgrep": {"default": [pgrep_response(1, stderr=b"a\rb")]}},
-     t_pgrep_output_control_char),
-    ("probe-comments-drop-numerals", {}, t_probe_comments_drop_numerals),
+     t_pgrep_output_control_char, None),
+    ("pgrep-stdout-control-char-fails",
+     {"pgrep": {"default": [pgrep_response(0, b"4242\na\rb")]}},
+     t_pgrep_stdout_control_char, None),
+    ("pgrep-hang-times-out",
+     {"pgrep": {"default": [pgrep_response(1, sleep=3.0)]}},
+     t_pgrep_hang_times_out, {"NEGCTL_PROBE_TIMEOUT_SECONDS": "1"}),
+    ("probe-comments-drop-numerals", {}, t_probe_comments_drop_numerals, None),
 ]
 
 
@@ -422,22 +548,38 @@ def probe_tests_mode(mutant, names):
         os.environ["PATH"] = f"{fake_dir}:{previous_path}"
         os.environ["PDRS_2516_FAKE_SPEC"] = str(spec_path)
         failures = 0
-        with published_module(MODULE_NAME, NEGCTL, source) as module:
-            for name in names:
-                spec_path.write_text(json.dumps(tests[name][1]))
-                for leftover in fake_dir.glob("pgrep-*"):
-                    leftover.unlink()
-                try:
-                    tests[name][2](module, source)
-                except AssertionError as error:
-                    print(f"FAIL {name}: AssertionError: {error}")
-                    failures += 1
-                except BaseException as error:  # noqa: BLE001 - reported, never silent
-                    print(f"ERROR {name}: {type(error).__name__}: {error}")
-                    traceback.print_exc()
-                    failures += 1
-                else:
-                    print(f"PASS {name}")
+        for name in names:
+            spec_path.write_text(json.dumps(tests[name][1]))
+            for leftover in fake_dir.glob("pgrep-*"):
+                leftover.unlink()
+            # A test may pin the probe's env-tunable bounds (the fix-r1
+            # P2-a 1 timeout): the probe binds them when the module is
+            # published, so the publication is per test, with the row's
+            # env set only for that test.
+            overrides = tests[name][3]
+            saved_env = {key: os.environ.get(key) for key in overrides} if overrides else None
+            if overrides:
+                os.environ.update(overrides)
+            try:
+                with published_module(MODULE_NAME, NEGCTL, source) as module:
+                    try:
+                        tests[name][2](module, source)
+                    except AssertionError as error:
+                        print(f"FAIL {name}: AssertionError: {error}")
+                        failures += 1
+                    except BaseException as error:  # noqa: BLE001 - reported, never silent
+                        print(f"ERROR {name}: {type(error).__name__}: {error}")
+                        traceback.print_exc()
+                        failures += 1
+                    else:
+                        print(f"PASS {name}")
+            finally:
+                if saved_env is not None:
+                    for key, value in saved_env.items():
+                        if value is None:
+                            os.environ.pop(key, None)
+                        else:
+                            os.environ[key] = value
         unchanged = NEGCTL.read_bytes() == disk_before
         print(f"probe file bytes unchanged: {unchanged}")
         if not unchanged:
@@ -483,7 +625,7 @@ def full_run():
         print(f"BASELINE FAILED (exit {result.returncode}, missing {missing})")
         return 1
     print(f"baseline: {len(passed)}/{len(baseline_names)} probe tests PASS")
-    verdicts = []
+    rows = []
     for control in CONTROLS:
         name, _path, _before, _after, test, marker = control
         mutant = mutated_source(source, control)
@@ -491,7 +633,7 @@ def full_run():
             compile(mutant, str(NEGCTL), "exec")
         except SyntaxError as error:
             print(f"{name}: INVALID (mutant does not compile: {error})")
-            verdicts.append("INVALID")
+            rows.append({"name": name, "verdict": "INVALID"})
             continue
         result = run_owned(
             child_command(["--probe-tests", "--mutant", name, test]), timeout=300)
@@ -503,23 +645,26 @@ def full_run():
             line.startswith(f"FAIL {test}: AssertionError:") and marker in line
             for line in output.split("\n"))
         if killed:
-            verdicts.append("KILLED")
+            rows.append({"name": name, "verdict": "KILLED"})
             print(f"VERDICT {name}: KILLED by {test} ({marker})")
         elif result.returncode == 0:
-            verdicts.append("SURVIVED")
+            rows.append({"name": name, "verdict": "SURVIVED"})
             print(f"VERDICT {name}: SURVIVED ({test} still passes on the mutant)")
         else:
-            verdicts.append("INVALID")
+            rows.append({"name": name, "verdict": "INVALID"})
             print(f"VERDICT {name}: INVALID (exit {result.returncode}, no clean "
                   f"'{marker}' assertion failure)")
     unchanged = NEGCTL.read_bytes() == source
     print(f"probe file bytes unchanged after the run: {unchanged}")
-    if not unchanged:
-        return 1
-    killed = verdicts.count("KILLED")
-    print(f"NEGATIVE CONTROLS {'PASS' if killed == len(CONTROLS) else 'FAILED'} "
-          f"({killed}/{len(CONTROLS)})")
-    return 0 if killed == len(CONTROLS) and unchanged else 1
+    killed = sum(1 for row in rows if row["verdict"] == "KILLED")
+    print(f"NEGATIVE CONTROLS "
+          f"{'PASS' if verdict_exit(rows) == 0 else 'FAILED'} "
+          f"({killed}/{len(EXPECTED_NAMES)} from the roster)")
+    # fix-r1 P1-2 (#1666 shape): the exit goes through verdict_exit, so a
+    # zero-row run (or any SURVIVED/INVALID) can never exit 0 -- the
+    # denominator itself is the static EXPECTED_NAMES roster checked in
+    # main() before any mode branch.
+    return 0 if verdict_exit(rows) == 0 and unchanged else 1
 
 
 def main(argv=None):
@@ -534,6 +679,16 @@ def main(argv=None):
                         help="internal: publish this control's mutant first")
     parser.add_argument("tests", nargs="*", help="probe test names")
     args = parser.parse_args(argv)
+    # fix-r1 P1-2 (#1666 shape): every mode verifies the execution table
+    # against the static roster before anything runs, so a dropped or
+    # renamed control row is a startup refusal (exit 2, "never started"),
+    # never a smaller green run -- and a table that lost every row cannot
+    # report 0/0 and exit 0.
+    try:
+        registered(CONTROLS, EXPECTED_NAMES)
+    except ValueError as error:
+        print(f"slot-probe-residual: {error}", file=sys.stderr)
+        return 2
     if args.check_anchors:
         return 0 if anchor_preflight(NEGCTL.read_bytes()) else 2
     if args.smoke:

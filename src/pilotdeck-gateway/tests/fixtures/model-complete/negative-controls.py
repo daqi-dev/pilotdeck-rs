@@ -83,6 +83,10 @@ LIB_RESPONSE_DRAIN_TEST = "runtime::model::http::tests::complete_response_text_o
 
 CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP") or os.environ.get("PDRS_CARGO_SLOTS") or "4")  # #1287：宿主按主机配置名额
 SLOT_WAIT_SECONDS = float(os.environ.get("NEGCTL_SLOT_WAIT_SECONDS", "1800"))
+# #2516 fix-r1 (P2-a 1): each ps/pgrep sample is bounded. A hung wrapper (or a
+# ps wedged behind a sandbox) must surface as a probe failure inside the wait
+# loop, not hold the mutation window open for as long as the OS lets it.
+PROBE_TIMEOUT_SECONDS = float(os.environ.get("NEGCTL_PROBE_TIMEOUT_SECONDS", "30"))
 TEST_TIMEOUT = float(os.environ.get("NEGCTL_TEST_TIMEOUT", "600"))
 TERM_GRACE = float(os.environ.get("NEGCTL_TERM_GRACE", "10"))
 SIGNAL_GRACE = float(os.environ.get("NEGCTL_SIGNAL_GRACE", "5"))
@@ -779,10 +783,16 @@ def slots_from_ps() -> tuple[int | None, str]:
     """
     try:
         result = subprocess.run(
-            ["ps", "-Aww", "-o", "pid=,ppid=,args="], capture_output=True
+            ["ps", "-Aww", "-o", "pid=,ppid=,args="], capture_output=True,
+            timeout=PROBE_TIMEOUT_SECONDS,
         )
     except OSError as error:
         return None, f"ps failed: {error}"
+    except subprocess.TimeoutExpired:
+        # #2516 fix-r1 (P2-a 1): a sample that never comes back is a probe
+        # failure, never a count -- reading 0 here would release a mutation
+        # beside a full quota with nobody even looking.
+        return None, f"ps timed out after {PROBE_TIMEOUT_SECONDS}s"
     if result.returncode != 0:
         return None, (
             f"ps exit {result.returncode}: "
@@ -901,9 +911,16 @@ def slots_from_pgrep() -> tuple[int | None, str]:
         alive = False
         for name in names:
             try:
-                result = subprocess.run(["pgrep", "-x", name], capture_output=True)
+                result = subprocess.run(
+                    ["pgrep", "-x", name], capture_output=True,
+                    timeout=PROBE_TIMEOUT_SECONDS,
+                )
             except OSError as error:
                 return None, f"pgrep -x {name} failed: {error}"
+            except subprocess.TimeoutExpired:
+                # #2516 fix-r1 (P2-a 1): same fail-closed reading as the ps
+                # sample above -- a hang is a probe failure, never a zero.
+                return None, f"pgrep -x {name} timed out after {PROBE_TIMEOUT_SECONDS}s"
             stdout = result.stdout.decode("utf-8", "surrogateescape")
             stderr = result.stderr.decode("utf-8", "surrogateescape")
             if re.search(CONTROL_CHARACTERS, stdout) or re.search(CONTROL_CHARACTERS, stderr):
