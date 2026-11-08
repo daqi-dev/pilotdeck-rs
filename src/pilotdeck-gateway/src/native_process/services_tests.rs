@@ -530,7 +530,10 @@ fn note_dedup_keeps_second_entry_inspectable() {
              for readable text, image, PDF, or notebook attachments; Office/archive/binary \
              files need conversion before inspection."
         ),
-        "#2495 the deduped second entry's inspectable must still select the read_file form, got: {note}"
+        // Static message: the negative-control receipt protocol compares the
+        // runtime message byte-for-byte (#2495 fix-r2), so a bound assertion
+        // never interpolates diagnostics into its own identity.
+        "#2495 the deduped second entry's inspectable must still select the read_file form"
     );
 }
 
@@ -592,7 +595,7 @@ fn note_dedup_both_non_inspectable_keeps_conversion_form() {
              directly inspectable with read_file; ask for a supported export or convert \
              them before inspection."
         ),
-        "#2495 two non-inspectable entries must keep the conversion form, got: {note}"
+        "#2495 two non-inspectable entries must keep the conversion form"
     );
 }
 
@@ -691,7 +694,7 @@ fn unregistered_colliding_spelling_counts_for_guidance() {
              for readable text, image, PDF, or notebook attachments; Office/archive/binary \
              files need conversion before inspection."
         ),
-        "#2495 the unregistered colliding entry's inspectable must still select the read_file form, got: {note}"
+        "#2495 the unregistered colliding entry's inspectable must still select the read_file form"
     );
 }
 
@@ -732,7 +735,7 @@ fn unregistered_colliding_spelling_gets_note_line() {
     negative_assert!(
         note.contains(&format!("- e.docx: {via_link}"))
             && note.contains(&format!("- e.docx: {physical}")),
-        "#2495 the unregistered entry naming the registered realpath spelling must get its own note line, got: {note}"
+        "#2495 the unregistered entry naming the registered realpath spelling must get its own note line"
     );
     negative_assert!(
         note.ends_with(
@@ -785,7 +788,7 @@ fn unregistered_non_member_inspectable_does_not_count() {
              directly inspectable with read_file; ask for a supported export or convert \
              them before inspection."
         ),
-        "#2495 a non-member inspectable must not flip the guidance to the read_file form, got: {note}"
+        "#2495 a non-member inspectable must not flip the guidance to the read_file form"
     );
 }
 
@@ -1320,7 +1323,7 @@ fn binary_container_info_diagnostic_gating() {
     negative_assert!(
         note.contains(&format!("- chan.zip: {registered_path}"))
             && !note.contains(upload_path.as_str()),
-        "#1469 only the registered binary container keeps a note line, got: {note}"
+        "#1469 only the registered binary container keeps a note line"
     );
 }
 
@@ -1526,7 +1529,7 @@ fn note_name_cleaning_and_dedupe() {
     );
     negative_assert!(
         note.lines().filter(|line| line.starts_with("- ")).count() == 1,
-        "#1321 duplicate normalized paths must produce exactly one note line, got: {note}"
+        "#1321 duplicate normalized paths must produce exactly one note line"
     );
 }
 

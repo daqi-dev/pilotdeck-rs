@@ -5,10 +5,15 @@ Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
 Every mutation must compile, fail at its bound nonce receipt, and pass again
 after restoration. Source bytes must equal HEAD; no alternate baseline exists.
-The execution table is verified against REGISTERED_MUTATIONS in every mode
-(--check, the default full run, and an explicit subset) before anything
-runs, so a row dropped from `mutations` cannot silently shrink the
-denominator. The four domain rows pin the #2495 boundary the TS probe fixed
+Each bound assertion is a static message: the receipt protocol compares the
+runtime `format!` result byte-for-byte, so an interpolated template never
+matches and the row can only come out NO_RECEIPT (fix-r2 review P1). The
+execution table is verified against the static EXPECTED_NAMES roster with the
+shared `negative_selection.registered` in every mode (--check, the default
+full run, and an explicit subset) before anything runs, so a row dropped from
+`mutations` cannot silently shrink the denominator, and a drift is a
+never-started refusal (exit 2), not a failed control. The four domain rows pin
+the #2495 boundary the TS probe fixed
 (`_tmp/20261026-issue-2495/probe/probe.out`): hasInspectable is a separate
 `attachments.some(...)` over the whole attachment list (never gated by the
 note dedup, counting an unregistered entry whose spelling is a member of
@@ -32,6 +37,7 @@ SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
+from negative_selection import refuse, registered
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -48,14 +54,14 @@ mutations = [
         }
         has_inspectable |= is_read_file_inspectable(entry);''',
      'native_process::services_tests::note_dedup_keeps_second_entry_inspectable',
-     "#2495 the deduped second entry's inspectable must still select the read_file form, got: {note}"),
+     "#2495 the deduped second entry's inspectable must still select the read_file form"),
     # The hasInspectable domain only: unregistered entries stop counting
     # even when their spelling is a member of allowedReadFiles.
     ('inspectable-registered-domain-restored', SERVICES,
      '        has_inspectable |= is_read_file_inspectable(entry);',
      '        has_inspectable |= entry.channel_key && is_read_file_inspectable(entry);',
      'native_process::services_tests::unregistered_colliding_spelling_counts_for_guidance',
-     "#2495 the unregistered colliding entry's inspectable must still select the read_file form, got: {note}"),
+     "#2495 the unregistered colliding entry's inspectable must still select the read_file form"),
     # The hasInspectable membership gate (fix-r1 sibling review P2, the
     # inspectable-side dual of the note-domain row below): the accumulation
     # hoisted above the allowedReadFiles membership test — note lines keep
@@ -71,7 +77,7 @@ mutations = [
             continue;
         }''',
      'native_process::services_tests::unregistered_non_member_inspectable_does_not_count',
-     '#2495 a non-member inspectable must not flip the guidance to the read_file form, got: {note}'),
+     '#2495 a non-member inspectable must not flip the guidance to the read_file form'),
     # The note-line domain: the whole pass restricted to channel-registered
     # entries, so a colliding unregistered spelling loses its line too.
     ('note-domain-registered-only', SERVICES,
@@ -82,7 +88,7 @@ mutations = [
             continue;
         }''',
      'native_process::services_tests::unregistered_colliding_spelling_gets_note_line',
-     '#2495 the unregistered entry naming the registered realpath spelling must get its own note line, got: {note}'),
+     '#2495 the unregistered entry naming the registered realpath spelling must get its own note line'),
     # The membership gate the whole pass hangs on: without it every path
     # attachment gets a line, registered or not (#1469's upload fixture).
     ('membership-gate-dropped', SERVICES,
@@ -93,30 +99,31 @@ mutations = [
             continue;
         }''',
      'native_process::services_tests::binary_container_info_diagnostic_gating',
-     '#1469 only the registered binary container keeps a note line, got: {note}'),
+     '#1469 only the registered binary container keeps a note line'),
     # The conversion direction: the accumulation stuck at true keeps the
     # read_file form even when nothing inspectable is left.
     ('inspectable-always-true', SERVICES,
      '        has_inspectable |= is_read_file_inspectable(entry);',
      '        has_inspectable = true;',
      'native_process::services_tests::note_dedup_both_non_inspectable_keeps_conversion_form',
-     '#2495 two non-inspectable entries must keep the conversion form, got: {note}'),
+     '#2495 two non-inspectable entries must keep the conversion form'),
     # The #1446/#1321 note-line dedup the refactor must not lose.
     ('note-dedup-dropped', SERVICES,
      '        if !seen.insert(lexical.clone()) {',
      '        if false {',
      'native_process::services_tests::note_name_cleaning_and_dedupe',
-     '#1321 duplicate normalized paths must produce exactly one note line, got: {note}'),
+     '#1321 duplicate normalized paths must produce exactly one note line'),
 ]
 
 # fix-r1 (Grok P0): `mutations` is both the registry and the execution table,
 # so a row dropped from the table would silently shrink the denominator —
 # `--check` would print a smaller count and still say OK, and the default
-# full run would judge only the survivors. This independent roster is
-# verified against the table (names, count, uniqueness) in every mode
-# before anything runs; an explicit subset only filters rows out of a table
-# that has already matched the roster.
-REGISTERED_MUTATIONS = frozenset({
+# full run would judge only the survivors. fix-r2 (review P2a): the roster
+# check is the shared `negative_selection.registered` (the EXPECTED_NAMES
+# form the sibling fixtures use) instead of a local frozenset compare —
+# ordered, so a reordered row is also a drift, and a refusal is exit 2
+# ("never started"), never a traceback that reads as a failed control.
+EXPECTED_NAMES = (
     'dedup-gating-restored',
     'inspectable-registered-domain-restored',
     'inspectable-membership-gate-dropped',
@@ -124,20 +131,14 @@ REGISTERED_MUTATIONS = frozenset({
     'membership-gate-dropped',
     'inspectable-always-true',
     'note-dedup-dropped',
-})
+)
 
 
 def check_roster():
-    names = [row[0] for row in mutations]
-    if len(names) != len(set(names)):
-        raise RuntimeError('#2495 repeated mutation name in the execution table')
-    if set(names) != REGISTERED_MUTATIONS:
-        missing = sorted(REGISTERED_MUTATIONS - set(names))
-        unexpected = sorted(set(names) - REGISTERED_MUTATIONS)
-        raise RuntimeError(
-            '#2495 execution table does not match the registered roster '
-            f'({len(REGISTERED_MUTATIONS)} rows); missing: {missing}; '
-            f'unexpected: {unexpected}')
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
 
 
 def test_body(test, texts=None):
@@ -177,8 +178,9 @@ def main():
     if stale:
         raise SystemExit('#2495 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:
-        print(f'#2495 {len(mutations)}/{len(REGISTERED_MUTATIONS)} registered mutations '
-              f'present; {len(mutations)} unique anchors and assertion bindings: OK')
+        print(f'#2495 {len(mutations)} registered mutations present '
+              f'(EXPECTED_NAMES roster matched); {len(mutations)} unique anchors '
+              f'and assertion bindings: OK')
         return 0
     selected = [row for row in mutations if not args.selected or row[0] in args.selected]
     if not selected or (args.selected and len(selected) != len(args.selected)):
