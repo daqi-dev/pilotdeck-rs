@@ -1339,7 +1339,9 @@ pub struct HttpHookExecutor {
     /// value; production keeps the TS value.
     timeout: Duration,
     body_limit: usize,
+    native_output_limit: bool,
 }
+const NATIVE_HTTP_OUTPUT_LIMIT: &str = "Native HTTP hook output exceeded the 8 MiB budget.";
 /// The TS CLI replaces fetch's global dispatcher at startup
 /// (`cli/pilotdeck.ts:28` → `cli/proxy.ts:108-111,149-160`):
 /// `new undici.Agent({ headersTimeout, bodyTimeout:
@@ -1379,11 +1381,14 @@ impl HttpHookExecutor {
             crate::runtime::model::http::ProxyConfig::from_settings_lookup(settings, |key| {
                 env.get(key).cloned()
             });
-        Self::with_config_and_proxy(
+        let mut executor = Self::with_config_and_proxy(
             crate::runtime::model::http::webpki_client_config(),
             HOOK_CONNECT_TIMEOUT,
             proxy,
-        )
+        );
+        executor.body_limit = 8 * 1024 * 1024;
+        executor.native_output_limit = true;
+        executor
     }
     fn with_config(config: rustls::ClientConfig) -> Self {
         Self::with_config_timeout(config, HOOK_CONNECT_TIMEOUT)
@@ -1412,6 +1417,7 @@ impl HttpHookExecutor {
             client,
             timeout: HTTP_TIMEOUT,
             body_limit: crate::fetch_redirect::MAX_STRING_LENGTH,
+            native_output_limit: false,
         }
     }
     /// Test hook: a smaller response-body byte limit than Node's
@@ -1427,6 +1433,13 @@ impl HttpHookExecutor {
     pub async fn execute(&self, options: HttpHookOptions) -> ExecutionResult {
         match self.execute_inner(options).await {
             Ok(result) => result,
+            Err(message)
+                if self.native_output_limit && message.equals_str(NATIVE_HTTP_OUTPUT_LIMIT) =>
+            {
+                let mut result = ExecutionResult::failure(message, false);
+                result.outcome = HookOutcome::NativeOutputLimit;
+                result
+            }
             Err(message) => ExecutionResult::failure(message, false),
         }
     }
@@ -1577,7 +1590,11 @@ impl HttpHookExecutor {
         .await
         .map_err(|error| match error {
             crate::fetch_redirect::BodyError::TooLong => {
-                JsString::from(crate::fetch_redirect::STRING_TOO_LONG)
+                JsString::from(if self.native_output_limit {
+                    NATIVE_HTTP_OUTPUT_LIMIT
+                } else {
+                    crate::fetch_redirect::STRING_TOO_LONG
+                })
             }
             crate::fetch_redirect::BodyError::Terminated => JsString::from("terminated"),
             crate::fetch_redirect::BodyError::Aborted => {

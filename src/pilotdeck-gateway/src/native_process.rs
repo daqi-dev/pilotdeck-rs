@@ -11,6 +11,7 @@ use std::{
 mod agent;
 mod agent_mcp;
 mod assembly;
+mod deployment;
 #[cfg(unix)]
 mod background;
 #[cfg(unix)]
@@ -48,6 +49,7 @@ mod management_tests;
 mod mcp_status_tests;
 mod requests;
 mod services;
+mod session_events;
 mod session_overrides;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
 #[cfg(test)]

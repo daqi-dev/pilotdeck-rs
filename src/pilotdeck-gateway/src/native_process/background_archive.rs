@@ -125,13 +125,19 @@ impl NativeArchive {
         let records = match open_file(&root, "state.json", OFlags::RDONLY) {
             Ok(file) => {
                 if file.metadata()?.len() > SNAPSHOT_BYTES as u64 {
-                    return Err(invalid("Native background snapshot exceeds 32 MiB."));
+                    return Err(invalid(format!(
+                        "Native background snapshot exceeds {} MiB.",
+                        SNAPSHOT_BYTES / (1024 * 1024)
+                    )));
                 }
                 let mut bytes = Vec::new();
                 file.take(SNAPSHOT_BYTES as u64 + 1)
                     .read_to_end(&mut bytes)?;
                 if bytes.len() > SNAPSHOT_BYTES {
-                    return Err(invalid("Native background snapshot grew beyond 32 MiB."));
+                    return Err(invalid(format!(
+                        "Native background snapshot grew beyond {} MiB.",
+                        SNAPSHOT_BYTES / (1024 * 1024)
+                    )));
                 }
                 decode_records(
                     std::str::from_utf8(&bytes)
@@ -222,9 +228,10 @@ impl NativeArchive {
             state.records[index] = record;
         } else {
             if state.records.len() >= NativeTaskLimits::CLI.retained_tasks {
-                return Err(invalid(
-                    "Native background archive retained-task limit (256) reached; old records were kept.",
-                ));
+                return Err(invalid(format!(
+                    "Native background archive retained-task limit ({}) reached; old records were kept.",
+                    NativeTaskLimits::CLI.retained_tasks
+                )));
             }
             record.owner = Some(Owner {
                 token: Arc::downgrade(&handle.token),
@@ -300,7 +307,10 @@ impl NativeArchive {
     fn replace(&self, bytes: &[u8]) -> io::Result<()> {
         self.verify_owner_file()?;
         if bytes.len() > SNAPSHOT_BYTES {
-            return Err(invalid("Native background snapshot exceeds 32 MiB."));
+            return Err(invalid(format!(
+                "Native background snapshot exceeds {} MiB.",
+                SNAPSHOT_BYTES / (1024 * 1024)
+            )));
         }
         let temporary = format!("state.{}.tmp", uuid::Uuid::new_v4());
         let result = (|| {
@@ -502,14 +512,20 @@ impl NativeOutputStorage for ArchiveHandle {
         expected_bytes: u64,
     ) -> io::Result<Option<NativeOutputFile>> {
         if expected_bytes > NativeTaskLimits::CLI.output_bytes as u64 {
-            return Err(invalid("Native task output exceeds its 16 MiB limit."));
+            return Err(invalid(format!(
+                "Native task output exceeds its {} MiB limit.",
+                NativeTaskLimits::CLI.output_bytes / (1024 * 1024)
+            )));
         }
         let id = id_text(task_id)?;
         let name = format!("{id}.log");
         match open_file(&self.archive.output, &name, OFlags::RDONLY) {
             Ok(file) => {
                 if file.metadata()?.len() > NativeTaskLimits::CLI.output_bytes as u64 {
-                    return Err(invalid("Native output file exceeds 16 MiB."));
+                    return Err(invalid(format!(
+                        "Native output file exceeds {} MiB.",
+                        NativeTaskLimits::CLI.output_bytes / (1024 * 1024)
+                    )));
                 }
                 let link_check = output_link_check(&self.archive.output, &name, &file)?;
                 Ok(Some(NativeOutputFile {
@@ -575,7 +591,10 @@ fn validate_record(record: &Record) -> io::Result<()> {
         .validate_spec(&spec)
         .map_err(|error| invalid(error.message.to_utf8().unwrap_or_default()))?;
     if snapshot.output.total_bytes > NativeTaskLimits::CLI.output_bytes as u64 {
-        return Err(invalid("Native task output exceeds 16 MiB."));
+        return Err(invalid(format!(
+            "Native task output exceeds {} MiB.",
+            NativeTaskLimits::CLI.output_bytes / (1024 * 1024)
+        )));
     }
     Ok(())
 }
@@ -633,9 +652,10 @@ fn decode_records(raw: &str, path: &Path) -> io::Result<Vec<Record>> {
         _ => return Err(invalid("Native background snapshot needs a tasks array.")),
     };
     if tasks.len() > NativeTaskLimits::CLI.retained_tasks {
-        return Err(invalid(
-            "Native snapshot exceeds its retained-task limit (256); old records were kept.",
-        ));
+        return Err(invalid(format!(
+            "Native snapshot exceeds its retained-task limit ({}); old records were kept.",
+            NativeTaskLimits::CLI.retained_tasks
+        )));
     }
     let mut identities = Vec::new();
     let mut failures = Vec::new();
@@ -757,7 +777,10 @@ fn encode_records(records: &[Record]) -> io::Result<Vec<u8>> {
         .ok_or_else(|| invalid("Snapshot encoder returned undefined."))?
         .into_bytes();
     if encoded.len() > SNAPSHOT_BYTES {
-        return Err(invalid("Native snapshot exceeds 32 MiB."));
+        return Err(invalid(format!(
+            "Native snapshot exceeds {} MiB.",
+            SNAPSHOT_BYTES / (1024 * 1024)
+        )));
     }
     Ok(encoded)
 }

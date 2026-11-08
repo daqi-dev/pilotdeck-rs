@@ -1896,13 +1896,14 @@ pub struct NativeSettings {
 /// native session flag store. Output-style-only reload is a separate delegate.
 #[cfg(test)]
 pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
-    native_settings_with_writer(options, None, None, None)
+    native_settings_with_writer(options, None, None, None, None)
 }
 fn native_settings_with_writer(
     options: NativeSettingsOptions,
     writer: Option<Arc<dyn crate::runtime::settings::LocalSettingsWriter>>,
     flags: Option<Arc<super::SessionOverrides>>,
     styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
+    sdk: Option<Arc<dyn crate::runtime::refresh::SdkConfigChange>>,
 ) -> NativeSettings {
     let NativeSettingsOptions {
         owner,
@@ -1919,7 +1920,7 @@ fn native_settings_with_writer(
         router: Arc::new(move || Some(router.clone())),
         project_root,
         memory_diagnostics: None,
-        sdk: None,
+        sdk,
         log,
     }));
     // `runtimeRefresh.attach()` (createLocalGateway.ts:831): without the
@@ -1981,8 +1982,20 @@ pub fn native_settings_for_process_with_flags(
     env: &crate::config::Env,
     flags: Option<Arc<super::SessionOverrides>>,
 ) -> std::io::Result<NativeSettings> {
-    native_settings_for_process_with_styles(owner, project, home, served_project, env, flags, None)
+    native_settings_for_process_with_styles(
+        owner,
+        project,
+        home,
+        served_project,
+        env,
+        flags,
+        (None, None),
+    )
 }
+type NativeRefreshContributions = (
+    Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
+    Option<Arc<dyn crate::runtime::refresh::SdkConfigChange>>,
+);
 pub(crate) fn native_settings_for_process_with_styles(
     owner: SessionOwner,
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
@@ -1990,8 +2003,9 @@ pub(crate) fn native_settings_for_process_with_styles(
     served_project: &std::path::Path,
     env: &crate::config::Env,
     flags: Option<Arc<super::SessionOverrides>>,
-    styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
+    contributions: NativeRefreshContributions,
 ) -> std::io::Result<NativeSettings> {
+    let (styles, sdk) = contributions;
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
     // against the served project, `--home` only as the fallback homedir for
@@ -2035,6 +2049,7 @@ pub(crate) fn native_settings_for_process_with_styles(
         writer,
         flags,
         styles,
+        sdk,
     ))
 }
 

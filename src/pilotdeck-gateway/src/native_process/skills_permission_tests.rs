@@ -29,6 +29,7 @@ async fn native_skill_ask_grant_is_single_use_and_deny_cannot_read_the_catalog()
             Some(TurnInteractionAuthority {
                 permission_mode: None,
                 base_permission_mode: None,
+                sdk_hooks: None,
                 sdk_permission_mode: None,
                 can_prompt: Some(true),
                 policy_can_prompt: None,

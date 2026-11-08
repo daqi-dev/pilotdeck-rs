@@ -67,7 +67,7 @@ impl RuntimeError {
     pub fn js_error(&self) -> Option<&RuntimeJsError> {
         self.js_error.as_deref()
     }
-    fn aggregate(message: &str, mut failures: Vec<Self>) -> RuntimeResult {
+    pub(crate) fn aggregate(message: &str, mut failures: Vec<Self>) -> RuntimeResult {
         match failures.len() {
             0 => Ok(()),
             1 => Err(failures.remove(0)),

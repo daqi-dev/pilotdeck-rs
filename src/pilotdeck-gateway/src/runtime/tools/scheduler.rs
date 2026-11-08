@@ -786,6 +786,85 @@ impl ToolRuntime {
                     string(provider.temporary_root().to_string_lossy().as_ref()),
                 );
             }
+            // FileChanged observes the actual didSave notification from the write
+            // body, not a path inferred from a tool name or response.
+            if let Some(hooks) = self.turn_hooks.get().cloned() {
+                use super::builtin::{FileUpdateNotice, FileUpdateNotifier};
+                use crate::host::modules::lifecycle::LifecyclePort;
+                let previous = execution.host.file_update_notifier.as_ref();
+                if previous.is_some_and(|port| port.downcast_ref::<FileUpdateNotifier>().is_none())
+                {
+                    return fail(
+                        &name,
+                        ToolError::new(
+                            "unsupported_tool",
+                            "Unknown file update notifier cannot be safely composed.",
+                        ),
+                    );
+                }
+                let upstream = previous
+                    .and_then(|port| port.downcast_ref::<FileUpdateNotifier>())
+                    .map(|port| port.0.clone());
+                let fields = context.fields.clone();
+                let callback: Arc<dyn Fn(FileUpdateNotice) -> HostFuture<()> + Send + Sync> =
+                    Arc::new(move |notice| {
+                        let upstream = upstream.clone();
+                        let hooks = hooks.clone();
+                        let fields = fields.clone();
+                        Box::pin(async move {
+                            if let Some(upstream) = upstream {
+                                let _ = upstream(notice.clone()).await;
+                            }
+                            let cwd = fields
+                                .get("cwd")
+                                .and_then(JsValue::as_string)
+                                .cloned()
+                                .unwrap_or_default();
+                            let input = crate::runtime::hooks::LifecycleDispatchInput {
+                                event: "FileChanged".into(),
+                                base_input: object([
+                                    (
+                                        "sessionId",
+                                        fields
+                                            .get("sessionId")
+                                            .cloned()
+                                            .unwrap_or(JsValue::Undefined),
+                                    ),
+                                    ("transcriptPath", "".into()),
+                                    ("cwd", JsValue::String(cwd.clone())),
+                                    (
+                                        "permissionMode",
+                                        fields
+                                            .get("permissionMode")
+                                            .cloned()
+                                            .unwrap_or(JsValue::Undefined),
+                                    ),
+                                ]),
+                                payload: Some(object([
+                                    ("absolutePath", JsValue::String(notice.absolute.clone())),
+                                    ("relativePath", JsValue::String(notice.relative)),
+                                    (
+                                        "changeKind",
+                                        if notice.created {
+                                            "create".into()
+                                        } else {
+                                            "update".into()
+                                        },
+                                    ),
+                                ])),
+                                match_query: Some(notice.absolute),
+                                cwd,
+                                env: fields.get("env").and_then(JsValue::as_object).cloned(),
+                                signal: None,
+                            };
+                            let _ = hooks.dispatch(input).await;
+                            Ok(())
+                        })
+                    });
+                let mut host = (*execution.host).clone();
+                host.file_update_notifier = Some(Arc::new(FileUpdateNotifier(callback)));
+                execution.host = Arc::new(host);
+            }
             let track_progress =
                 !name.equals_str("todo_write") && !truthy(&tool.is_read_only(&input)?);
             match tool.execute(input.clone(), execution).await {

@@ -68,7 +68,7 @@ pub enum Deployment {
 pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
     let transport = env
         .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
-        .map(|value| value.trim().to_lowercase())
+        .map(|value| crate::metadata::js_trim(value).to_lowercase())
         .unwrap_or_default();
     match transport.as_str() {
         "" | "native" => Ok(Deployment::Native),
@@ -96,8 +96,7 @@ pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
             let sidecar_path = match env
                 .get("PILOTDECK_AGENT_LOOP_SIDECAR_PATH")
                 .map(String::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+                .filter(|value| !crate::metadata::js_trim(value).is_empty())
             {
                 Some(value) => crate::metadata::resolve(cwd, value),
                 // TS resolves `new URL("./pilotdeck-agent-loop-sidecar.js",
@@ -126,7 +125,7 @@ pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
 }
 
 fn required_text(value: Option<&str>, default: &str, name: &str) -> Result<String, String> {
-    let value = value.unwrap_or(default).trim();
+    let value = crate::metadata::js_trim(value.unwrap_or(default));
     if value.is_empty() {
         return Err(format!("{name} must not be empty."));
     }
@@ -148,7 +147,7 @@ fn js_integral_number(value: &str) -> Option<f64> {
 }
 
 fn required_port(value: Option<&str>) -> Result<u16, String> {
-    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+    let Some(value) = value.filter(|value| !crate::metadata::js_trim(value).is_empty()) else {
         return Err("PILOTDECK_AGENT_LOOP_TCP_PORT is required when transport is tcp.".into());
     };
     match js_integral_number(value) {
@@ -158,7 +157,7 @@ fn required_port(value: Option<&str>) -> Result<u16, String> {
 }
 
 fn optional_positive_integer(value: Option<&str>) -> Result<Option<u64>, String> {
-    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+    let Some(value) = value.filter(|value| !crate::metadata::js_trim(value).is_empty()) else {
         return Ok(None);
     };
     match js_integral_number(value) {

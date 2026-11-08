@@ -3371,10 +3371,9 @@ async fn real_native_model_selection_matches_fixed_ts_bundle_matrix() {
             ),
         )),
     };
-    let oracle: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/native-model-selection/oracle.json"
-    )))
+    let oracle: serde_json::Value = serde_json::from_str(include_str!(
+        "../../tests/fixtures/native-model-selection/oracle.json"
+    ))
     .unwrap();
     for row in oracle["rows"].as_array().unwrap() {
         let mut input = row["input"].clone();

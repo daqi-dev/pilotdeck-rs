@@ -62,6 +62,7 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    session_emit: Option<super::session_events::SessionEmit>,
     forks: Option<Arc<super::agent::NativeForkRegistry>>,
     fork_owner: Option<Arc<super::agent::NativeForkOwner>>,
     fork_scope: Option<Arc<super::agent::ForkScope>>,
@@ -119,6 +120,7 @@ impl SessionTools {
             binding.projection.clone(),
         );
         Ok(Self {
+            session_emit: None,
             forks: None,
             fork_owner: None,
             fork_scope: None,
@@ -150,6 +152,11 @@ impl SessionTools {
 
     pub(super) fn with_plan_files(mut self, files: Arc<super::plan_todo::NativePlanFiles>) -> Self {
         self.plan_files = Some(files);
+        self
+    }
+
+    pub(super) fn with_session_emitter(mut self, emit: super::session_events::SessionEmit) -> Self {
+        self.session_emit = Some(emit);
         self
     }
 
@@ -397,6 +404,9 @@ impl SessionTools {
             )
         });
         if let Some(turn) = &fork_turn {
+            if let Some(emit) = &self.session_emit {
+                turn.bind_session_emitter(emit.clone());
+            }
             turn.register(&tools);
         }
         let execution = ToolRuntime::new(
@@ -436,9 +446,30 @@ impl SessionTools {
             environment: Arc::new(NativeTurnEnvironment(self.env.clone())),
         };
         let question_profile = Arc::new(std::sync::OnceLock::new());
+        let sdk_state = authority
+            .as_ref()
+            .and_then(|authority| authority.sdk_hooks.clone());
+        let on_requested = sdk_state.as_ref().map(|sdk| {
+            let handlers = sdk.handlers.clone();
+            let session = identity.session_id.clone();
+            Arc::new(move |payload: JsObject| {
+                let handler = handlers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .session_hook_handler(&session)
+                    .cloned();
+                if let Some(handler) = handler {
+                    handler(
+                        crate::runtime::sdk_session::PilotDeckHookEvent::Elicitation,
+                        &JsValue::Object(payload),
+                    );
+                }
+            }) as super::elicitation::RequestedObserver
+        });
         let elicitation = super::elicitation::Elicitation {
             profile: question_profile.clone(),
             coordinator: self.interactions.clone(),
+            on_requested,
             session: identity.session_id.clone(),
             can_prompt: turn_context.can_prompt,
             emit: permission_emit.clone(),
@@ -468,7 +499,71 @@ impl SessionTools {
                 serial: self.plan_serial.clone(),
             })
         });
+        let sdk_file_slot = sdk_state
+            .as_ref()
+            .filter(|sdk| {
+                sdk.settings.iter().any(|(event, matchers)| {
+                    event.equals_str("FileChanged") && !matchers.is_empty()
+                })
+            })
+            .map(|_| {
+                Arc::new(std::sync::OnceLock::<(
+                    Arc<crate::runtime::hooks::LifecycleRuntime>,
+                    Cancellation,
+                )>::new())
+            });
+        let sdk_file_notifier = sdk_file_slot.as_ref().map(|slot| {
+            let slot = slot.clone();
+            let session = identity.session_id.clone();
+            let cwd: JsString = self.options.project.to_string_lossy().as_ref().into();
+            let callback: Arc<
+                dyn Fn(
+                        crate::runtime::tools::builtin::FileUpdateNotice,
+                    ) -> crate::host::HostFuture<()>
+                    + Send
+                    + Sync,
+            > = Arc::new(move |notice| {
+                let slot = slot.clone();
+                let session = session.clone();
+                let cwd = cwd.clone();
+                Box::pin(async move {
+                    let (runtime, signal) = slot.get().ok_or_else(|| {
+                        crate::host::ModuleError::new("SDK FileChanged owner is unavailable.")
+                    })?;
+                    let input = crate::runtime::hooks::LifecycleDispatchInput {
+                        event: "FileChanged".into(),
+                        base_input: value([
+                            ("sessionId", JsValue::String(session)),
+                            ("transcriptPath", "".into()),
+                            ("cwd", JsValue::String(cwd.clone())),
+                        ]),
+                        payload: Some(value([
+                            ("filePath", JsValue::String(notice.relative.clone())),
+                            ("absolutePath", JsValue::String(notice.absolute)),
+                            ("root", JsValue::String(notice.root)),
+                            (
+                                "changeType",
+                                if notice.created {
+                                    "created".into()
+                                } else {
+                                    "updated".into()
+                                },
+                            ),
+                        ])),
+                        match_query: Some(notice.relative),
+                        cwd,
+                        env: None,
+                        signal: Some(signal.clone()),
+                    };
+                    let _ = runtime.dispatch(input).await;
+                    Ok(())
+                })
+            });
+            Arc::new(crate::runtime::tools::builtin::FileUpdateNotifier(callback))
+                as capability::RuntimeContext
+        });
         let tool_ports = ToolContextPorts {
+            file_update_notifier: sdk_file_notifier,
             subagent: fork_turn.as_ref().map(|turn| {
                 Arc::new(super::agent::ForkPort(turn.clone())) as Arc<dyn OneShotSubagent>
             }),
@@ -512,6 +607,58 @@ impl SessionTools {
             turn: identity.turn_id.clone(),
         };
         let message_sink = sink.clone();
+        let mut turn_hooks = self.plugin_hooks.clone();
+        if let Some(sdk) = &sdk_state {
+            for (event, matchers) in &sdk.settings {
+                if event.equals_str("ConfigChange") || event.equals_str("FileChanged") {
+                    continue;
+                }
+                if let Some((_, existing)) = turn_hooks.iter_mut().find(|(name, _)| name == event) {
+                    existing.extend(matchers.iter().cloned());
+                } else {
+                    turn_hooks.push((event.clone(), matchers.clone()));
+                }
+            }
+        }
+        // One budget per submit, shared by turn and session projections.
+        let projection_budget = Arc::new(super::assembly::sdk_hooks::HookProjectionBudget::default());
+        let hook_options = crate::runtime::hooks::HookRuntimeOptions {
+                    on_projection: Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
+                        session: identity.session_id.clone(),
+                        sdk: sdk_state.as_ref().is_some_and(|sdk| sdk.include_events),
+                        emit: permission_emit.clone(),
+                        error_emit: permission_emit.clone(),
+                        signal: signal.clone(),
+                        budget: projection_budget.clone(),
+                    })),
+                    on_async_registered: sdk_state.as_ref().filter(|sdk| sdk.active).map(|sdk| Arc::new(super::assembly::sdk_hooks::NativeAsyncRegistration { session: identity.session_id.clone(), include_events: sdk.include_events, registry: sdk.async_registry.clone() }) as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>),
+
+                    #[cfg(unix)]
+                    shell: self.native_sandbox.as_ref().map(|sandbox| {
+                        Arc::new(crate::runtime::hooks::exec::SandboxedHookShell {
+                            sandbox: sandbox.clone(),
+                            workspace: self.options.project.to_string_lossy().as_ref().into(),
+                        })
+                            as Arc<dyn crate::runtime::hooks::exec::ShellPort>
+                    }),
+                    http: Some(
+                        crate::runtime::hooks::exec::HttpHookExecutor::with_native_proxy(
+                            self.hook_proxy.as_ref(),
+                            &self.hook_env,
+                        ),
+                    ),
+                    ..Default::default()
+        };
+
+        let mut session_hook_options = hook_options.clone();
+        session_hook_options.on_projection = Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
+            session: identity.session_id.clone(),
+            sdk: sdk_state.as_ref().is_some_and(|sdk| sdk.include_events),
+            emit: self.session_emit.clone().unwrap_or_else(|| permission_emit.clone()),
+            error_emit: permission_emit.clone(),
+            signal: signal.clone(),
+            budget: projection_budget,
+        }));
         SessionPorts {
             model: RouterModelPortOptions {
                 is_main_agent: self.fork_scope.is_none(),
@@ -551,27 +698,14 @@ impl SessionTools {
                     context: turn_context,
                     rules: self.permission_rules.clone(),
                     coordinator: self.interactions.clone(),
-                    emit: permission_emit,
+                    emit: permission_emit.clone(),
                     timeout: Duration::from_secs(30),
                 },
-                hooks: self.plugin_hooks.clone(),
-                hook_options: Some(crate::runtime::hooks::HookRuntimeOptions {
-                    #[cfg(unix)]
-                    shell: self.native_sandbox.as_ref().map(|sandbox| {
-                        Arc::new(crate::runtime::hooks::exec::SandboxedHookShell {
-                            sandbox: sandbox.clone(),
-                            workspace: self.options.project.to_string_lossy().as_ref().into(),
-                        })
-                            as Arc<dyn crate::runtime::hooks::exec::ShellPort>
-                    }),
-                    http: Some(
-                        crate::runtime::hooks::exec::HttpHookExecutor::with_native_proxy(
-                            self.hook_proxy.as_ref(),
-                            &self.hook_env,
-                        ),
-                    ),
-                    ..Default::default()
-                }),
+                hooks: turn_hooks,
+                sdk_hook_state: sdk_state.clone(),
+                sdk_file_slot,
+                hook_options: Some(hook_options),
+                session_hook_options: Some(session_hook_options),
                 contribution: None,
                 base_env: Some(self.env.clone()),
                 signal,

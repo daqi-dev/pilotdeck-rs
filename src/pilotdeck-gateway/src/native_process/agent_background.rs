@@ -12,6 +12,15 @@ pub(crate) struct NativeForkOwner {
     releasing: Mutex<bool>,
     completion: watch::Sender<Option<RuntimeResult>>,
     executor: tokio::runtime::Handle,
+    tasks: Mutex<
+        Vec<(
+            crate::runtime::background::BackgroundSubagentRuntime,
+            JsString,
+        )>,
+    >,
+    drain_started: Mutex<bool>,
+    drain_done: watch::Sender<Option<RuntimeResult>>,
+    cleanup_errors: Mutex<Vec<String>>,
 }
 impl NativeForkOwner {
     pub(in crate::native_process) fn new(lease: RuntimeLease) -> Arc<Self> {
@@ -21,6 +30,10 @@ impl NativeForkOwner {
             releasing: Mutex::new(false),
             completion: watch::channel(None).0,
             executor: tokio::runtime::Handle::current(),
+            tasks: Mutex::default(),
+            drain_started: Mutex::new(false),
+            drain_done: watch::channel(None).0,
+            cleanup_errors: Mutex::default(),
         })
     }
     pub(in crate::native_process) fn generation(&self) -> Option<Arc<RuntimeLease>> {
@@ -34,8 +47,75 @@ impl NativeForkOwner {
     pub(in crate::native_process) fn is_open(&self) -> bool {
         !self.closed.load(Ordering::SeqCst)
     }
+    fn start(
+        &self,
+        runtime: crate::runtime::background::BackgroundSubagentRuntime,
+        input: crate::runtime::background::StartBackgroundSubagentInput,
+    ) -> Result<crate::runtime::background::BackgroundSubagentTask, ToolError> {
+        let mut tasks = lock(&self.tasks);
+        if !self.is_open() {
+            return Err(ToolError::aborted());
+        }
+        if tasks.len() >= 256 {
+            return Err(error(
+                "Native session background task record budget is full.",
+            ));
+        }
+        let task = runtime.start(input);
+        tasks.push((runtime, task.task_id.clone()));
+        Ok(task)
+    }
     pub(in crate::native_process) fn close_admission(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        let tasks = lock(&self.tasks).clone();
+        // Cancel all before waiting; one noncooperative child cannot prevent
+        // cancellation from reaching its independent siblings.
+        for (runtime, id) in tasks {
+            if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.stop(&id))).is_err()
+            {
+                lock(&self.cleanup_errors).push("Background cancellation panicked.".into());
+            }
+        }
+    }
+    pub(in crate::native_process) fn drain(self: Arc<Self>) -> BoxFuture<RuntimeResult> {
+        self.close_admission();
+        let mut done = self.drain_done.subscribe();
+        let first = {
+            let mut started = lock(&self.drain_started);
+            let first = !*started;
+            *started = true;
+            first
+        };
+        if first {
+            let owner = self.clone();
+            crate::runtime::cleanup_task::spawn_with_error(
+                &self.executor,
+                self.drain_done.clone(),
+                RuntimeError::new("Native background drain was dropped or panicked."),
+                async move {
+                    let tasks = lock(&owner.tasks).clone();
+                    for (runtime, id) in tasks {
+                        runtime.stop_and_wait(&id).await;
+                    }
+                    let failures = lock(&owner.cleanup_errors).clone();
+                    if failures.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(RuntimeError::new(failures.join("; ")))
+                    }
+                },
+            );
+        }
+        Box::pin(async move {
+            loop {
+                if let Some(result) = done.borrow_and_update().clone() {
+                    return result;
+                }
+                done.changed()
+                    .await
+                    .map_err(|_| RuntimeError::new("Native background drain completion lost."))?;
+            }
+        })
     }
     pub(in crate::native_process) fn release_generation(
         self: Arc<Self>,
@@ -55,8 +135,9 @@ impl NativeForkOwner {
                 self.completion.clone(),
                 RuntimeError::new("Native fork generation release was dropped or panicked."),
                 async move {
+                    let drained = owner.clone().drain().await;
                     let generation = lock(&owner.generation).take();
-                    match generation {
+                    let released = match generation {
                         Some(generation) => match Arc::try_unwrap(generation) {
                             Ok(mut lease) => lease.release().await,
                             Err(mut generation) => loop {
@@ -71,7 +152,12 @@ impl NativeForkOwner {
                             },
                         },
                         None => Ok(()),
-                    }
+                    };
+                    let errors = drained.err().into_iter().chain(released.err()).collect();
+                    RuntimeError::aggregate(
+                        "Failed to drain native child work and release its generation.",
+                        errors,
+                    )
                 },
             );
         }
@@ -128,6 +214,432 @@ mod tests {
             .unwrap();
         assert_eq!(old.state(), RuntimeState::Disposed);
         drop(current);
+        registry.dispose().await.unwrap();
+    }
+}
+
+struct BackgroundRecordReservation {
+    registry: Arc<NativeForkRegistry>,
+    committed: bool,
+}
+impl BackgroundRecordReservation {
+    #[allow(deprecated)] // fetch_update supports the workspace MSRV (1.93).
+    fn reserve(registry: Arc<NativeForkRegistry>) -> Result<Self, ToolError> {
+        registry
+            .background_records
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                (count < 4096).then_some(count + 1)
+            })
+            .map_err(|_| error("Native background task record budget is full."))?;
+        Ok(Self {
+            registry,
+            committed: false,
+        })
+    }
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+impl Drop for BackgroundRecordReservation {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.registry
+                .background_records
+                .fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+}
+
+struct BackgroundRunGuard {
+    owner: Arc<NativeForkOwner>,
+    finished: bool,
+}
+impl Drop for BackgroundRunGuard {
+    fn drop(&mut self) {
+        if !self.finished {
+            lock(&self.owner.cleanup_errors)
+                .push("Native background fork stopped before joining child cleanup.".into());
+        }
+    }
+}
+impl ForkApi {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn launch_background(
+        self: &Arc<Self>,
+        factory: Arc<ProjectSessionFactory>,
+        permit: tokio::sync::OwnedSemaphorePermit,
+        definition: String,
+        spec: JsObject,
+        description: JsString,
+        directive: JsString,
+        parent_mode: JsString,
+        parent_ask: bool,
+        depth: f64,
+        max: f64,
+        context: ToolRunContext,
+    ) -> Result<ToolOutput, ToolError> {
+        use crate::runtime::{
+            background::{BackgroundExecutionWorld, StartBackgroundSubagentInput},
+            project::{ProjectResources, Resource},
+            tools::ToolCancellation,
+        };
+        let owner = self
+            .turn
+            .owner
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .ok_or_else(|| error("Native background session owner is unavailable."))?;
+        let generation = self
+            .turn
+            .generation
+            .get()
+            .cloned()
+            .ok_or_else(|| error("Native background creation turn is not bound."))?;
+        let resource = generation
+            .runtime()
+            .resources()
+            .get::<ProjectResources>()
+            .ok_or_else(|| error("Native background project resources are missing."))?
+            .context()
+            .resource(Resource::ExecutionWorld)
+            .ok_or_else(|| error("Native background execution world is missing."))?;
+        let runtime = resource
+            .as_any()
+            .downcast_ref::<BackgroundExecutionWorld>()
+            .ok_or_else(|| error("Native background execution world has the wrong type."))?
+            .resources
+            .subagents
+            .clone();
+        let id: JsString = uuid::Uuid::new_v4().to_string().into();
+        let output_id = id.clone();
+        let output_definition = definition.clone();
+        let output_description = description.clone();
+        // Preserve the creating turn's policy. A stale/missing publisher
+        // cannot grant: the existing permission emitter rejects delivery.
+        let mut authority = self.turn.authority.clone();
+        if let Some(authority) = &mut authority {
+            authority.emit = self
+                .turn
+                .session_emit
+                .get()
+                .cloned()
+                .unwrap_or_else(|| Arc::new(|_| false));
+        }
+        // Capture immutable file-state seeds before returning task admission.
+        let read = Arc::new(Mutex::new(lock(&self.read).clone()));
+        let write = Arc::new(Mutex::new(lock(&self.write).clone()));
+        let mut detached = ForkTurn::new(
+            self.turn.registry.clone(),
+            self.turn.parent.clone(),
+            self.turn.config.clone(),
+            self.turn.recorder.clone(),
+            self.turn.rules.clone(),
+            authority,
+            None,
+            self.turn.tools.clone(),
+            self.turn.skills.clone(),
+            Some(&owner),
+            #[cfg(unix)]
+            self.turn.sandbox.clone(),
+        );
+        if let Some(emit) = self.turn.session_emit.get() {
+            detached.bind_session_emitter(emit.clone());
+        }
+        Arc::get_mut(&mut detached)
+            .expect("new detached turn has one owner")
+            .detached = true;
+        detached
+            .bind_generation(generation)
+            .map_err(|failure| error(failure.to_string()))?;
+        let api = Arc::new(ForkApi {
+            turn: detached.clone(),
+            read: read.clone(),
+            write: write.clone(),
+        });
+        let timeout = context
+            .fields
+            .get("subagentTimeoutMs")
+            .and_then(JsValue::as_number)
+            .unwrap_or(3_600_000.0);
+        let deadline = tokio::time::Instant::now()
+            + crate::runtime::tools::builtin::bash::runner::timer_delay(timeout);
+        let fields = context.fields.clone();
+        let observer_owner = owner.clone();
+        let record = BackgroundRecordReservation::reserve(self.turn.registry.clone())?;
+        let task = owner.start(
+            runtime,
+            StartBackgroundSubagentInput {
+                kind: None,
+                session_id: self.turn.parent.session_id.clone(),
+                parent_turn_id: self.turn.parent.turn_id.clone(),
+                subagent_id: id.clone(),
+                subagent_type: definition.as_str().into(),
+                observed_subagent_id: None,
+                run: Box::new(move |signal: ToolCancellation| {
+                    Box::pin(async move {
+                        let _permit = permit;
+                        let mut guard = BackgroundRunGuard {
+                            owner: observer_owner.clone(),
+                            finished: false,
+                        };
+                        let context = detached_context(fields, read, write, signal.clone());
+                        let result = api
+                            .run(
+                                factory,
+                                definition,
+                                spec,
+                                description,
+                                directive,
+                                parent_mode,
+                                parent_ask,
+                                depth,
+                                max,
+                                context,
+                                Cancellation::new(),
+                                deadline,
+                                Some(id),
+                            )
+                            .await;
+                        if let Err(error) = detached.clone().close().await {
+                            lock(&observer_owner.cleanup_errors).push(error.to_string());
+                        }
+                        lock(&observer_owner.cleanup_errors)
+                            .extend(lock(&detached.cleanup_errors).iter().cloned());
+                        guard.finished = true;
+                        result.map(|_| ()).map_err(|failure| failure.message)
+                    })
+                }),
+            },
+        )?;
+        record.commit();
+        Ok(background_output(
+            &output_definition,
+            &output_description,
+            &output_id,
+            &task.task_id,
+        ))
+    }
+}
+fn detached_context(
+    fields: JsObject,
+    read: SharedFileState,
+    write: SharedFileState,
+    signal: crate::runtime::tools::ToolCancellation,
+) -> ToolRunContext {
+    use crate::host::modules::tool_context::{ToolFileState, ToolRuntimeContext};
+    let host = Arc::new(ToolRuntimeContext {
+        fields: fields.clone(),
+        files: ToolFileState {
+            read_file_state: read,
+            write_snapshots: write,
+            allowed_read_files: vec![],
+        },
+        abort_signal: Some(Arc::new(signal)),
+        model: None,
+        elicitation: None,
+        user_dialog: None,
+        audit_recorder: None,
+        file_history: None,
+        file_update_notifier: None,
+        now: None,
+        progress: None,
+        subagent: None,
+        plan_todo: None,
+        goal: None,
+        plan_directory: None,
+    });
+    ToolRunContext {
+        host,
+        fields,
+        execute_tool: None,
+    }
+}
+fn background_output(
+    definition: &str,
+    description: &JsString,
+    id: &JsString,
+    task: &JsString,
+) -> ToolOutput {
+    let text = concat(&[
+        &"Background subagent started as task ".into(),
+        task,
+        &".".into(),
+    ]);
+    let data = object([
+        ("subagentType", definition.into()),
+        ("description", JsValue::String(description.clone())),
+        ("text", JsValue::String(text.clone())),
+        ("backgroundTaskId", JsValue::String(task.clone())),
+    ])
+    .as_object()
+    .unwrap()
+    .clone();
+    ToolOutput {
+        data: Some(JsValue::Object(data.clone())),
+        content: vec![
+            object([
+                ("type", "text".into()),
+                (
+                    "text",
+                    JsValue::String(concat(&[
+                        &format!("[{definition}] ").into(),
+                        description,
+                        &"\n\n".into(),
+                        &text,
+                    ])),
+                ),
+            ]),
+            object([("type", "json".into()), ("value", JsValue::Object(data))]),
+        ],
+        metadata: Some(
+            object([
+                ("subagent", definition.into()),
+                ("subagentId", JsValue::String(id.clone())),
+                ("backgroundTaskId", JsValue::String(task.clone())),
+                ("forkMode", "background".into()),
+            ])
+            .as_object()
+            .unwrap()
+            .clone(),
+        ),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+    use crate::runtime::{
+        background::{BackgroundSubagentRuntime, StartBackgroundSubagentInput, TaskStatus},
+        project::{ProjectRuntimeRegistry, ResourceBundle},
+    };
+    #[test]
+    fn actual_ts_background_tool_output_matches() {
+        let fixture =
+            pilotdeck_protocol::parse_json(include_str!("agent_background_oracle.json")).unwrap();
+        let JsValue::Array(cases) = fixture.get("cases").unwrap() else {
+            panic!("cases")
+        };
+        let case = &cases[0];
+        let output = background_output(
+            "research",
+            &"fixture task".into(),
+            &"child-fixed".into(),
+            &"task-fixed".into(),
+        );
+        let actual = object([
+            ("content", JsValue::Array(output.content)),
+            ("data", output.data.unwrap()),
+            ("metadata", JsValue::Object(output.metadata.unwrap())),
+        ]);
+        assert_eq!(&actual, case.get("result").unwrap());
+    }
+    #[test]
+    fn background_record_budget_is_bounded_and_failed_admission_rolls_back() {
+        let registry = NativeForkRegistry::new();
+        drop(BackgroundRecordReservation::reserve(registry.clone()).unwrap());
+        assert_eq!(registry.background_records.load(Ordering::SeqCst), 0);
+        registry.background_records.store(4095, Ordering::SeqCst);
+        BackgroundRecordReservation::reserve(registry.clone())
+            .unwrap()
+            .commit();
+        assert!(BackgroundRecordReservation::reserve(registry.clone()).is_err());
+        assert_eq!(registry.background_records.load(Ordering::SeqCst), 4096);
+    }
+    #[tokio::test]
+    async fn session_drain_cancels_all_tasks_and_waits_real_runtime_done_before_releasing_generation()
+     {
+        let registry = ProjectRuntimeRegistry::new(
+            "/fixture-background-owner",
+            Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+        );
+        let owner = NativeForkOwner::new(registry.acquire(None).unwrap());
+        let runtime = BackgroundSubagentRuntime::default();
+        let (cancelled, seen) = tokio::sync::oneshot::channel();
+        let (release, held) = tokio::sync::oneshot::channel();
+        let (started, entered) = tokio::sync::oneshot::channel();
+        let task = owner
+            .start(
+                runtime.clone(),
+                StartBackgroundSubagentInput {
+                    kind: None,
+                    session_id: "parent".into(),
+                    parent_turn_id: "parent-turn".into(),
+                    subagent_id: "child".into(),
+                    subagent_type: "research".into(),
+                    observed_subagent_id: None,
+                    run: Box::new(move |signal| {
+                        Box::pin(async move {
+                            let _ = started.send(());
+                            signal.cancelled().await;
+                            let _ = cancelled.send(());
+                            let _ = held.await;
+                            Ok(())
+                        })
+                    }),
+                },
+            )
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        let (peer_started, peer_entered) = tokio::sync::oneshot::channel();
+        let (peer_cancelled, peer_seen) = tokio::sync::oneshot::channel();
+        let peer = owner
+            .start(
+                runtime.clone(),
+                StartBackgroundSubagentInput {
+                    kind: None,
+                    session_id: "parent".into(),
+                    parent_turn_id: "parent-turn".into(),
+                    subagent_id: "peer".into(),
+                    subagent_type: "research".into(),
+                    observed_subagent_id: None,
+                    run: Box::new(move |signal| {
+                        Box::pin(async move {
+                            let _ = peer_started.send(());
+                            signal.cancelled().await;
+                            let _ = peer_cancelled.send(());
+                            Ok(())
+                        })
+                    }),
+                },
+            )
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), peer_entered)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut draining = owner.clone().drain();
+        tokio::time::timeout(std::time::Duration::from_secs(2), seen)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), peer_seen)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            runtime.get(&peer.task_id).unwrap().status,
+            TaskStatus::Cancelled
+        );
+        assert!(!owner.is_open());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut draining)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            runtime.get(&task.task_id).unwrap().status,
+            TaskStatus::Cancelled
+        );
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), draining)
+            .await
+            .unwrap()
+            .unwrap();
+        owner.release_generation().await.unwrap();
         registry.dispose().await.unwrap();
     }
 }

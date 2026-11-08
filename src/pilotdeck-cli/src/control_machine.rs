@@ -201,8 +201,12 @@ impl Emitter {
         for (key, value) in fields {
             frame.insert((*key).into(), value.clone());
         }
-        self.output.deliver(&JsValue::Object(frame)).await.map_err(|_|ControlError::new("output_error","Could not deliver watch output within 10 seconds; resynchronize before continuing."))?;
+        let delivered = self.output.enqueue(&JsValue::Object(frame))?;
+        // Reserving the identity and enqueueing are one synchronous step.
+        // A timer/signal may cancel the acknowledgement wait, while the
+        // output thread still writes the accepted frame.
         self.sequence += 1;
+        super::stream::Output::confirm(delivered).await.map_err(|_|ControlError::new("output_error","Could not deliver watch output within 10 seconds; resynchronize before continuing."))?;
         Ok(())
     }
     async fn notification(&mut self, value: &JsValue, token: &str) -> Result<()> {
@@ -500,6 +504,41 @@ pub(super) async fn run(options: &Options, token: &str, selection: Selection) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn cancelled_watch_delivery_never_reuses_an_enqueued_sequence() {
+        use std::{future::Future, task::Poll};
+        let (output, receive) = super::super::stream::Output::controlled();
+        let mut emitter = Emitter {
+            output,
+            epoch: "stable-epoch".into(),
+            sequence: 0,
+            resync: false,
+        };
+        let mut pending = Box::pin(emitter.emit("notification", &[]));
+        std::future::poll_fn(|cx| {
+            assert!(pending.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(pending); // the watch timer wins after enqueue, before stdout acknowledgement
+        let (first, first_ack) = receive.try_recv().unwrap();
+        assert!(first_ack.send(Ok(())).is_err());
+        assert_eq!(emitter.sequence, 1);
+        let mut next = Box::pin(emitter.emit("stopped", &[]));
+        std::future::poll_fn(|cx| {
+            assert!(next.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        let (second, second_ack) = receive.try_recv().unwrap();
+        second_ack.send(Ok(())).unwrap();
+        next.await.unwrap();
+        let first = pilotdeck_protocol::parse_json(&first).unwrap();
+        let second = pilotdeck_protocol::parse_json(&second).unwrap();
+        assert_eq!(first.get("epoch"), second.get("epoch"));
+        assert_eq!(first.get("seq"), Some(&JsValue::Number(0.0)));
+        assert_eq!(second.get("seq"), Some(&JsValue::Number(1.0)));
+    }
     #[test]
     fn compiled_schema_uses_actual_registration_and_open_domain_contracts() {
         let value = schema(None);

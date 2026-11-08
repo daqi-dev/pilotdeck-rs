@@ -7,6 +7,7 @@ use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
+pub type RequestedObserver = Arc<dyn Fn(JsObject) + Send + Sync>;
 #[derive(Clone)]
 pub struct Elicitation {
     pub profile: Arc<std::sync::OnceLock<crate::runtime::project::InteractionProfile>>,
@@ -15,6 +16,7 @@ pub struct Elicitation {
     pub can_prompt: bool,
     pub timeout: std::time::Duration,
     pub emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>,
+    pub on_requested: Option<RequestedObserver>,
 }
 struct Pending(Registration);
 impl Drop for Pending {
@@ -136,11 +138,28 @@ impl Elicitation {
         let _pending = Pending(registration);
         payload.insert("type".into(), "elicitation_request".into());
         payload.insert("requestId".into(), JsValue::String(request_id.clone()));
+        let hook_payload = {
+            let mut hook = JsObject::new();
+            hook.insert("requestId".into(), JsValue::String(request_id.clone()));
+            hook.insert("toolName".into(), tool_name.into());
+            hook.insert(
+                "toolCallId".into(),
+                payload
+                    .get("toolCallId")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            );
+            hook
+        };
         if !(self.emit)(JsValue::Object(payload)) {
             return Err(ToolError::new(
                 "tool_execution_failed",
                 "Elicitation delivery failed.",
             ));
+        }
+        if let Some(observer) = &self.on_requested {
+            let _ =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| observer(hook_payload)));
         }
         let mut receive = receive;
         let reason = tokio::select! {
@@ -223,6 +242,7 @@ mod tests {
             let coordinator = Arc::new(GatewayInteractionCoordinator::default());
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let channel = Elicitation {
+                on_requested: None,
                 profile: test_profile(),
                 coordinator: coordinator.clone(),
                 session: "session".into(),
@@ -286,6 +306,7 @@ mod tests {
         let coordinator = Arc::new(GatewayInteractionCoordinator::default());
         for can_prompt in [false, true] {
             let channel = Elicitation {
+                on_requested: None,
                 profile: test_profile(),
                 coordinator: coordinator.clone(),
                 session: "session".into(),
@@ -331,6 +352,7 @@ mod tests {
             .unwrap();
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let channel = Elicitation {
+            on_requested: None,
             profile: test_profile(),
             coordinator: coordinator.clone(),
             session: "session".into(),
@@ -384,10 +406,9 @@ mod tests {
 
     #[tokio::test]
     async fn leased_headless_profile_uses_ts_deterministic_answers() {
-        let fixture = pilotdeck_protocol::parse_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/elicitation/oracle-profile.json"
-        )))
+        let fixture = pilotdeck_protocol::parse_json(include_str!(
+            "../../tests/fixtures/elicitation/oracle-profile.json"
+        ))
         .unwrap();
         let Some(JsValue::Array(results)) = fixture.get("results") else {
             panic!("profile oracle missing")
@@ -401,6 +422,7 @@ mod tests {
             let cell = Arc::new(std::sync::OnceLock::new());
             cell.set(profile).unwrap();
             let channel = Elicitation {
+                on_requested: None,
                 profile: cell,
                 coordinator: Arc::new(GatewayInteractionCoordinator::default()),
                 session: "s".into(),

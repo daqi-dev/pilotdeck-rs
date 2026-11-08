@@ -422,10 +422,9 @@ mod tests {
     use super::*;
     #[test]
     fn fixed_ts_projection_and_merge_oracle() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/plan-todo/oracle.json"
-        )))
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/plan-todo/oracle.json"
+        ))
         .unwrap();
         let Some(JsValue::Array(events)) = oracle.get("events") else {
             panic!("events")

@@ -40,7 +40,7 @@ use crate::{
         turn::{
             admission::{GatewaySubmitAdmission, SubmitAdmissionOptions},
             gateway::{GatewayServices, TurnGateway},
-            host_factory::{Deployment, TurnHostFactory},
+            host_factory::TurnHostFactory,
             projector::{
                 GatewayAgentEventProjector, GatewayAgentEventProjectorOptions,
                 GatewayToolResultArtifactStore,
@@ -66,6 +66,8 @@ mod cron;
 mod mcp;
 mod memory;
 mod sdk_adapter;
+mod sdk_dispatch;
+pub(super) mod sdk_hooks;
 pub(crate) mod snapshot;
 mod steer;
 mod style_reload;
@@ -445,6 +447,7 @@ async fn start_assembly(
     // Management can inspect existing skills; turn admission still checks that
     // unsupported skill prompt/tool composition is not silently omitted.
     validate_profile_inner(&options, &env, true).await?;
+    let prepare_deployment = super::deployment::resolve(&options, &env)?;
     register_project(&options)?;
     let project = project_registry(&options, &env);
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
@@ -453,8 +456,28 @@ async fn start_assembly(
     let memory = memory::build_memory(options.clone(), project.clone()).await?;
     let recorders: Recorders = Arc::default();
     let permission_rule_sets = permission_rule_sets.unwrap_or_default();
+    let sdk_handlers = Arc::new(std::sync::Mutex::new(
+        crate::runtime::sdk_session::SessionHandlerRegistry::new(),
+    ));
+    let delivered_handlers = sdk_handlers.clone();
     let interactions = Arc::new(GatewayInteractionCoordinator::new(InteractionOptions {
         permission_grants: Some(permission_rule_sets.clone()),
+        on_elicitation_admitted: Some(Arc::new(move |session, request| {
+            let handler = delivered_handlers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .session_hook_handler(session)
+                .cloned();
+            if let Some(handler) = handler {
+                handler(
+                    crate::runtime::sdk_session::PilotDeckHookEvent::ElicitationResult,
+                    &object([
+                        ("requestId", JsValue::String(request.clone())),
+                        ("delivered", JsValue::Bool(true)),
+                    ]),
+                );
+            }
+        })),
         ..InteractionOptions::default()
     }));
     let user_dialog_bus = user_dialog::build_user_dialog_bus();
@@ -475,15 +498,20 @@ async fn start_assembly(
     .with_homedir(options.home.clone())
     .with_projects(sdk_projects.clone());
     let prepare_mcp_config: Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>> = Arc::default();
+    let sdk_registry = crate::runtime::sdk_session::SdkSessionRegistry::new(sdk_options)
+        .with_shared_handlers(sdk_handlers.clone());
+    let sdk_async_hooks = Arc::new(std::sync::OnceLock::new());
     let sdk_port = Arc::new(sdk_adapter::NativeSdkPort {
         mcp_config: prepare_mcp_config.clone(),
-        registry: tokio::sync::Mutex::new(crate::runtime::sdk_session::SdkSessionRegistry::new(
-            sdk_options,
-        )),
+        handlers: sdk_handlers.clone(),
+        async_hooks: sdk_async_hooks.clone(),
+        registry: tokio::sync::Mutex::new(sdk_registry),
     });
     let prepare_sdk = sdk_port.clone();
     let fork_registry = super::agent::NativeForkRegistry::new();
     let prepare_forks = fork_registry.clone();
+    let session_events = Arc::new(super::session_events::NativeSessionEvents::default());
+    let prepare_session_events = session_events.clone();
     let storage_forks = fork_registry.clone();
     let prepare_project = project.clone();
     let prepare_options = options.clone();
@@ -524,8 +552,10 @@ async fn start_assembly(
         prepare: Arc::new(move |context, session_mcp_runtimes| {
             let project = prepare_project.clone();
             let forks = prepare_forks.clone();
+            let session_events = prepare_session_events.clone();
             let options = prepare_options.clone();
             let env = prepare_env.clone();
+            let deployment = prepare_deployment.clone();
             let recorders = prepare_recorders.clone();
             let interactions = prepare_interactions.clone();
             let permission_rule_sets = prepare_permission_rule_sets.clone();
@@ -927,13 +957,15 @@ async fn start_assembly(
                     ..Default::default()
                 };
                 let session = context.session_key;
+                let session_emit = {
+                    let owner = Arc::downgrade(&fork_owner);
+                    session_events.bind(
+                        session.clone(),
+                        Arc::new(move || owner.upgrade().is_some_and(|owner| owner.is_open())),
+                    )
+                };
                 let closing_owner = fork_owner.clone();
-                retained.push(move || {
-                    Box::pin(async move {
-                        closing_owner.close_admission();
-                        Ok(())
-                    })
-                });
+                retained.push(move || closing_owner.drain());
                 Ok(PreparedSession {
                     resources: retained,
                     tail,
@@ -960,12 +992,6 @@ async fn start_assembly(
                                     .or_else(|| session_overrides.permission_mode(&session))
                             })
                         };
-                        let deployment = Deployment::Stdio {
-                            command: options.sidecar.to_string_lossy().into_owned(),
-                            args: options.sidecar_args.clone(),
-                            cwd: options.project.clone(),
-                            env: env.clone(),
-                        };
                         let ports = super::tools::SessionTools::new(
                             &options,
                             &env,
@@ -975,6 +1001,7 @@ async fn start_assembly(
                             lsp,
                             session_mcp,
                         )?
+                        .with_session_emitter(session_emit)
                         .with_permission_mode_source(permission_source.clone())
                         .with_permission_rules(native_permission_rules)
                         .with_web(native_web)
@@ -1255,6 +1282,7 @@ async fn start_assembly(
         // legal `--drain-ms` teardown is not cut by the host's default bound.
         budget,
         move |coordinator| {
+            session_events.install(&coordinator);
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
             let replacement = Arc::new(ReplacementCoordinator::new(
                 Default::default(),
@@ -1285,6 +1313,7 @@ async fn start_assembly(
             );
             let async_hook_registry =
                 steer::build_async_hook_registry(&build_project, &owner, &coordinator);
+            let _ = sdk_async_hooks.set(async_hook_registry.clone());
             // U7 global settings (#1320): `createPilotConfigStoreSync` +
             // `runtimeRefresh` + the settings gateway
             // (createLocalGateway.ts:795-835, 1383-1410), composed in
@@ -1305,7 +1334,12 @@ async fn start_assembly(
                 &options.project,
                 &env,
                 Some(session_overrides.clone()),
-                Some(style_reload),
+                (
+                    Some(style_reload),
+                    Some(Arc::new(sdk_dispatch::NativeSdkConfigDispatch(
+                        sdk_handlers.clone(),
+                    ))),
+                ),
             )?;
             // #1326 A8 U8: the one `CronManager::new` of the native process.
             // `None` (no `cron:` section) keeps the unconfigured shape — the
@@ -1412,6 +1446,7 @@ async fn start_assembly(
                     cron,
                     build_channels.server().clone(),
                     tokio::runtime::Handle::current(),
+                    cron_shutdown.clone(),
                 )
                 .map_err(cron::cron_io_error)?;
                 cron.start().map_err(cron::cron_io_error)?;
@@ -1740,13 +1775,10 @@ async fn validate_profile_inner(
         .and_then(|v| v.get("modules"))
         .and_then(JsValue::as_object)
         .is_some_and(|modules| {
-            modules.own_entries().iter().any(|(name, value)| {
-                !(name.equals_str("skills") || name.equals_str("knowledge"))
-                    || value.get("enabled") != Some(&JsValue::Bool(false))
-                    || value
-                        .as_object()
-                        .is_none_or(|fields| fields.own_entries().len() != 1)
-            })
+            modules
+                .own_entries()
+                .iter()
+                .any(|(name, value)| !supports_native_module_binding(name, value))
         })
     {
         return Err(
@@ -1755,6 +1787,37 @@ async fn validate_profile_inner(
     }
     Ok(())
 }
+// These are the normalized native bindings from parseModulesConfig. In the
+// TS runtime they retain the same default owner as an absent binding; only an
+// external protocol binding replaces a model/tool/context/agent-loop port.
+fn supports_native_module_binding(name: &JsString, value: &JsValue) -> bool {
+    let Some(fields) = value.as_object() else {
+        return false;
+    };
+    if (name.equals_str("skills") || name.equals_str("knowledge"))
+        && fields.own_entries().len() == 1
+        && fields.get("enabled") == Some(&JsValue::Bool(false))
+    {
+        return true;
+    }
+    [
+        "agentLoop",
+        "skills",
+        "modelProvider",
+        "tools",
+        "context",
+        "knowledge",
+    ]
+    .iter()
+    .any(|slot| name.equals_str(slot))
+        && fields.own_entries().len() == 2
+        && fields.get("enabled") == Some(&JsValue::Bool(true))
+        && fields
+            .get("provider")
+            .and_then(JsValue::as_string)
+            .is_some_and(|provider| provider.equals_str("pilotdeck"))
+}
+
 pub fn env_object(env: &Env) -> JsObject {
     let mut result = JsObject::new();
     for (key, value) in env {

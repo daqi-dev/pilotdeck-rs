@@ -1386,6 +1386,7 @@ fn fixed_options() -> HookRuntimeOptions {
         clock: Arc::new(|| JsString::from(FIXED_START)),
         shell: None,
         on_async_registered: None,
+        ..Default::default()
     }
 }
 
@@ -2363,12 +2364,13 @@ impl pilotdeck_gateway::runtime::hooks::runtime::AsyncHookRegistrationHandler fo
     fn handle(
         &self,
         registration: pilotdeck_gateway::runtime::hooks::runtime::AsyncHookRegistration,
-    ) {
+    ) -> Result<(), pilotdeck_gateway::host::HostError> {
         self.0.lock().unwrap().push(SeenRegistration {
             hook_name: registration.hook_name.to_utf8().unwrap(),
             invocation_id: registration.invocation_id.to_utf8().unwrap(),
             timeout_ms: registration.timeout_ms,
         });
+        Ok(())
     }
 }
 
@@ -2395,6 +2397,7 @@ async fn async_invocation_id_prefers_the_registration_bridge() {
             clock: Arc::new(|| JsString::from(FIXED_START)),
             shell: None,
             on_async_registered: Some(Arc::new(RegistrationSink(sink.clone()))),
+            ..Default::default()
         },
     );
     let result = runtime

@@ -987,9 +987,11 @@ async fn production_profile_and_registration() {
     );
     std::fs::write(
         options.home.join("pilotdeck.yaml"),
-        format!("{CONFIG}modules:\n  skills: {{enabled: true, provider: pilotdeck}}\n"),
+        format!(
+            "{CONFIG}modules:\n  tools: {{enabled: true, implementationId: fixture.tools, contract: pilotdeck.tools/v1, transport: module-http-v2, endpoint: 'http://127.0.0.1:1', catalog: [{{name: fixture_echo, description: Fixture echo, inputSchema: {{type: object}}}}]}}\n"
+        ),
     )
-    .expect("#1071 enabled module fixture");
+    .expect("#1071 external module fixture");
     crate::runtime::project::NativeConfigSource::new(
         options.project.clone(),
         env.clone(),
@@ -1512,3 +1514,6 @@ fn session_tool_results_dir_layout_and_sanitization() {
         "#897 session tool-results directory sanitizes the session id"
     );
 }
+
+#[path = "builtin_module_tests.rs"]
+mod builtin_modules;

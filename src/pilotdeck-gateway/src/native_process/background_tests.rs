@@ -40,6 +40,13 @@ async fn native_project_background_owner_is_shared_with_sdk_and_drained_on_dispo
     let registry =
         assembly::project_registry(&options, &options.environment(crate::config::Env::new()));
     let runtime = registry.resolve(None).unwrap();
+    // Different spellings of one project share the held archive lock. The
+    // alternate runtime must not fail staging as if another process owned it.
+    let alias = scratch.0.join("project-alias");
+    std::os::unix::fs::symlink(&project, &alias).unwrap();
+    let alternate = registry.resolve(Some(&alias)).unwrap();
+    assert!(!Arc::ptr_eq(&runtime, &alternate));
+
     let resource = runtime
         .resources()
         .get::<crate::runtime::project::ProjectResources>()

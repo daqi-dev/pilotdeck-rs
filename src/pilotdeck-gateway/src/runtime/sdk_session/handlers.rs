@@ -76,8 +76,8 @@ impl PilotDeckHookEvent {
 /// SDK config-change payload type (dispatch belongs to A6.7-pr6).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SdkConfigChangePayload {
-    pub changed_paths: Vec<String>,
-    pub change_classes: Vec<String>,
+    pub changed_paths: Vec<JsString>,
+    pub change_classes: Vec<JsString>,
 }
 
 pub type SdkConfigChangeHandler = Arc<dyn Fn(&SdkConfigChangePayload) + Send + Sync>;
@@ -199,6 +199,13 @@ impl SessionHandlerRegistry {
             .iter()
             .find(|(key, _)| key == session_key)
             .map(|(_, entry)| &entry.handler)
+    }
+
+    pub(crate) fn config_change_handlers(&self) -> Vec<SdkConfigChangeHandler> {
+        self.config_change
+            .iter()
+            .map(|(_, entry)| entry.handler.clone())
+            .collect()
     }
 
     pub fn config_change_sessions(&self) -> Vec<JsString> {

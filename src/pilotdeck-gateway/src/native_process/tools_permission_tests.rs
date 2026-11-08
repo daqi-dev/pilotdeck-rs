@@ -94,6 +94,7 @@ fn prompt_flags_are_fresh_each_turn_and_managed_false_is_a_ceiling() {
             Some(TurnInteractionAuthority {
                 permission_mode: None,
                 base_permission_mode: None,
+                sdk_hooks: None,
                 sdk_permission_mode: None,
                 can_prompt: requested,
                 policy_can_prompt: policy,
@@ -143,6 +144,7 @@ fn prompt_flags_are_fresh_each_turn_and_managed_false_is_a_ceiling() {
         Some(TurnInteractionAuthority {
             permission_mode: None,
             base_permission_mode: None,
+            sdk_hooks: None,
             sdk_permission_mode: None,
             can_prompt: Some(true),
             policy_can_prompt: None,
@@ -173,6 +175,7 @@ fn selectors_are_read_again_and_managed_default_mode_wins() {
             Some(TurnInteractionAuthority {
                 permission_mode: None,
                 base_permission_mode: None,
+                sdk_hooks: None,
                 sdk_permission_mode: None,
                 can_prompt: None,
                 policy_can_prompt: None,
@@ -208,6 +211,7 @@ fn selectors_are_read_again_and_managed_default_mode_wins() {
         Some(TurnInteractionAuthority {
             permission_mode: None,
             base_permission_mode: None,
+            sdk_hooks: None,
             sdk_permission_mode: None,
             can_prompt: None,
             policy_can_prompt: None,
@@ -242,6 +246,7 @@ async fn read_file_ask_once_reaches_real_native_execution_and_cannot_be_replayed
         Some(TurnInteractionAuthority {
             permission_mode: None,
             base_permission_mode: None,
+            sdk_hooks: None,
             sdk_permission_mode: None,
             can_prompt: None,
             policy_can_prompt: None,
@@ -379,6 +384,7 @@ fn sdk_mode_changes_only_per_turn_permission_context() {
             Some(TurnInteractionAuthority {
                 permission_mode: None,
                 base_permission_mode: None,
+                sdk_hooks: None,
                 sdk_permission_mode: mode.map(Into::into),
                 can_prompt: Some(true),
                 policy_can_prompt: None,
@@ -421,6 +427,7 @@ fn admitted_mode_reaches_host_permission_and_remembers_plan_base() {
             Some(TurnInteractionAuthority {
                 permission_mode: Some(mode.into()),
                 base_permission_mode: base.map(Into::into),
+                sdk_hooks: None,
                 sdk_permission_mode: None,
                 can_prompt: Some(false),
                 policy_can_prompt: None,
@@ -498,6 +505,7 @@ async fn plan_enter_blocks_a_sibling_write_in_the_same_batch() {
         Some(TurnInteractionAuthority {
             permission_mode: None,
             base_permission_mode: None,
+            sdk_hooks: None,
             sdk_permission_mode: None,
             can_prompt: Some(true),
             policy_can_prompt: None,

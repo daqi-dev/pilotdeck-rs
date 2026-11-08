@@ -39,8 +39,30 @@ pub struct TurnInteractionAuthority {
     pub can_prompt: Option<bool>,
     pub policy_can_prompt: Option<bool>,
     pub sdk_permission_mode: Option<pilotdeck_protocol::JsString>,
+    /// Committed, host-owned SDK configuration for this turn.
+    pub sdk_hooks: Option<SdkHookState>,
     pub emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>,
 }
+
+pub type SdkAsyncRegistrySlot =
+    Arc<std::sync::OnceLock<Option<Arc<crate::runtime::async_hooks::AsyncHookRegistry>>>>;
+
+/// Committed SDK hook inputs share the existing session registry and gateway async owner.
+#[derive(Clone)]
+pub struct SdkHookState {
+    pub settings: HooksSettings,
+    pub active: bool,
+    pub include_events: bool,
+    pub handlers: Arc<std::sync::Mutex<crate::runtime::sdk_session::SessionHandlerRegistry>>,
+    pub async_registry: SdkAsyncRegistrySlot,
+}
+
+pub type SdkFileRuntimeSlot = Arc<
+    std::sync::OnceLock<(
+        Arc<crate::runtime::hooks::LifecycleRuntime>,
+        crate::runtime::hooks::Cancellation,
+    )>,
+>;
 
 /// Session authority; none of these fields are read from the sidecar payload.
 pub struct InteractionTurnInput {
@@ -48,7 +70,10 @@ pub struct InteractionTurnInput {
     pub permission: PermissionTurnOptions,
     /// Host-merged SDK/session contribution hooks, plus their owning lease.
     pub hooks: HooksSettings,
+    pub sdk_hook_state: Option<SdkHookState>,
+    pub sdk_file_slot: Option<SdkFileRuntimeSlot>,
     pub hook_options: Option<crate::runtime::hooks::HookRuntimeOptions>,
+    pub session_hook_options: Option<crate::runtime::hooks::HookRuntimeOptions>,
     pub contribution: Option<PluginSessionContributionLease>,
     pub base_env: Option<JsObject>,
     pub signal: Cancellation,

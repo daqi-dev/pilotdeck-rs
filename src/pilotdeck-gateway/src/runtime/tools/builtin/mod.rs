@@ -1087,12 +1087,49 @@ pub(super) fn resolve_path_following_symlinks(path: &Path) -> io::Result<PathBuf
 /// Write variant of `resolvePilotDeckWorkspacePath`. `must_exist` mirrors the
 /// notebook resolver; `allow_outside` is the host permission decision, never a
 /// model-controlled input.
+/// Exact path identity captured at the checked write, not reconstructed from tool output.
+pub(super) struct ResolvedWritePath {
+    pub absolute: JsString,
+    pub relative: JsString,
+    pub root: JsString,
+}
+/// A post-commit observation. It never changes the already-completed write result.
+#[derive(Clone)]
+pub struct FileUpdateNotice {
+    pub absolute: JsString,
+    pub relative: JsString,
+    pub root: JsString,
+    pub created: bool,
+}
+pub struct FileUpdateNotifier(
+    pub std::sync::Arc<dyn Fn(FileUpdateNotice) -> crate::host::HostFuture<()> + Send + Sync>,
+);
+async fn notify_file_update(
+    context: &crate::runtime::tools::ToolRunContext,
+    resolved: &ResolvedWritePath,
+    created: bool,
+) {
+    if let Some(notifier) = context
+        .host
+        .file_update_notifier
+        .as_ref()
+        .and_then(|value| value.downcast_ref::<FileUpdateNotifier>())
+    {
+        let notice = FileUpdateNotice {
+            absolute: resolved.absolute.clone(),
+            relative: resolved.relative.clone(),
+            root: resolved.root.clone(),
+            created,
+        };
+        let _ = (notifier.0)(notice).await;
+    }
+}
 pub(super) fn resolve_write_path(
     input: &JsString,
     context: &crate::runtime::tools::ToolRunContext,
     must_exist: bool,
     allow_outside: bool,
-) -> Result<ResolvedPath, crate::runtime::tools::ToolError> {
+) -> Result<ResolvedWritePath, crate::runtime::tools::ToolError> {
     let input_text = text(input);
     if input.is_empty() || input_text.contains('\0') {
         return Err(invalid(
@@ -1115,9 +1152,10 @@ pub(super) fn resolve_write_path(
         if write_denied(&relative_cwd) {
             return Err(denied_error(&relative_cwd));
         }
-        return Ok(ResolvedPath {
+        return Ok(ResolvedWritePath {
             absolute,
             relative: relative_cwd,
+            root: cwd.clone(),
         });
     }
 
@@ -1136,9 +1174,10 @@ pub(super) fn resolve_write_path(
             if write_denied(&relative_cwd) {
                 return Err(denied_error(&relative_cwd));
             }
-            return Ok(ResolvedPath {
+            return Ok(ResolvedWritePath {
                 absolute,
                 relative: relative_cwd,
+                root: cwd.clone(),
             });
         }
         return Err(tool_error(
@@ -1178,9 +1217,10 @@ pub(super) fn resolve_write_path(
     // for a path inside a root. TS `pathSafety.ts` likewise consults
     // `allowOutsideWorkspace` only inside its `!root` branch.
     guard_write_containment(input, &absolute, &roots)?;
-    Ok(ResolvedPath {
+    Ok(ResolvedWritePath {
         absolute,
         relative: relative_path,
+        root,
     })
 }
 

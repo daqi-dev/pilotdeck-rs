@@ -29,15 +29,17 @@ use std::{
     time::Duration,
 };
 use tokio::net::TcpListener;
-const HELPERS: [&str; 8] = [
-    "web_search",
-    "web_fetch",
-    "read_file",
-    "write_file",
-    "edit_file",
-    "grep",
-    "glob",
-    "bash",
+// Each helper declares its read-only admission beside its name. Adding a
+// helper cannot silently bypass the read-only sandbox's RPC restriction.
+const HELPERS: [(&str, bool); 8] = [
+    ("web_search", true),
+    ("web_fetch", true),
+    ("read_file", true),
+    ("write_file", false),
+    ("edit_file", false),
+    ("grep", true),
+    ("glob", true),
+    ("bash", false),
 ];
 const MAX_CODE_BYTES: usize = 1024 * 1024;
 pub struct ExecuteCodeTool {
@@ -61,9 +63,14 @@ impl ExecuteCodeTool {
                 ("kind", string("custom")),
                 (
                     "description",
-                    string(
-                        "Run a local Python 3 script using import pilotdeck_tools. Helpers: web_search, web_fetch, read_file, write_file, edit_file, grep, glob, bash. Helpers re-enter this turn's permission, hooks and file-freshness checks. Only the final stdout/stderr summary returns to the model. Agent, task, notebook, MCP and recursive execute_code helpers are unavailable. Python inherits the tool environment; never print secrets. Read-only automatic permissions are enforced by a real filesystem sandbox; approved executions still obey the project sandbox.",
-                    ),
+                    string(format!(
+                        "Run a local Python 3 script using import pilotdeck_tools. Helpers: {}. Helpers re-enter this turn's permission, hooks and file-freshness checks. Only the final stdout/stderr summary returns to the model. Agent, task, notebook, MCP and recursive execute_code helpers are unavailable. Python inherits the tool environment; never print secrets. Read-only automatic permissions are enforced by a real filesystem sandbox; approved executions still obey the project sandbox.",
+                        HELPERS
+                            .iter()
+                            .map(|(name, _)| *name)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )),
                 ),
                 (
                     "inputSchema",
@@ -537,10 +544,8 @@ async fn run(
     let token = uuid::Uuid::new_v4().to_string();
     let allowed = HELPERS
         .iter()
-        .copied()
-        .filter(|name| {
-            mode != SandboxMode::ReadOnly || !["bash", "write_file", "edit_file"].contains(name)
-        })
+        .filter(|(_, read_only)| mode != SandboxMode::ReadOnly || *read_only)
+        .map(|(name, _)| *name)
         .collect();
     let rpc = Arc::new(rpc::State::new(
         hook,
@@ -766,7 +771,10 @@ fn read_only(input: &JsValue) -> bool {
         }
     }
     let word = |u: u16| matches!(u,48..=57|65..=90|97..=122|95);
-    for name in ["write_file", "edit_file", "bash"] {
+    for name in HELPERS
+        .iter()
+        .filter_map(|(name, read_only)| (!read_only).then_some(*name))
+    {
         let token: Vec<_> = name.encode_utf16().collect();
         for offset in 0..mask.len() {
             if offset > 0 && word(mask[offset - 1]) {

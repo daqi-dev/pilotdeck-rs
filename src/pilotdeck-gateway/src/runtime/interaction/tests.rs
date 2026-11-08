@@ -78,6 +78,7 @@ impl Harness {
                         GatewaySessionPermissionRuleSetRegistry::default(),
                     )),
                     on_elicitation_delivered: Some(delivered),
+                    on_elicitation_admitted: None,
                 }
             } else {
                 InteractionOptions {
@@ -722,6 +723,7 @@ fn interaction_injected_options_share_the_supplied_components() {
         elicitation_bus: Some(elicitation_bus.clone()),
         permission_grants: Some(grants.clone()),
         on_elicitation_delivered: None,
+        on_elicitation_admitted: None,
     });
     let entry = |id: &str| PendingEntry {
         request_id: id.into(),
@@ -969,4 +971,34 @@ fn interaction_reject_cross_thread_response_and_bulk_have_one_winner() {
             assert_eq!(coordinator.elicitation_bus().pending_count(&"s".into()), 0);
         }
     }
+}
+
+#[test]
+fn elicitation_hook_admission_precedes_answer_consumer_and_misses_do_not_fire() {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let observed = events.clone();
+    let coordinator = GatewayInteractionCoordinator::new(InteractionOptions {
+        on_elicitation_admitted: Some(Arc::new(move |_, _| observed.lock().unwrap().push("hook"))),
+        ..Default::default()
+    });
+    let resolved = events.clone();
+    let entry = PendingEntry {
+        request_id: "q".into(),
+        tool_call_id: "tool".into(),
+        tool_name: "fixture".into(),
+        resolve: Arc::new(move |_| resolved.lock().unwrap().push("resolve")),
+        reject: Arc::new(|_| ()),
+    };
+    let _registration = coordinator
+        .elicitation_bus()
+        .register(&"s".into(), entry, None)
+        .unwrap();
+    assert!(!coordinator.respond_elicitation(
+        &"s".into(),
+        &"missing".into(),
+        "answer".into(),
+        None
+    ));
+    assert!(coordinator.respond_elicitation(&"s".into(), &"q".into(), "answer".into(), None));
+    assert_eq!(*events.lock().unwrap(), vec!["hook", "resolve"]);
 }

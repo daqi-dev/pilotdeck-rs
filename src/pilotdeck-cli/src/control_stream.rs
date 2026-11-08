@@ -60,6 +60,11 @@ pub(super) fn input(options: &Options) -> Result<JsValue> {
 type Delivery = (String, tokio::sync::oneshot::Sender<io::Result<()>>);
 pub(super) struct Output(mpsc::SyncSender<Delivery>);
 impl Output {
+    #[cfg(test)]
+    pub(super) fn controlled() -> (Self, mpsc::Receiver<Delivery>) {
+        let (send, receive) = mpsc::sync_channel(1);
+        (Self(send), receive)
+    }
     pub(super) fn new() -> Result<Self> {
         let (send, receive) = mpsc::sync_channel::<Delivery>(1);
         // No runtime blocking task or join: a stalled consumer cannot keep the
@@ -79,7 +84,10 @@ impl Output {
             .map_err(|_| output_error())?;
         Ok(Self(send))
     }
-    pub(super) async fn deliver(&self, value: &JsValue) -> Result<()> {
+    pub(super) fn enqueue(
+        &self,
+        value: &JsValue,
+    ) -> Result<tokio::sync::oneshot::Receiver<io::Result<()>>> {
         let raw = encode(value)?;
         if raw.len() >= MAX_LINE {
             return Err(ControlError::new(
@@ -89,10 +97,18 @@ impl Output {
         }
         let (done, delivered) = tokio::sync::oneshot::channel();
         self.0.try_send((raw, done)).map_err(|_| output_error())?;
+        Ok(delivered)
+    }
+    pub(super) async fn confirm(
+        delivered: tokio::sync::oneshot::Receiver<io::Result<()>>,
+    ) -> Result<()> {
         match timeout(OUTPUT_TIMEOUT, delivered).await {
             Ok(Ok(Ok(()))) => Ok(()),
             _ => Err(output_error()),
         }
+    }
+    pub(super) async fn deliver(&self, value: &JsValue) -> Result<()> {
+        Self::confirm(self.enqueue(value)?).await
     }
 }
 fn output_error() -> ControlError {

@@ -298,6 +298,7 @@ pub struct TurnBinding {
     pub environment: Arc<dyn TurnEnvironment>,
 }
 
+#[derive(Clone)]
 pub struct PlanDirectory {
     pub path: JsString,
     cwd: JsString,
@@ -312,6 +313,7 @@ impl PlanDirectory {
     }
 }
 
+#[derive(Clone)]
 pub struct ToolRuntimeContext {
     pub fields: JsObject,
     pub files: ToolFileState,

@@ -82,12 +82,16 @@ pub(super) fn bind_callbacks(
     manager: &CronManager,
     server: crate::channel::server::ChannelServer,
     runtime: tokio::runtime::Handle,
+    shutdown: crate::runtime::network::Cancellation,
 ) -> Result<(), CronError> {
     let callbacks = crate::runtime::cron::CronExecutionCallbacks {
         assistant_text_limit_units: Some(
             crate::runtime::cron::NATIVE_CRON_MAX_ASSISTANT_TEXT_UNITS,
         ),
         on_result_delivery: Some(Arc::new(move |value| {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                return Err(CronError::error("Cron result delivery requires its scheduler worker thread."));
+            }
             let required = |key: &str| {
                 value
                     .get(key)
@@ -118,6 +122,7 @@ pub(super) fn bind_callbacks(
             // stop_and_drain cannot report success while delivery is pending.
             match complete_delivery(
                 &runtime,
+                Some(&shutdown),
                 std::time::Duration::from_secs(30),
                 server.deliver_cron_result(delivery),
             ) {
@@ -138,13 +143,22 @@ pub(super) fn bind_callbacks(
 
 fn complete_delivery(
     runtime: &tokio::runtime::Handle,
+    shutdown: Option<&crate::runtime::network::Cancellation>,
     budget: std::time::Duration,
     delivery: impl std::future::Future<Output = bool>,
 ) -> Result<bool, &'static str> {
     runtime.block_on(async {
-        tokio::time::timeout(budget, delivery)
-            .await
-            .map_err(|_| "delivery timed out")
+        let stopping = async {
+            match shutdown {
+                Some(signal) => signal.cancelled().await,
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::select! {
+            biased;
+            _ = stopping => Err("delivery cancelled during gateway shutdown"),
+            result = tokio::time::timeout(budget, delivery) => result.map_err(|_| "delivery timed out"),
+        }
     })
 }
 
@@ -157,7 +171,7 @@ mod delivery_completion_tests {
         let (entered, ready) = tokio::sync::oneshot::channel();
         let (release, wait) = tokio::sync::oneshot::channel();
         let worker = tokio::task::spawn_blocking(move || {
-            complete_delivery(&runtime, std::time::Duration::from_secs(2), async {
+            complete_delivery(&runtime, None, std::time::Duration::from_secs(2), async {
                 entered.send(()).unwrap();
                 wait.await.unwrap();
                 true
@@ -174,6 +188,7 @@ mod delivery_completion_tests {
         let result = tokio::task::spawn_blocking(move || {
             complete_delivery(
                 &runtime,
+                None,
                 std::time::Duration::from_millis(20),
                 std::future::pending(),
             )

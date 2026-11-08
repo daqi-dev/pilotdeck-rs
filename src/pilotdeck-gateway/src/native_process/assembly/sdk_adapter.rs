@@ -78,6 +78,8 @@ impl SdkAbortSignal for CompletionSignal<'_> {
 
 pub(super) struct NativeSdkPort {
     pub registry: Mutex<SdkSessionRegistry>,
+    pub handlers: Arc<std::sync::Mutex<crate::runtime::sdk_session::SessionHandlerRegistry>>,
+    pub async_hooks: crate::runtime::turn::interaction::SdkAsyncRegistrySlot,
     pub mcp_config: Arc<std::sync::OnceLock<Arc<crate::runtime::mcp::sdk::SdkMcpConfig>>>,
 }
 impl NativeSdkPort {
@@ -102,6 +104,30 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
     }
     fn permission_mode<'a>(&'a self, session: &'a JsString) -> SubmitFuture<'a, Option<JsString>> {
         Box::pin(NativeSdkPort::permission_mode(self, session))
+    }
+    fn hooks<'a>(
+        &'a self,
+        session: &'a JsString,
+    ) -> SubmitFuture<
+        'a,
+        Result<Option<crate::runtime::turn::interaction::SdkHookState>, SubmitError>,
+    > {
+        Box::pin(async move {
+            let config = self
+                .prompt_config(session)
+                .await
+                .unwrap_or(JsValue::Undefined);
+            let active = config
+                .get("hooks")
+                .is_some_and(|value| !value.is_undefined());
+            Ok(Some(crate::runtime::turn::interaction::SdkHookState {
+                settings: super::sdk_hooks::settings(&config)?,
+                active,
+                include_events: config.get("includeHookEvents") == Some(&JsValue::Bool(true)),
+                handlers: self.handlers.clone(),
+                async_registry: self.async_hooks.clone(),
+            }))
+        })
     }
     fn set<'a>(
         &'a self,
@@ -159,6 +185,7 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
             "sdkSessionConfig must be an object.",
         )
     })?;
+    super::sdk_hooks::validate(config)?;
     validate_agents(object.get("agents"))?;
     if let Some(skills) = object.get("skills").filter(|value| !value.is_undefined())
         && !valid_skill_selector(skills)
@@ -182,6 +209,8 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
     if object.entries().iter().any(|(key, value)| {
         ![
             "permissionMode",
+            "hooks",
+            "includeHookEvents",
             "agents",
             "skills",
             "systemPrompt",
@@ -315,7 +344,7 @@ fn validate_agents(value: Option<&JsValue>) -> Result<(), SubmitError> {
                 }
             } else if name.equals_str("mcpServers") {
                 super::super::agent_mcp::validate(value).map_err(sdk_submit_error)?;
-            } else if name.equals_str("background") && value == &JsValue::Bool(false) {
+            } else if name.equals_str("background") && matches!(value, JsValue::Bool(_)) {
             } else {
                 return Err(SubmitError::new(
                     "CAPABILITY_UNAVAILABLE",
@@ -386,12 +415,16 @@ fn project_agents(agents: &pilotdeck_protocol::JsObject) -> pilotdeck_protocol::
             ("skills", "skills"),
             ("memory", "memory"),
             ("initialPrompt", "initialPrompt"),
+            ("background", "background"),
             (
                 "criticalSystemReminder_EXPERIMENTAL",
                 "criticalSystemReminder",
             ),
         ] {
             if let Some(value) = agent.get(source).filter(|value| !value.is_undefined()) {
+                if source == "background" && value != &JsValue::Bool(true) {
+                    continue;
+                }
                 definition.insert(target.into(), value.clone());
             }
         }

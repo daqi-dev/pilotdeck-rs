@@ -171,7 +171,7 @@ async fn fixed_ts_rpc_responses_and_nested_call_ids() {
         let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = calls.clone();
         let result = js(&case["result"]).as_object().cloned().unwrap_or_default();
-        let mut allowed = HELPERS.to_vec();
+        let mut allowed = HELPERS.iter().map(|(name, _)| *name).collect::<Vec<_>>();
         if case["webSearch"] == false {
             allowed.retain(|n| *n != "web_search");
         }
@@ -348,4 +348,16 @@ async fn explicit_permission_preserves_workspace_sandbox_and_nested_write_dispat
     let output = execute(&tool, context, json!({"code":code,"timeout_seconds":3})).await;
     assert_eq!(data(&output).get("status"), Some(&string("error")));
     assert!(!outside_path.exists());
+}
+
+#[test]
+fn python_public_helper_exports_match_native_admission_registry() {
+    let source = include_str!("helper.py");
+    let exported = source
+        .lines()
+        .filter_map(|line| line.strip_prefix("def "))
+        .filter_map(|rest| rest.split_once('(').map(|(name, _)| name))
+        .filter(|name| !name.starts_with('_'))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(exported, HELPERS.iter().map(|(name, _)| *name).collect());
 }

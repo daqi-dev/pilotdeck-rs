@@ -59,6 +59,15 @@ token 必须为不超过 64 KiB 的普通文件；CLI 以同一描述符有界�
 参数、token 隔离与真实 Rust sidecar 的验证说明见 [control-stream README](tests/fixtures/control-stream/README.md)。上述真实组合探针的 `--host-mode control-serve --signal TERM|INT` 分别验证两种正常退出；假 provider 结果不等于真实 provider 或人工验收。
 
 
+## install 源码安装
+
+```sh
+pilotdeck-control install --root /isolated/new-install --source /isolated/clean-checkout \
+  --remote /approved/source-repository --ref refs/heads/main
+```
+
+`--root` 必须尚不存在；`--source` 是干净的本地源码检出，固定其 HEAD 后在执行命令的目标机器编译四个程序，并发布同一代产物。`--remote` 与 `--ref` 保存为后续更新允许使用的来源，`--ref` 默认 `refs/heads/main`。调用此命令即明确选择源码、安装目录及更新来源，命令不会再询问确认；既有安装通过旧 `pilotdeck update` 更新。成功 stdout 为含 sourceSha、generation、binaries 的 JSON，失败 stderr 为 `{"kind":"原因码","message":"说明"}` 且非零退出；`install --help` 不构建。完整源码首装和更新验证须在隔离目录进行。
+
 ## schema 与 watch 机器观察
 
 `pilotdeck-control schema` 离线输出versioned描述，不要求URL/token、不读取stdin。带既有URL/token选项时追加真实describe_server原值；registered_methods只表示编译登记，provider能否调用仍以目标capabilities及实际RPC结果为准。开放params/result Schema不是完整逐字段验证器。

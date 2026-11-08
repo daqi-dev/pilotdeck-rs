@@ -128,6 +128,8 @@ impl PlanFiles for NativePlanFiles {
                 }
                 let text = String::from_utf8_lossy(&bytes);
                 let trimmed = crate::metadata::js_trim(&text);
+                // Fixed TS planFile.ts:76 treats empty or whitespace-only text as absent.
+                if trimmed.is_empty() { return Ok(JsValue::Undefined); }
                 let plan: JsString = trimmed.into();
                 super::projection::validate_plan(&plan).map_err(|e| error(e.to_string()))?;
                 Ok(JsValue::String(plan))
@@ -215,7 +217,7 @@ mod tests {
                 .read(".pilotdeck/plans/plan.md".into(), cwd.clone())
                 .await
                 .unwrap(),
-            JsValue::from("")
+            JsValue::Undefined
         );
         fs::write(&path, "x".repeat(3 * 1024 * 1024)).unwrap();
         let error = files

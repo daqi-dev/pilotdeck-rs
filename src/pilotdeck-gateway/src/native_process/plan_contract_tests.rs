@@ -78,6 +78,7 @@ async fn every_fixed_ts_plan_todo_result_request_and_snapshot_matches_native_ser
         Some(TurnInteractionAuthority {
             permission_mode: None,
             base_permission_mode: None,
+            sdk_hooks: None,
             sdk_permission_mode: None,
             can_prompt: Some(true),
             policy_can_prompt: None,

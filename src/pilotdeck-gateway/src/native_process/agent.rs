@@ -82,6 +82,7 @@ pub(super) struct NativeForkRegistry {
     factory: OnceLock<Weak<ProjectSessionFactory>>,
     scopes: Mutex<HashMap<JsString, Arc<ForkScope>>>,
     slots: Arc<Semaphore>,
+    background_records: AtomicU64,
 }
 impl NativeForkRegistry {
     pub(super) fn new() -> Arc<Self> {
@@ -89,6 +90,7 @@ impl NativeForkRegistry {
             factory: OnceLock::new(),
             scopes: Mutex::default(),
             slots: Arc::new(Semaphore::new(8)),
+            background_records: AtomicU64::new(0),
         })
     }
     pub(super) fn install_factory(&self, factory: &Arc<ProjectSessionFactory>) {
@@ -147,6 +149,7 @@ struct Job {
     done: watch::Receiver<Option<Result<ToolOutput, ToolError>>>,
 }
 pub(super) struct ForkTurn {
+    session_emit: OnceLock<super::session_events::SessionEmit>,
     registry: Arc<NativeForkRegistry>,
     parent: ExecutionIdentity,
     config: JsObject,
@@ -158,6 +161,7 @@ pub(super) struct ForkTurn {
     skills: super::skills::NativeSkills,
     generation: OnceLock<Arc<crate::runtime::project::RuntimeLease>>,
     owner: Option<Weak<NativeForkOwner>>,
+    detached: bool,
     #[cfg(unix)]
     sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     events: mpsc::Sender<JsObject>,
@@ -167,6 +171,7 @@ pub(super) struct ForkTurn {
     next: AtomicU64,
     cleanup_errors: Mutex<Vec<String>>,
     close_done: watch::Sender<Option<Result<(), HostError>>>,
+    lifecycle: OnceLock<Arc<dyn crate::host::modules::lifecycle::LifecyclePort>>,
 }
 impl ForkTurn {
     #[allow(clippy::too_many_arguments)]
@@ -186,6 +191,7 @@ impl ForkTurn {
         let (events, events_rx) = mpsc::channel(16);
         let (close_done, _) = watch::channel(None);
         Arc::new(Self {
+            session_emit: OnceLock::new(),
             registry,
             parent,
             config,
@@ -197,6 +203,7 @@ impl ForkTurn {
             skills,
             generation: OnceLock::new(),
             owner: owner.map(Arc::downgrade),
+            detached: false,
             #[cfg(unix)]
             sandbox,
             events,
@@ -206,8 +213,16 @@ impl ForkTurn {
             next: AtomicU64::new(1),
             cleanup_errors: Mutex::default(),
             close_done,
+            lifecycle: OnceLock::new(),
         })
     }
+    pub(super) fn bind_session_emitter(&self, emit: super::session_events::SessionEmit) {
+        assert!(
+            self.session_emit.set(emit).is_ok(),
+            "session emitter is bound once"
+        );
+    }
+
     fn bind_generation(
         &self,
         generation: Arc<crate::runtime::project::RuntimeLease>,
@@ -215,6 +230,91 @@ impl ForkTurn {
         self.generation.set(generation).map_err(|_| {
             ModuleError::new("Native fork execution generation is already bound.").into()
         })
+    }
+    async fn dispatch_subagent_hook(
+        &self,
+        event: &str,
+        id: &JsString,
+        definition: &str,
+        success: Option<bool>,
+    ) -> Result<(), ToolError> {
+        use crate::runtime::hooks::LifecycleDispatchInput;
+        let Some(port) = self.lifecycle.get() else {
+            return Ok(());
+        };
+        let cwd = string(&self.config, "cwd")
+            .ok_or_else(|| error("Subagent lifecycle cwd is missing."))?;
+        let mut payload = object([
+            ("subagentId", JsValue::String(id.clone())),
+            ("subagentType", definition.into()),
+        ])
+        .as_object()
+        .unwrap()
+        .clone();
+        if let Some(success) = success {
+            payload.insert("success".into(), JsValue::Bool(success));
+        }
+        let base_input = object([
+            ("sessionId", JsValue::String(self.parent.session_id.clone())),
+            ("transcriptPath", "".into()),
+            ("cwd", JsValue::String(cwd.clone())),
+            (
+                "permissionMode",
+                self.config
+                    .get("permissionMode")
+                    .cloned()
+                    .unwrap_or(JsValue::Undefined),
+            ),
+        ])
+        .as_object()
+        .unwrap()
+        .clone();
+        let env = crate::host::modules::lifecycle::build_turn_environment(
+            self.config.get("env").and_then(JsValue::as_object),
+            &cwd,
+            &self.parent.session_id,
+            &self.parent.turn_id,
+        )
+        .map_err(|failure| error(failure.to_string()))?;
+        // Match the fixed TS helper: dispatch rejection propagates, while
+        // returned effects/events/errors are not independently applied here.
+        port.dispatch(LifecycleDispatchInput {
+            event: event.into(),
+            base_input,
+            payload: Some(payload),
+            match_query: Some(event.into()),
+            cwd,
+            env: Some(env),
+            signal: None,
+        })
+        .await
+        .map_err(|failure| error(failure.to_string()))?;
+        Ok(())
+    }
+    async fn stop_subagent_hooks(
+        &self,
+        id: &JsString,
+        definition: &str,
+        success: bool,
+    ) -> Result<(), ToolError> {
+        match self
+            .dispatch_subagent_hook("SubagentStop", id, definition, Some(success))
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(mut failure) => {
+                // The TS catch retries a rejected successful stop as failure;
+                // the original rejection still fails the parent tool.
+                if success
+                    && let Err(retry) = self
+                        .dispatch_subagent_hook("SubagentStop", id, definition, Some(false))
+                        .await
+                {
+                    failure.message = concat(&[&failure.message, &"; ".into(), &retry.message]);
+                }
+                Err(failure)
+            }
+        }
     }
     async fn emit(&self, mut value: JsObject) -> Result<(), ToolError> {
         value.insert(
@@ -227,6 +327,12 @@ impl ForkTurn {
         );
         if *lock(&self.closed) {
             return Err(ToolError::aborted());
+        }
+        if self.detached {
+            if let Some(emit) = self.session_emit.get() {
+                let _ = emit(JsValue::Object(value));
+            }
+            return Ok(());
         }
         self.events
             .send(value)
@@ -400,6 +506,10 @@ impl ToolExecution for ForkExecution {
         self.inner.bind_turn_permission(permission)
     }
     fn bind_turn_hooks(&self, hooks: TurnHooks) -> Result<(), HostError> {
+        self.turn
+            .lifecycle
+            .set(Arc::new(hooks.clone()))
+            .map_err(|_| ModuleError::new("Native subagent lifecycle is already bound."))?;
         self.inner.bind_turn_hooks(hooks)
     }
     fn refresh(&self) -> HostFuture<()> {
@@ -619,6 +729,37 @@ impl ForkApi {
             .get()
             .and_then(Weak::upgrade)
             .ok_or_else(|| error("Native session factory is unavailable."))?;
+        if spec.get("background") == Some(&JsValue::Bool(true)) {
+            let closed = lock(&self.turn.closed);
+            if *closed {
+                return Err(ToolError::aborted());
+            }
+            let result = self
+                .launch_background(
+                    factory,
+                    permit,
+                    definition,
+                    spec,
+                    description,
+                    directive,
+                    parent_mode,
+                    parent_ask,
+                    depth,
+                    max,
+                    context,
+                )
+                .map_err(|failure| {
+                    fork_error(
+                        concat(&[
+                            &"background agent subagent failed to launch: ".into(),
+                            &failure.message,
+                        ]),
+                        "subagent_launch_failed",
+                    )
+                });
+            drop(closed);
+            return result;
+        }
         let mut wait = {
             let closed = lock(&self.turn.closed);
             if *closed {
@@ -665,6 +806,7 @@ impl ForkApi {
                         context,
                         run_cancel,
                         deadline,
+                        None,
                     )
                     .await
                     .map_err(|failure| {
@@ -711,9 +853,11 @@ impl ForkApi {
         context: ToolRunContext,
         cancel: Cancellation,
         deadline: tokio::time::Instant,
+        fixed_id: Option<JsString>,
     ) -> Result<ToolOutput, ToolError> {
         let started = Instant::now();
-        let subagent: JsString = uuid::Uuid::new_v4().to_string().into();
+        let subagent: JsString =
+            fixed_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
         let cwd = string(&self.turn.config, "cwd")
             .ok_or_else(|| error("Subagent project root is missing."))?;
         let session = concat(&[&cwd, &"::sub::".into(), &subagent]);
@@ -883,27 +1027,34 @@ impl ForkApi {
             ("subagentSessionId", JsValue::String(session.clone())),
         ]))
         .await?;
-        let _ = self
+        let start_hook = self
             .turn
-            .emit(
-                object([
-                    ("type", "subagent_started".into()),
-                    ("subagentId", JsValue::String(subagent.clone())),
-                    ("subagentType", JsValue::String(definition.as_str().into())),
-                    (
-                        "toolCallId",
-                        context
-                            .fields
-                            .get("currentToolCallId")
-                            .cloned()
-                            .unwrap_or(JsValue::Undefined),
-                    ),
-                ])
-                .as_object()
-                .unwrap()
-                .clone(),
-            )
+            .dispatch_subagent_hook("SubagentStart", &subagent, &definition, None)
             .await;
+        let lifecycle_started = start_hook.is_ok();
+        if lifecycle_started {
+            let _ = self
+                .turn
+                .emit(
+                    object([
+                        ("type", "subagent_started".into()),
+                        ("subagentId", JsValue::String(subagent.clone())),
+                        ("subagentType", JsValue::String(definition.as_str().into())),
+                        (
+                            "toolCallId",
+                            context
+                                .fields
+                                .get("currentToolCallId")
+                                .cloned()
+                                .unwrap_or(JsValue::Undefined),
+                        ),
+                    ])
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                )
+                .await;
+        }
         let child_context = SessionContext {
             session_key: session.clone(),
             project_key: None,
@@ -911,19 +1062,23 @@ impl ForkApi {
             allowed_tools: Some(allowed),
             disallowed_tools: None,
         };
-        let result = self
-            .execute_child(
-                factory,
-                child_context,
-                &turn,
-                &subagent,
-                &definition,
-                &directive,
-                &context,
-                cancel,
-                deadline,
-            )
-            .await;
+        let mut result = match start_hook {
+            Ok(()) => {
+                self.execute_child(
+                    factory,
+                    child_context,
+                    &turn,
+                    &subagent,
+                    &definition,
+                    &directive,
+                    &context,
+                    cancel,
+                    deadline,
+                )
+                .await
+            }
+            Err(failure) => Err(failure),
+        };
         let elapsed = started.elapsed().as_millis() as f64;
         let (summary, usage, turns, errored) = match &result {
             Ok(report) => (
@@ -940,36 +1095,52 @@ impl ForkApi {
             ),
         };
         let (summary, truncated) = preview(&summary, 4096);
-        self.write_parent(object([
-            ("type", "subagent_completed".into()),
-            ("subagentId", JsValue::String(subagent.clone())),
-            ("subagentType", JsValue::String(definition.as_str().into())),
-            ("summaryPreview", JsValue::String(summary)),
-            ("summaryTruncated", JsValue::Bool(truncated)),
-            ("usage", usage),
-            ("turns", turns),
-            (
-                "durationMs",
-                JsValue::Number(if errored { 0.0 } else { elapsed }),
-            ),
-            ("errored", JsValue::Bool(errored)),
-        ]))
-        .await?;
-        let _ = self
-            .turn
-            .emit(
-                object([
-                    ("type", "subagent_completed".into()),
-                    ("subagentId", JsValue::String(subagent.clone())),
-                    ("subagentType", JsValue::String(definition.as_str().into())),
-                    ("success", JsValue::Bool(!errored)),
-                    ("durationMs", JsValue::Number(elapsed)),
-                ])
-                .as_object()
-                .unwrap()
-                .clone(),
-            )
+        let completion = self
+            .write_parent(object([
+                ("type", "subagent_completed".into()),
+                ("subagentId", JsValue::String(subagent.clone())),
+                ("subagentType", JsValue::String(definition.as_str().into())),
+                ("summaryPreview", JsValue::String(summary)),
+                ("summaryTruncated", JsValue::Bool(truncated)),
+                ("usage", usage),
+                ("turns", turns),
+                (
+                    "durationMs",
+                    JsValue::Number(if errored { 0.0 } else { elapsed }),
+                ),
+                ("errored", JsValue::Bool(errored)),
+            ]))
             .await;
+        if let Err(failure) = completion {
+            append_subagent_failure(&mut result, failure);
+        }
+        if lifecycle_started {
+            if let Err(failure) = self
+                .turn
+                .stop_subagent_hooks(&subagent, &definition, result.is_ok())
+                .await
+            {
+                append_subagent_failure(&mut result, failure);
+            }
+            let _ = self
+                .turn
+                .emit(
+                    object([
+                        ("type", "subagent_completed".into()),
+                        ("subagentId", JsValue::String(subagent.clone())),
+                        ("subagentType", JsValue::String(definition.as_str().into())),
+                        ("success", JsValue::Bool(result.is_ok())),
+                        (
+                            "durationMs",
+                            JsValue::Number(if result.is_ok() { elapsed } else { 0.0 }),
+                        ),
+                    ])
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                )
+                .await;
+        }
         let report = result?;
         Ok(agent_output(
             &definition,
@@ -1003,6 +1174,13 @@ struct Report {
     usage: JsValue,
     turns: JsValue,
     parsed: Option<JsObject>,
+}
+fn append_subagent_failure(result: &mut Result<Report, ToolError>, mut failure: ToolError) {
+    if let Err(previous) = result {
+        failure.code = previous.code.clone();
+        failure.message = concat(&[&previous.message, &"; ".into(), &failure.message]);
+    }
+    *result = Err(failure);
 }
 impl ForkApi {
     #[allow(clippy::too_many_arguments)]

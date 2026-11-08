@@ -194,10 +194,9 @@ mod tests {
     use super::*;
     #[test]
     fn fixed_ts_resolution_matrix_and_input_preservation() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/sdk-fork-mcp/oracle.json"
-        )))
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../tests/fixtures/sdk-fork-mcp/oracle.json"
+        ))
         .unwrap();
         let JsValue::Array(rows) = oracle.get("rows").unwrap() else {
             panic!("rows")

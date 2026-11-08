@@ -44,6 +44,56 @@ pub(super) struct SessionLifecycle {
     pub(super) transcript_path: JsString,
     owned: Option<SessionOwnership>,
     executor: tokio::runtime::Handle,
+    sdk: Option<SdkSessionHooks>,
+}
+struct SdkSessionHooks {
+    handlers: Arc<Mutex<crate::runtime::sdk_session::SessionHandlerRegistry>>,
+    registration: Option<crate::runtime::sdk_session::HandlerRegistration>,
+    session_registration: Option<crate::runtime::sdk_session::HandlerRegistration>,
+    signal: Cancellation,
+    file: Option<Arc<crate::runtime::hooks::LifecycleRuntime>>,
+    config: Option<Arc<crate::runtime::hooks::LifecycleRuntime>>,
+}
+impl SdkSessionHooks {
+    fn revoke(&mut self) {
+        if let Some(token) = self.registration.take() {
+            self.handlers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .unregister_config_change(&token);
+        }
+        if let Some(token) = self.session_registration.take() {
+            self.handlers
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .unregister_session_hook(&token);
+        }
+        self.signal.abort();
+    }
+}
+impl Drop for SdkSessionHooks {
+    fn drop(&mut self) {
+        self.revoke();
+    }
+}
+
+/// Poll once before returning so the HookRuntime owns the in-flight receipt
+/// before a concurrent session close can dispose it.
+fn admit_sdk_observer(
+    mut work: HostFuture<crate::runtime::hooks::LifecycleDispatchResult>,
+    permit: tokio::sync::OwnedSemaphorePermit,
+    executor: &tokio::runtime::Handle,
+) {
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    match work.as_mut().poll(&mut context) {
+        std::task::Poll::Ready(_) => drop(permit),
+        std::task::Poll::Pending => {
+            executor.spawn(async move {
+                let _permit = permit;
+                let _ = work.await;
+            });
+        }
+    }
 }
 struct SessionOwnership {
     lease: Arc<RuntimeLease>,
@@ -72,6 +122,7 @@ impl SessionLifecycle {
             .as_any()
             .downcast_ref::<InteractionHooks>()
             .ok_or_else(|| ModuleError::new("Invalid leased interaction hooks resource."))?;
+        let turn_signal = signal.clone();
         let port = hooks.bind_session_with_options(
             Binding {
                 session_id: identity.session_id.clone(),
@@ -83,10 +134,195 @@ impl SessionLifecycle {
             },
             identity.run_id.clone(),
             input.hooks.clone(),
-            input.hook_options.clone().unwrap_or_default(),
+            input.session_hook_options.clone().or_else(|| input.hook_options.clone()).unwrap_or_default(),
         )?;
+        let port: Arc<dyn LifecyclePort> = Arc::new(port);
+        let sdk = input
+            .sdk_hook_state
+            .as_ref()
+            .map(|sdk| {
+                let signal = Cancellation::new();
+                let overflowed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let report_limit = {
+                    let overflowed = overflowed.clone();
+                    let abort = turn_signal.clone();
+                    let emit = input.permission.emit.clone();
+                    Arc::new(move || {
+                        use std::sync::atomic::Ordering;
+                        if !overflowed.swap(true, Ordering::SeqCst) {
+                            let mut error = JsObject::new();
+                            error.insert("type".into(), "error".into());
+                            error.insert("code".into(), "SDK_HOOK_DISPATCH_LIMIT".into());
+                            error.insert(
+                                "message".into(),
+                                "SDK hook dispatch exceeded its native concurrency budget.".into(),
+                            );
+                            error.insert("recoverable".into(), JsValue::Bool(false));
+                            emit(JsValue::Object(error));
+                            abort.abort();
+                        }
+                    })
+                };
+                let settings = |name: &str| {
+                    sdk.settings
+                        .iter()
+                        .filter(|(event, _)| event.equals_str(name))
+                        .cloned()
+                        .collect::<crate::hooks::protocol::HooksSettings>()
+                };
+                let file_settings = settings("FileChanged");
+                let file = (!file_settings.is_empty()).then(|| {
+                    Arc::new(crate::runtime::hooks::LifecycleRuntime::new(
+                        crate::runtime::hooks::HookRuntime::with_options(
+                            file_settings,
+                            input.session_hook_options.clone().or_else(|| input.hook_options.clone()).unwrap_or_default(),
+                        ),
+                    ))
+                });
+                if file.is_some() && input.sdk_file_slot.is_none() {
+                    return Err(ModuleError::new("SDK FileChanged slot is missing.").into());
+                }
+                if let (Some(slot), Some(runtime)) = (&input.sdk_file_slot, &file) {
+                    slot.set((runtime.clone(), signal.clone())).map_err(|_| {
+                        ModuleError::new("SDK FileChanged owner was already bound.")
+                    })?;
+                }
+                let config_settings = settings("ConfigChange");
+                let config = (!config_settings.is_empty()).then(|| {
+                    let mut options = input.session_hook_options.clone().or_else(|| input.hook_options.clone()).unwrap_or_default();
+                    options.on_async_registered = None;
+                    Arc::new(crate::runtime::hooks::LifecycleRuntime::new(
+                        crate::runtime::hooks::HookRuntime::with_options(config_settings, options),
+                    ))
+                });
+                let registration = config.as_ref().map(|runtime| {
+                    let runtime = Arc::downgrade(runtime);
+                    let report_limit = report_limit.clone();
+                    let cancel = signal.clone();
+                    let session = identity.session_id.clone();
+                    let cwd = cwd.clone();
+                    let executor = tokio::runtime::Handle::current();
+                    static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
+                        std::sync::OnceLock::new();
+                    let slots = SLOTS
+                        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(64)))
+                        .clone();
+                    let handler: crate::runtime::sdk_session::SdkConfigChangeHandler =
+                        Arc::new(move |notice| {
+                            let Some(runtime) = runtime.upgrade() else {
+                                return;
+                            };
+                            let Ok(permit) = slots.clone().try_acquire_owned() else {
+                                report_limit();
+                                return;
+                            };
+                            let session = session.clone();
+                            let cwd = cwd.clone();
+                            let cancel = cancel.clone();
+                            let notice = notice.clone();
+                            let mut base = JsObject::new();
+                            base.insert("sessionId".into(), JsValue::String(session));
+                            base.insert("transcriptPath".into(), "".into());
+                            base.insert("cwd".into(), JsValue::String(cwd.clone()));
+                            let mut payload = JsObject::new();
+                            payload.insert(
+                                "changedPaths".into(),
+                                JsValue::Array(
+                                    notice
+                                        .changed_paths
+                                        .into_iter()
+                                        .map(JsValue::String)
+                                        .collect(),
+                                ),
+                            );
+                            payload.insert(
+                                "changeClasses".into(),
+                                JsValue::Array(
+                                    notice
+                                        .change_classes
+                                        .into_iter()
+                                        .map(JsValue::String)
+                                        .collect(),
+                                ),
+                            );
+                            let work: HostFuture<_> = Box::pin(async move {
+                                runtime
+                                    .dispatch(LifecycleDispatchInput {
+                                        event: "ConfigChange".into(),
+                                        base_input: base,
+                                        payload: Some(payload),
+                                        match_query: Some("ConfigChange".into()),
+                                        cwd,
+                                        env: None,
+                                        signal: Some(cancel),
+                                    })
+                                    .await
+                            });
+                            admit_sdk_observer(work, permit, &executor);
+                        });
+                    sdk.handlers
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .register_config_change(&identity.session_id, handler)
+                });
+                let session_port = Arc::downgrade(&port);
+                let report_limit = report_limit.clone();
+                let session_cancel = signal.clone();
+                let session_id = identity.session_id.clone();
+                let session_cwd = cwd.clone();
+                let executor = tokio::runtime::Handle::current();
+                static SESSION_SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
+                    std::sync::OnceLock::new();
+                let slots = SESSION_SLOTS
+                    .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(64)))
+                    .clone();
+                let session_handler: crate::runtime::sdk_session::SessionHookHandler =
+                    Arc::new(move |event, payload| {
+                        let Some(port) = session_port.upgrade() else {
+                            return;
+                        };
+                        let Ok(permit) = slots.clone().try_acquire_owned() else {
+                            report_limit();
+                            return;
+                        };
+                        let session = session_id.clone();
+                        let cwd = session_cwd.clone();
+                        let cancel = session_cancel.clone();
+                        let payload = payload.as_object().cloned().unwrap_or_default();
+                        let mut base = JsObject::new();
+                        base.insert("sessionId".into(), JsValue::String(session));
+                        base.insert("transcriptPath".into(), "".into());
+                        base.insert("cwd".into(), JsValue::String(cwd.clone()));
+                        let name: JsString = event.as_str().into();
+                        let work = port.dispatch(LifecycleDispatchInput {
+                            event: name.clone(),
+                            base_input: base,
+                            payload: Some(payload),
+                            match_query: Some(name),
+                            cwd,
+                            env: None,
+                            signal: Some(cancel),
+                        });
+                        admit_sdk_observer(work, permit, &executor);
+                    });
+                let session_registration = sdk
+                    .handlers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .register_session_hook(&identity.session_id, session_handler);
+                Ok::<SdkSessionHooks, HostError>(SdkSessionHooks {
+                    handlers: sdk.handlers.clone(),
+                    registration,
+                    session_registration: Some(session_registration),
+                    signal,
+                    file,
+                    config,
+                })
+            })
+            .transpose()?;
         Ok(Some(Self {
-            port: Arc::new(port),
+            sdk,
+            port,
             cwd,
             transcript_path,
             owned: Some(SessionOwnership {
@@ -100,6 +336,7 @@ impl SessionLifecycle {
     #[cfg(test)]
     fn test(port: Arc<dyn LifecyclePort>) -> Self {
         Self {
+            sdk: None,
             port,
             cwd: "/virtual/743".into(),
             transcript_path: "/virtual/743/session.jsonl".into(),
@@ -172,10 +409,24 @@ impl SessionLifecycle {
     }
     fn spawn_close(&mut self) -> watch::Receiver<Option<Result<(), HostError>>> {
         let owned = self.owned.take();
+        let mut sdk = self.sdk.take();
+        if let Some(sdk) = &mut sdk {
+            sdk.revoke();
+        }
         let port = self.port.clone();
         let (done, completion) = watch::channel(None);
         let cleanup = async move {
             let mut errors = Vec::new();
+            if let Some(sdk) = &sdk {
+                for runtime in [sdk.file.as_ref(), sdk.config.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Err(error) = runtime.dispose_checked().await {
+                        errors.push(error.to_string());
+                    }
+                }
+            }
             if let Err(e) = port.dispose().await {
                 errors.push(e.to_string());
             }

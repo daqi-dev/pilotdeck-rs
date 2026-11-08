@@ -76,11 +76,8 @@ fn snapshot(value: GoalState) -> serde_json::Value {
 #[tokio::test]
 async fn fixed_ts_goal_cases_use_actual_durable_writer_and_projection() {
     let (_scratch, store, storage, session) = fixture();
-    let oracle: serde_json::Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/native-goal/oracle.json"
-    )))
-    .unwrap();
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("../../tests/fixtures/native-goal/oracle.json")).unwrap();
     for row in oracle["rows"].as_array().unwrap() {
         let name = row["name"].as_str().unwrap();
         let input = pilotdeck_protocol::parse_json(&row["input"].to_string()).unwrap();

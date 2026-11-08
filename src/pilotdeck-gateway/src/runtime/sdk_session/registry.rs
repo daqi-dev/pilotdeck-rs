@@ -226,7 +226,7 @@ pub struct SdkSessionRegistry {
     /// SDK MCP slice write the same entries (#347③).
     projects: Arc<SdkSessionProjects>,
     overrides: Option<SessionConfigOverrides>,
-    handlers: SessionHandlerRegistry,
+    handlers: Arc<Mutex<SessionHandlerRegistry>>,
 }
 
 impl SdkSessionRegistry {
@@ -239,8 +239,16 @@ impl SdkSessionRegistry {
             thinking: Vec::new(),
             projects,
             overrides: None,
-            handlers: SessionHandlerRegistry::new(),
+            handlers: Arc::new(Mutex::new(SessionHandlerRegistry::new())),
         }
+    }
+
+    pub(crate) fn with_shared_handlers(
+        mut self,
+        handlers: Arc<Mutex<SessionHandlerRegistry>>,
+    ) -> Self {
+        self.handlers = handlers;
+        self
     }
 
     pub fn with_overrides(mut self, overrides: SessionConfigOverrides) -> Self {
@@ -252,12 +260,16 @@ impl SdkSessionRegistry {
         &self.options
     }
 
-    pub fn handlers(&self) -> &SessionHandlerRegistry {
-        &self.handlers
+    pub fn handlers(&self) -> std::sync::MutexGuard<'_, SessionHandlerRegistry> {
+        self.handlers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
-    pub fn handlers_mut(&mut self) -> &mut SessionHandlerRegistry {
-        &mut self.handlers
+    pub fn handlers_mut(&mut self) -> std::sync::MutexGuard<'_, SessionHandlerRegistry> {
+        self.handlers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     /// Full configuration insertion order, for fixture replay and inspection.
@@ -586,7 +598,10 @@ impl SdkSessionRegistry {
         session_key: &JsString,
         handler: SdkConfigChangeHandler,
     ) -> HandlerRegistration {
-        self.handlers.register_config_change(session_key, handler)
+        self.handlers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .register_config_change(session_key, handler)
     }
 
     pub fn register_session_hook_handler(
@@ -594,7 +609,10 @@ impl SdkSessionRegistry {
         session_key: &JsString,
         handler: SessionHookHandler,
     ) -> HandlerRegistration {
-        self.handlers.register_session_hook(session_key, handler)
+        self.handlers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .register_session_hook(session_key, handler)
     }
 
     pub fn is_ephemeral_session(&self, session_key: &JsString) -> bool {
@@ -625,7 +643,10 @@ impl SdkSessionRegistry {
         self.delete_plugins(session_key);
         self.delete_thinking(session_key);
         self.delete_project(session_key);
-        self.handlers.clear_session(session_key);
+        self.handlers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clear_session(session_key);
         Ok(())
     }
 

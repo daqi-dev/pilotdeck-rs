@@ -33,16 +33,18 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
             temporary_root,
         ));
         let project = context.project_root();
+        let archive_project = std::fs::canonicalize(&project)
+            .map_err(|error| crate::runtime::project::RuntimeError::new(error.to_string()))?;
         let archive = {
             let mut archives = self.archives.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(archive) = archives.get(&project).and_then(Weak::upgrade) {
+            if let Some(archive) = archives.get(&archive_project).and_then(Weak::upgrade) {
                 archive
             } else {
-                let archive =
-                    super::background_archive::NativeArchive::open(&project).map_err(|error| {
+                let archive = super::background_archive::NativeArchive::open(&archive_project)
+                    .map_err(|error| {
                         crate::runtime::project::RuntimeError::new(error.to_string())
                     })?;
-                archives.insert(project.clone(), Arc::downgrade(&archive));
+                archives.insert(archive_project, Arc::downgrade(&archive));
                 archive
             }
         };

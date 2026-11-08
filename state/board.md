@@ -4982,3 +4982,8 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-08 20:09 · CLI 计划兼容与执行代际检查点
 
 本轮恢复plan工具的完整旧提示/审批选项/turn身份，真实原生服务逐项消费固定TS9格结果+请求+快照全过；计划容量提前核验并预留首次待办空间。Cron交付纳入owned fire worker，回收等待/超时测试通过；原claim窗口三次shutdown与timeout/CRUD真实链在mbp2完成，原失败记录保留。SDK子代理现在继承创建turn实际generation（非首次prepare旧代），max_turns按真实TS正常报告，取消/timeout真实child aborted落盘已过。r47编译/plan/goal/Cron/agent/turn-host/execute_code19格真实Python语法/strict/四bin通过，native-review仅新增测试fixture缺provider失败，修后r48 34过50忽略及71负控静态绑定过；7条实际注错判杀待跑，不能以静态check替代。主证据 `_tmp/20261108-cli-completion/verify-r{47,48}`，r47冻结bin附该单失败范围。独立execution/machine评审继续；SDK特殊hooks及后台/续跑仍未完成。20:01本机磁盘短暂ENOSPC，暂停本机写并核mbp2仍91GiB；随后本机空间自行回升8.8GiB，未停止其他会话构建或删除任何材料。唯一正本/双方快照/只本机提交/仅mbp2编译约束不变，下一交接20:41。
+
+
+### 2026-11-08 20:41 · CLI 两小时接续（继续开发）
+
+唯一正本与旧树快照维持，本机本轮可归属材料约1.33GiB，Rust仅mbp2，未清理/停止其它任务。r50全目标编译、agent17、execute_code、hooks integration19过1忽略、session投递、内置模块兼容、watch取消序号与71静态锚通过；strict仅MSRV命名冲突已源修。SDK主片/receipt/session投影与stdio环境接线已整合，r51编译缺宿主转发/可见性等已修待r52，未冒通过；7条实际负控仍被旧source guard动态include阻断，静态路径等价修复后待重跑。GLM独审暴露空plan文件P1，按实际TS恢复undefined；Cron交付关停、raw子代理事件缓冲/continuable/observer/TCP及SDK真实probe继续。现场、证据、持有人与下一步见主仓 `_tmp/20261108-cli-completion/handoff-2041.md`，下一交接22:41；本轮只本机提交、无GitHub写，完整CLI/阶段D/人签均未收口。

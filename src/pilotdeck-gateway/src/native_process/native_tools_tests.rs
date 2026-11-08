@@ -86,6 +86,7 @@ fn harness_with_hook_settings(
         Some(TurnInteractionAuthority {
             permission_mode: None,
             base_permission_mode: None,
+            sdk_hooks: None,
             sdk_permission_mode: sdk.map(Into::into),
             can_prompt: None,
             policy_can_prompt: None,
@@ -632,4 +633,76 @@ async fn tool_lifecycle_blocks_before_execution_and_observes_success_and_failure
     .await;
     assert_eq!(failed.get("type"), Some(&"error".into()));
     assert!(h.root.join("failure-ran").exists());
+}
+
+#[tokio::test]
+async fn file_changed_observes_real_committed_create_update_and_not_a_rejected_write() {
+    let raw = pilotdeck_protocol::parse_json(r#"{"FileChanged":[{"hooks":[{"type":"command","command":"cat >> file-events; printf '\\n' >> file-events"}]}]}"#).unwrap();
+    let h = harness_with_hook_settings(
+        "allow",
+        "bypassPermissions",
+        None,
+        None,
+        None,
+        true,
+        crate::hooks::config::parse_hooks_config(&raw).settings,
+    );
+    let write =
+        |value| crate::metadata::object([("file_path", "observed.txt".into()), ("content", value)]);
+    success(&invoke(&h, "write_file", "create", write("one".into())).await);
+    let read = invoke(
+        &h,
+        "read_file",
+        "read",
+        crate::metadata::object([("file_path", "observed.txt".into())]),
+    )
+    .await;
+    success(&read);
+    success(&invoke(&h, "write_file", "update", write("two".into())).await);
+    let rejected = invoke(
+        &h,
+        "write_file",
+        "rejected",
+        crate::metadata::object([
+            ("file_path", ".git/config".into()),
+            ("content", "three".into()),
+        ]),
+    )
+    .await;
+    assert_eq!(rejected.get("type"), Some(&"error".into()));
+    let events = std::fs::read_to_string(h.root.join("file-events")).unwrap();
+    let entries: Vec<_> = events
+        .lines()
+        .map(|line| pilotdeck_protocol::parse_json(line).unwrap())
+        .collect();
+    assert_eq!(entries.len(), 2, "{events}");
+    assert_eq!(entries[0].get("changeKind"), Some(&"create".into()));
+    assert_eq!(entries[1].get("changeKind"), Some(&"update".into()));
+    assert_eq!(entries[0].get("relativePath"), Some(&"observed.txt".into()));
+}
+
+#[test]
+fn turn_and_session_hooks_use_their_distinct_emitters() {
+    let (_scratch, tools, recorder, identity) =
+        make_tools(JsObject::new(), Arc::default(), RuleSetHandle::empty());
+    let turn_events = Arc::new(Mutex::new(Vec::new()));
+    let session_events = Arc::new(Mutex::new(Vec::new()));
+    let turn_sink = turn_events.clone(); let session_sink = session_events.clone();
+    let tools = tools.with_session_emitter(Arc::new(move |event| { session_sink.lock().unwrap().push(event); true }));
+    let ports = tools.turn_with_authority(&identity, recorder, Cancellation::new(), Some(TurnInteractionAuthority {
+        permission_mode: None, base_permission_mode: None, can_prompt: Some(true),
+        policy_can_prompt: None, sdk_permission_mode: None, sdk_hooks: None,
+        emit: Arc::new(move |event| { turn_sink.lock().unwrap().push(event); true }),
+    }));
+    let event = crate::metadata::object([
+        ("type", "started".into()), ("sessionId", JsValue::String(identity.session_id.clone())),
+        ("hookName", "h".into()), ("hookEvent", "SessionStart".into()),
+    ]);
+    let event = event.as_object().unwrap();
+    ports.interaction.hook_options.as_ref().unwrap().on_projection.as_ref().unwrap().project(event).unwrap();
+    assert_eq!(turn_events.lock().unwrap().len(), 1);
+    assert_eq!(session_events.lock().unwrap().len(), 0);
+    ports.interaction.session_hook_options.as_ref().unwrap().on_projection.as_ref().unwrap().project(event).unwrap();
+    assert_eq!(turn_events.lock().unwrap().len(), 1);
+    assert_eq!(session_events.lock().unwrap().len(), 1);
 }

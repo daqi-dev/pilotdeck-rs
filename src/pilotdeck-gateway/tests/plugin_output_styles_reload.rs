@@ -33,11 +33,8 @@ async fn actual(runtime: &PluginRuntime, result: Value) -> Value {
 }
 #[tokio::test]
 async fn style_only_reload_matches_fixed_typescript_and_leaves_other_contributions_untouched() {
-    let oracle: Value = serde_json::from_str(include_str!(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/styles-reload/oracle.json"
-    )))
-    .unwrap();
+    let oracle: Value =
+        serde_json::from_str(include_str!("fixtures/styles-reload/oracle.json")).unwrap();
     let root = Scratch(std::env::temp_dir().join(format!("pdrs-style-{}", uuid::Uuid::new_v4())));
     let project = root.0.join("project");
     let home = root.0.join("home");

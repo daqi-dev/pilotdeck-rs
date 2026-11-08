@@ -409,3 +409,165 @@ async fn warm_parent_child_inherits_actual_turn_generation_after_reload() {
     owner.release_generation().await.unwrap();
     registry.dispose().await.unwrap();
 }
+
+#[tokio::test]
+async fn subagent_lifecycle_uses_real_hook_runtime_and_retries_rejected_success_stop_as_failure() {
+    use crate::{
+        hooks::protocol::{HookCommand, HookMatcher},
+        host::modules::lifecycle::LifecyclePort,
+        runtime::hooks::{
+            HookRuntime, LifecycleDispatchInput, LifecycleDispatchResult, LifecycleRuntime,
+            exec::{CallbackFuture, CallbackHookHandler, CallbackInput, CallbackResult},
+        },
+    };
+    struct Callback(Arc<Mutex<Vec<JsObject>>>);
+    impl CallbackHookHandler for Callback {
+        fn call(&self, input: CallbackInput) -> CallbackFuture {
+            lock(&self.0).push(input.hook_input);
+            Box::pin(async { Ok(CallbackResult::Void) })
+        }
+    }
+    struct Port {
+        runtime: LifecycleRuntime,
+        seen: Arc<Mutex<Vec<JsObject>>>,
+        reject_true: std::sync::atomic::AtomicBool,
+    }
+    impl LifecyclePort for Port {
+        fn dispatch(&self, input: LifecycleDispatchInput) -> HostFuture<LifecycleDispatchResult> {
+            lock(&self.seen).push(
+                object([
+                    ("event", JsValue::String(input.event.clone())),
+                    ("base", JsValue::Object(input.base_input.clone())),
+                    (
+                        "payload",
+                        JsValue::Object(input.payload.clone().unwrap_or_default()),
+                    ),
+                    (
+                        "env",
+                        JsValue::Object(input.env.clone().unwrap_or_default()),
+                    ),
+                    (
+                        "matchQuery",
+                        input
+                            .match_query
+                            .clone()
+                            .map(JsValue::String)
+                            .unwrap_or(JsValue::Undefined),
+                    ),
+                ])
+                .as_object()
+                .unwrap()
+                .clone(),
+            );
+            if input.event.equals_str("SubagentStop")
+                && input
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("success"))
+                    == Some(&JsValue::Bool(true))
+                && self.reject_true.swap(false, Ordering::SeqCst)
+            {
+                return Box::pin(async {
+                    Err(ModuleError::new("fixture successful-stop dispatch rejected").into())
+                });
+            }
+            let runtime = self.runtime.clone();
+            Box::pin(async move { runtime.dispatch(input).await })
+        }
+    }
+    let callbacks = Arc::new(Mutex::new(vec![]));
+    let settings = ["SubagentStart", "SubagentStop"]
+        .into_iter()
+        .map(|event| {
+            (
+                event.into(),
+                vec![HookMatcher {
+                    hooks: vec![HookCommand::Callback {
+                        name: "fixture".into(),
+                        condition: None,
+                        status_message: None,
+                    }],
+                    ..Default::default()
+                }],
+            )
+        })
+        .collect();
+    let runtime = HookRuntime::new(settings);
+    let _registration = runtime
+        .callback_executor()
+        .register(&"fixture".into(), Arc::new(Callback(callbacks.clone())))
+        .unwrap();
+    let seen = Arc::new(Mutex::new(vec![]));
+    let port = Arc::new(Port {
+        runtime: LifecycleRuntime::new(runtime),
+        seen: seen.clone(),
+        reject_true: std::sync::atomic::AtomicBool::new(true),
+    });
+    let turn = turn(
+        object([
+            ("cwd", "/fixture-subagent-hook".into()),
+            ("permissionMode", "default".into()),
+            ("env", JsValue::Object(JsObject::new())),
+        ])
+        .as_object()
+        .unwrap()
+        .clone(),
+    );
+    assert!(turn.lifecycle.set(port).is_ok());
+    turn.dispatch_subagent_hook("SubagentStart", &"child".into(), "explore", None)
+        .await
+        .unwrap();
+    let error = turn
+        .stop_subagent_hooks(&"child".into(), "explore", true)
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .message
+            .to_utf8()
+            .unwrap()
+            .contains("fixture successful-stop")
+    );
+    let seen = lock(&seen);
+    assert_eq!(seen.len(), 3);
+    assert_eq!(seen[0].get("event"), Some(&"SubagentStart".into()));
+    assert_eq!(
+        seen[1].get("payload").unwrap().get("success"),
+        Some(&JsValue::Bool(true))
+    );
+    assert_eq!(
+        seen[2].get("payload").unwrap().get("success"),
+        Some(&JsValue::Bool(false))
+    );
+    for input in seen.iter() {
+        assert_eq!(
+            input.get("base").unwrap().get("sessionId"),
+            Some(&"parent".into())
+        );
+        assert_eq!(
+            input.get("base").unwrap().get("transcriptPath"),
+            Some(&"".into())
+        );
+        assert_eq!(
+            input.get("env").unwrap().get("PILOTDECK_SESSION_ID"),
+            Some(&"parent".into())
+        );
+        assert_eq!(
+            input.get("env").unwrap().get("PILOTDECK_TURN_ID"),
+            Some(&"parent-turn".into())
+        );
+        assert_eq!(input.get("matchQuery"), input.get("event"));
+    }
+    drop(seen);
+    let callbacks = lock(&callbacks);
+    assert_eq!(callbacks.len(), 2);
+    assert_eq!(
+        callbacks[0].get("hookEventName"),
+        Some(&"SubagentStart".into())
+    );
+    assert_eq!(
+        callbacks[1].get("hookEventName"),
+        Some(&"SubagentStop".into())
+    );
+    assert_eq!(callbacks[1].get("success"), Some(&JsValue::Bool(false)));
+}

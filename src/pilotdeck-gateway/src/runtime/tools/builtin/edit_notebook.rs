@@ -53,7 +53,7 @@ impl ExecutableTool for EditNotebookTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move { execute(&input, &context).await })
     }
 }
 
@@ -189,7 +189,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
     Ok(None)
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
     let path = input_string(input, "notebook_path").unwrap_or_else(|| JsString::from(""));
     let cell_id = input_string(input, "cell_id").filter(|value| !value.is_empty());
     let new_source = input_string(input, "new_source").unwrap_or_else(|| JsString::from(""));
@@ -212,6 +212,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
             .track_edit(&text(&resolved.absolute), &message)
             .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
     }
+    let created_for_notice = freshness.previous_content.is_none();
     let original_content = match freshness.previous_content {
         Some(content) => content,
         None => read_notebook_json(&resolved.absolute)?,
@@ -311,6 +312,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
         None,
     );
 
+    super::notify_file_update(context, &resolved, created_for_notice).await;
     let cell_type = match effective_cell_type {
         Some(value) => text(&value),
         None => infer_result_cell_type(&cells, cell_index, effective_mode).to_string(),

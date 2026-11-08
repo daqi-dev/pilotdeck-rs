@@ -943,10 +943,9 @@ mod native_hook_loading_tests {
         );
         let plugin = root.0.join("plugins/fixture");
         std::fs::create_dir_all(&plugin).unwrap();
-        let oracle = pilotdeck_protocol::parse_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/native-hooks/oracle.json"
-        )))
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-hooks/oracle.json"
+        ))
         .unwrap();
         let hooks = oracle.get("hookConfig").cloned().unwrap();
         let mut manifest = JsObject::new();

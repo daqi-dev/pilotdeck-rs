@@ -97,6 +97,12 @@ pub trait SubmitSdkSessionConfig: Send + Sync {
     fn permission_mode<'a>(&'a self, _session: &'a JsString) -> SubmitFuture<'a, Option<JsString>> {
         Box::pin(async { None })
     }
+    fn hooks<'a>(
+        &'a self,
+        _session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
     fn set<'a>(
         &'a self,
         session: &'a JsString,
@@ -737,6 +743,17 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
             match &self.options.sdk_config {
                 Some(port) => port.permission_mode(session).await,
                 None => None,
+            }
+        })
+    }
+    fn sdk_hooks<'a>(
+        &'a self,
+        session: &'a JsString,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
+        Box::pin(async move {
+            match &self.options.sdk_config {
+                Some(port) => port.hooks(session).await,
+                None => Ok(None),
             }
         })
     }

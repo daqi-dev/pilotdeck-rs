@@ -344,10 +344,9 @@ mod tests {
     use super::*;
     #[test]
     fn fixed_ts_validation_oracle() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/elicitation/oracle.json"
-        )))
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../../tests/fixtures/elicitation/oracle.json"
+        ))
         .unwrap();
         let Some(JsValue::Array(cases)) = oracle.get("cases") else {
             panic!("missing cases")
@@ -403,10 +402,9 @@ mod execution_tests {
     }
     #[tokio::test]
     async fn real_oracle_answer_and_prefilled_outputs() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/elicitation/oracle.json"
-        )))
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../../tests/fixtures/elicitation/oracle.json"
+        ))
         .unwrap();
         let Some(JsValue::Array(cases)) = oracle.get("cases") else {
             panic!("missing cases")
@@ -423,6 +421,7 @@ mod execution_tests {
             let coordinator = Arc::new(GatewayInteractionCoordinator::default());
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let channel = Elicitation {
+                on_requested: None,
                 profile: crate::native_process::elicitation::test_profile(),
                 coordinator: coordinator.clone(),
                 session: "fixture".into(),
@@ -469,10 +468,9 @@ mod execution_tests {
     }
     #[tokio::test]
     async fn fixed_ts_answer_coercion_oracle() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/elicitation/oracle-coercion.json"
-        )))
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../../tests/fixtures/elicitation/oracle-coercion.json"
+        ))
         .unwrap();
         let Some(JsValue::Array(cases)) = oracle.get("results") else {
             panic!("missing cases")
@@ -480,6 +478,7 @@ mod execution_tests {
         assert_eq!(cases.len(), 6);
         for case in cases {
             let channel = Elicitation {
+                on_requested: None,
                 profile: crate::native_process::elicitation::test_profile(),
                 coordinator: Arc::new(GatewayInteractionCoordinator::default()),
                 session: "fixture".into(),
@@ -501,10 +500,9 @@ mod execution_tests {
 
     #[tokio::test]
     async fn raw_gateway_answers_follow_fixed_ts_oracle() {
-        let oracle = pilotdeck_protocol::parse_json(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/elicitation/oracle-malformed.json"
-        )))
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../../tests/fixtures/elicitation/oracle-malformed.json"
+        ))
         .unwrap();
         let Some(JsValue::Array(cases)) = oracle.get("results") else {
             panic!("missing cases")
@@ -514,6 +512,7 @@ mod execution_tests {
             let coordinator = Arc::new(GatewayInteractionCoordinator::default());
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let channel = Elicitation {
+                on_requested: None,
                 profile: crate::native_process::elicitation::test_profile(),
                 coordinator: coordinator.clone(),
                 session: "fixture".into(),
