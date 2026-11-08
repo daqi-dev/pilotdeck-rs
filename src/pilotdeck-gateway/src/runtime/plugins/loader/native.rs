@@ -18,21 +18,22 @@ pub(super) fn read_manifest(
             .parent()
             .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?;
         let mut file = crate::project_files::open_beneath(parent, &target)
-            .map_err(|error| PluginRuntimeError::new(error.to_string()))?;
-        if !file
-            .metadata()
-            .map_err(|error| PluginRuntimeError::new(error.to_string()))?
-            .is_file()
-        {
-            return Err(PluginRuntimeError::new(
-                "Plugin manifest is not a regular file.",
-            ));
+            .map_err(|error| if crate::project_files::nofollow_loop(&error) {
+                PluginRuntimeError::gateway("NATIVE_PLUGIN_UNSAFE", error.to_string())
+            } else { PluginRuntimeError::new(error.to_string()) })?;
+        let metadata = file.metadata().map_err(|error| PluginRuntimeError::new(error.to_string()))?;
+        if !metadata.is_file() {
+            return Err(if metadata.is_dir() {
+                PluginRuntimeError::new("Plugin manifest is not a regular file.")
+            } else {
+                PluginRuntimeError::gateway("NATIVE_PLUGIN_UNSAFE", "Plugin manifest is not a regular file.")
+            });
         }
         let text = budget.read(&mut file)?;
+        check_manifest_tokens(&text, budget)?;
         let value = parse_json(&text).map_err(|error| {
             PluginRuntimeError::new(json_syntax::parse_error(&text).unwrap_or(error.message))
         })?;
-        check_manifest_values(&value, budget)?;
         Ok(value)
     }
     #[cfg(not(unix))]
@@ -44,34 +45,48 @@ pub(super) fn read_manifest(
     }
 }
 
-fn check_manifest_values(
-    value: &JsValue,
-    budget: &mut StyleBudget,
-) -> Result<(), PluginRuntimeError> {
-    // Charge before enqueueing children: even an extremely wide object cannot
-    // allocate an unbounded second traversal buffer before hitting the budget.
-    budget.entry()?;
-    let mut pending = vec![(value, 0usize)];
-    while let Some((value, depth)) = pending.pop() {
-        if matches!(value, JsValue::Array(_) | JsValue::Object(_))
-            && depth >= crate::js_value::MAX_ARRAY_DEPTH
-        {
-            return Err(PluginRuntimeError::new("Maximum call stack size exceeded"));
-        }
-        match value {
-            JsValue::Array(items) => {
-                for child in items {
-                    budget.entry()?;
-                    pending.push((child, depth + 1));
+pub(super) fn fatal(error: &PluginRuntimeError) -> bool {
+    matches!(error.code, Some("STYLE_RELOAD_LIMIT" | "NATIVE_PLUGIN_UNSAFE" | "NATIVE_PLUGIN_DEPTH"))
+}
+
+/// Count syntactic JSON values before materializing the JsValue tree. Keys do
+/// not count; duplicate-key values do. This is a budget preflight, not a JSON
+/// parser: the existing codec still validates syntax/strings and diagnostics.
+fn check_manifest_tokens(text: &str, budget: &mut StyleBudget) -> Result<(), PluginRuntimeError> {
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    let mut depth = 0usize;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'{' | b'[' => {
+                budget.entry()?;
+                depth += 1;
+                if depth > crate::js_value::MAX_ARRAY_DEPTH {
+                    return Err(PluginRuntimeError::gateway("NATIVE_PLUGIN_DEPTH", "Maximum call stack size exceeded"));
                 }
+                at += 1;
             }
-            JsValue::Object(object) => {
-                for (_, child) in object.entries() {
-                    budget.entry()?;
-                    pending.push((child, depth + 1));
+            b'}' | b']' => { depth = depth.saturating_sub(1); at += 1; }
+            b'"' => {
+                at += 1;
+                while at < bytes.len() {
+                    match bytes[at] {
+                        b'\\' => at = at.saturating_add(2),
+                        b'"' => { at += 1; break; }
+                        _ => at += 1,
+                    }
                 }
+                let mut next = at;
+                while next < bytes.len() && bytes[next].is_ascii_whitespace() { next += 1; }
+                if bytes.get(next) != Some(&b':') { budget.entry()?; }
             }
-            _ => {}
+            b'n' | b't' | b'f' | b'-' | b'0'..=b'9' => {
+                budget.entry()?;
+                at += 1;
+                while at < bytes.len() && !bytes[at].is_ascii_whitespace()
+                    && !matches!(bytes[at], b',' | b':' | b'[' | b']' | b'{' | b'}' | b'"') { at += 1; }
+            }
+            _ => at += 1,
         }
     }
     Ok(())
@@ -102,6 +117,7 @@ fn configured_markdown(
     Ok(result)
 }
 
+#[cfg(test)]
 pub(super) fn load_plugin(
     path: &Path,
     source: PluginSource,
@@ -109,6 +125,10 @@ pub(super) fn load_plugin(
 ) -> Result<LoadedPlugin, PluginRuntimeError> {
     let raw = read_manifest(path, budget)?;
     let parsed = parse_plugin_manifest(&raw)?;
+    load_from_manifest(path, source, &parsed, budget)
+}
+
+pub(super) fn load_from_manifest(path: &Path, source: PluginSource, parsed: &JsValue, budget: &mut StyleBudget) -> Result<LoadedPlugin, PluginRuntimeError> {
     let manifest = parsed.as_object().expect("validated plugin manifest");
     let undefined = JsValue::Undefined;
     let get = |key| manifest.get_property(key).unwrap_or(&undefined);
@@ -122,7 +142,7 @@ pub(super) fn load_plugin(
         "output-styles",
         budget,
     )?;
-    let hooks_config = load_native_plugin_hooks_from_manifest(path, &parsed, budget)?;
+    let hooks_config = load_native_plugin_hooks_from_manifest(path, parsed, budget)?;
     let servers = |key| {
         if get(key).as_object().is_none() {
             Ok(None)

@@ -397,40 +397,35 @@ pub(crate) fn discover_style_paths(
     }
     Ok(output)
 }
-/// Discover and validate bounded native disk plugins. Manifest projection
-/// follows the shared TS parser; unknown metadata never executes a module.
+/// One discovery candidate and its single parsed manifest, retained through
+/// this staging transaction. Ordinary failures are handled per discovered path.
+pub(crate) struct NativePluginManifest {
+    pub(crate) path: PathBuf,
+    pub(crate) source: PluginSource,
+    manifest: Result<JsValue, PluginRuntimeError>,
+}
+
 pub(crate) fn validate_native_style_paths(
     directories: &[(PathBuf, PluginSource)],
     budget: &mut StyleBudget,
-) -> Result<Vec<DiscoveredPluginPath>, PluginRuntimeError> {
+) -> Result<Vec<NativePluginManifest>, PluginRuntimeError> {
     let mut found = Vec::new();
     for (directory, source) in directories {
-        let entries = match fs::read_dir(directory) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(error) => return Err(PluginRuntimeError::new(error.to_string())),
-        };
+        // TS discovery treats readdir/stat failures as absent candidates.
+        let Ok(entries) = fs::read_dir(directory) else { continue; };
         let mut paths = Vec::new();
         for entry in entries {
             budget.entry()?;
-            let entry = entry.map_err(|error| PluginRuntimeError::new(error.to_string()))?;
-            // Node stat follows legitimate plugin-root aliases. Pin the
-            // selected manifest file below; a lexical alias is not an escape.
-            let Ok(metadata) = fs::metadata(entry.path()) else {
-                continue;
-            };
-            if metadata.is_dir() {
-                paths.push(entry.path());
-            }
+            let Ok(entry) = entry else { paths.clear(); break; };
+            let Ok(metadata) = fs::metadata(entry.path()) else { continue; };
+            if metadata.is_dir() { paths.push(entry.path()); }
         }
         paths.sort();
         for path in paths {
-            let manifest = native::read_manifest(&path, budget)?;
-            parse_plugin_manifest(&manifest)?;
-            found.push(DiscoveredPluginPath {
-                path,
-                source: *source,
-            });
+            let manifest = native::read_manifest(&path, budget)
+                .and_then(|raw| parse_plugin_manifest(&raw));
+            if let Err(error) = &manifest && native::fatal(error) { return Err(error.clone()); }
+            found.push(NativePluginManifest { path, source: *source, manifest });
         }
     }
     Ok(found)
@@ -476,13 +471,8 @@ fn load_native_plugin_hooks_from_manifest(
             .ok_or_else(|| PluginRuntimeError::new("Invalid hook path."))?;
         let mut file = match crate::project_files::open_beneath(parent, &target) {
             Ok(file) => file,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::InvalidInput
-                ) =>
-            {
-                return Err(PluginRuntimeError::new(error.to_string()));
+            Err(error) if crate::project_files::nofollow_loop(&error) => {
+                return Err(PluginRuntimeError::gateway("NATIVE_PLUGIN_UNSAFE", error.to_string()));
             }
             Err(_) => return Ok(None),
         };
@@ -490,9 +480,10 @@ fn load_native_plugin_hooks_from_manifest(
             Ok(metadata) => metadata,
             Err(_) => return Ok(None),
         };
+        if metadata.is_dir() { return Ok(None); }
         if !metadata.is_file() {
-            return Err(PluginRuntimeError::new(
-                "Hook config is not a regular file.",
+            return Err(PluginRuntimeError::gateway(
+                "NATIVE_PLUGIN_UNSAFE", "Hook config is not a regular file.",
             ));
         }
         let text = match budget.read(&mut file) {
@@ -537,19 +528,21 @@ pub(crate) fn stage_native_style_plugins(
         &mut budget,
     )?;
     let mut plugins = Vec::new();
+    let mut failures = Vec::new();
     for entry in paths {
-        plugins.push(Arc::new(native::load_plugin(
-            &entry.path,
-            entry.source,
-            &mut budget,
-        )?));
+        let attempt = entry.manifest.and_then(|manifest| {
+            native::load_from_manifest(&entry.path, entry.source, &manifest, &mut budget)
+        });
+        match attempt {
+            Ok(plugin) => plugins.push(Arc::new(plugin)),
+            Err(error) if native::fatal(&error) => return Err(error),
+            Err(_) => failures.push(PluginRefreshFailure { path: entry.path, source: entry.source, kind: PluginKind::Plugin }),
+        }
     }
     let skills = stage_native_standalone_skills(options)?;
     plugins.extend(skills.plugins);
-    Ok(LoadFromDiskResult {
-        plugins,
-        staged_failures: skills.staged_failures,
-    })
+    failures.extend(skills.staged_failures);
+    Ok(LoadFromDiskResult { plugins, staged_failures: failures })
 }
 
 /// Standalone skills are inert markdown: no plugin manifests, hooks, MCP,

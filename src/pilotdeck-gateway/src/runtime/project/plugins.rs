@@ -193,10 +193,9 @@ mod native_style_tests {
             assert!(view.snapshot_contributions().hooks.is_empty());
 
             fs::write(&manifest, r#"{"name":false}"#).unwrap();
-            assert_eq!(
-                runtime.refresh().await.unwrap_err().message,
-                "Plugin manifest must contain a name."
-            );
+            let report = runtime.refresh_with_report().await.unwrap();
+            assert_eq!(report.staged_failures.len(), 1);
+            assert_eq!(report.generation, generation);
             assert_eq!(runtime.generation().await, generation);
             assert_eq!(runtime.snapshot().await.len(), 1);
         }
@@ -282,10 +281,9 @@ mod native_style_tests {
         assert_eq!(next.contributions.commands[0].content, "second command");
         assert_eq!(old.contributions.commands[0].content, "first command");
         fs::write(&manifest, r#"{"name":false}"#).unwrap();
-        assert_eq!(
-            runtime.refresh().await.unwrap_err().message,
-            "Plugin manifest must contain a name."
-        );
+        let report = runtime.refresh_with_report().await.unwrap();
+        assert_eq!(report.staged_failures.len(), 1);
+        assert_eq!(report.generation, 2);
         assert_eq!(runtime.generation().await, 2);
         assert_eq!(runtime.snapshot().await[0].name, "Visible name");
         old.release().await.unwrap();

@@ -421,6 +421,26 @@ EXPECTED_FAILURES.update({
 })
 
 
+# Native disk profile: same assertion-only judge and guarded source restore.
+NATIVE = 'src/pilotdeck-gateway/src/runtime/plugins/loader/native.rs'
+NATIVE_TEST = 'lib:runtime::plugins::loader::native::tests::'
+CASES += [
+    ('native-manifest-value-budget', NATIVE, '        check_manifest_tokens(&text, budget)?;', '        let _ = (&text, &budget);', NATIVE_TEST + 'native_manifest_stage_charges_once_at_the_real_value_boundary'),
+    ('native-manifest-double-charge', NATIVE, '    let manifest = parsed.as_object().expect("validated plugin manifest");', '    let _ = read_manifest(path, budget)?;\n    let manifest = parsed.as_object().expect("validated plugin manifest");', NATIVE_TEST + 'native_manifest_stage_charges_once_at_the_real_value_boundary'),
+    ('native-manifest-file-type', NATIVE, '        if !metadata.is_file() {', '        if false && !metadata.is_file() {', NATIVE_TEST + 'native_manifest_and_hook_fifos_are_rejected_without_reading'),
+    ('native-skill-filter', NATIVE, '        result.retain(|command| command.is_skill);', '        result.retain(|command| !command.is_skill);', NATIVE_TEST + 'native_declarations_replay_fixed_ts_loader_oracle'),
+    ('native-mcp-declaration', NATIVE, '        mcp_servers: servers("mcpServers")?,', '        mcp_servers: None,', NATIVE_TEST + 'native_declarations_replay_fixed_ts_loader_oracle'),
+    ('native-hook-directory', LOADER, '        if metadata.is_dir() { return Ok(None); }', '        if false && metadata.is_dir() { return Ok(None); }', NATIVE_TEST + 'native_ordinary_loader_failures_follow_real_ts_staging'),
+]
+EXPECTED_FAILURES.update({
+    'native-manifest-value-budget': ['native manifest over value boundary rejects before projection'],
+    'native-manifest-double-charge': ['native manifest charged once at exact value boundary'],
+    'native-manifest-file-type': ['Plugin manifest is not a regular file.'],
+    'native-skill-filter': ['defaults-and-skill-filter: contribution count'],
+    'native-mcp-declaration': ['raw-server-declarations: MCP raw strings/order'],
+    'native-hook-directory': ['native ordinary staging hook-directory'],
+})
+
 assert len(CASES) == len({c[0] for c in CASES}), "mutation ids must be unique"
 assert set(EXPECTED_FAILURES) == {c[0] for c in CASES}, "every case needs failure markers"
 selected = set(sys.argv[2:])
