@@ -179,6 +179,9 @@ leader_unit = 'a_live_group_behind_a_zombie_leader_is_not_terminal'
 # #2154: the EOF-before-pid stranding shape — Linux-only, it parks a probe's
 # child in the poison state and asserts the group guard's kill ends it.
 eof_unit = 'a_probe_that_dies_before_the_pid_line_takes_its_group_with_it'
+# #2142 fix-r3 (concurrency #1): the error-side classification of the
+# group-is-gone wait — Linux-only like the wait itself.
+gone_error_unit = 'a_proc_read_error_means_gone_only_when_the_entry_is_absent'
 # #2142 fix-r2 (sibling r2 #2 / boundary r2 #2 / simplify r2 #1): the
 # production sweep's own classification test — Linux-only like the criterion
 # it pins, and module-qualified because the executor always passes --exact
@@ -926,7 +929,10 @@ cases = [
     # the pid-line read itself), and the timeout branch's own explicit killpg
     # plus its bounded death confirmation — a different line from this
     # anchor — bounds the mutant's on-disk residue and keeps the window
-    # release behind a proven dying group (fix-r2 concurrency r2 #2).
+    # release behind a proven dying group (fix-r2 concurrency r2 #2; fix-r3
+    # concurrency P1 made that confirmation an asserted escalation — a
+    # second kill and `PROBE_DEATH_RETRY_WINDOW` before the branch panics —
+    # so the fail-closed wait below cannot hand this row a false PASS).
     ('probe-group-kill-removed', publication,
      '''        let _ = rustix::process::kill_process_group(self.0, Signal::KILL);
 ''',
@@ -934,6 +940,59 @@ cases = [
 ''',
      publication_target, eof_unit,
      '#2154 the poison group must not outlive'),
+    # #2142 fix-r3 (concurrency #1): the fail-open the group-is-gone wait
+    # used to have — any /proc metadata error read as "already gone", so a
+    # restricted procfs (hidepid, a restricted container) could confirm a
+    # death it never observed, and the kill-removed mutant above could have
+    # false-PASSED through it. The classification is one function now
+    # (`metadata_failure_is_gone`), pinned by its own unit test the way the
+    # link rule is — a healthy host's /proc never answers the error side for
+    # a descendant. The mutant reverts it to "every error is gone".
+    ('metadata-failure-always-gone', publication,
+     '''fn metadata_failure_is_gone(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+}''',
+     '''fn metadata_failure_is_gone(_error: &io::Error) -> bool {
+    true
+}''',
+     publication_target, gone_error_unit,
+     "#2142 an unreadable /proc entry means the group's state is unknown, never gone"),
+    # #2142 fix-r3 (concurrency P1 — two reviewers): the timeout branch's
+    # death confirmation is an assert now, not a dropped `let _ =`. This
+    # mutant hardcodes the confirm verdict false — the shape of a /proc that
+    # can never prove death — so the bound leader test enters the branch,
+    # escalates through the retry round, and must fail on the confirm's own
+    # message instead of the branch panic sailing over an unconfirmed group.
+    # Against the pre-fix code the same run fails with the branch panic's
+    # message alone, so this row's marker is what makes the assert — and its
+    # dedicated message — the killable fact.
+    ('group-gone-always-false', publication,
+     '''fn group_is_gone_within(pid: &str, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        let gone = match fs::metadata(format!("/proc/{pid}")) {
+            // The usual exit: reaped, and gone from the tree.
+            Err(error) if metadata_failure_is_gone(&error) => true,
+            // Anything else unreadable is an unknown — alive for a wait
+            // whose whole job is proving death.
+            Err(_) => false,
+            Ok(_) => thread_group_is_dead(pid),
+        };
+        if gone {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}''',
+     '''fn group_is_gone_within(pid: &str, budget: Duration) -> bool {
+    let _ = (pid, budget);
+    false
+}''',
+     publication_target, leader_unit,
+     '#2142 the timeout branch must not panic over a group whose death it could not confirm'),
 ]
 
 
@@ -970,6 +1029,8 @@ INVALID_OFF_LINUX = (
     'stranger-pid-reap-removed',
     'blind-source-self-unrelated',
     'probe-group-kill-removed',
+    'metadata-failure-always-gone',
+    'group-gone-always-false',
 )
 
 
