@@ -82,25 +82,49 @@ def literal_member(text):
     return re.fullmatch(r'"[^"\\]*",?(?:\s*//.*)?', text.strip()) is not None
 
 
+def _code_line(line):
+    """The line with any trailing // comment removed and right-trimmed."""
+    return re.sub(r'//.*$', '', line).rstrip()
+
+
+def _declares_binding(code):
+    """A const/static table binding (the `'static` lifetime is not one)."""
+    return re.search(r"(?<!')(?:\bconst\b|\bstatic\b)", code) is not None
+
+
 def literal_table_lines(lines):
     # 1-based line numbers inside Rust string-literal tables (e.g.
     # UNMIGRATED_CHANNEL_KEYS): every member line plus the closing bracket
     # line. Opening lines stay out — sidecar:* entries legitimately anchor
     # a whole guarded block at its `for option in [` header. A table opens
-    # at a line that ends with '[' and declares a const/static binding; blank
-    # and //-comment lines inside are transparent (a comment added mid-table
-    # must not silently drop the whole table back to range-only — #2286
-    # review P0); any other code line aborts the block, keeping the members
-    # collected so far. Non-binding arrays (`let xs = [`, `for x in [`) are
-    # not key tables and stay out entirely. A table that ends at the last
-    # line of the file still closes (the EOF table is a table).
+    # at a line that ends with '[' (after stripping a trailing // comment)
+    # and declares a const/static binding, or at a wrapped `&[`/`[`
+    # continuation whose previous non-empty line declares one (rustfmt
+    # wraps long openers — fix-r1 dropped that form, a coverage regression
+    # #2286 fix-r2 DS boundary P0); blank and //-comment lines inside are
+    # transparent (a comment added mid-table must not silently drop the
+    # whole table back to range-only — #2286 review P0); any other code
+    # line (block comments, attributes, escaped literals) aborts the
+    # block, keeping the members collected so far. Non-binding arrays
+    # (`let xs = [`, `for x in [`, `let xs: &'static [&str] = &[`) are not
+    # key tables and stay out entirely. A table that ends at the last line
+    # of the file still closes (the EOF table is a table).
     inside = set()
     index = 0
     while index < len(lines):
-        line = lines[index]
-        if not line.rstrip().endswith("[") or not re.search(r"\b(?:const|static)\b", line):
+        code = _code_line(lines[index])
+        if not code.endswith("["):
             index += 1
             continue
+        if not _declares_binding(code):
+            qualifies = code.strip() in ('&[', '[')
+            look = index - 1
+            while qualifies and look >= 0 and not lines[look].strip():
+                look -= 1
+            if not (qualifies and look >= 0
+                    and _declares_binding(_code_line(lines[look]))):
+                index += 1
+                continue
         members = []
         end = index + 1
         closed = False
@@ -159,7 +183,12 @@ def key_literal_error(key, ref, tables=None):
     token = key.rsplit(":", 1)[-1]
     if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
         return None
-    if lines[number - 1].strip() not in {'"%s"' % token, '"%s",' % token}:
+    # Compare against the literal stem: a member line legitimately carries
+    # a trailing // comment (literal_member admits it, so the line is in the
+    # table) — comparing the raw line would flag exactly that form
+    # (#2286 fix-r2, DS boundary P1). Keys never contain '/', so the strip
+    # cannot corrupt a real match.
+    if _code_line(lines[number - 1]).strip() not in {'"%s"' % token, '"%s",' % token}:
         return "evidence key literal mismatch: " + key
     return None
 
