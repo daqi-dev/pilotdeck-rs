@@ -148,6 +148,11 @@ impl LiveSession for Arc<Session> {
     }
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         self.log.host("submit");
+        if self.setup["pumpPanic"] == true {
+            // #2498: the worker task dies before its own `finish`, so the
+            // manage arm's JoinError branch owns the delivery close.
+            panic!("#2498 injected worker panic");
+        }
         if self.setup["input"]["timeoutMs"]
             .as_f64()
             .is_some_and(|v| v > 0.0)
@@ -641,6 +646,9 @@ struct Registry {
     log: Arc<Log>,
     setup: Value,
     pending: Arc<AtomicUsize>,
+    /// #2498: holds every append behind a step-opened gate, so the panic
+    /// arm's bounded drain is provably parked on in-flight writes.
+    append_gate: Gate,
 }
 impl Registry {
     fn track<T: Send + 'static>(&self, future: RegistryFuture<T>) -> RegistryFuture<T> {
@@ -689,6 +697,14 @@ impl TurnRunRegistry for Registry {
                     "injected registry append failure".into(),
                 ))
             });
+        }
+        if self.setup["registryAppendGate"] == true {
+            let gate = self.append_gate.clone();
+            let future = self.port.append(run, event);
+            return self.track(Box::pin(async move {
+                gate.wait().await;
+                future.await
+            }));
         }
         self.track(self.port.append(run, event))
     }
@@ -760,6 +776,45 @@ fn terminal_wire_codes(log: &Log) -> Vec<String> {
         .filter(|code| code == "turn_timeout" || code == "gateway_submit_failed")
         .collect()
 }
+/// The failure frames the #2498 panic arm enqueues behind the registry gate:
+/// the failure status (`agent_status` carries the code as `event`) and the
+/// terminal error frame (carries it as `code`).
+fn failure_appends(log: &Log) -> usize {
+    log.registry
+        .lock()
+        .expect("#748 submit fixture prerequisite")
+        .iter()
+        .filter(|entry| entry["op"] == "append")
+        .filter(|entry| {
+            entry["event"]["code"] == "gateway_submit_failed"
+                || entry["event"]["event"] == "gateway_submit_failed"
+        })
+        .count()
+}
+/// Wait until the panicked arm has enqueued both failure frames behind the
+/// registry append gate, then let it park inside its bounded drain. The bound
+/// is wall-clock, not a spin count or a tokio timer: the fixture registry
+/// runs its FIFO jobs on a real OS thread, so a paused tokio clock cannot
+/// bound the accept I/O that precedes the panic, while a genuine regression
+/// still fails at the bound instead of hanging.
+async fn await_panic_failure_records(log: &Log) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while failure_appends(log) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "#2498 the panicked arm never recorded its failure frames (appends={}, registry={:?})",
+            failure_appends(log),
+            log.registry
+                .lock()
+                .expect("#748 submit fixture prerequisite")
+                .len(),
+        );
+        tokio::task::yield_now().await;
+    }
+    for _ in 0..32 {
+        tokio::task::yield_now().await;
+    }
+}
 async fn collect(mut stream: TurnSubmission, log: Arc<Log>) {
     loop {
         match stream.next().await {
@@ -811,7 +866,12 @@ async fn replay_case(case: &Value) {
         .as_array()
         .expect("#748 submit fixture prerequisite")
         .iter()
-        .any(|s| s == "timeout");
+        .any(|s| {
+            s == "timeout"
+                || s.as_str() == Some("panic-drain")
+                || s.as_str() == Some("panic-budget")
+                || s.as_str() == Some("panic-close")
+        });
     if controlled_clock {
         tokio::time::pause();
     }
@@ -884,6 +944,7 @@ async fn replay_case(case: &Value) {
         log: log.clone(),
         setup: setup.clone(),
         pending: Arc::default(),
+        append_gate: Gate::new(),
     });
     let services = Arc::new(Services {
         session: session.clone(),
@@ -1084,6 +1145,30 @@ async fn replay_case(case: &Value) {
                         .push(json(&event));
                 }
             }
+            // #2498 cells: the pump panics inside the worker, so the manage
+            // arm's JoinError branch owns the failure record and the delivery
+            // close. The failure appends stay behind the registry gate until
+            // this step, so the arm's bounded drain is provably parked on them
+            // before the clock moves; `settle` after the step then joins the
+            // released writes.
+            "panic-drain" => {
+                await_panic_failure_records(&log).await;
+                registry.append_gate.open();
+            }
+            "panic-budget" => {
+                await_panic_failure_records(&log).await;
+                tokio::time::advance(Duration::from_millis(500)).await;
+                registry.append_gate.open();
+            }
+            "panic-close" => {
+                await_panic_failure_records(&log).await;
+                tokio::time::advance(Duration::from_millis(1100)).await;
+                // The expired budget closes delivery before the appends settle.
+                for _ in 0..32 {
+                    tokio::task::yield_now().await;
+                }
+                registry.append_gate.open();
+            }
             other => panic!("unknown fixture step: {other}"),
         }
         settle(&registry).await;
@@ -1155,6 +1240,47 @@ async fn replay_case(case: &Value) {
             assert_eq!(
                 actual, expected,
                 "#813 {name}: step {index} {step}: submit scenario must match"
+            );
+        }
+    }
+    // #2498: the panic arm's close must end the turn within the abort budget,
+    // without waiting for durable appends that never settle. The spin is
+    // wall-clock bounded (the registry worker is a real OS thread; a paused
+    // tokio clock cannot bound it) so a missing close is an assertion
+    // failure here, never a hang. This must precede `consumer.await` for the
+    // same reason.
+    if let Some(wire_expectation) = case["panicWire"].as_str() {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while !(log.ended.load(Ordering::SeqCst)
+            && !owner.has_active_turn(&"s".into())
+            && host_count(&log, "after") > 0)
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "#2498 {name}: the panic arm must close the turn without waiting for never-settling appends"
+            );
+            tokio::task::yield_now().await;
+        }
+        let wire = terminal_wire_codes(&log);
+        if wire_expectation == "dropped" {
+            crate::negative_assert!(
+                wire.is_empty(),
+                "#2498 {name}: failure frames settling after the hard close are dropped (wire {wire:?})"
+            );
+        } else {
+            crate::negative_assert_eq!(
+                wire,
+                vec!["gateway_submit_failed".to_string()],
+                "#2498 {name}: the bounded drain delivers the in-flight failure frames (wire {wire:?})"
+            );
+            crate::negative_assert!(
+                log.visible
+                    .lock()
+                    .expect("#748 submit fixture prerequisite")
+                    .iter()
+                    .any(|event| event["type"] == "agent_status"
+                        && event["event"] == "gateway_submit_failed"),
+                "#2498 {name}: the failure status frame must survive the bounded drain"
             );
         }
     }
@@ -1530,6 +1656,44 @@ async fn timeout_takeover_writes_exactly_one_terminal() {
         let case = json!({"name": name, "setup": setup, "steps": steps,
             "native": aborted.clone(), "results": [], "orderOnly": true,
             "singleTerminal": "turn_timeout"});
+        tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+            .await
+            .unwrap_or_else(|_| panic!("{} deadlocked", name));
+    }
+}
+/// #2498: a panicked worker never reaches its own `finish`, so the manage
+/// arm's JoinError branch owns the delivery close. Real-TS measurement
+/// (`_tmp/20261026-issue-2498/ts-probe-2498.out`, InProcessGateway at
+/// cc7c4e65, Node v22.22.0): a pump throw whose failure registry appends
+/// never settle hangs the TS turn forever (probe A: ended=false,
+/// active=true, after never called), while appends settling late still
+/// deliver both failure frames (probe B). The Rust close is bounded by the
+/// same abort budget as the timer-path backstop, deliberately diverging for
+/// never- and late-settling appends (specs/gateway-parity/diffs/
+/// A7.2-TURN-PANIC-FINISH-001.md).
+#[tokio::test]
+async fn panicked_worker_closes_delivery_within_abort_budget() {
+    // Cell 1 ("panic-drain"): the gated appends settle with the clock
+    // frozen — the bounded drain delivers both failure frames.
+    // Cell 2 ("panic-budget"): 500ms elapse, still inside the 1000ms budget
+    // floor — still delivered, pinning `.max(1_000)`.
+    // Cell 3 ("panic-close"): the budget expires before the appends settle
+    // — the hard close ends the turn and the late frames are dropped.
+    let cases = [
+        ("panic-drain-delivers", "panic-drain", "delivered"),
+        ("panic-budget-delivers", "panic-budget", "delivered"),
+        ("panic-close-drops-late-frames", "panic-close", "dropped"),
+    ];
+    for (name, step, wire) in cases {
+        let case = json!({
+            "name": name,
+            "setup": {"pumpPanic": true, "registryAppendGate": true},
+            "steps": [step],
+            "native": [],
+            "results": [],
+            "orderOnly": true,
+            "panicWire": wire,
+        });
         tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
             .await
             .unwrap_or_else(|_| panic!("{} deadlocked", name));
