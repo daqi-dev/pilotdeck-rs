@@ -469,17 +469,17 @@ impl TurnGateway {
                 // Preserve the original implicit-drop drain. Only an explicit
                 // embedding shutdown opts into a deadline; a bound too large
                 // for the clock, or within tokio's tick conversion of its
-                // ceiling (`TICK_CONVERSION_HEADROOM`), is the #1949 waiver —
-                // see `declared_cleanup_budget` — so the drain is awaited
-                // without scheduling one. Tokio's own `timeout` saturates an
-                // overflowing budget into a far-future timer and panics on
-                // a near-full one just as `timeout_at` does — both register
-                // through the same unchecked tick conversion; the explicit
-                // spelling instead takes the waiver branch for both, matching
-                // `dispose_initialization`'s bound.
+                // ceiling, is the #1949 waiver — see `declared_cleanup_budget`
+                // and the tier decision `deadline_or_waiver` makes for both
+                // poll sites — so the drain is awaited without scheduling one.
+                // Tokio's own `timeout` saturates an overflowing budget into a
+                // far-future timer and panics on a near-full one just as
+                // `timeout_at` does — both register through the same unchecked
+                // tick conversion; the explicit spelling instead takes the
+                // waiver branch for both, matching `dispose_initialization`'s
+                // bound.
                 let result = match budget
-                    .and_then(|budget| tokio::time::Instant::now().checked_add(budget))
-                    .filter(|deadline| deadline.checked_add(TICK_CONVERSION_HEADROOM).is_some())
+                    .and_then(|budget| deadline_or_waiver(tokio::time::Instant::now(), budget))
                 {
                     Some(deadline) => tokio::time::timeout_at(deadline, drain).await.unwrap_or_else(|_| Err("gateway host drain deadline exceeded".into())),
                     None => drain.await,
@@ -726,10 +726,7 @@ async fn dispose_initialization(
         // waiver (`TICK_CONVERSION_HEADROOM`): registering it would panic,
         // not saturate.
         let uncaught = crate::mutants::on("native-ws-initialization-cleanup-panic-uncaught");
-        match tokio::time::Instant::now()
-            .checked_add(cleanup_bound)
-            .filter(|deadline| deadline.checked_add(TICK_CONVERSION_HEADROOM).is_some())
-        {
+        match deadline_or_waiver(tokio::time::Instant::now(), cleanup_bound) {
             Some(cleanup_deadline) => {
                 let _ =
                     tokio::time::timeout_at(cleanup_deadline, caught_cleanup(cleanup, uncaught))
@@ -832,6 +829,22 @@ const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_millis(10);
 /// #1949 waiver.
 const TICK_CONVERSION_HEADROOM: Duration = Duration::from_secs(1);
 
+/// #1949: the tier decision both poll sites share — the deadline a budget
+/// would be awaited under, or `None` for the waiver (the waiver rule itself
+/// is [`declared_cleanup_budget`]'s to state, once). A budget too large for
+/// the clock overflows the first `checked_add`; one whose deadline still
+/// fits but lands within [`TICK_CONVERSION_HEADROOM`] of the clock's
+/// ceiling fails the second, because tokio converts a deadline into a
+/// timer tick through the same unchecked addition there — the panic the
+/// probe test measures. `now` is a parameter, not a read, so both callers
+/// pass their own clock and the deterministic tier test can pin the
+/// boundaries on one captured `now` (#2501: an e2e budget cannot — the site
+/// reads its own, later clock).
+fn deadline_or_waiver(now: tokio::time::Instant, budget: Duration) -> Option<tokio::time::Instant> {
+    now.checked_add(budget)
+        .filter(|deadline| deadline.checked_add(TICK_CONVERSION_HEADROOM).is_some())
+}
+
 /// The deadline a host actually gets out of an embedding-declared teardown
 /// budget: the budget plus [`INITIALIZATION_TEARDOWN_SLACK`].
 /// [`TurnGateway::start_with_cleanup_budget`] calls it on the way in and the
@@ -841,15 +854,16 @@ const TICK_CONVERSION_HEADROOM: Duration = Duration::from_secs(1);
 /// back into a deadline (`dispose_initialization`'s cleanup await and the
 /// shutdown drain): a budget too large for the clock — an embedding's
 /// `Duration::MAX`, which also saturates the slack addition above when it
-/// flows through here — overflows the site's `Instant::checked_add`, and the
-/// site treats that overflow as the embedding's explicit waiver of the
+/// flows through here — overflows [`deadline_or_waiver`]'s first
+/// `checked_add`, and that overflow is the embedding's explicit waiver of the
 /// deadline: the await runs without one, equivalent to none, so the embedding
 /// that declared it opts out of #1746's no-hang guarantee, which covers
 /// bounded budgets only. A budget that still fits the clock but lands
 /// within [`TICK_CONVERSION_HEADROOM`] of its ceiling is the same explicit
 /// waiver: tokio converts a deadline to a timer tick through an unchecked
 /// addition a near-ceiling deadline overflows (a panic, not a saturation),
-/// so the site awaits without a deadline there too.
+/// so the site awaits without a deadline there too — [`deadline_or_waiver`]
+/// returns `None` for both tiers.
 fn declared_cleanup_budget(teardown_budget: Duration) -> Duration {
     teardown_budget.saturating_add(INITIALIZATION_TEARDOWN_SLACK)
 }
