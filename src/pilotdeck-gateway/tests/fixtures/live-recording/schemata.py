@@ -82,6 +82,11 @@ GUARDED = [
     RUNNER,
     DRIVER,
     INTERACTION,
+    # 21 of 22 rows bind tests in live::stream_tests, and one binds a
+    # factory::tests::interaction_host test (schemata `switches`): the bound
+    # test sources are hash-guarded like the old script's compile-only paths.
+    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_stream_tests.rs',
+    ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_host_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
@@ -91,7 +96,7 @@ GUARDED = [
     FIXTURES / '_shared/mutant_switch.py',
     FIXTURES / 'negative_suite.py',
     FIXTURES / 'negative_process.py',
-    Path(__file__),
+    Path(__file__).resolve(),
 ]
 
 
