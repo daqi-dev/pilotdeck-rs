@@ -925,17 +925,22 @@ async fn http10_close_delimited_response() {
     let cell = cell("http10");
     let (bytes, closed) = exchange(&cell.server, &cell.request, &cell.id, cell.half_close).await;
     let raw = latin1_string(&bytes);
+    let lower = raw.to_ascii_lowercase();
     assert!(
         raw.starts_with("HTTP/1.0 200 OK\r\n"),
         "#1349 pin http10: hyper answers with a 1.0 status line (Node's 1.1 line is the registered diff): {raw:?}"
     );
     assert!(
-        raw.contains("\r\nConnection: close\r\n")
-            && !raw.to_ascii_lowercase().contains("keep-alive"),
+        raw.contains("\r\nConnection: close\r\n") && !lower.contains("keep-alive"),
         "#1349 pin http10: the 1.0 response is close with no keep-alive like Node: {raw:?}"
     );
+    // #1947 structural pin (ledger A8.3-CH-WEBHOOK-004-R2): this cell's reply
+    // is a streamed body — close-delimited already — so the lane's framing
+    // switch (`module-host-http10-framing-off`, bound to the value-body pin
+    // below) cannot kill this assertion; it pins the existing framing against
+    // drift.
     assert!(
-        !raw.to_ascii_lowercase().contains("\r\ncontent-length:"),
+        !lower.contains("\r\ncontent-length:"),
         "#1947 pin http10: the 1.0 reply is close-delimited, no content-length: {raw:?}"
     );
     assert!(

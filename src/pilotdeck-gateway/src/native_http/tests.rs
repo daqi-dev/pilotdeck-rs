@@ -1067,17 +1067,22 @@ async fn http10_close_delimited_response() {
             &fixture,
         )
         .await;
+        let lower = raw.to_ascii_lowercase();
         assert!(
             raw.starts_with("HTTP/1.0 200 OK\r\n"),
             "#1209 pin {id}: HTTP/1.0 is answered with a 1.0 status line (registered diff vs Node's 1.1 line): {raw:?}"
         );
         assert!(
-            raw.contains("\r\nConnection: close\r\n")
-                && !raw.to_ascii_lowercase().contains("keep-alive"),
+            raw.contains("\r\nConnection: close\r\n") && !lower.contains("keep-alive"),
             "#1209 pin {id}: HTTP/1.0 is answered close with no keep-alive: {raw:?}"
         );
+        // #1947 structural pin (ledger A8.3-CH-WEBHOOK-004-R2): this cell's
+        // reply is a streamed body — close-delimited already — so the lane's
+        // framing switch (`native-http-http10-framing-off`, bound to the
+        // webhook-json pin) cannot kill this assertion; it pins the existing
+        // framing against drift.
         assert!(
-            !raw.to_ascii_lowercase().contains("\r\ncontent-length:"),
+            !lower.contains("\r\ncontent-length:"),
             "#1947 pin {id}: the HTTP/1.0 reply is close-delimited, no content-length: {raw:?}"
         );
         assert!(
