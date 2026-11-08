@@ -347,12 +347,24 @@ async fn route<B>(
         // `respondJson` is `res.writeHead(status, {content-type:
         // "application/json"}); res.end(JSON.stringify(body))` — a whole
         // reply Node sizes up front, so the body is not chunked.
-        return Ok(handler_response_with_length(
+        let mut response = handler_response_with_length(
             hyper::StatusCode::from_u16(status).unwrap_or(hyper::StatusCode::INTERNAL_SERVER_ERROR),
             "application/json",
             text,
             keep_alive,
-        ));
+        );
+        // #1947: on HTTP/1.0 the reply is close-delimited — Node's 1.0
+        // replies carry no `content-length` — so the size stays unknown to
+        // hyper, like the webhook channel's own `finalize` (#1684). The
+        // parser-level rejections keep their registered `content-length: 0`
+        // diff, so this wraps only the webhook branch.
+        if request.version() == hyper::Version::HTTP_10
+            && !crate::mutants::on("native-http-http10-framing-off")
+        {
+            let sized = std::mem::replace(response.body_mut(), streamed(None));
+            *response.body_mut() = Unsized(sized).boxed();
+        }
+        return Ok(response);
     }
     // A7.4's user-dialog HTTP store entry is not yet open on this listener: TS
     // never mounts HttpGatewayUserDialogStore on the gateway port either, but
@@ -580,6 +592,33 @@ fn sized_body(body: Option<String>) -> Body {
     Full::new(body.map(Bytes::from).unwrap_or_default())
         .map_err(|never: std::convert::Infallible| match never {})
         .boxed()
+}
+
+/// A body whose size hyper cannot know (#1947): everything else delegates, so
+/// the frames and the end-of-stream flag are unchanged. Sibling of the
+/// webhook channel's `Unsized` (#1684), wrapping the one sized body this
+/// router builds for an HTTP/1.0 reply (the webhook branch's
+/// `handler_response_with_length`).
+struct Unsized(Body);
+
+impl hyper::body::Body for Unsized {
+    type Data = Bytes;
+    type Error = crate::ProxyError;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        hyper::body::SizeHint::default()
+    }
 }
 
 /// A TS `writeHead(status, headers)` followed by `end(body)` with the whole

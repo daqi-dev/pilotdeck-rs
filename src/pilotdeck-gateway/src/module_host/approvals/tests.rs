@@ -1036,6 +1036,10 @@ async fn http10_close_delimited_response() {
             && !raw.to_ascii_lowercase().contains("transfer-encoding"),
         "#1350 pin http10: the 1.0 response is close-delimited with no keep-alive and no chunking like Node: {raw:?}"
     );
+    assert!(
+        !raw.to_ascii_lowercase().contains("content-length"),
+        "#1947 pin http10: the 1.0 reply is close-delimited, no content-length: {raw:?}"
+    );
     let expected_body = cell
         .response
         .split_once("\r\n\r\n")

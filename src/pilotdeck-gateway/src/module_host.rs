@@ -406,11 +406,46 @@ pub(crate) async fn serve(
 /// response version keeps hyper's `fix_keep_alive` in its HTTP/1.0 branch —
 /// the same #1209 trick (whose hyper `HTTP/1.0` status line against Node's
 /// `HTTP/1.1` is the registered A8.4-NATIVE-HTTP-001 diff).
+///
+/// #1947: the 1.0 reply is also close-delimited — a provider value body
+/// would otherwise get a `content-length` from hyper that Node's 1.0 replies
+/// do not carry — so like the webhook lane (#1684) the size stays unknown to
+/// hyper; the `streamed` bodies already are.
 fn finalize(mut response: hyper::Response<Body>, version: hyper::Version) -> hyper::Response<Body> {
-    if version == hyper::Version::HTTP_10 {
-        *response.version_mut() = hyper::Version::HTTP_10;
+    if version != hyper::Version::HTTP_10 {
+        return response;
+    }
+    *response.version_mut() = hyper::Version::HTTP_10;
+    if !crate::mutants::on("module-host-http10-framing-off") {
+        let body = std::mem::replace(response.body_mut(), streamed(None));
+        *response.body_mut() = Unsized(body).boxed();
     }
     response
+}
+
+/// A body whose size hyper cannot know (#1947): everything else delegates, so
+/// the frames and the end-of-stream flag are unchanged. Sibling of the
+/// webhook channel's `Unsized` (#1684).
+struct Unsized(Body);
+
+impl hyper::body::Body for Unsized {
+    type Data = Bytes;
+    type Error = crate::ProxyError;
+
+    fn poll_frame(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<hyper::body::Frame<Self::Data>, Self::Error>>> {
+        std::pin::Pin::new(&mut self.get_mut().0).poll_frame(cx)
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.0.is_end_stream()
+    }
+
+    fn size_hint(&self) -> hyper::body::SizeHint {
+        hyper::body::SizeHint::default()
+    }
 }
 
 enum ReadError {
