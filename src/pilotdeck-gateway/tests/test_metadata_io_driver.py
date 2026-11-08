@@ -923,23 +923,54 @@ class EnvironmentControls(unittest.TestCase):
         self.check_ci_mutations(cases, 'test_pr_gate_wiring_is_pinned_by_parsed_yaml',
                                 '#1809', mutated='pr-gate.yml')
 
+    def retirement_budget_constants(self, issue='#1809'):
+        """#1632 / #1692 §1 的推导范式：预算常量从装置源码**同源**读，不手抄第二份。
+
+        r10 P0（评审）：r9 的兄弟断言手抄 `85×60 > 4580 + 300`，装置侧重算后
+        这边不会跟着红——第二份裸数字只会静默漂移。subprocess 按 spec 加载
+        self_check.py（模块体只设 pycache 隔离与常量，不跑 main），打印
+        RETIREMENT_JOB_TIMEOUT_MINUTES / INTERNAL_WORST_CASE_SECONDS /
+        JOB_OVERHEAD_MARGIN_SECONDS 三个登记值。
+        """
+        source = (Path(__file__).resolve().parents[3]
+                  / 'scripts/retirement-outcome-parity/self_check.py')
+        loader = (
+            'import importlib.util, json\n'
+            'spec = importlib.util.spec_from_file_location("self_check", '
+            f'{str(source)!r})\n'
+            'module = importlib.util.module_from_spec(spec)\n'
+            'spec.loader.exec_module(module)\n'
+            'print(json.dumps([module.RETIREMENT_JOB_TIMEOUT_MINUTES, '
+            'module.INTERNAL_WORST_CASE_SECONDS, '
+            'module.JOB_OVERHEAD_MARGIN_SECONDS]))\n')
+        result = subprocess.run([sys.executable, '-I', '-c', loader],
+                                capture_output=True, text=True, timeout=120,
+                                check=False)
+        self.assertEqual(result.returncode, 0,
+                         f'{issue} cannot load the retirement budget constants '
+                         f'from self_check.py: {result.stderr.strip()[:400]}')
+        minutes, internal, margin = json.loads(result.stdout)
+        return minutes, internal, margin
+
     def test_retirement_job_bounds_its_wall_clock(self):
-        # #1632 / #1692 §1 的 timeout 钉死范式，#1809 r9（评审 P2 预算算式）：
-        # 合并把守卫 fd 探针（每形态 20 s 超时 + 30 s 清理）与 PC1–PC2 正控带进
-        # 负控步骤后，内部最坏和 = emit/check/negctl 超时 300+300+1800 s + 锁与
-        # 探针三趟（每趟 4×60 s 等锁 + 3×(20+30) s 敌意锁 + 3×(20+30) s 守卫 fd）
-        # + 写目标 4×50 s = 4580 s ≈ 76.3 min。外层超时若先到，步骤被 SIGKILL、
-        # 证据目录半途而废而闸门读不到红。85 min = 5100 s > 4580 + 300 s job
-        # 开销余量（与 self_check.check_wiring 的派生不等式同口径）。
+        # #1632 / #1692 §1 的 timeout 钉死范式，#1809 r10 P0（评审复算）：
+        # 内部最坏和从装置源码同源推导（锁趟数 = 七项自检 1 + control_lock 5
+        # ——detail / 弱化 flock / 守卫 fd 三变异循环；control_check 三个变异
+        # 方向各一个 300 s checker 子进程；r9 的 4580 s 漏算了这三趟锁与这些
+        # 子进程，85 min 下派生不等式恒真）。外层超时若先到，步骤被 SIGKILL、
+        # 证据目录半途而废而闸门读不到红。
+        minutes, internal, margin = self.retirement_budget_constants()
         body = self.ci_jobs('#1809')['retirement-outcome-parity']
-        self.assertIn('    timeout-minutes: 85\n', body,
+        self.assertIn(f'    timeout-minutes: {minutes}\n', body,
                       '#1809 the retirement job bounds its own wall clock above the '
                       'internal worst case')
-        self.assertGreater(85 * 60, 4580 + 300,
+        self.assertGreater(minutes * 60, internal + margin,
                             '#1809 the job budget stays above the internal worst '
                             'case sum plus job overhead')
 
     def test_retirement_job_timeout_regressions_are_rejected(self):
+        minutes, _, _ = self.retirement_budget_constants()
+        timeout_line = f'    timeout-minutes: {minutes}\n'
         workflow = self.ci_workflow_fixture()
         body = self.ci_jobs('#1809')['retirement-outcome-parity']
         cases = []
@@ -949,10 +980,10 @@ class EnvironmentControls(unittest.TestCase):
             cases.append((label, workflow.replace(body, body.replace(old, new, 1), 1),
                           message))
 
-        change('retirement-job-timeout-removed', '    timeout-minutes: 85\n', '',
+        change('retirement-job-timeout-removed', timeout_line, '',
                '#1809 the retirement job bounds its own wall clock above the '
                'internal worst case')
-        change('retirement-job-timeout-lowered', '    timeout-minutes: 85\n',
+        change('retirement-job-timeout-lowered', timeout_line,
                '    timeout-minutes: 55\n',
                '#1809 the retirement job bounds its own wall clock above the '
                'internal worst case')

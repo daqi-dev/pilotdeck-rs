@@ -71,6 +71,8 @@ CHECKER = HERE / 'check_outcome_parity.py'
 CONTROLS = HERE / 'negative_controls.py'
 FIXTURES = HERE / 'fixtures'
 ORACLE = HERE / 'ts-oracle.json'
+# 本文件自己的源码路径：_assert_pass_counting 的同源互证读它（数调用点）。
+SELF = HERE / 'self_check.py'
 WORKFLOW = REPO_ROOT / '.github' / 'workflows' / 'ci.yml'
 # pr-gate.yml 的两个 run step（git fetch 基线步、check-pr-gate.py 步）是合并闸门第 2、3
 # 步的宿主，此前不在任何守卫覆盖内（评审 r8 P1：self_check 与兄弟守卫都只读 ci.yml）。
@@ -224,8 +226,8 @@ def check_emit():
     return f'byte-identical to {ORACLE.name} ({len(committed)} B)'
 
 
-def _provenance_methods_digests(fixtures=None):
-    """解析 `fixtures/PROVENANCE.md` 登记的**原始采集** methods sha256 表。
+def _provenance_original_digests(fixtures=None):
+    """解析 `fixtures/PROVENANCE.md` 登记的**原始采集** sha256 表（methods + frames）。
 
     评审 r9 P2（boundary#4）：r8 的「5 轮 sha256 互异」只挡**字节级同片**——保留
     `(outcome, errorCode)` 不变、每轮塞一个判据不消费的字节即可骗过机检（解析值
@@ -233,26 +235,32 @@ def _provenance_methods_digests(fixtures=None):
     FAIL——见 RESULT 的实测）。真正钉住「5 份独立采集」的外部锚是 PROVENANCE 表
     登记的**原始采集哈希**（对照 #1477 仓外原始数据可审计）；这里把入库件的复算
     哈希与该表交叉核对：改任何一份入库 methods.json（哪怕只加一个不消费字节）
-    都当场红。表格式漂移（行缺失 / 哈希列不再是 64 hex）fail-closed 判红，不猜。
+    都当场红。r10 P1（评审 MM boundary#2 = DS boundary#3）：frames.jsonl 此前是
+    自指行（引用由入库夹具 emit 出的金样 `rounds.files[].framesSha256`），没有
+    外部锚——给任一轮 frames.jsonl 塞一个判据不消费的字节照样全绿；r10 起两个
+    文件都逐轮登记原始哈希（三列表，见 PROVENANCE.md），与 methods 同口径交叉
+    核对。表格式漂移（行缺失 / 哈希列不再是 64 hex）fail-closed 判红，不猜。
     """
     provenance = Path(fixtures or FIXTURES) / 'PROVENANCE.md'
     try:
         text = provenance.read_text(encoding='utf-8')
     except OSError as error:
         raise CheckFailure(f'cannot read {provenance}: {error}') from error
-    digests = {}
+    methods, frames = {}, {}
     for match in re.finditer(
-            r'^\| (round-\d{2}) \| `([0-9a-f]{64})` \| 同左 \|$', text, re.M):
-        if match.group(1) in digests:
+            r'^\| (round-\d{2}) \| `([0-9a-f]{64})` \| `([0-9a-f]{64})` \|$',
+            text, re.M):
+        if match.group(1) in methods:
             raise CheckFailure(
                 f'{provenance}: round {match.group(1)} is registered twice in the '
                 'original-collection digest table')
-        digests[match.group(1)] = match.group(2)
-    if not digests:
+        methods[match.group(1)] = match.group(2)
+        frames[match.group(1)] = match.group(3)
+    if not methods:
         raise CheckFailure(
             f'{provenance}: no original-collection digest rows parsed; the '
             'provenance cross-check refuses to pass on an unparsable table')
-    return digests
+    return {'methods': methods, 'frames': frames}
 
 
 def check_check(fixtures=None):
@@ -276,17 +284,33 @@ def check_check(fixtures=None):
     # 不消费字节」。入库 methods.json 的复算哈希还必须与 PROVENANCE 表登记的
     # **原始采集**哈希逐轮全等（原始数据在仓外可审计，攻击者改了入库件却改不了
     # #1477 的采集记录；同步改表即改审计链，属可见伪造而非静默漂移）。
-    recomputed = {round_dir.name: _sha256_file(round_dir / 'driver' / 'methods.json')
-                  for round_dir in rounds}
-    provenance = _provenance_methods_digests(fixtures)
-    if provenance != recomputed:
+    # r10 P1：frames.jsonl 同口径——此前它只有自指锚（金样本身从入库件 emit 出），
+    # 改一个判据不消费的字节全绿；现在与 methods 一样逐轮对表。
+    recomputed_methods = {
+        round_dir.name: _sha256_file(round_dir / 'driver' / 'methods.json')
+        for round_dir in rounds}
+    recomputed_frames = {
+        round_dir.name: _sha256_file(round_dir / 'driver' / 'frames.jsonl')
+        for round_dir in rounds}
+    provenance = _provenance_original_digests(fixtures)
+    if provenance['methods'] != recomputed_methods:
         raise CheckFailure(
             'fixture methods.json digests no longer match the registered '
             'original-collection digests in fixtures/PROVENANCE.md: '
-            f'provenance {sorted(provenance)}, recomputed {sorted(recomputed)}; '
+            f'provenance {sorted(provenance["methods"])}, '
+            f'recomputed {sorted(recomputed_methods)}; '
             'a byte added to (or re-sliced from) any round breaks the independent-'
             'collection audit chain even when every (outcome, errorCode) stays '
             'golden-identical')
+    if provenance['frames'] != recomputed_frames:
+        raise CheckFailure(
+            'fixture frames.jsonl digests no longer match the registered '
+            'original-collection digests in fixtures/PROVENANCE.md: '
+            f'provenance {sorted(provenance["frames"])}, '
+            f'recomputed {sorted(recomputed_frames)}; '
+            'a byte added to (or re-sliced from) any round breaks the independent-'
+            'collection audit chain even when every (outcome, errorCode) and the '
+            'wire frames stay golden-identical (the r10 P1 fix has rotted)')
     command = [sys.executable, '-I', str(CHECKER), 'check', '--oracle', str(ORACLE)]
     for round_dir in rounds:
         command += ['--round', str(round_dir)]
@@ -453,6 +477,27 @@ spec.loader.exec_module(module)
 kept = module.invalidate_stale_summary(sys.argv[2], respect_output_lock=True)
 print(f'GUARD {"KEPT" if kept else "DROPPED"}', flush=True)
 '''
+
+
+# 守卫 fd 三变异的登记簿（r9 P2 落地、r10 P0 提为模块级常量）：control_lock 逐条
+# 把临时 negative_controls 副本退回 r8 之前的口径，check_lock 的守卫 fd 探针必须红
+# 在各自的专属判定上（锚串取自 `_assert_guard_fd_fail_closed` 的专属文案）。外层
+# 预算的锁趟数算式（LOCK_CHECK_PASSES，见下）从这份登记簿**推导**——新增 / 删除
+# 一条变异时趟数自动跟上，不再手抄。
+GUARD_FD_MUTATIONS = (
+    ('guard fd without O_NONBLOCK',
+     'os.O_RDONLY | os.O_CREAT | nofollow | nonblock',
+     'os.O_RDONLY | os.O_CREAT | nofollow',
+     'the summary guard fd hung on a planted non-regular lock'),
+    ('guard fd without the S_ISREG check',
+     'if not stat_module.S_ISREG(info.st_mode):',
+     'if False:',
+     'the summary guard deleted a published summary'),
+    ('guard fd without O_NOFOLLOW',
+     'os.O_RDONLY | os.O_CREAT | nofollow | nonblock',
+     'os.O_RDONLY | os.O_CREAT | nonblock',
+     'the summary guard deleted a published summary'),
+)
 
 
 def _assert_guard_fd_fail_closed(controls, root, label):
@@ -693,16 +738,18 @@ def check_writes():
     return f'non-regular write targets rejected with rc={hostile_rcs}'
 
 
-# —— 外层预算的派生算式（评审 r9 P2 concurrency#2 = boundary#3 = sibling#4）——
-# r8 注释自设的判据是「外层 timeout-minutes > 装置内部超时最坏和」，但当时按
-# 45→55 min 抬的数没有把守卫 fd 探针与变异自检的第二、三趟锁探针算进去（55 min
-# < 内部最坏和）。这里把算式落成常量：check_wiring 钉 ci.yml 的 timeout-minutes 值
-# 并断言不等式，抬高任何内部等待上限而忘了抬外层时当场红。
-# check_lock 单趟最坏等待：4×等锁读（LOCKED / 等锁提示 / RELEASED / ACQUIRED）+
-# 2×进程 wait（各 LOCK_PROBE_WAIT_TIMEOUT_SECONDS）+ 敌意锁 3×(20 + 清理 30 s)
-# + 守卫 fd 探针 3×(20 + 清理 30 s)。
+# —— 外层预算的派生算式（评审 r9 P2 = r10 P0 复算）——
+# r8 注释自设的判据是「外层 timeout-minutes > 装置内部超时最坏和」，r9 把算式落成
+# 常量，但 check_lock 按「三趟」计、control_check 的两次 check_check 各自再起一个
+# 300 s checker 子进程也不计——内部和虚低成 4580 s，85 min 下派生不等式恒真（尺子
+# 假通过）。r10 起趟数与子进程数都从**调用结构**推导（乘数漂移由
+# _assert_pass_counting 同源互证钉住），算式只修数、判据本身不动。
+# check_lock 单趟最坏等待：4×等锁读（LOCKED / 等锁提示 / RELEASED / ACQUIRED，
+# 各 LOCK_PROBE_WAIT_TIMEOUT_SECONDS）+ 2×进程 wait（同上限）+ 敌意锁
+# 3×(20 + 清理 30 s) + 守卫 fd 探针 3×(20 + 清理 30 s)。
 LOCK_WORST_CASE_SECONDS = (
-    6 * LOCK_PROBE_WAIT_TIMEOUT_SECONDS
+    4 * LOCK_PROBE_WAIT_TIMEOUT_SECONDS
+    + 2 * LOCK_PROBE_WAIT_TIMEOUT_SECONDS
     + EXPECTED_LOCK_HOSTILE_PLANTS
     * (LOCK_HOSTILE_TIMEOUT_SECONDS + HOSTILE_CLEANUP_WAIT_SECONDS)
     + EXPECTED_LOCK_HOSTILE_PLANTS
@@ -710,14 +757,90 @@ LOCK_WORST_CASE_SECONDS = (
 WRITES_WORST_CASE_SECONDS = EXPECTED_WRITE_HOSTILE_TARGETS * (
     WRITE_HOSTILE_TIMEOUT_SECONDS + HOSTILE_CLEANUP_WAIT_SECONDS)
 # 全 job（七项自检与变异自检是同一个 job 的两个 step，共用同一个 timeout-minutes
-# 兜底）：check_lock 被跑三趟——七项自检 1 趟 + control_lock 两趟（detail 与弱化
-# flock 样本各一）。
+# 兜底）：check_lock 共六趟——七项自检 1 趟（CHECKS/ORDER 注册的 'lock' 项）+
+# control_lock 五趟（detail 1 + 弱化 flock 样本 1 + 守卫 fd 变异循环
+# len(GUARD_FD_MUTATIONS) = 3 趟）。
+LOCK_CHECK_PASSES = (
+    1  # 七项自检：run_checks 按 ORDER 逐名调 CHECKS 的 'lock' 项
+    + 1  # control_lock 开头的 detail 重跑一趟
+    + 1  # control_lock 的弱化 flock 样本一趟
+    + len(GUARD_FD_MUTATIONS))  # control_lock 的守卫 fd 变异循环，每条一趟
+# control_check 里 check_check 的调用次数（r10 P0：此前 r9 的两次调用各起一个
+# 300 s 上限的 checker 子进程，完全不在预算算式里；r10 P1 的 frames 变异方向再加
+# 一次——三个变异方向各一趟，由 _assert_pass_counting 与调用点互证）。
+CONTROL_CHECK_SUBPROCESSES = 3
 INTERNAL_WORST_CASE_SECONDS = (
     EMIT_TIMEOUT_SECONDS + CHECK_TIMEOUT_SECONDS + NEGCTL_TIMEOUT_SECONDS
-    + 3 * LOCK_WORST_CASE_SECONDS + WRITES_WORST_CASE_SECONDS)
+    + LOCK_CHECK_PASSES * LOCK_WORST_CASE_SECONDS + WRITES_WORST_CASE_SECONDS
+    + CONTROL_CHECK_SUBPROCESSES * CHECK_TIMEOUT_SECONDS)
 # runner 侧非守卫开销（checkout / venv 装 PyYAML / 上传证据）的余量。
 JOB_OVERHEAD_MARGIN_SECONDS = 300
-RETIREMENT_JOB_TIMEOUT_MINUTES = 85
+RETIREMENT_JOB_TIMEOUT_MINUTES = 130
+
+
+def _assert_pass_counting():
+    """同源互证（r10 P0）：预算算式里的「数」必须与本文件源码里的调用点对得上。
+
+    趟数 / 子进程数只写在常量里时，新增 / 删除一个 `check_lock` 调用点而忘了改
+    `LOCK_CHECK_PASSES`，内部和只会朝「算小」方向漂——派生不等式恒真、尺子假
+    通过（r9 被评掉的形态，乘数压回旧错值不会让任何检查变红）。这里按源码文本
+    数调用点并与派生式互证（先例：control_lock 的 `source.count(mutation) != 1`
+    锚点计数；调用点按「函数名紧跟左括号」的字面形态数，def 行除外）：
+
+    - CHECKS 里 `'lock'` 恰注册一次、ORDER 里 `'lock'` 恰出现一次（七项自检那趟
+      的唯一入口；换个名字注册会让 ORDER 计数当场红）；
+    - check_lock 的调用点（def 之外）恰为 `LOCK_CHECK_PASSES -
+      len(GUARD_FD_MUTATIONS)`——detail 1 + 弱化 flock 1 + 守卫 fd 循环体 1
+      （循环体一处文本、按表展开 len(...) 趟）；
+    - check_check 的调用点（def 之外）恰为 `CONTROL_CHECK_SUBPROCESSES`；
+    - ORDER 不得重名（每个检查恰跑一趟是「每项超时只计一次」的前提）。
+
+    计数一律用 ``\\s*`` 拼接的正则而不是整串字面量：本函数自己的匹配文本也是
+    源码的一部分，整串字面量会把自己数进去（自指）。同理，注释 / 文档串里写出
+    调用形态（函数名紧跟左括号）也会数进来（fail-closed），改注释须同步这里
+    的登记。
+    """
+    source = SELF.read_text(encoding='utf-8')
+    if len(re.findall(r"^\s*'lock':\s*check_lock,\s*$", source, re.M)) != 1:
+        raise CheckFailure(
+            'self_check.py does not register exactly one `lock` entry in CHECKS; '
+            'the budget formula counts that registry pass as one lock pass '
+            '(update _assert_pass_counting alongside the registry)')
+    if ORDER.count('lock') != 1:
+        raise CheckFailure(
+            'ORDER does not run the lock check exactly once; the budget formula '
+            'counts one seven-item pass of check_lock')
+    if len(ORDER) != len(set(ORDER)):
+        raise CheckFailure(
+            'ORDER repeats a check name; the per-check subprocess budget assumes '
+            'each check runs exactly once in the seven-item pass')
+    lock_calls = len(re.findall(r'(?<!def )\bcheck_lock\s*\(', source))
+    expected_lock_calls = LOCK_CHECK_PASSES - len(GUARD_FD_MUTATIONS)
+    if lock_calls != expected_lock_calls:
+        raise CheckFailure(
+            f'self_check.py carries {lock_calls} check_lock call sites but '
+            f'LOCK_CHECK_PASSES={LOCK_CHECK_PASSES} with '
+            f'{len(GUARD_FD_MUTATIONS)} guard-fd mutations implies '
+            f'{expected_lock_calls}; a call site was added or removed without '
+            'updating the derived pass count, so the outer-budget inequality '
+            'would rot back to always-true (the r9 failure shape)')
+    if len(re.findall(r"^\s*'check':\s*check_check,\s*$", source, re.M)) != 1:
+        raise CheckFailure(
+            'self_check.py does not register exactly one `check` entry in '
+            'CHECKS; the budget formula counts that registry pass as one '
+            'checker subprocess')
+    check_calls = len(re.findall(r'(?<!def )\bcheck_check\s*\(', source))
+    if check_calls != CONTROL_CHECK_SUBPROCESSES:
+        raise CheckFailure(
+            f'self_check.py carries {check_calls} check_check call sites but '
+            f'CONTROL_CHECK_SUBPROCESSES={CONTROL_CHECK_SUBPROCESSES}; the '
+            'control_check subprocesses must be counted in the internal '
+            'worst-case sum or the outer budget silently over-covers them '
+            '(the r9 failure shape)')
+    return (f'{lock_calls} direct call sites + 1 registry pass + '
+            f'{len(GUARD_FD_MUTATIONS)} guard-fd loop passes = '
+            f'{LOCK_CHECK_PASSES} lock passes; {check_calls} control_check '
+            'subprocesses')
 
 
 # —— 行定位正则，**只**给 wiring_samples() 构造变异样本用：把真实 ci.yml 的文本切成
@@ -1275,9 +1398,12 @@ def check_wiring(workflow=None, pr_gate=None):
             f'exactly `{expected_job_condition}`; any other condition can skip the job '
             'on PRs the classifier does not mark docs-only')
 
-    # 外层预算（评审 r9 P2 concurrency#2）：值钉死 + 派生不等式。判据是 r8 注释
-    # 自设的「外层 > 内部最坏和」——内部超时打不满时失败由装置自己收口成红，
-    # 外层不够则失败退化为平台硬杀（job 记 cancelled，哪个检查红了都看不见）。
+    # 外层预算（评审 r9 P2 concurrency#2，r10 P0 复算）：值钉死 + 派生不等式。
+    # 判据是 r8 注释自设的「外层 > 内部最坏和」——内部超时打不满时失败由装置
+    # 自己收口成红，外层不够则失败退化为平台硬杀（job 记 cancelled，哪个检查
+    # 红了都看不见）。算式输入（锁趟数 / control_check 子进程数）由
+    # _assert_pass_counting 与本文件源码的调用点同源互证，乘数漂移当场红。
+    _assert_pass_counting()
     timeout_text = _scalar_text(
         yaml, path, retirement.get('timeout-minutes'),
         f'`{RETIREMENT_JOB}` job `timeout-minutes`')
@@ -1565,23 +1691,12 @@ def control_lock():
                 '(blocking flock replaced by pass — the second holder proceeds '
                 'while the first still holds the lock); the r8 P0 fix has rotted')
 
-        # 守卫 fd 的三种退化（r9 P2）。每种都必须红在**点名的判定**上：锚串取自
+        # 守卫 fd 的三种退化（r9 P2，登记簿 GUARD_FD_MUTATIONS——外层预算的锁
+        # 趟数从它推导，r10 P0）。每种都必须红在**点名的判定**上：锚串取自
         # `_assert_guard_fd_fail_closed` 的两条专属文案，别的判定（真锁敌意探针）
         # 不含这些串。
         guard_source = CONTROLS.read_text(encoding='utf-8')
-        for guard_label, old, new, anchor in (
-                ('guard fd without O_NONBLOCK',
-                 'os.O_RDONLY | os.O_CREAT | nofollow | nonblock',
-                 'os.O_RDONLY | os.O_CREAT | nofollow',
-                 'the summary guard fd hung on a planted non-regular lock'),
-                ('guard fd without the S_ISREG check',
-                 'if not stat_module.S_ISREG(info.st_mode):',
-                 'if False:',
-                 'the summary guard deleted a published summary'),
-                ('guard fd without O_NOFOLLOW',
-                 'os.O_RDONLY | os.O_CREAT | nofollow | nonblock',
-                 'os.O_RDONLY | os.O_CREAT | nonblock',
-                 'the summary guard deleted a published summary')):
+        for guard_label, old, new, anchor in GUARD_FD_MUTATIONS:
             if guard_source.count(old) != 1:
                 raise CheckFailure(f'the guard-fd anchor for `{guard_label}` is '
                                    'not uniquely present in '
@@ -2147,7 +2262,7 @@ SAMPLE_FAILURE_ANCHORS = {
     'require-if-continuation': 'the aggregate Require step condition',
     'folded-block': 'is a folded block',
     'job-outside-jobs': 'no `retirement-outcome-parity` job under `jobs:`',
-    'retirement-job-timeout-lowered': 'must stay exactly `85`',
+    'retirement-job-timeout-lowered': 'must stay exactly `130`',
     'pr-gate-step-shell-removed': "found ['env', 'name', 'run']",
     'pr-gate-root-defaults-shell':
         'the pr-gate workflow carries the unregistered root key',
@@ -2167,12 +2282,15 @@ EXPECTED_WIRING_SAMPLES = 44
 
 
 def control_check():
-    """P7 非退化机检的两个方向都要能红（评审 r9 P2 = r8 boundary#4）。
+    """P7 非退化机检的三个方向都要能红（评审 r9 P2 = r8 boundary#4；r10 P1 加方向）。
 
     变异体就是评审点名的攻击形态：保留全部判据消费字段（`(outcome, errorCode)`
     逐轮不变），只给一份 `methods.json` 塞一个**不消费**的尾字节——sha256 互异
     照样成立（仍 5 个互异值）、checker 照样 PASS，只有 PROVENANCE 交叉核对能红。
-    第二个方向：删掉 PROVENANCE 表里的一行登记（登记簿静默缩水）。
+    第二个方向（r10 P1，评审 MM boundary#2）：对 `frames.jsonl` 塞一个判据不消费
+    的字节（首行 `"seq":1` 的冒号后加空格——json.loads 仍过、frame 值不变），
+    r9 的交叉核对只查 methods 时这形态全绿，必须红在 frames 的专属判定上。
+    第三个方向：删掉 PROVENANCE 表里的一行登记（登记簿静默缩水）。
     """
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-check-') as tmp:
         root = Path(tmp) / 'fixtures'
@@ -2194,10 +2312,39 @@ def control_check():
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-check-') as tmp:
         root = Path(tmp) / 'fixtures'
         shutil.copytree(FIXTURES, root)
+        # r10 P1：JSON 冒号后加空格——判据（json.loads 解析后的 frame 值）不消费，
+        # sha256 变、P1–P8 结论不变，只有 frames 的 PROVENANCE 交叉核对能红。
+        target = root / 'round-02' / 'driver' / 'frames.jsonl'
+        original = target.read_text(encoding='utf-8')
+        anchor = '{"seq":1,"connection":1,'
+        first_line = original.partition('\n')[0]
+        if not original.startswith(anchor) or first_line.count(anchor) != 1:
+            raise CheckFailure('the frames.jsonl first-line anchor is not uniquely '
+                               'present to mutate; update this control with the '
+                               'current anchor')
+        target.write_text(original.replace(anchor, '{"seq": 1,"connection":1,', 1),
+                         encoding='utf-8')
+        try:
+            check_check(root)
+        except CheckFailure as error:
+            if 'frames.jsonl digests no longer match' not in str(error):
+                raise CheckFailure(
+                    f'unconsumed frames byte rejected by the wrong judgment: '
+                    f'{error}') from error
+        else:
+            raise CheckFailure(
+                'the provenance cross-check did not reject an unconsumed byte in '
+                'frames.jsonl (the frames column had no external anchor before '
+                'r10 and a re-sliced round would pass as "independent"); the r10 '
+                'fix has rotted')
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-check-') as tmp:
+        root = Path(tmp) / 'fixtures'
+        shutil.copytree(FIXTURES, root)
         table = root / 'PROVENANCE.md'
         lines = table.read_text(encoding='utf-8').split('\n')
         rows = [index for index, line in enumerate(lines)
-                if re.match(r'^\| round-\d{2} \| `[0-9a-f]{64}` \|', line)]
+                if re.match(r'^\| round-\d{2} \| `[0-9a-f]{64}` \| `[0-9a-f]{64}` \|$',
+                            line)]
         if len(rows) != EXPECTED_ROUNDS:
             raise CheckFailure('the provenance digest table does not carry '
                                 f'{EXPECTED_ROUNDS} rows to drop; update this '
@@ -2214,7 +2361,8 @@ def control_check():
         else:
             raise CheckFailure('the provenance cross-check did not reject a '
                                'fixture set with a dropped registration row')
-    return 'unconsumed bytes and dropped provenance rows are both rejected'
+    return ('unconsumed bytes (methods and frames) and dropped provenance rows '
+            'are all rejected')
 
 
 def control_wiring():

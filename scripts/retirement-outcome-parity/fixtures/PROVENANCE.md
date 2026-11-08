@@ -44,16 +44,19 @@
 ## 原始 ↔ 入库 sha256（审计链）
 
 `ts-oracle.json` 的 `rounds.files[]` 登记的始终是**当前入库文件**的 sha256。r7 起入库
-件逐字节等于原始件，两列相同：
+件逐字节等于原始件，因此下表两列即入库值。r10（评审 P1）起两个文件都逐轮登记
+**原始采集**哈希：`../self_check.py` 的 `check` 用例对入库件复算并与本表交叉核对
+（methods 与 frames 各自同口径；表解析不出 / 行数对不上 / 任一字节改动都当场红），
+`frames.jsonl` 不再依赖金样 `rounds.files[].framesSha256` 的自指锚（金样本身是从
+入库夹具 emit 出来的，挡不住入库件被改）：
 
-| 轮 | 原始 `methods.json` sha256 | 入库 sha256（当前金样） |
+| 轮 | 原始 `methods.json` sha256 | 原始 `frames.jsonl` sha256 |
 |---|---|---|
-| round-01 | `c46f74315569d5009592a42e05b01d523c1710b7587263d64f4c55cdb43bca0e` | 同左 |
-| round-02 | `5b8398a91e3cd08c8697c81fa7f87076d0c8054be8b6f061b5a5731aca6acee0` | 同左 |
-| round-03 | `da8f21606c098f931530d7bc12de54a9819753e0471a45da53902bc89eb98ced` | 同左 |
-| round-04 | `820deb64fefdf44be769c5439fcc3382295b6b942a59fa61e1f1afd8849ebd03` | 同左 |
-| round-05 | `b6ef2848952fdc4e736959597eb007d2c1a18275779046f101c3ddc1d2623b6d` | 同左 |
-| 全部轮的 `frames.jsonl` | 见当前金样 `rounds.files[].framesSha256` | 同左（照搬未变） |
+| round-01 | `c46f74315569d5009592a42e05b01d523c1710b7587263d64f4c55cdb43bca0e` | `0945e78eca71dce65135d0eb8a4bbcb4a828fc4f2f35ae16f3a566fa5dded034` |
+| round-02 | `5b8398a91e3cd08c8697c81fa7f87076d0c8054be8b6f061b5a5731aca6acee0` | `902366ef5363009121c6e72633c35aace41282b2533b7638c46bc6c93f83b2a4` |
+| round-03 | `da8f21606c098f931530d7bc12de54a9819753e0471a45da53902bc89eb98ced` | `0afa3a14ab2f552e9df0a3760f913755f68085db7f2f6acad7171af4392a7888` |
+| round-04 | `820deb64fefdf44be769c5439fcc3382295b6b942a59fa61e1f1afd8849ebd03` | `311657e03529f970b84ad133d576860cef368df434f97e8c66860761b59c9446` |
+| round-05 | `b6ef2848952fdc4e736959597eb007d2c1a18275779046f101c3ddc1d2623b6d` | `641d95cb2712bce5f68640a828049ca9f0550fb5afaa9c9fbba68c4cd814397b` |
 
 历史对照（r1–r6 的切片期值，去掉容差字段后五轮同为
 `d7e5e3e897cf3aab9849aa7c29a5a198028b20ac4d52aeb4457fe3aefcbed49d`）留档于 r6 及之前的
