@@ -92,8 +92,11 @@ SCRIPTS = (
 # `negative_process.target_environment` default the shared tree target when the
 # variable is *absent* (#1166) -- a present-but-blank value is refused by their
 # own `blank_target()` guard, so only `missing` is exempt -- and
-# `cli-parity-mock-gateway` and `same-json-surfaces` never compile Cargo, so all
-# four modes are moot for them.
+# `cli-parity-mock-gateway` and `same-json-surfaces` never read the target in
+# their own source (machine-checked below), while the `mutating_sources` window
+# they delegate to does read it (and may cold-boot the scanner with cargo
+# build, #2552 DS boundary#2): no mode is hostable for them, see the per-entry
+# reasons for the rc shapes.
 MODES = ('missing', 'empty', 'blank', 'dot')
 TARGET_OPTIONAL = {
     'interaction-values/negative_controls.py':
@@ -103,9 +106,21 @@ TARGET_OPTIONAL = {
         ('target_environment defaults the shared tree target when the variable is absent (#1166)',
          'target_environment(', ('missing',)),
     'cli-parity-mock-gateway/negative_controls.py':
-        ('never compiles Cargo, so it has no target guard', None, MODES),
+        ('own source never reads the target in any spelling (machine-checked); the '
+         'delegated mutating_sources window does: _ensure_workspace_scanner reads '
+         'CARGO_TARGET_DIR through the shared rule (absent defaults to the shared tree '
+         'target, blank/dot are refused there) and may cargo-build the scanner, so '
+         '"never compiles Cargo" is false (#2552 DS boundary#2); no mode is '
+         'matrix-hostable -- missing starts a full guarded batch past the 300s matrix '
+         'subprocess, the others surface as this entry\'s uncaught rc 1', None, MODES),
     'same-json-surfaces/negative_controls.py':
-        ('never compiles Cargo, so it has no target guard', None, MODES),
+        ('own source never reads the target in any spelling (machine-checked); the '
+         'delegated mutating_sources window does: _ensure_workspace_scanner reads '
+         'CARGO_TARGET_DIR through the shared rule (absent defaults to the shared tree '
+         'target, blank/dot are refused there) and may cargo-build the scanner, so '
+         '"never compiles Cargo" is false (#2552 DS boundary#2); missing would start '
+         'a full guarded batch past the 300s matrix subprocess; empty/blank/dot are '
+         'refused rc 2 by that shared rule plus the started flag (#2431)', None, MODES),
 }
 
 # Any read of the target variable is a target guard. Matching the call shapes

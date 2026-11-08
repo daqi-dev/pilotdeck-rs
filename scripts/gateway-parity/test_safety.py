@@ -2446,6 +2446,13 @@ class SameJsonSurfaces(unittest.TestCase):
     and the startup-refusal contract — a guard that fails before the first
     mutation is rc 2 with the claim directory withdrawn, never a red run
     (#2431).
+
+    #2552 (PR #2544 review follow-up, DS P2 six): the lease budget's tail
+    reserve is derived from the real exit-side worst case and carries its own
+    derivation pin, the budget guard itself refuses rc 2 on an unreadable
+    common.py, the spent-budget branch has a committed regression pin, and
+    the terminate handler body is pinned functionally, not just by the
+    call-site count.
     """
 
     @classmethod
@@ -2689,9 +2696,11 @@ class SameJsonSurfaces(unittest.TestCase):
         # #2425: the guarded branch installs terminate_cleanly on SIGTERM/
         # SIGHUP/SIGQUIT before the first mutation, so an interrupted batch
         # unwinds through the finally blocks and restores the tree instead of
-        # leaving a mutant behind under the parity lease.  The handler body
-        # is pinned too: installing a no-op or an unrelated handler would
-        # satisfy a call-site-only count.
+        # leaving a mutant behind under the parity lease.  The handler *body*
+        # is pinned separately, by
+        # test_terminate_cleanly_raises_the_signal_exit_code (#2552, DS
+        # boundary#1): this call-site count alone cannot tell a gutted body
+        # from a real one.
         marker = '#2425 the guarded run installs terminate handlers before mutating'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
@@ -2794,6 +2803,137 @@ class SameJsonSurfaces(unittest.TestCase):
                                     and not out.exists()
                                     and not (out / 'summary.json').exists()
                                     and 'guard refused to start' in stderr.getvalue(), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_budget_guard_refuses_when_common_is_unreadable(self):
+        # #2552 (DS concurrency#2 + boundary#3, two independent hits):
+        # require_lease_budget_below_max_age sat outside the started zone
+        # with no handler of its own, so a common.py the guard could not
+        # read (missing file, syntax error, a renamed MAX_AGE) bubbled out
+        # of main() as a traceback and read as a red run (rc 1).  Every
+        # failure of that guard must be a startup refusal: rc 2, no
+        # evidence directory, before the claim.  preflight is stubbed like
+        # the #2431 pins so the kill lands on the rc2 semantics itself.
+        marker = '#2552 the budget guard refuses when common.py is unreadable'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            import io
+            with tempfile.TemporaryDirectory(prefix='pdrs-2552-budget-') as folder:
+                folder = Path(folder)
+                missing = folder / 'missing-common.py'
+                renamed = folder / 'renamed-common.py'
+                renamed.write_text('LEASE_MAX_AGE = 2400\n')
+                # (label, common.py the guard reads, LEASE_BUDGET_SECONDS)
+                probes = (('missing common.py', missing, None),
+                          ('renamed MAX_AGE', renamed, None),
+                          ('budget above MAX_AGE', None, 2400))
+                for label, common_path, budget in probes:
+                    with self.subTest(label=label), \
+                            tempfile.TemporaryDirectory(prefix='pdrs-2552-out-') as out_folder:
+                        out = Path(out_folder) / 'out'
+                        spec = importlib.util.spec_from_file_location(
+                            'samejson_budget_' + label.replace(' ', '_').replace('-', '_'), path)
+                        module = importlib.util.module_from_spec(spec)
+                        exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+                        with patch.object(module, 'preflight', lambda: True), \
+                                patch.object(module, 'common',
+                                             common_path if common_path is not None else module.common), \
+                                patch.object(module, 'LEASE_BUDGET_SECONDS',
+                                             budget if budget is not None
+                                             else module.LEASE_BUDGET_SECONDS), \
+                                patch('sys.stdout', new_callable=io.StringIO), \
+                                patch('sys.stderr', new_callable=io.StringIO) as stderr, \
+                                patch.object(sys, 'argv', [str(path), str(out),
+                                                           'surfaces-frames-bare-not-equal']):
+                            try:
+                                module.main()
+                                raised = None
+                            except BaseException as exit_code:
+                                # BaseException, not just SystemExit: a mutant
+                                # that lets the guard's error escape main()
+                                # must fail this pin's own assertion below --
+                                # a ``with self.subTest`` swallows anything
+                                # raised through it into an unittest ERROR,
+                                # which classify() reads as INVALID, never
+                                # KILLED (#2552, same lesson as #2425's
+                                # assertRaises note).
+                                raised = exit_code
+                        self.assertTrue(raised is not None
+                                        and isinstance(raised, SystemExit)
+                                        and raised.code == 2
+                                        and not out.exists()
+                                        and not (out / 'summary.json').exists()
+                                        and 'lease budget' in stderr.getvalue(), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_lease_budget_marks_spent_cases_invalid(self):
+        # #2552 (DS concurrency#4): the spent-budget branch had no committed
+        # regression pin -- deleting it left every SameJsonSurfaces test
+        # green and the invariant had only a one-time drift probe.  Pin the
+        # call site and the INVALID marking by bytes, the reserve arithmetic
+        # and the below-MAX_AGE invariant by value, and the tail reserve's
+        # derivation (guarded-path count times the real _git worst case,
+        # imported constants) so it cannot silently become a hand-picked
+        # number again (DS concurrency#1).
+        marker = '#2552 a spent lease budget marks the remaining cases INVALID'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            source = path.read_bytes().decode()
+            spec = importlib.util.spec_from_file_location('samejson_budget_drift', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            reserve = (3 * (module.RUN_TIMEOUT_SECONDS + 2 * module.KILL_GRACE_SECONDS)
+                       + module.TAIL_OVERHEAD_SECONDS)
+            self.assertTrue(
+                source.count('if lease_budget_left(clock, time.monotonic()) <= 0:') == 1
+                and source.count("'s parity lease budget before this case") == 1
+                and module.TAIL_OVERHEAD_SECONDS
+                    == len(module.GUARDED_PATHS) * (module.GIT_TIMEOUT
+                                                     + 2 * module.KILL_GRACE_SECONDS)
+                    + module.FSYNC_AND_LEASE_SLACK_SECONDS
+                and module.lease_budget_left(0, 0) == module.LEASE_BUDGET_SECONDS - reserve
+                and module.lease_budget_left(0, module.LEASE_BUDGET_SECONDS - reserve) == 0
+                and module.lease_budget_left(0, module.LEASE_BUDGET_SECONDS - reserve + 1) < 0
+                and module.LEASE_BUDGET_SECONDS + module.TAIL_OVERHEAD_SECONDS
+                    < module.load_pristine_common().MAX_AGE, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_terminate_cleanly_raises_the_signal_exit_code(self):
+        # #2552 (DS boundary#1): terminate_cleanly's body had
+        # no pin at all, so replacing the raise with ``pass`` kept every
+        # SameJsonSurfaces test green while a comment claimed the body was
+        # pinned.  Call the real handler here for every signal it is
+        # registered for: outside a restore window it must raise
+        # SystemExit(128+signum) so the finally blocks still unwind, and
+        # while a signal is deferred (restore in progress) it must return
+        # without exiting -- negative_process re-raises it after the window
+        # closes.
+        marker = '#2552 terminate_cleanly exits 128+signum outside the restore window'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            import signal
+            spec = importlib.util.spec_from_file_location('samejson_terminate_pin', path)
+            module = importlib.util.module_from_spec(spec)
+            exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            outcomes = []
+            for name in ('SIGTERM', 'SIGHUP', 'SIGQUIT'):
+                number = getattr(signal, name, None)
+                if number is None:
+                    continue
+                try:
+                    module.terminate_cleanly(number, None)
+                    outcomes.append((name, None))
+                except SystemExit as error:
+                    outcomes.append((name, error.code))
+            with patch.object(module, 'defer_signal_exit', lambda _signum: True):
+                deferred = module.terminate_cleanly(signal.SIGTERM, None)
+            expected = [(name, 128 + getattr(signal, name)) for name
+                        in ('SIGTERM', 'SIGHUP', 'SIGQUIT')
+                        if hasattr(signal, name)]
+            self.assertTrue(outcomes == expected and deferred is None, marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 

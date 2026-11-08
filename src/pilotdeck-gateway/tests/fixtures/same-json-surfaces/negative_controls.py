@@ -33,7 +33,7 @@ from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import (KILL_TIMEOUT, SourceBaselineError,
+from negative_process import (GIT_TIMEOUT, KILL_TIMEOUT, SourceBaselineError,
                               defer_signal_exit, mutating_sources, run_owned,
                               tree_lock, write_source_atomic)
 from negative_selection import claim_dir, refuse, registered, select, verdict_exit
@@ -63,11 +63,22 @@ RUN_TIMEOUT_SECONDS = 60
 # number equals the upstream kill grace, and a copy drifts silently (mirror of
 # session-domain-cleanup's MiniMax boundary r14 P2-2).
 KILL_GRACE_SECONDS = KILL_TIMEOUT
-# What the reserve has to absorb besides the per-run worst case: the
-# ``mutating_sources`` exit-side restore and byte verification, and the
-# parity lease release, all fast but charged so the last case cannot start
-# at the very edge of the budget.
-TAIL_OVERHEAD_SECONDS = 20
+# The guarded set whose bytes the with-statement below snapshots, restores and
+# re-verifies: one list, so the exit-side reserve cannot drift from the paths
+# the window actually covers.
+GUARDED_PATHS = (session, native, common, Path(__file__).resolve())
+# What the reserve has to absorb besides the per-run worst case, all inside
+# the lease (#2552, DS concurrency#1 -- the old flat 20s charged none of
+# this): mutating_sources' exit side rewrites every guarded path atomically
+# (one fsync each, charged as slack below) and re-verifies it against HEAD
+# through one _git call per path, whose real worst case is GIT_TIMEOUT plus
+# twice the kill grace (negative_process._collect pays the grace twice:
+# communicate, then wait), and then the parity lease is released.  With the
+# four guarded paths that is 4 * (120 + 2 * 10) = 560s plus slack, so a flat
+# 20 left the invariant able to understate the true tail by ~28x.
+FSYNC_AND_LEASE_SLACK_SECONDS = 20
+TAIL_OVERHEAD_SECONDS = (len(GUARDED_PATHS) * (GIT_TIMEOUT + 2 * KILL_GRACE_SECONDS)
+                         + FSYNC_AND_LEASE_SLACK_SECONDS)
 
 
 def lease_budget_left(started, now):
@@ -156,6 +167,24 @@ cases = [
      '            install_terminate_' + 'handlers()\n',
      '',
      'test_guarded_run_installs_terminate_handlers'),
+    # #2552: the budget machinery the r2/r3 batch added had no committed
+    # regression pin -- deleting the spent-budget branch or the rc2 wrapper
+    # below left SameJsonSurfaces green, and gutting the terminate handler's
+    # body turned nothing red while a comment claimed it was pinned.  Same
+    # split rule as the rows above so the table never contains its own
+    # anchor contiguously.
+    ('budget-guard-exception-narrowed', Path(__file__).resolve(),
+     '    except Exception as er' + "ror:\n        refuse('lease budget guard cannot read",
+     '    except (SourceBaselineError, TimeoutError) as er' + "ror:\n        refuse('lease budget guard cannot read",
+     'test_budget_guard_refuses_when_common_is_unreadable'),
+    ('budget-check-removed', Path(__file__).resolve(),
+     '                    if lease_budget_' + 'left(clock, time.monotonic()) <= 0:',
+     '                    if False:',
+     'test_lease_budget_marks_spent_cases_invalid'),
+    ('terminate-body-gutted', Path(__file__).resolve(),
+     '    raise SystemExit(128 + ' + 'signum)',
+     '    pass',
+     'test_terminate_cleanly_raises_the_signal_exit_code'),
 ]
 
 # Static roster (#1666): the denominator of this run is a literal in the
@@ -175,7 +204,10 @@ EXPECTED_NAMES = ('surfaces-frames-bare-not-equal',
                   'startup-flag-flipped-before-the-guard',
                   'atomic-publish-reverted-to-truncating',
                   'atomic-restore-reverted-to-truncating',
-                  'terminate-handlers-uninstalled')
+                  'terminate-handlers-uninstalled',
+                  'budget-guard-exception-narrowed',
+                  'budget-check-removed',
+                  'terminate-body-gutted')
 
 messages = {
     'surfaces-frames-bare-not-equal': '#2039 boolean drift must surface on frames',
@@ -193,6 +225,9 @@ messages = {
     'atomic-publish-reverted-to-truncating': '#2425 mutant bytes are published in one atomic rename',
     'atomic-restore-reverted-to-truncating': '#2425 mutant bytes are published in one atomic rename',
     'terminate-handlers-uninstalled': '#2425 the guarded run installs terminate handlers before mutating',
+    'budget-guard-exception-narrowed': '#2552 the budget guard refuses when common.py is unreadable',
+    'budget-check-removed': '#2552 a spent lease budget marks the remaining cases INVALID',
+    'terminate-body-gutted': '#2552 terminate_cleanly exits 128+signum outside the restore window',
 }
 
 
@@ -292,12 +327,23 @@ def require_lease_budget_below_max_age():
     An explicit refusal, not an ``assert``: ``python3 -O`` would strip the
     guard and leave only the comment (session-domain-cleanup, GLM
     concurrency r11 P3-4 / MiniMax boundary r11 P3-5).
+
+    #2552 (DS concurrency#2 + boundary#3): a common.py this loader cannot read
+    (missing file, syntax error, a renamed MAX_AGE) is itself a startup
+    refusal -- this call sits before the with-statement's ``started`` zone,
+    so letting it bubble out of main() as a traceback would exit 1 and read
+    as a red run, violating the rc2 contract.
     """
-    pristine = load_pristine_common()
-    if not (LEASE_BUDGET_SECONDS + TAIL_OVERHEAD_SECONDS < pristine.MAX_AGE):
-        refuse('lease budget ' + str(LEASE_BUDGET_SECONDS) + 's + tail overhead '
-               + str(TAIL_OVERHEAD_SECONDS) + 's must stay below common.MAX_AGE '
-               + str(pristine.MAX_AGE) + 's')
+    try:
+        max_age = load_pristine_common().MAX_AGE
+    except Exception as error:
+        refuse('lease budget guard cannot read the pristine common constants: '
+               + repr(error))
+    else:
+        if not (LEASE_BUDGET_SECONDS + TAIL_OVERHEAD_SECONDS < max_age):
+            refuse('lease budget ' + str(LEASE_BUDGET_SECONDS) + 's + tail overhead '
+                   + str(TAIL_OVERHEAD_SECONDS) + 's must stay below common.MAX_AGE '
+                   + str(max_age) + 's')
 
 
 def main():
@@ -400,8 +446,7 @@ def main():
             # below enforces, so the guard itself cannot outlive the lease
             # window it is about to hold (#2425, DS concurrency #2).
             install_terminate_handlers()
-            with mutating_sources(root, [session, native, common,
-                                         Path(__file__).resolve()],
+            with mutating_sources(root, GUARDED_PATHS,
                                   lock_timeout=LEASE_BUDGET_SECONDS) as originals:
                 started = True
                 # The clock starts when the lease is held, not when main()
