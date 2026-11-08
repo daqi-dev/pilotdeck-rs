@@ -431,7 +431,16 @@ def read_observation(home, project, session, run_id, received, request_id=None, 
     # The recorder keeps whole envelopes; the frozen projection owns the
     # request-identity check and the yield/terminal split, so the collector and
     # the frozen audit can never disagree about what an in-process frame is.
-    observation['frames'] = w.native.project_envelopes(request_id, received)['frames']
+    # `received` can also carry a frame keyed to another request — e.g. one
+    # left in the socket buffer by the previous case's turn — which the
+    # strict projection would reject as a whole-read failure (an honest
+    # retry, then a collection error) instead of scoring this request's
+    # frames.  Drop only the foreign frames, keeping this request's in their
+    # seq order; a non-object entry still reaches the projection and fails
+    # closed there (#2396 fix-r3, DS sibling P1).
+    own = [frame for frame in received
+           if not isinstance(frame, dict) or frame.get('id') == request_id]
+    observation['frames'] = w.native.project_envelopes(request_id, own)['frames']
     return (observation, identity, source) if retain else observation
 
 
