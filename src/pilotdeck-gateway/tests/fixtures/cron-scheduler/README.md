@@ -17,7 +17,7 @@
 - `oracle.json` — 10 格金样（wx 发布，Rust 重放前先验 provenance）；
 - `probe.mts` — 矩阵探针：金样覆盖不到的 S/T 格逐格实测，每格一行
   `### <id> <json>` 原始输出（RESULT 贴真跑记录）；
-- `negative_controls.py` — 7 变异负控（锚点唯一性 `--check` 本地可验；
+- `negative_controls.py` — 13 变异负控（锚点唯一性 `--check` 本地可验；
   全量 KILLED 由协调者在干净树上跑）。
 
 ## S 组：调度器生命周期
@@ -31,7 +31,7 @@
 | S5 | 未绑定 | start | throw "…before bindGateway."（CronRuntime.ts:187-189 / CronManager.ts:87-89） | probe `S5-start-before-bind`（两个报错原文） | `start_before_bind_throws` |
 | S6 | 运行中(空闲) | poke | clearTimeout + 250ms 重臂（:55-64,71-86） | oracle `poke-fires-early` + `no-poke-no-early-fire` | `start_arms_the_idle_poll_and_poke_floors_at_250ms`（poke 后 armed ≤ 250） |
 | S7 | 已 stop/未启动 | poke | 三闸 no-op（:56） | probe `S7-poke-gates` | `poke_gates_on_running_and_stopped` |
-| S8 | tick 进行中 | poke | 另臂一个 250ms 定时器，timer 槽被 tick 收尾重臂覆盖，旧定时器泄漏（:71-86）→ 可重叠 tick（claim 栅栏约束） | probe `S8-poke-during-tick-leaks-second-timer`（泄漏定时器在 60s 窗口内 fire） | **登记差异**：Rust 串行，poke 只影响 deadline；可比重放面由 `poke_tick_gates_on_the_in_flight_run` 覆盖 |
+| S8 | tick 进行中 | poke | 另臂一个 250ms 定时器，timer 槽被 tick 收尾重臂覆盖，旧定时器泄漏（:71-86）→ 可重叠 tick（claim 栅栏约束） | probe `S8-poke-during-tick-leaks-second-timer`（泄漏定时器在 60s 窗口内 fire） | **登记差异**：Rust 串行，该窗口（tick 进行中 poke，`deadline == None`）无确定性用例，以结构保证登记（单线程串行 + 重臂门 `deadline.is_none()`）；`poke_tick_gates_on_the_in_flight_run` 钉的是「poke 的 250ms tick 读到预登记的在飞 run 计入容量门」，非 S8 |
 | S9 | 空闲 | stop | stopped+clearTimeout（:43-53） | oracle `stop-no-fire` | `stop_is_authoritative_no_post_stop_tick` |
 | S10 | tick 进行中 | stop | await tickInProgress（:50-52）；S8 泄漏竞态下 TS 可再跑一个 post-stop tick | probe `S10-post-stop-tick-leak`（stop 后泄漏定时器仍 fire） | **登记差异**：Rust join 线程，永不 post-stop tick（更严方向） |
 | S11 | 任意 | tick 失败 | catch warn "cron scheduler tick failed"，`.then` 仍重臂（:76-84） | oracle `tick-failure-recovers` | 金样重放（`scheduler_replays_the_ts_gold`） |
