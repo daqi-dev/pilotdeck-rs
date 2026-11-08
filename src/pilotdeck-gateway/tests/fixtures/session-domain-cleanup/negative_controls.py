@@ -1841,6 +1841,26 @@ def nested_constant_conditional_bypass(rows):
                   'flagged, passed=False')
 
 
+def nested_not_false_conditional_bypass(rows):
+    """#1652 fix-r4 (DS boundary P0): the cleanupAudit face written as
+    ``'PASS' if not False else 'FAIL'`` is constant-by-semantics —
+    ``ast.literal_eval`` rejects the test, but the fold must cover the whole
+    literal grammar or the dead fail-closed arm excuses the live clean one."""
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', '_retirement_report',
+        "nested status slot 'PASS' if not False else 'FAIL'", 'retirement-report')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: nested not-False conditional bypass '
+                  'flagged, passed=False')
+
+
 def controls_nested_same_name(rows):
     """#892 r3: a nested ``def main`` must not shadow or duplicate the
     registered point name (MiniMax/DeepSeek boundary P2)."""
@@ -2090,6 +2110,14 @@ MUTATIONS = [
      "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
      "            for row in rounds) else 'FAIL'},\n",
      "        'cleanupAudit': {'status': 'PASS' if True else 'FAIL'},\n"),
+    # #1652 fix-r4 (DS boundary P0): a constant-by-semantics test outside
+    # ``ast.literal_eval`` — ``not False`` can only ever take the clean arm,
+    # so the dead fail-closed arm must not excuse it.
+    ('nested-not-false-conditional-bypass', SOURCE,
+     "        'cleanupAudit': {'status': 'PASS' if all(\n"
+     "            isinstance(row.get('audit'), dict) and row['audit'].get('allStopped') is True\n"
+     "            for row in rounds) else 'FAIL'},\n",
+     "        'cleanupAudit': {'status': 'PASS' if not False else 'FAIL'},\n"),
     ('controls-nested-same-name', CONTROLS_SOURCE,
      "    report['cleanup'] = cleanup\n",
      "    def main():\n"
@@ -4463,6 +4491,8 @@ JUDGES = {
         'aggregation-audit', nested_status_slot_bypass, False, ()),
     'nested-constant-conditional-bypass': (
         'aggregation-audit', nested_constant_conditional_bypass, False, ()),
+    'nested-not-false-conditional-bypass': (
+        'aggregation-audit', nested_not_false_conditional_bypass, False, ()),
     'controls-nested-same-name': (
         'aggregation-audit', controls_nested_same_name, False, ()),
     'calibrate-shared-excuse': (

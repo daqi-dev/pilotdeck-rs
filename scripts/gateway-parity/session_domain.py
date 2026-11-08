@@ -1738,6 +1738,19 @@ def _retirement_hashable(value):
     return value if isinstance(value, (int, str)) else repr(value)
 
 
+def _retirement_list_rows(value):
+    """The observation rows of *value* — a non-list is not a row set.
+
+    fix-r4 (DS sibling P1): the census side already buckets a truthy
+    non-list container (``"outcomes": 5``, ``"frames": 7``) into the empty
+    observation set; the scorer, wire, controls and entry-inventory read
+    points had only ``or []``, so a JSON-legal but wrongly-typed artifact
+    raised TypeError at the first ``for`` and the report wrapper collapsed
+    every measured round into the ROUND_EVIDENCE stub (``rounds == []``).
+    """
+    return value if isinstance(value, list) else []
+
+
 def _retirement_census_verdict(census):
     """R3 (#1355 fix-r2): an unobservable census is not an empty host set.
 
@@ -1800,7 +1813,13 @@ def _retirement_report_census(round_row):
     # verdict directly and still sees its FAIL, so removing the gateway pid
     # from a one-pid declared set keeps its expected attribution.
     if (not isinstance(census, dict) or not isinstance(census.get('rows'), list)
-            or not (census.get('rows') or []) or not (census.get('declared') or [])):
+            or not (census.get('rows') or [])
+            or not isinstance(census.get('declared'), list)
+            or not (census.get('declared') or [])):
+        # fix-r4 (DS sibling P2): a truthy non-list ``declared`` (5, "12") is
+        # the same unobserved shape as non-list rows — the gate reads BLOCKED,
+        # not the verdict's "no declared pids" FAIL, so both spellings of a
+        # wrongly-typed census land in the same status.
         return {'status': 'BLOCKED', 'rule': 'HOST_CENSUS', 'undeclared': [],
                 'problems': ['the round recorded no process census; an unobserved census is '
                              'not an empty host set']}
@@ -1954,9 +1973,16 @@ def _retirement_evidence_pairs(verdict):
 
 
 def _retirement_wire_backing(frames):
-    """Map methods to their request ids and the responses/events that answered."""
+    """Map methods to their request ids and the responses/events that answered.
+
+    fix-r4 (DS sibling P1): a frame whose id or method is unusable as a key
+    (a list/dict — any unhashable JSON value; a bool is not an id either) is
+    skipped as an observation, the same fail-closed skip as a non-dict row:
+    the outcome's wire-backing rule then fails instead of the TypeError
+    collapsing every measured round into the wrapper's ROUND_EVIDENCE stub.
+    """
     sends, responses, events, final_events = {}, {}, {}, set()
-    for row in frames:
+    for row in _retirement_list_rows(frames):
         if not isinstance(row, dict):
             # #1588 r1 §1: a row that is not a dict carries no frame at all;
             # the outcomes above then fail their wire-backing rule fail-closed
@@ -1966,9 +1992,13 @@ def _retirement_wire_backing(frames):
         if not isinstance(frame, dict):
             continue
         identifier = frame.get('id')
+        if not isinstance(identifier, (int, str)) or isinstance(identifier, bool):
+            continue
         if row.get('direction') == 'send':
             if frame.get('type') == 'request':
-                sends[frame.get('method')] = identifier
+                method = frame.get('method')
+                if isinstance(method, str):
+                    sends[method] = identifier
             continue
         kind = frame.get('type')
         if kind == 'response':
@@ -2012,7 +2042,11 @@ def score_retirement_round(row, expected):
             and driver_exit == 0):
         problems.append({'rule': 'ROUND_EXECUTION',
                          'detail': f"driver exited {driver_exit!r}"})
-    outcomes = row.get('outcomes') or []
+    # fix-r4 (DS sibling P1): a truthy non-list outcomes container is not an
+    # observation set — the same isinstance bucket the census side uses, so
+    # the round scores its ZERO_TESTS fail instead of the TypeError below
+    # collapsing the whole report into ROUND_EVIDENCE.
+    outcomes = _retirement_list_rows(row.get('outcomes'))
     if not outcomes:
         problems.append({'rule': 'ZERO_TESTS', 'detail': 'no method outcome rows'})
         verdict['rules'] = problems
@@ -2070,7 +2104,8 @@ def score_retirement_round(row, expected):
                         for outcome_row in outcomes):
         problems.append({'rule': 'UNIFORM_UNAVAILABLE',
                          'detail': 'every executed method answered CAPABILITY_UNAVAILABLE'})
-    sends, responses, events, final_events = _retirement_wire_backing(row.get('frames') or [])
+    sends, responses, events, final_events = _retirement_wire_backing(
+        _retirement_list_rows(row.get('frames')))
     violations = []
     for outcome_row in outcomes:
         if not isinstance(outcome_row, dict):
@@ -2083,6 +2118,11 @@ def score_retirement_round(row, expected):
             # F1 (#1355 fix-r1): a gateway that takes requests and never answers
             # produces exactly this outcome with zero wire backing.
             violations.append({'method': method, 'problem': 'timeout lacks wire backing'})
+            continue
+        if not isinstance(method, str):
+            # fix-r4 (DS sibling P1): an unhashable method dies at the dict
+            # membership below — MISSING_FIELD above already fails the round,
+            # so the wire pass skips what it cannot look up.
             continue
         if method not in sends:
             violations.append({'method': method, 'problem': 'send frame missing'})
@@ -2121,20 +2161,35 @@ def score_retirement_round(row, expected):
     return verdict
 
 
+def _retirement_usable_frame_id(identifier):
+    """True when *identifier* can serve as a strip-set member (fix-r4, DS
+    sibling P1).
+
+    An unhashable id (list/dict) or a bool dies at the set arithmetic below;
+    a frame whose id cannot be named cannot be proven to belong to *method*,
+    so it is never added and never matched — the mutation leaves it in place
+    and the scorer's own guards (not the strip) judge it fail-closed.
+    """
+    return isinstance(identifier, (int, str)) and not isinstance(identifier, bool)
+
+
 def _retirement_strip_wire(mutated, method):
     """Remove every wire frame of *method* while keeping its outcome row."""
     identifiers = set()
-    for row in mutated.get('frames') or []:
+    for row in _retirement_list_rows(mutated.get('frames')):
         if not isinstance(row, dict):
             # #1588 r1 §1 (fix-r2, DS sibling P1): a non-dict row carries no
             # frame to strip; the outcome's wire-backing rule fails closed.
             continue
         frame = row.get('frame')
         if row.get('direction') == 'send' and isinstance(frame, dict) and frame.get('method') == method:
-            identifiers.add(frame.get('id'))
-    mutated['frames'] = [row for row in mutated.get('frames') or []
+            identifier = frame.get('id')
+            if _retirement_usable_frame_id(identifier):
+                identifiers.add(identifier)
+    mutated['frames'] = [row for row in _retirement_list_rows(mutated.get('frames'))
                          if not (isinstance(row, dict)
                                  and isinstance(row.get('frame'), dict)
+                                 and _retirement_usable_frame_id(row['frame'].get('id'))
                                  and row['frame'].get('id') in identifiers)]
     return mutated
 
@@ -2142,16 +2197,19 @@ def _retirement_strip_wire(mutated, method):
 def _retirement_strip_receive(mutated, method):
     """Remove every receive frame of *method*, keeping its send frame (R1)."""
     identifiers = set()
-    for row in mutated.get('frames') or []:
+    for row in _retirement_list_rows(mutated.get('frames')):
         if not isinstance(row, dict):
             continue
         frame = row.get('frame')
         if row.get('direction') == 'send' and isinstance(frame, dict) and frame.get('method') == method:
-            identifiers.add(frame.get('id'))
-    mutated['frames'] = [row for row in mutated.get('frames') or []
+            identifier = frame.get('id')
+            if _retirement_usable_frame_id(identifier):
+                identifiers.add(identifier)
+    mutated['frames'] = [row for row in _retirement_list_rows(mutated.get('frames'))
                          if not (isinstance(row, dict)
                                  and row.get('direction') == 'receive'
                                  and isinstance(row.get('frame'), dict)
+                                 and _retirement_usable_frame_id(row['frame'].get('id'))
                                  and row['frame'].get('id') in identifiers)]
     return mutated
 
@@ -2225,7 +2283,7 @@ def _retirement_controls(round_row, expected, verdict=None):
 
     # 1. 故意偷偷回退 TS / 假 local 实透传: an executed method with no wire frame.
     mutated = copy.deepcopy(round_row)
-    victim = next((row.get('method') for row in mutated.get('outcomes') or []
+    victim = next((row.get('method') for row in _retirement_list_rows(mutated.get('outcomes'))
                    if isinstance(row, dict) and row.get('outcome') == 'ok' and row.get('method')), None)
     injection = 'executed method with every wire frame stripped while its ok outcome is kept'
     if victim is None:
@@ -2237,7 +2295,7 @@ def _retirement_controls(round_row, expected, verdict=None):
                     'no ok outcome carrying a method name in the control round: every method '
                     'errored or timed out, so the wire-frame mutation cannot be established')
     else:
-        before = len(mutated.get('frames') or [])
+        before = len(_retirement_list_rows(mutated.get('frames')))
         mutated = _retirement_strip_wire(mutated, victim)
         if len(mutated['frames']) == before:
             # P1 (#1355 fix-r4b, both families): the victim has no send frame
@@ -2317,12 +2375,12 @@ def _retirement_controls(round_row, expected, verdict=None):
                        == undeclared_before | {_retirement_hashable(gateway_pid)}))
     # 3. 全走 unavailable: every outcome becomes CAPABILITY_UNAVAILABLE, wire kept consistent.
     mutated = copy.deepcopy(round_row)
-    for outcome_row in mutated.get('outcomes') or []:
+    for outcome_row in _retirement_list_rows(mutated.get('outcomes')):
         if not isinstance(outcome_row, dict):
             continue
         outcome_row['outcome'] = 'error'
         outcome_row['errorCode'] = 'CAPABILITY_UNAVAILABLE'
-    for row in mutated.get('frames') or []:
+    for row in _retirement_list_rows(mutated.get('frames')):
         if not isinstance(row, dict):
             continue
         frame = row.get('frame')
@@ -2330,7 +2388,7 @@ def _retirement_controls(round_row, expected, verdict=None):
             frame['ok'] = False
             frame.pop('result', None)
             frame['error'] = {'code': 'CAPABILITY_UNAVAILABLE', 'message': 'controlled mutation'}
-    outcomes = round_row.get('outcomes') or []
+    outcomes = _retirement_list_rows(round_row.get('outcomes'))
     if not outcomes:
         # P1 (#1355 fix-r4d, minimax boundary #2): a legal degraded round may
         # record zero method outcomes.  The scorer then stops at ZERO_TESTS and
@@ -2412,7 +2470,7 @@ def _retirement_controls(round_row, expected, verdict=None):
     # every receive frame stripped (send kept) must still fail EVIDENCE_BACKING
     # — the pre-fix scorer passed exactly this shape.
     mutated = copy.deepcopy(round_row)
-    stream_row = next((row for row in mutated.get('outcomes') or []
+    stream_row = next((row for row in _retirement_list_rows(mutated.get('outcomes'))
                        if isinstance(row, dict) and row.get('shape') == 'stream' and row.get('method')), None)
     injection = ('stream method rewritten to error with every receive frame stripped while '
                  'keeping its send frame')
@@ -2425,7 +2483,7 @@ def _retirement_controls(round_row, expected, verdict=None):
         stream_method = stream_row['method']
         stream_row['outcome'] = 'error'
         stream_row.pop('errorCode', None)
-        before = len(mutated.get('frames') or [])
+        before = len(_retirement_list_rows(mutated.get('frames')))
         mutated = _retirement_strip_receive(mutated, stream_method)
         if len(mutated['frames']) == before:
             # P1 (#1355 fix-r4b, both families): with no send frame (or no
@@ -2446,7 +2504,7 @@ def _retirement_controls(round_row, expected, verdict=None):
     # downgraded to final:false (the stream merely ended) must still fail
     # EVIDENCE_BACKING — the pre-fix scorer passed exactly this shape.
     mutated = copy.deepcopy(round_row)
-    stream_ok = next((row for row in mutated.get('outcomes') or []
+    stream_ok = next((row for row in _retirement_list_rows(mutated.get('outcomes'))
                       if isinstance(row, dict) and row.get('shape') == 'stream'
                       and row.get('outcome') == 'ok' and row.get('method')), None)
     injection = 'stream ok outcome whose terminal event frame is downgraded to final:false'
@@ -2460,7 +2518,7 @@ def _retirement_controls(round_row, expected, verdict=None):
                     'timed out, so the terminal-frame mutation cannot be established')
     else:
         stream_method = stream_ok['method']
-        sends, _responses, _events, _finals = _retirement_wire_backing(mutated.get('frames') or [])
+        sends, _responses, _events, _finals = _retirement_wire_backing(_retirement_list_rows(mutated.get('frames')))
         identifier = sends.get(stream_method)
         if identifier is None:
             # Same P1: without the send frame there is no id to locate the
@@ -2471,7 +2529,7 @@ def _retirement_controls(round_row, expected, verdict=None):
                         'so its terminal event frame cannot be located')
         else:
             flipped = 0
-            for frame_row in mutated.get('frames') or []:
+            for frame_row in _retirement_list_rows(mutated.get('frames')):
                 if not isinstance(frame_row, dict):
                     continue
                 frame = frame_row.get('frame')
@@ -2623,8 +2681,8 @@ def _retirement_entry_inventory(baseline, round_row):
     probe_rows = [(probe.get('path') if isinstance(probe.get('path'), str) else '',
                    probe.get('status') if isinstance(probe.get('status'), int)
                    and not isinstance(probe.get('status'), bool) else None)
-                  for probe in (round_row.get('http') or []) if isinstance(probe, dict)]
-    executed = {row.get('method') for row in round_row.get('outcomes') or []
+                  for probe in _retirement_list_rows(round_row.get('http')) if isinstance(probe, dict)]
+    executed = {row.get('method') for row in _retirement_list_rows(round_row.get('outcomes'))
                 if isinstance(row, dict) and row.get('outcome') in ('ok', 'error')
                 and isinstance(row.get('method'), str)}
     # R6: the completeness floor is re-asserted at the consumer, so a parser

@@ -3404,6 +3404,13 @@ class RetirementScoring(unittest.TestCase):
             ('census truthy non-list rows', 'census',
              {'rows': 5, 'declared': [7], 'declaredAlive': True},
              ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            # fix-r4 (DS r3 sibling P2): a truthy non-list declared sample is
+            # the same unobserved shape as non-list rows — the gate reads
+            # BLOCKED, not the verdict's "no declared pids" FAIL, so both
+            # spellings of a wrongly-typed census land in one status.
+            ('census declared truthy non-list', 'census',
+             {'rows': [{'pid': 7}], 'declared': 5, 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
             # fix-r3 (DS r2 concurrency): an unhashable pid is an unusable
             # observation read as undeclared (FAIL), never a TypeError out of
             # the control attribution.
@@ -3433,8 +3440,17 @@ class RetirementScoring(unittest.TestCase):
             # fix-r3 (DS r2 boundary): a non-str method value is a missing
             # method — MISSING_FIELD fails the round, never a TypeError out of
             # the scorer's set/sorted arithmetic that would drop all rounds.
+            # fix-r4 (DS r3 boundary): the pair is what discriminates — a lone
+            # None survives ``sorted`` as a single-element set (the row passed
+            # pre-fix too); None beside a real method is the shape that raised
+            # (``None < 'run_get'`` TypeError), and the unhashable spelling
+            # below died at the ``set()`` itself.
             ('outcomes method non-str', 'outcomes',
-             [{'method': None, 'outcome': 'ok', 'shape': 'request'}],
+             [{'method': None, 'outcome': 'ok', 'shape': 'request'},
+              {'method': 'run_get', 'outcome': 'ok', 'shape': 'request'}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            ('outcomes method unhashable', 'outcomes',
+             [{'method': ['x'], 'outcome': 'ok', 'shape': 'request'}],
              ('rounds', 0, 'status'), 'FAIL'),
             ('frames', 'frames', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('frames null', 'frames', None, ('rounds', 0, 'status'), 'FAIL'),
@@ -3447,6 +3463,26 @@ class RetirementScoring(unittest.TestCase):
             # documents that the scorer itself still fails fail-closed without
             # raising on the corrupt shape).
             ('frames truthy non-list', 'frames', {'a': 1},
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r4 (DS r3 sibling P1): the non-iterable spelling of the same
+            # shape — a dict row only proved the dict branch; 5 is what dies
+            # at the first ``for``, pre-fix collapsing every measured round
+            # into the wrapper's ROUND_EVIDENCE stub.
+            ('frames truthy non-list int', 'frames', 5,
+             ('rounds', 0, 'status'), 'FAIL'),
+            ('outcomes truthy non-list', 'outcomes', 5,
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r4 (DS r3 sibling P1): an unhashable frame id or method is
+            # an unusable observation, skipped fail-closed — the outcome's
+            # wire-backing rule fails instead of the TypeError at the dict
+            # key / set member.
+            ('frames unhashable frame id', 'frames',
+             [{'direction': 'send',
+               'frame': {'type': 'request', 'method': 'submit_turn', 'id': []}}],
+             ('rounds', 0, 'status'), 'FAIL'),
+            ('frames unhashable frame method', 'frames',
+             [{'direction': 'send',
+               'frame': {'type': 'request', 'method': ['x'], 'id': 1}}],
              ('rounds', 0, 'status'), 'FAIL'),
             ('http', 'http', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('http null', 'http', None, ('rounds', 0, 'status'), 'FAIL'),
@@ -3528,6 +3564,15 @@ class RetirementScoring(unittest.TestCase):
                           f'#46 {type(error).__name__} reason: {report["reason"]}')
             for face in self.REPORT_FACES:
                 self.assertIn(face, report, f'#46 {type(error).__name__} lacks face {face}')
+            # fix-r4 (DS r3 concurrency, pinning the A8.6-R1 correction): the
+            # refusal stub keeps every face but carries no measurements —
+            # rounds/executed read empty and the raw evidence stays in
+            # output/round-NN/driver/. The correction file must not claim
+            # measurements are preserved again.
+            self.assertEqual(report['rounds'], [],
+                             f'#46 {type(error).__name__} rounds: {report["rounds"]}')
+            self.assertEqual(report['executed'], {},
+                             f'#46 {type(error).__name__} executed: {report["executed"]}')
 
     def test_entry_inventory_treats_a_non_int_status_as_unusable(self):
         # fix-r2 (DS boundary P2): only a true int is a usable probe status —
@@ -3588,6 +3633,35 @@ class RetirementScoring(unittest.TestCase):
                 baseline, round_row('round-02', self._frames(final=True)))
             ws = next(entry for entry in inventory['entries'] if entry['entry'] == '/ws')
             self.assertEqual(ws['status'], 'HIT', f'#48 legal frames must still HIT: {ws}')
+
+            # fix-r4 (DS r3 sibling P1): a truthy non-list http/outcomes
+            # observation is an unobserved set here too — never the TypeError
+            # at the first ``for`` that collapsed the whole 16-face report
+            # into the ROUND_EVIDENCE stub.  http=5 reads no probes at all;
+            # outcomes=5 reads no executed method (a valid row with cron_sync
+            # HITs, so the NO_HIT below is the discriminating read).
+            corrupted_http = round_row('round-03', self._frames(final=True))
+            corrupted_http['http'] = 5
+            inventory = self.session._retirement_entry_inventory(baseline, corrupted_http)
+            health = next(entry for entry in inventory['entries']
+                          if entry['entry'] == '/health')
+            self.assertEqual(health['status'], 'NO_HIT',
+                             f'#48 truthy non-list http is not a probe set: {health}')
+            valid_cron = round_row('round-04', self._frames(final=True))
+            valid_cron['outcomes'] = [{'method': 'cron_sync', 'outcome': 'ok',
+                                       'shape': 'request'}]
+            inventory = self.session._retirement_entry_inventory(baseline, valid_cron)
+            cron = next(entry for entry in inventory['entries']
+                        if entry['entry'] == 'cron')
+            self.assertEqual(cron['status'], 'HIT',
+                             f'#48 a valid cron outcome must still HIT: {cron}')
+            corrupted_outcomes = round_row('round-05', self._frames(final=True))
+            corrupted_outcomes['outcomes'] = 5
+            inventory = self.session._retirement_entry_inventory(baseline, corrupted_outcomes)
+            cron = next(entry for entry in inventory['entries']
+                        if entry['entry'] == 'cron')
+            self.assertEqual(cron['status'], 'NO_HIT',
+                             f'#48 truthy non-list outcomes is not a method set: {cron}')
 
     def test_control_attribution_requires_the_injected_object(self):
         # P1 (#1355 fix-r4d): a control PASS must be attributed to the object

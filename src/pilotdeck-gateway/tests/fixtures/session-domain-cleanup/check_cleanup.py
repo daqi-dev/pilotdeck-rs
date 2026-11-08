@@ -4203,6 +4203,182 @@ def _name_is_optimistic(name, bindings, lineno, seen=None):
             and _name_is_optimistic(value.id, bindings, lineno, seen))
 
 
+# #1652 fix-r4 (DS boundary P0): a pure-literal test outside the foldable
+# grammar.  ``_literal_test_value`` returns this sentinel when the tree is
+# built only from literals but uses an operator the fold does not implement
+# (or one that raises while folding): the condition is still constant by
+# semantics, only unknowably here, so arm certification fails closed instead
+# of keeping both arms.
+_LITERAL_TEST_UNRESOLVED = object()
+
+# #1652 fix-r4 (DS boundary P0): the runtime grammar of a test.  Anything
+# built without these nodes is constant by the interpreter's own semantics.
+_RUNTIME_TEST_NODES = (ast.Name, ast.Call, ast.Attribute, ast.Subscript,
+                       ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp,
+                       ast.GeneratorExp, ast.Await, ast.Yield, ast.YieldFrom,
+                       ast.Starred, ast.JoinedStr, ast.FormattedValue,
+                       ast.NamedExpr, ast.Slice)
+
+
+def _test_is_runtime(node):
+    """True when the expression's value can depend on runtime state.
+
+    Names, calls, attribute/subscript reads, lambdas, comprehensions and
+    f-string interpolation are the runtime grammar (#1652 fix-r4, DS
+    boundary P0); everything else is built from literals and operators the
+    interpreter evaluates deterministically.
+    """
+    return any(isinstance(part, _RUNTIME_TEST_NODES) for part in ast.walk(node))
+
+
+def _literal_test_value(node):
+    """Value of an expression built only from literals and operators.
+
+    ``ast.literal_eval`` folds ``True`` but rejects ``not False``, ``1 == 1``,
+    ``True and True`` and ``'x' in 'abc'`` — tests that are constant by the
+    same semantics yet kept both arms, so the dead fail-closed arm kept
+    excusing the live clean one (#1652 fix-r4, DS boundary P0).  The fold
+    covers unary, boolean and chained comparison operators, container
+    literals, the arithmetic binops and nested constant conditionals.
+    Returns ``_LITERAL_TEST_UNRESOLVED`` for a pure-literal tree outside the
+    grammar or one that raises while folding; callers must not consult it
+    for a test with a runtime operand (``_test_is_runtime`` first).
+    """
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.UnaryOp):
+        operand = _literal_test_value(node.operand)
+        if operand is _LITERAL_TEST_UNRESOLVED:
+            return _LITERAL_TEST_UNRESOLVED
+        try:
+            if isinstance(node.op, ast.Not):
+                return not operand
+            if isinstance(node.op, ast.USub):
+                return -operand
+            if isinstance(node.op, ast.UAdd):
+                return +operand
+            if isinstance(node.op, ast.Invert):
+                return ~operand
+        except (TypeError, ValueError):
+            return _LITERAL_TEST_UNRESOLVED
+        return _LITERAL_TEST_UNRESOLVED
+    if isinstance(node, ast.BoolOp):
+        values = [_literal_test_value(value) for value in node.values]
+        if any(value is _LITERAL_TEST_UNRESOLVED for value in values):
+            return _LITERAL_TEST_UNRESOLVED
+        result = values[0]
+        for value in values[1:]:
+            if isinstance(node.op, ast.And):
+                if not result:
+                    break
+                result = value
+            else:
+                if result:
+                    break
+                result = value
+        return result
+    if isinstance(node, ast.Compare):
+        left = _literal_test_value(node.left)
+        for op, comparator in zip(node.ops, node.comparators):
+            if left is _LITERAL_TEST_UNRESOLVED:
+                return _LITERAL_TEST_UNRESOLVED
+            right = _literal_test_value(comparator)
+            if right is _LITERAL_TEST_UNRESOLVED:
+                return _LITERAL_TEST_UNRESOLVED
+            try:
+                if isinstance(op, ast.Eq):
+                    outcome = left == right
+                elif isinstance(op, ast.NotEq):
+                    outcome = left != right
+                elif isinstance(op, ast.Lt):
+                    outcome = left < right
+                elif isinstance(op, ast.LtE):
+                    outcome = left <= right
+                elif isinstance(op, ast.Gt):
+                    outcome = left > right
+                elif isinstance(op, ast.GtE):
+                    outcome = left >= right
+                elif isinstance(op, ast.In):
+                    outcome = left in right
+                elif isinstance(op, ast.NotIn):
+                    outcome = left not in right
+                elif isinstance(op, ast.Is):
+                    outcome = left is right
+                elif isinstance(op, ast.IsNot):
+                    outcome = left is not right
+                else:
+                    return _LITERAL_TEST_UNRESOLVED
+            except (TypeError, ValueError):
+                return _LITERAL_TEST_UNRESOLVED
+            if not outcome:
+                return False
+            left = right
+        return True
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        elements = [_literal_test_value(element) for element in node.elts]
+        if any(element is _LITERAL_TEST_UNRESOLVED for element in elements):
+            return _LITERAL_TEST_UNRESOLVED
+        if isinstance(node, ast.Tuple):
+            return tuple(elements)
+        if isinstance(node, ast.List):
+            return elements
+        try:
+            return set(elements)
+        except TypeError:
+            return _LITERAL_TEST_UNRESOLVED
+    if isinstance(node, ast.Dict):
+        entries = []
+        for key, value in zip(node.keys, node.values):
+            if key is None:  # a ``**`` spread is not a constant key
+                return _LITERAL_TEST_UNRESOLVED
+            folded_key = _literal_test_value(key)
+            folded_value = _literal_test_value(value)
+            if (_LITERAL_TEST_UNRESOLVED in (folded_key, folded_value)
+                    or not isinstance(folded_key, (str, int, float, bool, type(None)))):
+                return _LITERAL_TEST_UNRESOLVED
+            entries.append((folded_key, folded_value))
+        return dict(entries)
+    if isinstance(node, ast.BinOp):
+        left = _literal_test_value(node.left)
+        right = _literal_test_value(node.right)
+        if _LITERAL_TEST_UNRESOLVED in (left, right):
+            return _LITERAL_TEST_UNRESOLVED
+        try:
+            if isinstance(node.op, ast.Add):
+                return left + right
+            if isinstance(node.op, ast.Sub):
+                return left - right
+            if isinstance(node.op, ast.Mult):
+                return left * right
+            if isinstance(node.op, ast.Div):
+                return left / right
+            if isinstance(node.op, ast.FloorDiv):
+                return left // right
+            if isinstance(node.op, ast.Mod):
+                return left % right
+            if isinstance(node.op, ast.Pow):
+                return left ** right
+            if isinstance(node.op, ast.LShift):
+                return left << right
+            if isinstance(node.op, ast.RShift):
+                return left >> right
+            if isinstance(node.op, ast.BitOr):
+                return left | right
+            if isinstance(node.op, ast.BitAnd):
+                return left & right
+            if isinstance(node.op, ast.BitXor):
+                return left ^ right
+        except (ArithmeticError, TypeError, ValueError):
+            return _LITERAL_TEST_UNRESOLVED
+        return _LITERAL_TEST_UNRESOLVED
+    if isinstance(node, ast.IfExp):
+        test = _literal_test_value(node.test)
+        if test is _LITERAL_TEST_UNRESOLVED:
+            return _LITERAL_TEST_UNRESOLVED
+        return _literal_test_value(node.body if test else node.orelse)
+    return _LITERAL_TEST_UNRESOLVED
+
+
 def _constant_ifexp(node):
     """The taken arm of a constant conditional, or None when it is runtime.
 
@@ -4210,11 +4386,17 @@ def _constant_ifexp(node):
     in the condition keeps both arms — the healthy data-driven shape
     ``'PASS' if measured else 'FAIL'`` is untouched (#1652 fix-r2, anthropic
     boundary P0: ``'PASS' if True else 'FAIL'`` can only ever produce the
-    clean arm, and the dead fail-closed arm no longer excuses it).
+    clean arm, and the dead fail-closed arm no longer excuses it).  fix-r4
+    (DS boundary P0) grows the fold to the whole literal grammar —
+    ``not False``, ``1 == 1``, ``True and True`` and ``'x' in 'abc'`` are
+    constant by the interpreter's own semantics and ``ast.literal_eval``
+    rejected exactly those.  A pure-literal test outside the foldable
+    grammar returns None here; ``_exit_arms`` is where it fails closed.
     """
-    try:
-        taken = ast.literal_eval(node.test)
-    except (ValueError, TypeError, SyntaxError):
+    if _test_is_runtime(node.test):
+        return None
+    taken = _literal_test_value(node.test)
+    if taken is _LITERAL_TEST_UNRESOLVED:
         return None
     return node.body if taken else node.orelse
 
@@ -4226,11 +4408,17 @@ def _exit_arms(node):
     other arm cannot excuse this one (DeepSeek P0-1).  A *constant*
     condition is not a branch: only the arm the interpreter can take is an
     exit the expression can produce (#1652 fix-r2, anthropic boundary P0).
+    fix-r4 (DS boundary P0) folds the full literal grammar, and a
+    pure-literal test outside it produces *no* arm: the condition is still
+    constant, so neither arm can be certified and the fail-closed arm
+    cannot be claimed by the dead one.
     """
     if isinstance(node, ast.IfExp):
-        taken = _constant_ifexp(node)
-        if taken is not None:
-            return _exit_arms(taken)
+        if not _test_is_runtime(node.test):
+            taken = _literal_test_value(node.test)
+            if taken is _LITERAL_TEST_UNRESOLVED:
+                return []
+            return _exit_arms(node.body if taken else node.orelse)
         return [arm for sub in (node.body, node.orelse) for arm in _exit_arms(sub)]
     if isinstance(node, ast.BoolOp):
         return [arm for sub in node.values for arm in _exit_arms(sub)]
@@ -6737,6 +6925,19 @@ def aggregation_audit():
         "def _nested_constant_conditional_face(report):\n"
         "    return {'status': 'BLOCKED', 'face': "
         "{'status': 'PASS' if True else 'FAIL'}}\n"
+        # #1652 fix-r4 (DS boundary P0): constant-by-semantics tests beyond
+        # ``ast.literal_eval`` — the fold must reach the whole literal
+        # operator grammar, or the dead fail-closed arm keeps excusing the
+        # live clean one for each spelling it happens to reject.
+        "def _nested_not_false_conditional_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': 'PASS' if not False else 'FAIL'}}\n"
+        "def _nested_compare_conditional_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': 'PASS' if 1 == 1 else 'FAIL'}}\n"
+        "def _nested_boolop_conditional_face(report):\n"
+        "    return {'status': 'BLOCKED', 'face': "
+        "{'status': 'PASS' if True and True else 'FAIL'}}\n"
         # #1652 fix-r2 (DS boundary observation): a starred literal spread.
         "def _nested_starred_face(report):\n"
         "    return {'status': 'BLOCKED', 'faces': [*[{'status': 'PASS'}]]}\n")
@@ -6783,6 +6984,37 @@ def aggregation_audit():
                        for slot in unshared_status_slots(nested_constant[1]))):
         failures.append('#892 aggregation-audit: detector self-test did not flag a '
                         'clean status behind a constant condition (#1652)')
+    # #1652 fix-r4 (DS boundary P0): the constant fold covers the whole
+    # literal operator grammar, not only what ``ast.literal_eval`` happens
+    # to accept — each of these tests is constant by interpreter semantics,
+    # so the dead fail-closed arm must not excuse the live clean one.
+    for _probe_name in ('_nested_not_false_conditional_face',
+                        '_nested_compare_conditional_face',
+                        '_nested_boolop_conditional_face'):
+        _probe = probe892_found.get(('<self-test-892>', _probe_name))
+        if (not _probe
+                or not any('nested status slot' in slot
+                           for slot in unshared_status_slots(_probe[1]))):
+            failures.append('#892 aggregation-audit: detector self-test did not '
+                            f'flag a clean status behind a literal-grammar '
+                            f'condition ({_probe_name}, #1652)')
+    # A pure-literal test outside the foldable grammar certifies no arm
+    # (fail-closed): the dead arm must not be claimable, and the slot itself
+    # stays flagged rather than excused.
+    if _constant_ifexp(ast.parse("0 if 2 @ 3 else 1", mode='eval').body) is not None:
+        failures.append('#892 aggregation-audit: the constant fold judged a '
+                        'pure-literal test outside the grammar (#1652)')
+    if _exit_arms(ast.parse("0 if 2 @ 3 else 1", mode='eval').body) != []:
+        failures.append('#892 aggregation-audit: a pure-literal test outside the '
+                        'grammar kept an arm instead of failing closed (#1652)')
+    # The healthy data-driven shape must stay untouched: a runtime operand
+    # anywhere in the test keeps both arms.
+    if _constant_ifexp(ast.parse("0 if not ok else 1", mode='eval').body) is not None:
+        failures.append('#892 aggregation-audit: the constant fold reached a '
+                        'runtime test (#1652)')
+    if len(_exit_arms(ast.parse("0 if not ok else 1", mode='eval').body)) != 2:
+        failures.append('#892 aggregation-audit: a runtime test did not keep '
+                        'both arms (#1652)')
     # #1652 fix-r2 (DS boundary observation): a starred literal spread is
     # walked — the clean status inside ``[*[{'status': 'PASS'}]]`` must be
     # flagged, while spreading a name stays opaque by design.
