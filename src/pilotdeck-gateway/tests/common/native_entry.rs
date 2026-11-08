@@ -7,9 +7,10 @@
 //! `tests/native_process.rs` keeps its own spellings: its advertisement
 //! literals are needle-pinned by the frozen `native-entry-authority` binding
 //! (`tests/fixtures/native-entry-authority/native_entry_binding.py`), so
-//! migrating them here would break a frozen device. Its `VALID_HOME_CONFIG`
-//! copy is *not* needle-pinned — consolidating it here is possible follow-up
-//! work, deliberately not a frozen-adjacent edit in this round.
+//! migrating them here would break a frozen device. Everything else about
+//! the same child it shares with the two siblings through this file
+//! (#2510 item 2): the `VALID_HOME_CONFIG` profile its own children load has
+//! its one encoding here.
 use std::time::Duration;
 
 /// The child's own advertisement line once it is serving, exactly as the
@@ -51,5 +52,54 @@ pub fn advertises(line: &str) -> bool {
     {
         Some(Some(address)) => !address.is_empty() && !address.contains(char::is_whitespace),
         _ => false,
+    }
+}
+
+/// The address of one *finished* advertisement line, or `None` for any line
+/// `advertises` rejects. The judgment stays in the predicate; this only
+/// extracts what it accepted, so the address a sibling connects to is the
+/// address the shared rule judged — never a second hand-written prefix walk
+/// that could drift on its own (#2352: `tests/switch_e2e.rs` and the
+/// `native_child_serves` loop each carried one).
+pub fn advertised_address(line: &str) -> Option<&str> {
+    let address = line.strip_prefix(NATIVE_LISTENING)?.strip_prefix(' ')?;
+    advertises(line).then_some(address)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The shape lock for the shared `&str` spellings (#2352: the original
+    // complaint was a copy without the shape-lock test silently drifting).
+    // The byte-level twin in `tests/native_process.rs` additionally requires
+    // the finished newline; `lines()` here already delivers finished lines.
+    #[test]
+    fn advertisement_shape_is_locked() {
+        for (line, address) in [
+            ("native listening 127.0.0.1:4321", "127.0.0.1:4321"),
+            ("native listening [::1]:4321", "[::1]:4321"),
+        ] {
+            assert!(advertises(line), "must count as an advertisement: {line:?}");
+            assert_eq!(
+                advertised_address(line),
+                Some(address),
+                "the address the predicate judged: {line:?}"
+            );
+        }
+        for line in [
+            "native listening",
+            "native listening ",
+            "native listening 127.0.0.1:4321 extra",
+            "native listening: 127.0.0.1:4321",
+            "warn: native listening 127.0.0.1:4321",
+            "",
+        ] {
+            assert!(
+                !advertises(line),
+                "must not count as an advertisement: {line:?}"
+            );
+            assert_eq!(advertised_address(line), None, "no address: {line:?}");
+        }
     }
 }
