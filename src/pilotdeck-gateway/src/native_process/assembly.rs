@@ -1119,13 +1119,25 @@ async fn start_assembly(
                 // The profile is the immutable snapshot that supplied this
                 // session's model, tools, storage and original admission.
                 let sop_profile=snapshot.get("config").and_then(|v|v.get("modules")).and_then(|v|v.get("sop")).filter(|v|!matches!(v,JsValue::Undefined|JsValue::Null)).cloned();
+                let knowledge_binding = snapshot.get("config").and_then(|v|v.get("modules")).and_then(|v|v.get("knowledge")).filter(|binding| binding.get("transport") == Some(&JsValue::from("module-http-v2")));
+                let (native_knowledge, sop_authority) = match knowledge_binding {
+                    Some(binding) => {
+                        let (tool, authority) = super::knowledge::build(binding, sop_profile.as_ref(), &env, hook_proxy.as_ref())
+                            .map_err(|error| RuntimeError::new(String::from_utf16_lossy(error.message.units())))?;
+                        (Some(tool), authority)
+                    }
+                    None => (None, None),
+                };
                 let sop_controller=if config.get("isSubagent")!=Some(&JsValue::Bool(true)) {
                     match sop_profile {
-                        Some(profile)=>Some(crate::runtime::sop::controller::StaffDeckController::load(profile,Arc::new(crate::module_host::approvals::native_http::HyperJsonTransport::from_env(&env,None))).await.map_err(|error|{
-                            let mut runtime=RuntimeError::new(error.message.clone());
-                            if let Some(module)=error.module_error {runtime=runtime.with_js_error(crate::runtime::project::RuntimeJsError{name:"Error".into(),code:module.code.map(|s|String::from_utf16_lossy(s.units())),message:module.message,requires_host:false});}
-                            runtime
-                        })?),
+                        Some(profile)=>{
+                            let controller = crate::runtime::sop::controller::StaffDeckController::load(profile,Arc::new(crate::module_host::approvals::native_http::HyperJsonTransport::from_env(&env,None))).await.map_err(|error|{
+                                let mut runtime=RuntimeError::new(error.message.clone());
+                                if let Some(module)=error.module_error {runtime=runtime.with_js_error(crate::runtime::project::RuntimeJsError{name:"Error".into(),code:module.code.map(|s|String::from_utf16_lossy(s.units())),message:module.message,requires_host:false});}
+                                runtime
+                            })?;
+                            Some(match sop_authority { Some(authority) => controller.with_knowledge_authority(authority, config.get("cwd").and_then(JsValue::as_string).cloned().unwrap_or_else(|| options.project.to_string_lossy().as_ref().into())), None => controller })
+                        },
                         None=>None,
                     }
                 }else{None};
@@ -1196,6 +1208,7 @@ async fn start_assembly(
                         .with_permission_rules(native_permission_rules)
                         .with_automation(automation)
                         .with_web(native_web)
+                        .with_knowledge(native_knowledge)
                         .with_plugin_hooks(plugin_hooks)
                         .with_hook_proxy(hook_proxy)
                         .with_plan_files(plan_files)
@@ -1874,6 +1887,7 @@ async fn start_assembly(
                 let sessions = cleanup_observer("session", sessions).await;
                 let temporary=cleanup_ephemeral.close().await.map_err(|e|e.to_string());
                 let temporary=cleanup_observer("temporary sessions",temporary).await;
+                if let Err(error) = &temporary { cleanup_diagnostic(error); }
                 let project = cleanup_project.dispose().await.map_err(|e| e.to_string());
                 project_finished.store(true, std::sync::atomic::Ordering::Release);
                 let project = cleanup_observer("project", project).await;
@@ -2150,6 +2164,12 @@ fn supports_native_module_binding(name: &JsString, value: &JsValue) -> bool {
                 .is_some_and(|p| p.equals_str("staffdeck"))
                 || (fields.get("contract") == Some(&JsValue::from("sop.lifecycle/v2"))
                     && fields.get("transport") == Some(&JsValue::from("sop-http-v2"))));
+    }
+    if name.equals_str("knowledge")
+        && fields.get("transport") == Some(&JsValue::from("module-http-v2"))
+        && crate::skills::ExternalSkillBinding::from_value(value).is_ok()
+    {
+        return true;
     }
     if (name.equals_str("skills") || name.equals_str("knowledge"))
         && fields.own_entries().len() == 1

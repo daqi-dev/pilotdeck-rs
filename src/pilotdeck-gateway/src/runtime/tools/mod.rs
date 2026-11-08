@@ -115,6 +115,8 @@ pub struct ToolRunContext {
     pub fields: JsObject,
     /// Installed only for the active body; nested calls re-enter all gates.
     pub execute_tool: Option<NestedToolExecutor>,
+    /// Only an owner-validated SOP wrapper may set this per invocation.
+    pub(crate) knowledge_authority: Option<JsValue>,
 }
 impl ToolRunContext {
     pub fn new(host: Arc<ToolRuntimeContext>) -> Self {
@@ -122,6 +124,7 @@ impl ToolRunContext {
             fields: host.fields.clone(),
             host,
             execute_tool: None,
+            knowledge_authority: None,
         }
     }
     /// The signal only when it is a [`ToolCancellation`]; prefer

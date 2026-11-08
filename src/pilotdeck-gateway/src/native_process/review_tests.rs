@@ -239,6 +239,7 @@ async fn production_cleanup_matrix() {
     for mode in [
         "ok",
         "session-error",
+        "temporary sessions-error",
         "project-error",
         "both-errors",
         "release",
@@ -321,6 +322,7 @@ async fn production_cleanup_matrix() {
             .expect("#1071 production cleanup bounded test guard");
         let expected = match mode {
             "session-error" | "both-errors" => Err("session failed".to_owned()),
+            "temporary sessions-error" => Err("temporary sessions failed".to_owned()),
             "project-error" => Err("project failed".to_owned()),
             "cancel" => Err("cancelled".to_owned()),
             "never" => Err("gateway host drain deadline exceeded".to_owned()),
@@ -338,7 +340,7 @@ async fn production_cleanup_matrix() {
                 // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37).
                 vec!["automation", "channels", "session"]
             } else {
-                vec!["automation", "channels", "session", "project"]
+                vec!["automation", "channels", "session", "temporary sessions", "project"]
             },
             "#1071 production cleanup attempts both resources"
         );
@@ -349,8 +351,12 @@ async fn production_cleanup_matrix() {
         );
         negative_assert_eq!(
             actual_warnings,
-            if ["project-error", "both-errors"].contains(&mode) {
+            if mode == "both-errors" {
+                vec!["temporary sessions failed".to_owned(), "project failed".to_owned()]
+            } else if mode == "project-error" {
                 vec!["project failed".to_owned()]
+            } else if mode == "temporary sessions-error" {
+                vec!["temporary sessions failed".to_owned()]
             } else {
                 vec![]
             },

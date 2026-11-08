@@ -1105,6 +1105,7 @@ mod tests {
         // equal deadline the test task can resume before the ticker's tick
         // completes.
         tokio::time::sleep(std::time::Duration::from_millis(51)).await;
+        wait_real(|| harness.log().iter().any(|line| line.contains("always-on fire complete"))).await;
         let after = harness.fire_calls().len();
         negative_assert_eq!(
             serde_json::json!({"before": before, "after": after}),

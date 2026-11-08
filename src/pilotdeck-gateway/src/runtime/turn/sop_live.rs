@@ -204,6 +204,7 @@ impl Executor {
     }
 }
 impl SopNodeExecutor for Executor {
+    fn tool_execution(&self) -> Option<Arc<dyn crate::host::modules::capability::ToolExecution>> { Some(self.prepared.template.tool_execution()) }
     fn finish_node<'a>(&'a self, outcome: Option<&'a SopNodeOutcome>) -> SopFuture<'a, Result<(), HostError>> {
         Box::pin(async move {
             if outcome.is_some_and(|outcome| !matches!(&outcome.result, JsValue::Object(_))) { return Err(HostError::new(HostErrorKind::Protocol, "SOP node completion result must be an object.")); }

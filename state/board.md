@@ -5160,11 +5160,16 @@ r119固定5a409全目标check/native522/AO106/四个实际bin构建通过；stri
 已逐hash整合ephemeral 16源（两个shared clean三方）与central intake五源：临时JSONL/sidechain/spill复用原writer，owner真shutdown后清理；完整57格TS intake、未知键/数组语义、settings源fallback真实model authority均待r121。r120 check过；native531过1新增外部Read权限真实缺口、AO111过1新损坏索引夹具未制造write失败（已补只读父目录保证真实失败），SDK24/permission8/schema8/live231过。audit优先修ReadFile缺check_permissions导致外部路径默认allow，不放松测试；workspace P2继续。r119固定bin 23次本地假provider请求、11个真实CLI闭环检查全过（含预算计费停止/持久结算/下一次模型前拦截），证据native-sdk-completion/passed-r119；不能据此称settings/ephemeral新片已过。全部Rust仅mbp2，仅本机提交，完整CLI尚未完成。
 
 
-### 2026-11-09 07:17 · SOP 错误与指令协议整合
+### 2026-11-09 07:13 · SOP 错误与指令协议整合
 
 已逐SHA导入SOP typed错误投影六源与完整render/prepare五源，保retryability/details/UTF16、完整终端纠正与双换行前缀；实采8错误/12render/6context原件，待r122。r121首编仅两处新测试String转换失败，根已机械修，尚无运行证据；r120外部Read权限缺口audit正在修且不放松测试。固定0fd全Gateway分组前七组host136等实际通过但host探针PID身份变化触发保守停机，保留失败原件；api_web三例同bin短TMP已全部通过，仍不称原全量通过。新knowledge真实消费者与SDK生命周期实际入口联调并行准备；所有Rust仅mbp2，仅本机提交，CLI未完。
 
 
-### 2026-11-09 07:29 · 实际文件工具权限闭合
+### 2026-11-09 07:16 · 实际文件工具权限闭合
 
 逐SHA导入统一file predicate及Read/Write/Edit八文件片，native环境PILOT_HOME固定options.home、注册附件和会话allow仍保留；r120原额外目录反例不改，新增实际文件效果与TS八格predicate。尚待Rust首编；r122上个SOP批次全目标check通过，lib测试编译中。fullGateway后续已在确认旧测试进程全退出后接续，旧探针身份变化和长TMP失败原件保留。机器能力消费者独立审与真实SDK生命周期/知识链路继续，仅本机提交、Rust只mbp2，未称完整CLI完结。
+
+
+### 2026-11-09 07:19 · 知识消费者首轮整合
+
+逐SHA导入21源SOP authority/query完整消费者，保留已编译Sol render/error和文件权限片；同项目代authority重验、host-only上下文经真实scheduler、8MiB/4槽新transport，待r123。r122全目标check/四bin通过，SDK24/model30/SOP8均过；native535过3旧cleanup断言漏新增temporary阶段，已扩展失败矩阵并让临时清理错误同project一样诊断；AO111过1虚拟时钟测试缺阻塞IO完成barrier，已按同模块相邻真实用例补wait_real，原标准不变。损坏JSON/未知schema的保留+uncertain诊断真实反例均通过，可独立仲裁此前P1。两家SDK固定76c7e增量审进行中，真实SDK和SOP知识E2E待r123固定bin。仅本机提交、Rust只mbp2，完整CLI未完成。

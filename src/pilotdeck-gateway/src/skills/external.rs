@@ -102,6 +102,17 @@ impl ExternalSkillBinding {
     }
 }
 
+/// Correlation and optional authority are carried by the caller's owned run.
+pub(crate) struct ModuleInvocation<'a> {
+    pub module: &'a str,
+    pub run_id: &'a str,
+    pub operation_id: &'a str,
+    pub request_id: &'a str,
+    pub operation: &'a str,
+    pub input: &'a JsValue,
+    pub authority_context: Option<&'a JsValue>,
+}
+
 /// One outbound module HTTP exchange.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ModuleHttpRequest {
@@ -161,11 +172,8 @@ impl ModuleEnvironment for ProcessEnvironment {
 #[derive(Clone)]
 pub struct HyperModuleTransport {
     inner: crate::runtime::model::http::HyperModelTransport,
-    /// Test-only shrunken body cap; production always uses
-    /// [`crate::fetch_redirect::MAX_STRING_LENGTH`]. Tests reach the
-    /// over-limit branch without allocating a 512 MiB body, the same seam as
-    /// `user_dialog::HyperHttpStoreTransport::with_max_body_bytes`.
-    #[cfg(test)]
+    /// Optional cap for bounded native consumers; the existing skills client
+    /// retains the original MAX_STRING_LENGTH behavior.
     body_limit: Option<usize>,
 }
 
@@ -173,8 +181,14 @@ impl HyperModuleTransport {
     pub fn new() -> Self {
         Self {
             inner: crate::runtime::model::http::HyperModelTransport::new(),
-            #[cfg(test)]
             body_limit: None,
+        }
+    }
+
+    pub(crate) fn with_proxy_settings(settings: Option<&crate::runtime::model::http::ProxySettings>, env: &crate::config::Env) -> Self {
+        Self {
+            inner: crate::runtime::model::http::HyperModelTransport::with_proxy_settings(settings, env),
+            body_limit: Some(8 * 1024 * 1024),
         }
     }
 
@@ -187,7 +201,6 @@ impl HyperModuleTransport {
     }
 
     fn body_limit(&self) -> usize {
-        #[cfg(test)]
         if let Some(limit) = self.body_limit {
             return limit;
         }
@@ -394,7 +407,7 @@ impl Drop for WaiterGuard<'_> {
 /// `domainPorts.ts:75-105`. One instance mirrors one `createSkillManagementPort`
 /// call: the manifest cache, `requestId` counter and HTTP `messageId` counter
 /// live on the port, exactly as they do on the TS closure.
-pub struct ExternalSkillsPort<T> {
+pub struct ExternalSkillsPort<T: ?Sized> {
     binding: ExternalSkillBinding,
     transport: Arc<T>,
     env: Arc<dyn ModuleEnvironment>,
@@ -411,7 +424,7 @@ pub struct ExternalSkillsPort<T> {
     manifest_wait_gate: std::sync::OnceLock<Arc<ManifestWaitGate>>,
 }
 
-impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
+impl<T: ModuleHttpTransport + ?Sized + 'static> ExternalSkillsPort<T> {
     pub fn new(binding: ExternalSkillBinding, transport: Arc<T>) -> Self {
         Self::with_environment(binding, transport, Arc::new(ProcessEnvironment))
     }
@@ -474,6 +487,42 @@ impl<T: ModuleHttpTransport + 'static> ExternalSkillsPort<T> {
             )));
         }
         Ok(result)
+    }
+
+    /// Execute an explicitly scoped module operation with the same manifest,
+    /// credential, transport and response checks as the skills client.
+    pub(crate) async fn call_module(&self, call: ModuleInvocation<'_>) -> Result<JsValue> {
+        // Bound native knowledge work across sessions. The permit is held until
+        // the actual async HTTP and decoding future is dropped or completes.
+        static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+        let _permit = SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4))).clone().acquire_owned().await
+            .map_err(|_| SkillError::transport_failure("MODULE_TRANSPORT_UNAVAILABLE", "Module request capacity is unavailable."))?;
+        if !self.binding.methods.iter().any(|method| method == call.operation) {
+            return Err(SkillError::protocol_failure("Module operation is not declared."));
+        }
+        self.load_manifest_cached().await?;
+        let message_id = format!("module-http-{}", self.next(&self.message_sequence));
+        let authorization = self.authorization()?;
+        let mut payload = object([("operation", call.operation.into()), ("input", call.input.clone())]);
+        if let Some(authority) = call.authority_context {
+            payload.insert("authorityContext".into(), authority.clone());
+        }
+        let request = JsValue::Object(object([
+            ("kind", "request".into()), ("method", "module_call".into()),
+            ("messageId", message_id.as_str().into()), ("runId", call.run_id.into()),
+            ("operationId", call.operation_id.into()), ("requestId", call.request_id.into()),
+            ("module", call.module.into()), ("payload", JsValue::Object(payload)),
+        ]));
+        let body = stringify_json(&request).ok().flatten().ok_or_else(||
+            SkillError::protocol_failure("Module call request is not serializable."))?;
+        let response = self.request_json(&self.binding.call_path, "POST", Some(body.into_bytes()), true, authorization).await?;
+        validate_response(&response, &message_id, call.request_id)?;
+        let object = response.as_object().expect("validated module response");
+        if object.get("ok").and_then(JsValue::as_bool) != Some(true) {
+            return Err(module_failure(object));
+        }
+        Ok(object.get("payload").and_then(JsValue::as_object)
+            .and_then(|payload| payload.get("result")).cloned().unwrap_or(JsValue::Undefined))
     }
 
     fn next(&self, counter: &AtomicU64) -> u64 {

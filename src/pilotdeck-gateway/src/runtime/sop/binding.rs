@@ -46,7 +46,8 @@ impl SopRunBinding for StepBinding {
 /// Stream consumes the already prepared request and its original route handle.
 fn project(request: &mut JsObject, step: &JsValue) {
     let required = !strings(field(step, "requiredToolNames")).is_empty()
-        || field(field(step, "node"), "type") == &JsValue::from("knowledge_query");
+        || field(field(step, "node"), "type") == &JsValue::from("knowledge_query")
+        || field(step, "optionalKnowledge").as_object().is_some();
     request.insert(
         "toolChoice".into(),
         if required {
@@ -60,8 +61,15 @@ fn project(request: &mut JsObject, step: &JsValue) {
     {
         let filtered = tools
             .iter()
-            .filter(|t| field(t, "name") == &JsValue::from(tool::CONTROL))
-            .cloned()
+            .filter(|t| field(t, "name") == &JsValue::from(tool::CONTROL)
+                || (field(step, "optionalKnowledge").as_object().is_some() && field(t, "name") == &JsValue::from("knowledge_query")))
+            .map(|t| {
+                let mut value = t.clone();
+                if field(&value, "name") == &JsValue::from("knowledge_query") {
+                    super::common::set(&mut value, "inputSchema", super::authority::optional_schema());
+                }
+                value
+            })
             .collect();
         request.insert("tools".into(), JsValue::Array(filtered));
     }

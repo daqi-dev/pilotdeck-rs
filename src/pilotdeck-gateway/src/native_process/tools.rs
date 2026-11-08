@@ -71,6 +71,7 @@ pub struct SessionTools {
     fork_scope: Option<Arc<super::agent::ForkScope>>,
     web: Option<super::web::NativeWebTools>,
     skills: super::skills::NativeSkills,
+    knowledge: Option<Arc<super::knowledge::KnowledgeTool>>,
     context_runtime: Option<Arc<dyn crate::host::modules::context::ContextRuntime>>,
     options: Options,
     env: JsObject,
@@ -145,6 +146,7 @@ impl SessionTools {
             plan_serial: Arc::new(tokio::sync::Mutex::new(())),
             web: None,
             skills: Default::default(),
+            knowledge: None,
             context_runtime: None,
             options: options.clone(),
             env: {let mut env=env_object(env);env.insert("PILOT_HOME".into(),JsValue::String(options.home.to_string_lossy().into_owned().into()));env},
@@ -161,6 +163,11 @@ impl SessionTools {
             #[cfg(unix)]
             native_sandbox: None,
         })
+    }
+
+    pub(super) fn with_knowledge(mut self, tool: Option<Arc<super::knowledge::KnowledgeTool>>) -> Self {
+        self.knowledge = tool;
+        self
     }
 
     pub(super) fn with_user_dialog(
@@ -466,6 +473,9 @@ impl SessionTools {
             .expect("native automation tool names are unique");
         }
         self.skills.register(&tools);
+        if let Some(knowledge) = &self.knowledge {
+            tools.register(knowledge.clone()).map_err(|error| RuntimeError::new(error.to_string()))?;
+        }
         if let Some(web) = &self.web {
             web.register(&tools, identity)
                 .expect("native web tool names are unique");

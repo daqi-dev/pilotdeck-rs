@@ -34,6 +34,7 @@ pub(super) struct NodeHost {
     pub manifest: JsObject,
 }
 impl NodeTemplate {
+    pub(super) fn tool_execution(&self) -> Arc<dyn capability::ToolExecution> { self.execution.clone() }
     pub(super) fn capture(ports: &SessionPorts, identity: &ExecutionIdentity, deployment: Deployment, limits: Limits, expected: Option<JsString>, native_terminal_errors: bool) -> Self {
         Self { deployment, limits, expected, native_terminal_errors, model_session: identity.session_id.clone(), model: ports.model.clone(), tool_results_dir: ports.tool_results_dir.clone(), context_runtime: ports.context_runtime.clone(), context_identity: ports.context_identity.clone(), context_config: ports.context_config.clone(), execution: ports.tool_execution.clone(), tool_context: ports.tool_context.clone(), observer: ports.tool_observer.clone(), plan: ports.plan_todo.clone(), permission: ports.interaction.permission.clone(), signal: ports.interaction.signal.clone(), switches: ports.interaction.switches }
     }

@@ -782,6 +782,7 @@ fn detached_context(
         host,
         fields,
         execute_tool: None,
+        knowledge_authority: None,
     }
 }
 fn background_output(

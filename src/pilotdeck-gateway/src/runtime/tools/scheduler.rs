@@ -1091,11 +1091,15 @@ impl ToolExecution for ToolRuntime {
                 .map_err(|_| {
                     ModuleError::new("Tool runtime requires a host ToolRuntimeContext.")
                 })?;
-            let execution = context
-                .execution
-                .downcast::<ExecutionContext>()
+            let (execution, authority) = if let Some(scoped) = context.execution.downcast_ref::<crate::runtime::sop::authority::AuthorityExecution>() {
+                (scoped.original.clone(), Some(scoped.authority.clone()))
+            } else {
+                (context.execution, None)
+            };
+            let execution = execution.downcast::<ExecutionContext>()
                 .map_err(|_| ModuleError::new("Tool runtime requires a host ExecutionContext."))?;
             let mut context = ToolRunContext::new(host);
+            context.knowledge_authority = authority;
             with_operation_deadline_budget(&mut context, &execution.fields)?;
             runtime.execute_batch(calls, context).await
         })

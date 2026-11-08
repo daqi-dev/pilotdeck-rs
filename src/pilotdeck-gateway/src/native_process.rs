@@ -44,6 +44,7 @@ pub(crate) mod input_admission;
 mod management;
 mod methods;
 pub(crate) mod plan_todo;
+mod knowledge;
 mod skills;
 pub use methods::registered_methods;
 // #1320 fix-r2 F10: re-exported one hop up so the runtime-side single-source

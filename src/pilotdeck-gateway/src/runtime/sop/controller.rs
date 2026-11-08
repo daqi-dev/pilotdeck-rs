@@ -32,6 +32,8 @@ pub(crate) struct StaffDeckController {
     store: Arc<DiskSopStore>,
     client: Arc<SopClient>,
     discovery: Option<Discovery>,
+    authority: Option<Arc<super::authority::Authority>>,
+    project: Option<JsString>,
 }
 impl StaffDeckController {
     pub(crate) async fn load(
@@ -108,7 +110,15 @@ impl StaffDeckController {
             store: Arc::new(DiskSopStore::new(PathBuf::from(state).join("sessions"))),
             client,
             discovery,
+            authority: None,
+            project: None,
         }))
+    }
+    pub(crate) fn with_knowledge_authority(mut self: Arc<Self>, authority: Arc<super::authority::Authority>, project: JsString) -> Arc<Self> {
+        let this = Arc::get_mut(&mut self).expect("new controller is exclusively owned");
+        this.authority = Some(authority);
+        this.project = Some(project);
+        self
     }
     pub(crate) fn require_tools(
         &self,
@@ -218,6 +228,9 @@ pub(super) struct RunState {
     pub collect_checked: AtomicBool,
     profile: JsValue,
     model_validate: ModelValidator,
+    pub authority: Option<Arc<super::authority::Authority>>,
+    project: Option<JsString>,
+    knowledge_tools: Option<Arc<dyn crate::host::modules::capability::ToolExecution>>,
 }
 impl RunState {
     async fn prepare(&self, step_id: &JsValue) -> Result<(JsValue, Option<JsObject>), HostError> {
@@ -304,7 +317,7 @@ impl RunState {
             })?;
         }
         set(&mut step, "contextMode", JsValue::String(mode));
-        self.store
+        let saved = self.store
             .replace(
                 &self.session,
                 field(&persisted, "bundle").clone(),
@@ -313,6 +326,41 @@ impl RunState {
             )
             .await
             .map_err(store_error)?;
+        let has_knowledge = if self.authority.is_some() && field(field(&step, "node"), "type") == &JsValue::from("response") {
+            match &self.knowledge_tools {
+                Some(catalog) => catalog.list().await?.iter().any(|tool| tool.fields().get("name").and_then(JsValue::as_string).is_some_and(|name| name.equals_str("knowledge_query"))),
+                None => false,
+            }
+        } else { false };
+        if let (Some(authority), Some(project)) = (&self.authority, &self.project)
+            && has_knowledge {
+            let revision = field(&saved, "revision").as_number().ok_or_else(|| error("SOP_AUTHORITY_STATE_MISSING", "SOP revision is unavailable"))?;
+            let request_id = format!("sop.authority:{}:{}:{}", session, turn, crate::js_value::number_string(revision));
+            let context = crate::metadata::object([
+                ("sessionKey", JsValue::String(self.session.clone())),
+                ("projectKey", JsValue::String(project.clone())),
+                ("expectedRevision", JsValue::Number(revision)),
+                ("requestId", request_id.as_str().into()),
+            ]);
+            let result = async {
+                let projection = authority.resolve(&context, &self.signal).await?;
+                if field(&projection, "sopId") != field(&step, "skillId")
+                    || field(&projection, "sopVersion") != field(&step, "version")
+                    || field(&projection, "nodeId") != field(&step, "nodeId") {
+                    return Err(error("SOP_AUTHORITY_PIN_MISMATCH", "SOP_AUTHORITY_PIN_MISMATCH"));
+                }
+                self.store.authority(&self.session, revision).await.map_err(store_error)?;
+                Ok(projection)
+            }.await;
+            match result {
+                Ok(projection) => if matches!(field(&projection,"optionalCapabilities"),JsValue::Array(v) if !v.is_empty()) { set(&mut step,"optionalKnowledge",projection); },
+                Err(e) => {
+                    let code = e.module_error.as_ref().and_then(|v| v.code.as_ref()).cloned().unwrap_or_else(|| "SOP_AUTHORITY_UNAVAILABLE".into());
+                    if self.signal.is_cancelled() || code.equals_str("SOP_REVISION_CONFLICT") { return Err(e); }
+                    set(&mut step,"optionalKnowledgeUnavailable",JsValue::String(code));
+                }
+            }
+        }
         Ok((step, model))
     }
 }
@@ -364,7 +412,7 @@ impl HostLoopController for StaffDeckController {
   if let Some(delivery)=self.store.reply_delivery(session).await.map_err(store_error)?{let state=self.store.load(session).await.map_err(store_error)?;let finish=!state.as_ref().is_some_and(|s|active(field(s,"state")));let result=field(&delivery,"result").clone();let message=reply(&result,&if finish{identity.turn_id.clone()}else{format!("{}:recovered-step",String::from_utf16_lossy(identity.turn_id.units())).as_str().into()});if field(&delivery,"phase")==&JsValue::from("pending")||field(&delivery,"turnId")!=&JsValue::String(identity.turn_id.clone()){native.append_parent_reply(message.clone()).await?;self.store.mark_reply_durable(session,field(&delivery,"turnId").as_string().expect("validated delivery").clone(),identity.turn_id.clone()).await.map_err(store_error)?;native.emit_parent(assistant(&identity,message.clone())).await?;}append_once(&mut visible,message.clone());self.store.clear_reply_delivery(session,identity.turn_id.clone()).await.map_err(store_error)?;if finish{return Ok(aggregate(recovery(&identity,result,message),visible));}}
   let selected=self.select(session,&visible,&input.signal).await?;
   let Some(selected)=selected else{let outcome=native.run(SopNodePlan{continuation:false,context:SopNodeContext::Inherit,request:input.request,instruction:"".into(),model_override:None,step:JsValue::Undefined,binding:None}).await?;native.finish_node(Some(&outcome)).await?;return Ok(aggregate(outcome.result,outcome.messages));};
-  let run=Arc::new(RunState{store:self.store.clone(),client:self.client.clone(),bundle:self.bundle.clone(),selected,session:session.clone(),identity:identity.clone(),deadline:input.request.operation_deadline.clone(),signal:input.signal.clone(),user:latest_user(&visible),submission:Mutex::new(None),saw_tool_error:AtomicBool::new(false),collect_checked:AtomicBool::new(false),profile:self.profile.clone(),model_validate:native.model_validator()?});
+  let run=Arc::new(RunState{store:self.store.clone(),client:self.client.clone(),bundle:self.bundle.clone(),selected,session:session.clone(),identity:identity.clone(),deadline:input.request.operation_deadline.clone(),signal:input.signal.clone(),user:latest_user(&visible),submission:Mutex::new(None),saw_tool_error:AtomicBool::new(false),collect_checked:AtomicBool::new(false),profile:self.profile.clone(),model_validate:native.model_validator()?,authority:self.authority.clone(),project:self.project.clone(),knowledge_tools:native.tool_execution()});
   let mut corrections=HashSet::new();let mut total_turns=0.0;let mut total_spent=0.0;let mut usage=JsObject::new();let mut denials=vec![];let mut correcting=false;let mut continued=input.request.clone();let mut correction_result:Option<JsValue>=None;
   let mut completed=loop {
    if input.signal.is_cancelled(){return Err(cancelled());}
