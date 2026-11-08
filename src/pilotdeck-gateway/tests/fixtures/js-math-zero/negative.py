@@ -89,7 +89,7 @@ cases = [
      'pub(crate) fn js_min(left: f64, right: f64) -> f64 {\n'
      '    if left == 0.0 && right == 0.0 { left } else { left.min(right) }\n'
      '}',
-     'tests::js_math_signed_zero_ties_match_ts'),
+     'signed_zero_tests::js_math_signed_zero_ties_match_ts'),
     ('token-accounting-left-tie', token_accounting,
      'use pilotdeck_protocol::js_math::{max as js_max, min as js_min};',
      'fn js_max(left: f64, right: f64) -> f64 {\n'

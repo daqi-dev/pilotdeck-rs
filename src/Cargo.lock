@@ -1057,7 +1057,6 @@ dependencies = [
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
  "regex",
- "uuid",
 ]
 
 [[package]]
