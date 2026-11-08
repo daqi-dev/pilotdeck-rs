@@ -287,11 +287,11 @@ impl Runtime {
         );
 
         // `void this.pollMessages()` — the immediate poll, separate from the
-        // interval's first tick (tokio's `interval` fires at t=0, `setInterval`
-        // does not, so the first tick is discarded). #2285 ②: the task holds
-        // only a `Weak` — TS leaks its interval on the unsupported
-        // drop-without-stop flow; here the upgrade failure ends the task
-        // instead of keeping the `Runtime` (and its polls) alive forever.
+        // interval's first tick (tokio's `interval` fires at t=0, `setInterval` does
+        // not). #2285 ②: TS leaks its interval on the drop-without-stop flow; the task
+        // holds only a `Weak`, so the upgrade failure ends it instead of keeping the
+        // `Runtime` alive forever — but only while no poll is in flight (in-flight
+        // polls hold the strong count up: the TS-leak shape, see A8.3-CH-BLUEBUBBLES-007).
         let weak = Arc::downgrade(self);
         tokio::spawn(async move {
             let Some(runtime) = weak.upgrade() else {
@@ -317,8 +317,8 @@ impl Runtime {
                         }
                     }
                     _ = timer.tick() => {
-                        // #2285 ②: same `Weak` rule as the immediate poll —
-                        // a dropped channel ends the loop, not a forever poll.
+                        // #2285 ②: same `Weak` rule as the immediate poll — but only while
+                        // no poll is in flight; a dropped channel ends the loop, not a forever poll.
                         let Some(runtime) = weak.upgrade() else { break };
                         tokio::spawn(async move {
                             runtime.poll_messages().await;
