@@ -3,6 +3,8 @@
 pub mod builtin;
 mod recovery;
 pub mod registry;
+#[cfg(unix)]
+pub mod sandbox;
 pub mod scheduler;
 
 use crate::host::{

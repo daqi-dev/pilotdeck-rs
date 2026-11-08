@@ -197,6 +197,8 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
     let requested_mode = EditMode::parse(edit_mode_value.as_ref());
     let requested_cell_type = input_string(input, "cell_type");
     let resolved = resolve_write_path(&path, context, true, false)?;
+    #[cfg(unix)]
+    super::native_sandbox_write_path(&resolved.absolute, context)?;
     if !is_notebook(&resolved.absolute) {
         return Err(tool_error(
             "invalid_tool_input",

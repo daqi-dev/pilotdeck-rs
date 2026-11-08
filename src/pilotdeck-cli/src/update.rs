@@ -122,10 +122,7 @@ pub trait RuntimeClient {
 /// Main-bin adapter; the coordinator wires the authenticated runtime client
 /// from the native server's configured loopback address and server token.
 #[cfg(unix)]
-pub fn run_current(
-    args: &[String],
-    runtime: Option<&mut dyn RuntimeClient>,
-) -> Result<u8, Error> {
+pub fn run_current(args: &[String], runtime: Option<&mut dyn RuntimeClient>) -> Result<u8, Error> {
     let flags = Flags::parse(args)?;
     if std::env::var_os("DOCKER").as_deref() == Some(std::ffi::OsStr::new("1"))
         || std::env::var_os("container").as_deref() == Some(std::ffi::OsStr::new("docker"))
@@ -148,7 +145,7 @@ pub fn run_current(
         std::env::current_exe().map_err(|e| Error::new("unknownVersion", e.to_string()))?;
     let installation = Installation::discover(&executable)?;
     let builder = NativeBuilder::new("git".into(), "cargo".into())?;
-    let cancelled=builder.cancellation();
+    let cancelled = builder.cancellation();
     execute_stdout(
         flags,
         &mut Engine::new(installation, builder),
@@ -158,24 +155,44 @@ pub fn run_current(
 }
 
 #[cfg(unix)]
-fn execute_stdout(flags:Flags,backend:&mut dyn Backend,runtime:Option<&mut dyn RuntimeClient>,cancelled:std::sync::Arc<std::sync::atomic::AtomicBool>)->Result<u8,Error>{
+fn execute_stdout(
+    flags: Flags,
+    backend: &mut dyn Backend,
+    runtime: Option<&mut dyn RuntimeClient>,
+    cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<u8, Error> {
     // Keep the outer guard for the whole transaction: a nested Runner restores
     // NONBLOCK, so a full progress pipe cannot hang a subsequent status line.
-    let output=process::Progress::new().map_err(|e|Error::new("output_error",e))?;
-    let mut failure=None;
-    let result={
-        let mut line=|text:&str|{
-            if failure.is_none(){
-                let mut bytes=Vec::with_capacity(text.len()+1);bytes.extend_from_slice(text.as_bytes());bytes.push(b'\n');
-                if let Err(error)=output.write(&bytes){cancelled.store(true,std::sync::atomic::Ordering::Relaxed);failure=Some(error);}
+    let output = process::Progress::new().map_err(|e| Error::new("output_error", e))?;
+    let mut failure = None;
+    let result = {
+        let mut line = |text: &str| {
+            if failure.is_none() {
+                let mut bytes = Vec::with_capacity(text.len() + 1);
+                bytes.extend_from_slice(text.as_bytes());
+                bytes.push(b'\n');
+                if let Err(error) = output.write(&bytes) {
+                    cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+                    failure = Some(error);
+                }
             }
         };
-        execute(flags,backend,runtime,&mut line)
+        execute(flags, backend, runtime, &mut line)
     };
-    let restored=output.restore();
-    if result.as_ref().is_err_and(|error|error.reason=="processStopFailed"){return result;}
-    if let Some(error)=failure.or_else(||restored.err()){
-        return Err(Error::new("output_error",format!("Update output failed: {error} The installation outcome may be unknown; inspect the installation before retrying.")));
+    let restored = output.restore();
+    if result
+        .as_ref()
+        .is_err_and(|error| error.reason == "processStopFailed")
+    {
+        return result;
+    }
+    if let Some(error) = failure.or_else(|| restored.err()) {
+        return Err(Error::new(
+            "output_error",
+            format!(
+                "Update output failed: {error} The installation outcome may be unknown; inspect the installation before retrying."
+            ),
+        ));
     }
     result
 }

@@ -141,6 +141,8 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
         .and_then(JsValue::as_string)
         .is_some_and(|kind| kind.equals_str("allow"));
     let resolved = resolve_write_path(&path, context, false, allowed_outside)?;
+    #[cfg(unix)]
+    super::native_sandbox_write_path(&resolved.absolute, context)?;
     let freshness = ensure_write_snapshot_fresh(context, &resolved.absolute)?;
 
     let message = message_id(context);

@@ -2,7 +2,10 @@
 use super::{LocalHostOptions, Options, assembly, switch_wiring};
 pub use crate::native_http::control::{ControlHandler, ControlReply, ControlRequest};
 use crate::{ProxyError, config::Env};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{future::Future, net::SocketAddr, path::PathBuf, pin::Pin, sync::Arc, time::Duration};
+pub type ReadyCallback = Arc<
+    dyn Fn(SocketAddr) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>> + Send + Sync,
+>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostExit {
@@ -22,7 +25,7 @@ pub struct ServerOptions {
     pub static_assets: Option<PathBuf>,
     pub control: Option<ControlHandler>,
     pub restart: Option<tokio::sync::watch::Receiver<bool>>,
-    pub ready: Arc<dyn Fn(SocketAddr) + Send + Sync>,
+    pub ready: ReadyCallback,
 }
 
 pub async fn run_server(options: ServerOptions, env: Env) -> Result<HostExit, ProxyError> {
@@ -66,7 +69,7 @@ pub(super) struct Embedding {
     pub static_assets: Option<PathBuf>,
     pub control: Option<ControlHandler>,
     pub restart: Option<tokio::sync::watch::Receiver<bool>>,
-    pub ready: Arc<dyn Fn(SocketAddr) + Send + Sync>,
+    pub ready: ReadyCallback,
     pub native_diagnostics: bool,
 }
 async fn restart_requested(receiver: Option<tokio::sync::watch::Receiver<bool>>) {
@@ -163,7 +166,19 @@ pub(super) async fn run_embedding(
         faces.clone(),
         crate::switch::SwitchTimeouts::production(options.drain_budget),
     );
-    (embedding.ready)(address);
+    if let Err(error) = (embedding.ready)(address).await {
+        return match machine.run().await {
+            Ok(()) => Err(crate::ProxyError::from(error)),
+            Err(cleanup) => {
+                let final_cleanup = faces.finish_after_halt().await;
+                let detail = match final_cleanup {
+                    Ok(()) => format!("{error}; teardown: {cleanup}"),
+                    Err(last) => format!("{error}; teardown: {cleanup}; final cleanup: {last}"),
+                };
+                Err(crate::ProxyError::from(detail))
+            }
+        };
+    }
     #[cfg(unix)]
     let restart = tokio::select! { _ = terminate.recv() => false, _ = interrupt.recv() => false, _ = restart_requested(embedding.restart) => true };
     #[cfg(not(unix))]

@@ -62,3 +62,5 @@
 ## CLI history 原生探针（2026-11-08）
 
 原生链路验收先核每一层的实际合同：WS错误帧到新control会变成exit1/空stdout/JSON stderr；Ratatui用CSI坐标绘字而非连续原始空格串；真实历史同时含text与status。测试须保留完整状态序列，用不同内容证明背景文件选择，不能只放同内容副本。跨入口驱动与复跑说明唯一见 `src/pilotdeck-gateway/tests/fixtures/native-history/README.md`；3次错误假设原件在主仓consolidation目录，不用重复的探针修复假装产品发生回归。
+
+- [CLI 候选补丁合并](20261108-cli-candidate-merge.md) — base绑定生成时原字节，逐hunk防跨车道逻辑覆盖；JsValue转换与Drop边界。

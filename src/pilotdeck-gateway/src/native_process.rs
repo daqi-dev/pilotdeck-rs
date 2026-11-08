@@ -49,6 +49,7 @@ mod switch_wiring;
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
 mod tools;
+mod web;
 
 /// Start the isolated native entry through the same host as `pilotdeck server`.
 pub async fn run(options: Options) -> Result<(), ProxyError> {
@@ -69,7 +70,12 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
             static_assets: None,
             control: None,
             restart: None,
-            ready: Arc::new(|address| eprintln!("native listening {address}")),
+            ready: Arc::new(|address| {
+                Box::pin(async move {
+                    eprintln!("native listening {address}");
+                    Ok(())
+                })
+            }),
             native_diagnostics: true,
         },
     )

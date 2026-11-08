@@ -14,11 +14,26 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
     fn family(&self) -> Family {
         Family::ExecutionWorld
     }
-    fn stage(&self, _: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
         // The initial native task slice is memory-backed. Durable recovery is
         // deliberately not claimed until its disk inputs have bounded fd IO.
+        let env = context.env();
+        let temporary_root = env
+            .get("TMPDIR")
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"));
+        let sandbox = Arc::new(crate::runtime::tools::sandbox::NativeSandbox::new(
+            context.profile().sandbox_mode,
+            temporary_root,
+        ));
         let resource = Arc::new(crate::runtime::background::BackgroundExecutionWorld {
-            resources: BackgroundResources::default(),
+            resources: BackgroundResources {
+                tasks: crate::runtime::background::BackgroundTaskRuntime::default()
+                    .with_sandbox(sandbox.clone()),
+                subagents: Default::default(),
+            },
+            sandbox,
         });
         sink.register_owner(self.family(), resource.clone());
         sink.register_resource(Resource::ExecutionWorld, resource);

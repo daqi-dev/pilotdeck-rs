@@ -130,6 +130,19 @@ pub trait CommandRunner: Send + Sync {
     fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult>;
 }
 
+/// The enforcing native execution-world runner. The same command runner owns
+/// output, deadline, group termination and cancellation after exact argv wrapping.
+#[cfg(unix)]
+#[derive(Clone)]
+pub struct SandboxedShellCommandRunner(pub Arc<crate::runtime::tools::sandbox::NativeSandbox>);
+#[cfg(unix)]
+impl CommandRunner for SandboxedShellCommandRunner {
+    fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
+        let sandbox = self.0.clone();
+        Box::pin(run_with_sandbox(command, options, Some(sandbox)))
+    }
+}
+
 /// The default local runner.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NodeShellCommandRunner;
@@ -373,6 +386,29 @@ pub(crate) struct PreparedSpawn {
 }
 
 impl PreparedSpawn {
+    pub(crate) async fn apply_sandbox(
+        &mut self,
+        sandbox: &crate::runtime::tools::sandbox::NativeSandbox,
+        signal: Option<&AbortSignal>,
+    ) -> Result<(), ToolError> {
+        if sandbox.mode() == crate::runtime::project::SandboxMode::DangerFullAccess {
+            return Ok(());
+        }
+        let (executable, args) = sandbox
+            .prepare(
+                self.shell.shell.clone(),
+                self.args.clone(),
+                &self.cwd,
+                signal,
+            )
+            .await?;
+        self.shell = CommandShell {
+            shell: executable,
+            kind: CommandShellKind::Custom,
+        };
+        self.args = args;
+        Ok(())
+    }
     /// `spawn(shell, args, { cwd, env, detached: true })` with `stdin` as
     /// given and piped stdout/stderr. The caller owns kill-on-drop policy.
     pub(crate) fn command(&self, stdin: Stdio) -> Command {
@@ -418,6 +454,37 @@ pub(crate) fn prepare_spawn(
     resolve_env: &[(JsString, JsString)],
 ) -> Result<PreparedSpawn, JsString> {
     let shell = resolve_default_command_shell(resolve_env)?;
+    prepare_spawn_with_shell(command, cwd, env, shell)
+}
+
+pub(crate) fn prepare_spawn_for_sandbox(
+    command: &JsString,
+    cwd: &JsString,
+    env: Option<&[(JsString, JsString)]>,
+    resolve_env: &[(JsString, JsString)],
+    sandbox: Option<&crate::runtime::tools::sandbox::NativeSandbox>,
+) -> Result<PreparedSpawn, JsString> {
+    if sandbox.is_some_and(|sandbox| {
+        sandbox.mode() != crate::runtime::project::SandboxMode::DangerFullAccess
+    }) {
+        return prepare_spawn_with_shell(
+            command,
+            cwd,
+            env,
+            CommandShell {
+                shell: "/bin/sh".into(),
+                kind: CommandShellKind::Sh,
+            },
+        );
+    }
+    prepare_spawn(command, cwd, env, resolve_env)
+}
+fn prepare_spawn_with_shell(
+    command: &JsString,
+    cwd: &JsString,
+    env: Option<&[(JsString, JsString)]>,
+    shell: CommandShell,
+) -> Result<PreparedSpawn, JsString> {
     let args = shell.args(command);
     if let Some(index) = args.iter().position(|arg| arg.units().contains(&0)) {
         let prefix = units(&format!(
@@ -512,6 +579,13 @@ fn elapsed_ms(started: Instant) -> f64 {
 }
 
 async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult, ToolError> {
+    run_with_sandbox(command, options, None).await
+}
+async fn run_with_sandbox(
+    command: JsString,
+    options: CommandOptions,
+    sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+) -> Result<CommandResult, ToolError> {
     let started = Instant::now();
     let inherited;
     let env: &[(JsString, JsString)] = match &options.env {
@@ -521,8 +595,19 @@ async fn run(command: JsString, options: CommandOptions) -> Result<CommandResult
             &inherited
         }
     };
-    let prepared = prepare_spawn(&command, &options.cwd, options.env.as_deref(), env)
-        .map_err(ToolError::failed)?;
+    let mut prepared = prepare_spawn_for_sandbox(
+        &command,
+        &options.cwd,
+        options.env.as_deref(),
+        env,
+        sandbox.as_deref(),
+    )
+    .map_err(ToolError::failed)?;
+    if let Some(sandbox) = sandbox {
+        prepared
+            .apply_sandbox(&sandbox, options.signal.as_ref())
+            .await?;
+    }
     let mut process = prepared.command(Stdio::piped());
     process.kill_on_drop(true);
     let mut child = match process.spawn() {

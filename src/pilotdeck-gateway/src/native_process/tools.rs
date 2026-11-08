@@ -50,6 +50,7 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    web: Option<super::web::NativeWebTools>,
     options: Options,
     env: JsObject,
     binding: SessionBinding,
@@ -60,6 +61,8 @@ pub struct SessionTools {
     lsp: Arc<super::families::DefaultLsp>,
     #[cfg(unix)]
     background_tasks: Option<crate::runtime::background::BackgroundTaskRuntime>,
+    #[cfg(unix)]
+    native_sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     /// #1864 (b): re-read on every turn, like InProcessGateway.ts:1443 —
     /// the host-side permission context follows the stored selection so the
     /// same turn never runs one mode for the sidecar and another for native
@@ -83,6 +86,7 @@ impl SessionTools {
                 ..Default::default()
             });
         Ok(Self {
+            web: None,
             options: options.clone(),
             env: env_object(env),
             binding,
@@ -94,7 +98,14 @@ impl SessionTools {
             permission_mode_source: None,
             #[cfg(unix)]
             background_tasks: None,
+            #[cfg(unix)]
+            native_sandbox: None,
         })
+    }
+
+    pub(super) fn with_web(mut self, web: super::web::NativeWebTools) -> Self {
+        self.web = Some(web);
+        self
     }
 
     /// #1864 (b): the live permission-mode source, consulted on every turn
@@ -122,6 +133,12 @@ impl SessionTools {
         tasks: crate::runtime::background::BackgroundTaskRuntime,
     ) -> Self {
         self.background_tasks = Some(tasks);
+        self
+    }
+
+    #[cfg(unix)]
+    pub fn with_native_sandbox(mut self, sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>) -> Self {
+        self.native_sandbox = Some(sandbox);
         self
     }
 
@@ -185,18 +202,29 @@ impl SessionTools {
         let permission_emit = authority
             .map(|a| a.emit)
             .unwrap_or_else(|| Arc::new(|_| false));
+        #[cfg(unix)]
+        let tools = if let Some(sandbox) = &self.native_sandbox {
+            native_tools_with_sandbox(self.binding.context.allowed_tools.clone(), self.binding.context.disallowed_tools.clone(), self.lsp.clone(), sandbox.clone())
+        } else {
+            native_tools(self.binding.context.allowed_tools.clone(), self.binding.context.disallowed_tools.clone(), self.lsp.clone())
+        };
+        #[cfg(not(unix))]
         let tools = native_tools(
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
             self.lsp.clone(),
         );
+        if let Some(web) = &self.web {
+            web.register(&tools, identity)
+                .expect("native web tool names are unique");
+        }
         #[cfg(unix)]
         if let Some(tasks) = &self.background_tasks {
-            for tool in builtin::task::task_tools(Some(tasks.clone())) {
+            for tool in if let Some(sandbox) = &self.native_sandbox { builtin::task::task_tools_with_sandbox(Some(tasks.clone()), sandbox.clone()) } else { builtin::task::task_tools(Some(tasks.clone())) } {
                 tools.register(tool).expect("native task names are unique");
             }
         }
-        let execution = Arc::new(
+        let execution =
             ToolRuntime::new(
                 tools,
                 // Even a profile without an interaction resource keeps this turn's
@@ -209,8 +237,12 @@ impl SessionTools {
                     .get("sandboxMode")
                     .and_then(JsValue::as_string)
                     .cloned(),
-            ),
-        );
+            );
+        #[cfg(unix)]
+        let execution = if let Some(sandbox) = &self.native_sandbox {
+            execution.with_native_sandbox_provider(sandbox.clone())
+        } else { execution };
+        let execution = Arc::new(execution);
         let mut config = self.config.clone();
         config.insert("env".into(), JsValue::Object(self.env.clone()));
         config.insert("permissionMode".into(), JsValue::String(permission_mode));
@@ -533,6 +565,31 @@ pub(super) fn native_tools(
     denied: Option<Vec<JsString>>,
     lsp: Arc<super::families::DefaultLsp>,
 ) -> ToolRegistry {
+    native_tools_with_definitions(allowed, denied, lsp, {
+        let mut definitions = builtin::read_only_tools();
+        definitions.extend(builtin::write_tools());
+        #[cfg(unix)]
+        definitions.extend(builtin::shell_tools());
+        definitions
+    })
+}
+#[cfg(unix)]
+fn native_tools_with_sandbox(
+    allowed: Option<Vec<JsString>>, denied: Option<Vec<JsString>>,
+    lsp: Arc<super::families::DefaultLsp>, sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+) -> ToolRegistry {
+    let mut definitions = builtin::read_only_tools();
+    definitions.extend(builtin::write_tools());
+    definitions.push(Arc::new(builtin::bash::BashTool::with_options(builtin::bash::BashToolOptions {
+        runner: Some(Arc::new(builtin::bash::runner::SandboxedShellCommandRunner(sandbox))),
+        ..Default::default()
+    })));
+    native_tools_with_definitions(allowed, denied, lsp, definitions)
+}
+fn native_tools_with_definitions(
+    allowed: Option<Vec<JsString>>, denied: Option<Vec<JsString>>,
+    lsp: Arc<super::families::DefaultLsp>, definitions: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+) -> ToolRegistry {
     let tools = ToolRegistry::new(
         None,
         Some(Arc::new(move |tool| {
@@ -545,15 +602,13 @@ pub(super) fn native_tools(
     );
     // Workspace mutation and foreground shell execution share the same host
     // permission gate as read tools; registration never authorizes execution.
-    let mut definitions = builtin::read_only_tools();
-    definitions.extend(builtin::write_tools());
-    #[cfg(unix)]
-    definitions.extend(builtin::shell_tools());
     for tool in definitions {
         tools
             .register(tool)
             .expect("native builtin names are unique");
     }
+    tools.register(Arc::new(builtin::structured::StructuredOutputTool::default()))
+        .expect("native structured output name is unique");
     tools
         .register(Arc::new(LspTool::new(lsp)))
         .expect("native LSP name is unique");

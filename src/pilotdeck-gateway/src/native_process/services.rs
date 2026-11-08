@@ -1416,14 +1416,12 @@ impl SubmitHostServices for Services {
                 ));
             }
         }
-        // The composition does not expose the SDK/model setter yet. Refuse
-        // these before session admission instead of reporting a false selection.
-        for key in ["sdkConfig"] {
-            if input.get(key).is_some_and(|v| !v.is_undefined()) {
-                return Err(unavailable(
-                    "Per-turn model/SDK overrides are not installed in this isolated process.",
-                ));
-            }
+        // sdkConfig is not a wired native input; sdkSessionConfig is handled
+        // by the separately validated SDK admission port.
+        if input.get("sdkConfig").is_some_and(|v| !v.is_undefined()) {
+            return Err(unavailable(
+                "Per-turn model/SDK overrides are not installed in this isolated process.",
+            ));
         }
         // When snapshots are enabled (--storage-root was supplied), resolve the
         // id exactly as the management snapshot route does

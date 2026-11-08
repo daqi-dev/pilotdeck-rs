@@ -14,6 +14,30 @@ fn selection(v: &JsValue) -> bool {
         s.units()[i + 1..].to_vec(),
     ))
 }
+// The diagnostic table inherits Object.prototype's methods for these names.
+// Plain JSON values do not modify those shared functions. Continue to refuse
+// nested intrinsic keys until their cross-request effects are modelled.
+fn plain_intrinsic_value(value: &JsValue) -> bool {
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        match value {
+            JsValue::Object(object) => {
+                if object.prototype().is_some() {
+                    return false;
+                }
+                for (key, value) in object.entries() {
+                    if builtin_property(key) {
+                        return false;
+                    }
+                    pending.push(value);
+                }
+            }
+            JsValue::Array(values) => pending.extend(values),
+            _ => (),
+        }
+    }
+    true
+}
 pub(super) fn required(raw: &JsValue) -> bool {
     let providers = field(field(raw, "model"), "providers");
     if entries(providers).iter().any(|(key, p)| {
@@ -69,8 +93,11 @@ pub(super) fn required(raw: &JsValue) -> bool {
         return true;
     }
     let always = field(raw, "alwaysOn");
-    entries(always).iter().any(|(key, _)| builtin_property(key))
-        || entries(field(always, "projects"))
-            .iter()
-            .any(|(_, p)| entries(p).iter().any(|(key, _)| builtin_property(key)))
+    entries(always).iter().any(|(key, value)| {
+        builtin_property(key)
+            && !((key.equals_str("constructor") || key.equals_str("toString"))
+                && plain_intrinsic_value(value))
+    }) || entries(field(always, "projects"))
+        .iter()
+        .any(|(_, p)| entries(p).iter().any(|(key, _)| builtin_property(key)))
 }

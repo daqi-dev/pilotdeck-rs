@@ -4890,3 +4890,7 @@ READY 本段改动：**新增 4 行 + 翻牌 4 行 + 增记 5 行（153 条：do
 下一步：① #2381（位 1）合入落账 → 派批 4 #2195（cron-inline-sync，同模块串行排 #2295 落地后）；② #1433 接管车道 #2 / #2354 / #2396 / #2372 fix-r7（codex/mbp2 + 负控回归）/ #2417 fix-r1 / 批 5 各车道交付收货（**DONE 清单口径，勿按退出码收**）；③ **#1809 P0 处置待人选**（P0-only r11 / 仲裁降级 / 收紧内部上限，PR #2001 挂起中）；④ PR #2423/#2397/#2422/#2407/#2387 各走闸门入队（队列现只 #2381 位 1，吞吐窗口打开）；⑤ ops 缺陷 1–7（③④⑤ 守望漏收族最急）择空档修；⑥ 下一段 **16:0x 交接**。
 
 现场指针：`_tmp/20261107-coord/` 下 `patrol-1434.md`（本段正本）· `dispatch-2354-2396-1445-task.md` · `harvest-1433-1440-task.md` · `fix-2371-2372-input/arbitration-2372-r6-p1.md` · `patrol-1240.md` / `dispatch-batch1-1441-1245-task.md`（沿）。
+
+### 2026-11-08 · CLI 在途依赖纠偏与组合验证检查点
+
+本机唯一正本仍是 cli-gateway-setup/pilotdeck-rs；本轮继续保存原生server发现/更新、真实工具权限、NativeNode sandbox、SDK/model/settings及机器桥代码。mbp2 r12 的 update/权限/LocalHost/settings/history/SDK/机器桥已过所选检查；实际模型选择与SDK提示词通过，TUI alias、真实permission_request与update-restart确认暴露失败，保留原件并修复中。r13新增测试类型错误已修；r14 sandbox/background/config/management 已通过，其余CLI全量/严格lint仍在跑，最新permission生命周期候选尚未编译，不标完成。侧会话经用户授权指出未合上游重复，已核19张OPEN PR及全部现有树：Cron #2381、MCP #2429优先复用，Sol重复Cron候选仅保留未应用；后台复用main核心只补owner/IO，Kernel系列不同profile不整线合入。决定/来源/剩余边界在主仓 `_tmp/20261108-cli-completion/dependency-audit/decision.md`，所有其他树只读保全。下一步先保全此检查点再逐块接入上游差异，继续真实TUI与源码安装验证；无GitHub写、无本机Rust构建，旧8e32未动。

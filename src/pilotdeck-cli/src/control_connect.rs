@@ -13,7 +13,7 @@ use std::{
 use tokio::time::{Instant, timeout};
 use tokio_tungstenite::tungstenite::Message;
 const MAX_PENDING: usize = 64;
-struct Pending {
+struct RpcPending {
     id: JsValue,
     initialize: bool,
     stream: bool,
@@ -141,7 +141,7 @@ pub(super) async fn run(options: &Options, token: &str) -> Result<()> {
     )
     .await
     .map_err(|_| ControlError::new("transport_error", "Gateway handshake timed out."))??;
-    let mut pending = HashMap::<String, Pending>::new();
+    let mut pending = HashMap::<String, RpcPending>::new();
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|_| {
         ControlError::new("transport_error", "Cannot register shutdown signal.")
@@ -160,7 +160,7 @@ async fn drive(
     socket: &mut Socket,
     input: &mut tokio::sync::mpsc::Receiver<Result<Vec<u8>>>,
     output: &Output,
-    pending: &mut HashMap<String, Pending>,
+    pending: &mut HashMap<String, RpcPending>,
     token: &str,
 ) -> Result<()> {
     let mut tick = tokio::time::interval(Duration::from_millis(250));
@@ -185,7 +185,7 @@ async fn drive(
                 let stream=method=="submit_turn";
                 let key=uuid::Uuid::new_v4().to_string();
                 let request=encode(&object(&[("type","request".into()),("id",key.as_str().into()),("method",method.as_str().into()),("params",params)]))?;
-                pending.insert(key,Pending{id:request_id,initialize:string_is(&value,"method","initialize"),stream,next:0,error:None,deadline:(!stream).then(||Instant::now()+NETWORK_TIMEOUT)});
+                pending.insert(key,RpcPending{id:request_id,initialize:string_is(&value,"method","initialize"),stream,next:0,error:None,deadline:(!stream).then(||Instant::now()+NETWORK_TIMEOUT)});
                 timeout(NETWORK_TIMEOUT,socket.send(Message::Text(request.into()))).await.map_err(|_|ControlError::new("transport_error","Gateway send timed out; operation outcome may be unknown."))?.map_err(|_|ControlError::new("transport_error","Gateway connection closed; operation outcome may be unknown."))?;
             },
             message=socket.next()=>{

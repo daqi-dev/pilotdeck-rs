@@ -195,6 +195,13 @@ fn host_intrinsics_keep_upstream_ownership() {
     ));
     assert_eq!(tests.len(), 18);
     for test in tests {
+        let id = text(field(&test, "id")).unwrap();
+        if matches!(
+            id.as_str(),
+            "diag-2625-prototype-always" | "diag-2630-prototype-always"
+        ) {
+            continue; // The isolated real-TS scalar matrix below now owns these cases.
+        }
         let yaml = text(field(&test, "yaml")).unwrap();
         let metadata = Metadata {
             home: PathBuf::from("<PILOT_HOME>"),
@@ -599,4 +606,86 @@ fn string_coercion_errors_keep_their_class() {
         Err("TypeError")
     );
     assert_eq!(string_coercible(&JsValue::from("1")), Ok(()));
+}
+
+#[test]
+fn scalar_always_on_intrinsics_match_isolated_real_ts() {
+    struct TwoFiles {
+        global: Vec<u8>,
+        project: Option<Vec<u8>>,
+    }
+    impl Files for TwoFiles {
+        fn entries(&self, _: &Path) -> io::Result<Vec<(String, bool)>> {
+            Err(io::Error::from_raw_os_error(libc::ENOENT))
+        }
+        fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
+            if path.ends_with(".pilotdeck/pilotdeck.yaml") {
+                self.project
+                    .clone()
+                    .ok_or_else(|| io::Error::from_raw_os_error(libc::ENOENT))
+            } else {
+                Ok(self.global.clone())
+            }
+        }
+        fn stat(&self, path: &Path) -> io::Result<Stat> {
+            let data = self.read(path)?;
+            Ok(Stat {
+                directory: false,
+                size: data.len() as u64,
+                birth_ms: 0.0,
+                ctime_ms: 0.0,
+                mtime_ms: 0.0,
+            })
+        }
+    }
+    let values = cases(include_str!(
+        "../../tests/fixtures/config/intrinsic-scalars.json"
+    ));
+    assert_fixture_complete(&values, 48);
+    for case in values {
+        let id = text(field(&case, "id")).unwrap();
+        let project = match field(&case, "project") {
+            JsValue::Null => None,
+            value => Some(encode(value).into_bytes()),
+        };
+        let metadata = Metadata {
+            home: PathBuf::from("/home-fixture"),
+            cwd: PathBuf::from("/project"),
+            files: TwoFiles {
+                global: encode(field(&case, "global")).into_bytes(),
+                project,
+            },
+        };
+        let result = super::load_project_with_files_inner(
+            &metadata,
+            &Env::new(),
+            Some("/project"),
+            Some((1.0, "1970-01-01T00:00:00.000Z".into())),
+        )
+        .unwrap_or_else(|error| panic!("{id}: unexpected {} {:?}", error.code, error.message));
+        let expected = field(&case, "result");
+        assert_eq!(
+            encode(&canonical(&JsValue::Array(result.diagnostics))),
+            encode(&canonical(field(expected, "diagnostics"))),
+            "{id} diagnostics"
+        );
+        let snapshot = result.snapshot.expect("requested config snapshot");
+        assert_eq!(
+            encode(&canonical(field(field(&snapshot, "config"), "alwaysOn"))),
+            encode(&canonical(field(expected, "alwaysOn"))),
+            "{id} alwaysOn"
+        );
+    }
+}
+
+#[test]
+fn intrinsically_shared_and_nested_values_still_require_host() {
+    for input in [
+        r#"{"alwaysOn":{"__proto__":7}}"#,
+        r#"{"alwaysOn":{"constructor":{"__proto__":{"x":1}}}}"#,
+        r#"{"alwaysOn":{"toString":[{"constructor":1}]}}"#,
+        r#"{"alwaysOn":{"projects":{"/p":{"constructor":7}}}}"#,
+    ] {
+        assert!(host::required(&parse_json(input).unwrap()), "{input}");
+    }
 }

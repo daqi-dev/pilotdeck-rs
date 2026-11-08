@@ -1474,7 +1474,8 @@ fn failed_initialization_keeps_disposal_after_panicking_cleanup_and_huge_budget(
         let disposed = Arc::new(AtomicBool::new(false));
         let marker = disposed.clone();
         let result = TurnGateway::start_with_cleanup_budget(
-            TurnReplayOptions::new(), Duration::MAX,
+            TurnReplayOptions::new(),
+            Duration::MAX,
             move |coordinator| {
                 coordinator.set_after_dispose_hook(Arc::new(move || {
                     marker.store(true, Ordering::SeqCst);
@@ -1487,7 +1488,10 @@ fn failed_initialization_keeps_disposal_after_panicking_cleanup_and_huge_budget(
                 Ok(())
             },
         );
-        assert_eq!(result.err().unwrap().to_string(), "preserve original builder failure");
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "preserve original builder failure"
+        );
         assert!(disposed.load(Ordering::SeqCst));
     }
 }

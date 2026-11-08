@@ -111,66 +111,150 @@ fn exited(group: Pid) -> Result<bool, String> {
 }
 
 #[cfg(any(target_os = "macos", test))]
-fn listing_is_zombie_only(text:&str,leader:u32)->bool {
-    let mut saw_leader=false;let mut count=0;
-    for line in text.lines().filter(|line|!line.trim().is_empty()){
-        let fields:Vec<_>=line.split_whitespace().collect();
-        if fields.len()!=3{return false;}
-        let Ok(pid)=fields[0].parse::<u32>()else{return false;};
-        let Ok(group)=fields[1].parse::<u32>()else{return false;};
-        if pid==0||group!=leader||!fields[2].starts_with('Z'){return false;}
-        saw_leader|=pid==leader;count+=1;
+fn listing_is_zombie_only(text: &str, leader: u32) -> bool {
+    let mut saw_leader = false;
+    let mut count = 0;
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let fields: Vec<_> = line.split_whitespace().collect();
+        if fields.len() != 3 {
+            return false;
+        }
+        let Ok(pid) = fields[0].parse::<u32>() else {
+            return false;
+        };
+        let Ok(group) = fields[1].parse::<u32>() else {
+            return false;
+        };
+        if pid == 0 || group != leader || !fields[2].starts_with('Z') {
+            return false;
+        }
+        saw_leader |= pid == leader;
+        count += 1;
     }
-    saw_leader&&count>0
+    saw_leader && count > 0
 }
 
 /// Darwin returns EPERM for a group containing only zombies. It also returns
 /// EPERM for living members we cannot signal, so the errno alone is not proof.
 /// Inspect this exact reserved group with the system ps. Failure, truncation,
 /// malformed rows, a missing leader or any non-zombie member fail closed.
-#[cfg(target_os="macos")]
-fn darwin_zombie_only_group(leader:Pid,raw:u32)->Result<bool,String>{
-    struct Inspection{child:std::process::Child,pid:Pid,reaped:bool}
-    impl Drop for Inspection{
-        fn drop(&mut self){if !self.reaped{let _=self.child.kill();if exited(self.pid).unwrap_or(false){let _=self.child.wait();}}}
+#[cfg(target_os = "macos")]
+fn darwin_zombie_only_group(leader: Pid, raw: u32) -> Result<bool, String> {
+    struct Inspection {
+        child: std::process::Child,
+        pid: Pid,
+        reaped: bool,
     }
-    let child=Command::new("/bin/ps").args(["-g",&raw.to_string(),"-o","pid=,pgid=,stat="]).env("LC_ALL","C").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().map_err(|e|format!("Update process membership inspection failed: {e}"))?;
-    let pid=Pid::from_raw(child.id() as i32).ok_or("Invalid inspection process identity.")?;
-    let mut inspection=Inspection{child,pid,reaped:false};
-    let mut stdout=inspection.child.stdout.take().ok_or("Inspection stdout unavailable.")?;
-    let flags=rustix::fs::fcntl_getfl(&stdout).map_err(|e|e.to_string())?;rustix::fs::fcntl_setfl(&stdout,flags|rustix::fs::OFlags::NONBLOCK).map_err(|e|e.to_string())?;
-    let deadline=Instant::now()+Duration::from_secs(2);let mut bytes=Vec::new();let mut buffer=[0_u8;4096];
-    loop{
-        for _ in 0..16{match stdout.read(&mut buffer){
-            Ok(0)=>break,
-            Ok(n)=>{if bytes.len()+n>65536{return Err("Update process membership inspection exceeded its limit.".into());}bytes.extend_from_slice(&buffer[..n]);},
-            Err(e)if e.kind()==std::io::ErrorKind::WouldBlock=>break,
-            Err(e)if e.kind()==std::io::ErrorKind::Interrupted=>continue,
-            Err(e)=>return Err(format!("Update process membership inspection failed: {e}")),
-        }}
-        if exited(pid)?{
+    impl Drop for Inspection {
+        fn drop(&mut self) {
+            if !self.reaped {
+                let _ = self.child.kill();
+                if exited(self.pid).unwrap_or(false) {
+                    let _ = self.child.wait();
+                }
+            }
+        }
+    }
+    let child = Command::new("/bin/ps")
+        .args(["-g", &raw.to_string(), "-o", "pid=,pgid=,stat="])
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Update process membership inspection failed: {e}"))?;
+    let pid = Pid::from_raw(child.id() as i32).ok_or("Invalid inspection process identity.")?;
+    let mut inspection = Inspection {
+        child,
+        pid,
+        reaped: false,
+    };
+    let mut stdout = inspection
+        .child
+        .stdout
+        .take()
+        .ok_or("Inspection stdout unavailable.")?;
+    let flags = rustix::fs::fcntl_getfl(&stdout).map_err(|e| e.to_string())?;
+    rustix::fs::fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK)
+        .map_err(|e| e.to_string())?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut bytes = Vec::new();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        for _ in 0..16 {
+            match stdout.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if bytes.len() + n > 65536 {
+                        return Err(
+                            "Update process membership inspection exceeded its limit.".into()
+                        );
+                    }
+                    bytes.extend_from_slice(&buffer[..n]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(e) => return Err(format!("Update process membership inspection failed: {e}")),
+            }
+        }
+        if exited(pid)? {
             // ps cannot have a writer after its observed exit; drain its small
             // remaining pipe once more before validating the complete listing.
-            loop{match stdout.read(&mut buffer){Ok(0)=>break,Ok(n)=>{if bytes.len()+n>65536{return Err("Update process membership inspection exceeded its limit.".into());}bytes.extend_from_slice(&buffer[..n]);},Err(e)if e.kind()==std::io::ErrorKind::Interrupted=>continue,Err(e)=>return Err(format!("Update process membership inspection failed: {e}")),}}
-            let status=inspection.child.wait().map_err(|e|e.to_string())?;inspection.reaped=true;
-            return Ok(status.success()&&exited(leader)?&&std::str::from_utf8(&bytes).is_ok_and(|text|listing_is_zombie_only(text,raw)));
+            loop {
+                match stdout.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if bytes.len() + n > 65536 {
+                            return Err(
+                                "Update process membership inspection exceeded its limit.".into()
+                            );
+                        }
+                        bytes.extend_from_slice(&buffer[..n]);
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+                    Err(e) => {
+                        return Err(format!("Update process membership inspection failed: {e}"));
+                    }
+                }
+            }
+            let status = inspection.child.wait().map_err(|e| e.to_string())?;
+            inspection.reaped = true;
+            return Ok(status.success()
+                && exited(leader)?
+                && std::str::from_utf8(&bytes)
+                    .is_ok_and(|text| listing_is_zombie_only(text, raw)));
         }
-        if Instant::now()>=deadline{return Err("Update process membership inspection timed out.".into());}
+        if Instant::now() >= deadline {
+            return Err("Update process membership inspection timed out.".into());
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
 }
-fn stop_group(guard:&ChildGuard)->Result<(),String>{
-    confirm_group_signal(guard,rustix::process::kill_process_group(guard.group,Signal::KILL))
+fn stop_group(guard: &ChildGuard) -> Result<(), String> {
+    confirm_group_signal(
+        guard,
+        rustix::process::kill_process_group(guard.group, Signal::KILL),
+    )
 }
-fn confirm_group_signal(guard:&ChildGuard,result:Result<(),rustix::io::Errno>)->Result<(),String>{
-    #[cfg(not(target_os="macos"))]
-    let _=guard;
-    match result{
-        Ok(())=>Ok(()),
-        Err(error)=>{
-            #[cfg(target_os="macos")]
-            if error==rustix::io::Errno::PERM&&exited(guard.group)?&&darwin_zombie_only_group(guard.group,guard.child.id())?{return Ok(());}
-            Err(format!("Update command termination could not be confirmed: {error}"))
+fn confirm_group_signal(
+    guard: &ChildGuard,
+    result: Result<(), rustix::io::Errno>,
+) -> Result<(), String> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = guard;
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            #[cfg(target_os = "macos")]
+            if error == rustix::io::Errno::PERM
+                && exited(guard.group)?
+                && darwin_zombie_only_group(guard.group, guard.child.id())?
+            {
+                return Ok(());
+            }
+            Err(format!(
+                "Update command termination could not be confirmed: {error}"
+            ))
         }
     }
 }
@@ -311,21 +395,48 @@ mod tests {
         c
     }
     #[test]
-    fn zombie_exception_requires_the_complete_same_group_listing(){
-        assert!(listing_is_zombie_only("17 17 Z\n18 17 Z+\n",17));
-        for text in ["","17 17 S\n","17 17 Z\n18 17 S\n","18 17 Z\n","17 19 Z\n","17 17 Z extra\n","garbage","17 17 Z\n18 17 T\n"]{assert!(!listing_is_zombie_only(text,17),"{text}");}
+    fn zombie_exception_requires_the_complete_same_group_listing() {
+        assert!(listing_is_zombie_only("17 17 Z\n18 17 Z+\n", 17));
+        for text in [
+            "",
+            "17 17 S\n",
+            "17 17 Z\n18 17 S\n",
+            "18 17 Z\n",
+            "17 19 Z\n",
+            "17 17 Z extra\n",
+            "garbage",
+            "17 17 Z\n18 17 T\n",
+        ] {
+            assert!(!listing_is_zombie_only(text, 17), "{text}");
+        }
     }
-    #[cfg(target_os="macos")]
+    #[cfg(target_os = "macos")]
     #[test]
-    fn live_descendant_never_qualifies_for_darwin_eperm_exception(){
-        let mut c=command("/bin/sleep 120 & printf child-started");c.process_group(0).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
-        let child=c.spawn().unwrap();let group=Pid::from_raw(child.id() as i32).unwrap();let mut guard=ChildGuard{child,group,reaped:false};let deadline=Instant::now()+Duration::from_secs(2);
-        while !exited(group).unwrap(){assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(5));}
-        assert!(!darwin_zombie_only_group(group,guard.child.id()).unwrap());
+    fn live_descendant_never_qualifies_for_darwin_eperm_exception() {
+        let mut c = command("/bin/sleep 120 & printf child-started");
+        c.process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let child = c.spawn().unwrap();
+        let group = Pid::from_raw(child.id() as i32).unwrap();
+        let mut guard = ChildGuard {
+            child,
+            group,
+            reaped: false,
+        };
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !exited(group).unwrap() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!darwin_zombie_only_group(group, guard.child.id()).unwrap());
         // Inject only the syscall errno. The process table and living child
         // are real, so the waiver cannot accidentally hide a live member.
-        assert!(confirm_group_signal(&guard,Err(rustix::io::Errno::PERM)).is_err());
-        stop_group(&guard).unwrap();guard.child.wait().unwrap();guard.reaped=true;
+        assert!(confirm_group_signal(&guard, Err(rustix::io::Errno::PERM)).is_err());
+        stop_group(&guard).unwrap();
+        guard.child.wait().unwrap();
+        guard.reaped = true;
     }
     #[test]
     fn real_process_keeps_streams_separate_and_caps_infinite_output() {
@@ -392,27 +503,76 @@ mod tests {
         );
         let signals = Signals::install().unwrap();
         let before = rustix::fs::fcntl_getfl(std::io::stdout()).unwrap();
-        let result=if std::env::var_os("PDRS_UPDATE_WHOLE_OUTPUT").is_some(){
-            struct Whole{root:std::path::PathBuf,cancelled:Arc<AtomicBool>}
-            impl super::super::Backend for Whole{
-                fn check(&mut self)->Result<super::super::Status,super::super::Error>{Ok(super::super::Status{reason:None,can_update:true,latest:Some(super::super::Release{tag_name:"fixture".into(),source_sha:"a".repeat(40)})})}
-                fn apply(&mut self,_target:&super::super::Release,output:&mut dyn FnMut(&str))->Result<(),super::super::Error>{
-                    let mut c=command("printf '%s' \"$$\" > \"$1\"; i=0; while [ $i -lt 20000 ]; do printf '1234567890123456789012345678901234567890'; i=$((i+1)); done");c.arg("finite-progress").arg(self.root.join("build-pid"));
-                    Runner{timeout:Duration::from_secs(15),output_limit:64,cancelled:Some(&self.cancelled)}.run(&mut c,true).map_err(|e|super::super::Error::new("test",e))?;
+        let result = if std::env::var_os("PDRS_UPDATE_WHOLE_OUTPUT").is_some() {
+            struct Whole {
+                root: std::path::PathBuf,
+                cancelled: Arc<AtomicBool>,
+            }
+            impl super::super::Backend for Whole {
+                fn check(&mut self) -> Result<super::super::Status, super::super::Error> {
+                    Ok(super::super::Status {
+                        reason: None,
+                        can_update: true,
+                        latest: Some(super::super::Release {
+                            tag_name: "fixture".into(),
+                            source_sha: "a".repeat(40),
+                        }),
+                    })
+                }
+                fn apply(
+                    &mut self,
+                    _target: &super::super::Release,
+                    output: &mut dyn FnMut(&str),
+                ) -> Result<(), super::super::Error> {
+                    let mut c = command(
+                        "printf '%s' \"$$\" > \"$1\"; i=0; while [ $i -lt 20000 ]; do printf '1234567890123456789012345678901234567890'; i=$((i+1)); done",
+                    );
+                    c.arg("finite-progress").arg(self.root.join("build-pid"));
+                    Runner {
+                        timeout: Duration::from_secs(15),
+                        output_limit: 64,
+                        cancelled: Some(&self.cancelled),
+                    }
+                    .run(&mut c, true)
+                    .map_err(|e| super::super::Error::new("test", e))?;
                     // Runner is finished. This exact callback was the second
                     // blocking boundary when the surrounding guard was absent.
                     output("Build succeeded. Applying the prepared release.");
-                    std::fs::write(self.root.join("pid"),std::fs::read(self.root.join("build-pid")).unwrap()).unwrap();
-                    let deadline=Instant::now()+Duration::from_secs(5);
-                    while !self.cancelled.load(Ordering::Relaxed){assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(5));}
-                    Err(super::super::Error::new("cancelled","Update was cancelled."))
+                    std::fs::write(
+                        self.root.join("pid"),
+                        std::fs::read(self.root.join("build-pid")).unwrap(),
+                    )
+                    .unwrap();
+                    let deadline = Instant::now() + Duration::from_secs(5);
+                    while !self.cancelled.load(Ordering::Relaxed) {
+                        assert!(Instant::now() < deadline);
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(super::super::Error::new(
+                        "cancelled",
+                        "Update was cancelled.",
+                    ))
                 }
-                fn identity(&self)->(&str,&str){("fixture","old")}
-                fn target_generation(&self)->Option<&str>{None}
+                fn identity(&self) -> (&str, &str) {
+                    ("fixture", "old")
+                }
+                fn target_generation(&self) -> Option<&str> {
+                    None
+                }
             }
-            let mut backend=Whole{root:root.clone(),cancelled:signals.cancelled.clone()};
-            super::super::execute_stdout(super::super::Flags::default(),&mut backend,None,signals.cancelled.clone()).map(|_|()).map_err(|e|e.message)
-        }else{
+            let mut backend = Whole {
+                root: root.clone(),
+                cancelled: signals.cancelled.clone(),
+            };
+            super::super::execute_stdout(
+                super::super::Flags::default(),
+                &mut backend,
+                None,
+                signals.cancelled.clone(),
+            )
+            .map(|_| ())
+            .map_err(|e| e.message)
+        } else {
             let mut c = command(
                 "printf '%s' \"$$\" > \"$1\"; while :; do printf '1234567890123456789012345678901234567890' || exit; done",
             );
@@ -421,7 +581,9 @@ mod tests {
                 timeout: Duration::from_secs(15),
                 output_limit: 64,
                 cancelled: Some(&signals.cancelled),
-            }.run(&mut c, true).map(|_|())
+            }
+            .run(&mut c, true)
+            .map(|_| ())
         };
         let after = rustix::fs::fcntl_getfl(std::io::stdout()).unwrap();
         let pid = std::fs::read_to_string(root.join("pid"))
@@ -435,74 +597,77 @@ mod tests {
     }
     #[test]
     fn progress_does_not_block_on_an_unread_stdout_pipe() {
-        for whole in [false,true]{
-        let root = std::env::temp_dir().join(format!("update-progress-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir(&root).unwrap();
-        let mut command = Command::new(std::env::current_exe().unwrap());
-        command
-            .args([
-                "--exact",
-                "update::process::tests::unread_progress_pipe_helper",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env_clear()
-            .env("PDRS_UPDATE_PROGRESS_TEST", &root)
-            .env("HOME", &root)
-            .env("TMPDIR", &root)
-            .env("PATH", "/usr/bin:/bin")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if whole{command.env("PDRS_UPDATE_WHOLE_OUTPUT","1");}
-        let mut child=command.spawn().unwrap();
-        let deadline = Instant::now() + Duration::from_secs(8);
-        while !root.join("pid").exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        if !root.join("pid").exists() {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("progress helper did not start");
-        }
-        // Deliberately do not drain stdout: fill the pipe before the real SIGINT.
-        std::thread::sleep(Duration::from_millis(200));
-        rustix::process::kill_process(Pid::from_raw(child.id() as i32).unwrap(), Signal::INT)
-            .unwrap();
-        while !root.join("result.json").exists() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        if !root.join("result.json").exists() {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!("update progress blocked cancellation on an unread stdout pipe");
-        }
-        let result: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(root.join("result.json")).unwrap()).unwrap();
-        // The helper has now proved Runner returned and flags were restored.
-        // Drain nonblocking only now, allowing the test harness's final line.
-        let mut stdout = child.stdout.take().unwrap();
-        let flags = rustix::fs::fcntl_getfl(&stdout).unwrap();
-        rustix::fs::fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
-        let mut bytes = [0_u8; 8192];
-        let status = loop {
-            while matches!(stdout.read(&mut bytes),Ok(n)if n>0) {}
-            if let Some(status) = child.try_wait().unwrap() {
-                break status;
+        for whole in [false, true] {
+            let root =
+                std::env::temp_dir().join(format!("update-progress-{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir(&root).unwrap();
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "update::process::tests::unread_progress_pipe_helper",
+                    "--ignored",
+                    "--nocapture",
+                ])
+                .env_clear()
+                .env("PDRS_UPDATE_PROGRESS_TEST", &root)
+                .env("HOME", &root)
+                .env("TMPDIR", &root)
+                .env("PATH", "/usr/bin:/bin")
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if whole {
+                command.env("PDRS_UPDATE_WHOLE_OUTPUT", "1");
             }
-            if Instant::now() >= deadline {
+            let mut child = command.spawn().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(8);
+            while !root.join("pid").exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if !root.join("pid").exists() {
                 let _ = child.kill();
                 let _ = child.wait();
-                panic!("progress helper did not exit after cancellation");
+                panic!("progress helper did not start");
             }
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        assert!(status.success());
-        assert_eq!(
-            result,
-            serde_json::json!({"cancelled":true,"flagsRestored":true,"groupGone":true})
-        );
-        std::fs::remove_dir_all(root).unwrap();
+            // Deliberately do not drain stdout: fill the pipe before the real SIGINT.
+            std::thread::sleep(Duration::from_millis(200));
+            rustix::process::kill_process(Pid::from_raw(child.id() as i32).unwrap(), Signal::INT)
+                .unwrap();
+            while !root.join("result.json").exists() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            if !root.join("result.json").exists() {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("update progress blocked cancellation on an unread stdout pipe");
+            }
+            let result: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("result.json")).unwrap()).unwrap();
+            // The helper has now proved Runner returned and flags were restored.
+            // Drain nonblocking only now, allowing the test harness's final line.
+            let mut stdout = child.stdout.take().unwrap();
+            let flags = rustix::fs::fcntl_getfl(&stdout).unwrap();
+            rustix::fs::fcntl_setfl(&stdout, flags | rustix::fs::OFlags::NONBLOCK).unwrap();
+            let mut bytes = [0_u8; 8192];
+            let status = loop {
+                while matches!(stdout.read(&mut bytes),Ok(n)if n>0) {}
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("progress helper did not exit after cancellation");
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            assert!(status.success());
+            assert_eq!(
+                result,
+                serde_json::json!({"cancelled":true,"flagsRestored":true,"groupGone":true})
+            );
+            std::fs::remove_dir_all(root).unwrap();
         }
     }
 }

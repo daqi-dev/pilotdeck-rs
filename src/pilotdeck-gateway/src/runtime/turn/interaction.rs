@@ -193,6 +193,7 @@ impl InteractionTurn {
             )?);
         }
         if let Some(hooks) = &turn.ports.hooks {
+            router.capability.bind_turn_hooks(hooks.clone())?;
             // A dropped stream releases the submit slot before detached hook
             // cleanup finishes, just as with steer. Supersede the old hooks
             // identity first, then wait for its admitted hook jobs to drain

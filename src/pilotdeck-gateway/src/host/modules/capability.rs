@@ -65,6 +65,13 @@ pub trait ToolExecution: ToolCatalog {
     ) -> Result<(), crate::host::HostError> {
         Ok(())
     }
+    /// Host-owned lifecycle authority for the same run as the permission port.
+    fn bind_turn_hooks(
+        &self,
+        _hooks: crate::runtime::project::interaction_hooks::TurnHooks,
+    ) -> Result<(), crate::host::HostError> {
+        Ok(())
+    }
     fn refresh(&self) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
@@ -124,6 +131,15 @@ impl Handler {
     ) -> Result<(), crate::host::HostError> {
         if let Some(ports) = &self.ports {
             ports.execution.bind_turn_permission(permission)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn bind_turn_hooks(
+        &self,
+        hooks: crate::runtime::project::interaction_hooks::TurnHooks,
+    ) -> Result<(), crate::host::HostError> {
+        if let Some(ports) = &self.ports {
+            ports.execution.bind_turn_hooks(hooks)?;
         }
         Ok(())
     }

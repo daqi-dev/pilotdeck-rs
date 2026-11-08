@@ -25,22 +25,33 @@ async fn startup_failure_finishes_each_resource_after_any_stalled_observer() {
         std::fs::create_dir_all(options.home.join("cron/projects/broken/.cwd")).unwrap();
         let seen: Arc<Mutex<Vec<&'static str>>> = Arc::default();
         let completed = seen.clone();
-        let observer: crate::native_process::assembly::CleanupObserver = Arc::new(move |phase, result| {
-            let completed = completed.clone();
-            Box::pin(async move {
-                assert!(result.is_ok(), "disposal of {phase} failed");
-                completed.lock().unwrap().push(phase);
-                if phase == stalled { std::future::pending::<()>().await; }
-                result
-            })
-        });
+        let observer: crate::native_process::assembly::CleanupObserver =
+            Arc::new(move |phase, result| {
+                let completed = completed.clone();
+                Box::pin(async move {
+                    assert!(result.is_ok(), "disposal of {phase} failed");
+                    completed.lock().unwrap().push(phase);
+                    if phase == stalled {
+                        std::future::pending::<()>().await;
+                    }
+                    result
+                })
+            });
         let started = std::time::Instant::now();
         let result = crate::native_process::assembly::start_observed(
-            options, fixture.env.clone(), observer, Arc::new(|_| {}),
-        ).await;
+            options,
+            fixture.env.clone(),
+            observer,
+            Arc::new(|_| {}),
+        )
+        .await;
         assert!(result.err().unwrap().to_string().contains(".cwd"));
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
-        assert_eq!(*seen.lock().unwrap(), ["channels", "session", "project"], "{stalled}");
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["channels", "session", "project"],
+            "{stalled}"
+        );
     }
 }
 

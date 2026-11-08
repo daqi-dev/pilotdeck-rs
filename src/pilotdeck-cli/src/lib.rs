@@ -7,3 +7,6 @@ pub mod ws_config;
 
 #[cfg(unix)]
 pub mod management;
+
+#[cfg(unix)]
+pub mod runtime_record;

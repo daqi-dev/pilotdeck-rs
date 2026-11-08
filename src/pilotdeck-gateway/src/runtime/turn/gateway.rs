@@ -692,7 +692,11 @@ async fn dispose_initialization(
         .map(|services| services.interactions.clone());
     let (owner_bound, cleanup_bound) = initialization_teardown_bounds(teardown_deadline);
     if let Some(services) = services {
-        settle_initialization(async { services.submitter.owner.shutdown().await }, owner_bound).await;
+        settle_initialization(
+            async { services.submitter.owner.shutdown().await },
+            owner_bound,
+        )
+        .await;
     }
     if !skip_cleanup && let Some(cleanup) = cleanup {
         settle_initialization(cleanup, cleanup_bound).await;
@@ -712,8 +716,12 @@ async fn settle_initialization<T>(future: impl Future<Output = T>, budget: Durat
     use futures_util::FutureExt;
     let guarded = std::panic::AssertUnwindSafe(future).catch_unwind();
     match tokio::time::Instant::now().checked_add(budget) {
-        Some(deadline) => { let _ = tokio::time::timeout_at(deadline, guarded).await; }
-        None => { let _ = guarded.await; }
+        Some(deadline) => {
+            let _ = tokio::time::timeout_at(deadline, guarded).await;
+        }
+        None => {
+            let _ = guarded.await;
+        }
     }
 }
 

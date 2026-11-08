@@ -45,7 +45,7 @@ pub(super) fn schema(server: Option<JsValue>) -> JsValue {
         ("connectionMethods",JsValue::Array(["describe_server","submit_turn","abort_turn"].into_iter().map(|name|object(&[("name",name.into()),("contractRef","src/pilotdeck-gateway/src/runtime/turn/gateway.rs and runtime/connection/mod.rs".into())])).collect())),
         ("watch",object(&[("notificationCursor",JsValue::Null),("notificationReplay",JsValue::Bool(false)),("snapshotsAtomic",JsValue::Bool(false)),("snapshotMethods",JsValue::Array(["describe_server","active_turn_snapshot","run_get"].into_iter().map(JsValue::from).collect())),("runEventsCursor","run_events has a separate run-local persistent sequence; watch does not claim it as a global notification cursor.".into())])),
         ("appProtocol",object(&[("description","app/v1 is a separate JSON-RPC contract; this discovery describes the Gateway bridge only.".into())])),
-    ]){JsValue::Object(value)=>value,_=>unreachable!()};
+    ]){JsValue::Object(ref value)=>value.clone(),_=>unreachable!()};
     result.insert("live".into(), server.unwrap_or(JsValue::Null));
     JsValue::Object(result)
 }
@@ -195,7 +195,7 @@ impl Emitter {
             ("seq", JsValue::Number(self.sequence as f64)),
             ("cursor", JsValue::Null),
         ]) {
-            JsValue::Object(frame) => frame,
+            JsValue::Object(ref frame) => frame.clone(),
             _ => unreachable!(),
         };
         for (key, value) in fields {

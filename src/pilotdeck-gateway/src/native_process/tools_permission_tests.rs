@@ -13,7 +13,7 @@ impl Drop for Scratch {
     }
 }
 fn make_tools(
-    config: JsObject,
+    mut config: JsObject,
     coordinator: Arc<GatewayInteractionCoordinator>,
     rules: RuleSetHandle,
 ) -> (Scratch, SessionTools, Arc<Recorder>, ExecutionIdentity) {
@@ -45,6 +45,12 @@ fn make_tools(
         checkpoint: HostToolCheckpoint::new(None, &[]).unwrap(),
         projection: Arc::default(),
     };
+    // Match assembly prepare: cwd is authoritative project input, never a
+    // default supplied by ToolContextBuilder or the sidecar.
+    config.insert(
+        "cwd".into(),
+        JsValue::String(options.project.to_string_lossy().into_owned().into()),
+    );
     let tools = SessionTools::new(
         &options,
         &crate::config::Env::new(),

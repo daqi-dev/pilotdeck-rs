@@ -15,6 +15,18 @@ use crate::host::{
 use crate::js_value;
 use std::{future::poll_fn, task::Poll};
 
+struct GrantCleanup {
+    permission: crate::runtime::project::interaction_permission::TurnPermission,
+    tool: JsString,
+    call: JsString,
+    input: JsValue,
+}
+impl Drop for GrantCleanup {
+    fn drop(&mut self) {
+        let _ = self.permission.revoke_native_grant(&self.tool, &self.call, &self.input);
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SchedulerMode {
     Sequential,
@@ -30,7 +42,10 @@ pub struct ToolRuntime {
     permission: Arc<dyn PermissionDecision>,
     turn_permission:
         Arc<std::sync::OnceLock<crate::runtime::project::interaction_permission::TurnPermission>>,
+    turn_hooks: Arc<std::sync::OnceLock<crate::runtime::project::interaction_hooks::TurnHooks>>,
     native_sandbox: Option<JsString>,
+    #[cfg(unix)]
+    native_sandbox_provider: Option<Arc<super::sandbox::NativeSandbox>>,
     pub mode: SchedulerMode,
 }
 impl ToolRuntime {
@@ -43,14 +58,26 @@ impl ToolRuntime {
             registry,
             permission,
             turn_permission: Arc::default(),
+            turn_hooks: Arc::default(),
             mode,
             native_sandbox: None,
+            #[cfg(unix)]
+            native_sandbox_provider: None,
         }
     }
     /// Explicit native fallback until an execution-world sandbox provider is
     /// installed. Never silently execute a restricted profile unrestricted.
     pub fn with_native_sandbox(mut self, mode: Option<JsString>) -> Self {
         self.native_sandbox = mode;
+        self
+    }
+
+    #[cfg(unix)]
+    pub fn with_native_sandbox_provider(
+        mut self,
+        provider: Arc<super::sandbox::NativeSandbox>,
+    ) -> Self {
+        self.native_sandbox_provider = Some(provider);
         self
     }
 
@@ -224,12 +251,33 @@ impl ToolRuntime {
                 ),
             );
         };
+        #[cfg(unix)]
+        let native_sandbox_enforced = self
+            .native_sandbox
+            .as_ref()
+            .zip(self.native_sandbox_provider.as_ref())
+            .is_some_and(|(mode, provider)| {
+                mode.equals_str(provider.mode().as_str())
+                    && [
+                        "bash",
+                        "write_file",
+                        "edit_file",
+                        "edit_notebook",
+                        "task_create",
+                        "task_stop",
+                    ]
+                    .iter()
+                    .any(|tool| name.equals_str(tool))
+            });
+        #[cfg(not(unix))]
+        let native_sandbox_enforced = false;
         if let Some(mode) = self
             .native_sandbox
             .as_ref()
             .filter(|mode| mode.equals_str("read-only") || mode.equals_str("workspace-write"))
             && (name.equals_str("bash")
                 || !matches!(tool.is_read_only(&call.input), Ok(JsValue::Bool(true))))
+            && !native_sandbox_enforced
         {
             return fail(
                 &name,
@@ -289,7 +337,7 @@ impl ToolRuntime {
                 Ok(None) => {}
             }
             let definition: Arc<dyn ToolDefinition> = tool.clone();
-            let decision = if let Some(permission) = self.turn_permission.get() {
+            let mut decision = if let Some(permission) = self.turn_permission.get() {
                 permission
                     .decide_for_execution(definition, call.input.clone(), call.id.clone())
                     .await?
@@ -303,6 +351,51 @@ impl ToolRuntime {
                     )
                     .await?
             };
+            if decision.get("type").and_then(JsValue::as_string).is_some_and(|v| v.equals_str("ask"))
+                && let (Some(permission), Some(hooks)) = (self.turn_permission.get(), self.turn_hooks.get())
+            {
+                use crate::host::modules::lifecycle::LifecyclePort;
+                use crate::runtime::hooks::{HookEffect, LifecycleDispatchInput};
+                let _grant_cleanup = GrantCleanup {
+                    permission: permission.clone(), tool: name.clone(), call: call.id.clone(), input: call.input.clone(),
+                };
+                let cwd = context.fields.get("cwd").and_then(JsValue::as_string).cloned().unwrap_or_default();
+                let base_input = object([
+                    ("sessionId", context.fields.get("sessionId").cloned().unwrap_or(JsValue::Undefined)),
+                    ("transcriptPath", "".into()),
+                    ("cwd", JsValue::String(cwd.clone())),
+                    ("permissionMode", context.fields.get("permissionMode").cloned().unwrap_or(JsValue::Undefined)),
+                ]);
+                let payload = object([
+                    ("toolName", JsValue::String(name.clone())),
+                    ("toolInput", call.input.clone()),
+                    ("toolUseId", JsValue::String(call.id.clone())),
+                    ("permissionSuggestions", decision.get("request").and_then(|r| r.get("options")).cloned().unwrap_or(JsValue::Undefined)),
+                ]);
+                let dispatched = hooks.dispatch(LifecycleDispatchInput {
+                    event: "PermissionRequest".into(), base_input, payload: Some(payload),
+                    match_query: Some(name.clone()), cwd,
+                    env: context.fields.get("env").and_then(JsValue::as_object).cloned(), signal: None,
+                }).await?;
+                if let Some(result) = dispatched.effects.iter().find_map(|effect| match effect {
+                    HookEffect::PermissionRequestResult { result } => Some(result),
+                    _ => None,
+                }) {
+                    let behavior = result.get("behavior").and_then(JsValue::as_string);
+                    if behavior.is_some_and(|v| v.equals_str("allow")) {
+                        // The host callback minted the exact call/input grant.
+                        // Re-evaluate native policy and consume it once; an
+                        // unsupported unbacked hook allow stays ask/fail-closed.
+                        let definition: Arc<dyn ToolDefinition> = tool.clone();
+                        decision = permission.decide_for_execution(definition, call.input.clone(), call.id.clone()).await?;
+                    } else if behavior.is_some_and(|v| v.equals_str("deny")) {
+                        decision = JsValue::Object(object([
+                            ("type", "deny".into()),
+                            ("message", result.get("message").cloned().unwrap_or(JsValue::Undefined)),
+                        ]));
+                    }
+                }
+            }
             let kind = decision.get("type").and_then(JsValue::as_string);
             let message = decision
                 .get("message")
@@ -365,6 +458,16 @@ impl ToolRuntime {
             execution
                 .fields
                 .insert("currentPermissionDecision".into(), decision);
+            #[cfg(unix)]
+            if let Some(provider) = &self.native_sandbox_provider {
+                execution
+                    .fields
+                    .insert("nativeSandboxMode".into(), string(provider.mode().as_str()));
+                execution.fields.insert(
+                    "nativeSandboxTemporaryRoot".into(),
+                    string(provider.temporary_root().to_string_lossy().as_ref()),
+                );
+            }
             match tool.execute(input, execution).await {
                 Err(error) => fail(&name, error),
                 Ok(output) => {
@@ -436,6 +539,13 @@ impl ToolExecution for ToolRuntime {
         self.turn_permission
             .set(permission)
             .map_err(|_| ModuleError::new("Tool execution is already bound to a turn.").into())
+    }
+    fn bind_turn_hooks(
+        &self,
+        hooks: crate::runtime::project::interaction_hooks::TurnHooks,
+    ) -> Result<(), HostError> {
+        self.turn_hooks.set(hooks)
+            .map_err(|_| ModuleError::new("Tool execution hooks are already bound to a turn.").into())
     }
     fn execute_all(
         &self,

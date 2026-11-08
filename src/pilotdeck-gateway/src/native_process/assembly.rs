@@ -63,9 +63,9 @@ use std::{
 };
 
 mod cron;
-mod sdk_adapter;
 mod mcp;
 mod memory;
+mod sdk_adapter;
 pub(crate) mod snapshot;
 mod steer;
 mod user_dialog;
@@ -464,11 +464,19 @@ async fn start_assembly(
     let prepare_overrides = session_overrides.clone();
     let sdk_projects = SdkSessionProjects::shared();
     let sdk_options = crate::runtime::sdk_session::SdkSessionOptions::new(
-        options.project.clone(), options.project.clone(), env.clone(),
-        Arc::new(sdk_adapter::NativeSdkResolver { project: project.clone() }),
-    ).with_homedir(options.home.clone()).with_projects(sdk_projects.clone());
+        options.project.clone(),
+        options.project.clone(),
+        env.clone(),
+        Arc::new(sdk_adapter::NativeSdkResolver {
+            project: project.clone(),
+        }),
+    )
+    .with_homedir(options.home.clone())
+    .with_projects(sdk_projects.clone());
     let sdk_port = Arc::new(sdk_adapter::NativeSdkPort {
-        registry: tokio::sync::Mutex::new(crate::runtime::sdk_session::SdkSessionRegistry::new(sdk_options)),
+        registry: tokio::sync::Mutex::new(crate::runtime::sdk_session::SdkSessionRegistry::new(
+            sdk_options,
+        )),
     });
     let prepare_sdk = sdk_port.clone();
     let prepare_project = project.clone();
@@ -539,15 +547,33 @@ async fn start_assembly(
                         .bind()?,
                 );
                 #[cfg(unix)]
-                let background_tasks = {
-                    let resource = staged.resource(Resource::ExecutionWorld)
+                let (background_tasks, native_sandbox) = {
+                    let resource = staged
+                        .resource(Resource::ExecutionWorld)
                         .ok_or_else(|| RuntimeError::new("Native execution world is missing."))?;
-                    resource.as_any()
+                    let world = resource
+                        .as_any()
                         .downcast_ref::<crate::runtime::background::BackgroundExecutionWorld>()
-                        .ok_or_else(|| RuntimeError::new("Native execution world has the wrong type."))?
-                        .resources.tasks.clone()
+                        .ok_or_else(|| {
+                            RuntimeError::new("Native execution world has the wrong type.")
+                        })?;
+                    (world.resources.tasks.clone(), world.sandbox.clone())
                 };
                 let snapshot = staged.snapshot();
+                let router_resource = staged
+                    .resource(Resource::Router)
+                    .ok_or_else(|| RuntimeError::new("Native router is missing."))?;
+                let router = router_resource
+                    .as_any()
+                    .downcast_ref::<crate::runtime::project::model::RouterResources>()
+                    .ok_or_else(|| RuntimeError::new("Native router has the wrong type."))?;
+                let native_web = super::web::NativeWebTools::new(
+                    router.router.clone(),
+                    router.model_config.clone(),
+                    &snapshot,
+                    options.project.to_string_lossy().into_owned().into(),
+                    &env,
+                );
                 let agent = snapshot
                     .get("config")
                     .and_then(|v| v.get("agent"))
@@ -695,9 +721,12 @@ async fn start_assembly(
                             lsp,
                         )?
                         .with_permission_mode_source(permission_source.clone())
-                        .with_permission_rules(native_permission_rules);
+                        .with_permission_rules(native_permission_rules)
+                        .with_web(native_web);
                         #[cfg(unix)]
-                        let ports = ports.with_background_tasks(background_tasks);
+                        let ports = ports
+                            .with_background_tasks(background_tasks)
+                            .with_native_sandbox(native_sandbox);
                         Ok(TurnHostFactory::new_with_authority(
                             project,
                             deployment,
@@ -1202,14 +1231,16 @@ async fn start_assembly(
                     let result = factory.dispose().await.map_err(|e| e.to_string());
                     fallback_factory_finished.store(true, std::sync::atomic::Ordering::Release);
                     fallback_observer("session", result).await
-                }).await;
+                })
+                .await;
             }
             if !fallback_project_finished.load(std::sync::atomic::Ordering::Acquire) {
                 let _ = tokio::time::timeout(budget, async {
                     let result = project.dispose().await.map_err(|e| e.to_string());
                     fallback_project_finished.store(true, std::sync::atomic::Ordering::Release);
                     fallback_observer("project", result).await
-                }).await;
+                })
+                .await;
             }
             Err(error.into())
         }

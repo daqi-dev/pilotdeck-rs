@@ -15,6 +15,7 @@ pub struct RestartManager {
     state: Arc<Mutex<State>>,
     trigger: tokio::sync::watch::Sender<bool>,
     admission: Arc<tokio::sync::Semaphore>,
+    record: Arc<crate::runtime_record::RuntimeRecord>,
 }
 struct State {
     root: PathBuf,
@@ -28,6 +29,7 @@ struct Input {
     install_id: String,
     expected_generation: String,
     target_generation: String,
+    instance_id: String,
 }
 fn reply(status: u16, value: Value) -> ControlReply {
     ControlReply {
@@ -36,9 +38,12 @@ fn reply(status: u16, value: Value) -> ControlReply {
     }
 }
 impl RestartManager {
-    pub fn new(installation: Installation) -> (Arc<Self>, tokio::sync::watch::Receiver<bool>) {
+    pub fn new(
+        installation: Installation,
+    ) -> Result<(Arc<Self>, tokio::sync::watch::Receiver<bool>), Error> {
+        let record = Arc::new(crate::runtime_record::RuntimeRecord::lock(&installation)?);
         let (trigger, receiver) = tokio::sync::watch::channel(false);
-        (
+        Ok((
             Arc::new(Self {
                 state: Arc::new(Mutex::new(State {
                     root: installation.root,
@@ -48,9 +53,13 @@ impl RestartManager {
                 })),
                 trigger,
                 admission: Arc::new(tokio::sync::Semaphore::new(1)),
+                record,
             }),
             receiver,
-        )
+        ))
+    }
+    pub fn publish_address(&self, address: SocketAddr) -> Result<(), Error> {
+        self.record.publish(address)
     }
     pub fn handler(self: &Arc<Self>) -> ControlHandler {
         let owner = self.clone();
@@ -64,7 +73,7 @@ impl RestartManager {
             return match self.state.lock() {
                 Ok(state) => reply(
                     200,
-                    json!({"installId":state.install_id,"generation":state.running}),
+                    json!({"installId":state.install_id,"generation":state.running,"instanceId":self.record.instance_id()}),
                 ),
                 Err(_) => reply(503, json!({"error":"management_unavailable"})),
             };
@@ -77,10 +86,12 @@ impl RestartManager {
             return reply(409, json!({"error":"restart_busy"}));
         };
         let state = self.state.clone();
+        let instance = self.record.instance_id().to_owned();
         let result = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let mut state = state.lock().map_err(|_| "management_unavailable")?;
-            if input.install_id != state.install_id
+            if input.instance_id != instance
+                || input.install_id != state.install_id
                 || input.expected_generation != state.running
                 || input.target_generation == state.running
             {
@@ -147,6 +158,7 @@ impl RestartManager {
 pub struct HttpRuntime {
     pub address: SocketAddr,
     pub token: String,
+    pub instance_id: String,
 }
 struct Driver(tokio::task::JoinHandle<Result<(), hyper::Error>>);
 impl Drop for Driver {
@@ -161,19 +173,38 @@ impl HttpRuntime {
             .build()
             .map_err(|e| Error::new("runtimeUnavailable", e.to_string()))?;
         runtime.block_on(async {
+            let _local = crate::runtime_record::hold_local_address(self.address)?;
             tokio::time::timeout(Duration::from_secs(15), async {
-                let socket = tokio::net::TcpStream::connect(self.address)
-                    .await
-                    .map_err(|e| {
-                        Error::new(
-                            if e.kind() == std::io::ErrorKind::ConnectionRefused {
-                                "notRunning"
-                            } else {
-                                "runtimeUnavailable"
-                            },
-                            "Cannot connect to the running native service.",
-                        )
-                    })?;
+                // Bind the outgoing connection to the same local interface as
+                // the discovered listener before transmitting credentials.
+                let connector = match self.address {
+                    SocketAddr::V4(_) => tokio::net::TcpSocket::new_v4(),
+                    SocketAddr::V6(_) => tokio::net::TcpSocket::new_v6(),
+                }
+                .map_err(|_| {
+                    Error::new(
+                        "runtimeUnavailable",
+                        "Cannot create the native management socket.",
+                    )
+                })?;
+                let mut source = self.address;
+                source.set_port(0);
+                connector.bind(source).map_err(|_| {
+                    Error::new(
+                        "runtimeUnavailable",
+                        "Native service address is not bound locally.",
+                    )
+                })?;
+                let socket = connector.connect(self.address).await.map_err(|e| {
+                    Error::new(
+                        if e.kind() == std::io::ErrorKind::ConnectionRefused {
+                            "notRunning"
+                        } else {
+                            "runtimeUnavailable"
+                        },
+                        "Cannot connect to the running native service.",
+                    )
+                })?;
                 let (mut sender, connection) =
                     hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(socket))
                         .await
@@ -255,6 +286,7 @@ impl RuntimeClient for HttpRuntime {
         };
         if value.get("installId").and_then(Value::as_str) != Some(install_id)
             || value.get("generation").and_then(Value::as_str) != Some(expected_generation)
+            || value.get("instanceId").and_then(Value::as_str) != Some(self.instance_id.as_str())
         {
             return Err(Error::new(
                 "runtimeMismatch",
@@ -264,16 +296,63 @@ impl RuntimeClient for HttpRuntime {
         Ok(true)
     }
     fn restart(&mut self, input: &RestartRequest) -> Result<RestartReply, Error> {
-        let value = self.request(
-            "POST",
-            "/_control/restart",
-            serde_json::to_string(input).map_err(|e| Error::new("restartFailed", e.to_string()))?,
-        )?;
+        let value = self.request("POST", "/_control/restart", {
+            let mut value = serde_json::to_value(input)
+                .map_err(|e| Error::new("restartFailed", e.to_string()))?;
+            value["instanceId"] = Value::String(self.instance_id.clone());
+            value.to_string()
+        })?;
         serde_json::from_value(value).map_err(|_| {
             Error::new(
                 "restartUnconfirmed",
                 "The native service did not confirm a restart.",
             )
         })
+    }
+}
+
+#[cfg(test)]
+mod source_binding_tests {
+    use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+    };
+    #[test]
+    fn management_source_is_bound_to_the_selected_local_interface() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, peer) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut input = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            while !input.windows(4).any(|part| part == b"\r\n\r\n") {
+                let size = stream.read(&mut chunk).unwrap();
+                assert!(size > 0 && input.len() + size <= 4096);
+                input.extend_from_slice(&chunk[..size]);
+            }
+            let request = String::from_utf8_lossy(&input).to_ascii_lowercase();
+            assert!(request.contains("authorization: bearer probe-token"));
+            let body =
+                r#"{"installId":"install","generation":"generation","instanceId":"instance"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+            peer.ip()
+        });
+        let mut client = HttpRuntime {
+            address,
+            token: "probe-token".into(),
+            instance_id: "instance".into(),
+        };
+        assert!(client.available("install", "generation").unwrap());
+        assert_eq!(server.join().unwrap(), address.ip());
     }
 }

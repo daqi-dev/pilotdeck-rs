@@ -304,14 +304,20 @@ async fn update_settings_detaches_the_capture_listener_when_dropped_mid_reload()
     )
     .expect("#1318-r1 update-drop: the update input must parse");
     let mut future = Box::pin(gateway.update_settings(&input));
-    let parked = tokio::select! {
-        biased;
-        result = &mut future => panic!(
-            "#1318-r1 update-drop: update_settings must park at the chained reload, got {result:?}"
-        ),
-        _ = tokio::task::yield_now() => true,
-    };
-    assert!(parked, "#1318-r1 update-drop: the parking branch must win");
+    // The writer now runs in a blocking task. Poll the actual future until it
+    // has registered its reload listener, rather than assuming a single yield
+    // schedules and finishes the disk operation.
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if store.listener_count() == before + 2 { break; }
+            tokio::select! {
+                result = &mut future => panic!(
+                    "#1318-r1 update-drop: update_settings must park at the chained reload, got {result:?}"
+                ),
+                _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {},
+            }
+        }
+    }).await.expect("#1318-r1 update-drop: capture listener must register before deadline");
     assert_eq!(
         store.listener_count(),
         before + 2,

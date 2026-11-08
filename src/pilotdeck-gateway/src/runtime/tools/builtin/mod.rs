@@ -11,6 +11,7 @@ pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod read_file;
+pub mod structured;
 pub mod task;
 pub mod time;
 pub mod web;
@@ -1024,7 +1025,7 @@ fn path_components(path: &Path) -> Vec<PathBuf> {
 /// and every escape is visible before the write. `NotFound` means "still
 /// missing"; every other error (ENOTDIR, EACCES, ELOOP, ...) is returned
 /// unchanged so the Node diagnostic can render it.
-fn resolve_path_following_symlinks(path: &Path) -> io::Result<PathBuf> {
+pub(super) fn resolve_path_following_symlinks(path: &Path) -> io::Result<PathBuf> {
     const MAX_SYMLINK_HOPS: usize = 40;
     let mut resolved = PathBuf::from("/");
     let mut pending: std::collections::VecDeque<PathBuf> =
@@ -1406,4 +1407,27 @@ mod errno_tests {
             "EPERM: operation not permitted, stat '/fixture/quote' and\nline'"
         );
     }
+}
+
+/// Enforcing provider authority is installed by ToolRuntime after its host
+/// permission decision, never read from a sidecar tool argument.
+#[cfg(unix)]
+pub(super) fn native_sandbox_write_path(
+    path: &JsString, context: &crate::runtime::tools::ToolRunContext,
+) -> Result<JsString, crate::runtime::tools::ToolError> {
+    use crate::runtime::{project::SandboxMode, tools::sandbox::NativeSandbox};
+    let mode = match context.fields.get("nativeSandboxMode").and_then(JsValue::as_string) {
+        Some(mode) if mode.equals_str("read-only") => SandboxMode::ReadOnly,
+        Some(mode) if mode.equals_str("workspace-write") => SandboxMode::WorkspaceWrite,
+        _ => return Ok(path.clone()),
+    };
+    let temporary_root = context.fields.get("nativeSandboxTemporaryRoot").and_then(JsValue::as_string)
+        .map(os_path).unwrap_or_else(|| PathBuf::from("/tmp"));
+    let mut root = cwd(context);
+    if !permission_mode(context).equals_str("bypassPermissions") {
+        for candidate in additional_working_directories(context) {
+            if within_root(path, &candidate) { root = candidate; break; }
+        }
+    }
+    NativeSandbox::new(mode, temporary_root).check_write(&os_path(&root), &os_path(path)).map(|_| path.clone())
 }

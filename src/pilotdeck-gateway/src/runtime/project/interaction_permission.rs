@@ -214,6 +214,13 @@ impl TurnPermission {
         self.run.native_execution.store(true, Ordering::SeqCst);
         Ok(())
     }
+    /// Drop any unconsumed one-shot grant when a native hook dispatch fails,
+    /// is cancelled, or returns a different first effect.
+    pub(crate) fn revoke_native_grant(&self, name: &JsString, call_id: &JsString, input: &JsValue) -> Result<(), HostError> {
+        let key = native_grant_key(name, call_id, input)?;
+        lock(&self.run.native_grants).remove(&key);
+        Ok(())
+    }
     /// Re-evaluate host policy, then consume exactly this turn/tool/id/input's
     /// host-issued once grant. A sidecar-supplied decision never authorizes IO.
     pub(crate) fn decide_for_execution(

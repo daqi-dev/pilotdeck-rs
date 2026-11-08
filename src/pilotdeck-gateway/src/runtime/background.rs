@@ -60,8 +60,8 @@ use crate::{
         tools::{
             ToolCancellation,
             builtin::bash::runner::{
-                AbortSignal, SpawnError, classify_spawn_error, inherited_env, prepare_spawn,
-                timer_delay,
+                AbortSignal, SpawnError, classify_spawn_error, inherited_env,
+                prepare_spawn_for_sandbox, timer_delay,
             },
         },
     },
@@ -292,6 +292,7 @@ pub struct BackgroundTaskRuntimeOptions {
 }
 
 struct Inner {
+    sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     state: Mutex<RuntimeState>,
     starts: watch::Sender<usize>,
     /// `disposePromise`: `None` until the shared disposal settles, then the
@@ -440,6 +441,40 @@ fn truthy(value: &JsValue) -> bool {
 }
 
 impl BackgroundTaskRuntime {
+    /// Set the execution-world provider before sharing or starting this owner.
+    pub fn with_sandbox(
+        mut self,
+        sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    ) -> Self {
+        let inner = Arc::get_mut(&mut self.inner)
+            .expect("Configure background sandbox before sharing the owner.");
+        let state = inner
+            .state
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner());
+        assert!(
+            state.entries.iter().all(|(_, entry)| entry
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .child
+                .is_none())
+                && state.pending_starts == 0
+                && inner.sandbox.is_none(),
+            "Configure background sandbox before starting tasks."
+        );
+        inner.sandbox = Some(sandbox);
+        self
+    }
+    pub(crate) fn sandbox_matches(
+        &self,
+        expected: &Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    ) -> bool {
+        self.inner
+            .sandbox
+            .as_ref()
+            .is_some_and(|actual| Arc::ptr_eq(actual, expected))
+    }
     pub fn new(options: BackgroundTaskRuntimeOptions) -> Self {
         // Validate snapshot store requires disk spill
         if options.snapshot_store.is_some() && options.disk_spill_dir.is_none() {
@@ -448,6 +483,7 @@ impl BackgroundTaskRuntime {
 
         let runtime = Self {
             inner: Arc::new(Inner {
+                sandbox: None,
                 state: Mutex::new(RuntimeState {
                     entries: Vec::new(),
                     pending_starts: 0,
@@ -670,7 +706,9 @@ impl BackgroundTaskRuntime {
         if let Some(before_spawn) = &self.before_spawn {
             before_spawn();
         }
-        let result = self.spawn_task(task_id, entry, spec, &mut reservation);
+        let result = self
+            .spawn_task(task_id, entry, spec, &mut reservation)
+            .await;
         drop(reservation);
         let task = result?;
         // Release the start reservation before awaiting: dropping the caller
@@ -695,7 +733,7 @@ impl BackgroundTaskRuntime {
         entry
     }
 
-    fn spawn_task(
+    async fn spawn_task(
         &self,
         task_id: JsString,
         task: BackgroundBashTask,
@@ -744,21 +782,40 @@ impl BackgroundTaskRuntime {
                 .map(JsString::from_utf16)
                 .map_err(|_| JsString::from(js_value::StackOverflow::MESSAGE)),
         };
-        let spawned =
-            command
-                .and_then(|command| {
-                    prepare_spawn(&command, &spec.cwd, spec.env.as_deref(), resolve_env)
-                })
-                .map_err(|message| (false, message))
-                .and_then(|prepared| {
-                    // PreparedSpawn installs the shared child-only signal reset.
-                    prepared.command(Stdio::null()).spawn().map_err(|error| {
-                        match classify_spawn_error(&error, &prepared.shell) {
-                            SpawnError::Async(message) => (true, message),
-                            SpawnError::Sync(message) => (false, message),
-                        }
-                    })
-                });
+        let spawned = command
+            .and_then(|command| {
+                prepare_spawn_for_sandbox(
+                    &command,
+                    &spec.cwd,
+                    spec.env.as_deref(),
+                    resolve_env,
+                    self.inner.sandbox.as_deref(),
+                )
+            })
+            .map_err(|message| (false, message));
+        let prepared = match spawned {
+            Ok(mut prepared) => {
+                if let Some(sandbox) = &self.inner.sandbox {
+                    prepared
+                        .apply_sandbox(sandbox, None)
+                        .await
+                        .map(|_| prepared)
+                        .map_err(|error| (false, error.message))
+                } else {
+                    Ok(prepared)
+                }
+            }
+            Err(error) => Err(error),
+        };
+        let spawned = prepared.and_then(|prepared| {
+            // PreparedSpawn installs the shared child-only signal reset.
+            prepared.command(Stdio::null()).spawn().map_err(|error| {
+                match classify_spawn_error(&error, &prepared.shell) {
+                    SpawnError::Async(message) => (true, message),
+                    SpawnError::Sync(message) => (false, message),
+                }
+            })
+        });
         match spawned {
             Err((true, message)) => {
                 let mut task = task;
@@ -1679,6 +1736,7 @@ impl RuntimeResources for BackgroundResources {
 // owner of detached children; no second cleanup implementation is installed.
 pub struct BackgroundExecutionWorld {
     pub resources: BackgroundResources,
+    pub sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
 }
 impl crate::runtime::project::FamilyResource for BackgroundExecutionWorld {
     fn dispose(&self) -> DisposeFuture<'_> {

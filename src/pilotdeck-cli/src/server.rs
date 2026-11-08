@@ -66,7 +66,7 @@ fn auth(env: &Env, cwd: &Path, create: bool) -> Result<(String, Option<PathBuf>)
         return Ok((token, None));
     }
     let path = paths::gateway_token_path(env, cwd)?;
-    match crate::read_tui_token(&path) {
+    match super::read_tui_token(&path) {
         Ok(bytes) => {
             let value = String::from_utf8_lossy(&bytes);
             let token = paths::js_trim(&value);
@@ -110,7 +110,7 @@ fn auth(env: &Env, cwd: &Path, create: bool) -> Result<(String, Option<PathBuf>)
     let target = pilotdeck_cli::atomic_file::Target::prepare(&path).map_err(fail)?;
     // Another starter may have published between the first read and prepare.
     // Reuse it; publish() also verifies its captured identity before replacement.
-    if let Ok(bytes) = crate::read_tui_token(&path) {
+    if let Ok(bytes) = super::read_tui_token(&path) {
         let value = String::from_utf8_lossy(&bytes);
         let existing = paths::js_trim(&value);
         if !existing.is_empty() {
@@ -124,8 +124,8 @@ fn auth(env: &Env, cwd: &Path, create: bool) -> Result<(String, Option<PathBuf>)
 }
 
 pub fn run(args: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
-    let core = crate::local_host_options(env, cwd)?;
-    crate::config::check(env, cwd, &core.home)?;
+    let core = super::local_host_options(env, cwd)?;
+    super::config::check(env, cwd, &core.home)?;
     let bind_host = string_flag(args, "--host")
         .map(str::to_owned)
         .or_else(|| env.string("PILOTDECK_GATEWAY_HOST"))
@@ -146,13 +146,14 @@ pub fn run(args: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     let (token, token_path) = auth(env, cwd, true)?;
     let (manager, restart) = match Installation::discover(&std::env::current_exe().map_err(fail)?) {
         Ok(installation) => {
-            let (manager, receiver) = RestartManager::new(installation);
+            let (manager, receiver) = RestartManager::new(installation).map_err(fail)?;
             (Some(manager), Some(receiver))
         }
         Err(e) if e.reason == "development" => (None, None),
         Err(e) => return Err(fail(e)),
     };
     let label = bind_host.clone();
+    let ready_manager = manager.clone();
     let options = ServerOptions {
         core,
         bind_host,
@@ -164,14 +165,26 @@ pub fn run(args: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
         control: manager.as_ref().map(|m| m.handler()),
         restart,
         ready: Arc::new(move |address: SocketAddr| {
-            crate::stdout_line(&format!(
-                "PilotDeck server listening: http://{label}:{}",
-                address.port()
-            ));
-            crate::stdout_line(&format!("WebSocket: ws://{label}:{}/ws", address.port()));
-            if let Some(path) = &token_path {
-                crate::stdout_line(&format!("Token: {}", path.display()));
-            }
+            let manager = ready_manager.clone();
+            let label = label.clone();
+            let token_path = token_path.clone();
+            Box::pin(async move {
+                if let Some(manager) = manager {
+                    tokio::task::spawn_blocking(move || manager.publish_address(address))
+                        .await
+                        .map_err(|e| e.to_string())?
+                        .map_err(|e| e.to_string())?;
+                }
+                crate::stdout_line(&format!(
+                    "PilotDeck server listening: http://{label}:{}",
+                    address.port()
+                ));
+                crate::stdout_line(&format!("WebSocket: ws://{label}:{}/ws", address.port()));
+                if let Some(path) = token_path {
+                    crate::stdout_line(&format!("Token: {}", path.display()));
+                }
+                Ok(())
+            })
         }),
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -203,19 +216,19 @@ pub fn update(args: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure> {
     // Flag validation and the source-installation check precede any runtime IO.
     let flags = pilotdeck_cli::update::Flags::parse(args).map_err(fail)?;
     if !flags.restart || flags.check_only {
-        return pilotdeck_cli::update::run_current(args, None)
-            .map_err(fail);
+        return pilotdeck_cli::update::run_current(args, None).map_err(fail);
     }
     // A missing token cannot mean "no server": authenticate the running owner.
-    let _installation =
+    let installation =
         Installation::discover(&std::env::current_exe().map_err(fail)?).map_err(fail)?;
+    let location = pilotdeck_cli::runtime_record::discover(&installation).map_err(fail)?;
     let (token, _) = auth(env, cwd, false)?;
     let mut client = HttpRuntime {
-        address: ([127, 0, 0, 1], port(&[], env)?).into(),
+        address: location.address,
+        instance_id: location.instance_id,
         token,
     };
-    pilotdeck_cli::update::run_current(args, Some(&mut client))
-        .map_err(fail)
+    pilotdeck_cli::update::run_current(args, Some(&mut client)).map_err(fail)
 }
 
 #[cfg(test)]
