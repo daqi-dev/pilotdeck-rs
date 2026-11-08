@@ -1497,6 +1497,66 @@ impl Inner {
             };
             (event, should_persist, persist_seq)
         };
+        if self.native.is_some()
+            && should_persist
+            && let Some(store) = &self.snapshot_store
+        {
+            // Native wait's done capability must follow the actual terminal
+            // checkpoint. TS settleEntry awaits persistEntry(flushOutput:true)
+            // before notifyCompletion/finally(resolveDone). A spawned write
+            // followed immediately by done let a new generation restore the
+            // previous Running snapshot after wait already returned Completed.
+            let store = store.clone();
+            let entry = entry.clone();
+            let handler = self.on_completion.clone();
+            tokio::spawn(async move {
+                let persisted = {
+                    let store = store.clone();
+                    let entry = entry.clone();
+                    tokio::spawn(async move {
+                        BackgroundTaskRuntime::persist_entry_static(&store, &entry, persist_seq)
+                            .await
+                    })
+                    .await
+                };
+                // Borrow the join result until done is published, including a
+                // panicking port's payload destructor.
+                let failure = match &persisted {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(format!(
+                        "Native background terminal state could not be persisted: {error}"
+                    )),
+                    Err(_) => {
+                        Some("Native background terminal persistence worker failed.".to_owned())
+                    }
+                };
+                let mut reported = None;
+                let mut event = event;
+                if let Some(message) = failure {
+                    let mut state = lock(&entry.state);
+                    if state.task.status == TaskStatus::Completed {
+                        state.task.status = TaskStatus::Failed;
+                    }
+                    state.restored_failure = Some(message.as_str().into());
+                    if let Some(event) = &mut event {
+                        event.insert("status".into(), state.task.status.as_str().into());
+                    }
+                    drop(state);
+                    reported = Some(catch_port(|| store.report_failure(message)));
+                }
+                let notified = if let (Some(event), Some(handler)) = (event, handler) {
+                    Some(catch_port(|| handler(event)))
+                } else {
+                    None
+                };
+                let done = &entry.done;
+                done.send_replace(true);
+                drop(notified);
+                drop(reported);
+                drop(persisted);
+            });
+            return;
+        }
         if let (Some(event), Some(handler)) = (event, &self.on_completion) {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(event)));
         }

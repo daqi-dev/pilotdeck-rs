@@ -6,8 +6,30 @@ use super::{storage, tools::PhaseToolHandler};
 static CHAT_SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
 pub(crate) trait ChatCatalog: Send + Sync {
+    fn list<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Vec<JsValue>, ToolError>> + Send + 'a>>;
     fn summary<'a>(&'a self, session: &'a JsString)
-        -> Pin<Box<dyn Future<Output = Result<Option<JsString>, ToolError>> + Send + 'a>>;
+        -> Pin<Box<dyn Future<Output = Result<Option<JsString>, ToolError>> + Send + 'a>> {
+        Box::pin(async move {
+            let rows = self.list().await?;
+            Ok(rows.iter().find(|row| row.get("sessionId").and_then(JsValue::as_string) == Some(session))
+                .and_then(|row| row.get("summary")).and_then(JsValue::as_string).cloned())
+        })
+    }
+}
+/// An adapter over the very same project-scoped native session catalog used
+/// by the Gateway. Blocking work retains the shared storage worker permit.
+pub(crate) struct NativeChatCatalog {
+    pub catalog: Arc<dyn crate::runtime::manager::SessionCatalogPort>,
+    pub input: crate::runtime::manager::SessionCatalogListInput,
+}
+impl ChatCatalog for NativeChatCatalog {
+    fn list<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Vec<JsValue>, ToolError>> + Send + 'a>> {
+        let catalog = self.catalog.clone(); let input = self.input.clone();
+        Box::pin(async move {
+            storage::run(move || catalog.list(&input).map_err(|e| std::io::Error::other(e.to_string())))
+                .await.map_err(|e| ToolError::failed(e.to_string().as_str()))
+        })
+    }
 }
 pub(crate) struct ChatHandler {
     pub run_id: JsString,
@@ -120,8 +142,9 @@ mod tests {
     use crate::host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext};
     struct Catalog;
     impl ChatCatalog for Catalog {
-        fn summary<'a>(&'a self, _: &'a JsString) -> Pin<Box<dyn Future<Output = Result<Option<JsString>, ToolError>> + Send + 'a>> {
-            Box::pin(async { Ok(Some("catalog title".into())) })
+        fn list<'a>(&'a self) -> Pin<Box<dyn Future<Output = Result<Vec<JsValue>, ToolError>> + Send + 'a>> {
+            Box::pin(async { let mut row = JsObject::new(); row.insert("sessionId".into(), "real".into());
+                row.insert("summary".into(), "catalog title".into()); Ok(vec![JsValue::Object(row)]) })
         }
     }
     fn context() -> ToolRunContext {

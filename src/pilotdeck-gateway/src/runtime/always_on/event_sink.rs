@@ -49,12 +49,8 @@ impl PhaseEventSink {
         failures.fetch_add(1, Ordering::AcqRel);
         diagnostic("Always-On event persistence failed");
     }
-}
-impl ApplyEvents for PhaseEventSink {
-    fn drain<'a>(&'a self) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
-        Box::pin(PhaseEventSink::drain(self))
-    }
-    fn emit(&self, run_id: &str, phase: &str, error: Option<&ControlError>) {
+    pub(crate) fn emit_phase(&self, run_id: &str, phase: &str, plan: Option<&JsString>,
+        title: Option<&JsString>, outcome: Option<&str>, error: Option<&ControlError>) {
         let mut event = JsObject::new();
         event.insert("schemaVersion".into(), JsValue::Number(1.0));
         event.insert("eventId".into(), uuid::Uuid::new_v4().to_string().as_str().into());
@@ -63,7 +59,9 @@ impl ApplyEvents for PhaseEventSink {
         event.insert("phase".into(), phase.into());
         let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64() * 1000.0);
         event.insert("timestamp".into(), crate::runtime::cron::iso_from_epoch_ms(now).as_str().into());
-        event.insert("outcome".into(), if error.is_some() { "failed" } else { "executed" }.into());
+        if let Some(plan) = plan { event.insert("planId".into(), JsValue::String(plan.clone())); }
+        if let Some(title) = title { event.insert("title".into(), JsValue::String(title.clone())); }
+        if let Some(outcome) = outcome { event.insert("outcome".into(), outcome.into()); }
         if let Some(error) = error {
             let mut data = JsObject::new(); data.insert("code".into(), error.code.as_str().into());
             data.insert("message".into(), error.message.as_str().into()); event.insert("error".into(), JsValue::Object(data));
@@ -77,6 +75,14 @@ impl ApplyEvents for PhaseEventSink {
             if let Some(previous) = previous && previous.await.is_err() { Self::diagnose(&failures, &diagnostic); }
             if store.append_event(event).await.is_err() { Self::diagnose(&failures, &diagnostic); }
         }));
+    }
+}
+impl ApplyEvents for PhaseEventSink {
+    fn drain<'a>(&'a self) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> {
+        Box::pin(PhaseEventSink::drain(self))
+    }
+    fn emit(&self, run_id: &str, phase: &str, error: Option<&ControlError>) {
+        self.emit_phase(run_id, phase, None, None, Some(if error.is_some() { "failed" } else { "executed" }), error);
     }
 }
 impl PhaseObserver for PhaseEventSink {

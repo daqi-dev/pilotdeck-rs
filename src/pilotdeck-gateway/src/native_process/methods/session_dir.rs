@@ -70,13 +70,21 @@ async fn resolve_project(
 /// Catalog/status callbacks use lexical roots, unlike dialog writes. The
 /// fixed CLI permits a cold unregistered transcript; all IO remains under
 /// the selected home's descriptor-safe storage boundary.
-fn lexical_project(requests: &Requests, params: &JsValue) -> Result<std::path::PathBuf, RequestError> {
+fn lexical_project(
+    requests: &Requests,
+    params: &JsValue,
+) -> Result<std::path::PathBuf, RequestError> {
     match params.get("projectKey") {
         None | Some(JsValue::Null | JsValue::Undefined) => Ok(requests.options.project.clone()),
         Some(JsValue::String(key)) => super::super::project_scope::resolve(key),
         Some(other) => {
             let error = crate::session_model::path_argument(other);
-            Err(RequestError { code: error.code, message: error.message, details: None, validation: None })
+            Err(RequestError {
+                code: error.code,
+                message: error.message,
+                details: None,
+                validation: None,
+            })
         }
     }
 }
@@ -1399,19 +1407,49 @@ mod tests {
     async fn unregistered_catalog_and_cold_status_keep_actual_cli_contract() {
         use crate::runtime::turn::gateway::GatewayRequests;
         let (_scratch, requests) = crate::native_process::management_tests::setup();
-        let unknown = requests.options.project.parent().unwrap().join("cold-unregistered");
+        let unknown = requests
+            .options
+            .project
+            .parent()
+            .unwrap()
+            .join("cold-unregistered");
         std::fs::create_dir_all(&unknown).unwrap();
         let project = JsValue::from(unknown.to_str().unwrap());
         let chat = bounded_chat_dir(&requests.options.home, &unknown).unwrap();
-        let listed = requests.request("list_sessions".into(), object([("projectKey", project.clone())])).await.unwrap();
+        let listed = requests
+            .request(
+                "list_sessions".into(),
+                object([("projectKey", project.clone())]),
+            )
+            .await
+            .unwrap();
         assert_eq!(listed.get("sessions"), Some(&JsValue::Array(vec![])));
         assert!(!chat.exists());
-        let result = requests.request("record_agent_status_message".into(), object([
-            ("projectKey", project), ("sessionKey", "cold-status".into()),
-            ("turnId", "turn".into()), ("status", object([("message", "COLD_STATUS_FIXTURE".into())])),
-        ])).await.unwrap();
+        let result = requests
+            .request(
+                "record_agent_status_message".into(),
+                object([
+                    ("projectKey", project),
+                    ("sessionKey", "cold-status".into()),
+                    ("turnId", "turn".into()),
+                    (
+                        "status",
+                        object([
+                            ("event", "fixture_status".into()),
+                            ("kind", "status".into()),
+                            ("text", "COLD_STATUS_FIXTURE".into()),
+                        ]),
+                    ),
+                ]),
+            )
+            .await
+            .unwrap();
         assert_eq!(result.get("recorded"), Some(&JsValue::Bool(true)));
-        assert!(std::fs::read_to_string(chat.join("cold-status.jsonl")).unwrap().contains("COLD_STATUS_FIXTURE"));
+        assert!(
+            std::fs::read_to_string(chat.join("cold-status.jsonl"))
+                .unwrap()
+                .contains("COLD_STATUS_FIXTURE")
+        );
         assert!(!unknown.join(".pilotdeck").exists());
         requests.owner.shutdown().await.unwrap();
         requests.project.dispose().await.unwrap();
@@ -1432,11 +1470,7 @@ mod tests {
                 .unwrap()
                 .map(|entry| entry.unwrap().file_name())
                 .collect();
-        for method in [
-            "delete_session",
-            "rename_session",
-            "tag_session",
-        ] {
+        for method in ["delete_session", "rename_session", "tag_session"] {
             let params = object([
                 (
                     "projectKey",

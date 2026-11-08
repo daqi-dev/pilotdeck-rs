@@ -23,6 +23,8 @@
 // rest of the unported surface (paths, mutators, tick entries).
 #![allow(dead_code)]
 mod chat_tool;
+mod chat_digest;
+mod phase_runner;
 mod workspace_tool;
 mod workspace_phase;
 mod phase_tools;

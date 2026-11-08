@@ -274,6 +274,17 @@ impl DiscoveryStateStore {
         plan_id: Option<&str>,
         now_ms: f64,
     ) -> io::Result<JsObject> {
+        let plan_id = plan_id.map(JsString::from);
+        self.mark_fire_completed_js(outcome, run_id, plan_id.as_ref(), now_ms)
+    }
+
+    pub(crate) fn mark_fire_completed_js(
+        &self,
+        outcome: &str,
+        run_id: &str,
+        plan_id: Option<&JsString>,
+        now_ms: f64,
+    ) -> io::Result<JsObject> {
         let failures = self
             .read(now_ms)?
             .get("consecutiveFailures")
@@ -288,7 +299,7 @@ impl DiscoveryStateStore {
             ("lastRunId", JsValue::String(JsString::from(run_id))),
         ];
         if let Some(plan_id) = plan_id {
-            values.push(("lastPlanId", JsValue::String(JsString::from(plan_id))));
+            values.push(("lastPlanId", JsValue::String(plan_id.clone())));
         }
         values.push((
             "consecutiveFailures",
@@ -414,6 +425,15 @@ mod tests {
             discovery_lock_file: project_dir.join("locks").join("discovery.lock"),
         };
         (home, DiscoveryStateStore::new(paths))
+    }
+
+    #[test]
+    fn completed_plan_identity_preserves_unpaired_utf16() {
+        let (_home, store) = store("completed-js-id");
+        let id = JsString::from_utf16(vec![b'p' as u16, 0xd800]);
+        store.mark_fire_completed_js("executed", "run", Some(&id), NOW_MS).unwrap();
+        let restored = store.read(NOW_MS).unwrap();
+        assert_eq!(restored.get("lastPlanId").and_then(JsValue::as_string), Some(&id));
     }
 
     // The s1-s10 sequence replays the TS probe byte for byte: the default
