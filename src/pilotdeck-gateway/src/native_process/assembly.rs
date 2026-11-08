@@ -68,6 +68,7 @@ mod memory;
 mod sdk_adapter;
 pub(crate) mod snapshot;
 mod steer;
+mod style_reload;
 mod user_dialog;
 
 pub type Recorders = Arc<Mutex<HashMap<JsString, Weak<Recorder>>>>;
@@ -1079,12 +1080,22 @@ async fn start_assembly(
             // (createLocalGateway.ts:795-835, 1383-1410), composed in
             // `services::native_settings_for_process`; a store load failure
             // fails assembly, like the TS boot.
-            let settings = super::services::native_settings_for_process(
+            let style_reload = Arc::new(style_reload::NativeStyleReload {
+                options: options.clone(),
+                project: build_project.clone(),
+                owner: owner.clone(),
+                interactions: interactions.clone(),
+                sdk: sdk_port.clone(),
+                overrides: session_overrides.clone(),
+            });
+            let settings = super::services::native_settings_for_process_with_styles(
                 owner.clone(),
                 build_project.clone(),
                 &options.home,
                 &options.project,
                 &env,
+                Some(session_overrides.clone()),
+                Some(style_reload),
             )?;
             // #1326 A8 U8: the one `CronManager::new` of the native process.
             // `None` (no `cron:` section) keeps the unconfigured shape — the
@@ -1130,6 +1141,18 @@ async fn start_assembly(
                 cron: cron.clone(),
                 settings: settings.gateway,
                 session_overrides,
+                clear_sdk_state: Some(Arc::new(move |session| {
+                    let sdk = sdk_port.clone();
+                    Box::pin(async move {
+                        sdk.registry
+                            .lock()
+                            .await
+                            .clear_session_state(&session)
+                            .map_err(|error| {
+                                crate::runtime::connection::RequestError::new(error.message)
+                            })
+                    })
+                })),
             });
             let submitter = Arc::new(TurnSubmitter {
                 owner,
@@ -1170,8 +1193,10 @@ async fn start_assembly(
                 )));
                 cron.bind_agent_gateway(recording.clone())
                     .map_err(cron::cron_io_error)?;
-                cron.set_execution_project_filter(Arc::new(move |project| execution_options.serves_project(project)))
-                    .map_err(cron::cron_io_error)?;
+                cron.set_execution_project_filter(Arc::new(move |project| {
+                    execution_options.serves_project(project)
+                }))
+                .map_err(cron::cron_io_error)?;
                 cron.start().map_err(cron::cron_io_error)?;
                 build_cron_slot
                     .set(Arc::new(crate::switch::CronStopHandle::new(
@@ -1468,22 +1493,52 @@ async fn validate_profile_inner(
     if !mcp.servers.own_entries().is_empty() || !mcp.diagnostics.is_empty() {
         return Err("Native isolated profile does not yet support configured MCP servers.".into());
     }
-    for base in [&options.home, &options.project.join(".pilotdeck")] {
-        for name in ["plugins", "skills"] {
-            if management && name == "skills" {
-                continue;
-            }
-            match std::fs::read_dir(base.join(name)) {
-                Ok(entries) => {
-                    if entries.count() != 0 {
-                        return Err("Native isolated profile does not yet support configured plugins, skills or hooks.".into());
+    // The native plugin generation independently rechecks this restricted
+    // profile and never loads non-style families, closing the check/load race.
+    let home = options.home.clone();
+    let project = options.project.clone();
+    let permit = crate::runtime::plugins::style_slots()
+        .acquire_owned()
+        .await
+        .map_err(|_| "Style validation is unavailable.")?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let paths = crate::runtime::plugins::PilotExtensionPaths::resolve(&project, &home);
+        let mut budget = crate::runtime::plugins::loader::StyleBudget::new();
+        crate::runtime::plugins::loader::validate_native_style_paths(
+            &[
+                (
+                    paths.global_plugins_dir,
+                    crate::runtime::plugins::PluginSource::Global,
+                ),
+                (
+                    paths.project_plugins_dir,
+                    crate::runtime::plugins::PluginSource::Project,
+                ),
+            ],
+            &mut budget,
+        )
+        .map_err(|error| error.to_string())?;
+        if !management {
+            for directory in [paths.global_skills_dir, paths.project_skills_dir] {
+                match std::fs::read_dir(directory) {
+                    Ok(mut entries) => {
+                        if entries.next().is_some() {
+                            return Err(
+                                "Native isolated profile does not yet support configured skills."
+                                    .into(),
+                            );
+                        }
                     }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error.to_string()),
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
             }
         }
-    }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
     use crate::runtime::project::ConfigSource;
     let snapshot = crate::runtime::project::NativeConfigSource::new(
         options.project.clone(),
@@ -1573,7 +1628,7 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             .with_context_memory()
             .with_tools_mcp()
             .with_native_background_tasks()
-            .with_plugins(crate::runtime::plugins::PluginRuntimeOptions {
+            .with_native_style_plugins(crate::runtime::plugins::PluginRuntimeOptions {
                 project_root: options.project.clone(),
                 pilot_home: options.home.clone(),
                 builtin_skills_root: None,

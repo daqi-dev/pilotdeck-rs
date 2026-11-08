@@ -498,7 +498,8 @@ impl CronStopHandle {
     /// block the current-thread gateway runtime that advances active turns.
     pub async fn stop_async(self: &Arc<Self>) -> Result<(), CronError> {
         let owner = self.clone();
-        tokio::task::spawn_blocking(move || owner.stop_once()).await
+        tokio::task::spawn_blocking(move || owner.stop_once())
+            .await
             .map_err(|error| CronError::error(format!("Cron stop worker failed: {error}")))?
     }
 

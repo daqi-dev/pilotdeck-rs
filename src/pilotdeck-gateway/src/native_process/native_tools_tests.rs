@@ -44,8 +44,12 @@ fn harness_with_provider(
     harness_inner(decision, mode, sandbox, sdk, provider, false)
 }
 fn harness_inner(
-    decision: &'static str, mode: &'static str, sandbox: Option<&str>, sdk: Option<&str>,
-    provider: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>, with_hooks: bool,
+    decision: &'static str,
+    mode: &'static str,
+    sandbox: Option<&str>,
+    sdk: Option<&str>,
+    provider: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+    with_hooks: bool,
 ) -> Harness {
     let coordinator = Arc::new(GatewayInteractionCoordinator::default());
     let answerer = coordinator.clone();
@@ -69,6 +73,8 @@ fn harness_inner(
         recorder,
         signal.clone(),
         Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
             sdk_permission_mode: sdk.map(Into::into),
             can_prompt: None,
             policy_can_prompt: None,
@@ -78,8 +84,14 @@ fn harness_inner(
                     crate::runtime::interaction::PermissionDecision {
                         request_id: event.get("requestId").unwrap().as_string().unwrap().clone(),
                         decision: if decision == "allow_once" {
-                            if answers.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 { "allow".into() } else { "deny".into() }
-                        } else { decision.into() },
+                            if answers.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                                "allow".into()
+                            } else {
+                                "deny".into()
+                            }
+                        } else {
+                            decision.into()
+                        },
                         remember: None,
                         reason: None,
                     },
@@ -105,14 +117,24 @@ fn harness_inner(
         .bind_turn_permission(permission.clone())
         .unwrap();
     if with_hooks {
-        let hooks_resource = crate::runtime::project::interaction_hooks::InteractionHooks::new(resource.clone());
-        let hooks = hooks_resource.bind_turn(
-            crate::host::modules::lifecycle::Binding {
-                session_id: identity.session_id.clone(), turn_id: identity.turn_id.clone(),
-                cwd: root.to_string_lossy().as_ref().into(), permission_mode: Some(mode.into()),
-                base_env: None, signal: Some(signal.clone()),
-            }, identity.run_id.clone(), vec![], Some(permission.clone()), &mut router,
-        ).unwrap();
+        let hooks_resource =
+            crate::runtime::project::interaction_hooks::InteractionHooks::new(resource.clone());
+        let hooks = hooks_resource
+            .bind_turn(
+                crate::host::modules::lifecycle::Binding {
+                    session_id: identity.session_id.clone(),
+                    turn_id: identity.turn_id.clone(),
+                    cwd: root.to_string_lossy().as_ref().into(),
+                    permission_mode: Some(mode.into()),
+                    base_env: None,
+                    signal: Some(signal.clone()),
+                },
+                identity.run_id.clone(),
+                vec![],
+                Some(permission.clone()),
+                &mut router,
+            )
+            .unwrap();
         ports.tool_execution.bind_turn_hooks(hooks).unwrap();
     }
     Harness {
@@ -539,9 +561,15 @@ mod sandbox_provider_tests;
 #[tokio::test]
 async fn real_permission_lifecycle_prompts_then_consumes_the_single_call_grant() {
     let h = harness_inner("allow_once", "default", None, None, None, true);
-    let input = crate::metadata::object([("file_path", "prompted.txt".into()), ("content", "approved".into())]);
+    let input = crate::metadata::object([
+        ("file_path", "prompted.txt".into()),
+        ("content", "approved".into()),
+    ]);
     success(&invoke(&h, "write_file", "same-call", input.clone()).await);
-    assert_eq!(std::fs::read_to_string(h.root.join("prompted.txt")).unwrap(), "approved");
+    assert_eq!(
+        std::fs::read_to_string(h.root.join("prompted.txt")).unwrap(),
+        "approved"
+    );
     // The second permission callback answers deny; an accidentally retained
     // once grant would execute this identical call without consulting it.
     std::fs::remove_file(h.root.join("prompted.txt")).unwrap();

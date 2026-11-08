@@ -455,6 +455,12 @@ impl TurnHostFactory {
                 )
             })?
             .context();
+        let profile = context.profile().interaction;
+        tool_context.bind_interaction_profile(profile)?;
+        if interaction.switches.elicitation_available == Some(true) {
+            interaction.switches.elicitation_available =
+                Some(profile.question_provider != "disabled");
+        }
         let signal = interaction.signal.clone();
         let turn_context = TurnContext {
             session_id: identity.session_id.clone(),

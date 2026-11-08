@@ -7,16 +7,21 @@ use crate::runtime::{
         Families, Family, Resource, ResourceFamilySource, RuntimeResult, StageContext, StageSink,
     },
 };
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex, Weak},
+};
 
-struct NativeExecutionWorldFamily;
+#[derive(Default)]
+struct NativeExecutionWorldFamily {
+    archives: Mutex<HashMap<PathBuf, Weak<super::background_archive::NativeArchive>>>,
+}
 impl ResourceFamilySource for NativeExecutionWorldFamily {
     fn family(&self) -> Family {
         Family::ExecutionWorld
     }
     fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
-        // The initial native task slice is memory-backed. Durable recovery is
-        // deliberately not claimed until its disk inputs have bounded fd IO.
         let env = context.env();
         let temporary_root = env
             .get("TMPDIR")
@@ -27,10 +32,33 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
             context.profile().sandbox_mode,
             temporary_root,
         ));
+        let project = context.project_root();
+        let archive = {
+            let mut archives = self.archives.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(archive) = archives.get(&project).and_then(Weak::upgrade) {
+                archive
+            } else {
+                let archive =
+                    super::background_archive::NativeArchive::open(&project).map_err(|error| {
+                        crate::runtime::project::RuntimeError::new(error.to_string())
+                    })?;
+                archives.insert(project.clone(), Arc::downgrade(&archive));
+                archive
+            }
+        };
+        let store = archive.handle();
         let resource = Arc::new(crate::runtime::background::BackgroundExecutionWorld {
             resources: BackgroundResources {
-                tasks: crate::runtime::background::BackgroundTaskRuntime::default()
-                    .with_sandbox(sandbox.clone()),
+                tasks: crate::runtime::background::BackgroundTaskRuntime::new_native(
+                    crate::runtime::background::BackgroundTaskRuntimeOptions {
+                        disk_spill_dir: Some(project.join(".pilotdeck/background-tasks")),
+                        snapshot_store: Some(store.clone()),
+                        ..Default::default()
+                    },
+                    sandbox.clone(),
+                    store,
+                    crate::runtime::background::NativeTaskLimits::CLI,
+                ),
                 subagents: Default::default(),
             },
             sandbox,
@@ -42,7 +70,7 @@ impl ResourceFamilySource for NativeExecutionWorldFamily {
 }
 impl Families {
     pub(crate) fn with_native_background_tasks(mut self) -> Self {
-        self.execution_world = Arc::new(NativeExecutionWorldFamily);
+        self.execution_world = Arc::new(NativeExecutionWorldFamily::default());
         self
     }
 }

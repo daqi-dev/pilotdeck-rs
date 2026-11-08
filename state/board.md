@@ -4898,3 +4898,8 @@ READY 本段改动：**新增 4 行 + 翻牌 4 行 + 增记 5 行（153 条：do
 ### 2026-11-08 16:40 · CLI 两小时接续（继续开发）
 
 本机检查点a48a1410b与原快照保全；已取固定#2381 Cron和#2429 MCP源码做本地候选整合，未远端提交或冒称验收。r14沙箱/后台/config/management/alias与两类strict lint通过，全CLI旧server TODO测试已修；r15新cwd helper可见性编译错已修，Gateway独立测试继续。MCP取消/撞名缺口小片已接待测，Cron先加服务项目过滤再实跑。真实update超时已证为debug大文件hash，去符号对照同预算全链成功，但最终release源码安装仍待验证。现场/持有人/风险/资源/下一步见主仓 `_tmp/20261108-cli-completion/handoff-1640.md`；root继续整合与mbp2验证，Terra做elicitation，Sol做Cron最小补差，auditor做后台持久化；下一交接18:40，完整CLI未完成。
+
+
+### 2026-11-08 17:40 · CLI 持续实施检查点（本机，未收口）
+
+统一 canonical 继续串行整合：后台任务复用持久 runtime，加同前缀输出检查点和写失败保持；已在 mbp2 真 CLI/sidecar 跑通创建、等待、服务重启恢复与跨会话拒读。补齐请求 permission mode 到宿主工具上下文、SDK flags/删除清理、headless/disabled 问题交互及真实样式重载；样式真实 probe 验证无变化/修改、超限与 FIFO 保留旧态、pending question 关闭后迟答拒收。r24 背景/权限/样式/严格 lint/四 bin 构建通过；management 最后一个旧诊断文本断言已修，r25 24过1忽略，CLI全套仍在跑（此前r20 533过140忽略）。真实源码首装四件同代成功，下一本机提交送入 mbp2 隔离 Git 验证 update/restart，不写 GitHub。证据主仓 `_tmp/20261108-cli-completion/verify-r{20,22,24,25}`，运行原件 mbp2 对应 runtime；Cron事件、skills、plan/todo、goal及子智能体能力继续，未标完整CLI/A或真人实效完成。原8e32与双方快照保留，下一交接18:40。

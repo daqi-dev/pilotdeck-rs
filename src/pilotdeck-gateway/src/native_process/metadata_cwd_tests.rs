@@ -188,6 +188,7 @@ async fn observe(name: &str) -> (Value, Value) {
         cron: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        clear_sdk_state: None,
     };
     let services = services::Services {
         options: options.clone(),
@@ -557,6 +558,7 @@ async fn observe_archive(name: &str) {
         cron: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        clear_sdk_state: None,
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {

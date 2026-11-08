@@ -52,6 +52,12 @@ pub struct ToolInvocationContext {
 /// handles. It is deliberately opaque to the wire adapter, not JSON data.
 pub type RuntimeContext = Arc<dyn Any + Send + Sync>;
 pub trait ToolContext: Send + Sync {
+    fn bind_interaction_profile(
+        &self,
+        _profile: crate::runtime::project::InteractionProfile,
+    ) -> Result<(), HostError> {
+        Ok(())
+    }
     fn prepare(&self, call: JsValue) -> HostFuture<ToolInvocationContext>;
 }
 

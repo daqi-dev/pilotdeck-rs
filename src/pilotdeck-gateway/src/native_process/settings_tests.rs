@@ -382,6 +382,7 @@ fn base_requests(root: &Path, owner: &SessionOwner) -> Requests {
         cron: None,
         settings: Requests::stub_settings(owner),
         session_overrides: Arc::default(),
+        clear_sdk_state: None,
     }
 }
 
@@ -2087,4 +2088,75 @@ async fn settings_methods_route_through_the_native_request_gate() {
 #[ignore = "regenerates the TS fixture; needs PDRS_BASELINE and Node"]
 fn native_settings_fixture_regenerates_identically_from_ts() {
     crate::test_baseline::regenerates_identically("native-settings");
+}
+
+#[tokio::test]
+async fn native_flags_write_the_turn_store_and_reject_invalid_input_without_mutation() {
+    let h = harness(&[]);
+    let owner = h.probe.owner();
+    let state = Arc::new(super::SessionOverrides::default());
+    let gateway = SettingsGateway::new(SettingsGatewayOptions {
+        owner,
+        apply_flag_settings: Some(state.clone()),
+        update_settings: None,
+        resolve_settings: None,
+        reload_output_styles: None,
+        reload_config: None,
+        reload_extensions: None,
+    });
+    let session: JsString = "flag-session".into();
+    let applied = gateway.apply_flag_settings(&pilotdeck_protocol::parse_json(
+        r#"{"sessionKey":"flag-session","settings":{"effortLevel":"high","permissions":{"defaultMode":"bypassPermissions"}}}"#,
+    ).unwrap()).await.unwrap();
+    assert_eq!(
+        applied.get("applied"),
+        Some(&JsValue::Array(vec![
+            "effortLevel".into(),
+            "permissions.defaultMode".into()
+        ]))
+    );
+    assert_eq!(
+        state.permission_mode(&session),
+        Some("bypassPermissions".into())
+    );
+    let mut config = pilotdeck_protocol::JsObject::new();
+    super::assembly::apply_session_overrides(
+        &mut config,
+        state.permission_mode(&session).as_ref(),
+        state.thinking(&session).as_ref(),
+        None,
+    );
+    assert_eq!(
+        config.get("permissionMode"),
+        Some(&"bypassPermissions".into())
+    );
+    assert_eq!(
+        config.get("thinking").and_then(|v| v.get("mode")),
+        Some(&"high".into())
+    );
+    let before = state.thinking(&session);
+    assert!(
+        gateway
+            .apply_flag_settings(
+                &pilotdeck_protocol::parse_json(
+                    r#"{"sessionKey":"flag-session","settings":{"effortLevel":"invalid"}}"#,
+                )
+                .unwrap()
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(state.thinking(&session), before);
+    let cleared = gateway.apply_flag_settings(&pilotdeck_protocol::parse_json(
+        r#"{"sessionKey":"flag-session","settings":{"effortLevel":null,"permissions":null}}"#,
+    ).unwrap()).await.unwrap();
+    assert_eq!(
+        cleared.get("cleared"),
+        Some(&JsValue::Array(vec![
+            "effortLevel".into(),
+            "permissions.defaultMode".into()
+        ]))
+    );
+    assert!(state.permission_mode(&session).is_none());
+    assert!(state.thinking(&session).is_none());
 }

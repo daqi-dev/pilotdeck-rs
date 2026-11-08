@@ -267,10 +267,15 @@ pub trait TurnEnvironment: Send + Sync {
 pub type EventSink = Arc<dyn Fn(JsObject) + Send + Sync>;
 pub type Clock = Arc<dyn Fn() -> JsValue + Send + Sync>;
 
+pub type InteractionProfileBinder =
+    Arc<dyn Fn(crate::runtime::project::InteractionProfile) -> Result<(), HostError> + Send + Sync>;
+
 #[derive(Clone, Default)]
 pub struct ToolContextPorts {
     pub model: Option<Arc<dyn TurnModel>>,
     pub elicitation: Option<RuntimeContext>,
+    pub bind_interaction_profile: Option<InteractionProfileBinder>,
+    pub elicitation_enabled: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     pub user_dialog: Option<RuntimeContext>,
     pub audit_recorder: Option<RuntimeContext>,
     pub file_history: Option<RuntimeContext>,
@@ -438,7 +443,12 @@ impl ToolContextBuilder {
             "canElicit".into(),
             JsValue::Bool(
                 binding.input.get("canElicit").and_then(JsValue::as_bool) == Some(true)
-                    && self.ports.elicitation.is_some(),
+                    && self.ports.elicitation.is_some()
+                    && self
+                        .ports
+                        .elicitation_enabled
+                        .as_ref()
+                        .is_none_or(|enabled| enabled()),
             ),
         );
         fields.insert(
@@ -497,7 +507,12 @@ impl ToolContextBuilder {
             files,
             abort_signal: binding.abort_signal.clone(),
             model: self.auxiliary_model.clone(),
-            elicitation: self.ports.elicitation.clone(),
+            elicitation: self.ports.elicitation.clone().filter(|_| {
+                self.ports
+                    .elicitation_enabled
+                    .as_ref()
+                    .is_none_or(|enabled| enabled())
+            }),
             user_dialog: self.ports.user_dialog.clone(),
             audit_recorder: self.ports.audit_recorder.clone(),
             file_history: self.ports.file_history.clone(),
@@ -568,6 +583,15 @@ pub struct CapabilityContext {
     pub plan_todo: Option<Arc<dyn SessionService>>,
 }
 impl capability::ToolContext for CapabilityContext {
+    fn bind_interaction_profile(
+        &self,
+        profile: crate::runtime::project::InteractionProfile,
+    ) -> Result<(), HostError> {
+        if let Some(bind) = &self.builder.ports.bind_interaction_profile {
+            bind(profile)?;
+        }
+        Ok(())
+    }
     fn prepare(&self, call: JsValue) -> HostFuture<ToolInvocationContext> {
         let builder = self.builder.clone();
         let plans = self.plan_todo.clone();

@@ -64,6 +64,16 @@ fn cron(requests: &Requests) -> bool {
     requests.cron.is_some()
 }
 
+fn flag_settings(requests: &Requests) -> bool {
+    requests.settings.supports("apply_flag_settings")
+}
+fn update_settings(requests: &Requests) -> bool {
+    requests.settings.supports("update_settings")
+}
+fn output_styles(requests: &Requests) -> bool {
+    requests.settings.supports("reload_output_styles")
+}
+
 /// Advertised names, in the order the TS baseline records them.
 // One row per name: the table is read as a table (and diffed against
 // `oracle.json` row by row), so it is laid out by hand rather than exploded
@@ -113,6 +123,9 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "set_mcp_permission_mode_override", methods: &[], wired: compiled_in },
     Capability { name: "project_file_read", methods: &[], wired: compiled_in },
     Capability { name: "set_permission_mode", methods: &[], wired: compiled_in },
+    Capability { name: "apply_flag_settings", methods: &[], wired: flag_settings },
+    Capability { name: "update_settings", methods: &[], wired: update_settings },
+    Capability { name: "reload_output_styles", methods: &[], wired: output_styles },
     Capability { name: "resolve_settings", methods: &[], wired: compiled_in },
     Capability { name: "set_session_thinking", methods: &[], wired: compiled_in },
     Capability { name: "output_styles_list", methods: &[], wired: compiled_in },
@@ -161,18 +174,6 @@ pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[
     (
         "session_transcript_archive",
         "export/restore_session_transcript are not ported (methods/history.rs answers CAPABILITY_UNAVAILABLE)",
-    ),
-    (
-        "apply_flag_settings",
-        "settings delegate not bound in this process; porting tracked by #1671",
-    ),
-    (
-        "update_settings",
-        "settings delegate not bound in this process; porting tracked by #1671",
-    ),
-    (
-        "reload_output_styles",
-        "settings delegate not bound in this process; porting tracked by #1671",
     ),
     (
         "sdk_session_config",

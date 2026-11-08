@@ -257,6 +257,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             cron: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+            clear_sdk_state: None,
         }
     })
 }
@@ -715,9 +716,7 @@ async fn production_host_management_and_restart() {
         negative_assert!(
             assembly::validate_profile(&options, &options.environment(crate::config::Env::new()))
                 .await
-                .is_err_and(|e| e
-                    .to_string()
-                    .contains("configured plugins, skills or hooks")),
+                .is_err_and(|e| e.to_string().contains("configured skills")),
             "#1231 skill management does not enable execution"
         );
         host.shutdown(options.drain_budget)
@@ -1403,7 +1402,17 @@ async fn settings_capabilities_match_served_delegates() {
     );
     for &method in &published {
         let result = requests
-            .settings_request(method.to_owned(), JsValue::Undefined)
+            .settings_request(
+                method.to_owned(),
+                if method == "update_settings" {
+                    crate::metadata::object([
+                        ("source", "localSettings".into()),
+                        ("settings", crate::metadata::object([])),
+                    ])
+                } else {
+                    JsValue::Undefined
+                },
+            )
             .await;
         if advertised.iter().any(|name| name == method) {
             // #1869 item 3: a non-CAPABILITY_UNAVAILABLE answer is not proof
@@ -1457,7 +1466,17 @@ async fn settings_capabilities_match_served_delegates() {
     // was true for both regressions.
     for &method in &reloads {
         let result = requests
-            .settings_request(method.to_owned(), JsValue::Undefined)
+            .settings_request(
+                method.to_owned(),
+                if method == "update_settings" {
+                    crate::metadata::object([
+                        ("source", "localSettings".into()),
+                        ("settings", crate::metadata::object([])),
+                    ])
+                } else {
+                    JsValue::Undefined
+                },
+            )
             .await;
         let value = match result {
             Ok(value) => value,

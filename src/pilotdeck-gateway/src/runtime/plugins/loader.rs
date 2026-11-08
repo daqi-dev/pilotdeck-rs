@@ -278,6 +278,317 @@ pub fn load_plugin_from_path(
     })
 }
 
+/// Request-wide resource budget for the public style-only reload path.
+pub(crate) struct StyleBudget {
+    remaining_bytes: u64,
+    remaining_entries: usize,
+}
+impl StyleBudget {
+    pub(crate) fn new() -> Self {
+        Self {
+            remaining_bytes: 64 * 1024 * 1024,
+            remaining_entries: 10_000,
+        }
+    }
+    pub(super) fn entry(&mut self) -> Result<(), PluginRuntimeError> {
+        self.remaining_entries = self
+            .remaining_entries
+            .checked_sub(1)
+            .ok_or_else(style_limit)?;
+        Ok(())
+    }
+    pub(crate) fn reserve(&mut self, bytes: usize) -> Result<(), PluginRuntimeError> {
+        self.remaining_bytes = self
+            .remaining_bytes
+            .checked_sub(bytes as u64)
+            .ok_or_else(style_limit)?;
+        Ok(())
+    }
+    pub(super) fn read(&mut self, file: &mut std::fs::File) -> Result<String, PluginRuntimeError> {
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        file.take(self.remaining_bytes.saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
+        if bytes.len() as u64 > self.remaining_bytes {
+            return Err(style_limit());
+        }
+        self.remaining_bytes -= bytes.len() as u64;
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    }
+}
+fn style_limit() -> PluginRuntimeError {
+    PluginRuntimeError::gateway(
+        "STYLE_RELOAD_LIMIT",
+        "Output style reload resource limit exceeded.",
+    )
+}
+fn bounded_style_json(
+    path: &Path,
+    budget: &mut StyleBudget,
+) -> Result<JsValue, PluginRuntimeError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|e| io_error("open", path, &e))?;
+        if !file
+            .metadata()
+            .map_err(|e| io_error("open", path, &e))?
+            .is_file()
+        {
+            return Err(PluginRuntimeError::new(
+                "Output style manifest is not a regular file.",
+            ));
+        }
+        let text = budget.read(&mut file)?;
+        parse_json(&text).map_err(|e| {
+            PluginRuntimeError::new(json_syntax::parse_error(&text).unwrap_or(e.message))
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, budget);
+        Err(PluginRuntimeError::new(
+            "Bounded output style loading requires Unix.",
+        ))
+    }
+}
+pub(crate) fn discover_style_paths(
+    directories: &[(PathBuf, PluginSource)],
+    budget: &mut StyleBudget,
+) -> Result<Vec<DiscoveredPluginPath>, PluginRuntimeError> {
+    let mut output = Vec::new();
+    for (directory, source) in directories {
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        let mut names = Vec::new();
+        for entry in entries {
+            budget.entry()?;
+            match entry {
+                Ok(entry) => names.push(entry.file_name()),
+                Err(_) => {
+                    names.clear();
+                    break;
+                }
+            }
+        }
+        names.sort();
+        for name in names {
+            let path = directory.join(name.to_string_lossy().as_ref());
+            if fs::metadata(&path).is_ok_and(|m| m.is_dir()) {
+                output.push(DiscoveredPluginPath {
+                    path,
+                    source: *source,
+                });
+            }
+        }
+    }
+    Ok(output)
+}
+/// Native CLI profile: only inert output-style plugins are admitted. This
+/// check is repeated by generation loading; no non-style family is parsed.
+pub(crate) fn validate_native_style_paths(
+    directories: &[(PathBuf, PluginSource)],
+    budget: &mut StyleBudget,
+) -> Result<Vec<DiscoveredPluginPath>, PluginRuntimeError> {
+    let mut found = Vec::new();
+    for (directory, source) in directories {
+        let entries = match fs::read_dir(directory) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(PluginRuntimeError::new(e.to_string())),
+        };
+        let mut paths = Vec::new();
+        for entry in entries {
+            budget.entry()?;
+            let entry = entry.map_err(|e| PluginRuntimeError::new(e.to_string()))?;
+            let meta = fs::symlink_metadata(entry.path())
+                .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
+            if !meta.is_dir() {
+                return Err(PluginRuntimeError::new(
+                    "Native profile requires pure output-style plugins.",
+                ));
+            }
+            paths.push(entry.path());
+        }
+        paths.sort();
+        for path in paths {
+            let manifest = bounded_style_json(&path.join("plugin.json"), budget)?;
+            let object = manifest.as_object().ok_or_else(|| {
+                PluginRuntimeError::new("Native style manifest must be an object.")
+            })?;
+            for (key, _) in object.own_entries() {
+                if !["name", "version", "description", "outputStyles"]
+                    .iter()
+                    .any(|allowed| key.equals_str(allowed))
+                {
+                    return Err(PluginRuntimeError::new(
+                        "Native profile requires pure output-style plugins.",
+                    ));
+                }
+            }
+            parse_plugin_manifest(&manifest)?;
+            let dirs: Vec<String> = match object.get("outputStyles") {
+                None => vec!["output-styles".into()],
+                Some(JsValue::String(value)) => vec![
+                    value
+                        .to_utf8()
+                        .map_err(|_| PluginRuntimeError::new("Invalid output style path."))?,
+                ],
+                Some(JsValue::Array(values)) => values
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_string()
+                            .ok_or_else(|| PluginRuntimeError::new("Invalid output style path."))?
+                            .to_utf8()
+                            .map_err(|_| PluginRuntimeError::new("Invalid output style path."))
+                    })
+                    .collect::<Result<_, _>>()?,
+                _ => return Err(PluginRuntimeError::new("Invalid output style path.")),
+            };
+            if dirs.is_empty() {
+                return Err(PluginRuntimeError::new(
+                    "Native profile requires an output-style directory.",
+                ));
+            }
+            let mut roots = std::collections::HashSet::new();
+            for dir in &dirs {
+                use std::path::Component;
+                let path = Path::new(dir);
+                let mut components = path.components();
+                let Some(Component::Normal(first)) = components.next() else {
+                    return Err(PluginRuntimeError::new("Invalid output style path."));
+                };
+                if !components.all(|part| matches!(part, Component::Normal(_))) {
+                    return Err(PluginRuntimeError::new("Invalid output style path."));
+                }
+                let first = first.to_string_lossy().into_owned();
+                if [
+                    "commands", "skills", "hooks", "agents", "routers", "mcp", "lsp",
+                ]
+                .contains(&first.as_str())
+                {
+                    return Err(PluginRuntimeError::new(
+                        "Native profile requires pure output-style plugins.",
+                    ));
+                }
+                roots.insert(first);
+            }
+            let mut has_styles = false;
+            for item in fs::read_dir(&path).map_err(|e| PluginRuntimeError::new(e.to_string()))? {
+                budget.entry()?;
+                let item = item.map_err(|e| PluginRuntimeError::new(e.to_string()))?;
+                let name = item.file_name();
+                let name = name.to_string_lossy();
+                let meta = fs::symlink_metadata(item.path())
+                    .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
+                if name == "plugin.json" && meta.is_file() {
+                    continue;
+                }
+                if (name == "README.md" || name == "LICENSE") && meta.is_file() {
+                    continue;
+                }
+                if roots.contains(name.as_ref()) && meta.is_dir() {
+                    has_styles = true;
+                    continue;
+                }
+                return Err(PluginRuntimeError::new(
+                    "Native profile requires pure output-style plugins.",
+                ));
+            }
+            if !has_styles {
+                return Err(PluginRuntimeError::new(
+                    "Native profile requires an output-style directory.",
+                ));
+            }
+            found.push(DiscoveredPluginPath {
+                path,
+                source: *source,
+            });
+        }
+    }
+    Ok(found)
+}
+/// Build a generation containing only inert style contributions. This never
+/// loads the full plugin manifest, hooks, tools, skills, routers or MCP.
+pub(crate) fn stage_native_style_plugins(
+    options: &PluginRuntimeOptions,
+) -> Result<LoadFromDiskResult, PluginRuntimeError> {
+    if !options.builtin_plugins.is_empty() || options.builtin_skills_root.is_some() {
+        return Err(PluginRuntimeError::new(
+            "Native style-only plugin family cannot load builtins.",
+        ));
+    }
+    let paths = PilotExtensionPaths::resolve(&options.project_root, &options.pilot_home);
+    let mut budget = StyleBudget::new();
+    let paths = validate_native_style_paths(
+        &[
+            (paths.global_plugins_dir, PluginSource::Global),
+            (paths.project_plugins_dir, PluginSource::Project),
+        ],
+        &mut budget,
+    )?;
+    let mut plugins = Vec::new();
+    for entry in paths {
+        let style = load_style_bounded(&entry.path, entry.source, &mut budget)?;
+        plugins.push(Arc::new(LoadedPlugin {
+            name: style.name,
+            path: style.path,
+            source: style.source,
+            output_styles: style.output_styles,
+            commands: vec![],
+            skills: vec![],
+            hooks_config: None,
+            mcp_servers: None,
+            lsp_servers: None,
+            dispose: None,
+        }));
+    }
+    Ok(LoadFromDiskResult {
+        plugins,
+        staged_failures: vec![],
+    })
+}
+
+pub(crate) fn load_style_bounded(
+    path: &Path,
+    source: PluginSource,
+    budget: &mut StyleBudget,
+) -> Result<LoadedPluginOutputStyles, PluginRuntimeError> {
+    let parsed = bounded_style_json(&path.join("plugin.json"), budget)?;
+    let manifest = parse_plugin_manifest(&parsed)?;
+    let manifest = manifest.as_object().expect("validated manifest");
+    let undefined = JsValue::Undefined;
+    let configured = manifest.get_property("outputStyles").unwrap_or(&undefined);
+    let dirs = match configured {
+        JsValue::String(_) => vec![string(configured).unwrap()],
+        JsValue::Array(items) => items.iter().filter_map(string).collect(),
+        _ => vec!["output-styles".into()],
+    };
+    let mut output_styles = Vec::new();
+    for dir in dirs {
+        let base = config::join_path(path, &dir);
+        match markdown::load_plugin_commands_bounded(&basename(path), &base, path, budget) {
+            Ok(styles) => output_styles.extend(styles),
+            Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => return Err(error),
+            Err(_) => {}
+        }
+    }
+    Ok(LoadedPluginOutputStyles {
+        name: string(manifest.get_property("name").expect("validated name"))
+            .expect("validated name"),
+        path: path.into(),
+        source,
+        output_styles,
+    })
+}
+
 /// The style-only loader never reads hooks or unrelated markdown directories.
 pub struct LoadedPluginOutputStyles {
     pub name: String,

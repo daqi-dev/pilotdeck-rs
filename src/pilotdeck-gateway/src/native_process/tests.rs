@@ -1391,6 +1391,7 @@ async fn requests_registry_switch_gates_run_reads() {
             cron: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
+            clear_sdk_state: None,
         };
         let described = requests
             .describe_server()

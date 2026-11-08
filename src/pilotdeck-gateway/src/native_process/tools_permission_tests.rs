@@ -92,6 +92,8 @@ fn prompt_flags_are_fresh_each_turn_and_managed_false_is_a_ceiling() {
             recorder.clone(),
             Cancellation::new(),
             Some(TurnInteractionAuthority {
+                permission_mode: None,
+                base_permission_mode: None,
                 sdk_permission_mode: None,
                 can_prompt: requested,
                 policy_can_prompt: policy,
@@ -139,6 +141,8 @@ fn prompt_flags_are_fresh_each_turn_and_managed_false_is_a_ceiling() {
         recorder,
         Cancellation::new(),
         Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
             sdk_permission_mode: None,
             can_prompt: Some(true),
             policy_can_prompt: None,
@@ -167,6 +171,8 @@ fn selectors_are_read_again_and_managed_default_mode_wins() {
             recorder.clone(),
             Cancellation::new(),
             Some(TurnInteractionAuthority {
+                permission_mode: None,
+                base_permission_mode: None,
                 sdk_permission_mode: None,
                 can_prompt: None,
                 policy_can_prompt: None,
@@ -200,6 +206,8 @@ fn selectors_are_read_again_and_managed_default_mode_wins() {
         recorder,
         Cancellation::new(),
         Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
             sdk_permission_mode: None,
             can_prompt: None,
             policy_can_prompt: None,
@@ -232,6 +240,8 @@ async fn read_file_ask_once_reaches_real_native_execution_and_cannot_be_replayed
         recorder,
         Cancellation::new(),
         Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
             sdk_permission_mode: None,
             can_prompt: None,
             policy_can_prompt: None,
@@ -367,6 +377,8 @@ fn sdk_mode_changes_only_per_turn_permission_context() {
             recorder.clone(),
             Cancellation::new(),
             Some(TurnInteractionAuthority {
+                permission_mode: None,
+                base_permission_mode: None,
                 sdk_permission_mode: mode.map(Into::into),
                 can_prompt: Some(true),
                 policy_can_prompt: None,
@@ -390,5 +402,53 @@ fn sdk_mode_changes_only_per_turn_permission_context() {
                 .as_js_string()
                 .equals_str("default")
         );
+    }
+}
+
+#[test]
+fn admitted_mode_reaches_host_permission_and_remembers_plan_base() {
+    let (_scratch, tools, recorder, identity) =
+        make_tools(JsObject::new(), Arc::default(), RuleSetHandle::empty());
+    for (mode, base, expected) in [
+        ("bypassPermissions", None, "bypassPermissions"),
+        ("plan", Some("bypassPermissions"), "plan"),
+        ("default", None, "default"),
+    ] {
+        let ports = tools.turn_with_authority(
+            &identity,
+            recorder.clone(),
+            Cancellation::new(),
+            Some(TurnInteractionAuthority {
+                permission_mode: Some(mode.into()),
+                base_permission_mode: base.map(Into::into),
+                sdk_permission_mode: None,
+                can_prompt: Some(false),
+                policy_can_prompt: None,
+                emit: Arc::new(|_| false),
+            }),
+        );
+        assert_eq!(
+            ports.interaction.permission.context.mode.as_js_string(),
+            &JsString::from(expected)
+        );
+        assert_eq!(
+            ports.context_config.get("permissionMode"),
+            Some(&JsValue::from(expected))
+        );
+        assert!(!ports.interaction.permission.context.can_prompt);
+        if mode == "plan" {
+            assert_eq!(
+                tools
+                    .permission
+                    .0
+                    .lock()
+                    .unwrap()
+                    .1
+                    .as_ref()
+                    .unwrap()
+                    .as_js_string(),
+                &JsString::from("bypassPermissions")
+            );
+        }
     }
 }

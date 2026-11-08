@@ -534,7 +534,13 @@ fn output(
     } else {
         format!("{head}\n{}", slice.content)
     };
-    Ok(text_output(&text, output_data(task_id, &slice, &task)))
+    Ok(output_with_failure(
+        runtime,
+        &key,
+        &session,
+        text,
+        output_data(task_id, &slice, &task),
+    ))
 }
 
 async fn wait(
@@ -600,7 +606,7 @@ async fn wait(
     data.insert("waitedMs".into(), JsValue::Number(waited.waited_ms));
     data.insert("timedOut".into(), JsValue::Bool(waited.timed_out));
     data.insert("outcome".into(), string(waited.outcome));
-    Ok(text_output(&text, data))
+    Ok(output_with_failure(runtime, &key, &session, text, data))
 }
 
 async fn stop(
@@ -642,4 +648,19 @@ async fn stop(
             ("status", string(after.status.as_str())),
         ]),
     ))
+}
+
+fn output_with_failure(
+    runtime: &BackgroundTaskRuntime,
+    key: &JsString,
+    session: &JsValue,
+    mut text: String,
+    mut data: JsObject,
+) -> ToolOutput {
+    if let Some(reason) = runtime.failure_reason(key, Some(session)) {
+        text.push('\n');
+        text.push_str(&String::from_utf16_lossy(reason.units()));
+        data.insert("errorReason".into(), JsValue::String(reason));
+    }
+    text_output(&text, data)
 }

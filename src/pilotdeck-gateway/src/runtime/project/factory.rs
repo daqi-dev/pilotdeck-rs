@@ -519,6 +519,14 @@ impl Families {
         self
     }
 
+    /// Native CLI generation restricted to inert output-style contributions.
+    pub fn with_native_style_plugins(mut self, options: PluginRuntimeOptions) -> Self {
+        self.plugins = Arc::new(super::plugins::NativeStylePluginFamilySource { options });
+        self.router_custom_routers =
+            Some(Arc::new(super::custom_routers::CustomRouterFamilySource));
+        self
+    }
+
     /// Publish the interaction capability marker (permission, hooks, event,
     /// steer) for A6.9-pr3c2. This is a factory-level marker on the
     /// execution-world family, not the per-turn ports: their binding stays

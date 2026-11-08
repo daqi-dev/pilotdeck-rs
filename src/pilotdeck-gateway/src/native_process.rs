@@ -11,6 +11,8 @@ use std::{
 mod assembly;
 #[cfg(unix)]
 mod background;
+#[cfg(unix)]
+mod background_archive;
 mod local_host;
 mod server_host;
 pub use local_host::{LocalHost, LocalHostOptions};
@@ -24,8 +26,8 @@ mod capabilities;
 // #1328 replay test (channel::weixin::replay_tests) drives the assembly
 // directly, in the channel subtree rather than this one.
 pub(crate) mod channels;
-mod families;
 pub(crate) mod elicitation;
+mod families;
 mod management;
 mod methods;
 pub use methods::registered_methods;

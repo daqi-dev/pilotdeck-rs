@@ -59,7 +59,7 @@ pub struct PluginRouterContribution {
 }
 
 /// `OutputStyleContribution` from `PluginRuntime.listOutputStyles`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PluginOutputStyleContribution {
     pub name: String,
     pub description: Option<String>,
@@ -694,7 +694,7 @@ fn to_skill_contribution(
     }
 }
 
-fn to_output_style(
+pub(super) fn to_output_style(
     plugin: &LoadedPlugin,
     style: &super::loader::LoadedPluginCommand,
 ) -> PluginOutputStyleContribution {
@@ -714,7 +714,7 @@ fn to_output_style(
 }
 
 /// Sort with Node's ICU en-US `localeCompare` (stable, like JS `Array#sort`).
-fn locale_sort_by<T, F: Fn(&T) -> &str>(items: &mut [T], key: F) {
+pub(super) fn locale_sort_by<T, F: Fn(&T) -> &str>(items: &mut [T], key: F) {
     let locale = node_locale(|k| std::env::var(k).ok());
     if let Ok(collator) = node_collator(&locale) {
         items.sort_by(|a, b| {

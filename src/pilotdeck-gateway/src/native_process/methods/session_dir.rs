@@ -294,6 +294,11 @@ impl Requests {
             // Delete transcript files.
             if let Some(result) = storage.delete_session_transcripts() {
                 result.map_err(|e| RequestError::new(e.to_string()))?;
+            } else if let Some(result) = storage.delete_transcript() {
+                result.map_err(|e| RequestError::new(e.to_string()))?;
+            } else {
+                std::fs::remove_file(&storage.transcript_path)
+                    .map_err(|e| RequestError::new(e.to_string()))?;
             }
             // Remove file history and tool results directories.
             for dir in [
@@ -301,12 +306,23 @@ impl Requests {
                 &storage.tool_results_dir,
                 &storage.subagents_dir,
             ] {
-                let _ = std::fs::remove_dir_all(dir);
+                match std::fs::remove_dir_all(dir) {
+                    Ok(()) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(RequestError::new(error.to_string())),
+                }
             }
             Ok(())
         })
         .await
         .map_err(|e| RequestError::new(e.to_string()))??;
+        if let Some(clear) = &self.clear_sdk_state {
+            clear(key.clone()).await?;
+        }
+        self.mcp
+            .config()
+            .clear_sdk_session_state(&JsValue::String(key.clone()));
+        self.session_overrides.clear_sdk_state(&key);
         Ok(JsValue::Undefined)
     }
 
@@ -1297,5 +1313,65 @@ mod tests {
         }
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
+    }
+    #[tokio::test]
+    async fn delete_clears_sdk_state_only_after_durable_storage_removal() {
+        let (_scratch, mut requests) = crate::native_process::management_tests::setup();
+        let key: JsString = "sdk-delete".into();
+        let storage = _make_adapter(&requests)
+            .create_session_storage(SessionStorageInput {
+                project_root: requests.options.project.clone(),
+                pilot_home: requests.options.home.clone(),
+                session_id: key.clone(),
+                now: None,
+            })
+            .unwrap();
+        storage
+            .transcript
+            .record_session_metadata(
+                &key,
+                &"seed".into(),
+                object([("title", "delete me".into())]),
+            )
+            .unwrap();
+        let path = storage.transcript_path.clone();
+        let called = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = called.clone();
+        requests.clear_sdk_state = Some(Arc::new(move |session| {
+            let counter = counter.clone();
+            let path = path.clone();
+            Box::pin(async move {
+                assert_eq!(session, JsString::from("sdk-delete"));
+                assert!(
+                    !path.exists(),
+                    "clear occurs after the transcript is removed"
+                );
+                counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            })
+        }));
+        requests
+            .session_overrides
+            .set_thinking(&key, "old-thinking".into());
+        requests
+            .session_overrides
+            .set_output_style(&key, "old-style".into());
+        requests
+            .session_overrides
+            .set_permission_mode(&key, "ask".into());
+        let params = object([("sessionKey", JsValue::String(key.clone()))]);
+        requests.session_delete(&params).await.unwrap();
+        assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(requests.session_overrides.thinking(&key).is_none());
+        assert!(requests.session_overrides.output_style(&key).is_none());
+        assert_eq!(
+            requests.session_overrides.permission_mode(&key),
+            Some("ask".into())
+        );
+        assert_eq!(
+            requests.session_delete(&params).await.unwrap_err().code,
+            "SESSION_NOT_FOUND"
+        );
+        assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

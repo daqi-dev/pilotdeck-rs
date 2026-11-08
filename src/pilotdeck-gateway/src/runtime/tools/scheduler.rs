@@ -23,7 +23,9 @@ struct GrantCleanup {
 }
 impl Drop for GrantCleanup {
     fn drop(&mut self) {
-        let _ = self.permission.revoke_native_grant(&self.tool, &self.call, &self.input);
+        let _ = self
+            .permission
+            .revoke_native_grant(&self.tool, &self.call, &self.input);
     }
 }
 
@@ -351,32 +353,75 @@ impl ToolRuntime {
                     )
                     .await?
             };
-            if decision.get("type").and_then(JsValue::as_string).is_some_and(|v| v.equals_str("ask"))
-                && let (Some(permission), Some(hooks)) = (self.turn_permission.get(), self.turn_hooks.get())
+            if decision
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|v| v.equals_str("ask"))
+                && let (Some(permission), Some(hooks)) =
+                    (self.turn_permission.get(), self.turn_hooks.get())
             {
                 use crate::host::modules::lifecycle::LifecyclePort;
                 use crate::runtime::hooks::{HookEffect, LifecycleDispatchInput};
                 let _grant_cleanup = GrantCleanup {
-                    permission: permission.clone(), tool: name.clone(), call: call.id.clone(), input: call.input.clone(),
+                    permission: permission.clone(),
+                    tool: name.clone(),
+                    call: call.id.clone(),
+                    input: call.input.clone(),
                 };
-                let cwd = context.fields.get("cwd").and_then(JsValue::as_string).cloned().unwrap_or_default();
+                let cwd = context
+                    .fields
+                    .get("cwd")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+                    .unwrap_or_default();
                 let base_input = object([
-                    ("sessionId", context.fields.get("sessionId").cloned().unwrap_or(JsValue::Undefined)),
+                    (
+                        "sessionId",
+                        context
+                            .fields
+                            .get("sessionId")
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
                     ("transcriptPath", "".into()),
                     ("cwd", JsValue::String(cwd.clone())),
-                    ("permissionMode", context.fields.get("permissionMode").cloned().unwrap_or(JsValue::Undefined)),
+                    (
+                        "permissionMode",
+                        context
+                            .fields
+                            .get("permissionMode")
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
                 ]);
                 let payload = object([
                     ("toolName", JsValue::String(name.clone())),
                     ("toolInput", call.input.clone()),
                     ("toolUseId", JsValue::String(call.id.clone())),
-                    ("permissionSuggestions", decision.get("request").and_then(|r| r.get("options")).cloned().unwrap_or(JsValue::Undefined)),
+                    (
+                        "permissionSuggestions",
+                        decision
+                            .get("request")
+                            .and_then(|r| r.get("options"))
+                            .cloned()
+                            .unwrap_or(JsValue::Undefined),
+                    ),
                 ]);
-                let dispatched = hooks.dispatch(LifecycleDispatchInput {
-                    event: "PermissionRequest".into(), base_input, payload: Some(payload),
-                    match_query: Some(name.clone()), cwd,
-                    env: context.fields.get("env").and_then(JsValue::as_object).cloned(), signal: None,
-                }).await?;
+                let dispatched = hooks
+                    .dispatch(LifecycleDispatchInput {
+                        event: "PermissionRequest".into(),
+                        base_input,
+                        payload: Some(payload),
+                        match_query: Some(name.clone()),
+                        cwd,
+                        env: context
+                            .fields
+                            .get("env")
+                            .and_then(JsValue::as_object)
+                            .cloned(),
+                        signal: None,
+                    })
+                    .await?;
                 if let Some(result) = dispatched.effects.iter().find_map(|effect| match effect {
                     HookEffect::PermissionRequestResult { result } => Some(result),
                     _ => None,
@@ -387,11 +432,16 @@ impl ToolRuntime {
                         // Re-evaluate native policy and consume it once; an
                         // unsupported unbacked hook allow stays ask/fail-closed.
                         let definition: Arc<dyn ToolDefinition> = tool.clone();
-                        decision = permission.decide_for_execution(definition, call.input.clone(), call.id.clone()).await?;
+                        decision = permission
+                            .decide_for_execution(definition, call.input.clone(), call.id.clone())
+                            .await?;
                     } else if behavior.is_some_and(|v| v.equals_str("deny")) {
                         decision = JsValue::Object(object([
                             ("type", "deny".into()),
-                            ("message", result.get("message").cloned().unwrap_or(JsValue::Undefined)),
+                            (
+                                "message",
+                                result.get("message").cloned().unwrap_or(JsValue::Undefined),
+                            ),
                         ]));
                     }
                 }
@@ -544,8 +594,9 @@ impl ToolExecution for ToolRuntime {
         &self,
         hooks: crate::runtime::project::interaction_hooks::TurnHooks,
     ) -> Result<(), HostError> {
-        self.turn_hooks.set(hooks)
-            .map_err(|_| ModuleError::new("Tool execution hooks are already bound to a turn.").into())
+        self.turn_hooks.set(hooks).map_err(|_| {
+            ModuleError::new("Tool execution hooks are already bound to a turn.").into()
+        })
     }
     fn execute_all(
         &self,

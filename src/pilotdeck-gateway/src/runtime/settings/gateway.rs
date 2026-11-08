@@ -225,6 +225,19 @@ impl SettingsGateway {
         Self { options }
     }
 
+    /// Presence of the actual delegate, shared with native capability discovery.
+    pub(crate) fn supports(&self, method: &str) -> bool {
+        match method {
+            "apply_flag_settings" => self.options.apply_flag_settings.is_some(),
+            "update_settings" => self.options.update_settings.is_some(),
+            "resolve_settings" => self.options.resolve_settings.is_some(),
+            "reload_output_styles" => self.options.reload_output_styles.is_some(),
+            "reload_config" => self.options.reload_config.is_some(),
+            "reload_extensions" => self.options.reload_extensions.is_some(),
+            _ => false,
+        }
+    }
+
     /// `InProcessGateway.applyFlagSettings` (client/InProcessGateway.ts:2337).
     pub async fn apply_flag_settings(&self, input: &JsValue) -> Result<JsValue, SettingsError> {
         let port = self

@@ -673,7 +673,9 @@ struct SharedWaiter {
 impl SharedWaiter {
     fn commit_locked(&mut self) {
         self.active = false;
-        self.entry.waiters.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.entry
+            .waiters
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
     fn release(&mut self) -> Option<Settle> {
         if !self.active {
@@ -681,7 +683,10 @@ impl SharedWaiter {
         }
         let mut state = lock(&self.provider.state);
         self.active = false;
-        let previous = self.entry.waiters.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        let previous = self
+            .entry
+            .waiters
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         if previous == 1 && *self.entry.leases.borrow() == 0 {
             Some(self.provider.stop_entry_locked(&mut state, &self.entry))
         } else {
@@ -965,8 +970,14 @@ impl ProjectMcpRuntimeProvider {
                         entry
                     }
                 };
-                entry.waiters.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                let waiter = SharedWaiter { provider: self.clone(), entry: entry.clone(), active: true };
+                entry
+                    .waiters
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let waiter = SharedWaiter {
+                    provider: self.clone(),
+                    entry: entry.clone(),
+                    active: true,
+                };
                 (entry, waiter)
             };
             if let Err(error) = settled(entry.ready.clone()).await {

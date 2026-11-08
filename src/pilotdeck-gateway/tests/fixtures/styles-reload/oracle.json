@@ -1,0 +1,122 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "results": [
+    {
+      "name": "initial",
+      "result": null,
+      "styles": [],
+      "view": [],
+      "commands": [
+        {
+          "name": "p:a",
+          "content": "Original command\n"
+        }
+      ],
+      "generation": 1
+    },
+    {
+      "name": "add",
+      "result": {
+        "changed": [
+          "p:test"
+        ]
+      },
+      "styles": [
+        {
+          "name": "p:test",
+          "description": "first",
+          "content": "First version\n",
+          "plugin": "p",
+          "source": "project"
+        }
+      ],
+      "view": [],
+      "commands": [
+        {
+          "name": "p:a",
+          "content": "Original command\n"
+        }
+      ],
+      "generation": 1
+    },
+    {
+      "name": "edit",
+      "result": {
+        "changed": [
+          "p:test"
+        ]
+      },
+      "styles": [
+        {
+          "name": "p:test",
+          "description": "second",
+          "content": "Second version\n",
+          "plugin": "p",
+          "source": "project"
+        }
+      ],
+      "view": [],
+      "commands": [
+        {
+          "name": "p:a",
+          "content": "Original command\n"
+        }
+      ],
+      "generation": 1
+    },
+    {
+      "name": "unchanged",
+      "result": {
+        "changed": []
+      },
+      "styles": [
+        {
+          "name": "p:test",
+          "description": "second",
+          "content": "Second version\n",
+          "plugin": "p",
+          "source": "project"
+        }
+      ],
+      "view": [],
+      "commands": [
+        {
+          "name": "p:a",
+          "content": "Original command\n"
+        }
+      ],
+      "generation": 1
+    },
+    {
+      "name": "delete",
+      "result": {
+        "changed": [
+          "p:test"
+        ]
+      },
+      "styles": [],
+      "view": [],
+      "commands": [
+        {
+          "name": "p:a",
+          "content": "Original command\n"
+        }
+      ],
+      "generation": 1
+    },
+    {
+      "name": "full-refresh",
+      "result": null,
+      "styles": [],
+      "view": [],
+      "commands": [
+        {
+          "name": "p:a",
+          "content": "Changed command\n"
+        }
+      ],
+      "generation": 2
+    }
+  ]
+}

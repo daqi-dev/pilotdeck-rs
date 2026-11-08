@@ -294,6 +294,7 @@ fn harness() -> Harness {
         cron: None,
         settings: Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        clear_sdk_state: None,
     };
     Harness {
         requests,

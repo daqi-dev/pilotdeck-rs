@@ -155,7 +155,10 @@ impl SessionTools {
     }
 
     #[cfg(unix)]
-    pub fn with_native_sandbox(mut self, sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>) -> Self {
+    pub fn with_native_sandbox(
+        mut self,
+        sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    ) -> Self {
         self.native_sandbox = Some(sandbox);
         self
     }
@@ -193,6 +196,21 @@ impl SessionTools {
             }) {
                 state.0.mode = crate::config::permission::PermissionMode::from(mode);
             }
+            // TS HostPermissionModeState.applyTurnInput runs after session config
+            // composition. Mode comes from validated host admission, not a tool
+            // payload; policy rules still run before bypass in permission::decide.
+            if let Some(mode) = authority.as_ref().and_then(|a| a.permission_mode.as_ref()) {
+                if mode.equals_str("plan") && !state.0.mode.as_js_string().equals_str("plan") {
+                    state.1 = Some(
+                        authority
+                            .as_ref()
+                            .and_then(|a| a.base_permission_mode.clone())
+                            .map(crate::config::permission::PermissionMode::from)
+                            .unwrap_or_else(|| state.0.mode.clone()),
+                    );
+                }
+                state.0.mode = crate::config::permission::PermissionMode::from(mode.clone());
+            }
             (state.0.clone(), state.0.mode.as_js_string().clone())
         };
         // These flags belong to this invocation, never the session's shared
@@ -223,9 +241,20 @@ impl SessionTools {
             .unwrap_or_else(|| Arc::new(|_| false));
         #[cfg(unix)]
         let tools = if let Some(sandbox) = &self.native_sandbox {
-            native_tools_with_sandbox(self.binding.context.allowed_tools.clone(), self.binding.context.disallowed_tools.clone(), self.lsp.clone(), sandbox.clone(), &self.mcp)
+            native_tools_with_sandbox(
+                self.binding.context.allowed_tools.clone(),
+                self.binding.context.disallowed_tools.clone(),
+                self.lsp.clone(),
+                sandbox.clone(),
+                &self.mcp,
+            )
         } else {
-            native_tools(self.binding.context.allowed_tools.clone(), self.binding.context.disallowed_tools.clone(), self.lsp.clone(), &self.mcp)
+            native_tools(
+                self.binding.context.allowed_tools.clone(),
+                self.binding.context.disallowed_tools.clone(),
+                self.lsp.clone(),
+                &self.mcp,
+            )
         };
         #[cfg(not(unix))]
         let tools = native_tools(
@@ -240,28 +269,33 @@ impl SessionTools {
         }
         #[cfg(unix)]
         if let Some(tasks) = &self.background_tasks {
-            for tool in if let Some(sandbox) = &self.native_sandbox { builtin::task::task_tools_with_sandbox(Some(tasks.clone()), sandbox.clone()) } else { builtin::task::task_tools(Some(tasks.clone())) } {
+            for tool in if let Some(sandbox) = &self.native_sandbox {
+                builtin::task::task_tools_with_sandbox(Some(tasks.clone()), sandbox.clone())
+            } else {
+                builtin::task::task_tools(Some(tasks.clone()))
+            } {
                 tools.register(tool).expect("native task names are unique");
             }
         }
-        let execution =
-            ToolRuntime::new(
-                tools,
-                // Even a profile without an interaction resource keeps this turn's
-                // policy/flags/rules; session mode observation is a separate port.
-                Arc::new(Permissions(Mutex::new((turn_context.clone(), None)))),
-                SchedulerMode::Concurrent,
-            )
-            .with_native_sandbox(
-                self.config
-                    .get("sandboxMode")
-                    .and_then(JsValue::as_string)
-                    .cloned(),
-            );
+        let execution = ToolRuntime::new(
+            tools,
+            // Even a profile without an interaction resource keeps this turn's
+            // policy/flags/rules; session mode observation is a separate port.
+            Arc::new(Permissions(Mutex::new((turn_context.clone(), None)))),
+            SchedulerMode::Concurrent,
+        )
+        .with_native_sandbox(
+            self.config
+                .get("sandboxMode")
+                .and_then(JsValue::as_string)
+                .cloned(),
+        );
         #[cfg(unix)]
         let execution = if let Some(sandbox) = &self.native_sandbox {
             execution.with_native_sandbox_provider(sandbox.clone())
-        } else { execution };
+        } else {
+            execution
+        };
         let execution = Arc::new(execution);
         let mut config = self.config.clone();
         config.insert("env".into(), JsValue::Object(self.env.clone()));
@@ -278,20 +312,40 @@ impl SessionTools {
             abort_signal: Some(Arc::new(signal.clone())),
             environment: Arc::new(NativeTurnEnvironment(self.env.clone())),
         };
+        let question_profile = Arc::new(std::sync::OnceLock::new());
         let elicitation = super::elicitation::Elicitation {
+            profile: question_profile.clone(),
             coordinator: self.interactions.clone(),
             session: identity.session_id.clone(),
             can_prompt: turn_context.can_prompt,
             emit: permission_emit.clone(),
-            timeout: Duration::from_millis(self.env.get("PILOTDECK_ELICITATION_TIMEOUT_MS")
-                .and_then(JsValue::as_string).and_then(|s|s.to_utf8().ok())
-                .map(|s|s.trim().to_owned()).and_then(|s| {
-                    let s = s.strip_prefix('+').unwrap_or(&s);
-                    let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
-                    digits.parse::<u64>().ok().filter(|n| *n > 0)
-                }).unwrap_or(120_000)),
+            timeout: Duration::from_millis(
+                self.env
+                    .get("PILOTDECK_ELICITATION_TIMEOUT_MS")
+                    .and_then(JsValue::as_string)
+                    .and_then(|s| s.to_utf8().ok())
+                    .map(|s| s.trim().to_owned())
+                    .and_then(|s| {
+                        let s = s.strip_prefix('+').unwrap_or(&s);
+                        let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
+                        digits.parse::<u64>().ok().filter(|n| *n > 0)
+                    })
+                    .unwrap_or(120_000),
+            ),
         };
+        let profile_for_bind = question_profile.clone();
+        let profile_for_presence = question_profile;
         let tool_ports = ToolContextPorts {
+            bind_interaction_profile: Some(Arc::new(move |profile| {
+                profile_for_bind.set(profile).map_err(|_| {
+                    crate::host::ModuleError::new("Interaction profile is already bound.").into()
+                })
+            })),
+            elicitation_enabled: Some(Arc::new(move || {
+                profile_for_presence
+                    .get()
+                    .is_some_and(|profile| profile.question_provider != "disabled")
+            })),
             elicitation: Some(Arc::new(elicitation)),
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             ..Default::default()
@@ -611,20 +665,30 @@ pub(super) fn native_tools(
 }
 #[cfg(unix)]
 fn native_tools_with_sandbox(
-    allowed: Option<Vec<JsString>>, denied: Option<Vec<JsString>>,
-    lsp: Arc<super::families::DefaultLsp>, sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>, mcp: &SessionMcpTools,
+    allowed: Option<Vec<JsString>>,
+    denied: Option<Vec<JsString>>,
+    lsp: Arc<super::families::DefaultLsp>,
+    sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    mcp: &SessionMcpTools,
 ) -> ToolRegistry {
     let mut definitions = builtin::read_only_tools();
     definitions.extend(builtin::write_tools());
-    definitions.push(Arc::new(builtin::bash::BashTool::with_options(builtin::bash::BashToolOptions {
-        runner: Some(Arc::new(builtin::bash::runner::SandboxedShellCommandRunner(sandbox))),
-        ..Default::default()
-    })));
+    definitions.push(Arc::new(builtin::bash::BashTool::with_options(
+        builtin::bash::BashToolOptions {
+            runner: Some(Arc::new(
+                builtin::bash::runner::SandboxedShellCommandRunner(sandbox),
+            )),
+            ..Default::default()
+        },
+    )));
     native_tools_with_definitions(allowed, denied, lsp, mcp, definitions)
 }
 fn native_tools_with_definitions(
-    allowed: Option<Vec<JsString>>, denied: Option<Vec<JsString>>,
-    lsp: Arc<super::families::DefaultLsp>, mcp: &SessionMcpTools, definitions: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+    allowed: Option<Vec<JsString>>,
+    denied: Option<Vec<JsString>>,
+    lsp: Arc<super::families::DefaultLsp>,
+    mcp: &SessionMcpTools,
+    definitions: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
 ) -> ToolRegistry {
     let tools = ToolRegistry::new(
         None,
@@ -643,9 +707,15 @@ fn native_tools_with_definitions(
             .register(tool)
             .expect("native builtin names are unique");
     }
-    tools.register(Arc::new(builtin::ask_user_question::AskUserQuestion::default()))
+    tools
+        .register(Arc::new(
+            builtin::ask_user_question::AskUserQuestion::default(),
+        ))
         .expect("native question tool name is unique");
-    tools.register(Arc::new(builtin::structured::StructuredOutputTool::default()))
+    tools
+        .register(Arc::new(
+            builtin::structured::StructuredOutputTool::default(),
+        ))
         .expect("native structured output name is unique");
     tools
         .register(Arc::new(LspTool::new(lsp)))
@@ -719,7 +789,9 @@ impl SessionMcpTools {
             let name = tool.spec().wire_name.clone();
             // `has` applies visibility; registration also checks hidden names.
             // A raw collision is a refusal, not a process-wide panic.
-            if !tools.has(&name) && let Err(error) = tools.register(tool.clone()) {
+            if !tools.has(&name)
+                && let Err(error) = tools.register(tool.clone())
+            {
                 eprintln!("Skipping shared MCP tool registration: {error}");
             }
         }
@@ -748,7 +820,9 @@ impl Drop for SessionMcpRelease {
         let per_session = self.per_session.take();
         let shared = self.shared.take();
         if let Some(executor) = self.executor.take() {
-            drop(executor.spawn(async move { let _ = release_mcp_parts(per_session, shared).await; }));
+            drop(executor.spawn(async move {
+                let _ = release_mcp_parts(per_session, shared).await;
+            }));
         }
     }
 }
@@ -759,7 +833,9 @@ impl SessionMcpRelease {
         let per_session = self.per_session.take();
         let shared = self.shared.take();
         if let Some(executor) = self.executor.take() {
-            return executor.spawn(release_mcp_parts(per_session, shared)).await
+            return executor
+                .spawn(release_mcp_parts(per_session, shared))
+                .await
                 .map_err(|error| RuntimeError::new(error.to_string()))?;
         }
         release_mcp_parts(per_session, shared).await
@@ -769,35 +845,35 @@ async fn release_mcp_parts(
     per_session: Option<SessionMcpRuntimeRegistration>,
     shared: Option<ProjectMcpRuntimeLease>,
 ) -> Result<(), RuntimeError> {
-        let mut failures = Vec::new();
-        if let Some(registration) = per_session
-            && let Err(error) = registration.dispose().await
-        {
-            failures.push(error);
-        }
-        if let Some(lease) = shared
-            && let Err(error) = lease.release().await
-        {
-            failures.push(error);
-        }
-        match failures.len() {
-            0 => Ok(()),
-            1 => Err(failures
-                .pop()
-                .expect("#1433 exactly one MCP release failure")),
-            _ => Err(RuntimeError {
-                message: format!(
-                    "Failed to release session MCP resources: {}",
-                    failures
-                        .iter()
-                        .map(|error| error.message.clone())
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                ),
-                causes: failures,
-                js_error: None,
-            }),
-        }
+    let mut failures = Vec::new();
+    if let Some(registration) = per_session
+        && let Err(error) = registration.dispose().await
+    {
+        failures.push(error);
+    }
+    if let Some(lease) = shared
+        && let Err(error) = lease.release().await
+    {
+        failures.push(error);
+    }
+    match failures.len() {
+        0 => Ok(()),
+        1 => Err(failures
+            .pop()
+            .expect("#1433 exactly one MCP release failure")),
+        _ => Err(RuntimeError {
+            message: format!(
+                "Failed to release session MCP resources: {}",
+                failures
+                    .iter()
+                    .map(|error| error.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+            causes: failures,
+            js_error: None,
+        }),
+    }
 }
 
 /// #1433: inputs of [`session_mcp_tools`] (`SessionMcpRuntimeBundleOptions`).
@@ -1157,20 +1233,30 @@ mod tests {
     }
     impl crate::runtime::mcp::runtime::SessionMcpRuntime for PendingStartRuntime {
         fn stop(&self) -> McpFuture<'_, Result<(), RuntimeError>> {
-            self.stopped.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.stopped
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async { Ok(()) })
         }
     }
     impl McpRuntimePort for PendingStartRuntime {
         fn start(&self) -> McpFuture<'_, Result<Vec<McpClientStatusEntry>, RuntimeError>> {
-            self.entered.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.entered
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             Box::pin(std::future::pending())
         }
         fn list_all_tools(&self) -> McpFuture<'_, Result<Vec<McpToolSpec>, RuntimeError>> {
             Box::pin(async { Ok(vec![]) })
         }
-        fn server_info(&self, _: &str) -> Option<McpRuntimeServerInfo> { None }
-        fn call_tool<'a>(&'a self, _: &'a str, _: &'a JsString, _: &'a JsValue, _: McpCallOptions) -> McpFuture<'a, Result<McpToolCallResult, McpClientError>> {
+        fn server_info(&self, _: &str) -> Option<McpRuntimeServerInfo> {
+            None
+        }
+        fn call_tool<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a JsString,
+            _: &'a JsValue,
+            _: McpCallOptions,
+        ) -> McpFuture<'a, Result<McpToolCallResult, McpClientError>> {
             Box::pin(async { Err(McpClientError::new("unused", None, "unused")) })
         }
     }
@@ -1245,30 +1331,52 @@ mod tests {
     async fn cancelling_pending_session_start_releases_registration_and_stops_runtime() {
         use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
         let config = test_config();
-        config.set_mcp_servers(&set_input("s", &[("private", true)])).await.unwrap();
+        config
+            .set_mcp_servers(&set_input("s", &[("private", true)]))
+            .await
+            .unwrap();
         let entered = Arc::new(AtomicBool::new(false));
         let stopped = Arc::new(AtomicUsize::new(0));
         let factory_entered = entered.clone();
         let factory_stopped = stopped.clone();
-        let provider = Arc::new(ProjectMcpRuntimeProvider::new(ProjectMcpRuntimeProviderOptions {
-            project_root: "/pdrs-fixture/project".into(), pilot_home: "/pdrs-fixture/home".into(),
-            create_runtime: Some(Arc::new(move |_| Arc::new(PendingStartRuntime {
-                entered: factory_entered.clone(), stopped: factory_stopped.clone(),
-            }) as Arc<dyn McpRuntimePort>)), proxy: None, on_diagnostic: None, environment: Arc::new(SystemEnvironment),
-            builtin_paths: BuiltinMcpPaths::default(),
-        }));
+        let provider = Arc::new(ProjectMcpRuntimeProvider::new(
+            ProjectMcpRuntimeProviderOptions {
+                project_root: "/pdrs-fixture/project".into(),
+                pilot_home: "/pdrs-fixture/home".into(),
+                create_runtime: Some(Arc::new(move |_| {
+                    Arc::new(PendingStartRuntime {
+                        entered: factory_entered.clone(),
+                        stopped: factory_stopped.clone(),
+                    }) as Arc<dyn McpRuntimePort>
+                })),
+                proxy: None,
+                on_diagnostic: None,
+                environment: Arc::new(SystemEnvironment),
+                builtin_paths: BuiltinMcpPaths::default(),
+            },
+        ));
         let registry = SessionMcpRuntimeRegistry::new();
         let task_registry = registry.clone();
-        let task = tokio::spawn(async move { compose(&config, &provider, &task_registry, "s", 5.0, None).await });
+        let task = tokio::spawn(async move {
+            compose(&config, &provider, &task_registry, "s", 5.0, None).await
+        });
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while !entered.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
-        }).await.unwrap();
+            while !entered.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         assert_eq!(registry.size(), 1);
         task.abort();
         assert!(matches!(task.await, Err(error) if error.is_cancelled()));
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            while registry.size() != 0 || stopped.load(Ordering::SeqCst) != 1 { tokio::task::yield_now().await; }
-        }).await.expect("cancelled startup must release its slot and stop exactly once");
+            while registry.size() != 0 || stopped.load(Ordering::SeqCst) != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled startup must release its slot and stop exactly once");
     }
 
     /// `getSdkMcpServers` (#1433): only enabled entries, projected to their
@@ -1889,8 +1997,10 @@ mod tests {
             per_session: vec![same],
         };
         let hidden = native_tools(
-            None, Some(vec!["mcp__a_b__echo".into()]),
-            Arc::new(super::super::families::DefaultLsp::default()), &composed,
+            None,
+            Some(vec!["mcp__a_b__echo".into()]),
+            Arc::new(super::super::families::DefaultLsp::default()),
+            &composed,
         );
         assert!(!hidden.has(&"mcp__a_b__echo".into()));
         assert!(hidden.has(&"read_file".into()));

@@ -68,6 +68,30 @@ struct SnapshotFile {
 /// which is never dropped.
 pub trait BackgroundTaskSnapshotStore: Send + Sync {
     fn load(&self) -> Vec<PersistedBackgroundTask>;
+    /// Native archives preserve JS string fields separately from the legacy
+    /// String codec. Default stores retain their measured representation.
+    fn original_fields(&self, _task_id: &str) -> Option<TaskSnapshotIdentity> {
+        None
+    }
+    fn failure_reason(&self, _task_id: &str) -> Option<JsString> {
+        None
+    }
+    fn report_failure(&self, _message: String) {}
+    fn write_task(
+        &self,
+        task: BackgroundBashTask,
+        output: PersistedOutput,
+        seq: u64,
+        _failure_reason: Option<JsString>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + '_>> {
+        self.write(
+            PersistedBackgroundTask {
+                task: persist_task(&task),
+                output,
+            },
+            seq,
+        )
+    }
     fn write(
         &self,
         snapshot: PersistedBackgroundTask,
@@ -76,6 +100,33 @@ pub trait BackgroundTaskSnapshotStore: Send + Sync {
     fn flush(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<()>> + Send + '_>>;
+}
+
+#[derive(Clone)]
+pub struct TaskSnapshotIdentity {
+    pub command: JsValue,
+    pub cwd: JsValue,
+    pub session_id: JsValue,
+    pub agent_id: JsValue,
+    pub kind: JsValue,
+}
+impl TaskSnapshotIdentity {
+    pub fn of(task: &BackgroundBashTask) -> Self {
+        Self {
+            command: task.command.clone(),
+            cwd: task.cwd.clone(),
+            session_id: task.session_id.clone(),
+            agent_id: task.agent_id.clone(),
+            kind: task.kind.clone(),
+        }
+    }
+    pub fn apply(&self, task: &mut BackgroundBashTask) {
+        task.command = self.command.clone();
+        task.cwd = self.cwd.clone();
+        task.session_id = self.session_id.clone();
+        task.agent_id = self.agent_id.clone();
+        task.kind = self.kind.clone();
+    }
 }
 
 /// `JsonFileBackgroundTaskSnapshotStore`: atomic replace via temp + rename.
@@ -423,7 +474,20 @@ fn load_snapshot_file(file_path: &Path) -> io::Result<Vec<PersistedBackgroundTas
         }
     };
 
-    let snapshot = deserialize_snapshot_file(&text).map_err(|e| {
+    decode_snapshot_text(&text, file_path)
+}
+
+pub(crate) fn encode_snapshot_tasks(tasks: &[PersistedBackgroundTask]) -> io::Result<String> {
+    serialize_snapshot_file(&SnapshotFile {
+        version: SNAPSHOT_VERSION,
+        tasks: tasks.to_vec(),
+    })
+}
+pub(crate) fn decode_snapshot_text(
+    text: &str,
+    file_path: &Path,
+) -> io::Result<Vec<PersistedBackgroundTask>> {
+    let snapshot = deserialize_snapshot_file(text).map_err(|e| {
         io::Error::new(
             ErrorKind::InvalidData,
             format!(

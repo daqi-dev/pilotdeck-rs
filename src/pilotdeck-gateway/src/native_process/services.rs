@@ -1861,31 +1861,18 @@ pub struct NativeSettings {
     pub bundle: Arc<RefreshBundle>,
 }
 
-/// Compose the native U7 settings stack (createLocalGateway.ts:795-831 and
-/// 1383-1410): the real refresh bundle over the supplied registry, router
-/// and store (attached exactly like `runtimeRefresh.attach()`), and the
-/// settings gateway with the delegates the isolated native process owns —
-/// `resolve_settings` over the store snapshot and the two reloads over the
-/// bundle. `apply_flag_settings` / `update_settings` /
-/// `reload_output_styles` stay unconfigured (their delegates are the SDK
-/// session registry and the production local-settings writer, neither
-/// assembled into the isolated native process) and answer the TS
-/// unconfigured shapes through the component's own option handling.
-///
-/// #1320 fix-r1 F2: this composition never binds a notification server — the
-/// isolated native process has no server-push channel, so the bundle's
-/// broadcasts are lost (the connection registry is #1669, deliberately not
-/// built here). Tests that need to observe the dirty/broadcast order must
-/// `bind_server` a recording server themselves AND assert both
-/// `has_notification_server()` and the difference from the production
-/// assembly.
+/// Compose the config store and runtime refresh bundle. Test compositions may
+/// omit delegates; production supplies the atomic local writer and the shared
+/// native session flag store. Output-style-only reload is a separate delegate.
 #[cfg(test)]
 pub fn native_settings(options: NativeSettingsOptions) -> NativeSettings {
-    native_settings_with_writer(options, None)
+    native_settings_with_writer(options, None, None, None)
 }
 fn native_settings_with_writer(
     options: NativeSettingsOptions,
     writer: Option<Arc<dyn crate::runtime::settings::LocalSettingsWriter>>,
+    flags: Option<Arc<super::SessionOverrides>>,
+    styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
 ) -> NativeSettings {
     let NativeSettingsOptions {
         owner,
@@ -1911,7 +1898,8 @@ fn native_settings_with_writer(
     bundle.attach();
     let gateway = Arc::new(SettingsGateway::new(SettingsGatewayOptions {
         owner,
-        apply_flag_settings: None,
+        apply_flag_settings: flags
+            .map(|port| port as Arc<dyn crate::runtime::settings::ApplyFlagSettings>),
         update_settings: writer.map(|writer| crate::runtime::settings::UpdateSettings {
             organization_denied: false,
             writer,
@@ -1920,7 +1908,7 @@ fn native_settings_with_writer(
         resolve_settings: Some(Arc::new(ResolvedSettingsPort {
             store: store.clone(),
         })),
-        reload_output_styles: None,
+        reload_output_styles: styles,
         reload_config: Some(bundle.clone()),
         reload_extensions: Some(bundle.clone()),
     }));
@@ -1943,12 +1931,36 @@ fn native_settings_with_writer(
 /// `bind_server` a recording server themselves AND assert both
 /// `has_notification_server()` and the difference from the production
 /// assembly.
+#[cfg(test)]
 pub fn native_settings_for_process(
     owner: SessionOwner,
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
     home: &std::path::Path,
     served_project: &std::path::Path,
     env: &crate::config::Env,
+) -> std::io::Result<NativeSettings> {
+    native_settings_for_process_with_flags(owner, project, home, served_project, env, None)
+}
+
+#[cfg(test)]
+pub fn native_settings_for_process_with_flags(
+    owner: SessionOwner,
+    project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    home: &std::path::Path,
+    served_project: &std::path::Path,
+    env: &crate::config::Env,
+    flags: Option<Arc<super::SessionOverrides>>,
+) -> std::io::Result<NativeSettings> {
+    native_settings_for_process_with_styles(owner, project, home, served_project, env, flags, None)
+}
+pub(crate) fn native_settings_for_process_with_styles(
+    owner: SessionOwner,
+    project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    home: &std::path::Path,
+    served_project: &std::path::Path,
+    env: &crate::config::Env,
+    flags: Option<Arc<super::SessionOverrides>>,
+    styles: Option<Arc<dyn crate::runtime::settings::ReloadOutputStyles>>,
 ) -> std::io::Result<NativeSettings> {
     // #1320 fix-r1 F3: same anchor as every other config read of the process
     // (`NativeConfigSource`): PILOT_HOME from the environment resolved
@@ -1991,6 +2003,8 @@ pub fn native_settings_for_process(
             log: Arc::new(ConsoleLog),
         },
         writer,
+        flags,
+        styles,
     ))
 }
 

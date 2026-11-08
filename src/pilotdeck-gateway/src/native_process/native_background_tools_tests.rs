@@ -17,6 +17,8 @@ async fn native_task_tools_use_permission_once_and_share_the_real_runtime() {
         recorder,
         signal.clone(),
         Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
             can_prompt: Some(true),
             policy_can_prompt: None,
             sdk_permission_mode: None,

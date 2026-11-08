@@ -19,10 +19,9 @@ mod store;
 
 pub use fire::{CronFire, CronFireDeps, CronFirePort, CronRunOutcome};
 pub use manager::{
-    CronActiveRun, CronAgentGateway, CronError, CronGatewayBody, CronLogger, CronManager,
-    CronManagerConfig, CronManagerOptions, CronRuntime, CronTurnSubmit, NoopCronLogger,
-    CronExecutionProjectFilter,
-    SessionAdmissionCronGateway,
+    CronActiveRun, CronAgentGateway, CronError, CronExecutionProjectFilter, CronGatewayBody,
+    CronLogger, CronManager, CronManagerConfig, CronManagerOptions, CronRuntime, CronTurnSubmit,
+    NoopCronLogger, SessionAdmissionCronGateway,
 };
 pub use methods::{cron_create, cron_delete, cron_list, cron_run_now, cron_stop, cron_update};
 pub use migration::{MigrationInput, migrate_cron_stores};
@@ -37,13 +36,13 @@ pub use scheduler::{CronScheduler, DEFAULT_IDLE_POLL_MS, SchedulerDeps};
 pub use store::CronTaskStore;
 
 #[cfg(test)]
+mod host_integration_tests;
+#[cfg(test)]
 mod manager_tests;
 #[cfg(test)]
 mod schedule_tests;
 #[cfg(test)]
 mod scheduler_tests;
-#[cfg(test)]
-mod host_integration_tests;
 #[cfg(test)]
 mod tests;
 

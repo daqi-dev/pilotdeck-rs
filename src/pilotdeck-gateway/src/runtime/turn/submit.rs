@@ -1050,6 +1050,8 @@ impl TurnSubmitter {
                 prepared.input,
                 prepared.options,
                 super::interaction::TurnInteractionAuthority {
+                    permission_mode: field(input, "mode").as_string().cloned(),
+                    base_permission_mode: field(input, "basePermissionMode").as_string().cloned(),
                     can_prompt: field(input, "canPrompt").as_bool(),
                     sdk_permission_mode: self.host.sdk_permission_mode(&run.session_key).await,
                     policy_can_prompt: (field(

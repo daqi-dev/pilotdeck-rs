@@ -293,7 +293,9 @@ fn scheduler_thread(inner: Arc<SchedulerInner>) {
 /// whole tick and skips the remaining due tasks, exactly like the TS `await`
 /// inside the loop.
 fn execution_allowed(deps: &SchedulerDeps) -> bool {
-    deps.runtime.upgrade().is_none_or(|runtime| runtime.execution_allowed())
+    deps.runtime
+        .upgrade()
+        .is_none_or(|runtime| runtime.execution_allowed())
 }
 
 fn tick(deps: &SchedulerDeps) -> Result<(), CronError> {

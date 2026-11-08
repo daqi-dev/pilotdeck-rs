@@ -357,6 +357,16 @@ impl SubmitHost for GatewaySubmitHost {
                     ]),
                 ),
             ]);
+            if let JsValue::Object(ref mut object) = options {
+                for (source, target) in [
+                    ("mode", "permissionMode"),
+                    ("basePermissionMode", "basePermissionMode"),
+                ] {
+                    if let Some(mode) = input.get(source).and_then(JsValue::as_string) {
+                        object.insert(target.into(), JsValue::String(mode.clone()));
+                    }
+                }
+            }
             if !override_model.is_undefined()
                 && let JsValue::Object(ref mut object) = options
             {

@@ -1703,7 +1703,9 @@ async fn cancelled_last_waiter_stops_shared_startup() {
         }
         assert_eq!(gate.stops.load(std::sync::atomic::Ordering::SeqCst), 1);
         provider.dispose().await.unwrap();
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -1726,7 +1728,9 @@ async fn cancelled_one_of_two_waiters_preserves_shared_startup() {
         lease.release().await.unwrap();
         assert_eq!(gate.stops.load(std::sync::atomic::Ordering::SeqCst), 1);
         provider.dispose().await.unwrap();
-    }).await.unwrap();
+    })
+    .await
+    .unwrap();
 }
 
 // ---------------------------------------------------------------------------

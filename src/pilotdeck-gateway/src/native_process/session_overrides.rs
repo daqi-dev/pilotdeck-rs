@@ -15,6 +15,7 @@ struct Inner {
     permission_modes: HashMap<JsString, JsString>,
     thinking: HashMap<JsString, JsValue>,
     output_styles: HashMap<JsString, JsString>,
+    output_style_order: Vec<JsString>,
 }
 
 /// The minimal equivalent registry #1839 allows: one shared instance per
@@ -26,6 +27,13 @@ pub struct SessionOverrides {
 }
 
 impl SessionOverrides {
+    pub fn clear_sdk_state(&self, key: &JsString) {
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        state.thinking.remove(key);
+        state.output_styles.remove(key);
+        state.output_style_order.retain(|item| item != key);
+    }
+
     pub fn set_permission_mode(&self, key: &JsString, mode: JsString) {
         self.inner
             .lock()
@@ -69,19 +77,25 @@ impl SessionOverrides {
     }
 
     pub fn set_output_style(&self, key: &JsString, name: JsString) {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .output_styles
-            .insert(key.clone(), name);
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if !state.output_styles.contains_key(key) {
+            state.output_style_order.push(key.clone());
+        }
+        state.output_styles.insert(key.clone(), name);
     }
 
     pub fn clear_output_style(&self, key: &JsString) {
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        state.output_styles.remove(key);
+        state.output_style_order.retain(|item| item != key);
+    }
+
+    pub(crate) fn output_style_sessions(&self) -> Vec<JsString> {
         self.inner
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .output_styles
-            .remove(key);
+            .output_style_order
+            .clone()
     }
 
     pub fn output_style(&self, key: &JsString) -> Option<JsString> {
@@ -91,6 +105,59 @@ impl SessionOverrides {
             .output_styles
             .get(key)
             .cloned()
+    }
+}
+
+/// The flag-settings wire method writes the exact store read at native turn
+/// preparation, shared with set_permission_mode and set_session_thinking.
+impl crate::runtime::settings::ApplyFlagSettings for SessionOverrides {
+    fn apply(
+        &self,
+        input: &JsValue,
+    ) -> Result<crate::runtime::settings::FlagSettings, crate::runtime::settings::SettingsError>
+    {
+        use crate::runtime::settings::{FlagSettings, SettingsError};
+        let session = input
+            .get("sessionKey")
+            .and_then(JsValue::as_string)
+            .ok_or_else(|| {
+                SettingsError::gateway("INVALID_SESSION_KEY", "sessionKey is required.")
+            })?;
+        let settings = input
+            .get("settings")
+            .and_then(JsValue::as_object)
+            .ok_or_else(|| {
+                SettingsError::gateway("INVALID_FLAG_SETTINGS", "settings must be an object.")
+            })?;
+        let mut result = FlagSettings::default();
+        let mut state = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(effort) = settings.get("effortLevel") {
+            if matches!(effort, JsValue::Null) {
+                state.thinking.remove(session);
+                result.cleared.push("effortLevel".into());
+            } else {
+                let mut thinking = pilotdeck_protocol::JsObject::new();
+                thinking.insert("enabled".into(), JsValue::Bool(true));
+                thinking.insert("mode".into(), effort.clone());
+                state
+                    .thinking
+                    .insert(session.clone(), JsValue::Object(thinking));
+                result.applied.push("effortLevel".into());
+            }
+        }
+        if let Some(permissions) = settings.get("permissions") {
+            match permissions.get("defaultMode").and_then(JsValue::as_string) {
+                Some(mode) => {
+                    state.permission_modes.insert(session.clone(), mode.clone());
+                    result.applied.push("permissions.defaultMode".into());
+                }
+                None => {
+                    state.permission_modes.remove(session);
+                    result.cleared.push("permissions.defaultMode".into());
+                }
+            }
+        }
+        Ok(result)
     }
 }
 

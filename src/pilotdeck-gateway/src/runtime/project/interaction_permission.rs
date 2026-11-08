@@ -216,7 +216,12 @@ impl TurnPermission {
     }
     /// Drop any unconsumed one-shot grant when a native hook dispatch fails,
     /// is cancelled, or returns a different first effect.
-    pub(crate) fn revoke_native_grant(&self, name: &JsString, call_id: &JsString, input: &JsValue) -> Result<(), HostError> {
+    pub(crate) fn revoke_native_grant(
+        &self,
+        name: &JsString,
+        call_id: &JsString,
+        input: &JsValue,
+    ) -> Result<(), HostError> {
         let key = native_grant_key(name, call_id, input)?;
         lock(&self.run.native_grants).remove(&key);
         Ok(())

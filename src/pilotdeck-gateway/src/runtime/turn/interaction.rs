@@ -33,6 +33,9 @@ use tokio::{runtime::Handle, sync::watch};
 /// serialized to the sidecar or retained as mutable session state.
 #[derive(Clone)]
 pub struct TurnInteractionAuthority {
+    /// Validated Gateway turn input; never supplied by the sidecar.
+    pub permission_mode: Option<pilotdeck_protocol::JsString>,
+    pub base_permission_mode: Option<pilotdeck_protocol::JsString>,
     pub can_prompt: Option<bool>,
     pub policy_can_prompt: Option<bool>,
     pub sdk_permission_mode: Option<pilotdeck_protocol::JsString>,

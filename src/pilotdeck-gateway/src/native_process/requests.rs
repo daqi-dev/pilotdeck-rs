@@ -21,6 +21,9 @@ use crate::{
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::{Arc, Mutex};
 
+pub type SessionStateCleanup =
+    Arc<dyn Fn(JsString) -> Call<'static, Result<(), RequestError>> + Send + Sync>;
+
 #[derive(Clone)]
 pub struct Requests {
     pub options: Options,
@@ -64,6 +67,7 @@ pub struct Requests {
     /// `set_output_style`) write and the session factory's prepare closure
     /// reads back. One instance shared with the factory.
     pub session_overrides: Arc<SessionOverrides>,
+    pub clear_sdk_state: Option<SessionStateCleanup>,
 }
 
 #[cfg(test)]

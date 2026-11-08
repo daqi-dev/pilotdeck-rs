@@ -875,7 +875,9 @@ impl CronRuntime {
     }
 
     pub(super) fn execution_allowed(&self) -> bool {
-        self.manager.upgrade().is_none_or(|manager| manager.execution_allowed(&self.project_key))
+        self.manager
+            .upgrade()
+            .is_none_or(|manager| manager.execution_allowed(&self.project_key))
     }
 
     /// CronRuntime.ts:182-195. The bind check stands in for TS's `scheduler`
@@ -2150,15 +2152,21 @@ impl CronManager {
     ) -> Result<(), CronError> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.started || !state.runtimes.is_empty() || state.execution_project_filter.is_some() {
-            return Err(CronError::error("Cron execution scope must be configured before loading runtimes."));
+            return Err(CronError::error(
+                "Cron execution scope must be configured before loading runtimes.",
+            ));
         }
         state.execution_project_filter = Some(filter);
         Ok(())
     }
 
     fn execution_allowed(&self, project: &str) -> bool {
-        let filter = self.state.lock().unwrap_or_else(|e| e.into_inner())
-            .execution_project_filter.clone();
+        let filter = self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .execution_project_filter
+            .clone();
         filter.is_none_or(|filter| filter(project))
     }
 
@@ -2196,14 +2204,26 @@ impl CronManager {
             )));
         }
         let migration_logger = self.options.logger.clone().map(MigrationLogger);
-        migrate_cron_stores(&MigrationInput {
+        let migration = MigrationInput {
             pilot_home: PathBuf::from(&self.pilot_home),
             logger: migration_logger
                 .as_ref()
                 .map(|logger| logger as &dyn super::CronRuntimeLogger),
             now_ms: super::store::now_millis(),
             lock_retry_delay: Duration::from_millis(100),
-        })?;
+        };
+        let scope = self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .execution_project_filter
+            .clone();
+        match scope {
+            Some(scope) => {
+                super::migration::migrate_cron_stores_scoped(&migration, scope.as_ref())?
+            }
+            None => migrate_cron_stores(&migration)?,
+        }
         self.state.lock().unwrap_or_else(|e| e.into_inner()).started = true;
         let project_keys = discover_project_keys(&self.pilot_home, self.options.logger.as_ref())?;
         for project_key in project_keys {

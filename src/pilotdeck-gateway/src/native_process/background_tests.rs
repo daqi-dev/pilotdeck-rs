@@ -124,7 +124,8 @@ async fn native_project_background_owner_is_shared_with_sdk_and_drained_on_dispo
     );
     assert!(!project.join("never.txt").exists());
     assert!(
-        !project.join(".pilotdeck/background-tasks").exists(),
-        "memory-backed slice must not claim disk recovery"
+        project
+            .join(".pilotdeck/background-tasks/state.json")
+            .is_file()
     );
 }
