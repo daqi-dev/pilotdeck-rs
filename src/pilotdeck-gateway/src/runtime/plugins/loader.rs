@@ -103,6 +103,7 @@ pub struct PluginRefreshResult {
 
 mod config;
 mod markdown;
+mod native;
 mod server_value;
 use super::PluginRuntimeError;
 pub use config::{
@@ -396,8 +397,8 @@ pub(crate) fn discover_style_paths(
     }
     Ok(output)
 }
-/// Validate the native restricted plugin contributions. Generation loading
-/// repeats this check before loading output styles and configured hooks.
+/// Discover and validate bounded native disk plugins. Manifest projection
+/// follows the shared TS parser; unknown metadata never executes a module.
 pub(crate) fn validate_native_style_paths(
     directories: &[(PathBuf, PluginSource)],
     budget: &mut StyleBudget,
@@ -406,123 +407,28 @@ pub(crate) fn validate_native_style_paths(
     for (directory, source) in directories {
         let entries = match fs::read_dir(directory) {
             Ok(entries) => entries,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(e) => return Err(PluginRuntimeError::new(e.to_string())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(PluginRuntimeError::new(error.to_string())),
         };
         let mut paths = Vec::new();
         for entry in entries {
             budget.entry()?;
-            let entry = entry.map_err(|e| PluginRuntimeError::new(e.to_string()))?;
-            let meta = fs::symlink_metadata(entry.path())
-                .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
-            if !meta.is_dir() {
+            let entry = entry.map_err(|error| PluginRuntimeError::new(error.to_string()))?;
+            let metadata = fs::symlink_metadata(entry.path())
+                .map_err(|error| PluginRuntimeError::new(error.to_string()))?;
+            if metadata.file_type().is_symlink() {
                 return Err(PluginRuntimeError::new(
-                    "Native profile requires supported plugin contributions.",
+                    "Native plugin root cannot be a symlink.",
                 ));
             }
-            paths.push(entry.path());
+            if metadata.is_dir() {
+                paths.push(entry.path());
+            }
         }
         paths.sort();
         for path in paths {
-            let manifest = bounded_style_json(&path.join("plugin.json"), budget)?;
-            let object = manifest.as_object().ok_or_else(|| {
-                PluginRuntimeError::new("Native style manifest must be an object.")
-            })?;
-            for (key, _) in object.own_entries() {
-                if !["name", "version", "description", "outputStyles", "hooks"]
-                    .iter()
-                    .any(|allowed| key.equals_str(allowed))
-                {
-                    return Err(PluginRuntimeError::new(
-                        "Native profile requires supported plugin contributions.",
-                    ));
-                }
-            }
+            let manifest = native::read_manifest(&path, budget)?;
             parse_plugin_manifest(&manifest)?;
-            let dirs: Vec<String> = match object.get("outputStyles") {
-                None => vec!["output-styles".into()],
-                Some(JsValue::String(value)) => vec![
-                    value
-                        .to_utf8()
-                        .map_err(|_| PluginRuntimeError::new("Invalid output style path."))?,
-                ],
-                Some(JsValue::Array(values)) => values
-                    .iter()
-                    .map(|value| {
-                        value
-                            .as_string()
-                            .ok_or_else(|| PluginRuntimeError::new("Invalid output style path."))?
-                            .to_utf8()
-                            .map_err(|_| PluginRuntimeError::new("Invalid output style path."))
-                    })
-                    .collect::<Result<_, _>>()?,
-                _ => return Err(PluginRuntimeError::new("Invalid output style path.")),
-            };
-            if dirs.is_empty() {
-                return Err(PluginRuntimeError::new(
-                    "Native profile requires an output-style directory.",
-                ));
-            }
-            let mut roots = std::collections::HashSet::new();
-            for dir in &dirs {
-                use std::path::Component;
-                let path = Path::new(dir);
-                let mut components = path.components();
-                let Some(Component::Normal(first)) = components.next() else {
-                    return Err(PluginRuntimeError::new("Invalid output style path."));
-                };
-                if !components.all(|part| matches!(part, Component::Normal(_))) {
-                    return Err(PluginRuntimeError::new("Invalid output style path."));
-                }
-                let first = first.to_string_lossy().into_owned();
-                if [
-                    "commands", "skills", "hooks", "agents", "routers", "mcp", "lsp",
-                ]
-                .contains(&first.as_str())
-                {
-                    return Err(PluginRuntimeError::new(
-                        "Native profile requires supported plugin contributions.",
-                    ));
-                }
-                roots.insert(first);
-            }
-            let has_hooks = object.get("hooks").is_some() || path.join("hooks/hooks.json").exists();
-            let mut has_styles = false;
-            for item in fs::read_dir(&path).map_err(|e| PluginRuntimeError::new(e.to_string()))? {
-                budget.entry()?;
-                let item = item.map_err(|e| PluginRuntimeError::new(e.to_string()))?;
-                let name = item.file_name();
-                let name = name.to_string_lossy();
-                let meta = fs::symlink_metadata(item.path())
-                    .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
-                if name == "plugin.json" && meta.is_file() {
-                    continue;
-                }
-                if (name == "README.md" || name == "LICENSE") && meta.is_file() {
-                    continue;
-                }
-                if roots.contains(name.as_ref()) && meta.is_dir() {
-                    has_styles = true;
-                    continue;
-                }
-                // Hook plugins may carry helper scripts/assets, but no
-                // unsupported contribution family is loaded or ignored.
-                if has_hooks
-                    && !["commands", "skills", "agents", "routers", "mcp", "lsp"]
-                        .contains(&name.as_ref())
-                    && !meta.file_type().is_symlink()
-                {
-                    continue;
-                }
-                return Err(PluginRuntimeError::new(
-                    "Native profile requires supported plugin contributions.",
-                ));
-            }
-            if !has_styles && !has_hooks {
-                return Err(PluginRuntimeError::new(
-                    "Native profile requires an output-style directory.",
-                ));
-            }
             found.push(DiscoveredPluginPath {
                 path,
                 source: *source,
@@ -531,122 +437,93 @@ pub(crate) fn validate_native_style_paths(
     }
     Ok(found)
 }
-/// Read the manifest once more at the actual use boundary and load only
-/// persistent hooks. Path-based hooks stay beneath the canonical plugin root,
-/// reject symlinks/FIFOs, and share the generation's read budget.
+
+/// Test entrypoint for the same manifest and hook loading used by native staging.
+#[cfg(test)]
 fn load_native_plugin_hooks(
     path: &Path,
     budget: &mut StyleBudget,
 ) -> Result<Option<HooksSettings>, PluginRuntimeError> {
-    #[cfg(unix)]
-    let manifest = {
-        let parent = path
-            .parent()
-            .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?
-            .canonicalize()
-            .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
-        let root = parent.join(
-            path.file_name()
-                .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?,
-        );
-        let mut file = crate::project_files::open_beneath(&root, &root.join("plugin.json"))
-            .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
-        if !file
-            .metadata()
-            .map_err(|e| PluginRuntimeError::new(e.to_string()))?
-            .is_file()
-        {
-            return Err(PluginRuntimeError::new(
-                "Plugin manifest is not a regular file.",
-            ));
-        }
-        let text = budget.read(&mut file)?;
-        parse_json(&text).map_err(|e| {
-            PluginRuntimeError::new(json_syntax::parse_error(&text).unwrap_or(e.message))
-        })?
-    };
-    #[cfg(not(unix))]
-    let manifest = return Err(PluginRuntimeError::new(
-        "Bounded hook loading requires Unix.",
-    ));
-    let object = manifest
-        .as_object()
-        .ok_or_else(|| PluginRuntimeError::new("Plugin manifest must be an object."))?;
-    for (key, _) in object.own_entries() {
-        if !["name", "version", "description", "outputStyles", "hooks"]
-            .iter()
-            .any(|allowed| key.equals_str(allowed))
-        {
-            return Err(PluginRuntimeError::new(
-                "Native profile requires supported plugin contributions.",
-            ));
-        }
-    }
-    let hooks = object.get("hooks");
-    if let Some(value @ JsValue::Object(_)) = hooks {
+    let raw = native::read_manifest(path, budget)?;
+    let manifest = parse_plugin_manifest(&raw)?;
+    load_native_plugin_hooks_from_manifest(path, &manifest, budget)
+}
+
+fn load_native_plugin_hooks_from_manifest(
+    path: &Path,
+    manifest: &JsValue,
+    budget: &mut StyleBudget,
+) -> Result<Option<HooksSettings>, PluginRuntimeError> {
+    let object = manifest.as_object().expect("validated plugin manifest");
+    if let Some(value @ JsValue::Object(_)) = object.get("hooks") {
         return Ok(Some(
             crate::hooks::config::parse_hooks_config(value).settings,
         ));
     }
-    let relative = match hooks {
-        Some(JsValue::String(value)) => value
-            .to_utf8()
-            .map_err(|_| PluginRuntimeError::new("Invalid hook path."))?,
-        None | Some(JsValue::Undefined) => "hooks/hooks.json".to_owned(),
-        _ => return Err(PluginRuntimeError::new("Invalid hook configuration.")),
-    };
-    let relative = Path::new(&relative);
-    if !relative
-        .components()
-        .all(|component| matches!(component, std::path::Component::Normal(_)))
-    {
-        return Err(PluginRuntimeError::new("Invalid hook path."));
-    }
+    let relative = object
+        .get("hooks")
+        .and_then(string)
+        .unwrap_or_else(|| "hooks/hooks.json".to_owned());
     #[cfg(unix)]
     {
         let parent = path
             .parent()
             .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?
             .canonicalize()
-            .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
+            .map_err(|error| PluginRuntimeError::new(error.to_string()))?;
         let root = parent.join(
             path.file_name()
                 .ok_or_else(|| PluginRuntimeError::new("Invalid plugin path."))?,
         );
-        let file_path = root.join(relative);
-        let mut file = match crate::project_files::open_beneath(&root, &file_path) {
+        let target = config::resolve_path(&config::join_path(&root, &relative));
+        if !target.starts_with(&root) {
+            return Err(PluginRuntimeError::new("Invalid hook path."));
+        }
+        let mut file = match crate::project_files::open_beneath(&parent, &target) {
             Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(PluginRuntimeError::new(error.to_string())),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::InvalidInput
+                ) =>
+            {
+                return Err(PluginRuntimeError::new(error.to_string()));
+            }
+            Err(_) => return Ok(None),
         };
-        if !file
-            .metadata()
-            .map_err(|e| PluginRuntimeError::new(e.to_string()))?
-            .is_file()
-        {
+        let metadata = match file.metadata() {
+            Ok(metadata) => metadata,
+            Err(_) => return Ok(None),
+        };
+        if !metadata.is_file() {
             return Err(PluginRuntimeError::new(
                 "Hook config is not a regular file.",
             ));
         }
-        let text = budget.read(&mut file)?;
-        let value = parse_json(&text).map_err(|e| {
-            PluginRuntimeError::new(json_syntax::parse_error(&text).unwrap_or(e.message))
-        })?;
+        let text = match budget.read(&mut file) {
+            Ok(text) => text,
+            Err(error) if error.code == Some("STYLE_RELOAD_LIMIT") => return Err(error),
+            Err(_) => return Ok(None),
+        };
+        let value = match parse_json(&text) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
         Ok(Some(
             crate::hooks::config::parse_hooks_config(&value).settings,
         ))
     }
     #[cfg(not(unix))]
     {
-        let _ = (relative, budget);
+        let _ = (path, relative, budget);
         Err(PluginRuntimeError::new(
             "Bounded hook loading requires Unix.",
         ))
     }
 }
 
-/// Build a native restricted generation with output styles, configured hooks,
-/// and standalone skills; unsupported plugin contribution families stay rejected.
+/// Stage bounded disk declarations through the existing generation transaction.
+/// Programmatic plugins remain outside this loader; LSP data does not start a provider.
 pub(crate) fn stage_native_style_plugins(
     options: &PluginRuntimeOptions,
 ) -> Result<LoadFromDiskResult, PluginRuntimeError> {
@@ -666,19 +543,11 @@ pub(crate) fn stage_native_style_plugins(
     )?;
     let mut plugins = Vec::new();
     for entry in paths {
-        let style = load_style_bounded(&entry.path, entry.source, &mut budget)?;
-        plugins.push(Arc::new(LoadedPlugin {
-            name: style.name,
-            path: style.path,
-            source: style.source,
-            output_styles: style.output_styles,
-            commands: vec![],
-            skills: vec![],
-            hooks_config: load_native_plugin_hooks(&entry.path, &mut budget)?,
-            mcp_servers: None,
-            lsp_servers: None,
-            dispose: None,
-        }));
+        plugins.push(Arc::new(native::load_plugin(
+            &entry.path,
+            entry.source,
+            &mut budget,
+        )?));
     }
     let skills = stage_native_standalone_skills(options)?;
     plugins.extend(skills.plugins);
@@ -825,18 +694,22 @@ pub fn load_plugin_output_styles_from_path(
     })
 }
 
+fn configured_markdown_directories(configured: &JsValue, fallback: &str) -> Vec<String> {
+    match configured {
+        JsValue::String(_) => vec![string(configured).unwrap()],
+        JsValue::Array(items) => items.iter().filter_map(string).collect(),
+        _ => vec![fallback.into()],
+    }
+}
+
 fn load_configured_markdown(
     path: &Path,
     name: &str,
     configured: &JsValue,
     fallback: &str,
 ) -> Vec<LoadedPluginCommand> {
-    let dirs = match configured {
-        JsValue::String(_) => vec![string(configured).unwrap()],
-        JsValue::Array(items) => items.iter().filter_map(string).collect(),
-        _ => vec![fallback.into()],
-    };
-    dirs.into_iter()
+    configured_markdown_directories(configured, fallback)
+        .into_iter()
         .flat_map(|dir| {
             let base = config::join_path(path, &dir);
             markdown::load_plugin_commands_with_root(name, &base, path).unwrap_or_default()
@@ -937,7 +810,7 @@ mod native_hook_loading_tests {
         }
     }
     #[test]
-    fn fixed_ts_inline_hook_loads_and_unsupported_plugin_family_is_rejected() {
+    fn fixed_ts_inline_hook_and_markdown_declarations_are_accepted() {
         let root = Scratch(
             std::env::temp_dir().join(format!("pdrs-plugin-hook-{}", uuid::Uuid::new_v4())),
         );
@@ -986,6 +859,11 @@ mod native_hook_loading_tests {
                 .unwrap(),
         )
         .unwrap();
-        assert!(validate_native_style_paths(&dirs, &mut StyleBudget::new()).is_err());
+        assert_eq!(
+            validate_native_style_paths(&dirs, &mut StyleBudget::new())
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }
