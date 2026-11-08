@@ -1956,11 +1956,15 @@ async fn a_panicking_drain_cleanup_still_disposes_the_coordinator() {
     );
 }
 
-/// #1949: the drain's own deadline arithmetic carries the same clock bound
-/// the initialization teardown got — an embedding that declares
-/// `Duration::MAX` explicitly waived the bound, so the drain must settle
-/// instead of overflowing the host thread into an opaque hang (the drain
-/// twin of the maximal initialization budget test).
+/// #1949: an embedding that declares `Duration::MAX` for shutdown has
+/// explicitly waived the drain deadline, so the drain must settle with its
+/// real result (here `Ok`) rather than hang. Behavior anchor, not a
+/// regression discriminator: tokio's `timeout` saturates a MAX bound into a
+/// far-future timer, so the pre-#1949 `timeout(budget, drain)` settled too —
+/// the drain-side `checked_add` only spells that waiver out. The inner
+/// result is asserted (not just the outer guard) so a host panic escaping
+/// the drain (`Err("gateway host exited without drain result")`) cannot
+/// pass as a settle.
 #[tokio::test]
 async fn a_maximal_drain_budget_still_settles_the_drain() {
     let host = native_ws_fixture_with_cleanup(Arc::new(Requests), async { Ok(()) });
@@ -1969,11 +1973,8 @@ async fn a_maximal_drain_budget_still_settles_the_drain() {
         host.shutdown(std::time::Duration::MAX),
     )
     .await
-    .expect("#1949 a maximal drain budget must not overflow the host");
-    assert!(
-        settled.is_ok(),
-        "#1949 a maximal drain budget must settle the drain: {settled:?}"
-    );
+    .expect("#1949 the maximal-budget drain must settle within the guard");
+    settled.expect("#1949 a maximal drain budget must settle the drain itself");
 }
 
 /// #1949 fixture: a factory whose creation never settles, so the owner's
