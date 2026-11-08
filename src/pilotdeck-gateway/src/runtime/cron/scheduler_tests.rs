@@ -969,6 +969,17 @@ fn tick_panic_folds_into_a_warn_and_re_arms() {
             .any(|warn| warn.contains("cron scheduler tick failed"))
             .then_some(())
     });
+    // fix-r2's MIN_TIMER_MS floor puts a 250ms gap between the folded tick
+    // and the re-arm — longer than the settle window, so the fire is awaited
+    // explicitly instead of relying on the settle pump to observe it.
+    wait_until("the post-panic tick to fire the due task", || {
+        harness
+            .gateway
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("submitTurn"))
+            .then_some(())
+    });
     let observed = wait_settled(&harness);
     assert!(
         observed
@@ -983,6 +994,186 @@ fn tick_panic_folds_into_a_warn_and_re_arms() {
         1,
         "#2295 the fired run must still complete after the panic: {:?}",
         observed.history
+    );
+}
+
+/// #2295 fix-r2: a start whose recalculation fails leaves exactly the TS
+/// state — `running` already set, no timer armed (CronScheduler.ts:38-40, the
+/// reject keeps the latches) — so the second start is the running-gate no-op
+/// (the still-broken store is not re-read), and a later `poke()` revives the
+/// scheduler: the poked 250ms tick fires the due task (CronScheduler.ts:
+/// 55-64). The broken store is the gold tick-failure shape (EISDIR); a
+/// recording fire port stands in for the turn, and the manager-loaded runtime
+/// keeps the seat's weak upgrade alive.
+#[test]
+fn poke_after_a_failed_start_recalculation_fires_the_due_task() {
+    let harness = harness(CronManagerConfig::default(), Some(10_000));
+    seed_tasks(&harness, &[once_body("t1", DUE)]);
+    harness
+        .manager
+        .list_tasks(&json("{\"projectKey\": \"/fire\"}"))
+        .unwrap();
+    let runtime = harness.manager.loaded_runtime("/fire").unwrap();
+    let fired: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    struct RecordingFire(Arc<Mutex<Vec<String>>>);
+    impl CronFirePort for RecordingFire {
+        fn run_task(&self, task: &JsValue, _run_id: &JsString) -> Result<(), CronError> {
+            self.0.lock().unwrap().push(
+                task.get("taskId")
+                    .and_then(JsValue::as_string)
+                    .unwrap_or_else(|| panic!("#2295 the fired task carries a taskId"))
+                    .to_utf8()
+                    .expect("#2295 task ids are UTF-8")
+                    .to_string(),
+            );
+            Ok(())
+        }
+    }
+    let paths = resolve_cron_paths(&harness.home.to_string_lossy(), "/fire").unwrap();
+    let scheduler = CronScheduler::new(SchedulerDeps {
+        config: CronManagerConfig::default(),
+        store: CronTaskStore::new(paths),
+        fire: Arc::new(RecordingFire(fired.clone())),
+        uuid: Arc::new(|| JsString::from("id-1")),
+        now: Arc::new(|| PINNED_NOW_MS),
+        active_run_count: Arc::new(|| 0),
+        logger: Arc::new(MessageLogger::default()),
+        zone_cache: Arc::new(CronZoneResolverCache::new()),
+        // Far enough that the seat's own re-arm never races the poked tick.
+        idle_poll_ms: 10_000,
+        runtime: Arc::downgrade(&runtime),
+    })
+    .unwrap();
+    // Break the store: start's recalculation fails with running latched.
+    let backup = harness.tasks_file.with_extension("json.bak");
+    fs::rename(&harness.tasks_file, &backup).unwrap();
+    fs::create_dir(&harness.tasks_file).unwrap();
+    scheduler
+        .start()
+        .expect_err("#2295 the broken store must fail the start recalculation");
+    // The second start is the running-gate no-op: the store is still broken,
+    // so a re-run recalculation would fail again — running must have stayed
+    // set through the rejection.
+    scheduler.start().expect(
+        "#2295 the running gate must make the second start a no-op despite the broken store",
+    );
+    assert!(
+        scheduler.armed_tick_delay_ms().is_none(),
+        "#2295 a failed start must leave nothing armed (the TS timer stays undefined)"
+    );
+    // Restore and revive: the poked 250ms tick fires the due task.
+    fs::remove_dir(&harness.tasks_file).unwrap();
+    fs::rename(&backup, &harness.tasks_file).unwrap();
+    scheduler.poke();
+    let armed = scheduler
+        .armed_tick_delay_ms()
+        .expect("#2295 poke must arm the floor after the failed start");
+    assert!(
+        armed <= 250,
+        "#2295 the poked floor must arm at 250ms after the failed start, got {armed}ms"
+    );
+    let fired_tasks = wait_until(
+        "the poked tick to fire the due task after the failed start",
+        || {
+            let fired = fired.lock().unwrap();
+            (!fired.is_empty()).then(|| fired.clone())
+        },
+    );
+    assert_eq!(
+        fired_tasks,
+        vec!["t1".to_owned()],
+        "#2295 the revived tick must fire exactly the due task"
+    );
+}
+
+/// #2295 fix-r2: every arm floors at `MIN_TIMER_MS` — `scheduleNextTick`'s
+/// `Math.max(MIN_TIMER_MS, delayMs ?? computeDelayMs())` (CronScheduler.ts:
+/// 73): an injected idle poll of 0 must not arm at "now" (a deadline that
+/// `checked_duration_since` already sees as due would hot-loop `listTasks`).
+/// The now seam counts every tick's read, so a hot loop shows up as an
+/// unbounded call count.
+#[test]
+fn idle_poll_below_the_floor_arms_at_the_floor() {
+    let ticks = Arc::new(AtomicUsize::new(0));
+    let now = {
+        let ticks = ticks.clone();
+        Arc::new(move || {
+            ticks.fetch_add(1, Ordering::SeqCst);
+            PINNED_NOW_MS
+        })
+    };
+    let harness = harness_with_now(CronManagerConfig::default(), Some(0), now);
+    seed_tasks(&harness, &[once_body("t1", FAR)]);
+    harness.manager.start().unwrap();
+    let scheduler = harness
+        .manager
+        .loaded_runtime("/fire")
+        .unwrap()
+        .bound_scheduler()
+        .unwrap();
+    let armed = scheduler
+        .armed_tick_delay_ms()
+        .expect("#2295 start must arm the floored idle poll");
+    assert!(
+        (100..=250).contains(&armed),
+        "#2295 an idle poll below the floor must arm at the 250ms floor, got {armed}ms"
+    );
+    // The re-arm after a tick floors too: in 700ms the floored seat ticks a
+    // handful of times (plus start's recalculation and lifecycle reads), not
+    // the unbounded cadence of an unfloored 0ms poll.
+    thread::sleep(Duration::from_millis(700));
+    let calls = ticks.load(Ordering::SeqCst);
+    assert!(
+        calls <= 12,
+        "#2295 the floored idle poll must not hot-loop: {calls} now-seam calls in 700ms"
+    );
+}
+
+/// #2295 fix-r2: a huge injected idle poll must not panic the arm — std
+/// documents `Instant + Duration` as "may panic" on overflow, so the port arms
+/// through `checked_add`. The seat arms at the far-future deadline and stays
+/// poke-alive: the poked 250ms tick fires the due task, and the tick's own
+/// re-arm at the huge poll keeps the seat armed.
+#[test]
+fn huge_idle_poll_arms_without_panicking_and_stays_poke_alive() {
+    let harness = harness(CronManagerConfig::default(), Some(u64::MAX));
+    seed_tasks(&harness, &[once_body("t1", DUE)]);
+    harness.manager.start().unwrap();
+    let scheduler = harness
+        .manager
+        .loaded_runtime("/fire")
+        .unwrap()
+        .bound_scheduler()
+        .unwrap();
+    let armed = scheduler
+        .armed_tick_delay_ms()
+        .expect("#2295 the huge idle poll must arm at a representable deadline");
+    assert!(
+        armed > DEFAULT_IDLE_POLL_MS,
+        "#2295 the huge idle poll must arm at the far-future deadline, got {armed}ms"
+    );
+    scheduler.poke();
+    wait_until(
+        "the poked tick to fire the due task under the huge idle poll",
+        || {
+            harness
+                .gateway
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("submitTurn"))
+                .then_some(())
+        },
+    );
+    let observed = wait_settled(&harness);
+    assert_eq!(
+        observed.history.len(),
+        1,
+        "#2295 the fired run must complete under the huge idle poll: {:?}",
+        observed.history
+    );
+    assert!(
+        scheduler.armed_tick_delay_ms().is_some(),
+        "#2295 the tick's re-arm at the huge idle poll must keep the seat armed"
     );
 }
 

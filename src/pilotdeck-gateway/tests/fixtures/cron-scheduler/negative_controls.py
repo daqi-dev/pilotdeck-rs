@@ -29,7 +29,15 @@ liveness properties the replay cannot see: start-arms-nothing pins
 `armed_tick_delay_ms` after start, delay-skipped pins the constant-60s
 deferral on the direct scheduler, re-register-clobbers-stop pins the
 pre-register-window merge, tick-panic-kills-thread pins the panic fold into
-the warn, panic-unregister-gone pins the fire's unwind unregister.
+the warn, panic-unregister-gone pins the fire's unwind unregister. The fix-r2
+rows pin the review's two findings: failed-start-resets-running breaks the
+running latch the rejected start must keep (the second start re-runs the
+recalculation against the still-broken store), failed-start-loses-seat moves
+the spawn back after the recalculation (the reviewed bug: a failed start
+leaves the deadline without a consumer, so the poked tick never fires),
+floorless-idle-poll drops the MIN_TIMER_MS floor from the arm helper (a 0ms
+poll arms at "now", either read as Some(0) or raced to an unarmed moment, and
+hot-loops the now seam past the 700ms bound).
 """
 from pathlib import Path
 import json
@@ -54,6 +62,8 @@ CAPACITY = 'runtime::cron::scheduler_tests::capacity_defers_by_the_constant_sixt
 PREREGISTER = 'runtime::cron::scheduler_tests::stop_in_the_pre_register_window_survives_the_re_register'
 TICKPANIC = 'runtime::cron::scheduler_tests::tick_panic_folds_into_a_warn_and_re_arms'
 SUBMITPANIC = 'runtime::cron::scheduler_tests::submit_panic_still_unregisters'
+FAILEDSTART = 'runtime::cron::scheduler_tests::poke_after_a_failed_start_recalculation_fires_the_due_task'
+FLOOR = 'runtime::cron::scheduler_tests::idle_poll_below_the_floor_arms_at_the_floor'
 mutations = [
     # The runtime's stop never stops the scheduler, so the armed poll survives
     # the stop; the restart-holding test's first deterministic failure is the
@@ -152,6 +162,93 @@ mutations = [
      'JsString::from("#2295 fire not spawned")));',
      REPLAY,
      '#2295 gold due-once-fires observation final: gatewayCalls differ from the TS gold'),
+    # fix-r2: the rejected start resets running, so the second start re-runs
+    # the recalculation against the still-broken store and fails instead of
+    # being the running-gate no-op.
+    ('failed-start-resets-running', scheduler,
+     '            // The rejected start leaves the seat waiting unarmed — the exact\n'
+     '            // TS state, revived by a later poke.\n'
+     '            Err(error) => Err(error),',
+     '            // The rejected start leaves the seat waiting unarmed — the exact\n'
+     '            // TS state, revived by a later poke.\n'
+     '            Err(error) => {\n'
+     '                state.running = false;\n'
+     '                Err(error)\n'
+     '            }',
+     FAILEDSTART,
+     '#2295 the running gate must make the second start a no-op despite the broken store'),
+    # fix-r2: the seat spawns only after a successful recalculation (the
+    # reviewed bug), so the failed start leaves the poked deadline without a
+    # consumer and the due task never fires.
+    ('failed-start-loses-seat', scheduler,
+     '            state.running = true;\n'
+     '            // The seat spawns before the recalculation (the stopped gate\n'
+     '            // above just ran under the same lock, so no join can be missed);\n'
+     '            // a stop that lands while the lock is down for the recalculation\n'
+     '            // takes this handle with it and joins it, so no seat is leaked.\n'
+     '            if state.thread.is_none() {\n'
+     '                let inner = self.inner.clone();\n'
+     '                match thread::Builder::new()\n'
+     '                    .name("cron-scheduler".into())\n'
+     '                    .spawn(move || scheduler_thread(inner))\n'
+     '                {\n'
+     '                    Ok(handle) => state.thread = Some(handle),\n'
+     '                    Err(error) => {\n'
+     '                        // A spawn failure (EAGAIN/resource exhaustion)\n'
+     '                        // must not latch `running`: the gate above would\n'
+     '                        // swallow every later start() retry with a\n'
+     '                        // spurious Ok.\n'
+     '                        state.running = false;\n'
+     '                        drop(state);\n'
+     '                        self.inner.signal.notify_all();\n'
+     '                        return Err(CronError::error(JsString::from(error.to_string())));\n'
+     '                    }\n'
+     '                }\n'
+     '            }\n'
+     '        }\n'
+     '        let recalc = recalculate_all_next_runs(&self.inner.deps);\n'
+     '        let mut state = lock(&self.inner.state);\n'
+     '        match recalc {\n'
+     '            // The rejected start leaves the seat waiting unarmed — the exact\n'
+     '            // TS state, revived by a later poke.\n'
+     '            Err(error) => Err(error),\n'
+     '            Ok(()) => {\n',
+     '            state.running = true;\n'
+     '        }\n'
+     '        let recalc = recalculate_all_next_runs(&self.inner.deps);\n'
+     '        let mut state = lock(&self.inner.state);\n'
+     '        match recalc {\n'
+     '            // The rejected start leaves the seat waiting unarmed — the exact\n'
+     '            // TS state, revived by a later poke.\n'
+     '            Err(error) => Err(error),\n'
+     '            Ok(()) => {\n'
+     '                if state.thread.is_none() && !state.stopped {\n'
+     '                    let inner = self.inner.clone();\n'
+     '                    match thread::Builder::new()\n'
+     '                        .name("cron-scheduler".into())\n'
+     '                        .spawn(move || scheduler_thread(inner))\n'
+     '                    {\n'
+     '                        Ok(handle) => state.thread = Some(handle),\n'
+     '                        Err(error) => {\n'
+     '                            state.running = false;\n'
+     '                            drop(state);\n'
+     '                            self.inner.signal.notify_all();\n'
+     '                            return Err(CronError::error(JsString::from(error.to_string())));\n'
+     '                        }\n'
+     '                    }\n'
+     '                }\n',
+     FAILEDSTART,
+     '#2295 timed out waiting for the poked tick to fire the due task after the failed start'),
+    # fix-r2: the arm helper drops the MIN_TIMER_MS floor, so a 0ms poll arms
+    # at "now" — read back as Some(0) (or raced to an unarmed moment) and the
+    # 700ms window hot-loops the now seam.
+    ('floorless-idle-poll', scheduler,
+     '    Instant::now().checked_add(Duration::from_millis(idle_poll_ms.max(MIN_TIMER_MS)))',
+     '    Instant::now().checked_add(Duration::from_millis(idle_poll_ms))',
+     FLOOR,
+     ['#2295 start must arm the floored idle poll',
+      '#2295 an idle poll below the floor must arm at the 250ms floor, got 0ms',
+      '#2295 the floored idle poll must not hot-loop']),
 ]
 
 
