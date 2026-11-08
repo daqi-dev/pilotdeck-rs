@@ -21,6 +21,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (
     CARGO_SLOTS_WAIT_SECONDS, mutating_sources, new_output_directory, run_owned, wait_for_slot,
+    write_source_atomic,
 )
 from negative_suite import Case, classify, passed
 
@@ -189,7 +190,11 @@ def main():
                 # runner that takes the same .negative-source.lock (#1440).
                 # Restoring the primary path also undoes the paired edits of
                 # multi-file rows: every change rewrites the same file.
-                row['changes'][0][0].write_bytes(originals[row['changes'][0][0]])
+                # #1908: one atomic rename; a truncating write_bytes here
+                # has the same SIGKILL half-write window as the mutation
+                # write itself.
+                write_source_atomic(root, row['changes'][0][0],
+                                    originals[row['changes'][0][0]])
                 if not passed(run(row['name'] + '-restored', arguments), row['test']):
                     status, reason = 'INVALID', 'restored control did not pass the bound test'
         except SystemExit:

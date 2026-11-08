@@ -10,7 +10,7 @@ import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_selection import refuse
 from negative_suite import Case, classify, passed, publish_summary
 
@@ -676,7 +676,10 @@ def main():
                 # Restore and re-run inside the source guard: the restored control
                 # compiles the tree, so it must never race another runner that
                 # takes the same .negative-source.lock (#1440).
-                case.path.write_bytes(originals[case.path])
+                # #1908: one atomic rename; a truncating write_bytes here
+                # has the same SIGKILL half-write window as the mutation
+                # write itself.
+                write_source_atomic(ROOT, case.path, originals[case.path])
                 if not passed(run(case.mutation + '-restored', args), case.test):
                     raise RuntimeError('restored positive control failed')
         except Exception as error:
