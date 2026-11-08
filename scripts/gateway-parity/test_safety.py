@@ -4139,9 +4139,12 @@ class RetirementScoring(unittest.TestCase):
         # matching addresses) read as the PASS binding pre-fix, but no port
         # producer (lsof ``-Fn`` addresses, the port-set allocation) can
         # ever emit one.
+        # fix-r10 (anthropic boundary r9 P2): 65536 is the first value past
+        # the domain — the boundary itself, not just a far-away 70000.
         for tag, port, addresses in (
                 ('zero', 0, ['127.0.0.1:0']),
                 ('boolean', True, ['127.0.0.1:True']),
+                ('boundary', 65536, ['127.0.0.1:65536']),
                 ('oversized', 70000, ['127.0.0.1:70000'])):
             verdict = self.session._retirement_listener_verdict(
                 {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}, port)
@@ -4153,6 +4156,7 @@ class RetirementScoring(unittest.TestCase):
         for tag, port, addresses in (
                 ('zero', 0, ['127.0.0.1:0']),
                 ('boolean', True, ['127.0.0.1:True']),
+                ('boundary', 65536, ['127.0.0.1:65536']),
                 ('oversized', 70000, ['127.0.0.1:70000'])):
             row = self._stream_ok_round_row()
             row['ports'] = {'mock': 28761, 'gateway': port}

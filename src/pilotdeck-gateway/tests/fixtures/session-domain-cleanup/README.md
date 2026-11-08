@@ -1211,9 +1211,10 @@ pinned by `test_safety` (probe-status domain, gateway-port domain, the
 by the in-file aggregation-audit self-tests, both the established r6-r8
 precedent.  The fold work: the container branches gained the *total*
 running bound (`_folded_size`, judged per element with an early exit, so
-`['x' * 999999, …]` piles can no longer sum to n × the cap — measured
-100 × 999999 chars folded to ~100 MB pre-fix and UNRESOLVED at ~51 MB RSS
-post-fix), the negative-int exponent comment was corrected to the measured
+`['x' * 999999, …]` piles can no longer sum to n × the cap — measured: a
+~1.5 KB source folding to a ~100 MB value peaked ~150 MB RSS pre-fix and
+folds to UNRESOLVED at ~51 MB RSS post-fix), the negative-int exponent
+comment was corrected to the measured
 behavior (CPython resolves `int ** negative-int` as a float power with no
 large intermediate; an oversized left raises `OverflowError` into the
 fail-closed except — the r8 comment's "raises" claim was wrong, and two
@@ -1223,3 +1224,28 @@ materialises), and the duplicated width scan was extracted into that one
 shared helper.  The enumeration list above also gained the
 `summary-name-relay-shared-call-bypass` row the r8 table add had missed
 (DS boundary r8 P3 — count 238 was already right).
+
+fix-r10 (DS r9 P0/P1 + anthropic r9 P2/P3, probe-verified) also added no
+mutants — same pinning split.  Two DS findings landed in `_folded_size`:
+first, the total bound was still quadratic, because list repetition shares
+one folded child object — `([(['x'] * 999999)] * 999999,)` (a ~40-byte
+source) put ~10^12 virtual nodes behind ONE element's `_folded_size` call
+and the caller's early exit only fires after that call returns (measured
+>20 s; the fold path itself >25 s).  The traversal now runs under one
+shared work budget (`_FOLD_SIZE_WORK_CAP = _FOLD_MAX_ITEMS * 4` child
+visits, one budget list for the whole container loop, so a pile of
+zero-size elements — `[''] * 999999` × 5, where the running total never
+grows — still aborts); an exhausted budget raises `_FoldedSizeOverflow`
+inside, returns `None`, and the callers read that as an
+`_LITERAL_TEST_UNRESOLVED` verdict.  Second, ints counted "1 each" in
+containers while a legal single int is `1 << 999999` — 1200 literal
+elements of it (~15.6 KB of
+source) folded to ~200 MB RSS with the total reading only 1200.  Ints now
+count `max(1, bit_length())` bits (bools floor to 1; the arithmetic fold
+already used that convention), so a single at-cap int still folds.  The
+aggregation-audit self-tests pin the bomb shape, the int pile, the
+zero-size pile, and the still-folding controls.  anthropic r9's boundary
+P2 (the port-domain matrix pinned 0/True/70000 but not the 65536 boundary
+itself) joined `test_safety`'s two matrices, and its sibling P3 wording
+(the r9 README/docstring mixed "~100 KB" sources and mismatched RSS
+numbers) is unified to the measured source/fold/RSS triple above.

@@ -1804,6 +1804,19 @@ def _retirement_list_rows(value):
     return value if isinstance(value, list) else []
 
 
+def _retirement_frame_rows(frames):
+    """The frame-bearing rows of *frames* — the one predicate on a row.
+
+    fix-r10 (DS simplify r9 advisory, in-round): the row-carries-a-frame
+    predicate (a dict row whose ``'frame'`` slot is a dict) was spelled out
+    twice — in the wire-backing loop and the /ws inventory hit — so the two
+    readings could drift apart again exactly the way the fix-r9 boundary P1
+    had them disagreeing before ``[{}]``.  One helper, both readers.
+    """
+    return [row for row in frames
+            if isinstance(row, dict) and isinstance(row.get('frame'), dict)]
+
+
 def _retirement_census_verdict(census):
     """R3 (#1355 fix-r2): an unobservable census is not an empty host set.
 
@@ -2082,15 +2095,14 @@ def _retirement_wire_backing(frames):
     collapsing every measured round into the wrapper's ROUND_EVIDENCE stub.
     """
     sends, responses, events, final_events = {}, {}, {}, set()
-    for row in _retirement_list_rows(frames):
-        if not isinstance(row, dict):
-            # #1588 r1 §1: a row that is not a dict carries no frame at all;
-            # the outcomes above then fail their wire-backing rule fail-closed
-            # instead of an AttributeError escaping the scorer.
-            continue
+    # #1588 r1 §1 (fix-r4) / DS boundary r8 P1 (fix-r9): a row that is not
+    # a dict, or a dict row whose 'frame' is not a dict, carries no frame at
+    # all; the outcomes above then fail their wire-backing rule fail-closed
+    # instead of an AttributeError escaping the scorer.  fix-r10: the
+    # predicate itself lives in _retirement_frame_rows, shared with the /ws
+    # inventory hit so the two readings cannot drift apart again.
+    for row in _retirement_frame_rows(_retirement_list_rows(frames)):
         frame = row.get('frame')
-        if not isinstance(frame, dict):
-            continue
         identifier = frame.get('id')
         if not isinstance(identifier, (int, str)) or isinstance(identifier, bool):
             continue
@@ -2865,9 +2877,10 @@ def _retirement_entry_inventory(baseline, round_row):
             # only counts rows with a dict 'frame', so ``[{}]`` or
             # ``[{'frame': None}]`` must not HIT here either.
             frames = round_row.get('frames')
-            hit = (isinstance(frames, list)
-                   and any(isinstance(frame, dict) and isinstance(frame.get('frame'), dict)
-                           for frame in frames))
+            # fix-r10: same _retirement_frame_rows predicate as the wire
+            # backing above (DS simplify r9 advisory) — the hit reading
+            # stays exactly the rows the wire pass would count.
+            hit = bool(_retirement_frame_rows(_retirement_list_rows(frames)))
             reason = None if hit else 'no websocket frames recorded'
         else:
             hit = any(p[1] not in (None, 404) for p in matched)

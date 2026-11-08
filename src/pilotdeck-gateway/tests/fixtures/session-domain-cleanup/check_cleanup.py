@@ -4391,25 +4391,74 @@ def _literal_test_value(node):
         return _LITERAL_TEST_UNRESOLVED
 
 
-def _folded_size(value):
-    """The element/character count a folded value contributes to a container cap.
+class _FoldedSizeOverflow(Exception):
+    """Internal to ``_folded_size``: the traversal budget ran out.
+
+    Never escapes ``_folded_size`` — it maps to the None return the
+    container branches resolve as a fail-closed container.
+    """
+
+
+_FOLD_SIZE_WORK_CAP = _FOLD_MAX_ITEMS * 4
+
+
+def _folded_size(value, budget=None):
+    """The units a folded value contributes to a container cap.
 
     fix-r9 (DS boundary r8 P1, probe-verified — fix-r9-audit/probe-r9-ds-
     before.out B): the container branches folded every element first and
     built the container with no *total* size judgment, so n elements each
     individually at the cap (``['x' * 999999, 'x' * 999999, ...]``, a
-    ~100 KB source) summed to n x the cap in folded memory.  Strings and
+    ~1.5 KB source) summed to n x the cap in folded memory.  Strings and
     bytes count their characters, containers the sum of their folded
-    children, scalars 1.
+    children, other scalars 1 — fix-r10 (DS sibling/boundary r9 P1, both
+    roles, probe-verified — fix-r10-audit/probe-r10-ds-before.out A4/B):
+    ints count their bits, so a legal single ``1 << 999999`` element still
+    fits the cap exactly (its ``bit_length`` is the cap) while a literal
+    pile of them no longer folds (1200 of them used to materialise ~200 MB
+    from a ~16 KB source with the total reading 1200).
+
+    fix-r10 (DS concurrency r9 P0, probe-verified — fix-r10-audit/probe-
+    r10-ds-before.out A/A2): the traversal itself must be bounded — list
+    repetition shares one folded child, so ``([(['x'] * 999999)] *
+    999999,)`` (a ~40-byte source) put ~10^12 virtual nodes behind one
+    element's size call and hung the ruler (>25 s on the fold path, n^2
+    growth measured).  Every child visit spends one unit from ``budget``
+    (a one-cell list the container branches share across their element
+    loop, so the bound covers the whole container, not one element);
+    exhausting it returns None and the caller resolves the container.
     """
-    if isinstance(value, (str, bytes)):
-        return len(value)
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return sum(_folded_size(element) for element in value)
-    if isinstance(value, dict):
-        return sum(_folded_size(key) + _folded_size(item)
-                   for key, item in value.items())
-    return 1
+    if budget is None:
+        budget = [_FOLD_SIZE_WORK_CAP]
+
+    def walk(item):
+        if isinstance(item, (str, bytes)):
+            return len(item)
+        if isinstance(item, int):
+            # bools land here too: True is 1 bit, False floors to 1.
+            return max(1, item.bit_length())
+        if isinstance(item, (list, tuple, set, frozenset)):
+            total = 0
+            for element in item:
+                budget[0] -= 1
+                if budget[0] < 0:
+                    raise _FoldedSizeOverflow
+                total += walk(element)
+            return total
+        if isinstance(item, dict):
+            total = 0
+            for key, val in item.items():
+                budget[0] -= 1
+                if budget[0] < 0:
+                    raise _FoldedSizeOverflow
+                total += walk(key) + walk(val)
+            return total
+        return 1
+
+    try:
+        return walk(value)
+    except _FoldedSizeOverflow:
+        return None
 
 
 def _literal_test_value_fold(node):
@@ -4508,11 +4557,19 @@ def _literal_test_value_fold(node):
         # instead of materialising the rest of the pile.
         elements = []
         total = 0
+        # fix-r10 (DS concurrency r9 P0): one shared traversal budget across
+        # the whole container — a per-element budget would let a pile of
+        # zero-size elements (``[''] * 999999`` x n) iterate n x the cap
+        # without ever crossing the size total.
+        budget = [_FOLD_SIZE_WORK_CAP]
         for element_node in node.elts:
             element = _literal_test_value(element_node)
             if element is _LITERAL_TEST_UNRESOLVED:
                 return _LITERAL_TEST_UNRESOLVED
-            total += _folded_size(element)
+            size = _folded_size(element, budget)
+            if size is None:
+                return _LITERAL_TEST_UNRESOLVED
+            total += size
             if total > _FOLD_MAX_ITEMS:
                 return _LITERAL_TEST_UNRESOLVED
             elements.append(element)
@@ -4529,6 +4586,9 @@ def _literal_test_value_fold(node):
         # folded keys and values.
         entries = []
         total = 0
+        # fix-r10 (DS concurrency r9 P0): same shared traversal budget as the
+        # sequence branches, covering the whole dict in one allowance.
+        budget = [_FOLD_SIZE_WORK_CAP]
         for key, value in zip(node.keys, node.values):
             if key is None:  # a ``**`` spread is not a constant key
                 return _LITERAL_TEST_UNRESOLVED
@@ -4537,7 +4597,11 @@ def _literal_test_value_fold(node):
             if (_LITERAL_TEST_UNRESOLVED in (folded_key, folded_value)
                     or not isinstance(folded_key, (str, int, float, bool, type(None)))):
                 return _LITERAL_TEST_UNRESOLVED
-            total += _folded_size(folded_key) + _folded_size(folded_value)
+            key_size = _folded_size(folded_key, budget)
+            value_size = _folded_size(folded_value, budget)
+            if key_size is None or value_size is None:
+                return _LITERAL_TEST_UNRESOLVED
+            total += key_size + value_size
             if total > _FOLD_MAX_ITEMS:
                 return _LITERAL_TEST_UNRESOLVED
             entries.append((folded_key, folded_value))
@@ -7608,6 +7672,45 @@ def aggregation_audit():
     if _literal_test_value(ast.parse("b'%10s' % b'x'", mode='eval').body) != b'         x':
         failures.append('#892 aggregation-audit: the format fold rejected a '
                         'bounded bytes format (#1652)')
+    # #1652 fix-r10 (DS concurrency r9 P0, probe-verified — fix-r10-audit/
+    # probe-r10-ds-before.out A): list repetition shares one folded child
+    # object, so ``([(['x'] * 999999)] * 999999,)`` puts ~10^12 virtual
+    # nodes behind ONE element's ``_folded_size`` call and the caller's
+    # total early-exit only fires after that call returns.  The shared
+    # traversal budget must abort inside the traversal (measured
+    # quadratic in the child count pre-fix: >20 s on the one-element
+    # bomb).  The zero-size pile pins the budget *placement*: each
+    # element of ``([''] * 999999,)`` has size 0, so a per-element cap
+    # would never fire — the budget must be shared across the whole
+    # container loop.
+    for _source in ("([(['x'] * 999999)] * 999999,)",
+                    "((1 << 999999), (1 << 999999))",
+                    "([''] * 999999, [''] * 999999, [''] * 999999,"
+                    " [''] * 999999, [''] * 999999)"):
+        if (_literal_test_value(ast.parse(_source, mode='eval').body)
+                is not _LITERAL_TEST_UNRESOLVED):
+            failures.append('#892 aggregation-audit: the container fold '
+                            f'traversed a bomb-shaped container {_source!r} '
+                            'instead of aborting on the shared traversal '
+                            'budget (#1652)')
+    # #1652 fix-r10 (DS boundary r9 P1, probe-verified — fix-r10-audit/
+    # probe-r10-ds-before.out C): ints count by bit length, not by "1
+    # each" — a legal single int is 1 << 999999 (bit_length exactly the
+    # cap), and 1200 literal elements of it used to fold to ~200 MB RSS
+    # from ~15.6 KB of source while the total read only 1200.  A single
+    # at-cap int and a single shared-small element still fold (the
+    # tighter semantics must not over-fold); a bool floors to 1 bit.
+    if _literal_test_value(
+            ast.parse("((1 << 999999),)", mode='eval').body) != ((1 << 999999),):
+        failures.append('#892 aggregation-audit: the container fold rejected '
+                        'a single at-cap int (#1652)')
+    if _literal_test_value(
+            ast.parse("(['x'] * 999999,)", mode='eval').body) != (['x'] * 999999,):
+        failures.append('#892 aggregation-audit: the container fold rejected '
+                        'a single shared-small element (#1652)')
+    if _literal_test_value(ast.parse('(True, False)', mode='eval').body) != (True, False):
+        failures.append('#892 aggregation-audit: the container fold changed '
+                        'bool folding (1 bit each, floored) (#1652)')
     # #1652 fix-r8 (MM sibling r7 P1, probe-verified — M1/M1c): the relay
     # family's shared-call exemption is judged on the exit arms — a name
     # (or a local dict slot) bound to a dead-arm BoolOp
