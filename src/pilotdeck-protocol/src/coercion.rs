@@ -232,7 +232,7 @@ pub fn property_key(value: &JsValue) -> Result<JsString, ToStringError> {
 /// so the shared 2000 bound is deliberately conservative rather than an exact
 /// threshold.
 fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+    text.trim_matches(|c: char| matches!(c, '\u{0009}'..='\u{000d}' | '\u{0020}' | '\u{00a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' | '\u{2028}' | '\u{2029}' | '\u{202f}' | '\u{205f}' | '\u{3000}' | '\u{feff}'))
 }
 pub fn json_stringify(value: &JsValue) -> Result<Option<String>, StackOverflow> {
     let mut pending = vec![(value, 0usize)];
@@ -439,5 +439,16 @@ mod tests {
         assert_eq!(to_number(&nested(MAX_ARRAY_DEPTH + 1)), Err(StackOverflow));
         // Far past the limit: still an error, never a Rust stack overflow.
         assert_eq!(to_string_units(&nested(1_000_000)), Err(StackOverflow));
+    }
+}
+
+#[cfg(test)]
+mod whitespace_boundary_tests {
+    #[test]
+    fn number_coercion_keeps_ecmascript_whitespace_boundary() {
+        assert!(super::string_to_number("\u{85}7\u{85}").is_nan());
+        assert!(super::string_to_number("\u{85}").is_nan());
+        assert_eq!(super::string_to_number("\u{feff}7\u{feff}"), 7.0);
+        assert_eq!(super::string_to_number("\u{feff}"), 0.0);
     }
 }

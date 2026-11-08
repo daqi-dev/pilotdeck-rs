@@ -164,20 +164,20 @@ impl From<pilotdeck_tokenizer::TokenizeError> for SummaryError {
     }
 }
 
-pub fn plan_messages(
+pub fn plan_messages<E>(
     messages: &[JsValue],
     budget: f64,
     protected: &ProtectedNames,
     floor: usize,
-    estimate: &dyn Fn(&[JsValue]) -> Result<f64, SummaryError>,
-) -> Result<(usize, Vec<JsValue>), SummaryError> {
+    estimate: &dyn Fn(&[JsValue]) -> Result<f64, E>,
+) -> Result<(usize, Vec<JsValue>), E> {
     let groups = groups(messages);
     let min = if floor <= 1 {
         1
     } else {
         floor.max(messages.len() / 10).min(8)
     };
-    let scan = |limit: f64| -> Result<(usize, f64), HostError> {
+    let scan = |limit: f64| -> Result<(usize, f64), E> {
         let (mut tokens, mut count, mut cut) = (0.0, 0usize, groups.len());
         for (index, group) in groups.iter().enumerate().rev() {
             let next = estimate(group)?;

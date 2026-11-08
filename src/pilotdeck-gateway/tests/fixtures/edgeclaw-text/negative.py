@@ -70,7 +70,7 @@ cases = [
     // Explicit stack: the TS baseline recurses, so a deeply nested JSON value''',
      'decode_escaped_unicode_value_handles_100k_nesting'),
     # Render null array elements as the literal "null" instead of joining empty.
-    ('array-join', text.parent / '..' / '..' / '..' / 'js_value.rs',
+    ('array-join', root / 'src/pilotdeck-protocol/src/coercion.rs',
      '''                if !matches!(item, JsValue::Undefined | JsValue::Null) {
                     next = Some(item);
                 }''',
