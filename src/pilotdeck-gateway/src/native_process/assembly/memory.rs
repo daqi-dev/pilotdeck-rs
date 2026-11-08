@@ -63,7 +63,8 @@ impl ProjectMemoryRegistry for NativeMemoryRegistry {
         if metadata.files.was_refused() {
             return Err(MemoryProviderError::new("Unsafe project marker."));
         }
-        resolved.map(JsString::from)
+        resolved
+            .map(JsString::from)
             .ok_or_else(|| MemoryProviderError::unknown_project_key(project_key.units()))
     }
 
@@ -601,18 +602,30 @@ mod tests {
     fn native_memory_marker_fifo_is_bounded_subprocess() {
         use std::time::Instant;
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--ignored", "--nocapture", "native_memory_marker_fifo_child"])
-            .stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+            .args([
+                "--ignored",
+                "--nocapture",
+                "native_memory_marker_fifo_child",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
             if let Some(status) = child.try_wait().unwrap() {
                 let output = child.wait_with_output().unwrap();
-                assert!(status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+                assert!(
+                    status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
                 assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
                 break;
             }
             if Instant::now() >= deadline {
-                let _ = child.kill(); let _ = child.wait_with_output();
+                let _ = child.kill();
+                let _ = child.wait_with_output();
                 panic!("memory marker FIFO blocked");
             }
             std::thread::sleep(Duration::from_millis(20));
@@ -630,9 +643,16 @@ mod tests {
         assert!(resolver.resolve_project_key(&key).is_ok());
         let dir = scratch.home().join("projects/000-unrelated");
         std::fs::create_dir(&dir).unwrap();
-        assert!(std::process::Command::new("/usr/bin/mkfifo").arg(dir.join(".cwd")).status().unwrap().success());
-        let error = resolver.resolve_project_key(&key).expect_err("unsafe marker accepted");
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(dir.join(".cwd"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        let error = resolver
+            .resolve_project_key(&key)
+            .expect_err("unsafe marker accepted");
         assert_eq!(error.message, JsString::from("Unsafe project marker."));
     }
-
 }

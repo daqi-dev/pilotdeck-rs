@@ -1614,10 +1614,16 @@ fn six_actual_original_cache_plan_profiles_match_frozen_hash_and_own_generation(
             panic!("prepared messages");
         };
         let native = request_assembly::cache_plan_with_collation(
-            &prepared, messages, &route("p", "m"),
+            &prepared,
+            messages,
+            &route("p", "m"),
             &|_, _| panic!("an empty catalog must not need collation"),
-        ).unwrap();
-        assert_eq!(&native, plan, "native opt-in must retain all six fixed TS zero-tool plans");
+        )
+        .unwrap();
+        assert_eq!(
+            &native, plan,
+            "native opt-in must retain all six fixed TS zero-tool plans"
+        );
     }
 }
 

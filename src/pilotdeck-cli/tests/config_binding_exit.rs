@@ -63,23 +63,24 @@ fn start_with_sidecar(home: &Path, project: &Path, sidecar: Option<&Path>) -> Ow
     )
     .unwrap();
     let mut command = Command::new(env!("CARGO_BIN_EXE_pilotdeck"));
-    command.env_clear()
-            .env("HOME", home)
-            .env("PILOT_HOME", home)
-            .env("PILOTDECK_BUNDLED_SKILLS_DIR", &bundled)
-            .env("STAFFDECK_PROJECT_BINDING_ENABLED", "true")
-            .env("STAFFDECK_COPY_TENANT_ID", "fixture-tenant")
-            .env("STAFFDECK_FORMAL_API_ORIGIN", "https://staffdeck.invalid/")
-            .env(
-                "STAFFDECK_SOP_RUNTIME_ORIGIN",
-                "https://staffdeck.invalid/runtime",
-            )
-            .env("STAFFDECK_SOP_MANAGEMENT_API_KEY", "mock-management-only")
-            .current_dir(project)
-            .arg("binding prompt")
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+    command
+        .env_clear()
+        .env("HOME", home)
+        .env("PILOT_HOME", home)
+        .env("PILOTDECK_BUNDLED_SKILLS_DIR", &bundled)
+        .env("STAFFDECK_PROJECT_BINDING_ENABLED", "true")
+        .env("STAFFDECK_COPY_TENANT_ID", "fixture-tenant")
+        .env("STAFFDECK_FORMAL_API_ORIGIN", "https://staffdeck.invalid/")
+        .env(
+            "STAFFDECK_SOP_RUNTIME_ORIGIN",
+            "https://staffdeck.invalid/runtime",
+        )
+        .env("STAFFDECK_SOP_MANAGEMENT_API_KEY", "mock-management-only")
+        .current_dir(project)
+        .arg("binding prompt")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(sidecar) = sidecar {
         command.env("PILOTDECK_RS_SIDECAR", sidecar);
     }
@@ -316,10 +317,14 @@ async fn binding_precheck_precedes_connections_and_allows_the_existing_remote_ch
                     "data: [DONE]\n\n"
                 ).to_owned())
             } else {
-                ("application/json", json!({
-                    "id":"binding-title", "choices":[{"message":{"role":"assistant",
-                    "content":"{\"title\":\"Binding local fixture\"}"},"finish_reason":"stop"}]
-                }).to_string())
+                (
+                    "application/json",
+                    json!({
+                        "id":"binding-title", "choices":[{"message":{"role":"assistant",
+                        "content":"{\"title\":\"Binding local fixture\"}"},"finish_reason":"stop"}]
+                    })
+                    .to_string(),
+                )
             };
             let header = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -328,7 +333,9 @@ async fn binding_precheck_precedes_connections_and_allows_the_existing_remote_ch
             timeout(Duration::from_secs(3), async {
                 socket.write_all(header.as_bytes()).await.unwrap();
                 socket.write_all(response.as_bytes()).await.unwrap();
-            }).await.unwrap();
+            })
+            .await
+            .unwrap();
             requests.push(body);
         }
         requests
@@ -338,18 +345,39 @@ async fn binding_precheck_precedes_connections_and_allows_the_existing_remote_ch
     let output = finish_with_budget(child, Duration::from_secs(15)).await;
     let _ = stop.send(());
     let requests = timeout(Duration::from_secs(3), provider_task)
-        .await.unwrap().unwrap();
-    assert_eq!(output.status.code(), Some(0), "{}", String::from_utf8_lossy(&output.stderr));
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(output.stdout, b"binding local ready");
-    let streams: Vec<_> = requests.iter().filter(|body| body["stream"] == true).collect();
+    let streams: Vec<_> = requests
+        .iter()
+        .filter(|body| body["stream"] == true)
+        .collect();
     assert_eq!(streams.len(), 1, "one actual native main turn");
     assert_eq!(streams[0]["model"], "mock");
-    assert!(streams[0]["messages"].as_array().unwrap().iter().any(|message|
-        message["role"] == "user" && message["content"] == "binding prompt"
-    ));
-    assert!(timeout(Duration::from_millis(150), listener.accept()).await.is_err(),
-        "503 fallback must not reconnect to the discovery peer");
-    assert_eq!(fs::read(home.join("pilotdeck.yaml")).unwrap(), yaml.as_bytes());
+    assert!(
+        streams[0]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["role"] == "user" && message["content"] == "binding prompt")
+    );
+    assert!(
+        timeout(Duration::from_millis(150), listener.accept())
+            .await
+            .is_err(),
+        "503 fallback must not reconnect to the discovery peer"
+    );
+    assert_eq!(
+        fs::read(home.join("pilotdeck.yaml")).unwrap(),
+        yaml.as_bytes()
+    );
     assert!(!home.join("staffdeck/project-bindings.json").exists());
     let mut pending = vec![home.join("projects")];
     let mut results = Vec::new();
@@ -358,11 +386,21 @@ async fn binding_precheck_precedes_connections_and_allows_the_existing_remote_ch
         visited += 1;
         assert!(visited <= 128, "unexpected fixture history expansion");
         if path.is_dir() {
-            pending.extend(fs::read_dir(path).unwrap().map(|entry| entry.unwrap().path()));
-        } else if path.extension().is_some_and(|extension| extension == "jsonl") {
+            pending.extend(
+                fs::read_dir(path)
+                    .unwrap()
+                    .map(|entry| entry.unwrap().path()),
+            );
+        } else if path
+            .extension()
+            .is_some_and(|extension| extension == "jsonl")
+        {
             let bytes = fs::read(&path).unwrap();
             assert!(bytes.len() <= 1024 * 1024);
-            for line in bytes.split(|byte| *byte == b'\n').filter(|line| !line.is_empty()) {
+            for line in bytes
+                .split(|byte| *byte == b'\n')
+                .filter(|line| !line.is_empty())
+            {
                 let entry: Value = serde_json::from_slice(line).unwrap();
                 if entry["type"] == "turn_result" {
                     results.push((path.clone(), entry));
@@ -370,16 +408,26 @@ async fn binding_precheck_precedes_connections_and_allows_the_existing_remote_ch
             }
         }
     }
-    assert_eq!(results.len(), 1, "native LocalHost must persist the completed turn");
+    assert_eq!(
+        results.len(),
+        1,
+        "native LocalHost must persist the completed turn"
+    );
     assert_eq!(results[0].1["result"]["type"], "success");
     assert_eq!(results[0].1["result"]["stopReason"], "completed");
-    assert_eq!(results[0].1["result"]["finalMessage"]["content"][0]["text"], "binding local ready");
+    assert_eq!(
+        results[0].1["result"]["finalMessage"]["content"][0]["text"],
+        "binding local ready"
+    );
     // A fresh real LocalHost reports its missing prior transcript. Preserve the
     // complete diagnostic, including the actual persisted transcript path.
     let missing = format!("Transcript {} does not exist.", results[0].0.display());
-    assert_eq!(String::from_utf8(output.stderr).unwrap(), format!(
-        "[pilotdeck] gateway server unavailable; using in-process mode.\nnative session: Diagnostic {{ code: \"transcript_missing\", severity: \"warning\", line: None, message: {missing:?} }}\n"
-    ));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        format!(
+            "[pilotdeck] gateway server unavailable; using in-process mode.\nnative session: Diagnostic {{ code: \"transcript_missing\", severity: \"warning\", line: None, message: {missing:?} }}\n"
+        )
+    );
 }
 
 async fn provider_request(socket: &mut TcpStream) -> Value {
@@ -396,10 +444,19 @@ async fn provider_request(socket: &mut TcpStream) -> Value {
             assert!(bytes.len() <= 65536);
         };
         let head = std::str::from_utf8(&bytes[..head_end]).unwrap();
-        assert!(head.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"), "{head}");
-        let length: usize = head.lines().filter_map(|line| line.split_once(':'))
+        assert!(
+            head.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"),
+            "{head}"
+        );
+        let length: usize = head
+            .lines()
+            .filter_map(|line| line.split_once(':'))
             .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-            .unwrap().1.trim().parse().unwrap();
+            .unwrap()
+            .1
+            .trim()
+            .parse()
+            .unwrap();
         assert!(length <= 1024 * 1024);
         while bytes.len() < head_end + length {
             let count = socket.read(&mut buffer).await.unwrap();
@@ -408,5 +465,7 @@ async fn provider_request(socket: &mut TcpStream) -> Value {
             assert!(bytes.len() <= head_end + length);
         }
         serde_json::from_slice(&bytes[head_end..]).unwrap()
-    }).await.expect("bounded local provider request")
+    })
+    .await
+    .expect("bounded local provider request")
 }
