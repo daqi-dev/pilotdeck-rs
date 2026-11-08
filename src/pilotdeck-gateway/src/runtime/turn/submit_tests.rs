@@ -1574,14 +1574,21 @@ async fn context_budget_cancelled_wait_does_not_retain_admission() {
 #[tokio::test]
 async fn workspace_capture_uses_owned_cwd_instead_of_public_snapshot() {
     let oracle = crate::test_baseline::oracle(ORACLE);
-    let oracle = json(&oracle);
+    let JsValue::Array(cases) = oracle.get("cases").expect("#748 submit cases") else {
+        panic!("#748 submit cases must be an array");
+    };
     for scenario in ["snapshot-success", "snapshot-agent-failed"] {
-        let original = oracle["cases"]
-            .as_array()
-            .unwrap()
+        let original = cases
             .iter()
-            .find(|case| case["name"] == scenario)
+            .find(|case| {
+                case.get("name")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|name| name.equals_str(scenario))
+            })
             .unwrap();
+        // Convert only the selected snapshot case; the oracle's unrelated
+        // validation probes deliberately contain isolated UTF-16 surrogates.
+        let original = json(original);
         // The pre/post phases are taken from the fixed TS observations, not
         // recomputed from the Rust implementation under test.
         let phases: Vec<_> = original["results"].as_array().unwrap().last().unwrap()["hostCalls"]
