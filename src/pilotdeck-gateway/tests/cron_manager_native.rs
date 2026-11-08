@@ -13,7 +13,7 @@
 //!   the interrupted run as failed instead of re-executing it.
 //!
 //! `submit_turn` is synchronous in this port (consuming the admitted turn's
-//! event stream is #1305's half), so the duplicate-submit fixture re-enters
+//! event stream is the fire half's, fire.rs #2295), so the duplicate-submit fixture re-enters
 //! the same admission from inside the body's `run_turn` — the exact shape
 //! the TS `SessionRouter.beginTurn` rejection sees when the scheduler
 //! fires twice before the first turn unwinds.
@@ -248,7 +248,7 @@ impl CronGatewayBody for ReentrantBody {
 /// scenario needs before any start.
 struct Harness {
     home: PathBuf,
-    manager: CronManager,
+    manager: Arc<CronManager>,
     logger: Arc<RecordingLogger>,
     /// Dropped last, so the scratch tree outlives the manager's file writes.
     _scratch: Scratch,
@@ -272,6 +272,7 @@ fn harness() -> Harness {
             ))
         })),
         logger: Some(logger.clone()),
+        scheduler_idle_poll_ms: None,
     })
     .unwrap();
     Harness {
@@ -463,7 +464,7 @@ fn cancel_aborts_run_and_deletes_once_task() {
         runtime
             .active_run(&JsString::from("run-cancel"))
             .is_some_and(|run| run.stop_requested),
-        "the registry entry stays for the run's own finally (#1305 CronFire)"
+        "the registry entry stays for the run's own finally (CronFire, fire.rs)"
     );
 }
 

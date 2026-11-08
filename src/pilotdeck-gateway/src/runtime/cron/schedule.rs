@@ -1,7 +1,7 @@
-//! #1324 A8.3-pr1b: cron schedule computation, ported from the TS baseline
+//! Cron schedule computation, ported from the TS baseline
 //! `src/cron/runtime/CronSchedule.ts` (plus `src/cron/CronTimezone.ts`).
-//! Pure computation only — nothing here is wired into the gateway process
-//! (#1305 splits the dispatch; wiring is #1325).
+//! Pure computation shared by the manager's create/update paths, the
+//! recovery pass, and the #2295 fire/scheduler halves.
 //!
 //! Timezone data profile (decision card
 //! `state/decisions-20261102-issue1324-cron-tz.md`): *validity* follows the

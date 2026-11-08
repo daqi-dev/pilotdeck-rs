@@ -10,7 +10,10 @@ use pilotdeck_protocol::JsString;
 
 use crate::metadata;
 
-/// CronPaths.ts:6-15.
+/// CronPaths.ts:6-15. `Clone` because the fire and scheduler halves each own a
+/// `CronTaskStore` over the same paths (the store's task tail lock is global
+/// per path, so the instance count is unobservable).
+#[derive(Clone)]
 pub struct CronPaths {
     pub pilot_home: PathBuf,
     pub project_key: String,
