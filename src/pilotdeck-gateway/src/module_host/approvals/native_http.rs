@@ -5,7 +5,7 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper::{HeaderMap, Method, Request, header};
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
-use pilotdeck_protocol::{JsValue, parse_json};
+use pilotdeck_protocol::{JsString, JsValue, parse_json};
 use std::{future::Future, pin::Pin, time::Duration};
 #[derive(Debug)]
 pub(crate) enum JsonFailure {
@@ -26,6 +26,8 @@ pub(crate) struct JsonRequest {
 pub(crate) struct JsonResponse {
     pub status: u16,
     pub body: JsValue,
+    /// response.json() failure is preserved for approver authentication.
+    pub json_error: Option<JsString>,
 }
 pub(crate) trait JsonTransport: Send + Sync {
     fn request(&self, request: JsonRequest) -> JsonFuture<'_>;
@@ -147,6 +149,7 @@ impl JsonTransport for HyperJsonTransport {
                 return Ok(JsonResponse {
                     status,
                     body: JsValue::Undefined,
+                    json_error: None,
                 });
             }
             let raw = tokio::time::timeout_at(
@@ -165,9 +168,16 @@ impl JsonTransport for HyperJsonTransport {
             // The evaluator's response.json().catch(()=>undefined) rejects the
             // envelope, rather than reporting a safe-to-retry fetch failure.
             let text = String::from_utf8_lossy(&raw);
-            let body = parse_json(text.strip_prefix('\u{feff}').unwrap_or(&text))
-                .unwrap_or(JsValue::Undefined);
-            Ok(JsonResponse { status, body })
+            let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+            let json_error = pilotdeck_protocol::json_syntax::parse_error_units(
+                &text.encode_utf16().collect::<Vec<_>>(),
+            );
+            let body = parse_json(text).unwrap_or(JsValue::Undefined);
+            Ok(JsonResponse {
+                status,
+                body,
+                json_error,
+            })
         })
     }
 }

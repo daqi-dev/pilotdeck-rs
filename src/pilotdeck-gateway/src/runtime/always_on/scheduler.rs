@@ -1259,8 +1259,10 @@ mod tests {
         let scheduler = harness.scheduler(harness.config(true, &[("tickIntervalMinutes", 0.0)]));
         // start() restores the dormancy watcher (its baseline at t=0).
         scheduler.start().await.expect("#2294 start");
-        tokio::time::sleep(std::time::Duration::from_millis(1_600)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1_000)).await;
         wait_real(|| harness.log().iter().any(|line| line.contains("dormant_no_signal"))).await;
+        tokio::task::yield_now().await;
+        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
         let fired_while_dormant = harness.fire_calls().len();
         let blocked = harness.log().iter().any(|line| {
             line.contains("always-on gate blocked") && line.contains("dormant_no_signal")

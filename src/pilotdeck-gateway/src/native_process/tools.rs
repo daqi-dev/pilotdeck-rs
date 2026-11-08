@@ -617,7 +617,7 @@ impl SessionTools {
             let mut options = crate::user_dialog::ChannelOptions::new(identity.session_id.clone(), dialog.bus.clone(),
                 Arc::new(move |event| if emit(event) { Ok(()) } else { Err(crate::user_dialog::DialogError::Invalid("User dialog event owner is no longer active.".into())) }));
             options.journal = dialog.journal.clone();
-            Arc::new(builtin::user_dialog::NativeUserDialogPort::new(options)) as capability::RuntimeContext
+            Arc::new(dialog.port.with_options(options)) as capability::RuntimeContext
         });
         let tool_ports = ToolContextPorts {
             user_dialog,

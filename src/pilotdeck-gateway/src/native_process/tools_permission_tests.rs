@@ -575,3 +575,6 @@ mod ask_mode_native_tests;
 #[cfg(unix)]
 #[path = "plan_contract_tests.rs"]
 mod plan_contract_tests;
+
+#[path = "native_dialog_tools_tests.rs"]
+mod native_dialog_tools_tests;

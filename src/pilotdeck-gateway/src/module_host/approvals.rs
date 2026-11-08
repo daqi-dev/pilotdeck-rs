@@ -96,12 +96,16 @@ impl Clone for ApprovalBinding {
 pub(crate) struct ApprovalFailure {
     pub status: Option<u16>,
     pub code: Option<JsValue>,
+    /// Preserved for the Gateway control consumer; the HTTP renderer emits only code.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub message: Option<JsString>,
 }
 
 /// The `failure(status, code)` helper of `publicApprovalBridge.ts`.
 fn failure(status: u16, code: &str) -> ApprovalFailure {
     ApprovalFailure {
         status: Some(status),
+        message: Some(code.into()),
         code: Some(JsValue::String(JsString::from(code))),
     }
 }
@@ -114,6 +118,7 @@ fn failure(status: u16, code: &str) -> ApprovalFailure {
 fn state_error(code: &str) -> ApprovalFailure {
     ApprovalFailure {
         status: None,
+        message: None,
         code: Some(JsValue::String(JsString::from(code))),
     }
 }

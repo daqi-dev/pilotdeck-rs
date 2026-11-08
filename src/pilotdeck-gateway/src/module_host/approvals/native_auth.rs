@@ -29,17 +29,29 @@ impl FixedApprovalAuthenticator {
         approver: JsString,
         http: Arc<dyn JsonTransport>,
     ) -> Result<Self, ApprovalFailure> {
-        let origin =
-            url::Url::parse(origin).map_err(|_| failure(400, "APPROVAL_CONFIG_INVALID"))?;
+        let origin = url::Url::parse(origin).map_err(|_| ApprovalFailure {
+            status: None,
+            code: Some("ERR_INVALID_URL".into()),
+            message: Some("Invalid URL".into()),
+        })?;
         if !matches!(origin.scheme(), "http" | "https")
             || !origin.username().is_empty()
             || origin.password().is_some()
             || origin.query().is_some()
             || origin.fragment().is_some()
-            || !nonempty(&tenant)
-            || !nonempty(&approver)
         {
-            return Err(failure(400, "APPROVAL_CONFIG_INVALID"));
+            return Err(authority_failure(
+                400,
+                "APPROVAL_CONFIG_INVALID",
+                "A formal StaffDeck origin is required.",
+            ));
+        }
+        if !nonempty(&tenant) || !nonempty(&approver) {
+            return Err(authority_failure(
+                400,
+                "APPROVAL_CONFIG_INVALID",
+                "Recorded tenant and approver IDs are required.",
+            ));
         }
         Ok(Self {
             origin,
@@ -47,6 +59,20 @@ impl FixedApprovalAuthenticator {
             approver,
             http,
         })
+    }
+}
+fn authority_failure(status: u16, code: &str, message: &str) -> ApprovalFailure {
+    ApprovalFailure {
+        status: Some(status),
+        code: Some(code.into()),
+        message: Some(message.into()),
+    }
+}
+fn authority_exception(message: impl Into<JsString>) -> ApprovalFailure {
+    ApprovalFailure {
+        status: None,
+        code: None,
+        message: Some(message.into()),
     }
 }
 fn nonempty(value: &JsString) -> bool {
@@ -59,11 +85,15 @@ impl ApprovalAuthenticator for FixedApprovalAuthenticator {
     ) -> Pin<Box<dyn Future<Output = Result<ApprovalSubject, ApprovalFailure>> + Send + 'a>> {
         Box::pin(async move {
             if !nonempty(bearer) {
-                return Err(failure(401, "APPROVAL_AUTH_REQUIRED"));
+                return Err(authority_failure(
+                    401,
+                    "APPROVAL_AUTH_REQUIRED",
+                    "The approver must sign in.",
+                ));
             }
             let bearer = bearer
                 .to_utf8()
-                .map_err(|_| failure(502, "PUBLIC_APPROVAL_BRIDGE_FAILED"))?;
+                .map_err(|_| authority_exception("fetch failed"))?;
             let response = self
                 .http
                 .request(JsonRequest {
@@ -79,13 +109,32 @@ impl ApprovalAuthenticator for FixedApprovalAuthenticator {
                     timeout: Duration::from_secs(5),
                 })
                 .await
-                .map_err(|_| failure(502, "PUBLIC_APPROVAL_BRIDGE_FAILED"))?;
+                .map_err(|error| match error {
+                    super::native_http::JsonFailure::Transport(message)
+                    | super::native_http::JsonFailure::Body(message) => {
+                        authority_exception(message.as_str())
+                    }
+                })?;
             if !(200..300).contains(&response.status) {
-                return Err(failure(response.status, "APPROVAL_AUTH_REJECTED"));
+                return Err(authority_failure(
+                    response.status,
+                    "APPROVAL_AUTH_REJECTED",
+                    "StaffDeck rejected the approver identity.",
+                ));
+            }
+            if let Some(message) = response.json_error {
+                return Err(authority_exception(message));
             }
             let user = response.body;
             if matches!(user, JsValue::Null | JsValue::Undefined) {
-                return Err(failure(502, "PUBLIC_APPROVAL_BRIDGE_FAILED"));
+                let value = if matches!(user, JsValue::Null) {
+                    "null"
+                } else {
+                    "undefined"
+                };
+                return Err(authority_exception(
+                    format!("Cannot read properties of {value} (reading 'tenant_id')").as_str(),
+                ));
             }
             let role = user.get("role").and_then(JsValue::as_string);
             if user.get("tenant_id") != Some(&JsValue::String(self.tenant.clone()))
@@ -94,7 +143,11 @@ impl ApprovalAuthenticator for FixedApprovalAuthenticator {
                 || user.get("disabled") == Some(&JsValue::Bool(true))
                 || !role.is_some_and(|v| v.equals_str("admin") || v.equals_str("member"))
             {
-                return Err(failure(403, "APPROVAL_SUBJECT_MISMATCH"));
+                return Err(authority_failure(
+                    403,
+                    "APPROVAL_SUBJECT_MISMATCH",
+                    "This identity is not the configured native approver.",
+                ));
             }
             Ok(ApprovalSubject {
                 tenant_id: self.tenant.clone(),

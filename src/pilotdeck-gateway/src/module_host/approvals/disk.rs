@@ -26,9 +26,10 @@ impl SopFailure {
             message: message.into(),
         }
     }
-    fn approval(self) -> ApprovalFailure {
+    pub(crate) fn approval(self) -> ApprovalFailure {
         ApprovalFailure {
             status: None,
+            message: Some(self.message.into()),
             code: if self.code == "gateway_request_failed" {
                 None
             } else {

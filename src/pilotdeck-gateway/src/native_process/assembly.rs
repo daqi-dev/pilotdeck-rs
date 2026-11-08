@@ -1029,6 +1029,10 @@ async fn start_assembly(
                 };
                 let closing_owner = fork_owner.clone();
                 retained.push(move || closing_owner.drain());
+                if let Some(dialog) = &native_dialog {
+                    let port = dialog.port.clone();
+                    retained.push(move || Box::pin(async move { port.close().await; Ok(()) }));
+                }
                 Ok(PreparedSession {
                     resources: retained,
                     tail,

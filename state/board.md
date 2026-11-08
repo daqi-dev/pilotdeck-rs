@@ -5113,3 +5113,8 @@ r99固定67f120f42在mbp2全目标check、Always-On73项及bundle11项通过，�
 ### 2026-11-09 05:11 · 自动化工作区与后台恢复实测收口中
 
 r103全目标编译过；bundle12、配置FIFO/超限保快照1、owned shell3、SOP client4及原生审批7实际全过。Always-On87过2失败1忽略：Darwin不接受目录fd路径作cwd，audit按实际canonical路径+fd身份核验修，决定见当日决策卡；native486过1失败66忽略，cold-status测试错用message已改合法event/kind/text待验，r101后台Unknown实缺口已修终态checkpoint先于done并补可控写阻塞/失败测试，未把偶发通过当已修。47负控三组全部KILLED/还原且无残留，原件回收主仓negative-generation-r1/passed；r102一次类型推断编译失败原件保留，r103已修过。Terra真实五阶段engine、Sol SOP业务、audit共享host多node执行仍在实现；root factory候选待engine导出再合，另核出SDK opt-in四类user-dialog工具/恢复尚缺生产接线，继续补。只本机提交，Rust只mbp2，无GitHub写；完整CLI未完成。
+
+
+### 2026-11-09 05:39 · 自动化主链与 SDK 交互生产接线
+
+本机正本878638a2b：NativeFire发现/工作区/执行/报告/应用已真实接到factory和项目代，r105全目标编译过、AO96过2时间夹具失败1忽略，workspace5和journal3全过；native487、background150全过。r107新SDK四工具/受限journal/重启list-answer写真实transcript接线，全目标编译过、dialog2/form legacy3/recovery7/SDK参数1/native491全过；AO97过1失败1忽略，d1旧与新夹具均单独同bin过，已定位首次虚拟sleep跨过真实IO完成导致下一tick延后，按1000ms首tick等待修后待并行复验，原失败保全。用户dialog取消清理已补共享session owner drain及固定TS工具11格oracle，SOP错误message7文件片已逐hash整合，均待下一mbp2首编；完整Draft2020/JS regex仍待补，SOP host/controller主片尚未全交，完整CLI不标完成。两家非作者新审在跑，首个DeepSeek调用401已切回主仓key来源、随后一次缺coverage不计PASS。只本机提交、Rust全mbp2、无GitHub写；唯一正本和旧快照保持。

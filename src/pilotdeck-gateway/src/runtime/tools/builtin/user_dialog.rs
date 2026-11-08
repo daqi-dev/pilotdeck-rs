@@ -5,21 +5,75 @@ use crate::{host::{HostError, modules::capability::ToolDefinition}, runtime::too
 use super::{object, schema, string};
 use super::form_schema;
 
+struct PortState { closed: bool, next: u64, pending: usize, signals: std::collections::HashMap<u64, AbortSignal> }
+struct PortInner { state: std::sync::Mutex<PortState>, changed: tokio::sync::Notify }
 #[derive(Clone)]
-pub(crate) struct NativeUserDialogPort { options: ChannelOptions }
-impl NativeUserDialogPort { pub(crate) fn new(options: ChannelOptions) -> Self { Self { options } } }
+pub(crate) struct NativeUserDialogPort { inner: Arc<PortInner>, options: ChannelOptions }
+impl NativeUserDialogPort {
+    pub(crate) fn new(options: ChannelOptions) -> Self {
+        Self { inner: Arc::new(PortInner { state: std::sync::Mutex::new(PortState { closed: false, next: 0,
+            pending: 0, signals: Default::default() }), changed: tokio::sync::Notify::new() }), options }
+    }
+    pub(crate) fn with_options(&self, options: ChannelOptions) -> Self {
+        Self { inner: self.inner.clone(), options }
+    }
+    fn ticket(&self) -> Ticket {
+        self.inner.state.lock().unwrap_or_else(|e| e.into_inner()).pending += 1;
+        Ticket(self.clone())
+    }
+    fn admit(&self, signal: AbortSignal) -> Result<AbortGuard, ToolError> {
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.closed { return Err(ToolError::failed("User-dialog session is closed")); }
+        state.next = state.next.checked_add(1).ok_or_else(|| ToolError::failed("User-dialog identity exhausted"))?;
+        let id = state.next; state.signals.insert(id, signal.clone()); state.pending += 1;
+        Ok(AbortGuard { port: self.clone(), id, signal: Some(signal), ticket: Some(Ticket(self.clone())) })
+    }
+    /// Session owner invokes this before releasing the shared journal/store.
+    /// Admission closes first; all actual begin/tick/abort workers then drain.
+    pub(crate) async fn close(&self) {
+        let signals = { let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.closed = true; state.signals.values().cloned().collect::<Vec<_>>() };
+        for signal in signals { let _ = blocking(self.clone(), move || signal.abort()).await; }
+        loop {
+            let notified = self.inner.changed.notified();
+            tokio::pin!(notified); notified.as_mut().enable();
+            if self.inner.state.lock().unwrap_or_else(|e| e.into_inner()).pending == 0 { return; }
+            notified.await;
+        }
+    }
+}
+struct Ticket(NativeUserDialogPort);
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        let mut state = self.0.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.pending -= 1; let done = state.pending == 0; drop(state);
+        if done { self.0.inner.changed.notify_waiters(); }
+    }
+}
 static WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 fn slots() -> Arc<tokio::sync::Semaphore> { WORKERS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4))).clone() }
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> Result<T, ToolError> {
+async fn blocking<T: Send + 'static>(port: NativeUserDialogPort, f: impl FnOnce() -> T + Send + 'static) -> Result<T, ToolError> {
+    let ticket = port.ticket();
     let permit = slots().acquire_owned().await.map_err(|_| ToolError::failed("Dialog worker unavailable"))?;
-    tokio::task::spawn_blocking(move || { let _permit = permit; f() }).await.map_err(|e| ToolError::failed(e.to_string().as_str()))
+    tokio::task::spawn_blocking(move || { let _ticket = ticket; let _permit = permit; f() }).await.map_err(|e| ToolError::failed(e.to_string().as_str()))
 }
-struct AbortGuard(Option<AbortSignal>);
+struct AbortGuard { port: NativeUserDialogPort, id: u64, signal: Option<AbortSignal>, ticket: Option<Ticket> }
+impl AbortGuard {
+    fn disarm(&mut self) {
+        self.port.inner.state.lock().unwrap_or_else(|e| e.into_inner()).signals.remove(&self.id);
+        self.signal.take(); self.ticket.take();
+    }
+}
 impl Drop for AbortGuard {
     fn drop(&mut self) {
-        if let Some(signal) = self.0.take() && let Ok(handle) = tokio::runtime::Handle::try_current() {
-            handle.spawn(async move { let _ = blocking(move || signal.abort()).await; });
+        self.port.inner.state.lock().unwrap_or_else(|e| e.into_inner()).signals.remove(&self.id);
+        if let Some(signal) = self.signal.take() {
+            let port = self.port.clone(); let ticket = port.ticket();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move { let _ticket = ticket; let _ = blocking(port, move || signal.abort()).await; });
+            } else { signal.abort(); drop(ticket); }
         }
+        self.ticket.take();
     }
 }
 #[derive(Clone, Copy)]
@@ -146,17 +200,17 @@ impl ExecutableTool for DialogTool {
             let port = context.host.user_dialog.as_ref().and_then(|p| p.downcast_ref::<NativeUserDialogPort>()).cloned()
                 .ok_or_else(|| ToolError::new("unsupported_tool", format!("{} requires an enabled Gateway user-dialog channel.", kind.name()).as_str()))?;
             if context.is_aborted() { return Err(ToolError::aborted()); }
-            let mut options = port.options;
+            let mut options = port.options.clone();
             if matches!(kind, Kind::Form) { options.form_accepts = Some(Arc::new(form_schema::accepts_form_dialog_answer)); }
             let channel = GatewayUserDialogChannel::new(options);
-            let signal = AbortSignal::new(); let mut guard = AbortGuard(Some(signal.clone()));
+            let signal = AbortSignal::new(); let mut guard = port.admit(signal.clone())?;
             let call = context.fields.get("currentToolCallId").and_then(JsValue::as_string).or_else(|| context.fields.get("turnId").and_then(JsValue::as_string)).cloned().unwrap_or_default();
             let channel_for_begin = channel.clone(); let input_for_begin = input.clone();
-            let begin = blocking(move || make_request(kind, &channel_for_begin, &input_for_begin, call, signal));
+            let begin = blocking(port.clone(), move || make_request(kind, &channel_for_begin, &input_for_begin, call, signal));
             let mut request = tokio::select! { result = begin => result??, _ = context.cancelled() => return Err(ToolError::aborted()) };
             loop {
                 if let Some(answer) = request.try_result() {
-                    guard.0.take();
+                    guard.disarm();
                     return match answer {
                         Ok(DialogAnswer::Answered(value)) => output(kind, value, input.get("allowEmpty").and_then(JsValue::as_bool) == Some(true)),
                         Ok(DialogAnswer::Cancelled(reason)) => Err(cancellation(kind, reason)),
@@ -167,7 +221,7 @@ impl ExecutableTool for DialogTool {
                     _ = context.cancelled() => return Err(ToolError::aborted()),
                     _ = tokio::time::sleep(Duration::from_millis(100)) => {
                         let channel = channel.clone();
-                        tokio::select! { result = blocking(move || channel.tick()) => { result?; }, _ = context.cancelled() => return Err(ToolError::aborted()) }
+                        tokio::select! { result = blocking(port.clone(), move || channel.tick()) => { result?; }, _ = context.cancelled() => return Err(ToolError::aborted()) }
                     }
                 }
             }
@@ -225,6 +279,58 @@ mod tests {
         assert!(result.data.unwrap().get("answer").and_then(JsValue::as_string).unwrap().equals_str("answer"));
         let task=tokio::spawn(tool.execute(input,context)); pending(&bus,1).await;
         task.abort(); let _=task.await; pending(&bus,0).await;
+    }
+    #[tokio::test]
+    async fn close_drains_an_admitted_begin_after_future_cancellation() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let bus=Arc::new(Mutex::new(GatewayUserDialogBus::connected(DialogRuntime::default())));
+        let entered=Arc::new(tokio::sync::Notify::new()); let released=Arc::new(AtomicBool::new(false));
+        let notify=entered.clone(); let release=released.clone();
+        let mut options=ChannelOptions::new("session",bus.clone(),Arc::new(move |_| {
+            notify.notify_one(); while !release.load(Ordering::Acquire) {std::thread::yield_now();} Ok(())
+        }));
+        options.uuid=Arc::new(|| "dialog-id".into());
+        let base=NativeUserDialogPort::new(options.clone());
+        let port=base.with_options(options);
+        let host=Arc::new(ToolRuntimeContext { fields:Default::default(), files:HostToolCheckpoint::default().tool_context_state(),
+            abort_signal:None,model:None,elicitation:None,user_dialog:Some(Arc::new(port)),audit_recorder:None,
+            file_history:None,file_update_notifier:None,now:None,progress:None,subagent:None,plan_todo:None,goal:None,plan_directory:None });
+        let tool=DialogTool::new(Kind::Input); let input=JsValue::Object(object([("prompt",string("Question?"))]));
+        let task=tokio::spawn(tool.execute(input,ToolRunContext::new(host)));
+        tokio::time::timeout(Duration::from_secs(3),entered.notified()).await.unwrap();
+        task.abort(); let _=task.await;
+        let owner=base.clone(); let close=tokio::spawn(async move {owner.close().await});
+        tokio::task::yield_now().await; assert!(!close.is_finished(), "close must wait for begin worker");
+        released.store(true,Ordering::Release);
+        tokio::time::timeout(Duration::from_secs(3),close).await.unwrap().unwrap();
+        assert_eq!(bus.lock().unwrap().pending_count(&"session".into()),0);
+        assert!(base.admit(AbortSignal::new()).is_err());
+    }
+    #[test]
+    fn fixed_typescript_dialog_tool_output_and_validation_oracle() {
+        let fixture=pilotdeck_protocol::parse_json(include_str!("../../../../tests/fixtures/user-dialog-cli/tool-oracle.json")).unwrap();
+        let Some(JsValue::Array(rows))=fixture.get("records") else {panic!("records")};
+        let mut count=0;
+        for row in rows {
+            let kind=match row.get("index").and_then(JsValue::as_number).unwrap() as u32 {0=>Kind::Input,1=>Kind::Choice,2=>Kind::Confirmation,3=>Kind::Form,_=>panic!("kind")};
+            let input=row.get("input").unwrap();
+            if let Some(expected)=row.get("validation") {
+                let result=validate(kind,input);
+                if expected.get("ok")==Some(&JsValue::Bool(true)) {assert!(result.is_none());}
+                else {assert_eq!(JsValue::Array(result.unwrap().into_iter().map(JsValue::Object).collect()),expected.get("issues").unwrap().clone());}
+            }
+            let answer=row.get("answer").unwrap();
+            let actual=if answer.get("type").and_then(JsValue::as_string).unwrap().equals_str("cancelled") {
+                Err(cancellation(kind,optional(answer,"reason")))
+            } else {output(kind,answer.get("value").unwrap().clone(),input.get("allowEmpty").and_then(JsValue::as_bool)==Some(true))};
+            if let Some(expected)=row.get("error") {let error=actual.unwrap_err();
+                assert_eq!(error.code,expected.get("code").and_then(JsValue::as_string).unwrap().to_utf8().unwrap());
+                assert_eq!(&error.message,expected.get("message").and_then(JsValue::as_string).unwrap());
+            } else {let result=actual.unwrap(); let mut value=JsObject::new(); value.insert("content".into(),JsValue::Array(result.content));
+                value.insert("data".into(),result.data.unwrap()); assert_eq!(JsValue::Object(value),row.get("result").unwrap().clone());}
+            count+=1;
+        }
+        assert_eq!(count,11);
     }
     #[test]
     fn choice_confirmation_and_registry_enforce_their_contract() {

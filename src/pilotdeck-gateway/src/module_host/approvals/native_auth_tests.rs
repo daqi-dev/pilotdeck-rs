@@ -16,6 +16,7 @@ impl JsonTransport for MockHttp {
         let response = JsonResponse {
             body: self.body.clone(),
             status: self.status,
+            json_error: None,
         };
         Box::pin(async move { Ok(response) })
     }
@@ -82,15 +83,21 @@ async fn fixed_approver_matches_ten_real_ts_authentication_cells() {
                 if let Some(code) = expected.get("code") {
                     assert_eq!(error.code.as_ref(), Some(code), "{name}");
                 } else {
-                    assert_eq!(
-                        error.code,
-                        Some("PUBLIC_APPROVAL_BRIDGE_FAILED".into()),
-                        "{name}: ordinary authority exception uses bridge failure"
-                    );
+                    assert_eq!(error.code, None, "{name}: ordinary authority exception");
                 }
-                if let Some(status) = expected.get("status").and_then(JsValue::as_number) {
-                    assert_eq!(error.status, Some(status as u16), "{name}");
-                }
+                assert_eq!(
+                    error.status,
+                    expected
+                        .get("status")
+                        .and_then(JsValue::as_number)
+                        .map(|v| v as u16),
+                    "{name}"
+                );
+                assert_eq!(
+                    error.message.as_ref(),
+                    expected.get("message").and_then(JsValue::as_string),
+                    "{name}"
+                );
             }
         }
         let calls = http.calls.lock().unwrap();
@@ -285,7 +292,13 @@ impl JsonTransport for AdmissionHttp {
         } else {
             body
         };
-        Box::pin(async move { Ok(JsonResponse { status: 200, body }) })
+        Box::pin(async move {
+            Ok(JsonResponse {
+                status: 200,
+                body,
+                json_error: None,
+            })
+        })
     }
 }
 #[tokio::test]

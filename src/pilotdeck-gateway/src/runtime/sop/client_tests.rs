@@ -88,7 +88,13 @@ impl JsonTransport for Mock {
             .get(if health { "healthStatus" } else { "status" })
             .and_then(JsValue::as_number)
             .unwrap_or(200.0) as u16;
-        Box::pin(async move { Ok(JsonResponse { status, body }) })
+        Box::pin(async move {
+            Ok(JsonResponse {
+                status,
+                body,
+                json_error: None,
+            })
+        })
     }
 }
 fn array(value: &JsValue) -> &[JsValue] {

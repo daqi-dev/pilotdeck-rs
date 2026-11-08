@@ -1,0 +1,464 @@
+{
+  "records": [
+    {
+      "id": "input",
+      "index": 0,
+      "input": {
+        "prompt": "What?",
+        "placeholder": "Type",
+        "allowEmpty": false
+      },
+      "answer": {
+        "type": "answered",
+        "value": "hello"
+      },
+      "calls": [
+        {
+          "method": "requestInput",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_input",
+            "prompt": "What?",
+            "placeholder": "Type"
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The user answered: hello"
+          }
+        ],
+        "data": {
+          "answer": "hello"
+        }
+      }
+    },
+    {
+      "id": "input-surrogate",
+      "index": 0,
+      "input": {
+        "prompt": "What?"
+      },
+      "answer": {
+        "type": "answered",
+        "value": "\ud800"
+      },
+      "calls": [
+        {
+          "method": "requestInput",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_input",
+            "prompt": "What?"
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The user answered: \ud800"
+          }
+        ],
+        "data": {
+          "answer": "\ud800"
+        }
+      }
+    },
+    {
+      "id": "input-empty",
+      "index": 0,
+      "input": {
+        "prompt": "What?"
+      },
+      "answer": {
+        "type": "answered",
+        "value": "  "
+      },
+      "calls": [
+        {
+          "method": "requestInput",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_input",
+            "prompt": "What?"
+          }
+        }
+      ],
+      "error": {
+        "code": "tool_execution_failed",
+        "message": "The user submitted an empty response for a required input request."
+      }
+    },
+    {
+      "id": "input-allowed-empty",
+      "index": 0,
+      "input": {
+        "prompt": "What?",
+        "allowEmpty": true
+      },
+      "answer": {
+        "type": "answered",
+        "value": ""
+      },
+      "calls": [
+        {
+          "method": "requestInput",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_input",
+            "prompt": "What?",
+            "allowEmpty": true
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The user answered: "
+          }
+        ],
+        "data": {
+          "answer": ""
+        }
+      }
+    },
+    {
+      "id": "choice",
+      "index": 1,
+      "input": {
+        "prompt": "Pick",
+        "options": [
+          {
+            "value": "a"
+          },
+          {
+            "value": "b",
+            "label": "Bee"
+          }
+        ],
+        "defaultValue": "a"
+      },
+      "answer": {
+        "type": "answered",
+        "value": "b"
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "prompt": "Pick",
+          "options": [
+            {
+              "value": "a"
+            },
+            {
+              "value": "b",
+              "label": "Bee"
+            }
+          ],
+          "defaultValue": "a"
+        }
+      },
+      "calls": [
+        {
+          "method": "requestSelect",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_choice",
+            "prompt": "Pick",
+            "choices": [
+              {
+                "value": "a"
+              },
+              {
+                "value": "b",
+                "label": "Bee"
+              }
+            ],
+            "defaultValue": "a"
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The user selected: b"
+          }
+        ],
+        "data": {
+          "selected": "b"
+        }
+      }
+    },
+    {
+      "id": "choice-duplicate",
+      "index": 1,
+      "input": {
+        "prompt": "Pick",
+        "options": [
+          {
+            "value": "a"
+          },
+          {
+            "value": "a"
+          }
+        ]
+      },
+      "answer": {
+        "type": "answered",
+        "value": "a"
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "options[1].value",
+            "code": "invalid_schema",
+            "message": "choice values must be unique."
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "requestSelect",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_choice",
+            "prompt": "Pick",
+            "choices": [
+              {
+                "value": "a"
+              },
+              {
+                "value": "a"
+              }
+            ]
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The user selected: a"
+          }
+        ],
+        "data": {
+          "selected": "a"
+        }
+      }
+    },
+    {
+      "id": "confirm-false",
+      "index": 2,
+      "input": {
+        "prompt": "Proceed?",
+        "defaultValue": false
+      },
+      "answer": {
+        "type": "answered",
+        "value": false
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "prompt": "Proceed?",
+          "defaultValue": false
+        }
+      },
+      "calls": [
+        {
+          "method": "requestConfirm",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_confirmation",
+            "prompt": "Proceed?",
+            "defaultValue": false
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The user confirmed: no"
+          }
+        ],
+        "data": {
+          "confirmed": false
+        }
+      }
+    },
+    {
+      "id": "confirm-blank-label",
+      "index": 2,
+      "input": {
+        "prompt": "Proceed?",
+        "confirmLabel": " "
+      },
+      "answer": {
+        "type": "answered",
+        "value": true
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "confirmLabel",
+            "code": "invalid_schema",
+            "message": "confirmLabel must be a non-empty string no longer than 128 characters."
+          }
+        ]
+      },
+      "calls": [
+        {
+          "method": "requestConfirm",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_confirmation",
+            "prompt": "Proceed?",
+            "confirmLabel": " "
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "The user confirmed: yes"
+          }
+        ],
+        "data": {
+          "confirmed": true
+        }
+      }
+    },
+    {
+      "id": "form",
+      "index": 3,
+      "input": {
+        "prompt": "Fill",
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "answer": {
+        "type": "answered",
+        "value": {
+          "x": "ok"
+        }
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "prompt": "Fill",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "x": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "calls": [
+        {
+          "method": "requestForm",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_form",
+            "prompt": "Fill",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "x": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "json",
+            "value": {
+              "x": "ok"
+            }
+          }
+        ],
+        "data": {
+          "values": {
+            "x": "ok"
+          }
+        }
+      }
+    },
+    {
+      "id": "cancel",
+      "index": 0,
+      "input": {
+        "prompt": "What?"
+      },
+      "answer": {
+        "type": "cancelled",
+        "reason": "gone"
+      },
+      "calls": [
+        {
+          "method": "requestInput",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_input",
+            "prompt": "What?"
+          }
+        }
+      ],
+      "error": {
+        "code": "unsupported_tool",
+        "message": "The user cancelled the input request: gone"
+      }
+    },
+    {
+      "id": "cancel-empty",
+      "index": 2,
+      "input": {
+        "prompt": "Proceed?"
+      },
+      "answer": {
+        "type": "cancelled"
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "prompt": "Proceed?"
+        }
+      },
+      "calls": [
+        {
+          "method": "requestConfirm",
+          "arg": {
+            "toolCallId": "call-1",
+            "toolName": "request_user_confirmation",
+            "prompt": "Proceed?"
+          }
+        }
+      ],
+      "error": {
+        "code": "unsupported_tool",
+        "message": "The user cancelled the confirmation request."
+      }
+    }
+  ]
+}
