@@ -448,8 +448,16 @@ impl TurnPublisher {
     /// underlying coordinator's emit directly during an active publication.
     pub fn emit(&self, event: &JsValue) -> bool {
         let _pump = lock(&self.pump);
-        self.coordinator
-            .emit(&self.publication.run.session_key, event)
+        if self.publication.run.project_key.is_some() {
+            self.coordinator.emit_registered(
+                &self.publication.run.session_key,
+                event,
+                Some(&self._registration),
+            )
+        } else {
+            self.coordinator
+                .emit(&self.publication.run.session_key, event)
+        }
     }
     /// Host-only, weak per-turn delivery. It neither keeps an ended publisher
     /// alive nor retargets an old callback to a new run's session sink.
@@ -485,10 +493,21 @@ impl TurnPublisher {
             return true;
         }
         drop(state);
-        self.coordinator
-            .record(&self.publication.run.session_key, &event);
+        self.record_replay(&event);
         self.publication.enqueue(event);
         true
+    }
+    fn record_replay(&self, event: &JsValue) {
+        if self.publication.run.project_key.is_some() {
+            self.coordinator.record_registered(
+                &self.publication.run.session_key,
+                event,
+                &self._registration,
+            );
+        } else {
+            self.coordinator
+                .record(&self.publication.run.session_key, event);
+        }
     }
     pub fn agent_event(
         &self,
@@ -536,8 +555,7 @@ impl TurnPublisher {
                 std::mem::take(&mut state.deferred)
             };
             for event in deferred {
-                self.coordinator
-                    .record(&self.publication.run.session_key, &event);
+                self.record_replay(&event);
                 self.publication.enqueue(event);
             }
             lock(&self.publication.state).pending.clone()
@@ -597,10 +615,18 @@ impl TurnPublisher {
                 if !lock(&self.publication.state).queue.is_empty() {
                     continue;
                 }
-                self.coordinator.retain_terminal(
-                    &self.publication.run.session_key,
-                    &self.publication.run.run_id,
-                );
+                if self.publication.run.project_key.is_some() {
+                    self.coordinator.retain_terminal_registered(
+                        &self.publication.run.session_key,
+                        &self.publication.run.run_id,
+                        &self._registration,
+                    );
+                } else {
+                    self.coordinator.retain_terminal(
+                        &self.publication.run.session_key,
+                        &self.publication.run.run_id,
+                    );
+                }
                 return None;
             }
             notified.await;

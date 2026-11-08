@@ -263,6 +263,31 @@ impl TurnEventCoordinator {
             resume_unwind(panic);
         }
     }
+    /// Bind publisher mutations to the same registration which started this
+    /// replay. A late worker must not write into a successor's replay.
+    pub(crate) fn record_registered(
+        &self,
+        session_key: &JsString,
+        event: &JsValue,
+        expected: &TurnSinkRegistration,
+    ) -> bool {
+        let state = lock(&self.state);
+        let current = state.sinks.get(session_key).and_then(|sink| sink.upgrade());
+        if !current
+            .as_ref()
+            .is_some_and(|sink| Arc::ptr_eq(sink, &expected.registration))
+        {
+            return false;
+        }
+        if let Err(panic) =
+            catch_unwind(AssertUnwindSafe(|| self.replay.record(session_key, event)))
+        {
+            drop(state);
+            resume_unwind(panic);
+        }
+        true
+    }
+
     /// Publishes only when a sink is registered. Replay is updated before the
     /// sink observes the event, matching TS delivery order.
     ///
@@ -379,6 +404,33 @@ impl TurnEventCoordinator {
             resume_unwind(panic);
         }
     }
+    /// Native bound publisher cleanup only owns its own generation. The
+    /// registration check and replay terminal transition share the same lock
+    /// as start, including when two generations reuse the same run ID.
+    pub(crate) fn retain_terminal_registered(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        expected: &TurnSinkRegistration,
+    ) -> bool {
+        let mut state = lock(&self.state);
+        let current = state.sinks.get(session_key).and_then(|sink| sink.upgrade());
+        if !current
+            .as_ref()
+            .is_some_and(|sink| Arc::ptr_eq(sink, &expected.registration))
+        {
+            return false;
+        }
+        state.sinks.remove(session_key);
+        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
+            self.replay.retain_terminal(session_key, run_id)
+        })) {
+            drop(state);
+            resume_unwind(panic);
+        }
+        true
+    }
+
     /// Detaches the sink registered for `session_key` without touching the
     /// replay buffer: later `emit` calls return `false`, exactly like
     /// `retain_terminal` after it removed the sink, but the replay data, the

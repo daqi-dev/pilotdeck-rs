@@ -1423,3 +1423,73 @@ async fn legacy_close_still_discards_pending_terminal_after_close() {
     assert_eq!(publisher.next().await, None);
     publisher.finish().await;
 }
+
+#[tokio::test]
+async fn late_old_publisher_cannot_corrupt_reused_run_or_detach_successor() {
+    use crate::runtime::turn::replay::ActiveTurnSnapshotInput;
+    let coordinator = Arc::new(TurnEventCoordinator::new());
+    let old_run = RunRef {
+        session_key: "same".into(),
+        run_id: "same-run".into(),
+        project_key: Some("A".into()),
+    };
+    let new_run = RunRef {
+        session_key: "same".into(),
+        run_id: "same-run".into(),
+        project_key: Some("B".into()),
+    };
+    let old = TurnPublisher::start(old_run, None, coordinator.clone());
+    // Accepted before the successor starts; deferred completion exercises
+    // finish's replay write after the successor took the slot.
+    old.gateway_event(js(
+        &json!({"type":"turn_completed","runId":"same-run","text":"old-terminal"}),
+    ));
+    let new = TurnPublisher::start(new_run, None, coordinator.clone());
+    assert!(new.gateway_event(js(
+        &json!({"type":"model_event","runId":"same-run","text":"new-visible"})
+    )));
+    assert!(!old.emit(&js(
+        &json!({"type":"model_event","runId":"same-run","text":"old-emit"})
+    )));
+    old.gateway_event(js(
+        &json!({"type":"model_event","runId":"same-run","text":"old-late"}),
+    ));
+    old.finish().await;
+    while old.next().await.is_some() {}
+    let request = ActiveTurnSnapshotInput::new("same".into());
+    let snapshot = coordinator
+        .snapshot_for_project(&request, &"B".into())
+        .expect("new project replay");
+    let serialized = stringify_json(&snapshot.to_json()).unwrap().unwrap();
+    assert!(
+        snapshot.active,
+        "late cleanup must not terminate the new generation"
+    );
+    assert!(serialized.contains("new-visible"), "{serialized}");
+    assert!(
+        !serialized.contains("old-late")
+            && !serialized.contains("old-terminal")
+            && !serialized.contains("old-emit"),
+        "{serialized}"
+    );
+    assert!(new.emit(&js(
+        &json!({"type":"model_event","runId":"same-run","text":"new-after-cleanup"})
+    )));
+    let snapshot = coordinator
+        .snapshot_for_project(&request, &"B".into())
+        .unwrap();
+    assert!(
+        stringify_json(&snapshot.to_json())
+            .unwrap()
+            .unwrap()
+            .contains("new-after-cleanup")
+    );
+    new.finish().await;
+    while new.next().await.is_some() {}
+    assert!(
+        coordinator
+            .snapshot_for_project(&request, &"B".into())
+            .unwrap()
+            .terminal
+    );
+}
