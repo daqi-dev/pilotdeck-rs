@@ -516,36 +516,35 @@ async fn rejected_submit_exits_without_waiting_for_final_or_peer_close() {
     }
 }
 
-/// Default-channel file policy is shared with the SDK but selected only after
-/// this entry's actual discovery health check. Never contact an existing host.
 #[cfg(unix)]
-#[tokio::test(flavor = "current_thread")]
-async fn default_channel_token_files_are_bounded_and_preserve_ordinary_wire() {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
-    use std::os::unix::process::ExitStatusExt;
-    let _lease = Lease::acquire().await;
-    let listener = TcpListener::bind("127.0.0.1:18789")
-        .await
-        .expect("owned token regression requires port 18789 free");
-    let oracle: Value =
-        serde_json::from_str(include_str!("fixtures/cli-channel/ts-oracle.json")).unwrap();
-    let baseline = &oracle["cases"]["argv"];
-    for kind in [
-        "fifo-empty",
-        "fifo-held-writer",
-        "over-limit",
-        "sparse-large",
-        "valid-trim",
-        "valid-boundary",
-        "cancel",
-    ] {
+type TokenIdentity = (u64, u32, u64, i64, i64);
+#[cfg(unix)]
+fn token_identity(path: &Path) -> TokenIdentity {
+    use std::os::unix::fs::MetadataExt;
+    let m = fs::symlink_metadata(path).unwrap();
+    (m.ino(), m.mode(), m.len(), m.mtime(), m.mtime_nsec())
+}
+#[cfg(unix)]
+struct TokenCase {
+    _scratch: Scratch,
+    home: PathBuf,
+    project: PathBuf,
+    token: PathBuf,
+    yaml: &'static [u8],
+    before: TokenIdentity,
+    _held_writer: Option<fs::File>,
+}
+#[cfg(unix)]
+impl TokenCase {
+    fn new(kind: &str) -> Self {
+        use std::os::unix::fs::OpenOptionsExt;
         let base = std::env::temp_dir().join(format!(
-            "pdrs-default-token-{kind}-{}",
+            "pdrs-discovery-token-{kind}-{}",
             uuid::Uuid::new_v4()
         ));
         fs::create_dir(&base).unwrap();
         let base = fs::canonicalize(base).unwrap();
-        let _scratch = Scratch(base.clone());
+        let scratch = Scratch(base.clone());
         let home = base.join("home");
         let project = base.join("project");
         fs::create_dir(&home).unwrap();
@@ -562,7 +561,7 @@ async fn default_channel_token_files_are_bounded_and_preserve_ordinary_wire() {
             "completed\n",
         )
         .unwrap();
-        let yaml = b"schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: fake-only\n      models: {mock: {}}\n";
+        let yaml: &[u8] = b"schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: fake-only\n      models: {mock: {}}\n";
         fs::write(home.join("pilotdeck.yaml"), yaml).unwrap();
         let token = home.join("server-token");
         let mut held_writer = None;
@@ -601,65 +600,150 @@ async fn default_channel_token_files_are_bounded_and_preserve_ordinary_wire() {
         } else {
             fs::write(&token, "\u{feff}\t channel-fake-token \r\n").unwrap();
         }
-        let identity = |path: &Path| {
-            let m = fs::symlink_metadata(path).unwrap();
-            (m.ino(), m.mode(), m.len(), m.mtime(), m.mtime_nsec())
-        };
-        let before = identity(&token);
-        let process = ChildOwner(
+        let before = token_identity(&token);
+        Self {
+            _scratch: scratch,
+            home,
+            project,
+            token,
+            yaml,
+            before,
+            _held_writer: held_writer,
+        }
+    }
+    fn spawn(&self, argv: &[&str]) -> ChildOwner {
+        self.spawn_with_stdin(argv, Stdio::null())
+    }
+    #[cfg(target_os = "macos")]
+    fn spawn_tui(&self) -> (ChildOwner, std::os::fd::OwnedFd) {
+        use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
+        use std::os::unix::ffi::OsStrExt;
+        let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
+        rustix::io::fcntl_setfd(&master, rustix::io::FdFlags::CLOEXEC).unwrap();
+        grantpt(&master).unwrap();
+        unlockpt(&master).unwrap();
+        let name = ptsname(&master, Vec::new()).unwrap();
+        let slave = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(std::ffi::OsStr::from_bytes(name.as_bytes()))
+            .unwrap();
+        let process = self.spawn_with_stdin(&["tui"], Stdio::from(slave));
+        (process, master)
+    }
+    fn spawn_with_stdin(&self, argv: &[&str], stdin: Stdio) -> ChildOwner {
+        ChildOwner(
             Command::new(env!("CARGO_BIN_EXE_pilotdeck"))
                 .env_clear()
-                .env("HOME", &home)
-                .env("PILOT_HOME", &home)
-                .env("PILOTDECK_BUNDLED_SKILLS_DIR", &bundled)
+                .env("HOME", &self.home)
+                .env("PILOT_HOME", &self.home)
+                .env(
+                    "PILOTDECK_BUNDLED_SKILLS_DIR",
+                    self._scratch.0.join("bundled"),
+                )
                 // A regression to fallback must neither launch a helper nor
                 // contact the fixture model URL; this path intentionally is absent.
-                .env("PILOTDECK_RS_SIDECAR", base.join("must-not-launch-sidecar"))
-                .current_dir(&project)
-                .args(["hello", "--strange", " world "])
-                .stdin(Stdio::null())
+                .env(
+                    "PILOTDECK_RS_SIDECAR",
+                    self._scratch.0.join("must-not-launch-sidecar"),
+                )
+                .current_dir(&self.project)
+                .args(argv)
+                .stdin(stdin)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
                 .unwrap(),
-        );
-        let (mut health, _) = timeout(Duration::from_secs(5), listener.accept())
-            .await
-            .unwrap()
-            .unwrap();
-        assert!(
-            request_head(&mut health)
-                .await
-                .starts_with(b"GET /health HTTP/1.1\r\n")
-        );
-        timeout(
-            Duration::from_secs(3),
-            health.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
         )
+    }
+    fn assert_unchanged(&self, kind: &str) {
+        assert_eq!(
+            token_identity(&self.token),
+            self.before,
+            "{kind}: rejected/read token identity unchanged"
+        );
+        assert_eq!(
+            fs::read(self.home.join("pilotdeck.yaml")).unwrap(),
+            self.yaml,
+            "{kind}: configuration unchanged"
+        );
+        assert!(
+            !self.home.join("projects").exists(),
+            "{kind}: no in-process host state"
+        );
+    }
+}
+#[cfg(unix)]
+async fn answer_token_health(listener: &TcpListener) {
+    let (mut health, _) = timeout(Duration::from_secs(5), listener.accept())
         .await
         .unwrap()
         .unwrap();
-        drop(health);
+    assert!(
+        request_head(&mut health)
+            .await
+            .starts_with(b"GET /health HTTP/1.1\r\n")
+    );
+    timeout(
+        Duration::from_secs(3),
+        health.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    drop(health);
+}
+#[cfg(unix)]
+async fn assert_token_resource_refusal(process: ChildOwner, listener: &TcpListener, kind: &str) {
+    let output = finish_output(process).await;
+    assert_eq!(output.status.code(), Some(1), "{kind}");
+    assert!(output.stdout.is_empty(), "{kind}");
+    let expected = if kind.starts_with("fifo-") {
+        "Gateway auth token file must be a regular file.\n"
+    } else {
+        "Gateway auth token file exceeds the 65536-byte limit.\n"
+    };
+    assert_eq!(
+        output.stderr,
+        expected.as_bytes(),
+        "{kind}: explicit error without local fallback"
+    );
+    assert!(
+        timeout(Duration::from_millis(150), listener.accept())
+            .await
+            .is_err(),
+        "{kind}: special file must fail before WebSocket connection"
+    );
+}
+
+/// Default-channel file policy is shared with the SDK but selected only after
+/// this entry's actual discovery health check. Never contact an existing host.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn default_channel_token_files_are_bounded_and_preserve_ordinary_wire() {
+    use std::os::unix::process::ExitStatusExt;
+    let _lease = Lease::acquire().await;
+    let listener = TcpListener::bind("127.0.0.1:18789")
+        .await
+        .expect("owned token regression requires port 18789 free");
+    let oracle: Value =
+        serde_json::from_str(include_str!("fixtures/cli-channel/ts-oracle.json")).unwrap();
+    let baseline = &oracle["cases"]["argv"];
+    for kind in [
+        "fifo-empty",
+        "fifo-held-writer",
+        "over-limit",
+        "sparse-large",
+        "valid-trim",
+        "valid-boundary",
+        "cancel",
+    ] {
+        let case = TokenCase::new(kind);
+        let project = &case.project;
+        let process = case.spawn(&["hello", "--strange", " world "]);
+        answer_token_health(&listener).await;
         if kind.starts_with("fifo-") || kind == "over-limit" || kind == "sparse-large" {
-            let output = finish_output(process).await;
-            assert_eq!(output.status.code(), Some(1), "{kind}");
-            assert!(output.stdout.is_empty(), "{kind}");
-            let expected = if kind.starts_with("fifo-") {
-                "Gateway auth token file must be a regular file.\n"
-            } else {
-                "Gateway auth token file exceeds the 65536-byte limit.\n"
-            };
-            assert_eq!(
-                output.stderr,
-                expected.as_bytes(),
-                "{kind}: explicit error without local fallback"
-            );
-            assert!(
-                timeout(Duration::from_millis(150), listener.accept())
-                    .await
-                    .is_err(),
-                "{kind}: special file must fail before WebSocket connection"
-            );
+            assert_token_resource_refusal(process, &listener, kind).await;
         } else {
             let (socket, _) = timeout(Duration::from_secs(5), listener.accept())
                 .await
@@ -743,20 +827,36 @@ async fn default_channel_token_files_are_bounded_and_preserve_ordinary_wire() {
                 assert!(output.stderr.is_empty(), "{kind}: {:?}", output.stderr);
             }
         }
-        assert_eq!(
-            identity(&token),
-            before,
-            "{kind}: rejected/read token identity unchanged"
-        );
-        assert_eq!(
-            fs::read(home.join("pilotdeck.yaml")).unwrap(),
-            yaml,
-            "{kind}: configuration unchanged"
-        );
-        assert!(
-            !home.join("projects").exists(),
-            "{kind}: no in-process host state"
-        );
-        drop(held_writer);
+        case.assert_unchanged(kind);
+    }
+}
+
+/// Both command entry points must propagate the shared reader's resource error
+/// after their actual health check, before WS or local-host/terminal startup.
+#[cfg(target_os = "macos")]
+#[tokio::test(flavor = "current_thread")]
+async fn cron_and_tui_token_resources_fail_before_connection_or_local_fallback() {
+    let _lease = Lease::acquire().await;
+    let listener = TcpListener::bind("127.0.0.1:18789")
+        .await
+        .expect("owned cron/TUI token regression requires port 18789 free");
+    for argv in [vec!["cron", "list"], vec!["tui"]] {
+        for kind in [
+            "fifo-empty",
+            "fifo-held-writer",
+            "over-limit",
+            "sparse-large",
+        ] {
+            let case = TokenCase::new(kind);
+            let (process, _terminal) = if argv[0] == "tui" {
+                let (process, master) = case.spawn_tui();
+                (process, Some(master))
+            } else {
+                (case.spawn(&argv), None)
+            };
+            answer_token_health(&listener).await;
+            assert_token_resource_refusal(process, &listener, kind).await;
+            case.assert_unchanged(kind);
+        }
     }
 }

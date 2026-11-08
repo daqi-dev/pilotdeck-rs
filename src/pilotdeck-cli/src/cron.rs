@@ -27,11 +27,10 @@ async fn run_async(argv: &[String], env: &Env, cwd: &Path) -> Result<u8, Failure
         stderr_line(UNAVAILABLE);
         return Ok(1);
     }
-    let token = paths::gateway_token_path(env, cwd)
-        .ok()
-        .and_then(|path| std::fs::read(path).ok())
-        .map(|bytes| paths::js_trim(&String::from_utf8_lossy(&bytes)).to_owned())
-        .unwrap_or_default();
+    let token = match paths::gateway_token_path(env, cwd) {
+        Ok(path) => super::sdk::token::read(&path)?,
+        Err(_) => String::new(),
+    };
     if token.is_empty() {
         stderr_line(UNAVAILABLE);
         return Ok(1);

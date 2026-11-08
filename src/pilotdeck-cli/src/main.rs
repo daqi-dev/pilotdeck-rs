@@ -253,16 +253,15 @@ fn run_tui(env: &Env, cwd: &Path) -> Result<u8, Failure> {
         .build()
         .map_err(|e| Failure::Error(e.to_string()))?;
     runtime.block_on(async {
-        if gateway_probe::healthy_at(&base).await
-            && let Ok(token) = paths::gateway_token_path(env, cwd)
-                .and_then(|path| read_tui_token(&path).map_err(|e| Failure::Error(e.to_string())))
-        {
-            let token = String::from_utf8_lossy(&token);
-            let token = paths::js_trim(&token);
+        if gateway_probe::healthy_at(&base).await {
+            let token = match paths::gateway_token_path(env, cwd) {
+                Ok(path) => sdk::token::read(&path)?,
+                Err(_) => String::new(),
+            };
             if !token.is_empty() {
                 let url = format!("ws://127.0.0.1:{}/ws", port as u16);
                 if let Ok(client) =
-                    pilotdeck_cli::tui::transport::Client::connect(&url, token).await
+                    pilotdeck_cli::tui::transport::Client::connect(&url, &token).await
                 {
                     return pilotdeck_cli::tui::runner::run_with_client(client, &url, &home, cwd)
                         .await
@@ -280,6 +279,9 @@ fn run_tui(env: &Env, cwd: &Path) -> Result<u8, Failure> {
     })
 }
 
+// The server's existing-file reader deliberately returns raw bytes and rejects
+// directories: a failed server credential read must not mint a replacement.
+// Discovery clients use sdk::token::read and retain their ordinary-IO fallback.
 fn read_tui_token(path: &Path) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
     use std::os::unix::fs::OpenOptionsExt;

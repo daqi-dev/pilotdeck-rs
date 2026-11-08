@@ -35,8 +35,8 @@ pub(super) async fn connect(env: &Env, cwd: &Path) -> Result<Option<Remote>, Fai
         return Ok(None);
     };
     // Reuse the SDK file-source policy: ordinary IO/empty tokens keep the
-    // legacy fallback, while special/oversized files are explicit errors and
-    // must not silently start a different local host.
+    // legacy fallback. On Unix, opened special files and oversized files are
+    // explicit errors and must not silently start a different local host.
     let token = super::super::sdk::token::read(&path)?;
     if token.is_empty() {
         return Ok(None);
