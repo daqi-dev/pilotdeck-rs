@@ -519,6 +519,49 @@ impl SessionMcpRuntimeRegistry {
         runtime: Arc<dyn SessionMcpRuntime>,
     ) -> Result<SessionMcpRuntimeRegistration, RuntimeError> {
         let mut state = lock(&self.inner);
+        self.insert_active(&mut state, session_key, runtime)
+    }
+
+    /// #2442: the per-session cap comparison and the insert share one `inner`
+    /// critical section. `session_mcp_tools` used to read `size()` and then
+    /// `register` as two separate lock acquisitions, so two concurrent
+    /// prepares on the factory-level shared registry (`ProjectSessionFactory`
+    /// hands every session the same clone, and the session owner calls
+    /// `create` outside its state lock) could each read a below-cap size and
+    /// both register past the cap; the TS check-then-insert has no
+    /// interleaving point (SessionMcpRuntimeBundle.ts:70 + :119-125).
+    /// `Ok(None)` is the cap — the caller keeps its diagnostic; a non-active
+    /// registry still fails the caller like `register`.
+    pub fn register_below_cap(
+        &self,
+        session_key: &str,
+        runtime: Arc<dyn SessionMcpRuntime>,
+        cap: f64,
+    ) -> Result<Option<SessionMcpRuntimeRegistration>, RuntimeError> {
+        let mut state = lock(&self.inner);
+        let size: usize = state
+            .by_session
+            .iter()
+            .map(|(_, entries)| entries.len())
+            .sum();
+        if size as f64 >= cap {
+            return Ok(None);
+        }
+        Ok(Some(self.insert_active(
+            &mut state,
+            session_key,
+            runtime,
+        )?))
+    }
+
+    /// The shared insert half of `register` / `register_below_cap`; the
+    /// caller holds `inner` and has already applied its own admission check.
+    fn insert_active(
+        &self,
+        state: &mut RegistryState,
+        session_key: &str,
+        runtime: Arc<dyn SessionMcpRuntime>,
+    ) -> Result<SessionMcpRuntimeRegistration, RuntimeError> {
         let current = state.state.unwrap_or(McpOwnerState::Active);
         if current != McpOwnerState::Active {
             return Err(RuntimeError::new(format!(

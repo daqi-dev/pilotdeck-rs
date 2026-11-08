@@ -685,7 +685,21 @@ pub async fn session_mcp_tools(
     let Some(specs) = options.provider.per_session_server_specs(&servers, false)? else {
         return Ok((tools, release));
     };
-    if options.per_session_runtimes.size() as f64 >= options.max_per_session_instances {
+    let runtime = options.provider.create_runtime(specs.clone());
+    // #2442: the cap comparison and the registration are one critical section
+    // (`register_below_cap`) — the old two-lock check-then-register let two
+    // concurrent prepares on the factory-level shared registry each read a
+    // below-cap size and both register past the cap (TS has no interleaving
+    // point between `perSessionRuntimes.size >= maxPerSessionInstances`
+    // (SessionMcpRuntimeBundle.ts:70) and the insert (:119-125)). Building
+    // the runtime first is inert: the construction spawns nothing, and the
+    // start stays below the registration.
+    let Some(registration) = options.per_session_runtimes.register_below_cap(
+        &session_key,
+        runtime.clone(),
+        options.max_per_session_instances,
+    )?
+    else {
         diagnostic(
             format!(
                 "Per-session MCP limit reached ({}). Session {session_key} will not start: {}.",
@@ -699,13 +713,9 @@ pub async fn session_mcp_tools(
             None,
         );
         return Ok((tools, release));
-    }
-    let runtime = options.provider.create_runtime(specs);
+    };
     // Registration precedes the start (SessionMcpRuntimeBundle.ts:119-125):
     // even a failed start is disposed at close, never leaked.
-    let registration = options
-        .per_session_runtimes
-        .register(&session_key, runtime.clone())?;
     release.per_session = Some(registration);
     match runtime.start().await {
         Ok(statuses) => {
@@ -1420,6 +1430,95 @@ mod tests {
             "#1433 the limit reports the TS diagnostic"
         );
         release.release().await.expect("#1433 composition release");
+    }
+
+    /// `compose` (#2442): the cap comparison and the registration share one
+    /// critical section (`register_below_cap`). Two concurrent prepares on
+    /// the same factory-level registry — both parked inside the runtime
+    /// factory, exactly the interleave where the old two-lock
+    /// check-then-register had both already passed the size check — register
+    /// at most one runtime under cap=1; the other reports the TS diagnostic.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn session_mcp_tools_holds_the_cap_across_concurrent_prepares() {
+        let config = test_config();
+        for session_key in ["s-a", "s-b"] {
+            config
+                .set_mcp_servers(&set_input(session_key, &[("private-echo", true)]))
+                .await
+                .expect("#1433 fixture servers commit");
+        }
+        // Both prepares park inside the factory until the second arrives, so
+        // neither's registration can precede the other's cap check.
+        let parked = Arc::new(std::sync::Barrier::new(2));
+        let provider = Arc::new(ProjectMcpRuntimeProvider::new(
+            ProjectMcpRuntimeProviderOptions {
+                project_root: "/pdrs-fixture/project".into(),
+                pilot_home: "/pdrs-fixture/home".into(),
+                create_runtime: Some(Arc::new(move |_: Vec<McpServerSpec>| {
+                    parked.wait();
+                    let runtime: Arc<dyn McpRuntimePort> = Arc::new(FakeMcpRuntime {
+                        label: "per-session",
+                        tools: Vec::new(),
+                        start_fails: false,
+                        events: Arc::new(Mutex::new(Vec::new())),
+                    });
+                    runtime
+                })),
+                proxy: None,
+                on_diagnostic: None,
+                environment: Arc::new(SystemEnvironment),
+                builtin_paths: BuiltinMcpPaths::default(),
+            },
+        ));
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        let diagnostics: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let prepare = |session_key: &'static str| {
+            let config = config.clone();
+            let provider = provider.clone();
+            let runtimes = runtimes.clone();
+            let diagnostics = diagnostics.clone();
+            tokio::spawn(async move {
+                let sink = Arc::new(move |message: String, _: Option<RuntimeError>| {
+                    diagnostics
+                        .lock()
+                        .expect("#2442 diagnostics lock")
+                        .push(message);
+                });
+                crate::test_negative_receipt::expect_ok(
+                    compose(&config, &provider, &runtimes, session_key, 1.0, Some(sink)).await,
+                    "#2442 the concurrent composition succeeds",
+                )
+            })
+        };
+        let a = prepare("s-a");
+        let b = prepare("s-b");
+        let (_tools_a, release_a) = a.await.expect("#2442 prepare s-a joins");
+        let (_tools_b, release_b) = b.await.expect("#2442 prepare s-b joins");
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            1,
+            "#2442 concurrent prepares register at most one runtime under the cap"
+        );
+        let limited: Vec<String> = diagnostics.lock().expect("#2442 diagnostics lock").clone();
+        crate::negative_assert_eq!(
+            limited.len(),
+            1,
+            "#2442 exactly one concurrent prepare reports the limit diagnostic"
+        );
+        crate::negative_assert!(
+            limited[0]
+                == "Per-session MCP limit reached (1). Session s-a will not start: private-echo."
+                || limited[0]
+                    == "Per-session MCP limit reached (1). Session s-b will not start: private-echo.",
+            "#2442 the limit diagnostic names one of the concurrent sessions"
+        );
+        release_a.release().await.expect("#2442 release s-a");
+        release_b.release().await.expect("#2442 release s-b");
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            0,
+            "#2442 the registered runtime is disposed on release"
+        );
     }
 
     /// `compose` (#1433 fix-r1 review P2#4): the limit is the snapshot's f64,

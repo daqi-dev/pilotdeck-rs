@@ -17,6 +17,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
+REGISTRY = ROOT / 'src/pilotdeck-gateway/src/runtime/mcp/registry.rs'
 PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/sdk_mcp_session_tools.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
@@ -95,18 +96,21 @@ mutations = [
      'native_process::tools::tests::session_mcp_release_stops_per_session_before_shared',
      '#1433 release order: per-session MCP before shared MCP'),
     # `>=` is the TS limit check; `>` lets one runtime past an integer cap.
-    ('per-session-limit-off', TOOLS,
-     'if options.per_session_runtimes.size() as f64 >= options.max_per_session_instances {',
-     'if options.per_session_runtimes.size() as f64 > options.max_per_session_instances {',
+    # #2442 moved the comparison into `register_below_cap`'s single critical
+    # section (registry.rs), so this anchor follows the check there.
+    ('per-session-limit-off', REGISTRY,
+     'if size as f64 >= cap {',
+     'if size as f64 > cap {',
      'native_process::tools::tests::session_mcp_tools_respects_the_per_session_limit',
      '#1433 the limit skips the per-session server'),
     # #1433 fix-r1 (review P2#4): the limit must compare the snapshot's f64
     # cap without truncation — casting back to usize floors 2.5 to 2, so the
     # third registration under a 2.5 cap is refused (TS `2 >= 2.5` is false,
-    # SessionMcpRuntimeBundle.ts:70, Node v22.22.0).
-    ('per-session-limit-truncated', TOOLS,
-     'as f64 >= options.max_per_session_instances {',
-     'as usize >= options.max_per_session_instances as usize {',
+    # SessionMcpRuntimeBundle.ts:70, Node v22.22.0). #2442 moved the check
+    # into `register_below_cap` (registry.rs).
+    ('per-session-limit-truncated', REGISTRY,
+     'as f64 >= cap {',
+     'as usize >= cap as usize {',
      'native_process::tools::tests::session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit',
      '#1433 a 2.5 cap still admits the third per-session runtime'),
     # A per-session start failure degrades to a diagnostic; propagating it
