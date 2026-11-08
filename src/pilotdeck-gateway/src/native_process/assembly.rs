@@ -1131,7 +1131,7 @@ async fn start_assembly(
                 let sop_controller=if config.get("isSubagent")!=Some(&JsValue::Bool(true)) {
                     match sop_profile {
                         Some(profile)=>{
-                            let controller = crate::runtime::sop::controller::StaffDeckController::load(profile,Arc::new(crate::module_host::approvals::native_http::HyperJsonTransport::from_env(&env,None))).await.map_err(|error|{
+                            let controller = crate::runtime::sop::controller::StaffDeckController::load(profile,Arc::new(crate::module_host::approvals::native_http::HyperJsonTransport::from_env(&env,hook_proxy.as_ref()))).await.map_err(|error|{
                                 let mut runtime=RuntimeError::new(error.message.clone());
                                 if let Some(module)=error.module_error {runtime=runtime.with_js_error(crate::runtime::project::RuntimeJsError{name:"Error".into(),code:module.code.map(|s|String::from_utf16_lossy(s.units())),message:module.message,requires_host:false});}
                                 runtime

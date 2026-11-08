@@ -5188,3 +5188,8 @@ r124固定ba84df完整CLI546过/140条件忽略/0失败，AO112、SOP13、builti
 ### 2026-11-09 07:48 · 真实 SDK 与知识链路收敛
 
 r125固定4722244全目标check/strict/四bin通过，native544/AO116/SOP13/SDK24/model30/builtin136/external21/owner66过；CLI完整546过复用r124未变源。r125真实SDK29项、33次loopback请求全过含临时child侧链与清理；SOP四格增强真实knowledge/authority/receipt均过，cancel终态继续核TS。只补default_mode源码指纹的精确native新增helper过滤、close_then后两条非冻结负控定位，不改旧expectedSHA/13条负控判分；实际负控待跑。SDK读源资源差异新增记录未批准非豁免。独立SOP审发现项目proxy未传给controller/control，正在修；全Gateway剩余分组与FD诊断、两代源码安装继续。仅本机提交、Rust只mbp2，CLI尚未完结。
+
+
+### 2026-11-09 07:49 · 项目代理覆盖 SOP 外发
+
+已修独立审P1：SOP执行/发现复用被固定generation的hook_proxy，admission按原snapshot构建transport，全局approver认证沿启动项目snapshot，native外部skills管理也按请求项目proxy；新增实际CONNECT→auth/me、无env代理、.invalid目标的回归待mbp2编译。全局approver身份先于project授权的旧顺序不变。源码安装首代实际284秒通过且32技能逐项可读，二代编译中。SDK与AO修复增量已派非作者独立审，SOP cancel按真TS确认code原本agent_invalid_state、只修请求已发后的消息差异。CLI尚未收口，仍仅本机提交、Rust只mbp2。

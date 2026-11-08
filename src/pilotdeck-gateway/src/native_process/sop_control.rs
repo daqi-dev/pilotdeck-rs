@@ -106,7 +106,6 @@ pub(crate) struct NativeSopControl {
     options: Options,
     env: Env,
     registry: Arc<ProjectRuntimeRegistry>,
-    http: Arc<dyn JsonTransport>,
     helper: PathBuf,
 }
 impl NativeSopControl {
@@ -118,11 +117,15 @@ impl NativeSopControl {
         let helper = std::env::current_exe().map_err(|e| plain(e.to_string().as_str()))?;
         Ok(Arc::new(Self {
             options,
-            http: Arc::new(HyperJsonTransport::from_env(&env, None)),
             env,
             registry,
             helper,
         }))
+    }
+    fn transport(&self, snapshot: &JsValue) -> Arc<dyn JsonTransport> {
+        let proxy = snapshot.get("config").and_then(|config| config.get("proxy"))
+            .and_then(crate::runtime::model::http::ProxySettings::from_config);
+        Arc::new(HyperJsonTransport::from_env(&self.env, proxy.as_ref()))
     }
     async fn snapshot(&self, project: Option<&JsValue>) -> Result<(RuntimeLease, Arc<JsValue>)> {
         let root = match project {
@@ -359,7 +362,7 @@ impl NativeSopControl {
             pilot_user: pilot_user.clone(),
             expected_pilot_user: env(&self.env, "STAFFDECK_COPY_PILOTDECK_USER_ID").into(),
         };
-        authenticate_admission(&identity, project, self.http.as_ref(), epoch_ms()).await
+        authenticate_admission(&identity, project, self.transport(snapshot).as_ref(), epoch_ms()).await
     }
 }
 fn string(input: &JsValue, key: &str) -> Result<JsString> {
@@ -432,11 +435,16 @@ impl ApprovalAuthenticator for NativeSopControl {
                 e.status = Some(503);
                 return Err(e);
             };
+            // Approver identity is installation-wide, before project/session
+            // authorization. Use the listener's project generation, as the TS
+            // startup global dispatcher does; admission below uses its own
+            // retained project snapshot instead.
+            let (_lease, snapshot) = self.snapshot(None).await?;
             FixedApprovalAuthenticator::new(
                 &origin,
                 env(&self.env, "STAFFDECK_COPY_TENANT_ID").into(),
                 approver.into(),
-                self.http.clone(),
+                self.transport(&snapshot),
             )?
             .authenticate(bearer)
             .await
@@ -647,6 +655,58 @@ mod tests {
         requests.owner.shutdown().await.unwrap();
         requests.project.dispose().await.unwrap();
     }
+    #[tokio::test]
+    async fn approver_authentication_uses_project_proxy_without_proxy_environment() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        async fn headers(socket: &mut tokio::net::TcpStream) -> String {
+            let mut bytes = Vec::new();
+            loop {
+                let byte = socket.read_u8().await.unwrap();
+                bytes.push(byte);
+                assert!(bytes.len() < 16384);
+                if bytes.ends_with(b"\r\n\r\n") { break; }
+            }
+            String::from_utf8(bytes).unwrap()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let connect = headers(&mut socket).await;
+                assert!(connect.starts_with("CONNECT staffdeck-proxy-test.invalid:80 HTTP/1.1\r\n"), "{connect}");
+                socket.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.unwrap();
+                let request = headers(&mut socket).await;
+                assert!(request.starts_with("GET /api/auth/me HTTP/1.1\r\n"), "{request}");
+                assert!(request.to_lowercase().contains("authorization: bearer isolated-approver\r\n"));
+                let body = r#"{"tenant_id":"tenant","id":"approver","source":"web","role":"member"}"#;
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            }).await.unwrap();
+        });
+        let (_scratch, requests) = super::super::management_tests::setup();
+        let file = requests.options.home.join("pilotdeck.yaml");
+        let mut config = std::fs::read_to_string(&file).unwrap();
+        config.push_str(&format!("proxy:\n  url: http://{address}\n"));
+        std::fs::write(file, config).unwrap();
+        let mut environment = requests.env.clone();
+        for (key, value) in [
+            ("STAFFDECK_FORMAL_API_ORIGIN", "http://staffdeck-proxy-test.invalid"),
+            ("STAFFDECK_COPY_TENANT_ID", "tenant"),
+            ("STAFFDECK_APPROVAL_USER_ID", "approver"),
+        ] { environment.insert(key.into(), value.into()); }
+        assert!(!environment.keys().any(|key| key.to_ascii_lowercase().ends_with("proxy")));
+        let control = NativeSopControl::new(requests.options.clone(), environment, requests.project.clone()).unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(10), control.authenticate(&"isolated-approver".into())).await.unwrap();
+        // Settle both owners even when a regression makes authentication fail.
+        let server_result = server.await;
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+        server_result.unwrap();
+        let subject = result.unwrap();
+        assert!(subject.user_id.equals_str("approver"));
+        assert!(subject.tenant_id.equals_str("tenant"));
+    }
+
     #[test]
     fn admission_target_is_fresh_and_does_not_read_definitions_or_write_config() {
         let root = std::env::temp_dir().join(format!("pdrs-sop-binding-{}", uuid::Uuid::new_v4()));
