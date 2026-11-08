@@ -244,7 +244,7 @@ mutations.append(('environment-storage-not-injected', ENTRY, 'inherited.insert("
 # #1431 review: the id source itself and the two remaining environment
 # semantics (ambient storage must lose to --storage-root; the separate
 # snapshot root override must survive) had assertions but no mutants.
-mutations.append(('submit-workspace-id-legacy-slug', SERVICES, 'projects.workspace_id(&project).as_str()', 'crate::metadata::project_id(std::path::Path::new(&*project)).as_str()', WIRING, '#1431 marker spelling selects the registered workspace id'))
+mutations.append(('submit-workspace-id-legacy-slug', SERVICES, 'super::management::bounded_snapshot_workspace_id(&metadata, &project)\n                    .map_err(failure)?', 'crate::metadata::project_id(std::path::Path::new(&*project))', WIRING, '#1431 marker spelling selects the registered workspace id'))
 mutations.append(('environment-storage-ambient-wins', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert(root.clone());', ENVIRONMENT, '#1431 storage root injected from --storage-root'))
 mutations.append(('environment-snapshot-root-dropped', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());\n                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");', ENVIRONMENT, '#1431 snapshot root override preserved'))
 # #1431 review: the recorder extraction in `assembly::snapshot` is the last

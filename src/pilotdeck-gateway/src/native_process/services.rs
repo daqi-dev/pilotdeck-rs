@@ -5,7 +5,6 @@ use crate::{
     runtime::{
         context::compaction::js_truthy,
         project::{ProjectResources, ProjectRuntimeRegistry},
-        snapshot::{SnapshotProjectResolver, SnapshotProjects},
         turn::{
             submit::{NativeSubmitSnapshots, SubmitError, SubmitFuture, SubmitSnapshots},
             submit_host::{SubmitAttachmentLease, SubmitCwdService, SubmitHostServices},
@@ -1424,16 +1423,21 @@ impl SubmitHostServices for Services {
             ));
         }
         // When snapshots are enabled (--storage-root was supplied), resolve the
-        // id exactly as the management snapshot route does
-        // (`PersistenceResources::snapshot_gateway`): TS `resolveProjectStorageId`
-        // prefers a registered `.cwd` marker, else the legacy path slug. One
-        // resolver keeps turn-captured snapshots visible to `snapshot_list`.
+        // id through the same bounded helper as the management snapshot route:
+        // TS `resolveProjectStorageId` prefers a registered `.cwd` marker, else
+        // the legacy path slug. Sharing it keeps captured snapshots visible to
+        // `snapshot_list`.
         if self.snapshot_recorder.is_some() {
-            let projects = SnapshotProjects::new(self.options.home.clone(), PathBuf::new());
+            let metadata = crate::metadata::Metadata {
+                home: self.options.home.clone(),
+                cwd: PathBuf::new(),
+                files: super::methods::session_dir::BoundedSessionMarkers::new(),
+            };
             let project = self.options.project.to_string_lossy();
-            Ok(Some(JsString::from(
-                projects.workspace_id(&project).as_str(),
-            )))
+            let workspace_id =
+                super::management::bounded_snapshot_workspace_id(&metadata, &project)
+                    .map_err(failure)?;
+            Ok(Some(JsString::from(workspace_id.as_str())))
         } else {
             Ok(None)
         }

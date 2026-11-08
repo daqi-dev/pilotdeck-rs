@@ -55,6 +55,18 @@ impl ManagerProjectResolver for BoundedManagerProjects {
     }
 }
 
+/// Shared bounded storage-id lookup for native management and submit.
+pub(super) fn bounded_snapshot_workspace_id(
+    metadata: &crate::metadata::Metadata<super::methods::session_dir::BoundedSessionMarkers>,
+    project: &str,
+) -> Result<String, &'static str> {
+    let id = metadata.project_storage_id(project);
+    if metadata.files.was_refused() {
+        return Err("Unsafe project marker.");
+    }
+    Ok(id)
+}
+
 /// Per-request snapshot lookup. Project identity and storage id are resolved
 /// together under the same bounded marker reader; no unsafe fallback is used.
 struct BoundedSnapshotProjects {
@@ -77,13 +89,8 @@ impl SnapshotProjectResolver for BoundedSnapshotProjects {
         }
         let project =
             project.ok_or_else(|| SnapshotProjectionError::unknown_project_key(project_key))?;
-        let id = metadata.project_storage_id(&project);
-        if metadata.files.was_refused() {
-            return Err(SnapshotProjectionError::plain(
-                "Error",
-                "Unsafe project marker.",
-            ));
-        }
+        let id = bounded_snapshot_workspace_id(&metadata, &project)
+            .map_err(|error| SnapshotProjectionError::plain("Error", error))?;
         self.resolved
             .lock()
             .unwrap_or_else(|e| e.into_inner())
@@ -641,5 +648,88 @@ mod bounded_snapshot_tests {
         );
         assert!(resolver.resolve_project_key(&key).is_err());
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn native_submit_workspace_fifo_is_bounded_subprocess() {
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--nocapture",
+                "native_submit_workspace_fifo_child",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait_with_output();
+                panic!("submit workspace marker FIFO blocked");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    #[ignore = "run by bounded parent"]
+    async fn native_submit_workspace_fifo_child() {
+        use crate::runtime::turn::submit_host::SubmitHostServices as _;
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let root = requests.options.home.join("snapshot-storage");
+        std::fs::create_dir_all(&root).unwrap();
+        let recorder = Arc::new(
+            crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(
+                crate::storage::WorkspaceSnapshotConfig {
+                    root: root.to_string_lossy().into_owned(),
+                    snapshot_root: root.to_string_lossy().into_owned(),
+                },
+            ),
+        );
+        let services = crate::native_process::services::Services {
+            options: requests.options.clone(),
+            project: requests.project.clone(),
+            env: requests.env.clone(),
+            recorders: Arc::default(),
+            owner: requests.owner.clone(),
+            snapshot_recorder: Some(recorder),
+            upload_store: Arc::new(crate::upload::UploadStore::new(
+                crate::upload::UploadStoreOptions::new(
+                    |_| Ok(std::path::PathBuf::new()),
+                    || Ok(Vec::new()),
+                ),
+            )),
+        };
+        let input = crate::metadata::object([]);
+        assert_eq!(
+            services.workspace_id(&input).unwrap().unwrap(),
+            JsString::from("a8-main")
+        );
+        let directory = requests.options.home.join("projects/000-unrelated");
+        std::fs::create_dir(&directory).unwrap();
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(directory.join(".cwd"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        let failure = services
+            .workspace_id(&input)
+            .expect_err("unsafe submit marker accepted");
+        assert_eq!(failure.message, "Unsafe project marker.");
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
     }
 }
