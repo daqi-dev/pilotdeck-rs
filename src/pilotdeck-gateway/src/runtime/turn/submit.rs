@@ -665,7 +665,19 @@ impl TurnSubmitter {
                         if terminal.claim() {
                             self.publish_failure(&run, &publisher, &SubmitError::new("gateway_submit_failed", error.to_string())).await;
                         }
-                        publisher.finish().await;
+                        // #2498: a panicked worker can leave durable appends
+                        // that never settle (a stuck host future), and an
+                        // unbounded `finish` here would hold the turn — and its
+                        // admission and completion fence — alive forever. Mirror
+                        // the timer-path backstop below: drain only within the
+                        // abort budget, then close live delivery unconditionally.
+                        // `close_live` is immediate and idempotent; frames whose
+                        // appends settle after the close are dropped rather than
+                        // blocking the turn (registered in
+                        // specs/gateway-parity/diffs/A7.2-TURN-PANIC-FINISH-001.md).
+                        let budget = Duration::from_millis(self.host.abort_turn_timeout_ms().max(1_000));
+                        let _ = tokio::time::timeout(budget, publisher.finish()).await;
+                        publisher.close_live();
                     }
                 },
                 handle = &mut timer => {
