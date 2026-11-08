@@ -503,12 +503,14 @@ class Manifest(unittest.TestCase):
         # one of them (#1570 r11 sibling). `session-admission` and
         # `session-owner` carried the same private `copytree(src) +
         # copytree(specs)` inventory (#1570 r14 sibling). One list, every
-        # control.
+        # control. #996: session-owner/negative.py was deleted (its rows are
+        # the compile-time switches in schemata.py now), so the sweep keeps
+        # the surviving source_copy users.
         fixtures = Path(__file__).resolve().parents[1]
         sibling = (fixtures / 'skills-tree-files' / 'negative.py').read_text(encoding='utf-8')
         self.assertIn('source_copy(root)', sibling)
         self.assertNotIn('git ls-files', sibling)
-        for suite in ('session-admission', 'session-owner'):
+        for suite in ('session-admission',):
             with self.subTest(suite=suite):
                 text = (fixtures / suite / 'negative.py').read_text(encoding='utf-8')
                 self.assertIn('from negative_control import source_copy', text)
