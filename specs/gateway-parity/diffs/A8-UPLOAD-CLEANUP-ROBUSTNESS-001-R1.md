@@ -6,7 +6,7 @@ original: A8-UPLOAD-CLEANUP-ROBUSTNESS-001
 ## 类别
 
 更正（原条目两处登记性错误 + 三条「已知限制」被 #1850 闭合或改写 + #2423 fix-r1
-仲裁加固一条），不改原条目字节：
+仲裁加固两条），不改原条目字节：
 
 1. 原机器判据对 `plain_root_rejects_a_root_that_resolves_elsewhere` 四格的
    描述有误：原文「只有最后一格走得到等值比较」不准确——**真目录格同样走得到
@@ -28,6 +28,14 @@ original: A8-UPLOAD-CLEANUP-ROBUSTNESS-001
    「丢数据一律 P0」当轮修：闸由 `inside_root` 改为 `canonical_home` 逐组件
    走查（拒绝根到 `files` 之间任何链接组件），证据
    `_tmp/20261108-cb8-2423-arb/`。
+6. #2423 r1 评审（deepseek concurrency#1）仲裁（fix-r1 续）：lease 条目删除点
+   的 `inside_root` 是同一 containment-only 形态，且危害比评审所述更深——别名
+   `<id>` 指向**在用**租约目录时，victim 的内层文件被当成「租约」逐个判读，
+   `lease.json` 读经 `文件名/lease.json` 得 ENOTDIR、按过期孤儿删光整个 pin
+   集（cb8 探针三形态实测：`<id>` 层别名对在用 victim 无害、孤儿双路同删无
+   增量、指向在用租约目录三断言全灭，证据
+   `_tmp/20261108-cb8-2423-arb/lease-alias-probe.out.txt`）→ 同属确定性别名
+   删数据，当轮同修：条目删除点同用 `canonical_home` 走查。
 
 ## TS 依据
 
@@ -82,6 +90,16 @@ release 均无穿链防护），本更正不重录。#1850 的两处新核对（
   `spawn_cleanup` 的理由相同——释放跑在 detached 的 `spawn_blocking` 任务里，
   stderr 不可写时 `eprintln!` 的 panic 会静默杀死剩余租约的释放循环。日志
   内容不变。
+- `cleanup_expired_leases` 条目删除点 L1120（fix-r1 续，#2423 r1 deepseek
+  concurrency#1 仲裁）：比对由 `inside_root(&root_real, &dir)` 改为
+  `canonical_home(&dir, &root_real, &root_real)` 逐组件走查——拒绝
+  `root_real` 到条目之间任何链接组件（`<id>` 或 `<lease>` 换成指向根内另一
+  路径的链接即确定性别名，原比对放行、走查拒绝），`canonicalize` 后仍须落在
+  轮首快照 `root_real` 内（换 `.tmp` 祖先进来的根在此挡下）。未命中记
+  `[uploads] lease cleanup skipped <路径>: outside the leases root or a
+  linked lease dir` 后 `continue`（原消息为其前缀，既有断言不变）。同函数
+  `plain_root` 闸、轮首快照、空 `<id>` 目录守卫（`inside_root` 项）与
+  「expiresAt 不可读按过期」语义全部维持。
 
 ## 范围
 
@@ -91,11 +109,11 @@ release 均无穿链防护），本更正不重录。#1850 的两处新核对（
 - 原条目「已知限制」中仍成立的条目不变：坏 metadata 任务目录的泄漏面、租约
   半轮全有全无（TS parity）、指令级 TOCTOU 残余、`release` 守卫非快照与
   「跳过的租约目录不自动回收」、`future` Err 分支无注入点。**fix-r1 起把
-  cancel 的实例显式点名**（#2423 minimax concurrency#1）：`canonical_home` 走查
-  与 `remove_tree` 之间的几条指令窗口（含走查后把 `<id>` 换成同根内链接的
-  竞态别名）与原条目登记的四类删除点同形同威胁模型——能改
-  `<project>/.tmp` 的进程本就对项目树有写权，std 纯路径 API 关不掉（需
-  dirfd/`openat`），登记于此不另修。
+  cancel 与 lease 条目两个实例显式点名**（#2423 minimax concurrency#1 / r1
+  deepseek concurrency#1）：两个删除点的 `canonical_home` 走查与 `remove_tree`
+  之间的几条指令窗口（含走查后把 `<id>` 换成同根内链接的竞态别名）与原条目
+  登记的四类删除点同形同威胁模型——能改 `<project>/.tmp` 的进程本就对项目树
+  有写权，std 纯路径 API 关不掉（需 dirfd/`openat`），登记于此不另修。
 - `cancel` 闸门只作用于 in-gate 转换后的 `files` 删除；`mutate` 自身的
   metadata 写（经 `task_dir` 直拼）在换链后仍会跟着写——那是写路径残差，
   与删除守卫分属两题，#1850 未扩范围，登记于此。
@@ -108,37 +126,44 @@ release 均无穿链防护），本更正不重录。#1850 的两处新核对（
 - 行号更正：`plain_root_rejects_a_root_that_resolves_elsewhere` 原 L1231 →
   现 L1970（四格措辞更正见「类别」第 1 条）；`store_swapping_tmp` 原 L1277 →
   现 L2030。
-- 新增：`store_swapping_dir`（L2472，首个 `now` 回调把任意单个目录换成指向
+- 新增：`store_swapping_dir`（L2473，首个 `now` 回调把任意单个目录换成指向
   项目外的符号链接，三测试共用）、
-  `upload_cancel_does_not_follow_a_root_swapped_mid_mutate`（L2504，换 `.tmp`，
+  `upload_cancel_does_not_follow_a_root_swapped_mid_mutate`（L2505，换 `.tmp`，
   两拍时钟：expire 判定 + updatedAt，均先于删除）、
-  `upload_cancel_does_not_follow_a_task_dir_swapped_mid_mutate`（L2550，换
-  `<id>` 任务目录，只有 `inside_root` 能拒）、
-  `upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round`（L2599，
+  `upload_cancel_does_not_follow_a_task_dir_swapped_mid_mutate`（L2552，换
+  `<id>` 任务目录，只有 `canonical_home` 组件走查能拒）、
+  `upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round`（L2601，
   无上传记录故首拍即租约到期检查；清扫跳过链接 `<id>` 后 `names` 经链接读到
   空目标，守卫保住 `<id>` 符号链接本身）、
-  `upload_lease_release_surfaces_and_caches_a_realpath_failure`（L2644，ELOOP
+  `upload_lease_release_surfaces_and_caches_a_realpath_failure`（L2646，ELOOP
   环 → 首 release Err 且 code ELOOP；复原根后二次 release 仍同一 Err 且租约
   树还在，钉 `get_or_insert_with` 的 Err 缓存）、
   `upload_cancel_on_a_preplanted_alias_is_refused_at_the_identity_check`
-  （L2690，fix-r1 仲裁正证：良性预置别名在 `read_at` 身份校验处被拒、victim
+  （L2692，fix-r1 仲裁正证：良性预置别名在 `read_at` 身份校验处被拒、victim
   files 完好）、`upload_cancel_does_not_delete_through_an_aliased_task_dir`
-  （L2730，fix-r1 仲裁加固：伪造 `uploadId` 的记录经别名 cancel 不再删除另一
-  upload 的 files，拒绝记 cancel skipped 日志）。
+  （L2732，fix-r1 仲裁加固：伪造 `uploadId` 的记录经别名 cancel 不再删除另一
+  upload 的 files，拒绝记 cancel skipped 日志）、
+  `upload_lease_cleanup_does_not_sweep_through_an_aliased_id_dir`（L2772，
+  fix-r1 续仲裁加固：别名 `<id>` 指向在用租约目录，pin 集三断言全存活、跳过
+  记日志）。
 - 负控 `src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py`
-  （fix-r1 后）六条：`cancel-remove-tree-ungated`（还原裸 `remove_tree`）、
+  （fix-r1 后）九条：`cancel-remove-tree-ungated`（还原裸 `remove_tree`）、
   `cancel-delete-gate-dropped`（删整个删除点闸块，原
   `cancel-inside-root-dropped` 改名对齐新闸形）、
   `cancel-alias-walk-downgraded`（走查降级回 containment-only 比对，只有
   别名测试杀得掉这格）、`cleanup-lease-id-guard-dropped`（删空目录守卫的
   `inside_root` 项）、`release-realpath-swallowed`（非 NotFound 分支吞成
-  `Ok`）、`release-err-not-cached`（Err 不缓存，复原后重跑删除）。整份文件
-  54 锚点。
+  `Ok`）、`release-err-not-cached`（Err 不缓存，复原后重跑删除）；
+  fix-r1 续三条：`cleanup-lease-entry-symlink-swept` 与
+  `cleanup-lease-root-recanonicalized` 锚点改绑到新走查闸（后者变异改为把
+  containment 锚换成逐条目重解析，快照语义不变）、新增
+  `lease-alias-walk-downgraded`（条目走查降级回 containment-only，只有
+  lease 别名测试杀得掉这格）。整份文件 55 锚点。
 - 复算命令同原条目：
   `cargo test --manifest-path src/Cargo.toml -p pilotdeck-gateway --lib upload`
-  （fix-r1 后 78 passed / 3 ignored，含金样与 oracle 重放与两条别名用例；cb8
-  实测 `test result: ok. 78 passed; 0 failed; 3 ignored`，探针记录
-  `_tmp/20261108-cb8-2423-arb/post-fix-validation.out.txt`）；
+  （fix-r1 后 79 passed / 3 ignored，含金样与 oracle 重放与三条别名用例；cb8
+  实测 `test result: ok. 79 passed; 0 failed; 3 ignored`，探针记录
+  `_tmp/20261108-cb8-2423-arb/post-fix-validation-r2.out.txt`）；
   `python3 -I src/pilotdeck-gateway/tests/fixtures/upload-gateway/negative_controls.py --check`；
   `python3 -I scripts/gateway-parity/check_frozen.py --base 5ab9485394f0`。
 

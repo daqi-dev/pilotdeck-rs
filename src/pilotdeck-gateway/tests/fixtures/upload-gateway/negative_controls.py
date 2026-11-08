@@ -99,6 +99,10 @@ LEASE_ENTRY = 'upload::tests::upload_lease_cleanup_never_deletes_through_an_entr
 SWAP_RECORD = 'upload::tests::upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round'
 RECORD_RM = 'upload::tests::upload_cleanup_record_removal_failure_does_not_stop_the_sweep'
 LEASE_SWAP = 'upload::tests::upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round'
+# fix-r1 (#2423): the lease entry gate is the `canonical_home` component walk;
+# its downgrade mutant is killed by the deterministic in-root alias test.
+LEASE_ALIAS = (
+    'upload::tests::upload_lease_cleanup_does_not_sweep_through_an_aliased_id_dir')
 LEASE_RELEASE = 'upload::tests::upload_lease_release_does_not_follow_a_swapped_leases_root'
 PLAIN_ROOT = 'upload::tests::plain_root_rejects_a_root_that_resolves_elsewhere'
 ORPHAN_RM = 'upload::tests::upload_cleanup_orphan_removal_failure_does_not_stop_the_sweep'
@@ -549,9 +553,9 @@ mutations = [
             }
 ''', '', SWAP_RECORD,
      'a record delete must not follow a root swapped mid-round'),
-    ('cleanup-lease-entry-symlink-swept', STORE, '''                if !inside_root(&root_real, &dir) {
+    ('cleanup-lease-entry-symlink-swept', STORE, '''                if canonical_home(&dir, &root_real, &root_real).is_none() {
                     self.log_cleanup(format!(
-                        "[uploads] lease cleanup skipped {}: outside the leases root",
+                        "[uploads] lease cleanup skipped {}: outside the leases root or a linked lease dir",
                         dir.display()
                     ));
                     continue;
@@ -559,16 +563,29 @@ mutations = [
 ''', '', LEASE_ENTRY,
      'a symlinked lease entry must not be swept'),
     # #1646 review r3: the record half's "do not re-resolve the root per entry"
-    # property had two mutations; the lease half had none.
-    ('cleanup-lease-root-recanonicalized', STORE, '''                if !inside_root(&root_real, &dir) {
-                    self.log_cleanup(format!(
-                        "[uploads] lease cleanup skipped {}: outside the leases root",
-''', '''                let root_real = fs::canonicalize(&root_real).unwrap_or_default();
-                if !inside_root(&root_real, &dir) {
-                    self.log_cleanup(format!(
-                        "[uploads] lease cleanup skipped {}: outside the leases root",
-''', LEASE_SWAP,
+    # property had two mutations; the lease half had none. fix-r1 (#2423) moved
+    # the gate to the `canonical_home` walk, so the snapshot property now lives
+    # in the containment anchor: the walk's own stats go through a swapped
+    # `.tmp` ancestor and find real dirs, only the round-start anchor refuses.
+    ('cleanup-lease-root-recanonicalized', STORE,
+     '''                if canonical_home(&dir, &root_real, &root_real).is_none() {''',
+     '''                if canonical_home(
+                    &dir,
+                    &root_real,
+                    &fs::canonicalize(&root_real).unwrap_or_default(),
+                )
+                .is_none()
+                {''', LEASE_SWAP,
      'a lease delete must not follow a root swapped mid-round'),
+    # fix-r1 (#2423 deepseek r1 concurrency#1，仲裁实测坐实): downgrading the
+    # entry gate back to the containment-only comparison re-opens the
+    # deterministic alias — a linked `<id>` whose resolution stays inside the
+    # root lists the victim's inner files as "leases", whose lease.json read
+    # ENOTDIRs into expired orphans.
+    ('lease-alias-walk-downgraded', STORE,
+     '''                if canonical_home(&dir, &root_real, &root_real).is_none() {''',
+     '''                if !inside_root(&root_real, &dir) {''', LEASE_ALIAS,
+     "an aliased id dir must not put an active lease's files on the sweep"),
     # #1646 review r3: `release` is the third delete point on the leases tree and
     # fires long after acquire; it must not follow a swapped root either.
     ('lease-release-symlink-root-swept', STORE, '''                if root_real != root {
@@ -812,12 +829,14 @@ EXPECTED_NAMES = (
     'cleanup-symlink-root-swept', 'cleanup-record-rm-aborts',
     'cleanup-orphan-root-recanonicalized', 'cleanup-lease-symlink-root-swept',
     'cleanup-record-rm-follows-swapped-root', 'cleanup-lease-entry-symlink-swept',
-    'cleanup-lease-root-recanonicalized', 'lease-release-symlink-root-swept',
+    'cleanup-lease-root-recanonicalized', 'lease-alias-walk-downgraded',
+    'lease-release-symlink-root-swept',
     'plain-root-accepts-any-resolve', 'cleanup-orphan-rm-silent',
     'cleanup-schedule-stop-on-failure',
     # #1850 的五条（cancel 删除点闸门 / 条目 containment / 空目录守卫 /
-    # release realpath 分支 / Err 缓存）+ fix-r1 两条（cancel 删除闸门整块
-    # 删除 / 别名走查降级回 containment-only），与上面同一名册口径。
+    # release realpath 分支 / Err 缓存）+ fix-r1 四条（cancel 与 lease 条目
+    # 删除点各两条：删除闸门整块删除 / 别名走查降级回 containment-only），
+    # 与上面同一名册口径。
     'cancel-remove-tree-ungated', 'cancel-delete-gate-dropped',
     'cancel-alias-walk-downgraded',
     'cleanup-lease-id-guard-dropped', 'release-realpath-swallowed',

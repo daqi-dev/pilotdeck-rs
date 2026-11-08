@@ -1105,9 +1105,21 @@ impl UploadStore {
                 {
                     continue;
                 }
-                if !inside_root(&root_real, &dir) {
+                // fix-r1 (#2423 r1 评审 deepseek concurrency#1，实测坐实):
+                // containment-only `inside_root` passes a linked `<id>`
+                // whose resolution stays inside the root, and the entries
+                // it lists are then judged by the victim's own bytes — an
+                // alias onto an **active** lease dir makes every file
+                // inside it read as an expired orphan, destroying the live
+                // pin set without a race (probe:
+                // `_tmp/20261108-cb8-2423-arb/lease-alias-probe.out.txt`).
+                // The component walk the cancel delete point uses refuses
+                // every link below the root; the instruction gap between
+                // the walk and `remove_tree` is the same registered
+                // TOCTOU residual family.
+                if canonical_home(&dir, &root_real, &root_real).is_none() {
                     self.log_cleanup(format!(
-                        "[uploads] lease cleanup skipped {}: outside the leases root",
+                        "[uploads] lease cleanup skipped {}: outside the leases root or a linked lease dir",
                         dir.display()
                     ));
                     continue;
