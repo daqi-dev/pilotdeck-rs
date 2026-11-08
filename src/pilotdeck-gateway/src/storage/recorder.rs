@@ -228,8 +228,19 @@ impl Recorder {
     }
     /// TS `startTurn`: `turn_started`, then `{nextStep: 1}`.
     pub fn start_turn(&self, session_id: &JsString, turn_id: &JsString) -> RecorderResult<()> {
+        self.start_turn_with_inbox(session_id, turn_id, None)
+    }
+    pub(crate) fn start_turn_with_inbox(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        inbox: Option<&JsString>,
+    ) -> RecorderResult<()> {
         let mut inner = self.lock();
-        let draft = draft("turn_started");
+        let mut draft = draft("turn_started");
+        if let Some(inbox) = inbox {
+            draft.insert("inboxItemId".into(), JsValue::String(inbox.clone()));
+        }
         self.append(session_id, turn_id, draft)?;
         inner.completed_turn_id = None;
         inner.turns.insert(turn_id.clone(), Turn::started());

@@ -120,6 +120,7 @@ impl ReloadSource {
 /// has closed. A pre-drain snapshot must never rewind that durable sequence.
 pub struct SessionProjection {
     entries: Mutex<Vec<JsValue>>,
+    inbox: Mutex<super::inbox::InboxProjection>,
     last_valid: Mutex<DurableSessionState>,
     // Guarded by entries before access, just like last_valid. Tracks durable
     // completion even while projection is invalid; rebuilt only on restore.
@@ -131,6 +132,7 @@ impl Default for SessionProjection {
     fn default() -> Self {
         Self {
             entries: Mutex::default(),
+            inbox: Mutex::default(),
             last_valid: Mutex::default(),
             completed_turns: Mutex::default(),
             valid: AtomicBool::new(true),
@@ -139,6 +141,25 @@ impl Default for SessionProjection {
     }
 }
 impl SessionProjection {
+    pub(crate) fn pending_turns(
+        &self,
+        session: &JsString,
+    ) -> Result<std::collections::VecDeque<super::inbox::QueuedTurn>, RuntimeError> {
+        let entries = lock(&self.entries);
+        if self.disposed.load(Ordering::SeqCst) {
+            return Err(RuntimeError::new("Session projection driver is disposed."));
+        }
+        let mut inbox = lock(&self.inbox);
+        if inbox.processed > entries.len() {
+            *inbox = Default::default();
+        }
+        while inbox.processed < entries.len() {
+            let index = inbox.processed;
+            inbox.apply(&entries[index])?;
+            inbox.processed += 1;
+        }
+        Ok(inbox.pending(session))
+    }
     /// Pure domain projection over borrowed durable events. Reducers must not
     /// perform I/O, append, or acquire other session locks while this lock is held.
     pub(crate) fn fold_domain<T>(
@@ -850,8 +871,10 @@ pub struct FactoryOptions {
     pub diagnostic: Arc<dyn Fn(&Diagnostic) + Send + Sync>,
     pub tool_results_dir: Option<ToolResultsDir>,
 }
+type Publication = Arc<dyn Fn(SessionContext, LiveSessionHandle) -> RuntimeResult + Send + Sync>;
 #[derive(Clone)]
 pub struct ProjectSessionFactory {
+    publication: Option<Publication>,
     options: Arc<FactoryOptions>,
     mcp: SessionMcpRuntimeRegistry,
     #[cfg(test)]
@@ -866,11 +889,16 @@ impl ProjectSessionFactory {
             "writer_busy_wait_timeout must be positive"
         );
         Self {
+            publication: None,
             options: Arc::new(options),
             mcp: SessionMcpRuntimeRegistry::new(),
             #[cfg(test)]
             creation_sent: Arc::new(tokio::sync::watch::channel(0).0),
         }
+    }
+    pub(crate) fn with_publication(mut self, publication: Publication) -> Self {
+        self.publication = Some(publication);
+        self
     }
     /// Intentionally only the per-session MCP registry; owner.shutdown owns
     /// in-flight creations and session handles (TS ProjectSessionFactory:121).
@@ -1159,6 +1187,12 @@ impl ProjectSessionFactory {
     }
 }
 impl SessionFactory for ProjectSessionFactory {
+    fn published(&self, context: SessionContext, handle: LiveSessionHandle) -> RuntimeResult {
+        match &self.publication {
+            Some(callback) => callback(context, handle),
+            None => Ok(()),
+        }
+    }
     fn can_recreate(&self) -> bool {
         true
     }
@@ -1241,6 +1275,16 @@ impl LiveSession for OwnedSession {
         self.adapter.reload_signal_for_test()
     }
     fn submit(&self, input: JsValue, options: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        if !self
+            .storage
+            .projection
+            .pending_turns(&self.reload_source.session_id)?
+            .is_empty()
+        {
+            return Err(RuntimeError::new(
+                "Agent handle already has an active turn.",
+            ));
+        }
         // AgentSession owns session identity; submit options only identify the turn.
         let mut options = options
             .as_object()
@@ -1259,12 +1303,50 @@ impl LiveSession for OwnedSession {
             finished: false,
         }))
     }
+    fn submit_queued(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
+        item: JsString,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        // AgentSession owns session identity; submit options only identify the turn.
+        let mut options = options
+            .as_object()
+            .cloned()
+            .ok_or_else(|| RuntimeError::new("#748 session submit options must be an object"))?;
+        options.insert(
+            "sessionId".into(),
+            JsValue::String(self.reload_source.session_id.clone()),
+        );
+        let turn = self
+            .adapter
+            .submit_queued(input, JsValue::Object(options), authority, item)?;
+        Ok(Box::new(OwnedTurn {
+            turn,
+            checkpoint: self.checkpoint.clone(),
+            saved: self.saved_files.clone(),
+            started: self.adapter.reload_execution_started(),
+            finished: false,
+        }))
+    }
+
     fn submit_with_authority(
         &self,
         input: JsValue,
         options: JsValue,
         authority: crate::runtime::turn::interaction::TurnInteractionAuthority,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        if !self
+            .storage
+            .projection
+            .pending_turns(&self.reload_source.session_id)?
+            .is_empty()
+        {
+            return Err(RuntimeError::new(
+                "Agent handle already has an active turn.",
+            ));
+        }
         // AgentSession owns session identity; submit options only identify the turn.
         let mut options = options
             .as_object()

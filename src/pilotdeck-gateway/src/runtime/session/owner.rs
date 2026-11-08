@@ -57,6 +57,11 @@ pub trait SessionFactory: Send + Sync {
     fn can_recreate(&self) -> bool {
         false
     }
+    /// Optional host-owned wake after the exact handle is published. Default
+    /// factories have no queued-background consumer and keep their old path.
+    fn published(&self, _context: SessionContext, _handle: LiveSessionHandle) -> RuntimeResult {
+        Ok(())
+    }
     fn setup(
         &self,
         _context: SessionContext,
@@ -85,6 +90,8 @@ pub struct SessionEvictionSnapshot {
     pub message_count: Option<JsValue>,
 }
 
+pub(crate) type SessionHandleLookup =
+    Arc<dyn Fn(&JsString) -> Option<LiveSessionHandle> + Send + Sync>;
 type IdleEvict = Arc<dyn Fn(&JsString, &SessionEvictionSnapshot) + Send + Sync>;
 type Evict = Arc<dyn Fn(&JsString, EvictionReason) + Send + Sync>;
 pub struct SessionOwnerOptions {
@@ -176,6 +183,23 @@ impl SessionOwner {
     #[cfg(test)]
     pub(super) fn creations_sent_for_test(&self) -> watch::Receiver<usize> {
         self.0.creation_sent.subscribe()
+    }
+
+    /// A weak publication lookup: callbacks never retain owner -> factory cycles.
+    pub(crate) fn weak_handle_lookup(&self) -> SessionHandleLookup {
+        let owner = Arc::downgrade(&self.0);
+        Arc::new(move |key| {
+            let owner = owner.upgrade()?;
+            let state = owner.state.lock().unwrap();
+            if state.stopped {
+                return None;
+            }
+            state
+                .records
+                .get(key)
+                .filter(|record| record.handle.state() == super::HandleState::Active)
+                .map(|record| record.handle.clone())
+        })
     }
 
     pub fn new(options: SessionOwnerOptions) -> Self {
@@ -453,6 +477,37 @@ impl SessionOwner {
             if !already_drained {
                 disposal.await?;
             }
+        }
+        if let Err(cause) = self
+            .0
+            .options
+            .factory
+            .published(context.clone(), handle.clone())
+        {
+            {
+                let mut state = self.0.state.lock().unwrap();
+                if state
+                    .records
+                    .get(&context.session_key)
+                    .is_some_and(|record| record.handle.same_identity(&handle))
+                {
+                    state.records.remove(&context.session_key);
+                    state.order.retain(|key| key != &context.session_key);
+                    state.completion_owners.remove(&context.session_key);
+                    handle.stop_new();
+                }
+            }
+            let rollback = handle
+                .dispose("agent_publication_wake_rollback".into())
+                .await;
+            return Err(match rollback {
+                Ok(()) => cause,
+                Err(error) => RuntimeError {
+                    message: "Failed to wake and roll back published agent.".into(),
+                    causes: vec![cause, error],
+                    js_error: None,
+                },
+            });
         }
         Ok(handle)
     }
@@ -1272,3 +1327,96 @@ mod settle_order {
 #[cfg(test)]
 #[path = "owner_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    use crate::runtime::{project::DisposeFuture, session::LiveSession};
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    type Lookup = Arc<dyn Fn(&JsString) -> Option<LiveSessionHandle> + Send + Sync>;
+    #[derive(Default)]
+    struct Session {
+        disposed: AtomicBool,
+    }
+    impl LiveSession for Session {
+        fn snapshot(&self) -> JsValue {
+            JsValue::Null
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async move {
+                self.disposed.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+    #[derive(Default)]
+    struct Factory {
+        lookup: OnceLock<Lookup>,
+        count: AtomicUsize,
+        fail: AtomicBool,
+        sessions: Mutex<Vec<Arc<Session>>>,
+    }
+    impl SessionFactory for Factory {
+        fn create(
+            &self,
+            _: SessionContext,
+            _: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            let session = Arc::new(Session::default());
+            self.sessions.lock().unwrap().push(session.clone());
+            Box::pin(async move { Ok(LiveSessionHandle::new(session, None)) })
+        }
+        fn published(&self, context: SessionContext, handle: LiveSessionHandle) -> RuntimeResult {
+            assert!(
+                self.lookup.get().unwrap()(&context.session_key)
+                    .is_some_and(|actual| actual.same_identity(&handle)),
+                "background wake must see the exact already-published handle"
+            );
+            self.count.fetch_add(1, Ordering::SeqCst);
+            if self.fail.load(Ordering::SeqCst) {
+                Err(RuntimeError::new("injected restore wake failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    #[tokio::test]
+    async fn publication_wake_is_after_identity_and_failed_wake_rolls_back_actual_handle() {
+        let factory = Arc::new(Factory::default());
+        let mut options = SessionOwnerOptions::new(factory.clone());
+        options.idle_sweep_interval_ms = 0;
+        let owner = SessionOwner::new(options);
+        assert!(factory.lookup.set(owner.weak_handle_lookup()).is_ok());
+        let context = SessionContext {
+            session_key: "parent".into(),
+            project_key: None,
+            channel_key: "test".into(),
+            allowed_tools: None,
+            disallowed_tools: None,
+        };
+        factory.fail.store(true, Ordering::SeqCst);
+        assert!(owner.get_or_create(context.clone()).await.is_err());
+        assert!(owner.current_handle(&"parent".into()).is_none());
+        assert!(
+            factory.sessions.lock().unwrap()[0]
+                .disposed
+                .load(Ordering::SeqCst)
+        );
+        factory.fail.store(false, Ordering::SeqCst);
+        let handle = owner.get_or_create(context.clone()).await.unwrap();
+        let cached = owner.get_or_create(context).await.unwrap();
+        assert!(handle.same_identity(&cached));
+        assert_eq!(
+            factory.count.load(Ordering::SeqCst),
+            2,
+            "cached gets must not start duplicate pumps"
+        );
+        owner.shutdown().await.unwrap();
+    }
+}

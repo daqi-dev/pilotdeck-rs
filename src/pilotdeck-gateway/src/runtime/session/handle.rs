@@ -2,7 +2,10 @@
 //! lifecycle seam for an AgentSession adapter, not a substitute agent loop.
 use super::super::project::{DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult};
 use pilotdeck_protocol::{JsString, JsValue};
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
 use std::{future::Future, pin::Pin};
 use tokio::sync::watch;
 
@@ -46,6 +49,16 @@ pub trait LiveSession: Send + Sync {
         _options: JsValue,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         Err(RuntimeError::new("Agent session submit is unavailable."))
+    }
+    /// Host-only durable inbox claim; raw wire options cannot construct it.
+    fn submit_queued(
+        &self,
+        _input: JsValue,
+        _options: JsValue,
+        _authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
+        _item: JsString,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        Err(RuntimeError::new("Agent queued submit is unavailable."))
     }
     /// Gateway-only, typed authority. Legacy/session embedders continue using
     /// submit; adapters that own interactive ports override this forwarding.
@@ -95,9 +108,26 @@ pub enum HandleState {
     Disposed,
 }
 
+struct TurnSlot {
+    current: AtomicBool,
+    publish: AtomicBool,
+}
+impl TurnSlot {
+    fn new() -> Self {
+        Self {
+            current: AtomicBool::new(true),
+            publish: AtomicBool::new(true),
+        }
+    }
+    fn revoke(&self) {
+        self.current.store(false, Ordering::SeqCst);
+        self.publish.store(false, Ordering::SeqCst);
+    }
+}
 struct Progress {
     state: HandleState,
     activity: bool,
+    turn_current: Option<Arc<TurnSlot>>,
     maintenance: bool,
     cancelled: Option<JsString>,
     disposal: Option<watch::Receiver<Option<RuntimeResult>>>,
@@ -252,6 +282,7 @@ impl LiveSessionHandle {
             progress: Arc::new(Mutex::new(Progress {
                 state: HandleState::Active,
                 activity: false,
+                turn_current: None,
                 maintenance: false,
                 cancelled: None,
                 disposal: None,
@@ -284,6 +315,27 @@ impl LiveSessionHandle {
         )
     }
 
+    /// Wait for the real activity guard, without polling or reserving a turn.
+    pub(crate) async fn when_idle(&self) -> RuntimeResult {
+        let mut changed = self.0.changed.subscribe();
+        loop {
+            changed.borrow_and_update();
+            {
+                let progress = self.0.progress.lock().unwrap();
+                if progress.state != HandleState::Active {
+                    return Err(RuntimeError::new("Agent handle is not active."));
+                }
+                if !progress.activity {
+                    return Ok(());
+                }
+            }
+            changed
+                .changed()
+                .await
+                .map_err(|_| RuntimeError::new("Agent idle notification stopped."))?;
+        }
+    }
+
     pub fn state(&self) -> HandleState {
         self.0.progress.lock().unwrap().state
     }
@@ -296,6 +348,11 @@ impl LiveSessionHandle {
         if progress.state == HandleState::Active {
             progress.state = HandleState::Draining;
         }
+        if let Some(current) = &progress.turn_current {
+            current.revoke();
+        }
+        drop(progress);
+        self.0.changed.send_modify(|version| *version += 1);
     }
 
     pub fn snapshot(&self) -> JsValue {
@@ -327,7 +384,9 @@ impl LiveSessionHandle {
         progress.activity = true;
         progress.maintenance = maintenance;
         progress.cancelled = None;
-        Ok(HandleActivity(self.clone()))
+        let current = Arc::new(TurnSlot::new());
+        progress.turn_current = Some(current.clone());
+        Ok(HandleActivity(self.clone(), current))
     }
 
     /// Admission is reserved before invoking host code, with no synchronous
@@ -363,6 +422,36 @@ impl LiveSessionHandle {
         })
     }
 
+    pub(crate) fn submit_queued(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        mut authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
+        item: JsString,
+    ) -> Result<SessionSubmission, RuntimeError> {
+        let activity = self.begin_activity()?;
+        if let Some(authority) = &mut authority {
+            let emit = authority.emit.clone();
+            let slot = activity.1.clone();
+            authority.emit =
+                Arc::new(move |event| slot.publish.load(Ordering::SeqCst) && emit(event));
+        }
+        if let Some(hooks) = authority
+            .as_mut()
+            .and_then(|authority| authority.sdk_hooks.as_mut())
+        {
+            let current = activity.1.clone();
+            hooks.current_turn = Some(Arc::new(move || current.current.load(Ordering::SeqCst)));
+        }
+        let stream = self
+            .0
+            .session
+            .submit_queued(input, options, authority, item)?;
+        Ok(SessionSubmission {
+            stream,
+            _activity: Some(activity),
+        })
+    }
     pub fn abort(&self, reason: &JsString) -> RuntimeResult {
         // Set cancelled inside the lock; call session.abort() outside so that
         // a panic does not poison the progress mutex.
@@ -374,6 +463,9 @@ impl LiveSessionHandle {
             let mut progress = self.0.progress.lock().unwrap();
             if progress.state == HandleState::Disposed {
                 return Ok(());
+            }
+            if let Some(current) = &progress.turn_current {
+                current.revoke();
             }
             progress.cancelled.get_or_insert_with(|| reason.clone());
         }
@@ -401,6 +493,9 @@ impl Inner {
             return completion.clone();
         }
         progress.state = HandleState::Draining;
+        if let Some(current) = &progress.turn_current {
+            current.revoke();
+        }
         let active = progress.activity && !progress.maintenance;
         if active || progress.maintenance {
             progress.cancelled.get_or_insert_with(|| reason.clone());
@@ -628,6 +723,15 @@ pub struct SessionSubmission {
 impl SessionSubmission {
     pub async fn next(&mut self) -> Result<Option<JsValue>, RuntimeError> {
         let result = self.stream.next().await;
+        if let Ok(Some(event)) = &result
+            && event
+                .get("type")
+                .and_then(JsValue::as_string)
+                .is_some_and(|kind| kind.equals_str("turn_completed"))
+            && let Some(activity) = &self._activity
+        {
+            activity.1.current.store(false, Ordering::SeqCst);
+        }
         if !matches!(result, Ok(Some(_))) {
             self._activity.take();
         }
@@ -635,7 +739,7 @@ impl SessionSubmission {
     }
 }
 
-pub struct HandleActivity(LiveSessionHandle);
+pub struct HandleActivity(LiveSessionHandle, Arc<TurnSlot>);
 
 impl HandleActivity {
     pub fn cancellation_reason(&self) -> Option<JsString> {
@@ -645,12 +749,23 @@ impl HandleActivity {
 
 impl Drop for HandleActivity {
     fn drop(&mut self) {
-        self.0
-            .0
-            .progress
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .activity = false;
+        self.1.revoke();
+        {
+            let mut progress = self
+                .0
+                .0
+                .progress
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if progress
+                .turn_current
+                .as_ref()
+                .is_some_and(|current| Arc::ptr_eq(current, &self.1))
+            {
+                progress.activity = false;
+                progress.turn_current = None;
+            }
+        }
         self.0.0.changed.send_modify(|version| *version += 1);
     }
 }
@@ -991,3 +1106,153 @@ mod abort_contract_tests;
 #[cfg(test)]
 #[path = "handle_drop_tests.rs"]
 mod drop_contract_tests;
+
+#[cfg(test)]
+mod queued_slot_tests {
+    use super::*;
+    use crate::runtime::turn::interaction::{SdkHookState, TurnInteractionAuthority};
+    type Guard = Arc<dyn Fn() -> bool + Send + Sync>;
+    type Emitter = Arc<dyn Fn(JsValue) -> bool + Send + Sync>;
+    #[derive(Default)]
+    struct Session {
+        guards: Mutex<Vec<Guard>>,
+        emits: Mutex<Vec<Emitter>>,
+    }
+    struct Stream {
+        next: usize,
+    }
+    impl LiveTurn for Stream {
+        fn next(&mut self) -> SessionNext<'_> {
+            let next = self.next;
+            self.next += 1;
+            Box::pin(async move {
+                Ok(match next {
+                    0 => Some(
+                        pilotdeck_protocol::parse_json(
+                            r#"{"type":"turn_completed","result":{"type":"completed"}}"#,
+                        )
+                        .unwrap(),
+                    ),
+                    1 => Some(
+                        pilotdeck_protocol::parse_json(
+                            r#"{"type":"agent_status","event":"SessionEnd"}"#,
+                        )
+                        .unwrap(),
+                    ),
+                    _ => None,
+                })
+            })
+        }
+    }
+    impl LiveSession for Session {
+        fn snapshot(&self) -> JsValue {
+            JsValue::Null
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+        fn submit_queued(
+            &self,
+            _: JsValue,
+            _: JsValue,
+            authority: Option<TurnInteractionAuthority>,
+            _: JsString,
+        ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+            let authority = authority.unwrap();
+            self.guards
+                .lock()
+                .unwrap()
+                .push(authority.sdk_hooks.unwrap().current_turn.unwrap());
+            self.emits.lock().unwrap().push(authority.emit);
+            Ok(Box::new(Stream { next: 0 }))
+        }
+    }
+    fn authority() -> TurnInteractionAuthority {
+        TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
+            can_prompt: Some(false),
+            policy_can_prompt: None,
+            sdk_permission_mode: None,
+            sdk_hooks: Some(SdkHookState {
+                settings: vec![],
+                active: false,
+                include_events: false,
+                handlers: Arc::default(),
+                async_registry: Arc::default(),
+                current_turn: Some(Arc::new(|| false)),
+            }),
+            emit: Arc::new(|_| true),
+        }
+    }
+    #[tokio::test]
+    async fn queued_sdk_fence_uses_actual_slot_revokes_at_terminal_and_never_reopens_old_ids() {
+        let session = Arc::new(Session::default());
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        let options = pilotdeck_protocol::parse_json(
+            r#"{"sessionId":"same-session","turnId":"same-turn","runId":"same-run"}"#,
+        )
+        .unwrap();
+        let mut old = handle
+            .submit_queued(
+                JsValue::Null,
+                options.clone(),
+                Some(authority()),
+                "same-item".into(),
+            )
+            .unwrap();
+        let old_guard = session.guards.lock().unwrap()[0].clone();
+        let old_emit = session.emits.lock().unwrap()[0].clone();
+        assert!(
+            old_guard(),
+            "the queued stream owns a fresh guard, not the supplied stale one"
+        );
+        assert!(old_emit(JsValue::Null));
+        old.next().await.unwrap().unwrap();
+        assert!(
+            !old_guard(),
+            "terminal result revokes async admission before SessionEnd drain"
+        );
+        assert!(
+            old_emit(JsValue::Null),
+            "this stream still owns its SessionEnd public emitter"
+        );
+        assert!(
+            handle.begin_activity().is_err(),
+            "terminal does not release actual cleanup ownership"
+        );
+        old.next().await.unwrap().unwrap();
+        assert!(old.next().await.unwrap().is_none());
+        assert!(
+            !old_emit(JsValue::Null),
+            "releasing slot revokes its emitter before a successor"
+        );
+        let mut next = handle
+            .submit_queued(
+                JsValue::Null,
+                options,
+                Some(authority()),
+                "same-item".into(),
+            )
+            .unwrap();
+        let next_guard = session.guards.lock().unwrap()[1].clone();
+        assert!(next_guard());
+        assert!(!old_guard());
+        drop(old);
+        assert!(
+            next_guard(),
+            "late old drop must not revoke the successor's opaque guard"
+        );
+        handle.abort(&"cancel-new".into()).unwrap();
+        assert!(
+            !next_guard(),
+            "external abort revokes before invoking native session code"
+        );
+        while next.next().await.unwrap().is_some() {}
+        drop(next);
+        handle.dispose("test".into()).await.unwrap();
+    }
+}

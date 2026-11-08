@@ -19,6 +19,23 @@ pub fn load_project_bounded(
 ) -> Result<Config, Error> {
     load(home, cwd, env, project, None)
 }
+/// Native Metadata already carries the process-cwd base lazily. Preserve
+/// that behavior: absolute project inputs must not query a deleted cwd.
+pub(crate) fn load_project_bounded_lazy(
+    home: &Path,
+    cwd: &Path,
+    env: &Env,
+    project: Option<&str>,
+) -> Result<Config, Error> {
+    #[cfg(unix)]
+    {
+        unix::load_with_limits_at(home, cwd, env, project, None, FILE_LIMIT, TOTAL_LIMIT)
+    }
+    #[cfg(not(unix))]
+    {
+        load(home, cwd, env, project, None)
+    }
+}
 /// The snapshot counterpart of `load_project_bounded`, sharing one IO budget
 /// and exactly the existing snapshot context and configuration pipeline.
 pub fn load_snapshot_bounded(
@@ -191,9 +208,22 @@ mod unix {
         file_limit: usize,
         total_limit: usize,
     ) -> Result<Config, Error> {
+        let cwd = super::super::absolute_cwd(cwd)?;
+        load_with_limits_at(home, &cwd, env, project, context, file_limit, total_limit)
+    }
+
+    pub(super) fn load_with_limits_at(
+        home: &Path,
+        cwd: &Path,
+        env: &Env,
+        project: Option<&str>,
+        context: Option<(f64, JsString)>,
+        file_limit: usize,
+        total_limit: usize,
+    ) -> Result<Config, Error> {
         let metadata = Metadata {
             home: home.to_path_buf(),
-            cwd: super::super::absolute_cwd(cwd)?,
+            cwd: cwd.to_path_buf(),
             files: BoundedFiles::new(file_limit, total_limit),
         };
         let result = super::super::load_project_with_files_inner(&metadata, env, project, context);

@@ -490,6 +490,33 @@
       }
     },
     {
+      "id": "empty",
+      "input": {
+        "file_path": ""
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": ""
+        }
+      },
+      "permission": {
+        "type": "deny",
+        "reason": {
+          "type": "safety",
+          "message": "Path must be a non-empty string without null bytes."
+        },
+        "message": "Path must be a non-empty string without null bytes."
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "invalid_tool_input",
+          "message": "Path must be a non-empty string without null bytes."
+        }
+      }
+    },
+    {
       "id": "nul",
       "input": {
         "file_path": "a\u0000b"

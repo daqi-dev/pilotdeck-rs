@@ -187,6 +187,8 @@ pub trait TranscriptStore: Send + Sync {
 /// canonical path, sharing the ledger fence until all writer clones drop.
 #[derive(Default)]
 pub struct JsonlTranscriptStore {
+    /// Opt-in bounded descriptor IO for externally reachable native cold writes.
+    bounded: bool,
     /// Write lock; holds the paths whose tail this instance has prepared.
     prepared: Mutex<HashSet<PathBuf>>,
     /// Only project-owned session stores opt into the shared ledger fence.
@@ -206,6 +208,38 @@ pub struct JsonlTranscriptStore {
 impl JsonlTranscriptStore {
     pub fn new() -> Self {
         Self::with_stimulus(super::stimulus::StorageStimulus::global())
+    }
+    pub(crate) fn new_bounded() -> Self {
+        Self {
+            bounded: true,
+            ..Self::new()
+        }
+    }
+    fn open_options(&self) -> StoreResult<fs::OpenOptions> {
+        let mut options = private_open();
+        if self.bounded {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.custom_flags(libc::O_NONBLOCK);
+            }
+            #[cfg(not(unix))]
+            return Err(invalid(
+                "Bounded native transcript writes are unavailable on this platform.",
+            ));
+        }
+        Ok(options)
+    }
+    fn check_regular(&self, file: &fs::File) -> StoreResult<()> {
+        if self.bounded
+            && !file
+                .metadata()
+                .map_err(|e| descriptor_error(e, "fstat"))?
+                .is_file()
+        {
+            return Err(invalid("Native session transcript is not a regular file."));
+        }
+        Ok(())
     }
     /// #1370: construct wired to a specific controlled stimulus — the
     /// production `new` passes the process-wide env-resolved entry, while the
@@ -243,13 +277,15 @@ impl JsonlTranscriptStore {
         Ok(guard)
     }
     /// TS prepareTail: `open(path, "a+", 0o600)`, then LF after a non-LF last byte.
-    fn prepare_tail(path: &Path) -> StoreResult<()> {
-        let mut file = private_open()
+    fn prepare_tail(&self, path: &Path) -> StoreResult<()> {
+        let mut file = self
+            .open_options()?
             .read(true)
             .append(true)
             .create(true)
             .open(path)
             .map_err(|e| path_error(e, "open", path))?;
+        self.check_regular(&file)?;
         let size = file
             .metadata()
             .map_err(|e| descriptor_error(e, "fstat"))?
@@ -286,7 +322,7 @@ impl TranscriptStore for JsonlTranscriptStore {
         let path = &key.transcript_path;
         let mut prepared = self.lock(path)?;
         if !prepared.contains(path) {
-            Self::prepare_tail(path)?;
+            self.prepare_tail(path)?;
             prepared.insert(path.clone());
         }
         // appendFile(path, line, { mode: 0o600, flush }): flush only for compact boundaries.
@@ -322,11 +358,13 @@ impl TranscriptStore for JsonlTranscriptStore {
             }
             None => false,
         };
-        let mut file = private_open()
+        let mut file = self
+            .open_options()?
             .append(true)
             .create(true)
             .open(path)
             .map_err(|e| path_error(e, "open", path))?;
+        self.check_regular(&file)?;
         file.write_all(line.as_bytes())
             .map_err(|e| descriptor_error(e, "write"))?;
         if flush {
@@ -343,6 +381,13 @@ impl TranscriptStore for JsonlTranscriptStore {
         Ok(())
     }
     fn read(&self, key: &TranscriptKey, max_bytes: Option<u64>) -> StoreResult<TranscriptRead> {
+        if self.bounded {
+            if max_bytes.is_some_and(|limit| limit < super::TRANSCRIPT_MAX_BYTES) {
+                return Err(invalid("Smaller bounded transcript reads are unavailable."));
+            }
+            return super::transcript::read_transcript_bounded(&key.transcript_path)
+                .map(|result| result.read);
+        }
         read_transcript_limited_at(
             &key.transcript_path,
             self.diagnostic_path

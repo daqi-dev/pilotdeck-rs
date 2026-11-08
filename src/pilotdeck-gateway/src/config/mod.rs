@@ -2,6 +2,7 @@
 //! participates in validation, even when catalog projection does not use it.
 mod binding;
 mod bounded;
+pub(crate) use bounded::load_project_bounded_lazy;
 pub use bounded::{load_project_bounded, load_snapshot_bounded};
 pub mod changes;
 mod graph;

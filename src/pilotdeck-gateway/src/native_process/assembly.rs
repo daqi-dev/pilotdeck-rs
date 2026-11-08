@@ -547,6 +547,7 @@ async fn start_assembly(
     // #897: the composition-time budget preflight resolves the same directory
     // the per-turn ports use (`SessionTools::turn`), so the two cannot drift.
     let budget_project = options.project.clone();
+    let publication_forks = fork_registry.clone();
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
         writer_busy_wait_timeout: options.drain_budget,
         prepare: Arc::new(move |context, session_mcp_runtimes| {
@@ -976,6 +977,28 @@ async fn start_assembly(
                         if let Some(scope) = &fork_scope {
                             scope.seed_checkpoint(&binding.checkpoint)?;
                         }
+                        let resume_sdk=Arc::downgrade(&sdk);
+                        let resume_session=session.clone();
+                        let resume_emit=session_emit.clone();
+                        forks.bind_session(&binding, &fork_owner, Arc::new(move |seed| {
+                            let sdk=resume_sdk.clone();
+                            let session=resume_session.clone();
+                            let emit=resume_emit.clone();
+                            Box::pin(async move {
+                                let sdk=sdk.upgrade().ok_or_else(||RuntimeError::new("Session SDK owner is closed."))?;
+                                let config=sdk.prompt_config(&session).await;
+                                let sdk_hooks=crate::runtime::turn::admission::SubmitSdkSessionConfig::hooks(sdk.as_ref(),&session)
+                                    .await.map_err(|error|RuntimeError::new(error.message))?;
+                                let sdk_permission_mode=sdk.permission_mode(&session).await;
+                                let can_prompt=Some(seed.as_ref().map(|authority|authority.can_prompt.unwrap_or(true)).unwrap_or(false));
+                                let policy_can_prompt=(seed.as_ref().is_some_and(|authority|authority.policy_can_prompt==Some(false))
+                                    || config.as_ref().and_then(|config|config.get("managedPermissions")).and_then(|permissions|permissions.get("canPrompt"))==Some(&JsValue::Bool(false))).then_some(false);
+                                Ok(Some(crate::runtime::turn::interaction::TurnInteractionAuthority{
+                                    permission_mode:None,base_permission_mode:None,can_prompt,policy_can_prompt,
+                                    sdk_permission_mode,sdk_hooks,emit,
+                                }))
+                            })
+                        }))?;
                         recorders
                             .lock()
                             .unwrap_or_else(|e| e.into_inner())
@@ -1096,7 +1119,9 @@ async fn start_assembly(
             super::tools::session_tool_results_dir(&budget_project, session_id)
         })),
         diagnostic: Arc::new(|d| eprintln!("native session: {d:?}")),
-    }));
+    }).with_publication(Arc::new(move|context,handle|{
+        publication_forks.resume_published(context,handle)
+    })));
     fork_registry.install_factory(&factory);
     let built = (|| -> Result<_, ProxyError> {
         // TS parity: an unconfigured runRegistry is simply absent, so the file
@@ -1278,6 +1303,7 @@ async fn start_assembly(
         None => Arc::default(),
     };
     let cleanup_cron_slot = build_cron_slot.clone();
+    let lookup_forks = fork_registry.clone();
     let budget = options.drain_budget;
     let host = TurnGateway::start_with_cleanup_budget(
         TurnReplayOptions::new(),
@@ -1288,6 +1314,7 @@ async fn start_assembly(
         move |coordinator| {
             session_events.install(&coordinator);
             let owner = SessionOwner::new(SessionOwnerOptions::new(build_factory));
+            lookup_forks.install_session_lookup(owner.weak_handle_lookup());
             let replacement = Arc::new(ReplacementCoordinator::new(
                 Default::default(),
                 Arc::new(owner.clone()),

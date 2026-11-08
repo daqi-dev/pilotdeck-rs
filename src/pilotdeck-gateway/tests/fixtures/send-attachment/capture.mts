@@ -32,6 +32,7 @@ const cases = [
   {id:'external-allowed',input:{file_path:'../external.bin'},allow:true},
   {id:'registered',input:{file_path:'../external.bin'},registered:true},
   {id:'outside-alias',input:{file_path:'outside-alias'},allow:true},
+  {id:'empty',input:{file_path:''}},
   {id:'nul',input:{file_path:'a\0b'}},
 ];
 for (const item of cases) {

@@ -1774,7 +1774,7 @@ impl SubmitHostServices for Services {
                 ]);
                 let state =
                     crate::session_model::execute_with_config(&lookup, &params, &env, |selected| {
-                        crate::config::load_project_bounded(&home, &lookup.cwd, &env, selected)
+                        crate::config::load_project_bounded_lazy(&home, &lookup.cwd, &env, selected)
                     });
                 // Both the second marker scan and transcript open use the same
                 // bounded, nonblocking owner. A refused marker must not silently

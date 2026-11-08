@@ -18,6 +18,10 @@ struct RawEvents {
     bytes: usize,
 }
 
+struct OwnedForkJob {
+    cancel: Cancellation,
+    done: watch::Receiver<Option<RuntimeResult>>,
+}
 pub(crate) struct NativeForkOwner {
     generation: Mutex<Option<Arc<RuntimeLease>>>,
     raw: Mutex<RawEvents>,
@@ -34,6 +38,7 @@ pub(crate) struct NativeForkOwner {
     drain_started: Mutex<bool>,
     drain_done: watch::Sender<Option<RuntimeResult>>,
     cleanup_errors: Mutex<Vec<String>>,
+    owned_jobs: Mutex<Vec<OwnedForkJob>>,
 }
 impl NativeForkOwner {
     pub(in crate::native_process) fn new(lease: RuntimeLease) -> Arc<Self> {
@@ -48,6 +53,7 @@ impl NativeForkOwner {
             drain_started: Mutex::new(false),
             drain_done: watch::channel(None).0,
             cleanup_errors: Mutex::default(),
+            owned_jobs: Mutex::default(),
         })
     }
     pub(in crate::native_process) fn generation(&self) -> Option<Arc<RuntimeLease>> {
@@ -123,12 +129,41 @@ impl NativeForkOwner {
         tasks.push((runtime, task.task_id.clone()));
         Ok(task)
     }
+    pub(super) fn spawn_owned(
+        self: &Arc<Self>,
+        run: impl FnOnce(Cancellation) -> BoxFuture<RuntimeResult> + Send + 'static,
+    ) -> Result<(), ToolError> {
+        let mut jobs = lock(&self.owned_jobs);
+        jobs.retain(|job| !matches!(&*job.done.borrow(), Some(Ok(()))));
+        if !self.is_open() {
+            return Err(ToolError::aborted());
+        }
+        if jobs.len() >= 256 {
+            return Err(error("Native session owned job budget is full."));
+        }
+        let cancel = Cancellation::new();
+        let (done, receiver) = watch::channel(None);
+        jobs.push(OwnedForkJob {
+            cancel: cancel.clone(),
+            done: receiver,
+        });
+        crate::runtime::cleanup_task::spawn_with_error(
+            &self.executor,
+            done,
+            RuntimeError::new("Native session owned job was dropped or panicked."),
+            async move { run(cancel).await },
+        );
+        Ok(())
+    }
     pub(in crate::native_process) fn close_admission(&self) {
         self.closed.store(true, Ordering::SeqCst);
         {
             let mut raw = lock(&self.raw);
             raw.events.clear();
             raw.bytes = 0;
+        }
+        for job in lock(&self.owned_jobs).iter() {
+            job.cancel.cancel();
         }
         let tasks = lock(&self.tasks).clone();
         // Cancel all before waiting; one noncooperative child cannot prevent
@@ -159,6 +194,26 @@ impl NativeForkOwner {
                     let tasks = lock(&owner.tasks).clone();
                     for (runtime, id) in tasks {
                         runtime.stop_and_wait(&id).await;
+                    }
+                    let jobs = lock(&owner.owned_jobs)
+                        .iter()
+                        .map(|job| job.done.clone())
+                        .collect::<Vec<_>>();
+                    for mut done in jobs {
+                        loop {
+                            let result = done.borrow_and_update().clone();
+                            if let Some(result) = result {
+                                if let Err(error) = result {
+                                    lock(&owner.cleanup_errors).push(error.to_string());
+                                }
+                                break;
+                            }
+                            if done.changed().await.is_err() {
+                                lock(&owner.cleanup_errors)
+                                    .push("Native session owned job completion lost.".into());
+                                break;
+                            }
+                        }
                     }
                     let failures = lock(&owner.cleanup_errors).clone();
                     if failures.is_empty() {
@@ -699,6 +754,71 @@ mod launch_tests {
         );
         release.send(()).unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(2), draining)
+            .await
+            .unwrap()
+            .unwrap();
+        owner.release_generation().await.unwrap();
+        registry.dispose().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod owned_inbox_job_tests {
+    use super::*;
+    use crate::runtime::project::{ProjectRuntimeRegistry, ResourceBundle};
+    #[tokio::test]
+    async fn inbox_jobs_cancel_together_and_drain_retains_their_actual_completion() {
+        let registry = ProjectRuntimeRegistry::new(
+            "/fixture-inbox-owner",
+            Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+        );
+        let owner = NativeForkOwner::new(registry.acquire(None).unwrap());
+        let (started, entered) = tokio::sync::oneshot::channel();
+        let (cancelled, seen) = tokio::sync::oneshot::channel();
+        let (release, held) = tokio::sync::oneshot::channel();
+        owner
+            .spawn_owned(move |signal| {
+                Box::pin(async move {
+                    let _ = started.send(());
+                    signal.cancelled().await;
+                    let _ = cancelled.send(());
+                    let _ = held.await;
+                    Ok(())
+                })
+            })
+            .unwrap();
+        entered.await.unwrap();
+        let (peer_started, peer_entered) = tokio::sync::oneshot::channel();
+        let (peer_cancelled, peer_seen) = tokio::sync::oneshot::channel();
+        owner
+            .spawn_owned(move |signal| {
+                Box::pin(async move {
+                    let _ = peer_started.send(());
+                    signal.cancelled().await;
+                    let _ = peer_cancelled.send(());
+                    Ok(())
+                })
+            })
+            .unwrap();
+        peer_entered.await.unwrap();
+        let mut drain = owner.clone().drain();
+        tokio::time::timeout(std::time::Duration::from_secs(2), seen)
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), peer_seen)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!owner.is_open());
+        assert!(owner.spawn_owned(|_| Box::pin(async { Ok(()) })).is_err());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut drain)
+                .await
+                .is_err()
+        );
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), drain)
             .await
             .unwrap()
             .unwrap();

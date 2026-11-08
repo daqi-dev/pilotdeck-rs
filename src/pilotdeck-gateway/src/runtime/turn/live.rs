@@ -339,6 +339,16 @@ impl LiveSession for LiveSessionAdapter {
         self.submit_inner(input, options, Some(authority))
     }
 
+    fn submit_queued(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: Option<super::interaction::TurnInteractionAuthority>,
+        item: JsString,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        self.submit_inner_claim(input, options, authority, Some(item))
+    }
+
     fn snapshot(&self) -> JsValue {
         let (status, current_turn_id) = {
             let state = self.state.lock().unwrap();
@@ -2464,6 +2474,15 @@ impl LiveSessionAdapter {
         options: JsValue,
         authority: Option<super::interaction::TurnInteractionAuthority>,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+        self.submit_inner_claim(input, options, authority, None)
+    }
+    fn submit_inner_claim(
+        &self,
+        input: JsValue,
+        options: JsValue,
+        authority: Option<super::interaction::TurnInteractionAuthority>,
+        queued_claim: Option<JsString>,
+    ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         // Invalid requests must not occupy the session's active turn slot.
         let (mut request, mut input) = parse_execute_request(&input, &options, vec![])?;
         if let Some(config) = &self.agent_config {
@@ -2586,6 +2605,7 @@ impl LiveSessionAdapter {
                     request.identity.session_id.clone(),
                     request.identity.turn_id.clone(),
                 )
+                .with_inbox_item(queued_claim)
                 .with_subagent_descriptor(
                     request
                         .payload

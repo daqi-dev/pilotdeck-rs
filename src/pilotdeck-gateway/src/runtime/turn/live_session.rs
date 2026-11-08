@@ -197,15 +197,22 @@ impl SessionLifecycle {
                 }
                 let config_settings = settings("ConfigChange");
                 let config = (!config_settings.is_empty()).then(|| {
-                    let options = input
+                    let mut options = input
                         .session_hook_options
                         .clone()
                         .or_else(|| input.hook_options.clone())
                         .unwrap_or_default();
+                    // Fixed TS SessionInteractionBundle's ConfigChange owner has
+                    // a local pending registry, unlike main/FileChanged hooks.
+                    // An async receipt must not acquire gateway turn authority.
+                    options.on_async_registered = None;
                     Arc::new(crate::runtime::hooks::LifecycleRuntime::new(
                         crate::runtime::hooks::HookRuntime::with_options(config_settings, options),
                     ))
                 });
+                // Observer backpressure belongs to this session. Another
+                // session's slow HTTP endpoint must not consume its allowance.
+                let observer_slots = Arc::new(tokio::sync::Semaphore::new(64));
                 let registration = config.as_ref().map(|runtime| {
                     let runtime = Arc::downgrade(runtime);
                     let report_limit = report_limit.clone();
@@ -213,11 +220,7 @@ impl SessionLifecycle {
                     let session = identity.session_id.clone();
                     let cwd = cwd.clone();
                     let executor = tokio::runtime::Handle::current();
-                    static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
-                        std::sync::OnceLock::new();
-                    let slots = SLOTS
-                        .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(64)))
-                        .clone();
+                    let slots = observer_slots.clone();
                     let handler: crate::runtime::sdk_session::SdkConfigChangeHandler =
                         Arc::new(move |notice| {
                             let Some(runtime) = runtime.upgrade() else {
@@ -282,11 +285,7 @@ impl SessionLifecycle {
                 let session_id = identity.session_id.clone();
                 let session_cwd = cwd.clone();
                 let executor = tokio::runtime::Handle::current();
-                static SESSION_SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> =
-                    std::sync::OnceLock::new();
-                let slots = SESSION_SLOTS
-                    .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(64)))
-                    .clone();
+                let slots = observer_slots;
                 let session_handler: crate::runtime::sdk_session::SessionHookHandler =
                     Arc::new(move |event, payload| {
                         let Some(port) = session_port.upgrade() else {

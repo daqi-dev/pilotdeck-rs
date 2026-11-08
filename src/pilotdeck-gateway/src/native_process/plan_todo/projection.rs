@@ -500,7 +500,7 @@ mod tests {
         let JsValue::Array(items) = &input else {
             panic!("array")
         };
-        let todo = replace(&items);
+        let todo = replace(items);
         assert_eq!(todo[0].id.units(), &[0xd800]);
         assert_eq!(todo[0].content.units(), &[0xd800]);
     }

@@ -4992,3 +4992,8 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-08 21:17 · CLI 真实 SDK 与模型读取检查点（本机，继续开发）
 
 r56编译/47项SDK/5项async/29格模型矩阵+7子进程边界/20项agent/15项plan/双strict/四bin全过；冻结bin随后真实SDK FileChanged/ConfigChange、同session配置继承、64MiB投影负控、elicitation回答/timeout/abort/reconnect均过。真实slow HTTP证明正常close等待已入场ConfigChange；reload后PreToolUse及ConfigChange async的非空context经steer进入后续provider请求，修了旧代lookup与提前abort两处实效失败。r57真实同文本新turn身份不误投、生产CronManager→ChannelServer pending delivery随shutdown回收、97静态负控锚通过。r58独立配置loader修复64KiB marker误限合法config，含saved模型/大config/相对key的9子进程、旧session_model回归与strict全过。模型single-project差异已追加账本待人复核；普通RPC与set/clear同类FIFO路径在校验，不能冒P0/P1清零。continuable/observer/TCP监听端继续，root新Seatbelt控制字符实测待编译；7条实际负控仍待有提交的干净镜像执行。主证据 `_tmp/20261108-cli-completion/verify-r{52,54,56,57,58}` 与SDK remote原件，仍仅本机提交/mbp2构建，无GitHub写，完整CLI未收口；下个两小时交接22:41。
+
+
+### 2026-11-08 21:44 · CLI 队列恢复与阻塞读写修复检查点（本机，继续开发）
+
+r61 首编及 inbox/continuation/owned-jobs 各真实一项、agent/live/factory/附件过；r62 模型get三格与set/clear八格FIFO/超大文件/正常写、SDK与四bin过，cwd绝对路径删除工作目录回归及strict测试警告已源修待r63，不能记全绿。父pending自动wake/实际slot身份守卫已接；后台独立SDK lifecycle与observer adapter尚未齐。真实r56 FIFO并发探针证实get/set/clear/list/describe/catalog会阻塞其它RPC，已串行整合有界descriptor读取/冷写、惰性cwd、取消时保留writer reservation及测试，r63编译已过、其余进行中。SDK真TS四格确认ConfigChange async仅本地pending、FileChanged可网关登记；已纠正前一r56 ConfigChange回投扩展，旧成功记录不再算兼容通过；正常close等已受理HTTP与FileChanged内联await是TS原行为。两家独审复核r62 SDK413行增量中，仍未终审收口。mbp2本树缓存+证据约155GiB后仅删除可再生incremental约37.8GiB（实际可用由25GiB升48GiB），source/原件/bin均保留；本机未编译。下一步TCP监听端root、observer Sol、后台SDK与真实续跑audit、模型最新bin复验Terra，随后净提交镜像跑7实际负控；仅本机提交，无GitHub写，完整CLI/阶段D/人签未完成。证据主仓 `_tmp/20261108-cli-completion/verify-r{59,60,61,62,63}` 与各冻结候选；下一交接22:41。

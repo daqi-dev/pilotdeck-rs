@@ -71,6 +71,7 @@ pub struct TurnRunner {
     now: Arc<dyn Fn() -> JsString + Send + Sync>,
     phase: Phase,
     subagent_descriptor: Option<JsObject>,
+    inbox_item: Option<JsString>,
     messages: Vec<JsValue>,
     failure_status: bool,
     callback_error: Option<String>,
@@ -102,6 +103,7 @@ impl TurnRunner {
             now: Arc::new(|| SystemExecutionClock.now_iso()),
             phase: Phase::New,
             subagent_descriptor: None,
+            inbox_item: None,
             messages: vec![],
             failure_status: false,
             callback_error: None,
@@ -114,6 +116,10 @@ impl TurnRunner {
             interaction_events: None,
             session_steer: None,
         }
+    }
+    pub(crate) fn with_inbox_item(mut self, item: Option<JsString>) -> Self {
+        self.inbox_item = item;
+        self
     }
     pub(crate) fn with_subagent_descriptor(mut self, descriptor: Option<JsObject>) -> Self {
         self.subagent_descriptor = descriptor;
@@ -218,10 +224,14 @@ impl TurnRunner {
         {
             let _ = port.host_started();
         }
+        let inbox = self.inbox_item.take();
         if crate::mutants::on("gates-skip-start") {
-            let _ = self.io(|r, s, t| r.start_turn(s, t)).await;
+            let _ = self
+                .io(move |r, s, t| r.start_turn_with_inbox(s, t, inbox.as_ref()))
+                .await;
         } else {
-            self.io(|r, s, t| r.start_turn(s, t)).await?;
+            self.io(move |r, s, t| r.start_turn_with_inbox(s, t, inbox.as_ref()))
+                .await?;
         }
         self.phase = Phase::Started;
         let event = self.event(host_lifecycle_events()[0], []);

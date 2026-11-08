@@ -4,6 +4,7 @@ mod admission;
 mod completion;
 pub mod factory;
 mod handle;
+pub(crate) mod inbox;
 mod owner;
 pub(crate) mod transcript_locks;
 

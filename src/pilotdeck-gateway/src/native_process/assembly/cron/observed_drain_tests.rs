@@ -107,10 +107,7 @@ async fn shutdown_retries_abort_across_pending_admission_and_drains_terminal() {
         done: bool,
     }
     impl CronTurnStream for PendingAdmission {
-        fn next_event(
-            &mut self,
-        ) -> impl std::future::Future<Output = Result<Option<JsValue>, SubmitError>> {
-            async move {
+        async fn next_event(&mut self) -> Result<Option<JsValue>, SubmitError> {
                 if self.done {
                     return Ok(None);
                 }
@@ -125,7 +122,6 @@ async fn shutdown_retries_abort_across_pending_admission_and_drains_terminal() {
                     )
                     .unwrap(),
                 ))
-            }
         }
     }
     let ready = Arc::new(std::sync::atomic::AtomicBool::new(false));

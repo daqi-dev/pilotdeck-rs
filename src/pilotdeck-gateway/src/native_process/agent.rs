@@ -76,6 +76,8 @@ fn concat(parts: &[&JsString]) -> JsString {
 
 #[path = "agent_background.rs"]
 mod background;
+#[path = "agent_continuation.rs"]
+mod continuation;
 pub(super) use background::NativeForkOwner;
 
 pub(super) struct NativeForkRegistry {
@@ -83,6 +85,7 @@ pub(super) struct NativeForkRegistry {
     scopes: Mutex<HashMap<JsString, Arc<ForkScope>>>,
     slots: Arc<Semaphore>,
     background_records: AtomicU64,
+    continuations: continuation::Continuations,
 }
 impl NativeForkRegistry {
     pub(super) fn new() -> Arc<Self> {
@@ -91,6 +94,7 @@ impl NativeForkRegistry {
             scopes: Mutex::default(),
             slots: Arc::new(Semaphore::new(8)),
             background_records: AtomicU64::new(0),
+            continuations: Default::default(),
         })
     }
     pub(super) fn install_factory(&self, factory: &Arc<ProjectSessionFactory>) {
@@ -108,6 +112,7 @@ impl NativeForkRegistry {
 }
 #[derive(Clone)]
 pub(super) struct ForkScope {
+    seed_enabled: bool,
     pub config: JsObject,
     pub permission_rules: RuleSetHandle,
     pub permission_mode: JsString,
@@ -124,6 +129,9 @@ impl ForkScope {
         &self,
         checkpoint: &HostToolCheckpoint,
     ) -> Result<(), RuntimeError> {
+        if !self.seed_enabled {
+            return Ok(());
+        }
         let validated = HostToolCheckpoint::new(Some(&self.seed), &[])
             .map_err(|e| RuntimeError::new(e.to_string()))?;
         *lock(&checkpoint.read_file_state) = lock(&validated.read_file_state).clone();
@@ -373,6 +381,7 @@ impl ForkTurn {
         tools
             .register(Arc::new(AgentTool::for_config(&self.config)))
             .expect("native agent name is unique");
+        continuation::register(tools);
     }
     fn close(self: Arc<Self>) -> HostFuture<()> {
         let mut completion = self.close_done.subscribe();
@@ -865,34 +874,24 @@ impl ForkApi {
             .clone()
     }
     #[allow(clippy::too_many_arguments)]
-    async fn run(
-        self: Arc<Self>,
-        factory: Arc<ProjectSessionFactory>,
-        definition: String,
-        spec: JsObject,
-        description: JsString,
-        directive: JsString,
-        parent_mode: JsString,
+    fn compose_child(
+        &self,
+        definition: &str,
+        spec: &JsObject,
+        parent_mode: &JsString,
         parent_ask: bool,
         depth: f64,
         max: f64,
-        context: ToolRunContext,
-        cancel: Cancellation,
-        deadline: tokio::time::Instant,
-        fixed_id: Option<JsString>,
-    ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
-        let subagent: JsString =
-            fixed_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
-        let cwd = string(&self.turn.config, "cwd")
-            .ok_or_else(|| error("Subagent project root is missing."))?;
-        let session = concat(&[&cwd, &"::sub::".into(), &subagent]);
-        let turn = concat(&[&subagent, &"-t0".into()]);
+        session: &JsString,
+        subagent: &JsString,
+        descriptor: Option<JsObject>,
+        seed_enabled: bool,
+    ) -> Result<(Arc<ForkScope>, SessionContext, String), ToolError> {
         let channel: JsString = format!("native-fork:{}", uuid::Uuid::new_v4()).into();
         let readonly = spec.get("isReadOnly") == Some(&JsValue::Bool(true))
             || parent_ask
             || parent_mode.equals_str("plan");
-        let child_mode = string(&spec, "permissionMode").unwrap_or_else(|| parent_mode.clone());
+        let child_mode = string(spec, "permissionMode").unwrap_or_else(|| parent_mode.clone());
         let allowed: Vec<_> =
             self.turn
                 .tools
@@ -905,7 +904,7 @@ impl ForkApi {
                         .get("name")
                         .and_then(JsValue::as_string)?
                         .clone();
-                    if !definition_allows(&spec, &name) {
+                    if !definition_allows(spec, &name) {
                         return None;
                     }
                     let mut capabilities = tool.required_runtime_capabilities().unwrap_or_default();
@@ -933,21 +932,23 @@ impl ForkApi {
                     Some(name)
                 })
                 .collect();
-        let (store, key, relative) = self.turn.recorder.writer().sidechain_storage(&subagent);
+        let (store, key, relative) = self.turn.recorder.writer().sidechain_storage(subagent);
         let seed = SeedState {
             allowed_read_files: None,
             read_file_state: Some(lock(&self.read).clone()),
             write_snapshots: Some(lock(&self.write).clone()),
         };
-        let descriptor = object([
-            ("version", JsValue::Number(1.0)),
-            ("mode", "one-shot".into()),
-            ("provider", "pilotdeck-native".into()),
-            ("definitionId", JsValue::String(definition.as_str().into())),
-        ])
-        .as_object()
-        .unwrap()
-        .clone();
+        let descriptor = descriptor.unwrap_or_else(|| {
+            object([
+                ("version", JsValue::Number(1.0)),
+                ("mode", "one-shot".into()),
+                ("provider", "pilotdeck-native".into()),
+                ("definitionId", JsValue::String(definition.into())),
+            ])
+            .as_object()
+            .unwrap()
+            .clone()
+        });
         let mut config = self.turn.config.clone();
         config.insert("permissionMode".into(), JsValue::String(child_mode.clone()));
         config.insert("isSubagent".into(), JsValue::Bool(true));
@@ -958,6 +959,17 @@ impl ForkApi {
             "subagentDescriptor".into(),
             JsValue::Object(descriptor.clone()),
         );
+        if descriptor
+            .get("mode")
+            .and_then(JsValue::as_string)
+            .is_some_and(|mode| mode.equals_str("continuable"))
+        {
+            config.insert(
+                "nativeContinuationDescriptor".into(),
+                JsValue::Object(descriptor.clone()),
+            );
+            config.insert("subagentDescriptor".into(), JsValue::Undefined);
+        }
         if readonly {
             config.insert("runMode".into(), "ask".into());
         }
@@ -975,8 +987,7 @@ impl ForkApi {
             config.insert("maxContextTokens".into(), JsValue::Undefined);
             config.insert("maxOutputTokens".into(), JsValue::Undefined);
         }
-        let prompt =
-            definition_prompt(&definition, &spec, string(&config, "systemPrompt").as_ref());
+        let prompt = definition_prompt(definition, spec, string(&config, "systemPrompt").as_ref());
         config.insert("systemPrompt".into(), JsValue::String(prompt));
         for key in ["maxTurns", "initialPrompt"] {
             config.insert(
@@ -1018,6 +1029,7 @@ impl ForkApi {
             .clone()
             .unwrap_or_else(|| self.turn.parent.session_id.clone());
         let scope = Arc::new(ForkScope {
+            seed_enabled,
             config,
             permission_rules: self.turn.rules.clone(),
             permission_mode: child_mode,
@@ -1034,6 +1046,51 @@ impl ForkApi {
                 .ok_or_else(|| error("Parent fork execution world is unavailable."))?,
             channel: channel.clone(),
         });
+        let context = SessionContext {
+            session_key: session.clone(),
+            project_key: None,
+            channel_key: channel,
+            allowed_tools: Some(allowed),
+            disallowed_tools: None,
+        };
+        Ok((scope, context, relative))
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn run(
+        self: Arc<Self>,
+        factory: Arc<ProjectSessionFactory>,
+        definition: String,
+        spec: JsObject,
+        description: JsString,
+        directive: JsString,
+        parent_mode: JsString,
+        parent_ask: bool,
+        depth: f64,
+        max: f64,
+        context: ToolRunContext,
+        cancel: Cancellation,
+        deadline: tokio::time::Instant,
+        fixed_id: Option<JsString>,
+    ) -> Result<ToolOutput, ToolError> {
+        let started = Instant::now();
+        let subagent: JsString =
+            fixed_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
+        let cwd = string(&self.turn.config, "cwd")
+            .ok_or_else(|| error("Subagent project root is missing."))?;
+        let session = concat(&[&cwd, &"::sub::".into(), &subagent]);
+        let turn = concat(&[&subagent, &"-t0".into()]);
+        let (scope, child_context, relative) = self.compose_child(
+            &definition,
+            &spec,
+            &parent_mode,
+            parent_ask,
+            depth,
+            max,
+            &session,
+            &subagent,
+            None,
+            true,
+        )?;
         lock(&self.turn.registry.scopes).insert(session.clone(), scope);
         let _scope = ScopeGuard {
             registry: self.turn.registry.clone(),
@@ -1081,14 +1138,6 @@ impl ForkApi {
                 .await
         } else {
             Ok(())
-        };
-
-        let child_context = SessionContext {
-            session_key: session.clone(),
-            project_key: None,
-            channel_key: channel,
-            allowed_tools: Some(allowed),
-            disallowed_tools: None,
         };
         let mut result = match start_hook.and(start_delivery) {
             Ok(()) => {

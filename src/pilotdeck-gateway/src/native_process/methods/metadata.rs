@@ -19,6 +19,16 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
+            if method == "session_model_get" {
+                return session_model_get(self.options.home.clone(), self.env.clone(), params)
+                    .await;
+            }
+            if method == "list_projects" || method == "describe_project" {
+                return project_metadata(self.options.home.clone(), self.env.clone(), method, params).await;
+            }
+            if method == "model_catalog_list" {
+                return model_catalog(self.options.home.clone(), self.env.clone(), params).await;
+            }
             let metadata = Metadata {
                 home: self.options.home.clone(),
                 cwd: std::path::PathBuf::new(),
@@ -72,3 +82,177 @@ pub(super) fn unavailable(method: String) -> Result<JsValue, RequestError> {
         validation: None,
     })
 }
+
+/// The legacy dispatcher uses synchronous native files. The native gateway's
+/// session-model read is public and must not open a FIFO or unbounded file on
+/// the single-threaded host; preserve the original dispatcher for all other
+/// methods and use the same model projector with a separately bounded config.
+async fn session_model_get(
+    home: std::path::PathBuf,
+    env: crate::config::Env,
+    params: JsValue,
+) -> Result<JsValue, RequestError> {
+    use std::sync::{Arc, LazyLock};
+    static SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
+        LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+    let permit = SLOTS
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| RequestError::new("Session model reader is unavailable."))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let metadata = Metadata {
+            home: home.clone(),
+            cwd: std::path::PathBuf::new(),
+            files: crate::runtime::history::HistoryMarkerFiles::for_model_selection(),
+        };
+        let result =
+            crate::session_model::execute_with_config(&metadata, &params, &env, |project| {
+                crate::config::load_project_bounded_lazy(&home, &metadata.cwd, &env, project)
+            });
+        // Refusals from marker discovery are often otherwise interpreted as
+        // an absent registration. Never return a successful wrong selection.
+        if metadata.files.was_refused() {
+            return Err(RequestError::new(
+                "Unsafe project marker or session transcript.",
+            ));
+        }
+        result.map_err(|error| {
+            if error.requires_host {
+                return RequestError {
+                    code: "CAPABILITY_UNAVAILABLE".into(),
+                    message: "Native gateway method session_model_get is not configured.".into(),
+                    details: None,
+                    validation: None,
+                };
+            }
+            RequestError {
+                code: error.code,
+                message: error.message,
+                details: None,
+                validation: None,
+            }
+        })
+    })
+    .await
+    .map_err(|_| RequestError::new("Session model reader stopped unexpectedly."))?
+}
+
+/// Project summaries read untrusted per-project marker and transcript bytes.
+/// Count directory entries and bytes across the whole request; callers whose
+/// legacy algorithms swallow IO errors must still observe resource refusal.
+struct BoundedMetadataFiles {
+    inner: crate::runtime::history::HistoryMarkerFiles,
+    entries: std::cell::Cell<usize>,
+    bytes: std::cell::Cell<usize>,
+    refused: std::cell::Cell<bool>,
+}
+impl BoundedMetadataFiles {
+    const ENTRY_LIMIT: usize = 16_384;
+    const BYTE_LIMIT: usize = 16 * 1024 * 1024;
+    fn new() -> Self {
+        Self { inner: crate::runtime::history::HistoryMarkerFiles::for_model_selection(),
+            entries: std::cell::Cell::new(0), bytes: std::cell::Cell::new(0),
+            refused: std::cell::Cell::new(false) }
+    }
+    fn was_refused(&self) -> bool { self.refused.get() || self.inner.was_refused() }
+    fn limit(&self) -> std::io::Error {
+        self.refused.set(true);
+        std::io::Error::other("Native project metadata resource limit exceeded.")
+    }
+}
+impl crate::metadata::Files for BoundedMetadataFiles {
+    fn entries(&self, path: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let count = self.entries.get().saturating_add(1);
+            if count > Self::ENTRY_LIMIT { return Err(self.limit()); }
+            self.entries.set(count);
+            entries.push((entry.file_name(), entry.file_type()?.is_dir()));
+        }
+        entries.sort_by(|a, b| a.0.as_encoded_bytes().cmp(b.0.as_encoded_bytes()));
+        Ok(entries.into_iter().map(|(name, dir)| (name.to_string_lossy().into_owned(), dir)).collect())
+    }
+    fn stat(&self, path: &std::path::Path) -> std::io::Result<crate::metadata::Stat> {
+        crate::metadata::Files::stat(&crate::metadata::NativeFiles, path)
+    }
+    fn read(&self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
+        let bytes = crate::metadata::Files::read(&self.inner, path)?;
+        let used = self.bytes.get().saturating_add(bytes.len());
+        if used > Self::BYTE_LIMIT { return Err(self.limit()); }
+        self.bytes.set(used);
+        Ok(bytes)
+    }
+}
+fn metadata_route_result(route: crate::dispatch::Route, method: String) -> Result<JsValue, RequestError> {
+    match route {
+        crate::dispatch::Route::LocalResponse(bytes) => {
+            let response = crate::dispatch::parse(&bytes)
+                .ok_or_else(|| RequestError::new("Native method returned invalid JSON."))?;
+            if response.get("ok") == Some(&JsValue::Bool(true)) { return Ok(field(&response, "result")); }
+            let error = field(&response, "error");
+            Err(RequestError {
+                code: error.get("code").and_then(JsValue::as_string).and_then(|s| s.to_utf8().ok())
+                    .unwrap_or_else(|| "gateway_request_failed".into()),
+                message: error.get("message").and_then(JsValue::as_string).cloned()
+                    .unwrap_or_else(|| "Native request failed.".into()),
+                details: error.get("details").cloned().map(Box::new),
+                validation: None,
+            })
+        }
+        crate::dispatch::Route::Forward => unavailable(method),
+    }
+}
+async fn project_metadata(
+    home: std::path::PathBuf, env: crate::config::Env, method: String, params: JsValue,
+) -> Result<JsValue, RequestError> {
+    use std::sync::{Arc, LazyLock};
+    static SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
+        LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+    let permit = SLOTS.clone().acquire_owned().await
+        .map_err(|_| RequestError::new("Native project reader is unavailable."))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let metadata = Metadata { home, cwd: std::path::PathBuf::new(), files: BoundedMetadataFiles::new() };
+        let request = object([
+            ("type", "request".into()), ("id", "native".into()),
+            ("method", JsValue::String(method.clone().into())), ("params", params),
+        ]);
+        let route = crate::dispatch::route_with_environment(&request, Some(&metadata), Some(&env));
+        if metadata.files.was_refused() {
+            return Err(RequestError::new("Unsafe or oversized native project metadata."));
+        }
+        metadata_route_result(route, method)
+    }).await.map_err(|_| RequestError::new("Native project reader stopped unexpectedly."))?
+}
+async fn model_catalog(home: std::path::PathBuf, env: crate::config::Env, params: JsValue)
+    -> Result<JsValue, RequestError> {
+    use std::sync::{Arc, LazyLock};
+    static SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
+        LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+    let permit = SLOTS.clone().acquire_owned().await
+        .map_err(|_| RequestError::new("Native model catalog is unavailable."))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let result = crate::config::load_project_bounded_lazy(&home, &std::path::PathBuf::new(), &env, None)
+            .and_then(|config| crate::model_catalog::execute_loaded(config, &params, &env));
+        result.map_err(|error| {
+            if error.requires_host {
+                return RequestError { code: "CAPABILITY_UNAVAILABLE".into(),
+                    message: "Native gateway method model_catalog_list is not configured.".into(),
+                    details: None, validation: None };
+            }
+            RequestError { code: error.code, message: error.message, details: None, validation: None }
+        })
+    }).await.map_err(|_| RequestError::new("Native model catalog stopped unexpectedly."))?
+}
+
+#[cfg(test)]
+#[path = "metadata_session_model_tests.rs"]
+mod session_model_tests;
+
+#[cfg(all(test, unix))]
+#[path = "metadata_project_bounded_tests.rs"]
+mod project_bounded_tests;

@@ -1,0 +1,35 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "rows": [
+    {
+      "event": "ConfigChange",
+      "mode": "slow",
+      "closeWaitsForAcceptedRequest": true,
+      "closedAfterRelease": true
+    },
+    {
+      "event": "ConfigChange",
+      "mode": "async",
+      "registered": []
+    },
+    {
+      "event": "FileChanged",
+      "mode": "slow",
+      "closeWaitsForAcceptedRequest": true,
+      "fileUpdateWaitsForHook": true,
+      "closedAfterRelease": true
+    },
+    {
+      "event": "FileChanged",
+      "mode": "async",
+      "registered": [
+        {
+          "hookEvent": "FileChanged",
+          "invocationId": "fixture-invocation",
+          "includeHookEvents": false
+        }
+      ]
+    }
+  ]
+}

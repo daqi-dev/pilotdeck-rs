@@ -3411,7 +3411,7 @@ async fn real_native_model_selection_matches_fixed_ts_bundle_matrix() {
             assert_eq!(actual.code, expected["code"], "{}", row["name"]);
             assert_eq!(actual.message, expected["message"], "{}", row["name"]);
         } else {
-            let actual = result.expect(row["name"].as_str().unwrap());
+            let actual = result.unwrap_or_else(|error| panic!("{}: {error:?}", row["name"]));
             let encoded = pilotdeck_protocol::stringify_json(&actual)
                 .unwrap()
                 .unwrap();

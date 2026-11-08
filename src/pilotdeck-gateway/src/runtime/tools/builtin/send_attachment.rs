@@ -374,6 +374,39 @@ mod tests {
         .unwrap()
     }
     #[tokio::test]
+    async fn empty_or_nul_paths_are_denied_before_attachment_execution() {
+        let tool = SendAttachmentTool::new(HostToolCheckpoint::default(), JsObject::new());
+        let permission = crate::runtime::permission::create_default_permission_context(
+            crate::runtime::permission::DefaultPermissionContextOptions {
+                cwd: "/isolated-workspace".into(),
+                ..Default::default()
+            },
+        );
+        for path in ["", "a\0b"] {
+            let input = JsValue::Object(object([("file_path", string(path))]));
+            let decision = tool
+                .check_permissions(&input, &permission)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(decision.get("type"), Some(&string("deny")));
+            assert_eq!(
+                decision.get("message"),
+                Some(&string(
+                    "Path must be a non-empty string without null bytes."
+                ))
+            );
+            let error = tool
+                .execute(input, tool.permission_context(&permission))
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.message,
+                "Path must be a non-empty string without null bytes.".into()
+            );
+        }
+    }
+    #[tokio::test]
     async fn real_files_and_permissions_match_fixed_ts_attachment_oracle() {
         let path = std::env::temp_dir().join(format!("pdrs-attachment-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&path).unwrap();
