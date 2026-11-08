@@ -915,6 +915,252 @@
       }
     },
     {
+      "id": "meta-one",
+      "input": {
+        "type": "text",
+        "text": "/demo",
+        "isMeta": 1
+      },
+      "processed": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": false,
+        "diagnostics": [],
+        "command": {
+          "name": "demo",
+          "source": "extension"
+        }
+      },
+      "turn": {
+        "shouldCallModel": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "meta-zero",
+      "input": {
+        "type": "text",
+        "text": "/demo",
+        "isMeta": 0
+      },
+      "processed": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [],
+        "command": {
+          "name": "demo",
+          "source": "extension"
+        }
+      },
+      "turn": {
+        "shouldCallModel": true,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "meta-string",
+      "input": {
+        "type": "text",
+        "text": "/demo",
+        "isMeta": "yes"
+      },
+      "processed": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": false,
+        "diagnostics": [],
+        "command": {
+          "name": "demo",
+          "source": "extension"
+        }
+      },
+      "turn": {
+        "shouldCallModel": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "meta-empty",
+      "input": {
+        "type": "text",
+        "text": "/demo",
+        "isMeta": ""
+      },
+      "processed": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [],
+        "command": {
+          "name": "demo",
+          "source": "extension"
+        }
+      },
+      "turn": {
+        "shouldCallModel": true,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "meta-array",
+      "input": {
+        "type": "text",
+        "text": "/demo",
+        "isMeta": []
+      },
+      "processed": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": false,
+        "diagnostics": [],
+        "command": {
+          "name": "demo",
+          "source": "extension"
+        }
+      },
+      "turn": {
+        "shouldCallModel": false,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": "meta-null",
+      "input": {
+        "type": "text",
+        "text": "/demo",
+        "isMeta": null
+      },
+      "processed": {
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ],
+        "shouldCallModel": true,
+        "diagnostics": [],
+        "command": {
+          "name": "demo",
+          "source": "extension"
+        }
+      },
+      "turn": {
+        "shouldCallModel": true,
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n</plugin-command>"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "id": "snapshot",
       "old": {
         "messages": [

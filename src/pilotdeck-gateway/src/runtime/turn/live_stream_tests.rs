@@ -4966,10 +4966,29 @@ async fn session_input_admission_records_expanded_text_keeps_raw_prompt_and_bloc
     let admission = Arc::new(crate::native_process::input_admission::InputAdmission::new(
         &commands,
     ));
+    let recorder = test_recorder();
+    let title_calls = Arc::new(AtomicUsize::new(0));
+    let title_observed = title_calls.clone();
+    let tail = crate::runtime::turn::runner::tail::SessionTail::new(
+        recorder.clone(),
+        "session".into(),
+        crate::runtime::turn::runner::tail::TailConfig {
+            auto_generate_title: true,
+            title_provider: Some(crate::runtime::turn::runner::tail::TitleProvider {
+                generate: Arc::new(move |_| {
+                    title_observed.fetch_add(1, Ordering::SeqCst);
+                    Box::pin(async { Ok(None) })
+                }),
+                provider_id: None,
+                model_provenance: None,
+            }),
+            ..Default::default()
+        },
+    );
     let client_polled = Arc::new(AtomicBool::new(false));
     let observed = client_polled.clone();
     let handler = Arc::new(Handler::default());
-    let session = LiveSessionAdapter::new(test_recorder(), Vec::new, move |_| {
+    let session = LiveSessionAdapter::new(recorder, Vec::new, move |_| {
         let observed = observed.clone();
         let handler = handler.clone();
         Box::pin(async move {
@@ -4983,17 +5002,22 @@ async fn session_input_admission_records_expanded_text_keeps_raw_prompt_and_bloc
             Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
         })
     })
-    .with_input_admission(admission);
+    .with_input_admission(admission)
+    .with_tail(tail);
     let raw = parse_json(r#"{"type":"text","text":"/demo xyz","isMeta":true}"#).unwrap();
     let mut turn = session.submit_turn_for_test(raw, options()).unwrap();
     let mut accepted = None;
     let mut prompt = None;
     let mut failure = None;
+    let mut kinds = Vec::new();
     for _ in 0..12 {
         let Some(event) = next(turn.as_mut()).await.unwrap() else {
             break;
         };
         let ty = event.get("type").and_then(JsValue::as_string);
+        if let Some(ty) = ty {
+            kinds.push(ty.clone());
+        }
         if ty.is_some_and(|x| x.equals_str("input_accepted")) {
             accepted = event.get("messages").cloned();
         }
@@ -5010,6 +5034,37 @@ async fn session_input_admission_records_expanded_text_keeps_raw_prompt_and_bloc
     assert_eq!(
         failure.as_ref().and_then(|x| x.get("code")),
         Some(&"agent_unsupported_feature".into())
+    );
+    let oracle = crate::test_baseline::oracle(include_str!(
+        "../../../tests/fixtures/native-input-admission/meta-title-oracle.json"
+    ));
+    let expected_kinds: Vec<JsString> = match oracle.get("events") {
+        Some(JsValue::Array(events)) => events
+            .iter()
+            .map(|event| {
+                event
+                    .get("type")
+                    .and_then(JsValue::as_string)
+                    .expect("oracle event type")
+                    .clone()
+            })
+            .collect(),
+        _ => panic!("oracle events"),
+    };
+    let oracle_failure = match oracle.get("events") {
+        Some(JsValue::Array(events)) => events
+            .iter()
+            .find(|event| event.get("type") == Some(&JsValue::from("turn_failed")))
+            .and_then(|event| event.get("error"))
+            .cloned(),
+        _ => None,
+    };
+    assert_eq!(failure, oracle_failure, "native failure matches fixed TS");
+    assert_eq!(kinds, expected_kinds);
+    assert_eq!(
+        title_calls.load(Ordering::SeqCst),
+        1,
+        "auxiliary title invoked"
     );
     assert!(!client_polled.load(Ordering::SeqCst));
 }

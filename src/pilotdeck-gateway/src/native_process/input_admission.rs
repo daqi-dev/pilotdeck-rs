@@ -245,7 +245,7 @@ mod tests {
         let mut commands = commands();
         let admission = InputAdmission::new(&commands);
         commands[0].content = "changed".into();
-        assert_eq!(cases.len(), 23);
+        assert_eq!(cases.len(), 29);
         for case in cases {
             let id = case.get("id").and_then(JsValue::as_string).unwrap();
             if id.equals_str("snapshot") {
