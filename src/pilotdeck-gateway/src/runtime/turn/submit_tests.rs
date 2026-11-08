@@ -61,6 +61,7 @@ impl Log {
             .push(value.into());
     }
 }
+#[derive(Clone)]
 struct Gate(watch::Sender<bool>);
 impl Gate {
     fn new() -> Self {

@@ -77,9 +77,7 @@ fn actual_ts_read_render_and_available_skills_golden() {
                 "v22.22.0",
             );
             let extra = field(case, "extra");
-            let custom = field(extra, "customSystemPrompt")
-                .as_string()
-                .map(|s| s.to_utf8().unwrap());
+            let custom = field(extra, "customSystemPrompt").as_string();
             let result = assembler
                 .assemble(
                     "/fixture/project",
@@ -89,7 +87,7 @@ fn actual_ts_read_render_and_available_skills_golden() {
                     None,
                     &[],
                     &[],
-                    custom.as_deref(),
+                    custom,
                     custom.is_some(),
                     None,
                     field(extra, "includeExtensionsWithCustomSystemPrompt") == &JsValue::Bool(true),
