@@ -5041,3 +5041,7 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-09 独立能力包提取（Codex）
 
 从固定 main e8d80 提取 Budget、Context 纯算法、Anthropic 协议及必要 Protocol coercion，gateway 保留 I/O/状态/权限；不含 Kernel backend/BOOT/CLI 路由。包级首轮62通过/1原忽略，原 gateway context 首轮72通过/3原忽略；正在收窄未消费API并升级到本批新基线 f50ad6c84。dev-launch 本机技能缺失已检索，不冒充双谱系评审；正式独立评审由协调者/C接续。变异锚点按实际算法迁移，原冻结 oracle 不改。下一步：新基线定向回归、独立consumer、负控与评审。
+
+### 2026-11-09 能力包提取修复轮（Codex）
+
+固定新基线 f50ad6c84；独立consumer已运行，最终gateway context 71通过/3原忽略。独立审查抓到分组估计错误降格与NEL误作JS whitespace：前者实际负控失败后泛型透传原HostError正控通过，后者Node边界与候选负控证实后复用原metadata精确字符集；保留日志。删除未消费Budget policy/模型errors与header API，必要helper和coercion由gateway委托单一实现，原负控只迁源码锚、原oracle不改。当前在完成修复后回归/负控，前次审查混入WIP只记发现清单，最终clean候选另作双谱系审查。
