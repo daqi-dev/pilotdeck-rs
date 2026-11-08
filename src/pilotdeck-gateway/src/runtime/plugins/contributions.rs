@@ -4,7 +4,7 @@
 //! via `node_collator`.
 use super::loader::{LoadedPlugin, PluginSource};
 use crate::hooks::protocol::HooksSettings;
-use crate::project_files::{node_collator, node_locale};
+use crate::project_files::{node_collator, node_compare_utf16, node_locale};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::sync::Arc;
 
@@ -608,8 +608,7 @@ pub(super) fn collect_mcp_instructions(
     }
     let locale = node_locale(|k| std::env::var(k).ok());
     if let Ok(collator) = node_collator(&locale) {
-        entries
-            .sort_by(|a, b| collator.compare_utf16(a.server_name.units(), b.server_name.units()));
+        entries.sort_by(|a, b| node_compare_utf16(&collator, &a.server_name, &b.server_name));
     } else {
         entries.sort_by(|a, b| a.server_name.cmp(&b.server_name));
     }
@@ -724,5 +723,57 @@ pub(super) fn locale_sort_by<T, F: Fn(&T) -> &str>(items: &mut [T], key: F) {
         });
     } else {
         items.sort_by(|a, b| key(a).cmp(key(b)));
+    }
+}
+
+#[cfg(test)]
+mod surrogate_sort_regression {
+    use super::*;
+    #[test]
+    fn mcp_instruction_names_match_node_sort() {
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-context-utf16/oracle-extra.json"
+        ))
+        .unwrap();
+        let expected = match oracle.get("mcp").unwrap() {
+            JsValue::Array(a) => a,
+            _ => panic!("mcp"),
+        };
+        let mut servers = JsObject::new();
+        for entry in expected.iter().rev() {
+            let mut value = JsObject::new();
+            value.insert(
+                "instructions".into(),
+                entry.get("instructions").unwrap().clone(),
+            );
+            servers.insert(
+                entry
+                    .get("serverName")
+                    .unwrap()
+                    .as_string()
+                    .unwrap()
+                    .clone(),
+                JsValue::Object(value),
+            );
+        }
+        let plugin = LoadedPlugin {
+            name: "fixture".into(),
+            path: "/fixture".into(),
+            source: PluginSource::Project,
+            commands: vec![],
+            skills: vec![],
+            output_styles: vec![],
+            hooks_config: None,
+            mcp_servers: Some(JsValue::Object(servers)),
+            lsp_servers: None,
+            dispose: None,
+        };
+        let actual = collect_mcp_instructions(&[Arc::new(plugin)]);
+        let names: Vec<_> = actual.iter().map(|entry| &entry.server_name).collect();
+        let wanted: Vec<_> = expected
+            .iter()
+            .map(|entry| entry.get("serverName").unwrap().as_string().unwrap())
+            .collect();
+        assert_eq!(names, wanted);
     }
 }

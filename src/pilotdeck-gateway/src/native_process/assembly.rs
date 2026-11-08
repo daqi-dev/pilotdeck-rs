@@ -1691,20 +1691,31 @@ pub(super) fn apply_session_overrides(
     if let Some(content) = style_content {
         let existing = config
             .get("appendSystemPrompt")
-            .and_then(JsValue::as_string)
-            .map(|value| String::from_utf16_lossy(value.units()));
-        let joined = [existing.as_deref(), Some(content)]
-            .into_iter()
-            .flatten()
-            .filter(|part| !crate::metadata::js_trim(part).is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n");
+            .and_then(JsValue::as_string);
+        let mut parts = Vec::new();
+        if let Some(existing) = existing {
+            let units = crate::runtime::memory::js_trim_units(existing.units());
+            if !units.is_empty() {
+                parts.push(existing.clone());
+            }
+        }
+        let content = crate::metadata::js_trim(content);
+        if !content.is_empty() {
+            parts.push(JsString::from(content));
+        }
+        let mut joined = Vec::new();
+        for (index, part) in parts.iter().enumerate() {
+            if index != 0 {
+                joined.extend("\n\n".encode_utf16());
+            }
+            joined.extend_from_slice(part.units());
+        }
         config.insert(
             "appendSystemPrompt".into(),
             if joined.is_empty() {
                 JsValue::Undefined
             } else {
-                JsValue::String(joined.into())
+                JsValue::String(JsString::from_utf16(joined))
             },
         );
     }
@@ -1987,4 +1998,26 @@ pub(super) fn project_resources_factory(
         })
         .with_interaction(),
     })
+}
+
+#[cfg(test)]
+mod surrogate_style_regression {
+    use super::*;
+    #[test]
+    fn output_style_composition_preserves_existing_utf16_units() {
+        let mut config = JsObject::new();
+        config.insert(
+            "appendSystemPrompt".into(),
+            JsValue::String(JsString::from_utf16(vec![65, 0xd800, 66])),
+        );
+        apply_session_overrides(&mut config, None, None, Some("  style  "));
+        let value = config
+            .get("appendSystemPrompt")
+            .unwrap()
+            .as_string()
+            .unwrap();
+        let mut expected = vec![65, 0xd800, 66];
+        expected.extend("\n\nstyle".encode_utf16());
+        assert_eq!(value.units(), expected);
+    }
 }

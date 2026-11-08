@@ -410,9 +410,9 @@ impl DefaultContextRuntime {
             input.run_mode.as_deref(),
             &input.additional_working_directories,
             &effective_tools,
-            input.custom_system_prompt.as_deref(),
+            input.custom_system_prompt.as_ref(),
             input.use_custom_system_prompt,
-            input.append_system_prompt.as_deref(),
+            input.append_system_prompt.as_ref(),
             self.inner.include_extensions_with_custom_system_prompt,
             input.surface == RuntimeContextSurface::SystemPrompt,
             prompt_timestamp,
@@ -847,9 +847,9 @@ struct PrepareInput {
     additional_working_directories: Vec<String>,
     messages: Vec<JsValue>,
     tools: Vec<JsValue>,
-    custom_system_prompt: Option<String>,
+    custom_system_prompt: Option<JsString>,
     use_custom_system_prompt: bool,
-    append_system_prompt: Option<String>,
+    append_system_prompt: Option<JsString>,
     max_messages: Option<MaxMessages>,
     preview_only: bool,
 }
@@ -888,7 +888,7 @@ impl PrepareInput {
         let use_custom_system_prompt = !matches!(custom, JsValue::Undefined);
         let custom_system_prompt = match custom {
             JsValue::Undefined | JsValue::Null => None,
-            JsValue::String(_) => Some(display(custom)),
+            JsValue::String(value) => Some(value.clone()),
             value if truthy(value) => {
                 return Err(ModuleError::new(
                     "Context prepare input customSystemPrompt must be a string.",
@@ -898,9 +898,7 @@ impl PrepareInput {
             _ => None,
         };
         let append_system_prompt = match value("appendSystemPrompt") {
-            JsValue::String(_) if truthy(value("appendSystemPrompt")) => {
-                Some(display(value("appendSystemPrompt")))
-            }
+            JsValue::String(text) if truthy(value("appendSystemPrompt")) => Some(text.clone()),
             value if truthy(value) => {
                 return Err(ModuleError::new(
                     "Context prepare input appendSystemPrompt must be a string.",

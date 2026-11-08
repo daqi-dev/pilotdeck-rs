@@ -111,9 +111,9 @@ impl PromptAssembler {
         run_mode: Option<&str>,
         additional_working_directories: &[String],
         tools: &[pilotdeck_protocol::JsValue],
-        custom_system_prompt: Option<&str>,
+        custom_system_prompt: Option<&JsString>,
         use_custom_system_prompt: bool,
-        append_system_prompt: Option<&str>,
+        append_system_prompt: Option<&JsString>,
         include_extensions_with_custom_system_prompt: bool,
         include_user_context_in_system_prompt: bool,
         timestamp_ms: f64,
@@ -132,9 +132,9 @@ impl PromptAssembler {
         let use_custom = use_custom_system_prompt;
         if use_custom {
             if let Some(custom) = custom_system_prompt {
-                let trimmed = js_trim(custom);
+                let trimmed = crate::runtime::memory::js_trim_units(custom.units());
                 if !trimmed.is_empty() {
-                    parts.push(trimmed.into());
+                    parts.push(JsString::from_utf16(trimmed.to_vec()));
                 }
             }
         } else {
@@ -157,9 +157,9 @@ impl PromptAssembler {
             );
         }
         if let Some(append) = append_system_prompt {
-            let trimmed = js_trim(append);
+            let trimmed = crate::runtime::memory::js_trim_units(append.units());
             if !trimmed.is_empty() {
-                parts.push(trimmed.into());
+                parts.push(JsString::from_utf16(trimmed.to_vec()));
             }
         }
         let joined = join_utf16(&parts, "\n\n");
