@@ -159,6 +159,56 @@ MUTATIONS = [
      '                                mock.strays.lock().expect("#1343 stray mutex")\n'
      '                                    .push((0, format!("{method} {path}")));\n',
      GOLDEN, '#2285 every stray lands inside the case that armed it (case first-poll-hello-reply)'),
+    # #2285 fix-r1 boundary #1: re-inserting the r1 `arm()` clear must die —
+    # a late stray that really walked the disarmed server path must survive
+    # the next arm, not be silently dropped.
+    ('arm-clear-reinserted', tests,
+     '    fn arm(&self, case: &Value, record: Arc<Mutex<Record>>) -> u64 {\n'
+     '        let epoch = self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;\n',
+     '    fn arm(&self, case: &Value, record: Arc<Mutex<Record>>) -> u64 {\n'
+     '        let epoch = self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;\n'
+     '        self.strays.lock().expect("#1343 stray mutex").clear();\n',
+     'bluebubbles::tests::late_stray_survives_the_next_arm',
+     '#2285 a late stray survives the next arm charged to its own epoch '
+     '(the next arm must not clear the late stray)'),
+    # #2285 fix-r1 boundary #1: a late request really injected at the replay
+    # tail, after disarm — charged through `mock.stray()` on the real
+    # socket path — must fail the case that armed it, not vanish.
+    ('late-stray-real-path', tests,
+     '    drained(&record).await;\n'
+     '    mock.disarm();\n',
+     '    drained(&record).await;\n'
+     '    mock.disarm();\n'
+     '    let late_client = HttpClient::new();\n'
+     '    let _ = late_client\n'
+     '        .request_unbounded("GET", &format!("http://127.0.0.1:{MOCK_PORT}/api/v1/message?late=1"), None, "")\n'
+     '        .await;\n',
+     GOLDEN, '#1343 case missing-config records no request outside an armed case'),
+    # #2285 fix-r1 sibling #2: inlining the per-tick poll moves the panic
+    # into the driver task itself; the tick after the poisoned row never
+    # arrives, so the third-poll wait fires the cell.
+    ('poll-task-inlined-into-driver', source / 'mod.rs',
+     '                        let Some(runtime) = weak.upgrade() else { break };\n'
+     '                        tokio::spawn(async move {\n'
+     '                            runtime.poll_messages().await;\n'
+     '                        });\n',
+     '                        let Some(runtime) = weak.upgrade() else { break };\n'
+     '                        runtime.poll_messages().await;\n',
+     'bluebubbles::tests::poll_task_panic_does_not_stop_the_driver',
+     '#2285 a panicking poll task does not stop the poll driver'),
+    # #2285 fix-r1 boundary #2: back to the r1 single-silent-window
+    # termination — a starved first window ends the drain before the
+    # in-window arrival can extend it.
+    ('drained-single-quiet', tests,
+     '            if quiet >= 2 {\n'
+     '                break;\n'
+     '            }\n',
+     '            if quiet >= 1 {\n'
+     '                break;\n'
+     '            }\n',
+     'bluebubbles::tests::drained_holds_through_a_single_silent_window',
+     '#2285 the disarm drain holds through a single silent window '
+     '(the drain waited past one silent window)'),
     # A8.3-CHANNEL-BLUEBUBBLES-001-R2: the implemented channel must not be in
     # the unmigrated rejection table; re-inserting the key refuses startup
     # for the subset the loader test keeps loadable.

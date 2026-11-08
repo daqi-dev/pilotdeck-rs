@@ -14,17 +14,25 @@
 //! 003 `stop` does not await in-flight turns (#1353 owns the drain entry):
 //!     the stop-drains case pins the TS shape — the held turn finishes after
 //!     stop and its reply is gated by `running === false` posting nothing;
+//!     003-R1 corrects the Rust-side half: stop also aborts and bounded-reaps
+//!     the driver task with two new `error` log paths, still without awaiting
+//!     in-flight turns;
 //! 004 a same-guid row arriving after a restart re-dispatches channel-side;
 //!     the restart-clears-guids case records both dispatches, and the
 //!     never-re-executes case pins the dedupe inside one epoch;
 //! 005 a non-empty but invalid `serverUrl` logs and keeps polling instead of
 //!     the TS unhandled rejection — no replay case (the fake's URL is always
-//!     well-formed), the `Invalid URL` string is a component pin below.
+//!     well-formed), the `Invalid URL` string is a component pin below;
+//! 007 the #2285 deviations (drop-without-stop ends the driver — stricter
+//!     than TS's leaked interval — and a panicking per-tick poll task is
+//!     swallowed without the TS `poll error` log) do not shape this replay;
+//!     their pins live in the #2285 section below.
 use super::super::protocol::{
     BoxFuture, ChannelError, ChannelHandle, ChannelStartDeps, TurnEventStream, TurnGateway,
     TurnRequest,
 };
 use super::*;
+use crate::channel::http_client::HttpClient;
 use crate::test_baseline;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
@@ -603,14 +611,20 @@ fn turn_scripts(case: &Value) -> Vec<TurnScript> {
 }
 
 /// The generator's post-case quiescence window (`ticks(50)`), made
-/// self-extending for the disarm drain (#2285 r2 ⑤): one 50 ms round is
-/// repeated while the arrival counters still move, up to four rounds
-/// (200 ms), so bytes a slow or loaded loopback peer has already written
-/// still land inside the case's own armed window instead of turning into a
-/// late stray. Polls beyond the scripted slots only ever draw the dry
-/// default and stay invisible in the deduplicated `pollQueries`
-/// projection, so the extra rounds cannot change a green snapshot; the
-/// whole wait stays far inside `DEADLINE`.
+/// self-extending for the disarm drain (#2285 r2 ⑤, fix-r1 boundary #2): a
+/// single silent 50 ms round no longer ends the drain — a loopback peer
+/// starved past the first window may still be holding in-flight bytes, and
+/// that first-window exit was exactly the r1 false-FAIL shape. The drain now
+/// leaves only after two consecutive silent rounds, and repeats while the
+/// arrival counters still move, up to six rounds (300 ms), so bytes a slow
+/// or loaded peer has already written still land inside the case's own
+/// armed window instead of turning into a late stray. Still a heuristic
+/// (two starved windows in a row still cut it off); polls beyond the
+/// scripted slots only ever draw the dry default and stay invisible in the
+/// deduplicated `pollQueries` projection, so the extra rounds cannot change
+/// a green snapshot; the whole wait stays far inside `DEADLINE`. The
+/// termination semantics are pinned by
+/// `drained_holds_through_a_single_silent_window` below.
 async fn drained(record: &Arc<Mutex<Record>>) {
     let snapshot = |record: &Arc<Mutex<Record>>| {
         let record = record.lock().expect("#1343 record mutex");
@@ -623,13 +637,19 @@ async fn drained(record: &Arc<Mutex<Record>>) {
         )
     };
     let mut last = snapshot(record);
-    for _ in 0..4 {
+    let mut quiet = 0usize;
+    for _ in 0..6 {
         tokio::time::sleep(SETTLE).await;
         let now = snapshot(record);
         if now == last {
-            break;
+            quiet += 1;
+            if quiet >= 2 {
+                break;
+            }
+        } else {
+            quiet = 0;
+            last = now;
         }
-        last = now;
     }
 }
 
@@ -1047,12 +1067,17 @@ async fn poll_driver_exits_when_runtime_is_dropped() {
 /// #2285 ③: a panicking per-tick poll task must not stop the interval
 /// driver — TS's `pollMessages` catch keeps the channel polling through a
 /// failing exchange, and `void this.pollMessages()` gives TS no panic
-/// detection either (README registers the Rust deviation: the panic is
+/// detection either (007 registers the Rust deviation: the panic is
 /// swallowed by the runtime instead of logged). The injection poisons the
-/// scripted gateway's turn-index mutex: the first dispatch's `submit`
-/// panics after its GET already landed server-side, the next tick's poll
-/// (the dry default, no rows) completes cleanly, and `stop` still returns
-/// `Ok` — the driver's handle is reaped, not stalled.
+/// scripted gateway's turn-index mutex; the dispatchable row sits in slot
+/// one, so it lands in the driver's first tick's spawned poll task (the
+/// immediate poll draws the row-less slot zero) — its `submit` panics after
+/// the GET already landed server-side, the tick after it (the dry default,
+/// no rows) completes cleanly, and `stop` still returns `Ok` — the driver's
+/// handle is reaped, not stalled. The third-poll wait is what the
+/// `poll-task-inlined-into-driver` negative control kills: inlining the
+/// per-tick poll moves the panic into the driver task itself, no third
+/// poll ever arrives, and `until` fires the cell.
 #[tokio::test]
 async fn poll_task_panic_does_not_stop_the_driver() {
     const CELL: &str = "#2285 a panicking poll task does not stop the poll driver";
@@ -1062,10 +1087,12 @@ async fn poll_task_panic_does_not_stop_the_driver() {
     mock.arm(
         &json!({
             "scripted": {
-                // The immediate poll gets a dispatchable row; every later
-                // poll draws the dry default and never touches a lock the
+                // Slot zero (the immediate poll) is row-less; the poison row
+                // lands in the driver's first tick, and every later poll
+                // draws the dry default and never touches a lock the
                 // poisoned path could poison.
                 "polls": [
+                    { "status": 200, "json": [] },
                     { "status": 200, "json": [
                         { "guid": "panic-1", "chatGuid": "BB-PANIC", "text": "boom" }
                     ] }
@@ -1113,6 +1140,7 @@ async fn poll_task_panic_does_not_stop_the_driver() {
     let handle = bounded("panic", channel.start(deps.clone()))
         .await
         .expect("#2285 panic start");
+    // The immediate poll (row-less) lands first.
     {
         let record = record.clone();
         until(CELL, "panic first poll", move || {
@@ -1120,8 +1148,9 @@ async fn poll_task_panic_does_not_stop_the_driver() {
         })
         .await;
     }
-    // The first poll's dispatch panicked on the poisoned turn index; the
-    // interval's next tick must still poll (a clean, row-less exchange).
+    // The driver's first tick served the poison row's GET; its dispatch
+    // panicked on the poisoned turn index right after (invisibly — that is
+    // the registered deviation).
     {
         let record = record.clone();
         until(CELL, "panic second poll", move || {
@@ -1129,12 +1158,39 @@ async fn poll_task_panic_does_not_stop_the_driver() {
         })
         .await;
     }
+    // The poisoned dispatch panicked before it could record anything: the
+    // gateway projection stays empty, proving the injection path was
+    // actually walked (the dispatch reached `submit`; the panic did not
+    // bypass it).
+    crate::negative_assert!(
+        record
+            .lock()
+            .expect("#1343 record mutex")
+            .gateway
+            .is_empty(),
+        "{CELL} (the poisoned dispatch panicked before recording)"
+    );
+    // The interval survived the panicking poll task: its next tick still
+    // polls (a clean, row-less exchange).
+    {
+        let record = record.clone();
+        until(CELL, "panic third poll", move || {
+            record.lock().expect("#1343 record mutex").polls >= 3
+        })
+        .await;
+    }
     bounded("panic", handle.stop("done"))
         .await
         .expect("#2285 stop still succeeds after a poll task panicked");
+    // Drain whatever the stop-aborted epoch already had in flight, then
+    // hold one full poll interval past a post-drain baseline (the drop pin's
+    // window shape): a driver that survived stop ticks exactly once in a
+    // window this long, so comparing against a baseline sampled after the
+    // window — the old shape — could only ever see a ~50 ms slice of a
+    // 2.5 s period and pass almost unconditionally.
     tokio::time::sleep(POLL_MS + SETTLE * 4).await;
     let settled = record.lock().expect("#1343 record mutex").polls;
-    tokio::time::sleep(SETTLE).await;
+    tokio::time::sleep(POLL_MS + SETTLE).await;
     {
         let record = record.lock().expect("#1343 record mutex");
         crate::negative_assert_eq!(
@@ -1142,6 +1198,109 @@ async fn poll_task_panic_does_not_stop_the_driver() {
             settled,
             "{CELL} (polls stop arriving after stop)"
         );
+    }
+}
+
+/// The disarm drain's termination condition (#2285 fix-r1, boundary #2): a
+/// single silent 50 ms window must not end the drain. An arrival landing
+/// between the first and the second window — the starved-server shape the
+/// old single-window check mistook for quiescence, which was r1's false
+/// FAIL window — must still be observed and extend the wait. The paused
+/// clock makes the trace exact: the mover's deadline sits determinately
+/// between the two windows, so the drain runs 50 → 75 (arrival) → 100
+/// (movement seen, extension) → 150 → 200 ms (two consecutive silent
+/// windows) and never earlier.
+#[tokio::test(start_paused = true)]
+async fn drained_holds_through_a_single_silent_window() {
+    const CELL: &str = "#2285 the disarm drain holds through a single silent window";
+    let record = Arc::new(Mutex::new(Record::default()));
+    let mover = {
+        let record = record.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(SETTLE + SETTLE / 2).await;
+            record.lock().expect("#1343 record mutex").polls += 1;
+        })
+    };
+    let started = tokio::time::Instant::now();
+    drained(&record).await;
+    mover.await.expect("#2285 drained mover");
+    let elapsed = started.elapsed();
+    crate::negative_assert_eq!(
+        record.lock().expect("#1343 record mutex").polls,
+        1,
+        "{CELL} (the in-window arrival was observed)"
+    );
+    crate::negative_assert!(
+        elapsed >= SETTLE * 3,
+        "{CELL} (the drain waited past one silent window)"
+    );
+}
+
+/// #2285 r2 ④: `arm()` no longer clears the strays list. A request the
+/// previous case leaked past its armed window — here a real one that walks
+/// the loopback socket into the disarmed server task, which charges it
+/// through `mock.stray()` exactly like a leaked poll — must survive the
+/// next `arm()` and keep the epoch that read it, so the case that observes
+/// it fails by name instead of the leak being silently dropped (the r1
+/// false-PASS window the old `arm()` clear opened). The
+/// `arm-clear-reinserted` negative control re-inserts the clear and dies on
+/// the survival assertion; `late-stray-real-path` injects the same real
+/// late request inside the golden replay and dies on the first case's
+/// no-stray cell.
+#[tokio::test]
+async fn late_stray_survives_the_next_arm() {
+    const CELL: &str = "#2285 a late stray survives the next arm charged to its own epoch";
+    const STRAY_PORT: u16 = 19465;
+    let record = Arc::new(Mutex::new(Record::default()));
+    let mock = Mock::new();
+    let first = mock.arm(
+        &json!({ "scripted": { "polls": [], "sends": [] } }),
+        record.clone(),
+    );
+    start_mock_on(mock.clone(), STRAY_PORT).await;
+    mock.disarm();
+    // The real late request: it walks the socket into the server task,
+    // which reads it disarmed and charges the stray to `first`'s epoch
+    // before answering (so the stray is already recorded once the response
+    // completes).
+    let client = HttpClient::new();
+    let late = client
+        .request_unbounded(
+            "GET",
+            &format!("http://127.0.0.1:{STRAY_PORT}/api/v1/message?late=1"),
+            None,
+            "",
+        )
+        .await;
+    crate::negative_assert!(late.is_ok(), "{CELL} (the late request settles)");
+    {
+        let strays = mock.strays.lock().expect("#1343 stray mutex");
+        crate::negative_assert_eq!(
+            strays.len(),
+            1,
+            "{CELL} (the disarmed server recorded the late request)"
+        );
+        crate::negative_assert_eq!(
+            strays[0].0,
+            first,
+            "{CELL} (the stray is charged to the epoch that read it)"
+        );
+    }
+    // The next case's arm must not clear it: the entry keeps its original
+    // epoch — foreign to the new epoch — which is exactly how the next
+    // case's stray check sees it.
+    let second = mock.arm(
+        &json!({ "scripted": { "polls": [], "sends": [] } }),
+        record.clone(),
+    );
+    {
+        let strays = mock.strays.lock().expect("#1343 stray mutex");
+        crate::negative_assert_eq!(
+            strays.iter().filter(|(epoch, _)| *epoch == first).count(),
+            1,
+            "{CELL} (the next arm must not clear the late stray)"
+        );
+        crate::negative_assert!(second != first, "{CELL} (the arm increments the epoch)");
     }
 }
 
