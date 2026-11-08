@@ -25,9 +25,12 @@ def main():
     owner = 'pilotdeck-gateway/src/runtime/session/owner.rs'
     admission = 'pilotdeck-gateway/src/runtime/session/admission.rs'
     handle = 'pilotdeck-gateway/src/runtime/session/handle.rs'
+    read = 'pilotdeck-gateway/src/runtime/turn/read.rs'
     fixture = 'pilotdeck-gateway/tests/fixtures/session-owner/oracle.json'
     module = 'runtime::session::owner::tests::'
     mutants = [
+        ('foreign-retained-snapshot-exposed', read, '    coordinator\n        .snapshot_for_project(input, project)\n        .unwrap_or_else(|| ActiveTurnSnapshot {\n            active: false,\n            session_key: input.session_key.clone(),\n            run_id: None,\n            events: Vec::new(),\n            truncated: false,\n            terminal: false,\n        })', '    let _ = project; coordinator.snapshot(input)', 'native_owner_close_keeps_retained_replay_scoped_to_original_project', 'assertion failed:'),
+        ('unbound-owner-creation-accepted', owner, 'if state.project_binding {\n            let Some(project) = context.project_key.as_ref() else {\n                return Box::pin(async { Err(project_mismatch()) });\n            };', 'if state.project_binding && context.project_key.is_some() {\n            let Some(project) = context.project_key.as_ref() else {\n                return Box::pin(async { Err(project_mismatch()) });\n            };', 'native_project_binding_rejects_unbound_creation_before_and_during_scope', 'native unbound creation must not create a wildcard owner'),
         ('reserve-activity-ignores-inactive-handle', handle,
          'fn reserve_activity(&self, maintenance: bool) -> Result<HandleActivity, RuntimeError> {\n        let mut progress = self.0.progress.lock().unwrap();\n        if progress.state != HandleState::Active {', 'fn reserve_activity(&self, maintenance: bool) -> Result<HandleActivity, RuntimeError> {\n        let mut progress = self.0.progress.lock().unwrap();\n        if false {',
          'publication_cutoff_revokes_cached_handle_before_async_disposal_starts',
