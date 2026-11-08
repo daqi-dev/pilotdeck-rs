@@ -291,7 +291,9 @@ def checked_evidence(raw, contract, evidence):
     checked['networkWitness']['complete'] = evidence['networkWitness']['complete'] is True and network_equal
     checked['transcriptWitness']['complete'] = (evidence['transcriptWitness']['complete'] is True
                                                 and transcript_equal)
-    checked['cleanup']['allStopped'] = evidence['cleanup'] == replay['cleanup']
+    # #2039: cleanup carries JSON booleans, so the replay comparison must not
+    # let ``True == 1`` satisfy it (#1372 same_json, deep defense).
+    checked['cleanup']['allStopped'] = same_json(evidence['cleanup'], replay['cleanup'])
     return checked
 
 
@@ -299,14 +301,19 @@ def load_capture(folder):
     folder = Path(folder)
     need(not (folder / 'failure.json').exists(), 'capture carries a failure record')
     receipt = json.loads((folder / 'receipt.json').read_text())
-    need(receipt['status'] == 'WITNESS_CAPTURED' and receipt['tracerExitCode'] == 0,
+    # #2039: receipt.json is a retained JSON original whose bytes are not
+    # sha-pinned, so a tracerExitCode that drifted into a boolean must not
+    # satisfy ``False == 0`` (#1372 same_json, deep defense).
+    need(receipt['status'] == 'WITNESS_CAPTURED' and same_json(receipt['tracerExitCode'], 0),
          'capture was not completed successfully')
     raw = read_trace(folder / 'trace.log')
     for name, key in receipt_artifacts('capture').items():
         need(sha(folder / name) == receipt[key], 'capture artifact changed: ' + name)
     contract = json.loads((folder / 'launch.json').read_text())
     prelaunch = json.loads((folder / 'prelaunch.json').read_text())
-    need({k: v for k, v in contract.items() if k != 'launcherPid'} == prelaunch,
+    # #2039: the prelaunch mirror holds JSON values, so a boolean that became a
+    # number (or the reverse) is a drift, not an accepted equality (#1372).
+    need(same_json({k: v for k, v in contract.items() if k != 'launcherPid'}, prelaunch),
          'launch contract changed after pre-registration')
     return raw, contract, json.loads((folder / 'evidence.json').read_text())
 
@@ -341,7 +348,10 @@ def canonical_path(path):
 
 def ws_profile(direction, wire):
     need(direction in ('send', 'receive'), 'WS profile direction')
-    need(wire.get('opcode') == 1 and wire.get('fin') is True and wire.get('rsv') == 0,
+    # #2039: wire records are decoded observer JSON; opcode/rsv are JSON
+    # numbers on the real train, so a drifted boolean is a difference, not
+    # an accepted ``True == 1`` / ``False == 0`` (#1372 same_json).
+    need(same_json(wire.get('opcode'), 1) and wire.get('fin') is True and same_json(wire.get('rsv'), 0),
          'WS profile requires complete text frame without RSV')
     need(wire.get('masked') is (direction == 'send'), 'WS profile mask/direction')
 
@@ -351,7 +361,9 @@ def session_profile(contract, cases):
     need(contract.get('cases') == cases, 'session profile full manifest')
     need(Counter(contract.get('processRoles', [])) == Counter(['host'] + ['sidecar'] * len(cases))
          and set(contract.get('binaries', {})) == {'host', 'sidecar'}, 'session profile roles')
-    need(contract.get('connections') == 1, 'session profile connections')
+    # #2039: the launch contract is a JSON original on the live audit path;
+    # ``True == 1`` must not pass for a drifted connections boolean.
+    need(same_json(contract.get('connections'), 1), 'session profile connections')
     argv = contract['binaries']['host']['argv']
     need(argv.count('--listen') == argv.count('--home') == argv.count('--project') == 1,
          'session profile host arguments')
