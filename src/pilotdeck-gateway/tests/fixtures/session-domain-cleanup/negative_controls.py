@@ -518,10 +518,20 @@ def calibrate_status_write_is_literal_bypass(rows):
     (``1.0 is 1.0`` is True at runtime, measured), so the write takes the
     clean arm and the presence scan must treat the unresolvable test as
     cannot-rule-out."""
-    return _controls_main_needle(
-        rows, "inline status/exit assignment 'PASS' if 1.0 is 1.0 else 'FAIL'",
-        'aggregation-audit: identity-literal status write flagged, '
-        'passed=False')
+    ok, detail = match(rows, 'aggregation-audit', {'passed': False})
+    if not ok:
+        return ok, detail
+    row, error = _audit_row(rows)
+    if row is None:
+        return False, error
+    ok, detail = _point_failure(
+        row, 'scripts/gateway-parity/session_domain.py', 'main',
+        "inline status/exit assignment 'PASS' if 1.0 is 1.0 else 'FAIL'",
+        'calibrate-main')
+    if not ok:
+        return ok, detail
+    return True, ('aggregation-audit: identity-literal status write flagged, '
+                  'passed=False')
 
 
 def calibrate_shared_excuse(rows):
