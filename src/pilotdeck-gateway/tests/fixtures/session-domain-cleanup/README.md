@@ -1076,19 +1076,34 @@ operand (a name, a call, a subscript) keeps both arms, and a pure-literal test
 outside the foldable grammar produces *no* certified arm in `_exit_arms`
 (fail-closed) while the nested walk keeps both sides visible.  A `Starred`
 literal spread (`[*[{'status': 'PASS'}]]`) is walked into its payload (fix-r2,
-DS boundary observation); spreading a name stays opaque.  Names, calls and
+DS boundary observation); spreading a name stays opaque.  fix-r5 (DS boundary
+P0/P1) extended the same interpreter semantics to the value side and the
+identity operator: a `BoolOp` *value* follows short-circuit evaluation, so
+``'PASS' or 'FAIL'`` certifies only the clean operand (the dead fail-closed
+operand never runs — the mirror of the constant-conditional rule), a runtime
+operand keeps every later operand reachable, and ``is``/``is not`` never folds
+(two freshly parsed AST nodes are never the same object while CPython may
+dedup equal constants in one code object — ``1.0 is 1.0`` is `True` at runtime,
+measured), so an identity test fails closed with no certified arm; the
+arithmetic fold also grew bounds (exponents, shift widths and string repeats
+past fixed caps resolve to nothing) so an adversarial literal cannot hang or
+OOM the audit.  Names, calls and
 comprehensions stay opaque
 to the recursion — a Name is resolved by the write families, a callee by the
 delegation registries, and a comprehension body is its own scope; walking them
-here would double-judge the shapes those families already own.  Nine probes pin
-it: a clean status inside a returned face, one inside a list element of a
+here would double-judge the shapes those families already own.  Thirteen probes
+pin it: a clean status inside a returned face, one inside a list element of a
 returned face, one behind a constant condition, one behind each literal-grammar
-spelling (``not False`` / a comparison / a boolean chain), one inside a starred
-literal spread, and the legal pair — an `IfExp` face that keeps its fail-closed
-arm, and a bare fail-closed literal.  The `nested-status-slot-bypass`,
-`nested-constant-conditional-bypass` and `nested-not-false-conditional-bypass`
-mutants
+spelling (``not False`` / a comparison / a boolean chain), one behind an
+unresolvable identity test (``1.0 is 1.0``), the short-circuit pair
+(``'PASS' or 'FAIL'`` and ``'FAIL' and 'PASS'``), one inside a starred
+literal spread, and the legal trio — an `IfExp` face that keeps its fail-closed
+arm, a bare fail-closed literal, and a `BoolOp` value with a runtime operand
+beside its fail-closed operand.  The `nested-status-slot-bypass`,
+`nested-constant-conditional-bypass`, `nested-not-false-conditional-bypass`,
+`nested-boolop-value-bypass` and `nested-is-literal-bypass` mutants
 (the retirement report's `cleanupAudit` face hard-written to `PASS`, the
-same face written as `'PASS' if True else 'FAIL'`, and the same face written as
-`'PASS' if not False else 'FAIL'`) pin the
+same face written as `'PASS' if True else 'FAIL'`, as
+`'PASS' if not False else 'FAIL'`, as `'PASS' or 'FAIL'`, and as
+`'PASS' if 1.0 is 1.0 else 'FAIL'`) pin the
 detector from the mutation side.
