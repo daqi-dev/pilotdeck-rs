@@ -167,6 +167,7 @@ impl Requests {
     async fn tools_rewind_files(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let requests = self.clone();
         let params = params.clone();
+        let permit = super::session_dir::session_io_permit().await?;
         // Synchronous disk IO must not block the serial host thread.
         // begin_maintenance is acquired before has_active_turn so that no new
         // turn can start between the check and the IO: begin_turn checks the
@@ -174,6 +175,7 @@ impl Requests {
         // (maintenance already set for this session) or an active turn both
         // return SESSION_BUSY; the guard is dropped when the closure exits.
         tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             let session_key = required_trimmed(
                 &params,
                 "sessionKey",
@@ -198,18 +200,13 @@ impl Requests {
             let user_message_id = user_message_id
                 .to_utf8()
                 .map_err(|_| RequestError::new("userMessageId must be valid UTF-8."))?;
-            let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(|key: &crate::storage::ProjectKey| {
-                    crate::session_chat_dir(
-                        &key.pilot_home,
-                        &key.project_root,
-                        &key.project_root.to_string_lossy(),
-                    )
-                }),
-            );
             let home = requests.options.home.clone();
             let project = requests.options.project.clone();
+            let chat_dir = super::session_dir::bounded_chat_dir(&home, &project)?;
+            let adapter = AsyncTranscriptAdapter::new(
+                Arc::new(JsonlTranscriptStore::new_bounded()),
+                Arc::new(move |_: &crate::storage::ProjectKey| chat_dir.clone()),
+            );
             let result = rewind::rewind_files(RewindFilesInput {
                 adapter: &adapter,
                 project_root: &project,

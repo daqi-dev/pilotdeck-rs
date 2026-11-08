@@ -127,6 +127,7 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
                 handlers: self.handlers.clone(),
                 async_registry: self.async_hooks.clone(),
                 current_turn: None,
+                native_steer_bound: None,
             }))
         })
     }

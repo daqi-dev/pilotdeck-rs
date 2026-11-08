@@ -456,7 +456,7 @@ impl SessionTools {
             environment: Arc::new(NativeTurnEnvironment(self.env.clone())),
         };
         let question_profile = Arc::new(std::sync::OnceLock::new());
-        let sdk_state = authority
+        let mut sdk_state = authority
             .as_ref()
             .and_then(|authority| authority.sdk_hooks.clone());
         let on_requested = sdk_state.as_ref().map(|sdk| {
@@ -636,6 +636,12 @@ impl SessionTools {
         let native_async_turn = self.forks.as_ref().map(|registry| {
             registry.capture_async_turn(&identity.session_id, self.pinned_steer.clone())
         });
+        if let Some(sdk) = &mut sdk_state {
+            sdk.native_steer_bound = native_async_turn
+                .as_ref()
+                .and_then(Option::as_ref)
+                .map(|capture| capture.bind_steer.clone());
+        }
         let hook_options = crate::runtime::hooks::HookRuntimeOptions {
             on_projection: Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
                 session: identity.session_id.clone(),

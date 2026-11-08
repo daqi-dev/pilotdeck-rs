@@ -553,6 +553,14 @@ pub struct TurnSteer {
     run: Arc<Run>,
 }
 impl TurnSteer {
+    /// A host-only receipt for this exact freshly bound run.
+    pub(crate) fn async_hook_info(&self) -> Option<ActiveSteerInfo> {
+        self.session
+            .owner
+            .active_steer_info(&self.run.session_key)
+            .filter(|info| Arc::ptr_eq(info.identity(), &self.run.identity))
+    }
+
     fn check_identity(&self, state: &mut State) -> Result<(), HostError> {
         let session = self.session.session(state)?;
         if !session

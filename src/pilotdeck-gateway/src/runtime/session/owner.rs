@@ -96,6 +96,7 @@ pub struct SessionEvictionSnapshot {
 pub(crate) struct CapturedAsyncTurn {
     pub turn: crate::runtime::async_hooks::AsyncHookTurn,
     pub guard: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub bind_steer: crate::runtime::turn::interaction::NativeSteerBinding,
 }
 pub(crate) type AsyncTurnLookup = Arc<
     dyn Fn(
@@ -110,7 +111,7 @@ struct CompletionSteer {
     session: JsString,
     completion: TurnCompletionHandle,
     identity: Arc<()>,
-    steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+    steer: Arc<std::sync::OnceLock<crate::runtime::project::interaction_steer::ActiveSteerInfo>>,
 }
 impl CompletionSteer {
     fn current(&self, inner: &Inner, state: &State) -> bool {
@@ -171,7 +172,7 @@ impl crate::runtime::async_hooks::AsyncHookTurnHandle for CompletionSteer {
             if !self.current(&inner, &state) {
                 return None;
             }
-            let info = self.steer.as_ref()?.active_steer_info(&self.session)?;
+            let info = self.steer.get()?;
             if &info.run_id != self.completion.run_id() {
                 return None;
             }
@@ -246,6 +247,8 @@ struct CompletionOwner {
     completion: TurnCompletionHandle,
     handle: Option<LiveSessionHandle>,
     admission: Option<Arc<()>>,
+    async_steer:
+        Arc<std::sync::OnceLock<crate::runtime::project::interaction_steer::ActiveSteerInfo>>,
 }
 
 #[derive(Default)]
@@ -303,7 +306,7 @@ impl SessionOwner {
     /// Main hooks capture once; detached hooks intentionally call per marker.
     pub(crate) fn weak_async_turn_lookup(&self) -> AsyncTurnLookup {
         let owner = Arc::downgrade(&self.0);
-        Arc::new(move |session, steer| {
+        Arc::new(move |session, _steer| {
             let inner = owner.upgrade()?;
             let state = inner.state.lock().unwrap();
             if state.stopped {
@@ -323,17 +326,49 @@ impl SessionOwner {
                 session: session.clone(),
                 completion,
                 identity,
-                steer,
+                steer: current.async_steer.clone(),
             });
             let guard_capture = capture.clone();
             let guard = Arc::new(move || {
                 crate::runtime::async_hooks::AsyncHookTurnHandle::is_live(guard_capture.as_ref())
             });
+            let bind_capture = capture.clone();
+            let bind_steer = Arc::new(
+                move |info: crate::runtime::project::interaction_steer::ActiveSteerInfo| {
+                    let inner = bind_capture
+                        .owner
+                        .upgrade()
+                        .ok_or_else(|| crate::host::ModuleError::new("Async hook owner closed."))?;
+                    let state = inner.state.lock().unwrap();
+                    if !bind_capture.current(&inner, &state)
+                        || &info.run_id != bind_capture.completion.run_id()
+                        || !info.is_live()
+                    {
+                        return Err(crate::host::ModuleError::new(
+                            "Async hook steer admission expired.",
+                        )
+                        .into());
+                    }
+                    if let Some(existing) = bind_capture.steer.get() {
+                        if Arc::ptr_eq(existing.identity(), info.identity()) {
+                            return Ok(());
+                        }
+                        return Err(crate::host::ModuleError::new(
+                            "Async hook steer is already bound.",
+                        )
+                        .into());
+                    }
+                    bind_capture.steer.set(info).map_err(|_| {
+                        crate::host::ModuleError::new("Async hook steer is already bound.").into()
+                    })
+                },
+            );
             Some(CapturedAsyncTurn {
                 turn: crate::runtime::async_hooks::AsyncHookTurn::new(SharedCompletionSteer(
                     capture,
                 )),
                 guard,
+                bind_steer,
             })
         })
     }
@@ -703,6 +738,7 @@ impl SessionOwner {
                 completion: completion.clone(),
                 handle,
                 admission,
+                async_steer: Arc::new(std::sync::OnceLock::new()),
             },
         );
         completion

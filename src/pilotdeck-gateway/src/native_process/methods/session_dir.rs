@@ -95,6 +95,42 @@ fn _make_adapter(requests: &Requests) -> AsyncTranscriptAdapter {
     )
 }
 
+// Shared, separately bounded native session IO. The permit accompanies a
+// blocking closure until it really ends, even if the async caller is dropped.
+static NATIVE_SESSION_IO: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+    std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+
+pub(in crate::native_process) async fn session_io_permit() -> Result<tokio::sync::OwnedSemaphorePermit, RequestError> {
+    NATIVE_SESSION_IO.clone().acquire_owned().await
+        .map_err(|_| RequestError::new("Native session IO is unavailable."))
+}
+
+pub(in crate::native_process) fn bounded_chat_dir(
+    home: &std::path::Path, project: &std::path::Path,
+) -> Result<std::path::PathBuf, RequestError> {
+    let metadata = crate::metadata::Metadata {
+        home: home.to_path_buf(),
+        cwd: std::path::PathBuf::new(),
+        files: crate::runtime::history::HistoryMarkerFiles::new(),
+    };
+    let result = metadata.process_chat_dir(&project.to_string_lossy())
+        .map_err(|error| RequestError::new(error.to_string()));
+    if metadata.files.was_refused() {
+        return Err(RequestError::new("Unsafe project marker."));
+    }
+    result
+}
+
+async fn resolve_chat_dir(
+    home: std::path::PathBuf, project: std::path::PathBuf,
+) -> Result<(std::path::PathBuf, tokio::sync::OwnedSemaphorePermit), RequestError> {
+    let permit = session_io_permit().await?;
+    tokio::task::spawn_blocking(move || {
+        let dir = bounded_chat_dir(&home, &project)?;
+        Ok((dir, permit))
+    }).await.map_err(|_| RequestError::new("Native session path reader stopped unexpectedly."))?
+}
+
 impl Requests {
     pub(in crate::native_process) fn session_dir_request(
         &self,
@@ -258,17 +294,12 @@ impl Requests {
         let home = self.options.home.clone();
         let key_clone = key.clone();
         let project_clone = project_root.clone();
+        let (chat_dir, permit) = resolve_chat_dir(home.clone(), project_root.clone()).await?;
         tokio::task::spawn_blocking(move || {
-            let home2 = home.clone();
+            let _permit = permit;
             let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(move |k: &ProjectKey| {
-                    crate::session_chat_dir(
-                        &home2,
-                        &k.project_root,
-                        &k.project_root.to_string_lossy(),
-                    )
-                }),
+                Arc::new(JsonlTranscriptStore::new_bounded()),
+                Arc::new(move |_: &ProjectKey| chat_dir.clone()),
             );
             let storage = adapter
                 .create_session_storage(SessionStorageInput {
@@ -345,8 +376,8 @@ impl Requests {
         // #1457 fix-r1: same single-writer fence the config family uses; two
         // fresh writers that both restore the tail and append `sequence + 1`
         // leave the transcript unloadable.
-        let fence_path =
-            transcript_locks::session_transcript_path(&self.options.home, &project_root, &key);
+        let (chat_dir, permit) = resolve_chat_dir(self.options.home.clone(), project_root.clone()).await?;
+        let fence_path = chat_dir.join(format!("{}.jsonl", crate::storage::sanitize_session_id(&key)));
         let write_fence = transcript_locks::acquire(&fence_path).await?;
         // #1457 fix-r2: a loaded session owns the transcript writer (and the
         // writer lease) with an in-memory sequence, so the metadata entry goes
@@ -379,6 +410,7 @@ impl Requests {
         tokio::task::spawn_blocking(move || {
             // Held inside the closure: a cancelled request drops the future but
             // not the blocking append, so the fence has to travel with the write.
+            let _permit = permit;
             let _write = write_fence;
             let updated_at = pilotdeck_transport::system_clock::format_epoch_iso(
                 std::time::SystemTime::now()
@@ -404,16 +436,9 @@ impl Requests {
                     .map_err(|e| RequestError::new(e.to_string()))?;
                 return Ok(());
             }
-            let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(move |k: &ProjectKey| {
-                    crate::session_chat_dir(
-                        &home2,
-                        &k.project_root,
-                        &k.project_root.to_string_lossy(),
-                    )
-                }),
+                Arc::new(JsonlTranscriptStore::new_bounded()),
+                Arc::new(move |_: &ProjectKey| chat_dir.clone()),
             );
             let storage = adapter
                 .create_session_storage(SessionStorageInput {
@@ -525,11 +550,8 @@ impl Requests {
         // writer for the tail it restores. Looking the recorder up first left a
         // window where a concurrent close retired it between lookup and append,
         // and the retired writer's no-op append reported `recorded: true`.
-        let fence_path = transcript_locks::session_transcript_path(
-            &self.options.home,
-            &self.options.project,
-            &session_key,
-        );
+        let (chat_dir, permit) = resolve_chat_dir(self.options.home.clone(), self.options.project.clone()).await?;
+        let fence_path = chat_dir.join(format!("{}.jsonl", crate::storage::sanitize_session_id(&session_key)));
         let write_fence = transcript_locks::acquire(&fence_path).await?;
         let live_recorder = super::super::assembly::live_recorder(&self.recorders, &session_key);
         let recorders = self.recorders.clone();
@@ -544,6 +566,7 @@ impl Requests {
             let turn_id2 = turn_id.clone();
             let status2 = status.clone();
             let recorded = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
                 let _write = write_fence;
                 recorder
                     .writer()
@@ -564,17 +587,11 @@ impl Requests {
         let recorded = tokio::task::spawn_blocking(move || {
             // The fence must outlive a cancelled request, so it moves into the
             // blocking closure instead of dropping with this future.
+            let _permit = permit;
             let _write = write_fence;
-            let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(move |k: &ProjectKey| {
-                    crate::session_chat_dir(
-                        &home2,
-                        &k.project_root,
-                        &k.project_root.to_string_lossy(),
-                    )
-                }),
+                Arc::new(JsonlTranscriptStore::new_bounded()),
+                Arc::new(move |_: &ProjectKey| chat_dir.clone()),
             );
             match adapter.create_session_storage(SessionStorageInput {
                 project_root: project_root.clone(),
@@ -1375,3 +1392,7 @@ mod tests {
         assert_eq!(called.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "session_dir_bounded_tests.rs"]
+mod bounded_session_io_tests;

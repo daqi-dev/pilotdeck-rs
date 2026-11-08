@@ -1184,6 +1184,7 @@ mod queued_slot_tests {
                 handlers: Arc::default(),
                 async_registry: Arc::default(),
                 current_turn: Some(Arc::new(|| false)),
+                native_steer_bound: None,
             }),
             emit: Arc::new(|_| true),
         }

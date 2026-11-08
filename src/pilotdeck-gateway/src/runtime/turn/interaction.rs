@@ -47,6 +47,12 @@ pub struct TurnInteractionAuthority {
 pub type SdkAsyncRegistrySlot =
     Arc<std::sync::OnceLock<Option<Arc<crate::runtime::async_hooks::AsyncHookRegistry>>>>;
 
+pub type NativeSteerBinding = Arc<
+    dyn Fn(crate::runtime::project::interaction_steer::ActiveSteerInfo) -> Result<(), HostError>
+        + Send
+        + Sync,
+>;
+
 /// Committed SDK hook inputs share the existing session registry and gateway async owner.
 #[derive(Clone)]
 pub struct SdkHookState {
@@ -56,6 +62,7 @@ pub struct SdkHookState {
     pub handlers: Arc<std::sync::Mutex<crate::runtime::sdk_session::SessionHandlerRegistry>>,
     pub async_registry: SdkAsyncRegistrySlot,
     pub current_turn: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    pub native_steer_bound: Option<NativeSteerBinding>,
 }
 
 pub type SdkFileRuntimeSlot = Arc<
@@ -263,6 +270,16 @@ impl InteractionTurn {
             )?);
         } else {
             router.turn.authorizations = None;
+        }
+        if let Some(bind) = input
+            .sdk_hook_state
+            .as_ref()
+            .and_then(|sdk| sdk.native_steer_bound.as_ref())
+            && let Some(steer) = turn.ports.steer.as_ref()
+        {
+            bind(steer.async_hook_info().ok_or_else(|| {
+                ModuleError::new("Native async hook steer binding is not live.")
+            })?)?;
         }
         let tools = catalog.list().await?;
         // Availability is supplied by the turn-owned host composition.
