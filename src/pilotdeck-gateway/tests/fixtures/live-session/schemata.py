@@ -106,6 +106,10 @@ GUARDED = [
     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/live_session_tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/runtime/project/interaction_hooks/session.rs',
     ROOT / 'src/pilotdeck-gateway/tests/fixtures/live-session/peer.py',
+    # This suite judges kills by #946 nonce receipts; the selector forwarding
+    # lives in these two files and must not change under a running suite.
+    ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
+    ROOT / 'src/pilotdeck-gateway/src/test_process.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',
     ROOT / 'src/pilotdeck-gateway/src/lib.rs',
     ROOT / 'src/pilotdeck-gateway/Cargo.toml',
