@@ -22,7 +22,7 @@ use crate::{
     runtime::{
         connection::RequestError,
         manager::{SessionCatalogListInput, SessionCatalogPort, TranscriptSessionCatalog},
-        project::{ProjectRuntimeRegistry, RuntimeLease, ProjectResources},
+        project::{ProjectResources, ProjectRuntimeRegistry, RuntimeLease},
     },
 };
 use pilotdeck_protocol::{JsString, JsValue};
@@ -64,6 +64,27 @@ pub(crate) fn request_error(error: ApprovalFailure) -> RequestError {
         message: error.message.unwrap_or_else(|| code.as_str().into()),
         code,
         details: None,
+        validation: None,
+    }
+}
+/// InProcessGateway.resumeSop wraps only callback failures, after the busy gate.
+pub(crate) fn resume_error(error: ApprovalFailure) -> RequestError {
+    let code = error
+        .code
+        .as_ref()
+        .and_then(JsValue::as_string)
+        .map(|s| String::from_utf16_lossy(s.units()))
+        .unwrap_or_else(|| "SOP_RESUME_FAILED".into());
+    let details = error
+        .status
+        .filter(|s| (400..=599).contains(s))
+        .map(|status| {
+            crate::metadata::object([("httpStatus", JsValue::Number(f64::from(status)))])
+        });
+    RequestError {
+        message: error.message.unwrap_or_else(|| code.as_str().into()),
+        code,
+        details: details.map(Box::new),
         validation: None,
     }
 }
@@ -662,7 +683,9 @@ mod tests {
         }
         std::fs::write(
             &file,
-            pilotdeck_protocol::stringify_json(&row("bound")).unwrap().unwrap(),
+            pilotdeck_protocol::stringify_json(&row("bound"))
+                .unwrap()
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(
@@ -676,7 +699,9 @@ mod tests {
         );
         std::fs::write(
             &file,
-            pilotdeck_protocol::stringify_json(&row("revoked")).unwrap().unwrap(),
+            pilotdeck_protocol::stringify_json(&row("revoked"))
+                .unwrap()
+                .unwrap(),
         )
         .unwrap();
         let original = std::fs::read(&file).unwrap();
@@ -692,5 +717,48 @@ mod tests {
         assert_eq!(std::fs::read(&file).unwrap(), original);
         assert!(!root.join("staffdeck/sop-bundles").exists());
         std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod resume_error_tests {
+    use super::*;
+    #[test]
+    fn resume_callback_preserves_plain_message_and_only_valid_http_status() {
+        for status in [None, Some(399), Some(400), Some(599), Some(600)] {
+            let error = resume_error(ApprovalFailure {
+                status,
+                code: None,
+                message: Some("real owner failure".into()),
+            });
+            assert_eq!(error.code, "SOP_RESUME_FAILED");
+            assert_eq!(error.message, JsString::from("real owner failure"));
+            assert_eq!(
+                error.details,
+                status
+                    .filter(|s| (400..=599).contains(s))
+                    .map(|s| crate::metadata::object([(
+                        "httpStatus",
+                        JsValue::Number(f64::from(s))
+                    )])).map(Box::new)
+            );
+        }
+        let error = resume_error(ApprovalFailure {
+            status: Some(409),
+            code: Some("SOP_REVISION_CONFLICT".into()),
+            message: Some("Expected SOP revision 2, found 3.".into()),
+        });
+        assert_eq!(error.code, "SOP_REVISION_CONFLICT");
+        assert_eq!(
+            error.message,
+            JsString::from("Expected SOP revision 2, found 3.")
+        );
+        assert_eq!(
+            error.details,
+            Some(crate::metadata::object([(
+                "httpStatus",
+                JsValue::Number(409.0)
+            )])).map(Box::new)
+        );
     }
 }

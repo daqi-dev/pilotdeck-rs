@@ -33,7 +33,7 @@ impl Requests {
                     return Err(RequestError { code: "SESSION_BUSY".into(),
                         message: "Cannot resume StaffDeck SOP while a turn is active.".into(), details: None, validation: None });
                 }
-                return control.resume(&params).await.map_err(super::super::sop_control::request_error);
+                return control.resume(&params).await.map_err(super::super::sop_control::resume_error);
             }
             // Bare embeddings retain the capability-first TS gate; production
             // installs the same control owner used by the public HTTP bridge.

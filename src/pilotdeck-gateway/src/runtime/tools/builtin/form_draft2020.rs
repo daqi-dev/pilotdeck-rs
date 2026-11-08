@@ -130,10 +130,20 @@ impl<'a> Eval<'a>{
         if let Some(v)=value.as_string(){let len=char::decode_utf16(v.units().iter().copied()).count() as f64;
             if num(schema,"minLength").is_some_and(|n|len<n)||num(schema,"maxLength").is_some_and(|n|len>n){return None;}
             if let Some(p)=text(schema,"pattern"){if !self.regex(p,v)?{return None;}}
-            if let Some(f)=text(schema,"format"){let f=f.to_utf8().ok()?;let v=v.to_utf8().ok()?;
-                if !crate::runtime::mcp::output_schema::string_format_valid(&f,&v)? {return None;}}
+            if let Some(f)=text(schema,"format"){let f=f.to_utf8().ok()?;
+                if f=="regex" {
+                    // ajv-formats rejects a non-escaped \Z after any preceding unit.
+                    let u=v.units(); if (1..u.len().saturating_sub(1)).any(|i|u[i]==92&&u[i+1]==90&&u[i-1]!=92){return None;}
+                    if super::form_schema::legacy_regex(v).is_err(){return None;}
+                }
+                else if !["int32","int64","float","double","password","binary"].contains(&f.as_str()) {
+                    let v=v.to_utf8().ok()?;if !crate::runtime::mcp::output_schema::string_format_valid(&f,&v)? {return None;}
+                }}
         }
         if let Some(n)=value.as_number(){
+            if let Some(f)=text(schema,"format").and_then(|f|f.to_utf8().ok()) {
+                if crate::runtime::mcp::output_schema::number_format_valid(&f,n)==Some(false) {return None;}
+            }
             if num(schema,"minimum").is_some_and(|x|n<x)||num(schema,"maximum").is_some_and(|x|n>x)||num(schema,"exclusiveMinimum").is_some_and(|x|n<=x)||num(schema,"exclusiveMaximum").is_some_and(|x|n>=x)||num(schema,"multipleOf").is_some_and(|x|x<=0.0||(n/x).fract()!=0.0){return None;}
         }
         if let Some(map)=obj(value){let entries=map.own_entries();let len=entries.len() as f64;

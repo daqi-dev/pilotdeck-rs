@@ -44,8 +44,20 @@ impl NativeDialogRecovery {
             let home = self.home.clone();
             let session = session.clone();
             let cache = self.cache.clone();
+            let resolve_home = home.clone();
+            let resolve_root = root.clone();
+            let directory = blocking(move || {
+                super::super::methods::session_dir::bounded_chat_dir(&resolve_home, &resolve_root)
+                    .map_err(|error| SubmitError::new(&error.code, String::from_utf16_lossy(error.message.units())))
+            }).await?;
+            let transcript = directory.join(format!("{}.jsonl", crate::storage::sanitize_session_id(&session)));
+            let fence = crate::runtime::session::transcript_locks::acquire(&transcript).await
+                .map_err(|error| SubmitError::new(&error.code, String::from_utf16_lossy(error.message.units())))?;
             blocking(move || {
-                clear_journal(&home, &root, &session)?;
+                // A recovered answer keeps this same fence until both durable
+                // appends and journal removal complete, even after disconnect.
+                let _fence = fence;
+                clear_journal_at(&home, &directory, &session)?;
                 cache.lock().unwrap_or_else(|e| e.into_inner()).remove(&(root, session));
                 Ok(())
             }).await
@@ -111,11 +123,15 @@ fn io_failure(error: std::io::Error, operation: &str, path: &Path) -> SubmitErro
             .unwrap_or_else(|| error.to_string());
     failure(message)
 }
+#[cfg(test)]
 fn clear_journal(home: &Path, project: &Path, session: &JsString) -> Result<(), SubmitError> {
     let directory =
         super::super::methods::session_dir::bounded_chat_dir(home, project).map_err(|error| {
             SubmitError::new(&error.code, String::from_utf16_lossy(error.message.units()))
         })?;
+    clear_journal_at(home, &directory, session)
+}
+fn clear_journal_at(home: &Path, directory: &Path, session: &JsString) -> Result<(), SubmitError> {
     let name = format!(
         "{}.jsonl.dialogs.json",
         crate::storage::sanitize_session_id(session)
@@ -153,6 +169,27 @@ fn clear_journal(home: &Path, project: &Path, session: &JsString) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn new_submit_cannot_clear_a_recovery_journal_while_its_writer_is_fenced() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let port = recovery(&requests);
+        let session: JsString = "fenced-recovery".into();
+        let project: JsString = requests.options.project.to_string_lossy().into_owned().into();
+        let directory = crate::native_process::methods::session_dir::bounded_chat_dir(
+            &requests.options.home, &requests.options.project).unwrap();
+        std::fs::create_dir_all(&directory).unwrap();
+        let journal = directory.join("fenced-recovery.jsonl.dialogs.json");
+        std::fs::write(&journal, "pending recovery").unwrap();
+        let fence = crate::runtime::session::transcript_locks::acquire(&directory.join("fenced-recovery.jsonl")).await.unwrap();
+        let mut clear = port.clear_recovered(&session, Some(&project));
+        assert!(tokio::time::timeout(std::time::Duration::from_millis(100), &mut clear).await.is_err());
+        assert_eq!(std::fs::read_to_string(&journal).unwrap(), "pending recovery");
+        drop(fence);
+        tokio::time::timeout(std::time::Duration::from_secs(2), clear).await.unwrap().unwrap();
+        assert!(!journal.exists());
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+    }
     pub(super) fn recovery(requests: &crate::native_process::requests::Requests) -> NativeDialogRecovery {
         let options = crate::runtime::sdk_session::SdkSessionOptions::new(
             requests.options.project.clone(),

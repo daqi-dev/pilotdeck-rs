@@ -19,7 +19,7 @@ fn refname(value: &JsString) -> Option<String> { let value = value.to_utf8().ok(
 const REGEX_BACKTRACK_BUDGET: u64 = 10_000;
 const REGEX_SUBJECT_MAX_UNITS: usize = 1_048_576;
 const REGEX_CALL_COST: usize = 2_048;
-fn legacy_regex(value: &JsString) -> Result<regress::Regex, String> {
+pub(super) fn legacy_regex(value: &JsString) -> Result<regress::Regex, String> {
     if value.len_utf16() > 4096 { return Err("Form pattern exceeds its native unit limit".into()); }
     // Bound parser recursion before invoking the third-party compiler.
     let mut depth = 0usize; let mut escaped = false; let mut in_class = false;
@@ -189,13 +189,25 @@ fn time(s:&str, tz_required:bool)->bool {
     num(i+1)<=23 && num(i+4)<=59
 }
 fn format_ok(name:&JsString,value:&JsString) -> bool {
+    if name.equals_str("email") {
+        let units=value.units();
+        let whitespace=|c:u16|matches!(c,0x0009..=0x000d|0x0020|0x00a0|0x1680|0x2000..=0x200a|0x2028|0x2029|0x202f|0x205f|0x3000|0xfeff);
+        if units.iter().any(|c|whitespace(*c)){return false;}
+        let Some(at)=units.iter().position(|c|*c==64)else{return false;};
+        if at==0||units[at+1..].contains(&64){return false;}
+        let domain=&units[at+1..];return domain.iter().rposition(|c|*c==46).is_some_and(|dot|dot>0&&dot+1<domain.len());
+    }
+    if name.equals_str("uri") {
+        // WHATWG URL consumes a WebIDL USVString; isolated surrogates are
+        // replaced during URL parsing, but the original dialog stays intact.
+        if value.units().iter().any(|c|matches!(*c,0x0009..=0x000d|0x0020|0x00a0|0x1680|0x2000..=0x200a|0x2028|0x2029|0x202f|0x205f|0x3000|0xfeff)){return false;}
+        return url::Url::parse(&String::from_utf16_lossy(value.units())).is_ok();
+    }
     let Ok(v)=value.to_utf8() else {return false;};
     if name.equals_str("date") { date(&v) }
     else if name.equals_str("time") { time(&v,false) }
     else if name.equals_str("date-time") { v.split_once('T').is_some_and(|(a,b)| date(a)&&time(b,true)) }
     else if name.equals_str("uuid") { let b=v.as_bytes(); b.len()==36 && [8,13,18,23].iter().all(|i| b[*i]==b'-') && b.iter().enumerate().all(|(i,c)| [8,13,18,23].contains(&i)||c.is_ascii_hexdigit()) && matches!(b[19],b'8'|b'9'|b'a'|b'b'|b'A'|b'B') }
-    else if name.equals_str("uri") { !v.chars().any(char::is_whitespace) && url::Url::parse(&v).is_ok() }
-    else if name.equals_str("email") { let Some((a,b))=v.split_once('@') else {return false;}; !a.is_empty() && !b.is_empty() && !b.contains('@') && b.contains('.') && !v.chars().any(char::is_whitespace) }
     else {false}
 }
 fn check(value:&JsValue,schema:&JsValue,root:&JsValue,depth:usize,budget:&mut usize)->bool {
@@ -295,6 +307,16 @@ mod tests {
         let mut budget=0;
         assert!(!match_pattern(&pattern,&subject,&mut budget));
         assert!(budget>100_000,"engine must signal exhausted work, not a normal non-match");
+    }
+    #[test]
+    fn fixed_node_format_oracle_preserves_surrogates() {
+        let fixture=pilotdeck_protocol::parse_json(include_str!("../../../../tests/fixtures/user-dialog-cli/formats-oracle.json")).unwrap();
+        let Some(JsValue::Array(rows))=fixture.get("records") else {panic!("records")};assert_eq!(rows.len(),32);
+        for row in rows {let schema=row.get("schema").unwrap();let expected=row.get("result").unwrap();let actual=validate_schema(schema);
+            assert_eq!(actual.is_ok(),expected.get("ok").and_then(JsValue::as_bool).unwrap(),"{:?}",row.get("id"));
+            if let Err(error)=actual {assert_eq!(Some(error.as_str()),expected.get("message").and_then(JsValue::as_string).and_then(|s|s.to_utf8().ok()).as_deref(),"{:?}",row.get("id"));}
+            else {assert_eq!(accepts_form_dialog_answer(schema,row.get("answer").unwrap()),row.get("accepted").and_then(JsValue::as_bool).unwrap(),"{:?}",row.get("id"));}
+        }
     }
     #[test]
     fn fixed_node_draft2020_meta_and_dynamic_scope_oracles() {
