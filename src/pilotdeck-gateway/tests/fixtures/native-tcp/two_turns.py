@@ -26,7 +26,7 @@ class Provider(http.server.BaseHTTPRequestHandler):
    self.wfile.write(("data: "+json.dumps(msg)+"\n\n").encode());self.wfile.flush()
   self.wfile.write(b"data: [DONE]\n\n");self.wfile.flush();self.close_connection=True
 provider=http.server.ThreadingHTTPServer(("127.0.0.1",0),Provider);provider.daemon_threads=True;threading.Thread(target=provider.serve_forever,daemon=True).start()
-(home/"pilotdeck.yaml").write_text("schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:"+str(provider.server_port)+"/v1\n      apiKey: fixture-only\n      models: {mock: {}}\nmemory: {enabled: true, provider: edgeclaw}\n")
+(home/"pilotdeck.yaml").write_text("schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:"+str(provider.server_port)+"/v1\n      apiKey: fixture-only\n      models: {mock: {}}\nmemory: {enabled: false}\n")
 token=home/"token";token.write_text("fixture-token\n")
 def fresh_port():
  s=socket.socket();s.bind(("127.0.0.1",0));port=s.getsockname()[1];s.close();assert port!=18789;return port
@@ -46,7 +46,7 @@ def exchange(sock,frame):
  return json.loads(data)
 def hello(sock,id):
  return exchange(sock,{"kind":"request","messageId":id,"method":"hello","payload":{}})
-class Relay(socketserver.ThreadingTCPServer):allow_reuse_address=True;daemon_threads=True
+class Relay(socketserver.ThreadingTCPServer):allow_reuse_address=True;daemon_threads=False;block_on_close=True
 class Forward(socketserver.BaseRequestHandler):
  def handle(self):
   try:
@@ -75,6 +75,9 @@ side_env=env|{"PILOTDECK_AGENT_LOOP_TCP_HOST":"127.0.0.1","PILOTDECK_AGENT_LOOP_
 (out/"storage").mkdir()
 host_env=env|{"PILOTDECK_AGENT_LOOP_TRANSPORT":"tcp","PILOTDECK_AGENT_LOOP_TCP_HOST":"127.0.0.1","PILOTDECK_AGENT_LOOP_TCP_PORT":str(relay.server_address[1])}
 host=client=sidecar=None;result={}
+def terminate_requested(signum, _frame):
+ raise SystemExit("received signal " + str(signum))
+signal.signal(signal.SIGTERM, terminate_requested)
 try:
  sidecar=subprocess.Popen([str(a.sidecar)],cwd=project,env=side_env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True);children.append(sidecar)
  threading.Thread(target=log_stream,args=(sidecar.stderr,out/"sidecar.stderr"),daemon=True).start()
@@ -116,22 +119,49 @@ try:
  send(1,"initialize",{"protocolVersion":"pilotdeck-connect/1"});assert "result" in until(1)
  marker=legacy/".cwd"
  send(2,"gateway.call",{"method":"new_session","params":{"projectKey":str(project),"channelKey":"cli"}});session=until(2)["result"]["sessionKey"]
+ project_key=str(project)
  def run_turn(id,run_id):
-  params={"sessionKey":session,"runId":run_id,"projectKey":str(project),"channelKey":"cli","workspaceCwd":str(project),"message":"ISOLATED_MARKER_TEST","canPrompt":False}
+  params={"sessionKey":session,"runId":run_id,"projectKey":project_key,"channelKey":"cli","workspaceCwd":str(project),"message":"ISOLATED_MARKER_TEST","canPrompt":False}
   send(id,"run.submit",params);answer=until(id,timeout=35)
   return answer
  first=run_turn("before","before-marker")
  assert first.get("result",{}).get("terminal",{}).get("finishReason")=="completed",first
  send(3,"gateway.call",{"method":"new_session","params":{"projectKey":str(project),"channelKey":"cli"}});second_session=until(3)["result"]["sessionKey"]
  # The slug-named catalog entry permits later project-key registration while
- # having no marker itself, so it cannot mask storage-id legacy fallback.
+ # carrying its own marker so project registration survives the old marker change.
  slug=re.sub(r"[^A-Za-z0-9._-]+", "-", str(project)).strip("-") or "project"
  (home/"projects"/slug).mkdir()
+ (home/"projects"/slug/".cwd").write_text(str(project))
  send("list-before","gateway.call",{"method":"snapshot_list","params":{"projectKey":str(project),"sessionKey":session}});listed=until("list-before");items=listed.get("result",{}).get("items",[]);assert any(x.get("workspaceId")=="000-fixture" for x in items),listed
+ def marker_state():
+  out=[]
+  for path in (marker,home/"projects"/slug/".cwd"):
+   try:text=path.read_text()
+   except OSError as e:text="unreadable:"+str(e.errno)
+   out.append({"path":str(path),"mode":oct(path.stat().st_mode & 0o777),"text":text})
+  return out
+ marker_before=marker_state()
  if a.case!="normal":marker.chmod(0)
+ marker_after=marker_state()
+ send("registered-projects","gateway.call",{"method":"list_projects","params":{}})
+ registered=until("registered-projects")
+ projects=registered.get("result",{}).get("projects",[])
+ matches=[x["projectKey"] for x in projects if isinstance(x.get("projectKey"),str) and pathlib.Path(x["projectKey"]).resolve()==project.resolve()]
+ assert matches,("actual registered projects",registered)
+ project_key=matches[0]
  if a.case=="fresh-marker":session=second_session
  second=run_turn("after","after-marker")
  assert second.get("result",{}).get("terminal",{}).get("finishReason")=="completed",second
+ send("health","gateway.call",{"method":"describe_server","params":{}});health=until("health",timeout=4);assert "result" in health,health
+ # Close the gateway-owned connections and join every relay handler before
+ # inspecting wire or errors. The finally block remains safe after this drain.
+ for child in reversed(children):
+  if child.poll() is None:
+   try:os.killpg(child.pid,signal.SIGTERM);child.wait(timeout=3)
+   except (ProcessLookupError,subprocess.TimeoutExpired):
+    try:os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=3)
+    except ProcessLookupError:pass
+ relay.shutdown();relay.server_close()
  with wire_lock:
   executed=[x["frame"] for x in wire if x["direction"]=="to_sidecar" and x["frame"].get("method")=="execute"]
   events=[x["frame"] for x in wire if x["direction"]=="to_gateway" and x["frame"].get("kind")=="event"]
@@ -146,8 +176,7 @@ try:
   stream=[e for e in events if e.get("requestId")==request_id]
   assert stream and [e.get("sequence") for e in stream]==list(range(len(stream))) and stream[-1].get("final") is True,(request_id,stream)
  workspaces=sorted(x.name for x in (out/"storage/workspaces").iterdir() if x.is_dir());assert "000-fixture" in workspaces,workspaces
- send("health","gateway.call",{"method":"describe_server","params":{}});health=until("health",timeout=4);assert "result" in health,health
- result={"pass":True,"case":a.case,"first":first,"second":second,"firstSession":first.get("result",{}).get("sessionKey"),"secondSessionKey":session,"validMarkerWorkspace":"000-fixture","allWorkspaceDirectories":workspaces,"fallbackWorkspaceDirectories":[x for x in workspaces if x!="000-fixture"],"health":health,"control_sha256":hashlib.sha256(a.control.read_bytes()).hexdigest(),"sidecar_sha256":hashlib.sha256(a.sidecar.read_bytes()).hexdigest()};success=True
+ result={"pass":True,"case":a.case,"markerBefore":marker_before,"markerAfter":marker_after,"registeredProjects":registered,"selectedProjectKey":project_key,"first":first,"second":second,"firstSession":first.get("result",{}).get("sessionKey"),"secondSessionKey":session,"validMarkerWorkspace":"000-fixture","allWorkspaceDirectories":workspaces,"otherWorkspaceDirectories":[x for x in workspaces if x!="000-fixture"],"health":health,"control_sha256":hashlib.sha256(a.control.read_bytes()).hexdigest(),"sidecar_sha256":hashlib.sha256(a.sidecar.read_bytes()).hexdigest()};success=True
 
 except BaseException as e:
  result={"pass":False,"error":repr(e),"traceback":traceback.format_exc(),"control_sha256":hashlib.sha256(a.control.read_bytes()).hexdigest(),"sidecar_sha256":hashlib.sha256(a.sidecar.read_bytes()).hexdigest()}
