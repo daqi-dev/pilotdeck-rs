@@ -465,6 +465,7 @@ fn cron_manager(scratch: &Scratch) -> CronManager {
         now: None,
         uuid: None,
         logger: None,
+        scheduler_idle_poll_ms: None,
     })
     .expect("#1353 test cron manager constructs")
 }
