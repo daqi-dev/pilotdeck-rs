@@ -40,6 +40,13 @@ pub type SubmitLeaseRelease =
 /// attachment lease and turn composition, model selection, status recording,
 /// after-turn, clock and abort budget.
 pub trait SubmitHostServices: Send + Sync {
+    fn bind_project<'a>(
+        &'a self,
+        _input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHostServices>>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+
     /// `options.workspaceId ?? workspaceIdResolver(projectKey)`; errors refuse
     /// the turn before admission (InProcessGateway.ts:954).
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError>;
@@ -244,6 +251,21 @@ impl GatewaySubmitHost {
     }
 }
 impl SubmitHost for GatewaySubmitHost {
+    fn bind_project<'a>(
+        &'a self,
+        input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHost>>, SubmitError>> {
+        Box::pin(async move {
+            Ok(self.services.bind_project(input).await?.map(|services| {
+                Arc::new(Self::new(
+                    services,
+                    self.replacement.clone(),
+                    self.admission.clone(),
+                )) as Arc<dyn SubmitHost>
+            }))
+        })
+    }
+
     fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError> {
         Ok(SubmitWorkspace {
             id: self.services.workspace_id(input)?,

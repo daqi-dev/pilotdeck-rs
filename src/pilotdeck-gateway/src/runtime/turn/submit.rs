@@ -106,8 +106,8 @@ impl SubmitSnapshots for NativeSubmitSnapshots {
         })
     }
 }
-#[derive(Default)]
-pub struct WorkspaceAdmissions(Mutex<HashMap<JsString, (JsString, JsString)>>);
+#[derive(Clone, Default)]
+pub struct WorkspaceAdmissions(Arc<Mutex<HashMap<JsString, (JsString, JsString)>>>);
 impl WorkspaceAdmissions {
     pub fn reserve(&self, workspace: &JsString, run: &RunRef) -> bool {
         let mut owners = self.0.lock().unwrap();
@@ -176,6 +176,15 @@ struct PumpContext<'a> {
 /// (including usage/command short-circuits); empty means admission may proceed.
 /// The production host lives in [`super::submit_host`].
 pub trait SubmitHost: Send + Sync {
+    /// Optional immutable host binding, selected once after input validation.
+    /// Default embeddings preserve the old host and all existing error order.
+    fn bind_project<'a>(
+        &'a self,
+        _input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHost>>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+
     fn workspace(&self, input: &JsValue) -> Result<SubmitWorkspace, SubmitError>;
     /// Normalized runPolicy.failureGuard snapshot, resolved after refresh.
     /// None means no configured policy; enabled=false keeps accounting disabled.
@@ -374,6 +383,31 @@ impl TurnSubmitter {
             emit_all(send, vec![event]);
             return Ok(());
         }
+        if let Some(host) = self.host.bind_project(&mut input).await? {
+            let scoped = Arc::new(Self {
+                owner: self.owner.clone(),
+                coordinator: self.coordinator.clone(),
+                projector: self.projector.clone(),
+                registry: self.registry.clone(),
+                host,
+                workspace_admissions: self.workspace_admissions.clone(),
+            });
+            return scoped
+                .run_bound(input, send, barrier, admitted, reliable_budget)
+                .await;
+        }
+        self.run_bound(input, send, barrier, admitted, reliable_budget)
+            .await
+    }
+
+    async fn run_bound(
+        self: &Arc<Self>,
+        mut input: JsValue,
+        send: &mpsc::UnboundedSender<Message>,
+        barrier: oneshot::Receiver<()>,
+        admitted: impl FnOnce(&RunRef) + Send,
+        reliable_budget: Option<Duration>,
+    ) -> Result<(), SubmitError> {
         let routed = self.host.route_input(&mut input).await?;
         if !routed.is_empty() {
             emit_all(send, routed);

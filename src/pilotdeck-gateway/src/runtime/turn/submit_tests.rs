@@ -412,11 +412,35 @@ impl SubmitCwdService for Cwd {
 /// The oracle's gateway options, as `SubmitHostServices` ports.
 struct Services {
     session: Arc<Session>,
-    refreshed: AtomicBool,
+    refreshed: Arc<AtomicBool>,
     prepare: Gate,
+    scoped: bool,
 }
 impl SubmitHostServices for Services {
+    fn bind_project<'a>(
+        &'a self,
+        _input: &'a mut JsValue,
+    ) -> SubmitFuture<'a, Result<Option<Arc<dyn SubmitHostServices>>, SubmitError>> {
+        Box::pin(async move {
+            if self.session.setup["bindProject"] != true {
+                return Ok(None);
+            }
+            assert!(!self.scoped, "project host must bind only once");
+            self.session.log.host("bind_project");
+            Ok(Some(Arc::new(Self {
+                session: self.session.clone(),
+                refreshed: self.refreshed.clone(),
+                prepare: self.prepare.clone(),
+                scoped: true,
+            }) as Arc<dyn SubmitHostServices>))
+        })
+    }
+
     fn workspace_id(&self, _: &JsValue) -> Result<Option<JsString>, SubmitError> {
+        if self.session.setup["bindProject"] == true {
+            assert!(self.scoped, "workspace must use bound services");
+            self.session.log.host("bound_workspace");
+        }
         Ok(self.session.setup["workspace"].as_str().map(Into::into))
     }
     fn snapshots(&self) -> Option<Arc<dyn SubmitSnapshots>> {
@@ -552,6 +576,13 @@ impl SubmitHostServices for Services {
         })
     }
     fn after_turn(&self, _: &RunRef) -> Result<(), SubmitError> {
+        if self.session.setup["bindProject"] == true {
+            assert!(
+                self.scoped,
+                "async pump completion must retain bound services"
+            );
+            self.session.log.host("bound_after");
+        }
         self.session.log.host("after");
         if self.session.setup["finallyFailure"] == true {
             Err(SubmitError::new("FINALLY", "injected finally failure"))
@@ -839,8 +870,9 @@ async fn replay_case(case: &Value) {
     });
     let services = Arc::new(Services {
         session: session.clone(),
-        refreshed: AtomicBool::new(false),
+        refreshed: Arc::new(AtomicBool::new(false)),
         prepare: Gate::new(),
+        scoped: false,
     });
     let admission = Arc::new(Host {
         session: session.clone(),
@@ -1074,6 +1106,19 @@ async fn replay_case(case: &Value) {
         }
     }
     consumer.await.expect("#748 submit fixture prerequisite");
+    if setup["bindProject"] == true {
+        let calls = log.host.lock().expect("#748 bound host calls");
+        for expected in ["bind_project", "bound_workspace", "bound_after"] {
+            assert_eq!(
+                calls
+                    .iter()
+                    .filter(|call| call.as_str() == expected)
+                    .count(),
+                1,
+                "{name}: {expected} exactly once"
+            );
+        }
+    }
     if let Some(owned) = setup["ownedWorkspaceCwd"].as_str() {
         let expected: Vec<_> = case["ownedCapturePhases"]
             .as_array()
@@ -1618,4 +1663,48 @@ async fn workspace_capture_uses_owned_cwd_instead_of_public_snapshot() {
                 .expect("#748 owned-cwd submit bounded completion");
         }
     }
+}
+
+#[tokio::test]
+async fn submission_binds_project_once_and_retains_view_through_pump_cleanup() {
+    let oracle = parse_json(ORACLE).unwrap();
+    let JsValue::Array(cases) = oracle.get("cases").unwrap() else {
+        panic!("submit cases");
+    };
+    let original = cases
+        .iter()
+        .find(|case| {
+            case.get("name")
+                .and_then(JsValue::as_string)
+                .is_some_and(|name| name.equals_str("durable-accept-and-session-end"))
+        })
+        .unwrap();
+    let mut case = json(original);
+    case["name"] = "immutable-project-services-through-pump".into();
+    case["orderOnly"] = true.into();
+    case["setup"]["bindProject"] = true.into();
+    tokio::time::timeout(Duration::from_secs(20), replay_case(&case))
+        .await
+        .expect("bound submit cleanup");
+}
+
+#[test]
+fn bound_submitter_views_share_workspace_exclusion() {
+    let first = WorkspaceAdmissions::default();
+    let second = first.clone();
+    let a = RunRef {
+        session_key: "A".into(),
+        project_key: Some("project".into()),
+        run_id: "a".into(),
+    };
+    let b = RunRef {
+        session_key: "B".into(),
+        project_key: Some("project".into()),
+        run_id: "b".into(),
+    };
+    assert!(first.reserve(&"workspace".into(), &a));
+    assert!(!second.reserve(&"workspace".into(), &b));
+    first.release(&"workspace".into(), &a);
+    assert!(second.reserve(&"workspace".into(), &b));
+    second.release(&"workspace".into(), &b);
 }
