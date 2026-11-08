@@ -1,8 +1,9 @@
 //! A8 U8 (#1326): the cron runtime's assembly half. `build` turns the
 //! normalized `cron` config section into the one `CronManager` the native
 //! process owns; `NativeCronGatewayBody` is the production
-//! `CronGatewayBody` behind `bind_agent_gateway` (the scheduler that would
-//! drive it is #1305 — no `unimplemented!()` seam, every method is real).
+//! `CronGatewayBody` behind `bind_agent_gateway` (the scheduler that drives
+//! it is runtime/cron/scheduler.rs, #2295 — no `unimplemented!()` seam,
+//! every method is real).
 use std::path::Path;
 use std::sync::Arc;
 
@@ -71,9 +72,10 @@ pub(super) fn build(
         now: None,
         uuid: None,
         logger: None,
+        scheduler_idle_poll_ms: None,
     })
     .map_err(cron_io_error)?;
-    Ok(Some(Arc::new(manager)))
+    Ok(Some(manager))
 }
 
 /// `submitTurn`'s input exactly as CronFire.ts:80-88 builds it — the seven
@@ -103,8 +105,9 @@ fn submit_input(input: &CronTurnSubmit) -> JsValue {
 /// port methods are synchronous, while turn submission and session close are
 /// futures the gateway's current-thread runtime owns. `run_turn` must drain
 /// the whole turn (the port returns only after the turn unwound), so it may
-/// only run on a non-runtime thread — the #1305 scheduler's own thread, or
-/// the fixtures' driver threads — and blocks the captured `Handle`;
+/// only run on a non-runtime thread — the cron scheduler's own thread
+/// (runtime/cron/scheduler.rs), or the fixtures' driver threads — and blocks
+/// the captured `Handle`;
 /// `close_session` mirrors TS's fire-and-forget call sites
 /// (`.catch(() => undefined)`, never awaited) by scheduling the close and
 /// returning; `abort_turn` is synchronous end to end
@@ -143,8 +146,8 @@ impl NativeCronGatewayBody {
 /// and TS's `CronFire` reads any `type === "error"` event as a failed
 /// outcome (CronFire.ts:125-140), so the boundary surfaces the event as
 /// `Err`. Which outcome that becomes — `failed`, `cron_run_timeout`,
-/// `aborted` — is the firing half's (#1305) call; the code is passed
-/// through untouched so it can tell them apart.
+/// `aborted` — is the firing half's (fire.rs, #2295) call; the code is
+/// passed through untouched so it can tell them apart.
 fn failed_turn(event: &JsValue) -> Option<CronError> {
     let object = event.as_object()?;
     // Hot path: a turn's stream is mostly `text_delta` / `agent_status`, and
@@ -191,7 +194,8 @@ impl CronTurnStream for TurnSubmission {
 }
 
 /// Drain one admitted turn to its end. The first `error` event ends the
-/// drain with `Err` (see `failed_turn`); everything else is #1305's.
+/// drain with `Err` (see `failed_turn`); everything else is the `CronFire`
+/// half's (fire.rs, #2295).
 async fn drain_turn<S: CronTurnStream>(stream: &mut S) -> Result<(), CronError> {
     while let Some(event) = stream.next_event().await.map_err(|error| {
         CronError::gateway(
@@ -220,8 +224,9 @@ impl CronGatewayBody for NativeCronGatewayBody {
         let submitter = self.submitter.clone();
         self.runtime.block_on(async move {
             let mut submission = submitter.submit(submit_input(input));
-            // The event stream itself is #1305's `CronFire` half (store
-            // claims, run records, result delivery); this boundary only
+            // The event stream itself is the `CronFire` half's (fire.rs,
+            // #2295: store claims, run records, result delivery); this
+            // boundary only
             // keeps the port contract of unwinding the admitted turn and
             // reporting a turn that never ran or did not finish as `Err`
             // (`drain_turn`).

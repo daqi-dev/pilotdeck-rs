@@ -1,17 +1,16 @@
 //! Port of TS `src/cron/runtime/CronManager.ts` (the multi-project control
-//! provider and lifecycle owner), the manager-facing half of
-//! `src/cron/runtime/CronRuntime.ts` (the six control methods plus
-//! start/stop/session recovery), and the native provider half of
+//! provider and lifecycle owner), `src/cron/runtime/CronRuntime.ts` (the six
+//! control methods plus start/stop/session recovery and the fire/scheduler
+//! halves `bindAgentGateway` constructs), and the native provider half of
 //! `CronProjectStorageProvider.ts` (`.cwd` recording and restart discovery).
-//! Nothing here is wired into request routing yet: frame dispatch is #1326,
-//! and the scheduler/fire halves (interval ticks, event-stream turn
-//! consumption, result delivery) stay with #1305 — every TS
-//! `this.scheduler?.poke()` site is carried as a comment at the exact spot.
+//! Frame dispatch is #1326; the fire/scheduler halves are #2295 — the timer
+//! is the 60s idle poll with an `isDue` filter, and the event-stream turn
+//! consumption folds into the synchronous `CronAgentGateway` boundary.
 use std::{
     cell::{Cell, RefCell},
     fs, io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::Duration,
 };
 
@@ -31,15 +30,17 @@ use crate::{
 use super::{
     CRON_SCHEDULE_COMPUTATION_VERSION, ComputedRunAt, CronCreateSchedule, CronStoreError,
     CronTaskStore, CronZoneResolverCache, DelayUnit, MigrationInput, collator, compute_next_run_at,
-    delay_to_milliseconds, is_valid_cron_timezone, iso_from_epoch_ms, migrate_cron_stores,
-    resolve_cron_timezone, schedule::js_new_date, schedule::once_computed_run_at, strict_equals,
-    truthy,
+    delay_to_milliseconds, fire::CronFire, fire::CronFireDeps, is_valid_cron_timezone,
+    iso_from_epoch_ms, migrate_cron_stores, resolve_cron_timezone, schedule::js_new_date,
+    schedule::once_computed_run_at, scheduler::CronScheduler, scheduler::SchedulerDeps,
+    strict_equals, truthy,
 };
 
 /// `defaultCronConfig` (`src/cron/config/parseCronConfig.ts`): the defaults a
-/// `pilotdeck.yaml` without a `cron:` section gets. Only `enabled` and
-/// `timezone` are consumed by this port; the two scheduler knobs are carried
-/// so the config shape cannot drift before #1305 needs them.
+/// `pilotdeck.yaml` without a `cron:` section gets. `enabled` and `timezone`
+/// gate the runtime; the two scheduler knobs feed the firing half (#2295) —
+/// `max_concurrent_runs` caps in-flight runs per tick (scheduler.rs),
+/// `run_timeout_minutes` bounds a run's turn (fire.rs).
 #[derive(Clone, Debug)]
 pub struct CronManagerConfig {
     pub enabled: bool,
@@ -93,6 +94,11 @@ pub struct CronManagerOptions {
     pub now: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
     pub uuid: Option<Arc<dyn Fn() -> JsString + Send + Sync>>,
     pub logger: Option<Arc<dyn CronLogger>>,
+    /// The #2295 test seam for the scheduler's idle poll (`computeDelayMs`,
+    /// CronScheduler.ts:8): `None` keeps the 60s production constant; the
+    /// golden fixtures pin it low. `delayTask`'s deferral always writes the
+    /// constant, never this seam.
+    pub scheduler_idle_poll_ms: Option<u64>,
 }
 
 /// Every error the six methods and the lifecycle can surface, carrying the
@@ -193,7 +199,7 @@ fn property<'a>(input: &'a JsValue, name: &str) -> Result<&'a JsValue, CronError
 
 /// `${value}` in the TS template-literal error messages: ECMAScript `String()`,
 /// so lone surrogates survive as raw UTF-16 units.
-fn to_display(value: &JsValue) -> Result<JsString, CronError> {
+pub(super) fn to_display(value: &JsValue) -> Result<JsString, CronError> {
     js_value::to_string_units(value)
         .map(JsString::from_utf16)
         .map_err(|_| CronError::range_error(JsString::from("Maximum call stack size exceeded")))
@@ -222,7 +228,7 @@ fn js_lossy(text: &JsString) -> String {
 
 /// `JsValue::String` from an owned Rust string (the protocol's `From` is
 /// `&str` only).
-fn value_string(text: impl Into<JsString>) -> JsValue {
+pub(super) fn value_string(text: impl Into<JsString>) -> JsValue {
     JsValue::String(text.into())
 }
 
@@ -276,7 +282,7 @@ pub struct CronTurnSubmit {
 /// event-stream turn — the port contract is that it returns only after the
 /// turn has unwound, so admission is begin/end fenced around it
 /// synchronously; consuming and delivering the `GatewayEvent` stream inside
-/// that fence is #1305's `CronFire` half.
+/// that fence is the `CronFire` half's job (fire.rs, #2295).
 pub trait CronAgentGateway: Send + Sync {
     /// Rejected when the session cannot be admitted (busy, maintenance,
     /// shutdown) or the turn itself fails.
@@ -298,8 +304,9 @@ pub trait CronAgentGateway: Send + Sync {
     ) -> Result<(), CronError>;
 }
 
-/// The turn-execution seam the live gateway owns (#1305 `CronFire`, #1326
-/// routing). `run_turn` executes one admitted turn; `abort_turn` and
+/// The turn-execution seam the live gateway owns (the `CronFire` half is
+/// fire.rs, #2295; routing #1326). `run_turn` executes one admitted turn;
+/// `abort_turn` and
 /// `close_session` are the gateway's halves behind the same
 /// [`CronAgentGateway`] surface.
 pub trait CronGatewayBody: Send + Sync {
@@ -390,9 +397,9 @@ impl CronAgentGateway for SessionAdmissionCronGateway {
 
 // ------------------------------------------------------------ active runs
 
-/// TS `CronActiveRun` (CronFire.ts:8-14). `CronFire.runTask` registers one
-/// before the first store claim and unregisters it in its finally; until that
-/// half lands (#1305), the registration pair is the seam the fixtures drive
+/// TS `CronActiveRun` (CronFire.ts:8-14). `CronFire.runTask` (fire.rs, #2295)
+/// registers one before the first store claim and unregisters it in its
+/// finally; the registration pair is also the seam the fixtures drive
 /// (matrix cells 8/10/13).
 #[derive(Clone, Debug)]
 pub struct CronActiveRun {
@@ -406,7 +413,7 @@ pub struct CronActiveRun {
 
 /// `normalizeSchedule`'s output (CronRuntime.ts:572-597): the delay arm has
 /// already folded into `once` with an ISO `runAt`.
-enum NormalizedSchedule {
+pub(super) enum NormalizedSchedule {
     Once {
         run_at: JsValue,
     },
@@ -671,9 +678,8 @@ fn match_selector(value: &JsValue) -> RunSelector {
 // ---------------------------------------------------------------- runtime
 
 /// TS `CronRuntime` (CronRuntime.ts:70-563), the manager-facing half: the six
-/// control methods, the session-override bookkeeping, and start/stop
-/// recovery. `CronFire`/`CronScheduler` ownership is #1305; the active-run
-/// registration pair they depend on is exposed as the seam.
+/// control methods, the session-override bookkeeping, start/stop recovery,
+/// and the fire/scheduler halves `bindAgentGateway` constructs (#2295).
 pub struct CronRuntime {
     config: CronManagerConfig,
     project_key: String,
@@ -687,6 +693,17 @@ pub struct CronRuntime {
     session_overrides: Arc<Mutex<SessionConfigOverrides>>,
     gateway: Mutex<Option<Arc<dyn CronAgentGateway>>>,
     active_runs: Mutex<Vec<CronActiveRun>>,
+    /// `this.scheduler` — the half `bindAgentGateway` creates. Held strongly:
+    /// the fire closures hold the runtime only weakly, so this edge is the
+    /// one keeping the scheduler thread's world alive after the manager
+    /// clears its map (an in-flight fire keeps the runtime itself alive).
+    scheduler: Mutex<Option<Arc<CronScheduler>>>,
+    /// The owning manager, for the scheduler's manager-wide
+    /// `activeRunCount` sum (CronRuntime.ts:123's `sharedActiveRunCount`).
+    manager: Weak<CronManager>,
+    /// The #2295 test seam threaded from `CronManagerOptions` — the 60s
+    /// production constant by default.
+    scheduler_idle_poll_ms: u64,
 }
 
 impl CronRuntime {
@@ -700,6 +717,8 @@ impl CronRuntime {
         logger: Arc<dyn CronLogger>,
         zone_cache: Arc<CronZoneResolverCache>,
         session_overrides: Arc<Mutex<SessionConfigOverrides>>,
+        manager: Weak<CronManager>,
+        scheduler_idle_poll_ms: u64,
     ) -> Result<Self, CronError> {
         // Only the process-cwd read can fail, and both inputs are already
         // resolved absolute here, so this is the uv_cwd shape in practice.
@@ -716,6 +735,9 @@ impl CronRuntime {
             session_overrides,
             gateway: Mutex::new(None),
             active_runs: Mutex::new(Vec::new()),
+            scheduler: Mutex::new(None),
+            manager,
+            scheduler_idle_poll_ms,
         })
     }
 
@@ -736,17 +758,117 @@ impl CronRuntime {
             .clone()
     }
 
-    /// `bindAgentGateway` (CronRuntime.ts:120-124): the fire/scheduler halves
-    /// the TS method also constructs are #1305.
-    pub fn bind_agent_gateway(&self, gateway: Arc<dyn CronAgentGateway>) -> Result<(), CronError> {
+    /// `bindAgentGateway` (CronRuntime.ts:120-175): binds the gateway, then
+    /// constructs the fire and scheduler halves over it, in the TS order.
+    pub fn bind_agent_gateway(
+        self: &Arc<Self>,
+        gateway: Arc<dyn CronAgentGateway>,
+    ) -> Result<(), CronError> {
         let mut bound = self.gateway.lock().unwrap_or_else(|e| e.into_inner());
         if bound.is_some() {
             return Err(CronError::error(JsString::from(
                 "CronRuntime.bindAgentGateway already called.",
             )));
         }
+        // The runtime closures run through a weak self — no constructor
+        // edge keeps a dropped runtime's world alive. The fire threads
+        // upgrade once per spawn and hold the strong handle for the run,
+        // which is what TS's GC does for the fire promise chain.
+        let runtime = Arc::downgrade(self);
+        let fire = Arc::new(CronFire::new(CronFireDeps {
+            gateway: gateway.clone(),
+            store: CronTaskStore::new(self.store.paths().clone()),
+            now: self.now.clone(),
+            register_active_run: {
+                let runtime = runtime.clone();
+                Arc::new(move |run| {
+                    if let Some(runtime) = runtime.upgrade() {
+                        runtime.register_active_run(run);
+                    }
+                })
+            },
+            unregister_active_run: {
+                let runtime = runtime.clone();
+                Arc::new(move |run_id| {
+                    runtime
+                        .upgrade()
+                        .and_then(|runtime| runtime.unregister_active_run(run_id))
+                })
+            },
+            get_active_run: {
+                let runtime = runtime.clone();
+                Arc::new(move |run_id| {
+                    runtime
+                        .upgrade()
+                        .and_then(|runtime| runtime.active_run(run_id))
+                })
+            },
+            run_timeout_ms: self.config.run_timeout_minutes * 60_000.0,
+            default_timezone: self.config.timezone.clone(),
+            release_task_session: {
+                let runtime = runtime.clone();
+                Arc::new(move |task| {
+                    if let Some(runtime) = runtime.upgrade() {
+                        runtime.release_task_session(task);
+                    }
+                })
+            },
+            // The app-level delivery handler is not surfaced through
+            // `CronManagerOptions` yet (#2295 ledger).
+            on_result_delivery: None,
+            logger: self.logger.clone(),
+            zone_cache: self.zone_cache.clone(),
+        }));
+        // CronRuntime.ts:164-174: `activeRunCount` is the manager-wide sum
+        // (`sharedActiveRunCount?.()`), the runtime's own registry when the
+        // manager is gone — the `?? this.activeRuns.size` arm.
+        let manager = self.manager.clone();
+        let active_run_count: Arc<dyn Fn() -> usize + Send + Sync> = Arc::new(move || {
+            if let Some(manager) = manager.upgrade() {
+                let state = manager.state.lock().unwrap_or_else(|e| e.into_inner());
+                return state
+                    .runtimes
+                    .iter()
+                    .map(|runtime| runtime.active_run_count())
+                    .sum();
+            }
+            runtime
+                .upgrade()
+                .map(|runtime| runtime.active_run_count())
+                .unwrap_or(0)
+        });
+        let scheduler = Arc::new(CronScheduler::new(SchedulerDeps {
+            config: self.config.clone(),
+            store: CronTaskStore::new(self.store.paths().clone()),
+            fire,
+            uuid: self.uuid.clone(),
+            now: self.now.clone(),
+            active_run_count,
+            logger: self.logger.clone(),
+            zone_cache: self.zone_cache.clone(),
+            idle_poll_ms: self.scheduler_idle_poll_ms,
+            runtime: Arc::downgrade(self),
+        })?);
+        *self.scheduler.lock().unwrap_or_else(|e| e.into_inner()) = Some(scheduler);
         *bound = Some(gateway);
         Ok(())
+    }
+
+    /// `this.scheduler` — the half `bindAgentGateway` created. The scheduler
+    /// tests observe the armed timer through it (`armed_tick_delay_ms`, the
+    /// `zone_resolver_cache` "Public for tests" precedent).
+    pub(super) fn bound_scheduler(&self) -> Option<Arc<CronScheduler>> {
+        self.scheduler
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// `this.scheduler?.poke()` (CronRuntime.ts:277,349,363,379).
+    fn poke_scheduler(&self) {
+        if let Some(scheduler) = self.bound_scheduler() {
+            scheduler.poke();
+        }
     }
 
     /// CronRuntime.ts:182-195. The bind check stands in for TS's `scheduler`
@@ -767,7 +889,9 @@ impl CronRuntime {
         self.migrate_legacy_task_sessions()?;
         self.recover_interrupted_runs()?;
         self.prepare_task_sessions()?;
-        // this.scheduler.start() — #1305.
+        if let Some(scheduler) = self.bound_scheduler() {
+            scheduler.start()?;
+        }
         self.logger.info(
             "cron runtime started",
             &key_meta("projectKey", &JsString::from(self.project_key.clone())),
@@ -775,11 +899,14 @@ impl CronRuntime {
         Ok(())
     }
 
-    /// CronRuntime.ts:197-214: mark every active run, abort each with
+    /// CronRuntime.ts:197-214: stop the scheduler first (`await
+    /// this.scheduler?.stop()`), then mark every active run, abort each with
     /// `system:cron_shutdown` (rejections swallowed here), then release
     /// every task session. A `listTasks` failure propagates, as in TS.
     pub fn stop(&self) -> Result<(), CronError> {
-        // this.scheduler?.stop() — #1305.
+        if let Some(scheduler) = self.bound_scheduler() {
+            scheduler.stop();
+        }
         if let Some(gateway) = self.bound_gateway() {
             let active = {
                 let mut runs = self.active_runs.lock().unwrap_or_else(|e| e.into_inner());
@@ -812,8 +939,8 @@ impl CronRuntime {
     }
 
     /// `registerActiveRun` (CronRuntime.ts:412-414) — the `CronFire`
-    /// dependency that owns a run's liveness; exposed for #1305 and the
-    /// fixtures.
+    /// dependency that owns a run's liveness; exposed for the fire half
+    /// (fire.rs) and the fixtures.
     pub fn register_active_run(&self, run: CronActiveRun) {
         let mut runs = self.active_runs.lock().unwrap_or_else(|e| e.into_inner());
         match runs
@@ -959,7 +1086,7 @@ impl CronRuntime {
             self.release_task_session(&task);
             return Err(error.into());
         }
-        // this.scheduler?.poke() — #1305.
+        self.poke_scheduler();
         let mut out = JsObject::new();
         out.insert("task".into(), task);
         Ok(JsValue::Object(out))
@@ -1129,7 +1256,7 @@ impl CronRuntime {
             Ok(None) => Ok(not_updated("not_found")),
             Ok(Some(_)) if reason.get().is_some() => Ok(not_updated(reason.get().unwrap())),
             Ok(Some(task)) => {
-                // this.scheduler?.poke() — #1305.
+                self.poke_scheduler();
                 let mut out = JsObject::new();
                 out.insert("updated".into(), JsValue::Bool(true));
                 out.insert("task".into(), task);
@@ -1162,7 +1289,7 @@ impl CronRuntime {
         if deleted {
             self.release_task_session_by_id(property(input, "taskId")?);
         }
-        // this.scheduler?.poke() — #1305.
+        self.poke_scheduler();
         let mut out = JsObject::new();
         out.insert("deleted".into(), JsValue::Bool(deleted));
         if let Some(stopped_run_id) = stopped_run_id {
@@ -1201,7 +1328,7 @@ impl CronRuntime {
             };
             self.release_task_session_by_id(&JsValue::String(active.task_id.clone()));
         }
-        // this.scheduler?.poke() — #1305.
+        self.poke_scheduler();
         let mut out = JsObject::new();
         out.insert("stopped".into(), JsValue::Bool(true));
         out.insert("taskId".into(), JsValue::String(active.task_id.clone()));
@@ -1288,6 +1415,16 @@ impl CronRuntime {
         Ok(JsValue::Object(out))
     }
 
+    /// `runTickOnce` (CronRuntime.ts:405-410).
+    pub fn run_tick_once(&self) -> Result<(), CronError> {
+        let Some(scheduler) = self.bound_scheduler() else {
+            return Err(CronError::error(JsString::from(
+                "CronRuntime.runTickOnce called before bindGateway.",
+            )));
+        };
+        scheduler.run_tick_once()
+    }
+
     // ------------------------------------------------------------ private
 
     /// `matchesProject` (CronRuntime.ts:438-440).
@@ -1343,50 +1480,14 @@ impl CronRuntime {
         }
     }
 
-    /// `computeNextRunAt(schedule, now, timezone)` followed by the two throws
-    /// and the `.toISOString()` reads of createTask/updateTask: `Ok(None)` is
-    /// the falsy `undefined`; the pair is the Date's `getTime()` plus ISO
-    /// text. The once arm maps every NaN Date to `undefined` exactly like
-    /// `Number.isNaN(runAt.getTime()) ? undefined : runAt` (CronSchedule.ts:27),
-    /// so an Invalid Date here is unreachable — the delay arm's saturation
-    /// already handled its own.
+    /// `computeNextRunAt(schedule, now, timezone)` over this runtime's zone
+    /// cache — the shared free function below.
     fn computed_next_run_at(
         &self,
         schedule: &NormalizedSchedule,
         now_ms: f64,
     ) -> Result<Option<(f64, String)>, CronError> {
-        match schedule {
-            NormalizedSchedule::Once { run_at } => Ok(match compute_once(run_at)? {
-                ComputedRunAt::Valid(epoch_ms) => Some((epoch_ms, iso_from_epoch_ms(epoch_ms))),
-                ComputedRunAt::Undefined | ComputedRunAt::Invalid => None,
-            }),
-            NormalizedSchedule::Cron {
-                expression,
-                timezone,
-            } => {
-                let JsValue::String(expression) = expression else {
-                    // parseCronExpression's `expression.trim()` on a
-                    // non-string expression (CronSchedule.ts:108).
-                    return Err(CronError::type_error(JsString::from(
-                        "expression.trim is not a function",
-                    )));
-                };
-                let computed = compute_next_run_at(
-                    &CronCreateSchedule::Cron {
-                        expression: expression.clone(),
-                        timezone: Some(JsString::from(timezone.clone())),
-                    },
-                    now_ms,
-                    timezone,
-                    &self.zone_cache,
-                )
-                .map_err(|_| CronError::range_error(JsString::from("Invalid time value")))?;
-                Ok(match computed {
-                    ComputedRunAt::Valid(epoch_ms) => Some((epoch_ms, iso_from_epoch_ms(epoch_ms))),
-                    ComputedRunAt::Undefined | ComputedRunAt::Invalid => None,
-                })
-            }
-        }
+        computed_next_run_at_with(schedule, now_ms, &self.zone_cache)
     }
 
     /// `migrateLegacyTaskSessions` (CronRuntime.ts:442-466).
@@ -1654,6 +1755,23 @@ impl CronRuntime {
     }
 }
 
+impl Drop for CronRuntime {
+    /// Waking the scheduler's timer seat on the way out: the thread waits on
+    /// a condvar between arms and only re-checks liveness when woken, so the
+    /// drop is what lets it notice the world is gone instead of waiting
+    /// forever (TS GC just collects the loop).
+    fn drop(&mut self) {
+        if let Some(scheduler) = self
+            .scheduler
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
+            scheduler.wake();
+        }
+    }
+}
+
 /// The `{type:"delay", amount, unit}` fields (CronRuntime.ts:576-580): the
 /// amount must be a number (`delayToMilliseconds`'s `Number.isFinite` gate
 /// folds anything else into the "positive finite" error); the unit passes
@@ -1776,7 +1894,7 @@ fn template_message(prefix: &str, suffix: &str, value: &JsValue) -> Result<JsStr
 
 /// `current.revision ?? 0` (CronRuntime.ts:331,342): the store's normalized
 /// revision is always a safe non-negative integer.
-fn revision_of(task: &JsValue) -> f64 {
+pub(super) fn revision_of(task: &JsValue) -> f64 {
     task.get("revision")
         .and_then(JsValue::as_number)
         .unwrap_or(0.0)
@@ -1788,7 +1906,7 @@ fn revision_of(task: &JsValue) -> f64 {
 /// its slot and the result stays in the literal order. The port's store drops
 /// undefined values, so the spread rebuilds the literal order instead of
 /// letting missing slots append.
-fn spread_task(current: &JsValue, overrides: &[(&str, JsValue)]) -> JsObject {
+pub(super) fn spread_task(current: &JsValue, overrides: &[(&str, JsValue)]) -> JsObject {
     let mut out = JsObject::new();
     for key in [
         "schemaVersion",
@@ -1850,11 +1968,58 @@ fn compute_once(run_at: &JsValue) -> Result<ComputedRunAt, CronError> {
     }
 }
 
+/// `computeNextRunAt(schedule, now, timezone)` followed by the two throws
+/// and the `.toISOString()` reads of createTask/updateTask — the body of the
+/// method above, shared with the fire's post-run update and the scheduler's
+/// recalculation (#2295): `Ok(None)` is the falsy `undefined`; the pair is
+/// the Date's `getTime()` plus ISO text. The once arm maps every NaN Date to
+/// `undefined` exactly like `Number.isNaN(runAt.getTime()) ? undefined :
+/// runAt` (CronSchedule.ts:27), so an Invalid Date here is unreachable —
+/// the delay arm's saturation already handled its own.
+pub(super) fn computed_next_run_at_with(
+    schedule: &NormalizedSchedule,
+    now_ms: f64,
+    zone_cache: &Arc<CronZoneResolverCache>,
+) -> Result<Option<(f64, String)>, CronError> {
+    match schedule {
+        NormalizedSchedule::Once { run_at } => Ok(match compute_once(run_at)? {
+            ComputedRunAt::Valid(epoch_ms) => Some((epoch_ms, iso_from_epoch_ms(epoch_ms))),
+            ComputedRunAt::Undefined | ComputedRunAt::Invalid => None,
+        }),
+        NormalizedSchedule::Cron {
+            expression,
+            timezone,
+        } => {
+            let JsValue::String(expression) = expression else {
+                // parseCronExpression's `expression.trim()` on a
+                // non-string expression (CronSchedule.ts:108).
+                return Err(CronError::type_error(JsString::from(
+                    "expression.trim is not a function",
+                )));
+            };
+            let computed = compute_next_run_at(
+                &CronCreateSchedule::Cron {
+                    expression: expression.clone(),
+                    timezone: Some(JsString::from(timezone.clone())),
+                },
+                now_ms,
+                timezone,
+                zone_cache,
+            )
+            .map_err(|_| CronError::range_error(JsString::from("Invalid time value")))?;
+            Ok(match computed {
+                ComputedRunAt::Valid(epoch_ms) => Some((epoch_ms, iso_from_epoch_ms(epoch_ms))),
+                ComputedRunAt::Undefined | ComputedRunAt::Invalid => None,
+            })
+        }
+    }
+}
+
 /// The schedule shape `recoverInterruptedRuns` computes over: a stored task
 /// schedule plus the resolved timezone, dispatching like `computeNextRunAt`'s
 /// fall-through (an unknown `type` lands on the cron arm whose
 /// `expression.trim()` throws). The delay fold uses the recovery's `now`.
-fn task_schedule_shape(
+pub(super) fn task_schedule_shape(
     schedule: &JsValue,
     timezone: &str,
     now_ms: f64,
@@ -1890,7 +2055,7 @@ fn task_schedule_shape(
 
 /// A `resolveCronTimezone` argument: `None` for anything that is not a
 /// representable string (never a valid zone, so TS's `Set#has` skips it too).
-fn timezone_str(value: Option<&JsValue>) -> Option<String> {
+pub(super) fn timezone_str(value: Option<&JsValue>) -> Option<String> {
     value
         .and_then(JsValue::as_string)
         // The zone lookup is a UTF-8 `Set#has`; a lone surrogate can never
@@ -1921,6 +2086,11 @@ pub struct CronManager {
     zone_cache: Arc<CronZoneResolverCache>,
     gateway: Mutex<Option<Arc<dyn CronAgentGateway>>>,
     state: Mutex<ManagerState>,
+    /// The weak self the runtimes' `sharedActiveRunCount` closures sum
+    /// through (CronManager.ts:188's `activeRunCount: () =>
+    /// this.activeRunCount()`): the constructor hands it out via
+    /// `Arc::new_cyclic` because the manager only exists behind an `Arc`.
+    self_weak: Weak<CronManager>,
 }
 
 struct ManagerState {
@@ -1931,9 +2101,9 @@ struct ManagerState {
 }
 
 impl CronManager {
-    pub fn new(options: CronManagerOptions) -> Result<Self, CronError> {
+    pub fn new(options: CronManagerOptions) -> Result<Arc<Self>, CronError> {
         let pilot_home = resolve_pilot_home(&options.pilot_home)?;
-        Ok(Self {
+        Ok(Arc::new_cyclic(|self_weak| Self {
             options,
             pilot_home,
             zone_cache: Arc::new(CronZoneResolverCache::new()),
@@ -1942,7 +2112,8 @@ impl CronManager {
                 started: false,
                 runtimes: Vec::new(),
             }),
-        })
+            self_weak: self_weak.clone(),
+        }))
     }
 
     /// `bindAgentGateway` (CronManager.ts:70-75).
@@ -2183,6 +2354,27 @@ impl CronManager {
         )
     }
 
+    /// `runTickOnce` (CronManager.ts:170-178): "Public for tests" — one tick
+    /// for one project (loaded like any control method would load it) or one
+    /// for every loaded runtime.
+    pub fn run_tick_once(&self, project_key: Option<&str>) -> Result<(), CronError> {
+        if let Some(project_key) = project_key {
+            return self
+                .ensure_runtime(&JsValue::String(JsString::from(project_key)))?
+                .run_tick_once();
+        }
+        let runtimes = self
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .runtimes
+            .clone();
+        for runtime in &runtimes {
+            runtime.run_tick_once()?;
+        }
+        Ok(())
+    }
+
     /// The loaded runtime for a resolved project key — the seam the
     /// `runTickOnce`-style entries use (`Public for tests`, CronManager.ts:170).
     pub fn loaded_runtime(&self, project_key: &str) -> Option<Arc<CronRuntime>> {
@@ -2246,6 +2438,10 @@ impl CronManager {
                 .session_overrides
                 .clone()
                 .unwrap_or_else(|| Arc::new(Mutex::new(SessionConfigOverrides::new()))),
+            self.self_weak.clone(),
+            self.options
+                .scheduler_idle_poll_ms
+                .unwrap_or(super::scheduler::DEFAULT_IDLE_POLL_MS),
         )?);
         if let Some(gateway) = self
             .gateway

@@ -28,17 +28,16 @@ fn wire_message(error: &RequestError) -> String {
 /// enough for every control method (create/list/update/delete/stop/run_now)
 /// without the scheduler half.
 fn configured_manager(home: &std::path::Path) -> Arc<CronManager> {
-    Arc::new(
-        CronManager::new(CronManagerOptions {
-            config: CronManagerConfig::default(),
-            pilot_home: home.to_string_lossy().into_owned(),
-            session_overrides: None,
-            now: None,
-            uuid: None,
-            logger: None,
-        })
-        .expect("#1326 fixture cron manager"),
-    )
+    CronManager::new(CronManagerOptions {
+        config: CronManagerConfig::default(),
+        pilot_home: home.to_string_lossy().into_owned(),
+        session_overrides: None,
+        now: None,
+        uuid: None,
+        logger: None,
+        scheduler_idle_poll_ms: None,
+    })
+    .expect("#1326 fixture cron manager")
 }
 
 /// `GatewayRequests::request`'s dispatch slice: `methods::request` routes by
