@@ -66,7 +66,7 @@ cases = [
     # disabling both guards in one run.
     dict(name='recreate-disposed',
          changes=[(live, 'if self.disposed {', 'if false && self.disposed {'),
-                  (factory, 'if self.disposed.load(Ordering::SeqCst) {', 'if false && self.disposed.load(Ordering::SeqCst) {')],
+                  (factory, 'pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {\n        if self.disposed.load(Ordering::SeqCst) {', 'pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {\n        if false && self.disposed.load(Ordering::SeqCst) {')],
          test=prefix+'recreate_disposed', assertion='#745 recreate expected failure'),
     # fix-r2 (#1011): the adapter-level guard at SessionState::reload_source
     # stays load-bearing while the storage close is still queued: the projection
@@ -93,7 +93,7 @@ cases = [
     ('cancelled-create', factory, 'release_all(std::mem::take(&mut self.releases)).await', 'std::mem::forget(self); Ok(())', None, prefix+'cancelled_create_waiter_disposes_late_candidate', '#745 cancelled create conclusion'),
     ('cancelled-replacement', factory, 'release_all(std::mem::take(&mut self.releases)).await', 'std::mem::forget(self); Ok(())', None, prefix+'never_finishing_predecessor_does_not_block_other_keys', '#745 predecessor-never-finishes lease cleanup'),
     ('reload-file-state', root/'src/pilotdeck-gateway/src/host/modules/tool_context.rs', 'read_file_state: Some(self.read_file_state.lock().unwrap().clone()),', 'read_file_state: None,', None, prefix+'actual_file_state_matches_ts', '#745 actual file state conclusion'),
-    ('production-host', root/'src/pilotdeck-gateway/src/runtime/turn/host_factory.rs', "Agent loop transport 'native' has no sidecar host factory.", 'Wrong host transport error.', None, prefix+'production_adapter_dispatches_to_host', '#745 host factory execution conclusion'),
+    ('production-host', root/'src/pilotdeck-gateway/src/runtime/turn/host_factory.rs', 'if matches!(&self.deployment, Deployment::Native) {\n            return Err(HostError::new(\n                HostErrorKind::Protocol,\n                "Agent loop transport \'native\' has no sidecar host factory.",\n            ));\n        }', 'if matches!(&self.deployment, Deployment::Native) {\n            return Err(HostError::new(\n                HostErrorKind::Protocol,\n                "Wrong host transport error.",\n            ));\n        }', None, prefix+'production_adapter_dispatches_to_host', '#745 host factory execution conclusion'),
     ('submit-projection', live, 'if let Some(source) = reload_source {', 'if let Some(source) = reload_source.filter(|_| false) {', None, prefix+'invalid_projection_releases_submit_slot', '#745 invalid projection rejects submission'),
     ('submit-status', live, 'state.status = super::live_session::SessionStatus::Idle;', 'state.status = super::live_session::SessionStatus::Running;', None, prefix+'invalid_projection_releases_submit_slot', '#745 failed submit status reset'),
     ('submit-identity', live, 'state.current_turn_id = None;', 'state.current_turn_id = Some("stale".into());', None, prefix+'invalid_projection_releases_submit_slot', '#745 failed submit identity reset'),

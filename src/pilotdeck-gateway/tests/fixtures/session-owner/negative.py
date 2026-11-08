@@ -29,7 +29,7 @@ def main():
     module = 'runtime::session::owner::tests::'
     mutants = [
         ('reserve-activity-ignores-inactive-handle', handle,
-         'if progress.state != HandleState::Active {', 'if false {',
+         'fn reserve_activity(&self, maintenance: bool) -> Result<HandleActivity, RuntimeError> {\n        let mut progress = self.0.progress.lock().unwrap();\n        if progress.state != HandleState::Active {', 'fn reserve_activity(&self, maintenance: bool) -> Result<HandleActivity, RuntimeError> {\n        let mut progress = self.0.progress.lock().unwrap();\n        if false {',
          'publication_cutoff_revokes_cached_handle_before_async_disposal_starts',
          'publication admitted activity on the old handle'),
         ('idle-ignores-inflight-and-queued-close', owner,

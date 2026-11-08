@@ -163,14 +163,8 @@ mutations = [
     (
         "held-predecessor-exits-early",
         turn,
-        "            initialize_turn(query, argv, &session, &prompt, project).await",
-        "            match tokio::time::timeout(\n"
-        "                std::time::Duration::from_secs(2),\n"
-        "                initialize_turn(query, argv, &session, &prompt, project),\n"
-        "            ).await {\n"
-        "                Ok(result) => result,\n"
-        "                Err(_) => Err(Failure::Error(\"mutant predecessor deadline\".into())),\n"
-        "            }",
+        '            initialize_turn(\n                query,\n                argv,\n                &session,\n                &prompt,\n                project,\n                &mut local_validation,\n            )\n            .await',
+        '            match tokio::time::timeout(\n                std::time::Duration::from_secs(2),\n            initialize_turn(\n                query,\n                argv,\n                &session,\n                &prompt,\n                project,\n                &mut local_validation,\n            ),\n            ).await {\n                Ok(result) => result,\n                Err(_) => Err(Failure::Error("mutant predecessor deadline".into())),\n            }',
         # #1252: this held model predecessor still passes strict close order.
         "signal_cases::run_query_model_hold_sigterm",
         "#1145 run--query-model-hold-sigterm four surfaces, abort count, listeners and connections match TS",

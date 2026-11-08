@@ -24,8 +24,8 @@ MARKDOWN = 'src/pilotdeck-gateway/src/runtime/plugins/loader/markdown.rs'
 # Each replacement is unique and compiles; a compiler error is never a kill.
 CASES = [
     ('disk-loading', LOADER, 'plugins.push(Arc::new(plugin));', 'let _ = plugin;', 'plugin_loader_staging_oracle'),
-    ('discovery-order', LOADER, 'names.sort();', 'names.sort(); names.reverse();', 'plugin_loader_order'),
-    ('follow-symlinks', LOADER, 'fs::metadata(&path)', 'fs::symlink_metadata(&path)', 'plugin_loader_staging_oracle'),
+    ('discovery-order', LOADER, 'fn sorted_entries(directory: &Path) -> std::io::Result<Vec<PathBuf>> {\n    let mut names = fs::read_dir(directory)?\n        .map(|e| e.map(|e| e.file_name()))\n        .collect::<std::io::Result<Vec<_>>>()?;\n    // Node fs.readdir uses uv_fs_scandir (Unix fs.c: uv__fs_scandir_sort),\n    // whose strcmp comparator sorts encoded filenames, not JS strings.\n    names.sort();', 'fn sorted_entries(directory: &Path) -> std::io::Result<Vec<PathBuf>> {\n    let mut names = fs::read_dir(directory)?\n        .map(|e| e.map(|e| e.file_name()))\n        .collect::<std::io::Result<Vec<_>>>()?;\n    // Node fs.readdir uses uv_fs_scandir (Unix fs.c: uv__fs_scandir_sort),\n    // whose strcmp comparator sorts encoded filenames, not JS strings.\n    names.sort(); names.reverse();', 'plugin_loader_order'),
+    ('follow-symlinks', LOADER, 'for path in sorted_entries(directory).unwrap_or_default() {\n            if !fs::metadata(&path).is_ok_and(|s| s.is_dir()) {', 'for path in sorted_entries(directory).unwrap_or_default() {\n            if !fs::symlink_metadata(&path).is_ok_and(|s| s.is_dir()) {', 'plugin_loader_staging_oracle'),
     ('unreadable-directory', LOADER, 'sorted_entries(directory).unwrap_or_default()', 'sorted_entries(directory).expect("negative-control: unreadable directory")', 'plugin_loader_staging_oracle'),
     ('manifest-object-diagnostic', CONFIG, 'Plugin manifest must be an object.', 'negative-control object diagnostic', 'plugin_loader_manifest_oracle'),
     ('manifest-name-diagnostic', CONFIG, 'Plugin manifest must contain a name.', 'negative-control name diagnostic', 'plugin_loader_manifest_oracle'),
@@ -48,7 +48,7 @@ CASES = [
     ('builtin-disable', LOADER, '.get(&p.name)', '.get("negative-control-never-disabled")', 'plugin_loader_builtins'),
     ('builtin-skills', LOADER, 'skill_dirs.push((path.clone(), PluginSource::Builtin));', 'let _ = path;', 'plugin_loader_skills'),
     ('duplicates-retained', LOADER, 'plugins.push(Arc::new(plugin));', 'if !plugins.iter().any(|p| p.name == plugin.name && p.source == plugin.source) { plugins.push(Arc::new(plugin)); }', 'plugin_loader_staging_oracle'),
-    ('source-identity', LOADER, '(paths.project_plugins_dir, PluginSource::Project)', '(paths.project_plugins_dir, PluginSource::Global)', 'plugin_loader_staging_oracle'),
+    ('source-identity', LOADER, '    let discovered = discover_plugin_paths(&[\n        (paths.global_plugins_dir, PluginSource::Global),\n        (paths.project_plugins_dir, PluginSource::Project),\n    ]);', '    let discovered = discover_plugin_paths(&[\n        (paths.global_plugins_dir, PluginSource::Global),\n        (paths.project_plugins_dir, PluginSource::Global),\n    ]);', 'plugin_loader_staging_oracle'),
     ('staged-failures', LOADER, 'staged_failures: failures,', 'staged_failures: Vec::new(),', 'plugin_loader_staging_oracle'),
     ('node-join-absolute', CONFIG, 'PathBuf::from(format!("{}/{}", base.display(), part))', 'base.join(part)', 'plugin_loader_hooks_paths'),
     ('source-path-boundary', CONFIG, '.starts_with(&format!("{}/", root.display()))', '.starts_with(&format!("{}", root.display()))', 'plugin_loader_validation_oracle'),
@@ -58,13 +58,13 @@ CASES = [
 CASES += [
     ('output-styles', LOADER, 'get("outputStyles"), "output-styles"', 'get("notOutputStyles"), "output-styles"', 'plugin_loader_contributions'),
     ('style-only-config', LOADER, '&configured,\n            "output-styles",', '&JsValue::Undefined,\n            "output-styles",', 'plugin_loader_contributions'),
-    ('node-json-diagnostic', LOADER, 'json_syntax::parse_error(&text).unwrap_or(e.message)', 'e.message', 'plugin_loader_invalid'),
+    ('node-json-diagnostic', LOADER, '"Output style manifest is not a regular file.",\n            ));\n        }\n        let text = budget.read(&mut file)?;\n        parse_json(&text).map_err(|e| {\n            PluginRuntimeError::new(json_syntax::parse_error(&text).unwrap_or(e.message))\n        })', '"Output style manifest is not a regular file.",\n            ));\n        }\n        let text = budget.read(&mut file)?;\n        parse_json(&text).map_err(|e| {\n            PluginRuntimeError::new(e.message)\n        })', 'plugin_loader_invalid'),
     ('configured-trailing-slash', CONFIG, 'out.push("");', 'let _ = path;', 'plugin_loader_contributions'),
     ('server-depth', 'src/pilotdeck-gateway/src/runtime/plugins/loader/server_value.rs', 'Ok(raw.clone())', 'Ok(JsValue::Null)', 'plugin_loader_server_values_oracle'),
     # #564 fix 1: the read moved into read_markdown(...)?; swallow its error here.
     ('configured-directory-read-error', MARKDOWN,
-     'let Some(raw) = read_markdown(&root, &canonical, &canonical, checked_identity, false)?\n            else {\n                continue;\n            };',
-     'let Ok(Some(raw)) = read_markdown(&root, &canonical, &canonical, checked_identity, false) else {\n                continue;\n            };',
+     '            let Some(raw) = read_markdown(\n                &root,\n                &canonical,\n                &canonical,\n                checked_identity,\n                false,\n                budget.as_deref_mut(),\n            )?\n            else {\n                continue;\n            };',
+     '            let Ok(Some(raw)) = read_markdown(\n                &root,\n                &canonical,\n                &canonical,\n                checked_identity,\n                false,\n                budget.as_deref_mut(),\n            )\n            else {\n                continue;\n            };',
      'plugin_loader_hooks_paths'),
 ]
 PLUGINS = 'src/pilotdeck-gateway/src/runtime/plugins.rs'
@@ -111,8 +111,8 @@ CASES += [
     ('markdown-ancestor-file-open-skip', MARKDOWN, '&& has_symlink_ancestor(canonical)', '&& true', TOCTOU + 'ancestor_file_after_lstat_propagates_error'),
     ('markdown-ancestor-file-lstat-skip', MARKDOWN, "        Err(e) => return Err(error(e)), // doesn't exist or other error: propagate", '        Err(_) => return Ok(None), // negative control: ENOTDIR silently skipped', TOCTOU + 'ancestor_file_before_lstat_propagates_error'),
     ('markdown-ancestor-file-directory-skip', MARKDOWN,
-     'let Some(raw) = read_markdown(&root, &canonical, &canonical, checked_identity, false)?\n            else {\n                continue;\n            };',
-     'let Ok(Some(raw)) = read_markdown(&root, &canonical, &canonical, checked_identity, false) else {\n                continue;\n            };',
+     '            let Some(raw) = read_markdown(\n                &root,\n                &canonical,\n                &canonical,\n                checked_identity,\n                false,\n                budget.as_deref_mut(),\n            )?\n            else {\n                continue;\n            };',
+     '            let Ok(Some(raw)) = read_markdown(\n                &root,\n                &canonical,\n                &canonical,\n                checked_identity,\n                false,\n                budget.as_deref_mut(),\n            )\n            else {\n                continue;\n            };',
      TOCTOU + 'ancestor_file_rejects_only_its_configured_directory'),
     # Race errors are skipped, not turned into a failed load.
     ('markdown-race-error', MARKDOWN, '        {\n            return Ok(None);\n        }\n        Err(e) => return Err(error(e)),', '        {\n            return Err(error(e));\n        }\n        Err(e) => return Err(error(e)),', TOCTOU + 'ancestor_symlink_raced_after_check_is_skipped'),
@@ -130,8 +130,8 @@ CASES += [
      TOCTOU + 'standalone_static_leaf_symlink_outside_is_refused'),
     # A refused read (None) must fail the whole skill, not load empty content.
     ('standalone-none-error', MARKDOWN,
-     'read_markdown(&root, &canonical, file, file_identity(&metadata), true)?.ok_or_else(refused)',
-     'Ok(read_markdown(&root, &canonical, file, file_identity(&metadata), true)?.unwrap_or_default())',
+     '    read_markdown(\n        &root,\n        &canonical,\n        file,\n        file_identity(&metadata),\n        true,\n        budget,\n    )?\n    .ok_or_else(refused)',
+     '    Ok(read_markdown(\n        &root,\n        &canonical,\n        file,\n        file_identity(&metadata),\n        true,\n        budget,\n    )?\n    .unwrap_or_default())',
      TOCTOU + 'standalone_static_fifo_is_refused_without_blocking'),
     # An Err with the wrong code must fail each special-file contract test.
     *[(f'standalone-{kind}-error-code', MARKDOWN,
@@ -205,12 +205,12 @@ ALL_ENTRY_LIMIT = replace_once(markdown_source, '    let mut output = Vec::new()
 ALL_ENTRY_LIMIT = replace_once(ALL_ENTRY_LIMIT, '    while let Some(path) = pending.pop() {',
     '    while let Some(path) = pending.pop() {\n        if remaining == 0 { return Err(PluginRuntimeError::new("negative-control enumeration budget")); }\n        remaining -= 1;')
 DEPTH_LIMIT = replace_once(markdown_source,
-    'let mut pending: Vec<_> = markdown_entries(base).into_iter().rev().collect();',
-    'let mut pending: Vec<_> = markdown_entries(base).into_iter().rev().map(|p| (p, 1usize)).collect();')
+    'let mut pending: Vec<_> = markdown_entries(base, budget)?.into_iter().rev().collect();',
+    'let mut pending: Vec<_> = markdown_entries(base, budget)?.into_iter().rev().map(|p| (p, 1usize)).collect();')
 DEPTH_LIMIT = replace_once(DEPTH_LIMIT, 'while let Some(path) = pending.pop() {',
     'while let Some((path, depth)) = pending.pop() {')
-DEPTH_LIMIT = replace_once(DEPTH_LIMIT, '            pending.extend(markdown_entries(&path).into_iter().rev());',
-    '            if depth > 64 { return Err(PluginRuntimeError::new("negative-control depth budget")); }\n            pending.extend(markdown_entries(&path).into_iter().rev().map(|p| (p, depth + 1)));')
+DEPTH_LIMIT = replace_once(DEPTH_LIMIT, '            pending.extend(markdown_entries(&path, budget)?.into_iter().rev());',
+    '            if depth > 64 { return Err(PluginRuntimeError::new("negative-control depth budget")); }\n            pending.extend(markdown_entries(&path, budget)?.into_iter().rev().map(|p| (p, depth + 1)));')
 CASES += [
     ('markdown-cycle', MARKDOWN, DEDUP, 'if false && !visited.insert(directory_identity(&metadata, &canonical)) {', 'traversal:plugin_markdown_clique_10'),
     ('markdown-expansion-identity', MARKDOWN, '    Ok(output)\n}', '    if let Some(first) = output.first().map(|c| c.path.clone()) {\n        for command in &mut output { command.path = first.clone(); }\n    }\n    Ok(output)\n}', 'traversal:plugin_markdown_clique_10'),

@@ -70,8 +70,8 @@ mutations = [
     # guard in front of it. Run only after this script itself is committed.
     ('disposed-guard-removed',
      'src/pilotdeck-gateway/src/runtime/session/factory.rs',
-     'if self.disposed.load(Ordering::SeqCst) {',
-     'if false && self.disposed.load(Ordering::SeqCst) {',
+     'pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {\n        if self.disposed.load(Ordering::SeqCst) {',
+     'pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {\n        if false && self.disposed.load(Ordering::SeqCst) {',
      'runtime::session::factory::projection_cache_tests::missing_recreate',
      '#1011 fenced predecessor disposed before replacement load'),
     ('capture-single-attempt',

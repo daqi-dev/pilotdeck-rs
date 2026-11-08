@@ -37,61 +37,21 @@ mutations = [
     # Shared-lease tools keep existing names (SessionMcpRuntimeBundle.ts:62);
     # making them replace the builtin inverts the TS skip-on-conflict.
     ('shared-conflict-replaced', TOOLS,
-     '''            if !tools.has(&name) {
-                tools
-                    .register(tool.clone())
-                    .expect("#1433 shared session MCP tool name is unique");
-            }''',
-     '''            if tools.has(&name) {
-                tools.replace(tool.clone()).expect("#1433 shared replaces");
-            } else {
-                tools
-                    .register(tool.clone())
-                    .expect("#1433 shared session MCP tool name is unique");
-            }''',
+     '            if !tools.has(&name)\n                && let Err(error) = tools.register(tool.clone())\n            {\n                eprintln!("Skipping shared MCP tool registration: {error}");\n            }',
+     '            if tools.has(&name) {\n                tools.replace(tool.clone()).expect("#1433 shared replaces");\n            } else if let Err(error) = tools.register(tool.clone()) {\n                eprintln!("Skipping shared MCP tool registration: {error}");\n            }',
      'native_process::tools::tests::register_keeps_shared_names_and_replaces_per_session_names',
      '#1433 a shared session MCP tool keeps the existing builtin name'),
     # Per-session tools replace same names (SessionMcpRuntimeBundle.ts:140);
     # skipping the conflict leaves the builtin in place.
     ('per-session-replace-lost', TOOLS,
-     '''            if tools.has(&name) {
-                tools
-                    .replace(tool.clone())
-                    .expect("#1433 per-session MCP tool replaces its own name");
-            } else {
-                tools
-                    .register(tool.clone())
-                    .expect("#1433 per-session MCP tool name is unique");
-            }''',
-     '''            if !tools.has(&name) {
-                tools
-                    .register(tool.clone())
-                    .expect("#1433 per-session MCP tool name is unique");
-            }''',
+     '            if let Err(error) = tools.register_or_replace(tool.clone()) {\n                eprintln!("Skipping session MCP tool registration: {error}");\n            }',
+     '            if !tools.has(&name)\n                && let Err(error) = tools.register(tool.clone())\n            {\n                eprintln!("Skipping session MCP tool registration: {error}");\n            }',
      'native_process::tools::tests::register_keeps_shared_names_and_replaces_per_session_names',
      '#1433 a per-session MCP tool replaces the same-name builtin'),
     # Release order: per-session before shared (the reverse of composition).
     ('release-order-swapped', TOOLS,
-     '''        if let Some(registration) = self.per_session
-            && let Err(error) = registration.dispose().await
-        {
-            failures.push(error);
-        }
-        if let Some(lease) = self.shared
-            && let Err(error) = lease.release().await
-        {
-            failures.push(error);
-        }''',
-     '''        if let Some(lease) = self.shared
-            && let Err(error) = lease.release().await
-        {
-            failures.push(error);
-        }
-        if let Some(registration) = self.per_session
-            && let Err(error) = registration.dispose().await
-        {
-            failures.push(error);
-        }''',
+     '    if let Some(registration) = per_session\n        && let Err(error) = registration.dispose().await\n    {\n        failures.push(error);\n    }\n    if let Some(lease) = shared\n        && let Err(error) = lease.release().await\n    {\n        failures.push(error);\n    }',
+     '    if let Some(lease) = shared\n        && let Err(error) = lease.release().await\n    {\n        failures.push(error);\n    }\n    if let Some(registration) = per_session\n        && let Err(error) = registration.dispose().await\n    {\n        failures.push(error);\n    }',
      'native_process::tools::tests::session_mcp_release_stops_per_session_before_shared',
      '#1433 release order: per-session MCP before shared MCP'),
     # `>=` is the TS limit check; `>` lets one runtime past an integer cap.
