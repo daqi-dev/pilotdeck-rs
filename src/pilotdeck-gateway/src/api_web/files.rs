@@ -168,7 +168,7 @@ impl ProjectFileService {
         content: &JsString,
         base64: bool,
     ) -> Result<(), FilesError> {
-        let target = self.resolve_safe_writing(relative)?;
+        let (literal, target) = self.resolve_safe_writing(relative)?;
         let bytes = if base64 {
             node_base64_decode(content.units())
         } else {
@@ -178,11 +178,11 @@ impl ProjectFileService {
         // have run, so a test may replace a component before the write.
         #[cfg(test)]
         test_hook::notify("write");
-        // #1764: Node's own write-path refusals, in TS order.
+        // #1764: Node's own write-path argument validation, in TS order.
         if !crate::mutants::on("api-web-node-write-refusal-off") {
-            node_write_refusal(&target)?;
+            node_write_refusal(&literal)?;
         }
-        self.write_bytes(relative, &target, &bytes)
+        self.write_bytes(relative, &literal, &target, &bytes)
     }
 
     /// One `readTree` entry: the directory-first flag, the collation key and
@@ -330,27 +330,42 @@ impl ProjectFileService {
     }
 
     /// Write the bytes: the #1675 descriptor mkdir + inode-checked overwrite
-    /// when it is armed, the measured path form otherwise.
-    fn write_bytes(&self, relative: &str, target: &Path, bytes: &[u8]) -> Result<(), FilesError> {
+    /// when it is armed, the measured path form otherwise. `literal` is TS's
+    /// argument spelling — every Node diagnostic below names it, never the
+    /// canonical form the armed walk resolves in-root links to (Node opens the
+    /// literal path and reports that one).
+    fn write_bytes(
+        &self,
+        relative: &str,
+        literal: &Path,
+        target: &Path,
+        bytes: &[u8],
+    ) -> Result<(), FilesError> {
         #[cfg(unix)]
         if let Some(beneath) = self.beneath(target) {
-            return self.write_beneath(relative, target, beneath, bytes);
+            return self.write_beneath(relative, literal, beneath, bytes);
         }
         let _ = relative;
-        if let Some(parent) = target.parent() {
+        let _ = target;
+        if let Some(parent) = literal.parent() {
             fs::create_dir_all(parent).map_err(|error| sys_error(&error, "mkdir", parent))?;
         }
-        fs::write(target, bytes).map_err(|error| sys_error(&error, "open", target))
+        fs::write(literal, bytes).map_err(|error| sys_error(&error, "open", literal))
     }
 
     /// `createDirectories` + `overwrite` relative to one pinned root
     /// descriptor: no component is ever followed, and the leaf is only
-    /// truncated after its inode proves a private regular file.
+    /// truncated after its inode proves a private regular file. A directory
+    /// target is Node's own EISDIR refusal from the write's `open` — the leaf
+    /// `openat(O_WRONLY)` below returns it naturally — so the #1675 window
+    /// never re-introduces a follow-stat that could classify a raced component
+    /// (a swapped link to an outside directory answers the boundary refusal,
+    /// not an EISDIR oracle on the outside leaf).
     #[cfg(unix)]
     fn write_beneath(
         &self,
         relative: &str,
-        target: &Path,
+        literal: &Path,
         beneath: &Path,
         bytes: &[u8],
     ) -> Result<(), FilesError> {
@@ -363,10 +378,20 @@ impl ProjectFileService {
                 parent,
                 rustix::fs::Mode::from_raw_mode(0o777),
             )
-            .map_err(|error| self.refusal("mkdir", relative, target, error))?;
+            .map_err(|error| self.refusal("mkdir", relative, literal, error))?;
+        }
+        // `path: "."` (or a spelling that normalizes to it) targets the
+        // pinned root itself: the leaf open below has no relative name to
+        // open, and the pinned root is a directory by construction.
+        if beneath.as_os_str().is_empty() {
+            return Err(sys_error(
+                &io::Error::from_raw_os_error(libc::EISDIR),
+                "open",
+                literal,
+            ));
         }
         crate::project_files::overwrite_at(&root, beneath, bytes)
-            .map_err(|error| self.refusal("open", relative, target, error))
+            .map_err(|error| self.refusal("open", relative, literal, error))
     }
 
     /// Pin the project root itself for the write walk. The root is opened by
@@ -489,11 +514,14 @@ impl ProjectFileService {
     /// deepest existing ancestor when the #1675 walk is armed. TS never
     /// realpaths here, so an **in-root** link keeps its write-through; only a
     /// link that lands outside the root (or a raced replacement) is refused.
-    /// The realpath never loosens the lexical gate above.
-    fn resolve_safe_writing(&self, raw: &str) -> Result<PathBuf, FilesError> {
+    /// The realpath never loosens the lexical gate above. The answer is
+    /// `(literal, resolved)`: the literal target is TS's argument spelling
+    /// (what Node's write-path diagnostics report), the resolved one is where
+    /// the armed walk writes; unarmed the two are the same lexical path.
+    fn resolve_safe_writing(&self, raw: &str) -> Result<(PathBuf, PathBuf), FilesError> {
         let lexical = self.lexical_target(raw)?;
         if !self.armed() {
-            return Ok(lexical);
+            return Ok((lexical.clone(), lexical));
         }
         let resolved = canonical_prefix(&lexical);
         if self.boundary && !self.is_inside_root(&resolved) {
@@ -501,7 +529,7 @@ impl ProjectFileService {
                 raw: raw.to_owned(),
             });
         }
-        Ok(resolved)
+        Ok((lexical, resolved))
     }
 
     /// The shared lexical gate of both resolve forms: `isAbsolute`, a
@@ -806,17 +834,18 @@ fn sys_error(error: &io::Error, syscall: &str, path: &Path) -> FilesError {
     )
 }
 
-/// #1764: the two refusals Node's write path answers before this replica's
-/// walk runs, in TS order. TS writes run `mkdir(dirname(target), {recursive:
-/// true})` first and `writeFile(target)` second, and both calls validate their
-/// own path argument (no NUL bytes) before any syscall; the write's open then
-/// refuses a directory target with EISDIR. Measured against node v22.22.0
-/// (`_tmp/20261026-issue-2354/ts-probe/probe-output.txt`): `path: "."` and a
-/// `path: "sub"` naming an existing directory answer `EISDIR: illegal
-/// operation on a directory, open '<root>'` / `'<root>/sub'`, and a NUL in the
-/// path answers Node's argument-validation text with the received value
-/// rendered by `util.inspect`. The old replica answered a bare InvalidInput
-/// for the root itself and an EINVAL for a NUL.
+/// #1764: the argument validation Node's write path runs before any syscall,
+/// in TS order. TS writes run `mkdir(dirname(target), {recursive: true})`
+/// first and `writeFile(target)` second, and both calls validate their own
+/// path argument (no NUL bytes) before touching the filesystem. A directory
+/// target is NOT pre-checked here: Node's EISDIR is the write's own `open`
+/// refusal, so this replica answers it from the same place — the armed walk's
+/// leaf `openat(O_WRONLY)` (or the plain path open below it) returns EISDIR
+/// naturally, on the literal path. Measured against node v22.22.0
+/// (`_tmp/20261026-issue-2354/ts-probe/probe-output.txt` and
+/// `_tmp/20261026-issue-2354/fix-r1/ts-probe/node-write-refusal.txt`): the
+/// old replica answered a bare InvalidInput for the root itself and an EINVAL
+/// for a NUL.
 fn node_write_refusal(target: &Path) -> Result<(), FilesError> {
     // The mkdir's argument is checked first: a NUL in a directory component
     // of the target is refused with the parent path as received.
@@ -830,63 +859,18 @@ fn node_write_refusal(target: &Path) -> Result<(), FilesError> {
     if text.contains('\0') {
         return Err(null_byte_refusal(&text));
     }
-    // The write's open on a directory target (the root itself for `.`).
-    if fs::metadata(target).is_ok_and(|stats| stats.is_dir()) {
-        return Err(sys_error(
-            &io::Error::from_raw_os_error(libc::EISDIR),
-            "open",
-            target,
-        ));
-    }
     Ok(())
 }
 
 /// Node's ERR_INVALID_ARG_VALUE text for a NUL-bearing path argument: the
-/// received value in `util.inspect`'s string form.
+/// shared `node_io::path_error` renderer — `util.inspect`'s quoting (the
+/// backtick tier for a value with both quote kinds included) and the error
+/// constructor's 128 UTF-16 unit cut, not a local subset copy. The value is a
+/// Rust string here, so it holds no lone surrogates (the JSON boundary
+/// already replaced them with U+FFFD, like Node's own JS-to-fs boundary).
 fn null_byte_refusal(path: &str) -> FilesError {
-    FilesError::Message(format!(
-        "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}",
-        node_inspect(path)
-    ))
-}
-
-/// `util.inspect`'s string quoting of the received path (node v22.22.0,
-/// measured `_tmp/20261026-issue-2354/ts-probe/node-nul-render*.txt`): double
-/// quotes only when the value contains a single quote and no double quote;
-/// the backslash and the active quote escape (`\b` `\t` `\n` `\f` `\r` by
-/// name, `\v` renders `\x0B`); every other character below 0x20 plus the
-/// 0x7F–0xA0 range render `\xHH` with uppercase hex letters; everything else
-/// — NBSP and the replacement character the JS-to-fs boundary already
-/// substituted for lone surrogates included — is verbatim.
-fn node_inspect(value: &str) -> String {
-    let quote = if value.contains('\'') && !value.contains('"') {
-        '"'
-    } else {
-        '\''
-    };
-    let mut out = String::with_capacity(value.len() + 2);
-    out.push(quote);
-    for character in value.chars() {
-        let code = character as u32;
-        match character {
-            '\\' => out.push_str("\\\\"),
-            _ if character == quote => {
-                out.push('\\');
-                out.push(character);
-            }
-            '\u{08}' => out.push_str("\\b"),
-            '\t' => out.push_str("\\t"),
-            '\n' => out.push_str("\\n"),
-            '\u{0c}' => out.push_str("\\f"),
-            '\r' => out.push_str("\\r"),
-            _ if code < 0x20 || (0x7f..0xa0).contains(&code) => {
-                out.push_str(&format!("\\x{code:02X}"));
-            }
-            _ => out.push(character),
-        }
-    }
-    out.push(quote);
-    out
+    let message = crate::node_io::nul_message_for(&JsString::from(path), "path");
+    FilesError::Message(String::from_utf16_lossy(message.units()))
 }
 
 #[cfg(test)]

@@ -996,6 +996,100 @@ async fn write_to_a_nested_nul_path_answers_node_argument_validation() {
     let _ = fs::remove_dir_all(&parent);
 }
 
+/// #2354 fix-r1: a NUL path carrying both quote kinds renders the shared
+/// `node_io` renderer's backtick tier — node v22.22.0 measured,
+/// `_tmp/20261026-issue-2354/fix-r1/ts-probe/node-write-refusal.txt`:
+/// ``Received `/…/a'b"c\x00d.txt` `` — the local single-quote subset this
+/// file used to carry answered `'…\'…'` instead.
+#[test]
+fn write_nul_path_with_both_quotes_renders_the_backtick_tier() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#2354 the fixture root is UTF-8"));
+    let result = service.write_file(
+        "a'b\"c\u{0}d.txt",
+        &pilotdeck_protocol::JsString::from("x"),
+        false,
+    );
+    match result {
+        Err(files::FilesError::Message(message)) => assert_eq!(
+            message,
+            format!(
+                "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received `{root_text}/a'b\"c\\x00d.txt`"
+            ),
+            "#2354 both quote kinds render the backtick tier like node v22.22.0"
+        ),
+        Err(_) => panic!("#2354 a NUL path answers the argument-validation message"),
+        Ok(()) => panic!("#2354 a NUL path must be refused"),
+    }
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #2354 fix-r1: a NUL path past the error constructor's 128 UTF-16 unit cut
+/// truncates the received value at 128 units and appends `...` — node v22.22.0
+/// measured (`fix-r1/ts-probe/node-write-refusal.txt`: the received part of a
+/// 200-unit path is exactly 131 units), where the local subset used to render
+/// the whole path.
+#[test]
+fn write_nul_path_beyond_128_units_truncates_like_node() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#2354 the fixture root is UTF-8"));
+    let result = service.write_file(
+        &format!("{}\u{0}.txt", "N".repeat(126)),
+        &pilotdeck_protocol::JsString::from("x"),
+        false,
+    );
+    // The measured rule, re-derived for the expectation: the inspected value
+    // is quote + root + `/` + the escaped leaf (126 N's, the four-unit `\x00`
+    // escape, `.txt`), cut at 128 UTF-16 units, plus `...`.
+    let mut inspected: Vec<u16> = format!("'{root_text}/{}\\x00.txt'", "N".repeat(126))
+        .encode_utf16()
+        .collect();
+    inspected.truncate(128);
+    match result {
+        Err(files::FilesError::Message(message)) => assert_eq!(
+            message,
+            format!(
+                "The argument 'path' must be a string, Uint8Array, or URL without null bytes. Received {}...",
+                String::from_utf16_lossy(&inspected)
+            ),
+            "#2354 the received value is cut at 128 UTF-16 units like node v22.22.0"
+        ),
+        Err(_) => panic!("#2354 a NUL path answers the argument-validation message"),
+        Ok(()) => panic!("#2354 a NUL path must be refused"),
+    }
+    let _ = fs::remove_dir_all(&parent);
+}
+
+/// #2354 fix-r1: Node's EISDIR names the literal target — node v22.22.0
+/// measured (`fix-r1/ts-probe/node-write-refusal.txt`): a write whose path
+/// goes through an in-root directory symlink answers `open '<root>/link'`,
+/// not the canonical `<root>/sub` the armed walk resolves the link to.
+#[cfg(unix)]
+#[test]
+fn write_to_an_in_root_directory_link_reports_the_literal_path() {
+    let (parent, root) = fixture();
+    let root_text = root.to_string_lossy().into_owned();
+    std::os::unix::fs::symlink(root.join("sub"), root.join("link"))
+        .expect("#2354 create the in-root directory link");
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#2354 the fixture root is UTF-8"));
+    let result = service.write_file("link", &pilotdeck_protocol::JsString::from("x"), false);
+    match result {
+        Err(files::FilesError::Message(message)) => assert_eq!(
+            message,
+            format!("EISDIR: illegal operation on a directory, open '{root_text}/link'"),
+            "#2354 the EISDIR refusal names the literal target like node v22.22.0"
+        ),
+        Err(_) => panic!("#2354 a directory link target answers Node's EISDIR text"),
+        Ok(()) => panic!("#2354 a directory link target must be refused"),
+    }
+    let _ = fs::remove_dir_all(&parent);
+}
+
 // ------------------------------------------------- file service boundary pins
 
 /// #1691: the tree's `modifiedAt` is the transport's shared
@@ -1325,6 +1419,59 @@ fn write_rejects_a_leaf_swapped_inside_the_window() {
         Err(_) => panic!("#1675 a raced leaf answers workspace_boundary, not a write error"),
         Ok(()) => panic!("#1675 a write through a raced leaf must be rejected"),
     }
+}
+
+/// #2354 fix-r1 probe (write race window, middle component → an outside
+/// DIRECTORY leaf): the in-root directory on the path is swapped for a symlink
+/// to the outside directory after the realpath gate and before the write, and
+/// the leaf it names there is a directory. The EISDIR precheck this file used
+/// to carry would have followed the raced link with a path stat, classified
+/// the outside directory leaf, and answered the EISDIR 500 — an oracle on the
+/// outside leaf's shape — instead of the boundary refusal the window owes
+/// (#1675/A8.4-API-WEB-002). The refusal now comes from the write's own
+/// NOFOLLOW walk, so the window answers 403 for every swapped shape.
+#[cfg(unix)]
+#[test]
+fn write_rejects_a_component_swapped_to_an_outside_directory_leaf() {
+    let (parent, root) = fixture();
+    let outside = parent.join("outside");
+    fs::create_dir_all(root.join("swap")).expect("#2354 create the in-root directory");
+    fs::create_dir_all(&outside).expect("#2354 create the directory outside the root");
+    // The leaf beyond the swapped link is a directory: the follow-stat the
+    // precheck used to run would classify it (EISDIR) — the walk must not.
+    fs::create_dir_all(outside.join("raced.txt")).expect("#2354 create the outside directory leaf");
+    let link_root = root.clone();
+    let link_target = outside.clone();
+    let _guard = files::test_hook::set(move |phase| {
+        if phase == "write" {
+            fs::remove_dir(link_root.join("swap")).expect("#2354 remove the in-root directory");
+            std::os::unix::fs::symlink(&link_target, link_root.join("swap"))
+                .expect("#2354 install the racing directory symlink");
+        }
+    });
+    let service =
+        files::ProjectFileService::new(root.to_str().expect("#2354 the fixture root is UTF-8"));
+    let result = service.write_file(
+        "swap/raced.txt",
+        &pilotdeck_protocol::JsString::from("pwned\n"),
+        false,
+    );
+    let leaked = fs::read_to_string(outside.join("raced.txt"));
+    assert!(
+        leaked.is_err(),
+        "#2354 mutated: the race window carried the write out of the workspace: {leaked:?}"
+    );
+    match result {
+        Err(files::FilesError::Workspace { raw }) => assert_eq!(
+            raw, "swap/raced.txt",
+            "#2354 the escaping path is reported verbatim"
+        ),
+        Err(_) => panic!(
+            "#2354 a raced component to an outside directory answers workspace_boundary, not a write error"
+        ),
+        Ok(()) => panic!("#2354 a write through a raced component must be rejected"),
+    }
+    let _ = fs::remove_dir_all(&parent);
 }
 
 /// #1675 probe (missing root, ancestor race): the root does not exist yet, and
