@@ -333,18 +333,37 @@ def check_check(fixtures=None):
     return f'{EXPECTED_ROUNDS} rounds PASS, violations {report.get("violationsCount")}'
 
 
+def _assert_run_positive_tail(source):
+    """#2397 rebase 解评审（DS delta/anchor 两轮）源码锚守卫。
+
+    run_positive 尾部的 HELD/BROKEN 落判 + ``return record`` 曾被 rebase 重放静默
+    丢行——origin/main 有、重放后无，当时全部机检绿（正控注册数 0，该路径不可达，
+    「HELD==EXPECTED_POSITIVES」空真）。本函数用 ``ast.parse`` 断言这两条语句是
+    ``run_positive`` 函数体的**最后两条**：只证「出现在区间里」的裸子串锚抓不住
+    「两行被挪进 rc==1 分支 / 只丢 return / 整块被删」的形态，也会被合法重排假红；
+    ast.unparse 归一化后比对，改格式不红、改语义（挪分支、丢行、改名）必红。
+    """
+    import ast  # 局部导入：仅本守卫需要，模块头保持原导入面
+    try:
+        tree = ast.parse(source)
+    except SyntaxError as error:
+        raise CheckFailure(f'negative_controls.py 解析失败：{error!r}') from None
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == 'run_positive':
+            if (len(node.body) >= 2
+                    and ast.unparse(node.body[-2]) ==
+                    "record.update(verdict='HELD' if ok else 'BROKEN', reason=reason)"
+                    and ast.unparse(node.body[-1]) == 'return record'):
+                return
+            raise CheckFailure('run_positive 尾部 HELD/BROKEN 落判缺失（#2397 rebase 丢行类源码锚点：'
+                                '函数体末两条语句应为 record.update(verdict=...) 与 return record，'
+                                f'实际 {ast.unparse(node.body[-2:])!r}）')
+    raise CheckFailure('negative_controls.py 缺 def run_positive（#2397 源码锚点找不到目标函数）')
+
+
 def check_negctl():
     """负控必须全部 KILLED、正控必须全部 HELD（正控注册数现 0；A8.6-R1 的 PC1–PC2 与 N18 已随 #2294 按反转条款撤回）。"""
-    # #2397 rebase 解评审（DS delta P2）源码锚点守卫：run_positive 尾部的 HELD/BROKEN
-    # 落判 + return record 曾被 rebase 重放静默丢行——origin/main 有、重放后无，当时
-    # 全部机检绿（正控注册数 0，该路径不可达，「HELD==EXPECTED_POSITIVES」空真）。
-    # 两行再丢时这里直接红，不依赖不可达路径的执行覆盖；锚点与 origin/main 逐字节一致。
-    source = CONTROLS.read_text(encoding='utf-8')
-    start, end = source.find('def run_positive'), source.find('def build_parser')
-    anchor = "    record.update(verdict='HELD' if ok else 'BROKEN', reason=reason)\n    return record"
-    if (start < 0 or end <= start
-            or anchor not in source[start:end]):
-        raise CheckFailure('run_positive 尾部 HELD/BROKEN 落判缺失（#2397 rebase 丢行类源码锚点）')
+    _assert_run_positive_tail(CONTROLS.read_text(encoding='utf-8'))
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-negctl-') as tmp:
         result = subprocess.run(
             [sys.executable, '-I', str(CONTROLS), '--output', tmp],
