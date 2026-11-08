@@ -126,7 +126,15 @@ async fn native_session_io_child() {
     .await
     .expect("session request blocked");
     if case == "marker" {
-        assert!(result.is_err(), "{method}: unsafe marker accepted");
+        if method == "manager_sessions" {
+            assert_eq!(
+                result.expect_err("manager unsafe marker accepted").message,
+                JsString::from("Unsafe project marker."),
+                "native manager preserves unsafe marker refusal"
+            );
+        } else {
+            assert!(result.is_err(), "{method}: unsafe marker accepted");
+        }
     } else if method == "rewind_files" {
         assert_eq!(
             result.unwrap().get("canRewind"),

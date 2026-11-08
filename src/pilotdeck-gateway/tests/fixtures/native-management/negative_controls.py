@@ -503,7 +503,13 @@ mutations.append(('owned-workspace-cwd-unavailable', SESSION_FACTORY,
                   'runtime::session::factory::tests::production_workspace_cwd_is_storage_owned_without_extending_public_snapshot',
                   '#745 production owned workspace cwd'))
 
-EXPECTED_TOTAL = 101
+mutations.append(('manager-marker-refusal-dropped', SOURCE,
+                  '        if metadata.files.was_refused() {\n            return Err(ManagerError::plain("Error", "Unsafe project marker."));\n        }',
+                  '        if false && metadata.files.was_refused() {\n            return Err(ManagerError::plain("Error", "Unsafe project marker."));\n        }',
+                  'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_fifo_subprocess',
+                  'native manager preserves unsafe marker refusal'))
+
+EXPECTED_TOTAL = 102
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -606,6 +612,7 @@ EXPECTED_NAMES = (
     'snapshot-project-refusal-message-changed',
     'workspace-cwd-from-public-snapshot',
     'owned-workspace-cwd-unavailable',
+    'manager-marker-refusal-dropped',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
@@ -703,6 +710,7 @@ def main():
                     ROOT / 'src/pilotdeck-gateway/src/native_process/management_tests.rs',
                     ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit_tests.rs',
                     ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.rs',
+                    ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir_bounded_tests.rs',
                     ASSEMBLY_MEMORY,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs']) as originals:
                 original = originals[case.path].decode()
