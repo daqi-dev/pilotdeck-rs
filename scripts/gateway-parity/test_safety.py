@@ -3907,6 +3907,27 @@ class RetirementScoring(unittest.TestCase):
                                  f'#43 {tag} {key}: {report["hostAudit"][face]}')
                 self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#43 {tag} {key}')
 
+    def test_cleanup_audit_face_reads_the_shared_stopped_predicate(self):
+        # #2519: the report face's cleanupAudit and the round face's CLEANUP
+        # require both read `_cleanup_stopped`.  The False side had no pin
+        # before (every synthetic round carried allStopped: True), so a
+        # predicate that always read True would flip an unproven round's
+        # cleanup face to PASS unseen.  The round face's require itself runs
+        # inside a real retirement round (coordinator recalc); this pins the
+        # shared predicate's report-face consumer offline.
+        expected = ['submit_turn', 'run_get']
+        report = self._report_for(self._stream_ok_round_row(), expected)
+        self.assertEqual(report['cleanupAudit']['status'], 'PASS',
+                         '#44 proven round cleanup must PASS the audit face')
+        row = self._stream_ok_round_row()
+        row['audit'] = {'allStopped': False}
+        report = self._report_for(row, expected)
+        self.assertEqual(report['cleanupAudit']['status'], 'FAIL',
+                         '#44 unproven round cleanup must FAIL the audit face')
+        self.assertEqual(report['processAudit'],
+                         [row['audit']] * self.session.RETIREMENT_ROUNDS,
+                         '#44 processAudit must carry the failing round audit')
+
 
     def test_control_attribution_requires_the_injected_object(self):
         # P1 (#1355 fix-r4d): a control PASS must be attributed to the object
