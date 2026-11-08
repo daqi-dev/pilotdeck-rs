@@ -157,9 +157,31 @@ async fn execute(
     let handler = ResumeHandler::new(mode, &receipt);
     let client = HostClient::spawn_resumable(command, Some(&"fixture".into()), limits)
         .await
-        .unwrap();
+        // #1891: receipt-wired spawn failure; the failure point and the
+        // pass/fail condition are unchanged — the label only makes the
+        // negative-control shrink mutant observable by name.
+        .unwrap_or_else(|error| {
+            crate::test_negative_receipt::record_failure("#1891 resume peer spawn failed");
+            panic!("#1891 resume peer spawn failed: {error}")
+        });
     let result = client.execute(request(), handler.clone()).await;
     (result, handler, receipt)
+}
+/// #1891: liveness margins for the reconnect fixtures that answer — the same
+/// (60 s, 120 s) form the #1851 relaxation already uses for the
+/// `rejected_resume_or_replacement_handshake` modes below. Every spawn here
+/// is a real Python peer, and the reconnect path pays Python startup twice;
+/// the old `limits()` 2 s handshake / 2 s execution were wall-clock bets on
+/// host scheduling, not replay semantics under test. `close_timeout` and the
+/// byte/queue fields keep their original values, and the one mode that must
+/// lose to a deadline (`reconnect-handshake-timeout`) keeps its own tight
+/// Limits below.
+fn liveness_limits() -> Limits {
+    Limits {
+        handshake_timeout: Duration::from_secs(60),
+        execution_timeout: Some(Duration::from_secs(120)),
+        ..limits()
+    }
 }
 
 #[tokio::test]
@@ -169,7 +191,7 @@ async fn resume_sends_accepted_cursor_and_replays_from_next_sequence() {
         ("reconnect-terminal", 3, 1.0),
         ("reconnect-observer-panic", 3, 0.0),
     ] {
-        let (result, handler, receipt) = execute(mode, limits()).await;
+        let (result, handler, receipt) = execute(mode, liveness_limits()).await;
         assert!(
             matches!(result, Ok(ExecuteResult::Terminal(_))),
             "{mode}: {result:?}"
@@ -219,7 +241,7 @@ async fn first_replayed_event_must_be_exactly_next_sequence_like_ts() {
     // TS client:889-892 has no replay overlap tolerance: next - 1 and next + 1
     // both fail closed with the same message.
     for (mode, got) in [("reconnect-duplicate", 0), ("reconnect-gap", 2)] {
-        let (result, handler, receipt) = execute(mode, limits()).await;
+        let (result, handler, receipt) = execute(mode, liveness_limits()).await;
         let error = result.unwrap_err();
         assert_eq!(error.kind, HostErrorKind::Protocol, "{mode}: {error}");
         assert!(
@@ -254,9 +276,11 @@ async fn resume_replays_cached_or_pending_module_response_without_repeating_effe
                 // the final event; keep this whole-flow watchdog wide enough that a
                 // loaded host never decides the result (#560). Test-only: production
                 // `Limits::default().execution_timeout` is `None` (no local watchdog, #554).
+                // #1891: the handshake gets the same margin via
+                // `liveness_limits`.
                 close_timeout: Duration::from_millis(500),
                 execution_timeout: Some(Duration::from_secs(60)),
-                ..limits()
+                ..liveness_limits()
             },
         )
         .await;
@@ -295,9 +319,9 @@ async fn resume_is_not_attempted_before_acceptance_or_without_capability_or_prov
         let (mut command, receipt) = peer(mode);
         let handler = ResumeHandler::new(mode, &receipt);
         let client = if mode == "reconnect-no-provider" {
-            HostClient::spawn(&mut command, None, limits()).await
+            HostClient::spawn(&mut command, None, liveness_limits()).await
         } else {
-            HostClient::spawn_resumable(command, None, limits()).await
+            HostClient::spawn_resumable(command, None, liveness_limits()).await
         }
         .unwrap();
         let error = client
@@ -370,7 +394,10 @@ async fn reconnect_retains_callback_cache_in_the_same_byte_budget() {
             Limits {
                 max_frame_bytes: 8000,
                 max_buffered_bytes: 18000,
-                ..limits()
+                // #1891: the budget stays the limit under test; the handshake
+                // and execution clocks are liveness margins (see
+                // `liveness_limits`).
+                ..liveness_limits()
             },
         )
         .await;
@@ -461,7 +488,7 @@ async fn successful_resume_never_observes_failure_or_retries_after_bad_replay() 
             "stdout closed",
         ),
     ] {
-        let (result, handler, receipt) = execute(mode, limits()).await;
+        let (result, handler, receipt) = execute(mode, liveness_limits()).await;
         let error = result.unwrap_err();
         assert_eq!(error.kind, kind, "{mode}: {error}");
         assert!(error.message.contains(expected), "{mode}: {error}");
@@ -489,9 +516,10 @@ async fn coalesced_ack_cumulative_cleanup_slow_pipe_disconnect_and_resume_are_lo
         Limits {
             // Same reconnect + 2 MiB cached-response path as #560 above; keep the
             // whole-flow watchdog wide enough that a loaded host never decides the
-            // result. Test-only.
+            // result. Test-only. #1891: the handshake gets the same margin
+            // via `liveness_limits`.
             execution_timeout: Some(Duration::from_secs(60)),
-            ..limits()
+            ..liveness_limits()
         },
     )
     .await;

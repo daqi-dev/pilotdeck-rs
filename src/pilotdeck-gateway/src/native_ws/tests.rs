@@ -11,6 +11,10 @@ use pilotdeck_protocol::{JsString, JsValue};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::timeout};
+/// #1891: exempt from the first-byte relaxation on purpose — these awaits
+/// face the scripted in-process `GatewayRequests` fixture and the local
+/// listener's own joins, never a real sidecar; the quiet-window capture below
+/// has its own liveness constant.
 const DEADLINE: Duration = Duration::from_secs(5);
 const ORACLE: &str = include_str!("../../tests/fixtures/native-ws-entry/oracle.json");
 #[derive(Default)]
@@ -471,6 +475,14 @@ const BUDGET_ORACLE: &str =
 /// The quiet window the TS recorder used: a response is complete after a
 /// quarter second of silence while the connection stays open.
 const QUIET: Duration = Duration::from_millis(250);
+/// #1891: liveness watchdog for the first response byte, not an assertion
+/// about the response. This capture loop is the verbatim sibling of the one
+/// the #978 fix relaxed in `module_host::tests`, where a host running eight
+/// concurrent lib suites starved the serving task past the old deadline
+/// (8/48 loaded copies reddened "produced no bytes and stayed open"); the
+/// byte oracle and the closed flag are unchanged, and a connection that truly
+/// never answers still reds after this margin.
+const FIRST_BYTE: Duration = Duration::from_secs(60);
 
 fn budget_oracle() -> Value {
     crate::test_baseline::oracle(BUDGET_ORACLE);
@@ -501,9 +513,13 @@ async fn budget_capture(socket: &mut TcpStream) -> (String, bool) {
     let mut buffer = vec![0u8; 8192];
     let start = std::time::Instant::now();
     let mut closed = false;
-    while start.elapsed() < DEADLINE {
+    while start.elapsed() < FIRST_BYTE {
         let wait = if out.is_empty() {
-            DEADLINE - start.elapsed()
+            // Saturating: the loop condition above re-reads `elapsed`, so on a
+            // loaded host it can cross the cap between the two reads and the
+            // plain subtraction would panic on the very stall this watcher
+            // must tolerate (#978 boundary review).
+            FIRST_BYTE.saturating_sub(start.elapsed())
         } else {
             QUIET
         };

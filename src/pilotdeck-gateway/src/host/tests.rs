@@ -181,17 +181,27 @@ impl Drop for ActiveCall {
 
 fn limits() -> Limits {
     Limits {
-        handshake_timeout: Duration::from_secs(2),
-        execution_timeout: Some(Duration::from_secs(2)),
+        // #1891: liveness margins, not limits under test — every spawn here is
+        // a real Python fixture, and the old 2 s handshake / 2 s execution were
+        // wall-clock bets on host scheduling (the same source #978 measured
+        // reddening on a host running eight concurrent lib suites; this file's
+        // own #230 notes already recorded loaded-CI 2 s failures). The
+        // deadline-pinning tests below override these fields explicitly, so
+        // only the protocol-flow consumers see the margin, and no assertion or
+        // error kind changes: a fixture that truly hangs still reds.
+        handshake_timeout: Duration::from_secs(60),
+        execution_timeout: Some(Duration::from_secs(60)),
         close_timeout: Duration::from_secs(1),
         ..Limits::default()
     }
 }
 // Protocol assertions should not race Python startup/IO on a loaded CI worker.
+// #1891: same-source sibling of `limits()` above, so its handshake/execution
+// clocks carry the same margin; `close_timeout` stays at its #542-era 5 s.
 fn protocol_limits() -> Limits {
     Limits {
-        handshake_timeout: Duration::from_secs(5),
-        execution_timeout: Some(Duration::from_secs(10)),
+        handshake_timeout: Duration::from_secs(60),
+        execution_timeout: Some(Duration::from_secs(60)),
         close_timeout: Duration::from_secs(5),
         ..limits()
     }
@@ -333,7 +343,13 @@ async fn handshake_execute_ack_and_terminal() {
         "cleanup-hang",
     ] {
         let started = Instant::now();
-        let result = run(mode).await.unwrap_or_else(|e| panic!("{mode}: {e}"));
+        let result = run(mode).await.unwrap_or_else(|error| {
+            // #1891: receipt-wired run failure; the failure point and the
+            // pass/fail condition are unchanged — the label only makes the
+            // negative-control shrink mutant observable by name.
+            crate::test_negative_receipt::record_failure("#1891 host fixture run failed");
+            panic!("#1891 host fixture run failed: {mode}: {error}")
+        });
         assert_eq!(
             matches!(result, ExecuteResult::Rejected(_)),
             mode == "rejected"
@@ -1169,11 +1185,12 @@ async fn unbounded_execution_and_maximum_terminal_drain_do_not_panic() {
             .await
             .unwrap();
         // The watchdog must stay strictly looser than the limits this test
-        // grants: variant 2 still allows a legal 2 s execution, and a peer
-        // using that time would otherwise be cut off by the outer bound with
-        // an ambiguous timeout instead of the limit under test (#308).
+        // grants: variant 2 still allows a legal 60 s execution (#1891),
+        // and a peer using that time would otherwise be cut off by the outer
+        // bound with an ambiguous timeout instead of the limit under test
+        // (#308).
         let result = timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(70),
             client.execute(request(), Handler::new("positive")),
         )
         .await
