@@ -111,6 +111,7 @@ pub(crate) struct ModuleInvocation<'a> {
     pub operation: &'a str,
     pub input: &'a JsValue,
     pub authority_context: Option<&'a JsValue>,
+    pub on_dispatch: Option<&'a std::sync::atomic::AtomicBool>,
 }
 
 /// One outbound module HTTP exchange.
@@ -495,7 +496,9 @@ impl<T: ModuleHttpTransport + ?Sized + 'static> ExternalSkillsPort<T> {
         // Bound native knowledge work across sessions. The permit is held until
         // the actual async HTTP and decoding future is dropped or completes.
         static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
-        let _permit = SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4))).clone().acquire_owned().await
+        let wait = SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4))).clone().acquire_owned();
+        let _permit = tokio::time::timeout(crate::runtime::network::node_timer_duration(self.binding.timeout_ms), wait)
+            .await.map_err(|_| SkillError::transport_failure("MODULE_TIMEOUT", format!("Module HTTP request exceeded {}ms.", number_string(self.binding.timeout_ms))))?
             .map_err(|_| SkillError::transport_failure("MODULE_TRANSPORT_UNAVAILABLE", "Module request capacity is unavailable."))?;
         if !self.binding.methods.iter().any(|method| method == call.operation) {
             return Err(SkillError::protocol_failure("Module operation is not declared."));
@@ -515,6 +518,7 @@ impl<T: ModuleHttpTransport + ?Sized + 'static> ExternalSkillsPort<T> {
         ]));
         let body = stringify_json(&request).ok().flatten().ok_or_else(||
             SkillError::protocol_failure("Module call request is not serializable."))?;
+        if let Some(dispatched) = call.on_dispatch { dispatched.store(true, Ordering::SeqCst); }
         let response = self.request_json(&self.binding.call_path, "POST", Some(body.into_bytes()), true, authorization).await?;
         validate_response(&response, &message_id, call.request_id)?;
         let object = response.as_object().expect("validated module response");

@@ -107,6 +107,9 @@ pub(crate) type AsyncTurnLookup = Arc<
         + Send
         + Sync,
 >;
+/// Query data only; this port never retains the owning factory graph.
+pub(crate) type ActiveTurnQuery =
+    Arc<dyn Fn(&JsString) -> Option<(Option<JsString>, JsString)> + Send + Sync>;
 struct CompletionSteer {
     owner: Weak<Inner>,
     session: JsString,
@@ -340,6 +343,11 @@ impl SessionOwner {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn weak_factory(&self) -> Weak<dyn super::SessionFactory> {
+        Arc::downgrade(&self.0.options.factory)
+    }
+
     /// A weak publication lookup: callbacks never retain owner -> factory cycles.
     pub(crate) fn weak_handle_lookup(&self) -> SessionHandleLookup {
         let owner = Arc::downgrade(&self.0);
@@ -354,6 +362,17 @@ impl SessionOwner {
                 .get(key)
                 .filter(|record| record.handle.state() == super::HandleState::Active)
                 .map(|record| record.handle.clone())
+        })
+    }
+
+    /// Registry callbacks live inside the session factory's SDK configuration.
+    /// Capture only Weak here so registry -> owner -> factory cannot cycle.
+    pub(crate) fn weak_active_turn_query(&self) -> ActiveTurnQuery {
+        let owner = Arc::downgrade(&self.0);
+        Arc::new(move |key| {
+            let owner = Self(owner.upgrade()?);
+            let run = owner.active_turn_run_id(key)?;
+            Some((owner.project_key(key), run))
         })
     }
 

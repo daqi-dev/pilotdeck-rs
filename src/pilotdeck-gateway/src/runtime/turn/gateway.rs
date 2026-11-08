@@ -501,6 +501,17 @@ impl TurnGateway {
             stopped,
         })
     }
+    /// Observe ownership only: this never retains the submitter or its runtime.
+    #[cfg(test)]
+    pub(crate) fn weak_submitter(&self) -> std::sync::Weak<TurnSubmitter> {
+        Arc::downgrade(&self.gateway.0.submitter)
+    }
+    #[cfg(test)]
+    pub(crate) fn weak_session_factory(
+        &self,
+    ) -> std::sync::Weak<dyn crate::runtime::session::SessionFactory> {
+        self.gateway.0.submitter.owner.weak_factory()
+    }
     /// Signal shutdown synchronously, including from an embedding's Drop guard.
     pub fn request_shutdown(&self, budget: Duration) {
         self.stop.send_if_modified(|value| {

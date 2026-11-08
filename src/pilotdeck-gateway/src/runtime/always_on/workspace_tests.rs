@@ -216,3 +216,18 @@ async fn git_cleanup_barrier_preserves_a_replacement_at_the_original_path(){
     let waiting=tokio::time::timeout(Duration::from_secs(10),entered.notified()).await;let replacement=if waiting.is_ok(){std::fs::create_dir(&original).and_then(|_|std::fs::write(original.join("foreign"),"FOREIGN"))}else{Err(io::Error::other("repair barrier was not reached"))};release.notify_one();let removed=tokio::time::timeout(Duration::from_secs(15),removal).await;let closed=provider.close().await;let drained=fixture.registry.dispose().await;
     assert!(waiting.is_ok());replacement.unwrap();removed.unwrap().unwrap().unwrap();assert!(closed.is_ok());assert!(drained.is_ok());assert_eq!(std::fs::read(original.join("foreign")).unwrap(),b"FOREIGN");assert_ne!(fixture.git(project,&["show-ref","--verify","--quiet","refs/heads/always-on/rename-window"]).await.exit_code,Some(0));
 }
+
+#[tokio::test]
+async fn dispose_cleans_registered_workspace_when_its_branch_was_already_removed() {
+    let fixture=Fixture::new(); let project=Path::new(&fixture.paths.project_key);
+    fixture.initialize_git(project).await;
+    let provider=fixture.provider(Arc::new(NativeOwnedShellCommandRunner));
+    let handle=provider.prepare("git-worktree","already-unreferenced".into(),"fixture".into(),None).await.unwrap();
+    let cwd=native_path(&handle.cwd).unwrap();
+    let removed=fixture.git(project,&["update-ref","-d","refs/heads/always-on/already-unreferenced"]).await;
+    assert_eq!(removed.exit_code,Some(0));
+    let disposed=provider.dispose(handle,false).await;
+    let listing=fixture.git(project,&["worktree","list","--porcelain"]).await;
+    provider.close().await.unwrap();fixture.registry.dispose().await.unwrap();
+    disposed.unwrap();assert!(!cwd.exists());assert!(!listing.stdout.contains("already-unreferenced"));
+}

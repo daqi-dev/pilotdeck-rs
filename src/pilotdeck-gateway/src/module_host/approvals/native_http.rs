@@ -21,7 +21,7 @@ pub(crate) struct JsonRequest {
     pub body: Option<String>,
     pub parse_error_body: bool,
     pub redirect_error: bool,
-    pub timeout: Duration,
+    pub timeout: Option<Duration>,
 }
 pub(crate) struct JsonResponse {
     pub status: u16,
@@ -69,6 +69,13 @@ impl HyperJsonTransport {
     }
 }
 
+async fn before_deadline<F: Future>(deadline: Option<tokio::time::Instant>, future: F) -> Result<F::Output, ()> {
+    match deadline {
+        Some(deadline) => tokio::time::timeout_at(deadline, future).await.map_err(|_| ()),
+        None => Ok(future.await),
+    }
+}
+
 fn failed() -> JsonFailure {
     JsonFailure::Transport("fetch failed".into())
 }
@@ -104,8 +111,8 @@ impl JsonTransport for HyperJsonTransport {
             }
             let body = Bytes::from(input.body.unwrap_or_default());
             let method = Method::from_bytes(input.method.as_bytes()).map_err(|_| failed())?;
-            let deadline = tokio::time::Instant::now() + input.timeout;
-            let response = tokio::time::timeout_at(deadline, async {
+            let deadline = input.timeout.map(|timeout| tokio::time::Instant::now() + timeout);
+            let response = before_deadline(deadline, async {
                 if input.redirect_error {
                     let mut request = Request::builder()
                         .method(method.clone())
@@ -152,7 +159,7 @@ impl JsonTransport for HyperJsonTransport {
                     json_error: None,
                 });
             }
-            let raw = tokio::time::timeout_at(
+            let raw = before_deadline(
                 deadline,
                 crate::fetch_redirect::read_body(response.into_body(), self.limit, None),
             )

@@ -5193,3 +5193,8 @@ r125固定4722244全目标check/strict/四bin通过，native544/AO116/SOP13/SDK2
 ### 2026-11-09 07:49 · 项目代理覆盖 SOP 外发
 
 已修独立审P1：SOP执行/发现复用被固定generation的hook_proxy，admission按原snapshot构建transport，全局approver认证沿启动项目snapshot，native外部skills管理也按请求项目proxy；新增实际CONNECT→auth/me、无env代理、.invalid目标的回归待mbp2编译。全局approver身份先于project授权的旧顺序不变。源码安装首代实际284秒通过且32技能逐项可读，二代编译中。SDK与AO修复增量已派非作者独立审，SOP cancel按真TS确认code原本agent_invalid_state、只修请求已发后的消息差异。CLI尚未收口，仍仅本机提交、Rust只mbp2。
+
+
+### 2026-11-09 07:58 · 关闭真实引用环与补齐失败收尾
+
+r126 ad7a416 全目标check/strict/四bin、native545、default_mode原SHA单测均过。已导入两个真实装配引用环Weak修复（automation回调、async hook owner），同真实boot/shutdown观测submitter+factory四轮drop，待r127；补CompactionAbort多等待方enable以及workspace缺分支仍收目录/空capture失败回收。SDK真实Edit权限执行链与event_sink多drainer补回归。SOP真实TS已核取消错误文本及无默认30秒定时器，相关片与8MiB/四槽有界排队差异登记已导入待编。使用说明入docs/changes/arch/002_cli-native-machine.md，32技能和多项目更新。源码安装两代功能断言全过，但原监视器22项PID变化令原总FAIL保留；独立两次清理普查无483条旧身份存活，不能补猜检测瞬间新birth。SDK重复delete与在飞close错误仍在修，CLI未完。仅本机提交、Rust只mbp2。

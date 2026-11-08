@@ -1278,3 +1278,16 @@ async fn native_budget_admission_captures_once_settles_before_projection_and_cle
     admission.observe_event(&input,&js(&json!({"type":"turn_completed","runId":"other","result":{"budget":{"turnSpentUsd":5.0}}}))).await.unwrap();
     assert_eq!(budget.writes.lock().unwrap().len(),1,"unbudgeted terminal does not settle ledger");
 }
+
+#[tokio::test(flavor="multi_thread",worker_threads=2)]
+async fn compaction_abort_reaches_all_waiters_and_late_subscribers() {
+    for _ in 0..128 {
+        let signal=CompactionAbort::default();
+        let one=signal.clone();let two=signal.clone();
+        let a=tokio::spawn(async move{one.aborted().await});
+        let b=tokio::spawn(async move{two.aborted().await});
+        signal.abort("bounded-fixture".into());
+        let results=tokio::time::timeout(std::time::Duration::from_secs(2),async { (a.await.unwrap(),b.await.unwrap(),signal.aborted().await) }).await.unwrap();
+        assert_eq!(results,("bounded-fixture".into(),"bounded-fixture".into(),"bounded-fixture".into()));
+    }
+}

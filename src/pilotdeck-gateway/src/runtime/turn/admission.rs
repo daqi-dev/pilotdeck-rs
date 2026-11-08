@@ -67,6 +67,8 @@ impl CompactionAbort {
     pub async fn aborted(&self) -> JsString {
         loop {
             let notified = self.state.notified.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             if let Some(reason) = self.reason() {
                 return reason;
             }

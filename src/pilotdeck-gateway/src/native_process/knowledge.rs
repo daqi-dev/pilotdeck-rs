@@ -100,6 +100,7 @@ impl ExecutableTool for KnowledgeTool {
                 operation: "query",
                 input: &input,
                 authority_context: context.knowledge_authority.as_ref(),
+                on_dispatch: None,
             };
             let result = tokio::select! { biased; _=context.cancelled()=>return Err(ToolError::aborted()), result=client.call_module(operation)=>result.map_err(|e| ToolError::new(String::from_utf16_lossy(e.code.units()),e.message))? };
             let mut item = JsObject::new();

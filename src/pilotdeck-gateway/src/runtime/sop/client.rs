@@ -52,7 +52,7 @@ pub(crate) struct SopClient {
     endpoint: String,
     manifest_path: String,
     expected: Option<JsValue>,
-    timeout: Duration,
+    timeout: Option<Duration>,
     http: Arc<dyn JsonTransport>,
     manifest: tokio::sync::Mutex<Option<JsValue>>,
 }
@@ -68,9 +68,7 @@ impl SopClient {
             endpoint: endpoint.trim_end_matches('/').into(),
             manifest_path: manifest_path.unwrap_or_else(|| "/healthz".into()),
             expected,
-            timeout: timeout_ms
-                .map(crate::runtime::network::node_timer_duration)
-                .unwrap_or(Duration::from_secs(30)),
+            timeout: timeout_ms.map(crate::runtime::network::node_timer_duration),
             http,
             manifest: tokio::sync::Mutex::new(None),
         }

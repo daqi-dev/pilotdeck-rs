@@ -309,7 +309,7 @@ fn get(url: url::Url, timeout: Duration) -> JsonRequest {
         body: None,
         parse_error_body: true,
         redirect_error: false,
-        timeout,
+        timeout: Some(timeout),
     }
 }
 #[tokio::test]
@@ -360,4 +360,37 @@ async fn body_deadline_keeps_post_header_failure_distinct_from_connect_failure()
     server.abort();
     let _ = server.await;
     assert!(matches!(answer, Err(JsonFailure::Body(_))));
+}
+
+#[tokio::test(start_paused = true)]
+async fn absent_deadline_waits_past_thirty_seconds_for_actual_http_response() {
+    use crate::module_host::approvals::native_http::HyperJsonTransport;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener=tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address=listener.local_addr().unwrap();
+    let (started_tx,started_rx)=tokio::sync::oneshot::channel();
+    let (release_tx,release_rx)=tokio::sync::oneshot::channel();
+    let server=tokio::spawn(async move {
+        let (mut stream,_)=listener.accept().await.unwrap();let mut buf=[0;4096];stream.read(&mut buf).await.unwrap();started_tx.send(()).unwrap();
+        release_rx.await.unwrap();stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}").await.unwrap();
+    });
+    let mut request=get(url::Url::parse(&format!("http://{address}/fixture")).unwrap(),Duration::from_secs(2));request.timeout=None;
+    let client=tokio::spawn(async move {HyperJsonTransport::default().request(request).await});
+    started_rx.await.unwrap();tokio::time::advance(Duration::from_secs(31)).await;tokio::task::yield_now().await;
+    assert!(!client.is_finished(),"absent timeout must not invent a 30s deadline");
+    release_tx.send(()).unwrap();let response=client.await.unwrap().unwrap();assert_eq!(response.body,JsValue::Object(JsObject::new()));server.await.unwrap();
+}
+#[test]
+fn sop_client_uses_optional_configured_timeout() {
+    use crate::module_host::approvals::native_http::HyperJsonTransport;
+    let fixture=pilotdeck_protocol::parse_json(include_str!("../../../tests/fixtures/sop-timeout/oracle.json")).unwrap();
+    let JsValue::Array(rows)=field(&fixture,"results") else { panic!("TS cases") };
+    assert_eq!(rows.len(),4);
+    let JsValue::Array(default_calls)=field(&rows[0],"calls") else { panic!("default calls") };
+    let JsValue::Array(explicit_calls)=field(&rows[2],"calls") else { panic!("explicit calls") };
+    assert_eq!(field(&default_calls[0],"signal"),&JsValue::Bool(false));
+    assert_eq!(field(&explicit_calls[0],"signal"),&JsValue::Bool(true));
+    let transport=std::sync::Arc::new(HyperJsonTransport::default());
+    assert!(SopClient::new("http://127.0.0.1:1".into(),None,None,None,transport.clone()).timeout.is_none());
+    assert_eq!(SopClient::new("http://127.0.0.1:1".into(),None,None,Some(123.0),transport).timeout,Some(Duration::from_millis(123)));
 }

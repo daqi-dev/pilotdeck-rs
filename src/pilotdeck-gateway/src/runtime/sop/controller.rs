@@ -356,7 +356,8 @@ impl RunState {
                 Ok(projection) => if matches!(field(&projection,"optionalCapabilities"),JsValue::Array(v) if !v.is_empty()) { set(&mut step,"optionalKnowledge",projection); },
                 Err(e) => {
                     let code = e.module_error.as_ref().and_then(|v| v.code.as_ref()).cloned().unwrap_or_else(|| "SOP_AUTHORITY_UNAVAILABLE".into());
-                    if self.signal.is_cancelled() || code.equals_str("SOP_REVISION_CONFLICT") { return Err(e); }
+                    if self.signal.is_cancelled() { return Err(HostError::new(crate::host::HostErrorKind::Session, e.message)); }
+                    if code.equals_str("SOP_REVISION_CONFLICT") { return Err(e); }
                     set(&mut step,"optionalKnowledgeUnavailable",JsValue::String(code));
                 }
             }

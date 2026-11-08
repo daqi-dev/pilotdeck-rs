@@ -160,9 +160,20 @@ fn capture_with(paths:&AlwaysOnPaths,strategy:&str,cwd:&Path,expected:&File,befo
     if leaf.components().count()!=1{return Err(io::ErrorKind::PermissionDenied.into());}
     let parent=storage::directory(&storage::root_for(&paths.state_file),&base,false)?;
     let name=std::ffi::OsString::from(format!(".cleanup-{}",uuid::Uuid::new_v4()));
-    mkdirat(&parent,&name,Mode::from_raw_mode(0o700))?;let container=directory(&parent,&name)?;
-    before_move()?;
-    if let Err(error)=rustix::fs::renameat_with(&parent,leaf,&container,"workspace",rustix::fs::RenameFlags::NOREPLACE){let _=rustix::fs::unlinkat(&parent,&name,AtFlags::REMOVEDIR);return Err(error.into());}
+    mkdirat(&parent,&name,Mode::from_raw_mode(0o700))?;
+    let before_capture = (|| -> io::Result<File> {
+        let container=directory(&parent,&name)?;
+        before_move()?;
+        rustix::fs::renameat_with(&parent,leaf,&container,"workspace",rustix::fs::RenameFlags::NOREPLACE)?;
+        Ok(container)
+    })();
+    let container=match before_capture {
+        Ok(container)=>container,
+        Err(error)=>return match rustix::fs::unlinkat(&parent,&name,AtFlags::REMOVEDIR) {
+            Ok(())=>Err(error),
+            Err(cleanup)=>Err(io::Error::other(format!("{error}; empty cleanup container could not be removed: {cleanup}; preserved at {}",base.join(&name).display()))),
+        },
+    };
     let captured=directory(&container,std::ffi::OsStr::new("workspace")).map_err(|error|io::Error::other(format!("{error}; captured workspace preserved at {}",base.join(&name).display())))?;
     if let Err(error)=same_directory(expected,&captured){
         // Restore without overwriting any object which appeared at the old
@@ -282,6 +293,16 @@ mod tests {
         let(root,paths)=fixture();let(target,selected)=new_target(&paths,"snapshot-copy","run").unwrap();std::fs::write(target.join("owned"),"OWNED").unwrap();let moved=target.with_extension("kept");let path=target.clone();let kept=moved.clone();
         let result=capture_with(&paths,"snapshot-copy",&target,&selected,move||{std::fs::rename(&path,&kept)?;std::fs::create_dir(&path)?;std::fs::write(path.join("foreign"),"FOREIGN")?;Ok(())});
         assert!(result.is_err());assert_eq!(std::fs::read(target.join("foreign")).unwrap(),b"FOREIGN");assert_eq!(std::fs::read(moved.join("owned")).unwrap(),b"OWNED");std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn capture_failure_before_move_removes_only_its_empty_container(){
+        let(root,paths)=fixture();let(target,selected)=new_target(&paths,"snapshot-copy","before-move").unwrap();
+        std::fs::write(target.join("owned"),"KEEP").unwrap();
+        let result=capture_with(&paths,"snapshot-copy",&target,&selected,||Err(io::Error::other("BEFORE_MOVE_FAILURE")));
+        assert!(result.err().unwrap().to_string().contains("BEFORE_MOVE_FAILURE"));
+        assert_eq!(std::fs::read(target.join("owned")).unwrap(),b"KEEP");
+        assert!(std::fs::read_dir(target.parent().unwrap()).unwrap().all(|entry|!entry.unwrap().file_name().to_string_lossy().starts_with(".cleanup-")));
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn cleanup_uses_captured_object_when_a_new_original_path_appears(){

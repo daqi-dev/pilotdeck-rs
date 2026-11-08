@@ -106,7 +106,7 @@ impl ApprovalAuthenticator for FixedApprovalAuthenticator {
                     body: None,
                     parse_error_body: false,
                     redirect_error: true,
-                    timeout: Duration::from_secs(5),
+                    timeout: Some(Duration::from_secs(5)),
                 })
                 .await
                 .map_err(|error| match error {
@@ -461,7 +461,7 @@ pub(crate) async fn authenticate_admission(
                 body: None,
                 parse_error_body: false,
                 redirect_error: true,
-                timeout: Duration::from_secs(5),
+                timeout: Some(Duration::from_secs(5)),
             })
             .await
             .ok()?;

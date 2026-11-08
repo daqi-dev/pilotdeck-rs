@@ -795,3 +795,30 @@ async fn a_refused_or_failed_turn_is_not_drained_into_success() {
         "Error: closed"
     );
 }
+
+/// Repeated real assembly/shutdown must release the actual submitter graph,
+/// including unconfigured automation and cron's native binding callbacks.
+#[tokio::test]
+async fn shutdown_releases_the_real_assembly_submission_graph() {
+    for configured in [false, true, false, true] {
+        let harness = boot(configured).await;
+        let submission = harness.host.weak_submitter();
+        let factory = harness.host.weak_session_factory();
+        assert!(factory.upgrade().is_some());
+        assert!(submission.upgrade().is_some());
+        harness.host.shutdown(harness.options.drain_budget).await.unwrap();
+        // Both handles intentionally retain GatewayServices until dropped.
+        // Keep Scratch alive until the host's final references have gone.
+        let Harness { host, connection, text, options, _scratch } = harness;
+        drop(connection);
+        drop(host);
+        drop(text);
+        drop(options);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while submission.upgrade().is_some() || factory.upgrade().is_some() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        }).await.expect("actual native assembly retained its submitter/factory after shutdown/drop");
+        drop(_scratch);
+    }
+}

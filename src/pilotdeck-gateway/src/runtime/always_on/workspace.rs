@@ -279,9 +279,20 @@ impl NativeWorkspace {
                 let root=owner.0.project.clone();let repository=owner.io(move||workspace_copy::pin_project(&root)).await?;
                 let branch=handle.metadata.get("branchName").and_then(JsValue::as_string).map(|v|v.to_utf8().map_err(|_|WorkspaceError::new("invalid_workspace","Workspace branch is not representable."))).transpose()?;
                 let run=cwd.file_name().and_then(|name|name.to_str()).unwrap_or("");
-                let owned_branch=if let Some(branch)=branch.filter(|b|b==&format!("always-on/{run}")) {let branch_ref=format!("refs/heads/{branch}");let current=owner.command(&repository,&owner.0.project,&["git","rev-parse","--verify",&branch_ref],None).await?;expect_ok(&current,"git rev-parse owned workspace branch")?;Some((branch_ref,crate::metadata::js_trim(&current.stdout).to_owned()))}else{None};
+                // Branch and directory cleanup are independent. In particular,
+                // a previous partial cleanup may already have removed the ref.
+                let owned_branch: Result<Option<(String,String)>,WorkspaceError> = async {
+                    let Some(branch)=branch.filter(|b|b==&format!("always-on/{run}")) else {return Ok(None)};
+                    let branch_ref=format!("refs/heads/{branch}");
+                    let exists=owner.command(&repository,&owner.0.project,&["git","show-ref","--verify","--quiet",&branch_ref],None).await?;
+                    if exists.exit_code==Some(1) { return Ok(None); }
+                    expect_ok(&exists,"git show-ref owned workspace branch")?;
+                    let current=owner.command(&repository,&owner.0.project,&["git","rev-parse","--verify",&branch_ref],None).await?;
+                    expect_ok(&current,"git rev-parse owned workspace branch")?;
+                    Ok(Some((branch_ref,crate::metadata::js_trim(&current.stdout).to_owned())))
+                }.await;
                 let directory=owner.remove_git_selected(&repository,&owner.0.project,cwd,directory).await;
-                let branch=if let Some((branch_ref,expected))=owned_branch {match owner.command(&repository,&owner.0.project,&["git","update-ref","-d",&branch_ref,&expected],None).await {Ok(result)=>expect_ok(&result,"git update-ref dispose workspace branch"),Err(error)=>Err(error)}}else{Ok(())};
+                let branch=match owned_branch { Ok(Some((branch_ref,expected)))=>match owner.command(&repository,&owner.0.project,&["git","update-ref","-d",&branch_ref,&expected],None).await {Ok(result)=>expect_ok(&result,"git update-ref dispose workspace branch"),Err(error)=>Err(error)},Ok(None)=>Ok(()),Err(error)=>Err(error)};
                 cleanup_results(directory,branch)
             }else{
                 let paths=owner.0.paths.clone();let captured=owner.io(move||workspace_copy::capture_selected(&paths,"snapshot-copy",&cwd,&directory)).await?;

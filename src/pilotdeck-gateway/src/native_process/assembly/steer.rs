@@ -28,16 +28,16 @@ pub(super) fn build_async_hook_registry(
         })
         .map(|_| {
             let reg_project = build_project.clone();
-            let reg_owner = owner.clone();
+            let reg_owner = owner.weak_active_turn_query();
             let reg_coordinator = coordinator.clone();
             let registry = AsyncHookRegistry::new(
                 Arc::new(TokioHookClock),
                 move |session_key| {
                     // Turn is live only when the admission slot holds a run ID.
-                    let run_id = reg_owner.active_turn_run_id(session_key)?;
+                    let (project_key, run_id) = reg_owner(session_key)?;
                     // Shared lookup: fetch the InteractionSteer resource
                     // and guard the run ID against the admission slot.
-                    let root = match reg_owner.project_key(session_key) {
+                    let root = match project_key {
                         Some(key) => Some(std::path::PathBuf::from(key.to_utf8().ok()?)),
                         None => None,
                     };

@@ -1759,7 +1759,9 @@ async fn start_assembly(
             let cron_runtime = tokio::runtime::Handle::current();
             let cron_channels = build_channels.clone();
             let busy_owner = cron_owner.clone();
-            let stopping_automation = build_automation.clone();
+            // The bundle owns this callback; a strong lifetime capture would form
+            // lifetime -> bundle -> attachment -> callback -> lifetime.
+            let stopping_automation = Arc::downgrade(&build_automation);
             automation_bundle.attach(automation::ProjectAutomationAttachment {
                 agent_gateway: automation::ProjectAutomationAgentGateway {
                     always_on: automation_body,
@@ -1809,7 +1811,7 @@ async fn start_assembly(
                     busy_owner.has_active_user_turn(&project.into())
                 })),
                 update_subsystems: Arc::new(move |update| {
-                    if stopping_automation.is_stopping() {
+                    if stopping_automation.upgrade().is_none_or(|owner| owner.is_stopping()) {
                         published_automation.clear();
                     } else {
                         published_automation.publish(update, standalone.clone());

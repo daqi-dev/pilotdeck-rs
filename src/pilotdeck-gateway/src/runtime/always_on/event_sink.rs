@@ -137,6 +137,25 @@ mod tests {
         }).await.expect("the final write must release every waiter, including stop");
     }
     #[tokio::test]
+    async fn all_registered_drainers_wake_after_the_last_event_ticket() {
+        use std::future::Future;
+        let root=std::env::temp_dir().join(format!("pdrs-event-drainers-{}",uuid::Uuid::new_v4()));
+        let metadata=crate::metadata::Metadata{home:root.clone(),cwd:Default::default(),files:crate::metadata::NativeFiles};
+        let paths=super::super::paths::resolve_always_on_paths(&root,"/fixture/project",&metadata).unwrap();
+        let sink=PhaseEventSink::new("/fixture/project".into(),DiscoveryReportStore::new(paths),None,Arc::new(|_|{}));
+        let ticket=sink.ticket();
+        let first=sink.drain();let second=sink.drain();tokio::pin!(first,second);
+        std::future::poll_fn(|cx| {
+            assert!(first.as_mut().poll(cx).is_pending());
+            assert!(second.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        }).await;
+        drop(ticket);
+        tokio::time::timeout(std::time::Duration::from_secs(2),async {tokio::join!(first,second);}).await.expect("all registered event drains wake");
+        if root.exists(){std::fs::remove_dir_all(root).unwrap();}
+    }
+
+    #[tokio::test]
     async fn observer_and_synthetic_events_are_persisted_and_drained() {
         let root = std::env::temp_dir().join(format!("pdrs-always-on-events-{}", uuid::Uuid::new_v4()));
         let metadata = crate::metadata::Metadata { home: root.clone(), cwd: Default::default(), files: crate::metadata::NativeFiles };
