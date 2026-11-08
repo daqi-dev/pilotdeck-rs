@@ -279,11 +279,15 @@ panic 用例
   写端的来源。绑定 `a_live_group_behind_a_zombie_leader_is_not_terminal` 的
   `#1409 a zombie leader with a live group has not released its descriptors`。
   **#2142 起 `Z`/`X` 判据收口为单一函数 `terminal_state`**（枚举首查与收尾重查
-  都调它，此前两处各写一遍、可对同一 pid 给出相反结论），本变异体锚点随迁到
-  该函数本体——把组死检查换成永真第二合取（`(pid.is_empty() || true)`，语义仍是
-  「state 单方面决定」）即在**两个入口**同时 fail-open；替换文本刻意保留 `pid`
-  引用，否则 runner 继承的 `RUSTFLAGS=-D warnings` 宿主会把变异体编译成未用变量
-  失败、整行 INVALID（fix-r1 boundary #3）。
+  都调它，此前两处各写一遍、可对同一 pid 给出相反结论；production 侧
+  `src/test_process.rs` 另有一份同名副本，跨越 crate 边界，fix-r1 起），本变异体
+  锚点随迁到本文件该函数本体——把组死检查换成永真第二合取
+  （`(pid.is_empty() || true)`，语义仍是「state 单方面决定」）即在**两个入口**
+  同时 fail-open；替换文本刻意保留 `pid` 引用，否则 runner 继承的
+  `RUSTFLAGS=-D warnings` 宿主会把变异体编译成未用变量失败、整行 INVALID
+  （fix-r1 boundary #3）。production 副本另有一条同形变异体钉住（见
+  `terminal-state-production-hardcoded-false`），两份判据的函数体各自是
+  锚点：任一份漂移即 STALE。
 - `thread-group-dead-ignores-live-tasks`（#1409 第 1 条，同上）：判定函数
   `thread_group_is_dead` 对活任务视而不见——只要列出一个任务就判组已死，运行中
   的进程一旦 fd 目录被藏起来就变成可跳过。同一单元测试判杀。
@@ -298,6 +302,20 @@ panic 用例
   收割的组钉住**两个入口**的 `Terminal` 判定——单断言元组，变异载荷同时携带两
   个半边的错值，只有两入口真正共用判据时这个判杀才成立）的
   `#2142 a dead thread group must be terminal`。
+- `terminal-state-production-hardcoded-false`（#2142 fix-r2 新增，Linux，绑定 lib
+  单元测试）：production 扫描（`src/test_process.rs`，#2138）自己的
+  `terminal_state` 副本此前没有任何钉子——上面两条变异体只变异 publication 副本，
+  production 判据被写死永不出终态（fail-closed 方向：每具尸体都报警）时全仓测试
+  照旧全绿，而 #2138 的子进程审计对尸体假报警，无测试发现（sibling r2 #2 /
+  boundary r2 #2 / simplify r2 #1，五家评审独立撞上）。本条与
+  `terminal-state-hardcoded-false` 同锚点不同文件（`production` 路径，`--lib`）：
+  变异后 fail-closed 的是 production 的两个入口；绑定
+  `test_process::a_blind_source_is_skipped_only_when_it_cannot_be_a_child`
+  （fix-r2 起该用例镜像了 publication 的「已杀未收割、全 `Z` 线程组」元组断言，
+  单断言同时钉住枚举首查与 settle 重查的 `Terminal`）的
+  `#2142 a dead thread group must be terminal`。绑定用例在共享 lib 测试进程里跑，
+  但不持 subreaper 租约、不停毒态（探针是已杀全 `Z` 组，任何扫描都应读作
+  terminal），`--exact` 只跑它一个。
 - `blind-source-self-unrelated`（#1409 第 1 条，P1 复审补，Linux，绑定
   单元测试）：来源分类短路成「一律 Unrelated」——本进程自己也变成可跳过，
   任何宿主一旦藏起某进程的描述符，扫描都会当成「那里没有」照常出干净结论。
@@ -325,10 +343,16 @@ panic 用例
   `a_probe_that_dies_before_the_pid_line_takes_its_group_with_it`（探针父进程
   不打印直接退出、子进程关掉 stdout 让 EOF 真到达、把自己停进毒状态并把 pid
   发到收据文件）的 `#2154 the poison group must not outlive the guard's kill`。
-  **判杀依赖的实际路径时长**（fix-r1，concurrency #1 / boundary #2 收口）：收据
-  等待 10s + 变 Z 等待 10s + 判杀窗口 5s = 25s，三段各有自己的 deadline 断言、
-  超时先红，全在存活线程 30s 上界内——慢宿主上前置循环的时钟吃不掉判杀余量；
-  窗口超时分支另有一行**独立于锚点**的显式 killpg，把变异体的盘上残留当场收掉。
+  **判杀依赖的实际路径时长**（fix-r1，concurrency #1 / boundary #2 收口；fix-r2
+  boundary #1 / MM boundary #1 补上最后一段无界等待）：pid 行读取 4s（worker 线程
+  + `recv_timeout`，`read_line` 自己没有 deadline）+ 收据等待 10s + 变 Z 等待 10s +
+  判杀窗口 5s = 29s，各段有自己的 deadline 断言、超时先红，全在存活线程 30s 上界内
+  ——慢宿主上前置循环的时钟吃不掉判杀余量；且 4/10/10/5/30 在测试文件里是命名
+  常量（`PROBE_HOLD_SECS` 经 `format!` 注入两段探针脚本），余量算式是**编译期
+  assert**（`PROBE_LINE_BUDGET + PROBE_RECEIPT_BUDGET + PROBE_ZOMBIE_BUDGET +
+  PROBE_KILL_WINDOW < PROBE_HOLD_SECS`），不再靠注释手算；
+  窗口超时分支另有一行**独立于锚点**的显式 killpg + ≤1s 有界确认（先确认组在死、
+  再 panic 放窗口，concurrency #2），把变异体的盘上残留当场收掉。
   真实组长探针的子进程同样首句 `os.close(1)`（fix-r1 boundary #1，实测
   `_tmp/20261026-issue-2142/fix-r1/oom-eof-probe-ab.log`：不关 fd 1 时 OOM 杀掉
   父进程后 read_line 要等存活线程满 30s 才见 EOF——「空 pid 行 panic」的 OOM
@@ -377,6 +401,6 @@ Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**
 变异体在任意 unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
 
-<!-- mutants: total=37 lib=2 test=35 unix=16 linux-survives=9 linux-invalid=12 -->
-<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false blind-source-self-unrelated probe-group-kill-removed -->
+<!-- mutants: total=38 lib=3 test=35 unix=16 linux-survives=9 linux-invalid=13 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false terminal-state-production-hardcoded-false blind-source-self-unrelated probe-group-kill-removed -->
 
