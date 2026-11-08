@@ -7,7 +7,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from check import LEDGER, ROOT, check, enumeration, read, unique
+from check import LEDGER, ROOT, check, enumeration, key_literal_error, local_ref, read, unique
 BASELINE = ROOT / "resources/PilotDeck"
 
 
@@ -87,6 +87,57 @@ class CoverageControls(unittest.TestCase):
     def test_duplicate_json_members_are_rejected(self):
         with self.assertRaises(ValueError):
             json.loads('{"entries": [], "entries": []}', object_pairs_hook=unique)
+
+    def test_channel_key_literal_drift_fails(self):
+        # The #2283 pre-fix misalignment, reconstructed on the real loader.rs:
+        # deleting one UNMIGRATED_CHANNEL_KEYS line leaves every entry below
+        # it one line stale — each pointing at the adjacent next key, wecom
+        # at the closing `];` (issue #2286). Range-only validation passed on
+        # exactly this form; the key-literal assertion must go red per entry.
+        loader = "src/pilotdeck-gateway/src/channel/loader.rs"
+        drifted = {"gateway.channel:whatsapp": 52, "gateway.channel:signal": 53,
+                   "gateway.channel:mattermost": 54, "gateway.channel:matrix": 55,
+                   "gateway.channel:slack": 56, "gateway.channel:discord": 57,
+                   "gateway.channel:telegram": 58, "gateway.channel:qq": 59,
+                   "gateway.channel:wecom": 60}
+        data = copy.deepcopy(self.data)
+        for row in data["entries"]:
+            if row["id"] in drifted:
+                row["evidence"] = f"{loader}:{drifted[row['id']]}"
+        errors = check(data, self.baseline)
+        for key in drifted:
+            self.assertIn("evidence key literal mismatch: " + key, errors)
+        for unaffected in ("gateway.channel:bluebubbles", "gateway.channel:dingtalk",
+                           "gateway.channel:email", "gateway.channel:homeassistant"):
+            self.assertNotIn("evidence key literal mismatch: " + unaffected, errors)
+        for row in data["entries"]:  # restore must go back to green
+            if row["id"] in drifted:
+                row["evidence"] = f"{loader}:{drifted[row['id']] - 1}"
+        self.assertEqual(check(data, self.baseline), [])
+
+    def test_line_numbers_count_only_real_newlines(self):
+        # channel/sms/mod.rs really contains U+2028/U+2029 (in the line-1761
+        # doc comment): splitlines() would count 1876 lines and admit 1875,
+        # the "\n"/editor count is 1874 and must reject it.
+        for number, valid in [(433, True), (1683, True), (1874, True), (1875, False), (1876, False)]:
+            with self.subTest(line=number):
+                self.assertIs(local_ref(f"src/pilotdeck-gateway/src/channel/sms/mod.rs:{number}"), valid)
+
+    def test_evidence_forms_without_a_mechanical_key_stay_range_only(self):
+        # Deliberate fail-open set (see plan): block-opening anchors
+        # (sidecar:* at `for option in [`), match arms (`"user_dialog_claim" =>`),
+        # non-bare key segments, non-.rs evidence — no single key-literal
+        # form to assert, so these stay range-only by design, not by drift.
+        for key, ref in [("sidecar:factory",
+                          "src/pilotdeck-transport/src/bin/pilotdeck-agent-loop-sidecar.rs:26"),
+                         ("gateway.method:user_dialog_claim",
+                          "src/pilotdeck-gateway/src/native_process/methods/user_dialog.rs:142"),
+                         ("gateway.channel:weird/key",
+                          "src/pilotdeck-gateway/src/channel/loader.rs:50"),
+                         ("gateway.background:always-on",
+                          "specs/gateway-parity/diffs/A7.8-ALWAYS-ON-BACKGROUND-001.md:24")]:
+            with self.subTest(key=key):
+                self.assertIsNone(key_literal_error(key, ref))
 
     def test_unknown_express_shapes_fail(self):
         subprocess.run(["node", str(Path(__file__).with_name("test_shapes.mjs"))], check=True, timeout=10)
