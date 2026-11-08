@@ -66,18 +66,48 @@ impl NativeProjectCatalog {
             },
         }
     }
+    /// The blocking-pool copy of the registry. `Metadata<NativeFiles>` is two
+    /// paths over the stateless filesystem backend, so the snapshot costs two
+    /// PathBuf allocations and satisfies `spawn_blocking`'s `'static` bound
+    /// without reshaping `Metadata` or borrowing `self` across the pool.
+    fn snapshot_metadata(&self) -> metadata::Metadata<metadata::NativeFiles> {
+        metadata::Metadata {
+            home: self.metadata.home.clone(),
+            cwd: self.metadata.cwd.clone(),
+            files: metadata::NativeFiles,
+        }
+    }
 }
 
 impl ProjectCatalog for NativeProjectCatalog {
     fn list_projects(&self) -> Pin<Box<dyn Future<Output = io::Result<JsValue>> + Send + '_>> {
-        Box::pin(async move { self.metadata.list_projects() })
+        // #2450: the registry walk is synchronous std::fs (readdir plus a
+        // stat and marker read per project), so it runs on the blocking pool
+        // like the files branch's #1740 — a slow disk stalls no reactor
+        // thread. The pool sees a snapshot of the same home/cwd and answers
+        // the same bytes; only the executing thread changes. A join failure
+        // (panic or shutdown) surfaces as the catalog error the caller
+        // already renders as the generic 500.
+        let metadata = self.snapshot_metadata();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || metadata.list_projects())
+                .await
+                .map_err(|error| io::Error::other(format!("api-web catalog task: {error}")))?
+        })
     }
     fn describe_project(
         &self,
         key: &str,
     ) -> Pin<Box<dyn Future<Output = io::Result<JsValue>> + Send + '_>> {
+        // Same #2450 move as `list_projects`; the key travels as the same
+        // JsString the registry compares against.
+        let metadata = self.snapshot_metadata();
         let key = JsString::from(key);
-        Box::pin(async move { self.metadata.describe_project(&key) })
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || metadata.describe_project(&key))
+                .await
+                .map_err(|error| io::Error::other(format!("api-web catalog task: {error}")))?
+        })
     }
 }
 
@@ -292,6 +322,15 @@ async fn files_branch(
         Some(Err(files::FilesError::Message(message))) => send_json(
             hyper::StatusCode::INTERNAL_SERVER_ERROR,
             &error_body("internal_error", &message),
+            keep_alive,
+        ),
+        // #2455: the message keeps its UTF-16 units (the 128-unit cut of the
+        // NUL refusal can split a surrogate pair), so the body goes through
+        // the well-formed JSON encoder and the wire keeps Node's `\ud83d`
+        // escape for the lone surrogate.
+        Some(Err(files::FilesError::MessageUnits(message))) => send_json(
+            hyper::StatusCode::INTERNAL_SERVER_ERROR,
+            &error_body_units("internal_error", &message),
             keep_alive,
         ),
         None => send_json(
@@ -535,6 +574,19 @@ fn error_body(code: &str, message: &str) -> String {
         "{{\"error\":{{\"code\":{},\"message\":{}}}}}",
         json_text(code),
         json_text(message)
+    )
+}
+
+/// `error_body` for a message that keeps its UTF-16 units (#2455): Node's
+/// error message is a JS string, and a lone surrogate — the NUL refusal's
+/// 128-unit cut splitting a surrogate pair — serializes as the well-formed
+/// `\ud83d` escape, not the U+FFFD a `from_utf16_lossy` fold would emit.
+/// For a surrogate-free message the bytes equal `error_body`'s.
+fn error_body_units(code: &str, message: &JsString) -> String {
+    format!(
+        "{{\"error\":{{\"code\":{},\"message\":{}}}}}",
+        json_text(code),
+        pilotdeck_protocol::quote_json_string(message)
     )
 }
 

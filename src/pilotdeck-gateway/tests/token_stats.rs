@@ -374,7 +374,7 @@ fn oracle_mutation_is_detected() {
     scenario.insert("steps".into(), JsValue::Array(steps));
     scenarios[0] = JsValue::Object(scenario);
     let error = replay_scenario(&scenarios[0]).unwrap_err();
-    assert!(error.contains("step 1"), "{error}");
+    assert!(error.contains("step 1 ("), "{error}");
 }
 
 #[test]

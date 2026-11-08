@@ -890,7 +890,7 @@ async fn leading_ows_head_still_parses_a_valid_request() {
     );
     let payload = String::from_utf8_lossy(&response);
     assert!(
-        payload.contains("\"version\":1"),
+        payload.contains("\"version\":1,"),
         "#1555 the list response body must be intact behind the OWS-dropped head"
     );
     server.close().await;
@@ -1427,7 +1427,7 @@ async fn persistent_responses_advertise_keep_alive_like_node() {
     let head = read_head(&mut persistent).await.to_ascii_lowercase();
     assert!(head.starts_with("http/1.1 405"), "{head}");
     assert!(head.contains("connection: keep-alive"), "{head}");
-    assert!(head.contains("keep-alive: timeout=5"), "{head}");
+    assert!(head.contains("keep-alive: timeout=5\r"), "{head}");
 
     let mut closing = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     closing.write_all(&http_get(true)).await.unwrap();
@@ -1444,7 +1444,7 @@ async fn persistent_responses_advertise_keep_alive_like_node() {
     let head = read_head(&mut head_request).await.to_ascii_lowercase();
     assert!(head.starts_with("http/1.1 405"), "{head}");
     assert!(head.contains("connection: keep-alive"), "{head}");
-    assert!(head.contains("keep-alive: timeout=5"), "{head}");
+    assert!(head.contains("keep-alive: timeout=5\r"), "{head}");
 
     drop((persistent, closing, head_request));
     server.close().await;
@@ -1777,7 +1777,7 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
     assert_eq!(status(&response), 200, "{response:?}");
     let head = String::from_utf8_lossy(&response).to_ascii_lowercase();
     assert!(
-        head.contains("connection: keep-alive") && head.contains("keep-alive: timeout=1"),
+        head.contains("connection: keep-alive") && head.contains("keep-alive: timeout=1\r"),
         "Node keeps the in-flight advertisement even after close(): {head}"
     );
     assert!(
@@ -1804,7 +1804,7 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
     let second_head = String::from_utf8_lossy(&second).to_ascii_lowercase();
     assert!(
         second_head.contains("connection: keep-alive")
-            && second_head.contains("keep-alive: timeout=1"),
+            && second_head.contains("keep-alive: timeout=1\r"),
         "the post-close request is still on the advertised keep-alive connection: {second_head}"
     );
 

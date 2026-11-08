@@ -2371,7 +2371,7 @@ async fn keep_alive_idle_close_lands_at_six_seconds() {
             .expect("#1250 write the health request");
         let response = read_response(&mut client, "health").await;
         assert!(
-            response.to_ascii_lowercase().contains("keep-alive: timeout=5"),
+            response.to_ascii_lowercase().contains("keep-alive: timeout=5\r"),
             "#1250 the advertisement stays the bare keepAliveTimeout: {response:?}"
         );
         tokio::time::advance(IDLE_CLOSE_PROBE_ADVANCE).await;
