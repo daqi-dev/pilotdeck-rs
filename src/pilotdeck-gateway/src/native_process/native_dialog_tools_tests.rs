@@ -36,7 +36,13 @@ async fn native_session_tools_publish_durable_dialogs_and_deliver_all_four_answe
         (0, "request_user_input", object([("prompt", "Input?".into())]), JsValue::String(JsString::from_utf16(vec![0xd800, 0x4e2d])), "answer"),
         (1, "request_user_choice", object([("prompt", "Choose?".into()), ("options", JsValue::Array(vec![object([("value", "A".into())]), object([("value", "B".into())])]))]), "B".into(), "selected"),
         (2, "request_user_confirmation", object([("prompt", "Confirm?".into())]), JsValue::Bool(false), "confirmed"),
-        (3, "request_user_form", object([("prompt", "Form?".into()), ("schema", object([("type", "object".into()), ("properties", object([("name", object([("type", "string".into())]))])))]), object([("name", "value".into())]), "values"),
+        (3, "request_user_form", object([
+            ("prompt", "Form?".into()),
+            ("schema", object([
+                ("type", "object".into()),
+                ("properties", object([("name", object([("type", "string".into())]))])),
+            ])),
+        ]), object([("name", "value".into())]), "values"),
     ] {
         let id = JsString::from(format!("dialog-call-{index}"));
         let decision = permission.request(name.into(), id.clone(), input.clone(), vec![], signal.clone()).await.unwrap();

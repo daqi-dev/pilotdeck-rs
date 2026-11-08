@@ -426,7 +426,10 @@ impl Requests {
                             .get("value")
                             .cloned()
                             .unwrap_or(JsValue::Undefined);
-                        if !(snapshot.accepts)(&value) {
+                        let accepts = snapshot.accepts.clone();
+                        let accepted = crate::runtime::always_on::storage::run(move || Ok(accepts(&value))).await
+                            .map_err(|error| RequestError::new(error.to_string()))?;
+                        if !accepted {
                             return Err(RequestError {
                                     code: "INVALID_USER_DIALOG_RESPONSE".into(),
                                     message: format!(
