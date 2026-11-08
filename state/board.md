@@ -5037,3 +5037,7 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 | macmini 仓外清理授权待人点头（#1157 总表在案） | 人 | 下次派 macmini 宿主前 |
 
 现场指针：`_tmp/20261109-2498-2501-harvest/`（#2498 评审 + 补捞证据）· `_tmp/20261109-2532-fixr2-harvest/`（task2.md 收货续单）· `_tmp/20261107-coord/sweep-0305.md`（六灯 sweep 正本）· `_tmp/20261107-coord/patrol-0231.md`（沿 02:3x 段）。
+
+### 2026-11-09 Module2-host 上游切片（Codex）
+
+固定f04基线，仅新增pilotdeck-module2-host及workspace/lock注册，不依赖#2549、Kernel SDK或gateway。保原24HostCall清单/路由、共享driver的KernelClient/LcError端口；无效/未支持lifecycle明确拒绝。实际UTF16差分负控发现旧serde投影把原合法帧误报INVALID_JSON，按协调者边界新增原Protocol无损入口，serde互操作无法表达时独立UNREPRESENTABLE_FRAME，未全DTO重写。Module2 12测试/原Protocol45测试通过（1原忽略），strictClippy通过，独立consumer已实际运行，正在收锁/最终提交交协调者review。未push/开PR。
