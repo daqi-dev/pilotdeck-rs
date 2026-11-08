@@ -338,3 +338,45 @@ async fn durable_creation_requires_a_real_pin_before_any_host_connection() {
     }
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn capability_handshake_is_bounded_and_closes_the_original_connection() {
+    let root = scratch();
+    let socket = root.join("k.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut stream = BufReader::new(stream);
+        let mut line = String::new();
+        stream.read_line(&mut line).await.unwrap();
+        let request: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(request["method"], "initialize");
+        // Never acknowledge capability discovery. Cancellation must close this
+        // same socket, without creating a session or starting a replacement.
+        line.clear();
+        assert_eq!(stream.read_line(&mut line).await.unwrap(), 0);
+    });
+    let mut rpc = Rpc {
+        owner: None,
+        socket: socket.clone(),
+        stream: None,
+        next: 0,
+        node: "bounded-boot".into(),
+        lease: None,
+    };
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        rpc.initialize_creation(std::time::Duration::from_millis(40)),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert!(error.to_string().contains("handshake timed out"));
+    assert!(rpc.stream.is_none());
+    assert_eq!(rpc.next, 1);
+    tokio::time::timeout(std::time::Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+}

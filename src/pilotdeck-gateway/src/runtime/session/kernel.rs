@@ -290,6 +290,20 @@ struct Rpc {
     lease: Option<(String, u64, std::time::Instant)>,
 }
 impl Rpc {
+    async fn initialize_creation(
+        &mut self,
+        budget: std::time::Duration,
+    ) -> Result<Value, RuntimeError> {
+        let result = tokio::time::timeout(budget, async {
+            self.stream = Some(BufReader::new(UnixStream::connect(&self.socket).await.map_err(error)?));
+            self.exchange("initialize",json!({"abi_version":2,"api_version":"0.1.0","features":["model-session/1.0","model-response-metadata/1.0"],"node_id":self.node})).await
+        }).await.map_err(|_|error("Kernel creation capability handshake timed out; original intent retained."))?;
+        if result.is_err() {
+            self.stream = None;
+        }
+        result
+    }
+
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, RuntimeError> {
         let connected = self.stream.is_some();
         let result = self.call_guarded(method, params.clone(), None).await;
@@ -908,10 +922,10 @@ impl SessionBackendFactory for KernelBackendFactory {
                 let key = claim.document["creation_key"].as_str().unwrap();
                 // No session or lease is needed to discover this optional host
                 // feature. Unsupported hosts must never receive keyed create.
-                rpc.stream = Some(BufReader::new(
-                    UnixStream::connect(&rpc.socket).await.map_err(error)?,
-                ));
-                let initialized = rpc.exchange("initialize",json!({"abi_version":2,"api_version":"0.1.0","features":["model-session/1.0","model-response-metadata/1.0"],"node_id":rpc.node})).await?;
+                let initialized = rpc
+                    .initialize_creation(std::time::Duration::from_secs(30))
+                    .await
+                    .map_err(|cause| creation_unknown(key, cause))?;
                 let feature = &initialized["server_capabilities"]["session_creation"];
                 if feature["version"] != 1
                     || feature["query_method"] != "session.creation_get"
