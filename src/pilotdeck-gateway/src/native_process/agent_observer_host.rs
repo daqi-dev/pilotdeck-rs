@@ -408,4 +408,62 @@ mod caller_retry_tests {
             }
         }
     }
+    #[test]
+    fn actual_ts_observed_failure_and_first_observer_launch_failure_aggregate_once() {
+        let fixture: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/native-process/observer-caller-failure-oracle.json"
+        ))
+        .unwrap();
+        let cases = fixture["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 1);
+        let case = &cases[0];
+        assert_eq!(case["mode"], "observed-and-launch-fail");
+        let observed = &case["completed"][0];
+        assert_eq!(observed["errored"], true);
+        let original = observed["summary"].as_str().unwrap();
+        let expected_errors = case["result"]["errors"].as_array().unwrap();
+        let launcher = expected_errors[1]["message"].as_str().unwrap();
+        let mut calls = 0;
+        let failure = launch_with_retry(
+            ObserverOutcome {
+                success: false,
+                markdown: None,
+                error: Some(original.into()),
+            },
+            |outcome| {
+                calls += 1;
+                assert!(!outcome.success);
+                assert_eq!(outcome.error.as_ref().unwrap().to_utf8().unwrap(), original);
+                Err(error(launcher))
+            },
+        )
+        .unwrap_err();
+        assert_eq!(calls, case["launches"].as_array().unwrap().len());
+        assert_eq!(
+            calls, 1,
+            "the observed run already failed, so only its catch-path launch runs"
+        );
+        assert_eq!(
+            failure.message.to_utf8().unwrap(),
+            case["result"]["message"].as_str().unwrap()
+        );
+        let details = failure.details.as_ref().unwrap();
+        let Some(JsValue::Array(actual_errors)) = details.get("errors") else {
+            panic!("aggregate errors")
+        };
+        assert_eq!(actual_errors.len(), 2);
+        for (actual, expected) in actual_errors.iter().zip(expected_errors) {
+            for key in ["name", "message"] {
+                assert_eq!(
+                    actual
+                        .get(key)
+                        .and_then(JsValue::as_string)
+                        .unwrap()
+                        .to_utf8()
+                        .unwrap(),
+                    expected[key].as_str().unwrap()
+                );
+            }
+        }
+    }
 }
