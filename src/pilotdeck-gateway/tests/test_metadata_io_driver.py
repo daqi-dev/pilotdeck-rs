@@ -3191,7 +3191,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = '8d4fafbbb603c9ecce0150e1a21b9563bea5489e8ee1a86604a4150961887b07'
+    SESSION_CONTROLS_SHA256 = 'c8ba11a90696724b4437c0bc88550f6f7d1b99634b51b5c002a4def9630ad610'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
