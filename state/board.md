@@ -4894,3 +4894,7 @@ READY 本段改动：**新增 4 行 + 翻牌 4 行 + 增记 5 行（153 条：do
 ### 2026-11-08 · CLI 在途依赖纠偏与组合验证检查点
 
 本机唯一正本仍是 cli-gateway-setup/pilotdeck-rs；本轮继续保存原生server发现/更新、真实工具权限、NativeNode sandbox、SDK/model/settings及机器桥代码。mbp2 r12 的 update/权限/LocalHost/settings/history/SDK/机器桥已过所选检查；实际模型选择与SDK提示词通过，TUI alias、真实permission_request与update-restart确认暴露失败，保留原件并修复中。r13新增测试类型错误已修；r14 sandbox/background/config/management 已通过，其余CLI全量/严格lint仍在跑，最新permission生命周期候选尚未编译，不标完成。侧会话经用户授权指出未合上游重复，已核19张OPEN PR及全部现有树：Cron #2381、MCP #2429优先复用，Sol重复Cron候选仅保留未应用；后台复用main核心只补owner/IO，Kernel系列不同profile不整线合入。决定/来源/剩余边界在主仓 `_tmp/20261108-cli-completion/dependency-audit/decision.md`，所有其他树只读保全。下一步先保全此检查点再逐块接入上游差异，继续真实TUI与源码安装验证；无GitHub写、无本机Rust构建，旧8e32未动。
+
+### 2026-11-08 16:40 · CLI 两小时接续（继续开发）
+
+本机检查点a48a1410b与原快照保全；已取固定#2381 Cron和#2429 MCP源码做本地候选整合，未远端提交或冒称验收。r14沙箱/后台/config/management/alias与两类strict lint通过，全CLI旧server TODO测试已修；r15新cwd helper可见性编译错已修，Gateway独立测试继续。MCP取消/撞名缺口小片已接待测，Cron先加服务项目过滤再实跑。真实update超时已证为debug大文件hash，去符号对照同预算全链成功，但最终release源码安装仍待验证。现场/持有人/风险/资源/下一步见主仓 `_tmp/20261108-cli-completion/handoff-1640.md`；root继续整合与mbp2验证，Terra做elicitation，Sol做Cron最小补差，auditor做后台持久化；下一交接18:40，完整CLI未完成。

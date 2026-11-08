@@ -72,8 +72,18 @@ async fn native_project_background_owner_is_shared_with_sdk_and_drained_on_dispo
     // Record assertions before cleanup, but evaluate only after the registry
     // has drained the process even when an observation is wrong.
     let started = project.join("started.txt").exists();
-    let owner = background_tasks_in_registry(&registry, None, &"owner".into(), &JsValue::String(task.task_id.clone()));
-    let other = background_tasks_in_registry(&registry, None, &"other".into(), &JsValue::String(task.task_id.clone()));
+    let owner = background_tasks_in_registry(
+        &registry,
+        None,
+        &"owner".into(),
+        &JsValue::String(task.task_id.clone()),
+    );
+    let other = background_tasks_in_registry(
+        &registry,
+        None,
+        &"other".into(),
+        &JsValue::String(task.task_id.clone()),
+    );
     let denied =
         stop_background_task_in_registry(&registry, None, &"other".into(), &task.task_id).await;
     let was_running = resources
@@ -87,13 +97,21 @@ async fn native_project_background_owner_is_shared_with_sdk_and_drained_on_dispo
     // detached. Its exact shell result is not a task-list envelope. Selecting
     // the task distinguishes ownership without inventing a taskIds field.
     let owner = owner.unwrap();
-    assert_eq!(JsValue::Object(owner), crate::metadata::object([
-        ("backgrounded", JsValue::Bool(false)), ("reason", "no_foreground_tasks".into()),
-    ]));
+    assert_eq!(
+        JsValue::Object(owner),
+        crate::metadata::object([
+            ("backgrounded", JsValue::Bool(false)),
+            ("reason", "no_foreground_tasks".into()),
+        ])
+    );
     let other = other.unwrap();
-    assert_eq!(JsValue::Object(other), crate::metadata::object([
-        ("backgrounded", JsValue::Bool(false)), ("reason", "task_not_found".into()),
-    ]));
+    assert_eq!(
+        JsValue::Object(other),
+        crate::metadata::object([
+            ("backgrounded", JsValue::Bool(false)),
+            ("reason", "task_not_found".into()),
+        ])
+    );
     let denied = denied.unwrap_err();
     assert_eq!(denied.code, Some("BACKGROUND_TASK_NOT_FOUND".into()));
     assert!(

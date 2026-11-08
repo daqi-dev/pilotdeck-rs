@@ -18,6 +18,7 @@ pub mod host;
 pub mod http_proxy;
 mod js_value;
 mod metadata;
+pub use metadata::process_cwd_diagnostic;
 mod model_catalog;
 pub mod model_cost;
 mod module_host;

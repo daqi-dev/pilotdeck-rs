@@ -58,6 +58,7 @@ fn make_tools(
         config,
         coordinator,
         Arc::default(),
+        super::SessionMcpTools::empty(),
     )
     .unwrap()
     .with_permission_rules(rules);

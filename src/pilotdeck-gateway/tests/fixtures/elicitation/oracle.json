@@ -1,0 +1,526 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "name": "valid",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ]
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "questions": [
+            {
+              "question": "Pick?",
+              "header": "Choice",
+              "options": [
+                {
+                  "label": "A",
+                  "description": "First"
+                },
+                {
+                  "label": "B",
+                  "description": "Second"
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "empty",
+      "input": {
+        "questions": []
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "questions",
+            "code": "invalid_schema",
+            "message": "Provide 1-4 questions"
+          }
+        ]
+      }
+    },
+    {
+      "name": "one",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              }
+            ]
+          }
+        ]
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "questions[].options",
+            "code": "invalid_schema",
+            "message": "Question \"Pick?\" must have 2-4 options"
+          }
+        ]
+      }
+    },
+    {
+      "name": "duplicate",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          },
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ]
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "questions",
+            "code": "invalid_schema",
+            "message": "Question texts must be unique: \"Pick?\""
+          }
+        ]
+      }
+    },
+    {
+      "name": "header",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "1234567890123",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ]
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "questions[].header",
+            "code": "invalid_schema",
+            "message": "header for \"Pick?\" exceeds 12 chars"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sameLabel",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "A",
+                "description": "First"
+              }
+            ]
+          }
+        ]
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "questions[].options",
+            "code": "invalid_schema",
+            "message": "Option labels must be unique within question \"Pick?\""
+          }
+        ]
+      }
+    },
+    {
+      "name": "preview",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First",
+                "preview": "<script>x</script>"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ]
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "questions[].options[].preview",
+            "code": "invalid_schema",
+            "message": "Option \"A\" in question \"Pick?\": preview must not contain <script> or <style> tags. Use inline styles via the style attribute if needed."
+          }
+        ]
+      }
+    },
+    {
+      "name": "answer",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "elicitation_request",
+          "requestId": "request-1",
+          "toolCallId": "turn-1",
+          "toolName": "ask_user_question",
+          "questions": [
+            {
+              "question": "Pick?",
+              "header": "Choice",
+              "options": [
+                {
+                  "label": "A",
+                  "description": "First"
+                },
+                {
+                  "label": "B",
+                  "description": "Second"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"Pick?\"=\"A\" user notes: note. You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "First"
+                  },
+                  {
+                    "label": "B",
+                    "description": "Second"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick?": "A"
+            },
+            "annotations": {
+              "Pick?": {
+                "notes": "note"
+              }
+            }
+          }
+        }
+      },
+      "pending": false
+    },
+    {
+      "name": "cancel",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "elicitation_request",
+          "requestId": "request-1",
+          "toolCallId": "turn-1",
+          "toolName": "ask_user_question",
+          "questions": [
+            {
+              "question": "Pick?",
+              "header": "Choice",
+              "options": [
+                {
+                  "label": "A",
+                  "description": "First"
+                },
+                {
+                  "label": "B",
+                  "description": "Second"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "message": "User declined to answer questions (declined)",
+          "code": "unsupported_tool"
+        }
+      },
+      "pending": false
+    },
+    {
+      "name": "abort",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "elicitation_request",
+          "requestId": "request-1",
+          "toolCallId": "turn-1",
+          "toolName": "ask_user_question",
+          "questions": [
+            {
+              "question": "Pick?",
+              "header": "Choice",
+              "options": [
+                {
+                  "label": "A",
+                  "description": "First"
+                },
+                {
+                  "label": "B",
+                  "description": "Second"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "elicitation_cancelled",
+          "requestId": "request-1",
+          "reason": "aborted"
+        }
+      ],
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "message": "User declined to answer questions (aborted)",
+          "code": "unsupported_tool"
+        }
+      },
+      "pending": false
+    },
+    {
+      "name": "prefilled",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ],
+        "answers": {
+          "Pick?": [
+            "A",
+            "B"
+          ]
+        },
+        "annotations": {
+          "Pick?": {
+            "notes": "note"
+          }
+        }
+      },
+      "events": [],
+      "result": {
+        "value": {
+          "content": [
+            {
+              "type": "text",
+              "text": "User has answered your questions: \"Pick?\"=\"A, B\" user notes: note. You can now continue with the user's answers in mind."
+            }
+          ],
+          "data": {
+            "questions": [
+              {
+                "question": "Pick?",
+                "header": "Choice",
+                "options": [
+                  {
+                    "label": "A",
+                    "description": "First"
+                  },
+                  {
+                    "label": "B",
+                    "description": "Second"
+                  }
+                ]
+              }
+            ],
+            "answers": {
+              "Pick?": [
+                "A",
+                "B"
+              ]
+            },
+            "annotations": {
+              "Pick?": {
+                "notes": "note"
+              }
+            }
+          }
+        }
+      },
+      "pending": false
+    },
+    {
+      "name": "missing-channel",
+      "input": {
+        "questions": [
+          {
+            "question": "Pick?",
+            "header": "Choice",
+            "options": [
+              {
+                "label": "A",
+                "description": "First"
+              },
+              {
+                "label": "B",
+                "description": "Second"
+              }
+            ]
+          }
+        ]
+      },
+      "events": [],
+      "result": {
+        "error": {
+          "name": "PilotDeckToolRuntimeError",
+          "message": "ask_user_question requires a host elicitation channel (none registered).",
+          "code": "unsupported_tool"
+        }
+      },
+      "pending": false
+    }
+  ]
+}

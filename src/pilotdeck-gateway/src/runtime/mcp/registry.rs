@@ -642,6 +642,8 @@ struct SharedEntry {
     tools: Arc<Mutex<Vec<Arc<McpBridgeTool>>>>,
     // Changed only while holding provider.state; watch lets stop await drain.
     leases: watch::Sender<usize>,
+    // Mutated only while holding provider.state.
+    waiters: std::sync::atomic::AtomicUsize,
     ready: Settle,
     stop: Mutex<Option<Settle>>,
 }
@@ -659,6 +661,38 @@ struct ProviderState {
 pub struct ProjectMcpRuntimeProvider {
     options: Arc<ProjectMcpRuntimeProviderOptions>,
     state: Arc<Mutex<ProviderState>>,
+}
+
+// Waiting for startup also owns the generation. Dropping the last waiter
+// retires it if no lease survived, including cancellation during startup.
+struct SharedWaiter {
+    provider: ProjectMcpRuntimeProvider,
+    entry: Arc<SharedEntry>,
+    active: bool,
+}
+impl SharedWaiter {
+    fn commit_locked(&mut self) {
+        self.active = false;
+        self.entry.waiters.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn release(&mut self) -> Option<Settle> {
+        if !self.active {
+            return None;
+        }
+        let mut state = lock(&self.provider.state);
+        self.active = false;
+        let previous = self.entry.waiters.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        if previous == 1 && *self.entry.leases.borrow() == 0 {
+            Some(self.provider.stop_entry_locked(&mut state, &self.entry))
+        } else {
+            None
+        }
+    }
+}
+impl Drop for SharedWaiter {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
 }
 
 /// `ProjectMcpRuntimeLease`: the tools of one retained generation.
@@ -854,6 +888,17 @@ impl ProjectMcpRuntimeProvider {
         Ok((!servers.is_empty()).then_some(servers))
     }
 
+    /// The provider's own runtime factory — the custom factory when one was
+    /// staged, otherwise the native one with the provider's proxy source.
+    /// `SessionMcpRuntimeBundle` builds per-session runtimes with exactly this
+    /// fallback (`createRuntime ?? createNativeMcpRuntime`), so #1433's
+    /// composition must not grow a second, proxy-less default.
+    pub fn create_runtime(&self, servers: Vec<McpServerSpec>) -> Arc<dyn McpRuntimePort> {
+        self.options.create_runtime.clone().unwrap_or_else(|| {
+            super::runtime::native_mcp_runtime_factory_with_proxy(self.options.proxy.clone())
+        })(servers)
+    }
+
     fn assert_active(&self, action: &str) -> Result<(), RuntimeError> {
         let state = self.state();
         if state != McpOwnerState::Active {
@@ -882,10 +927,10 @@ impl ProjectMcpRuntimeProvider {
         }
         let key = signature(&servers);
         loop {
-            let entry = {
+            let (entry, mut waiter) = {
                 let mut state = lock(&self.state);
                 Self::check_active(&state)?;
-                match state
+                let entry = match state
                     .entries
                     .iter()
                     .find(|e| e.signature == key && lock(&e.stop).is_none())
@@ -912,16 +957,22 @@ impl ProjectMcpRuntimeProvider {
                             executor: tokio::runtime::Handle::current(),
                             tools,
                             leases: watch::channel(0).0,
+                            waiters: std::sync::atomic::AtomicUsize::new(0),
                             ready,
                             stop: Mutex::new(None),
                         });
                         state.entries.push(entry.clone());
                         entry
                     }
-                }
+                };
+                entry.waiters.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let waiter = SharedWaiter { provider: self.clone(), entry: entry.clone(), active: true };
+                (entry, waiter)
             };
             if let Err(error) = settled(entry.ready.clone()).await {
-                if let Err(release) = self.release_entry(&entry).await {
+                if let Some(stop) = waiter.release()
+                    && let Err(release) = settled(stop).await
+                {
                     self.diagnostic(
                         "Failed to clean up unavailable MCP runtime".into(),
                         Some(release),
@@ -930,9 +981,8 @@ impl ProjectMcpRuntimeProvider {
                 self.diagnostic("MCP runtime startup partial-failed".into(), Some(error));
                 return Ok(ProjectMcpRuntimeLease::empty());
             }
-            // Selecting an entry reserves no lease: cancelling while waiting
-            // for ready must not pin it. Recheck under the same lock as release
-            // and dispose, since another caller may have retired it meanwhile.
+            // Transfer the waiting reservation into a lease atomically with
+            // respect to cancellation, release and dispose.
             {
                 let state = lock(&self.state);
                 Self::check_active(&state)?;
@@ -940,6 +990,7 @@ impl ProjectMcpRuntimeProvider {
                     continue;
                 }
                 entry.leases.send_modify(|count| *count += 1);
+                waiter.commit_locked();
             }
             let tools = lock(&entry.tools).clone();
             return Ok(ProjectMcpRuntimeLease {

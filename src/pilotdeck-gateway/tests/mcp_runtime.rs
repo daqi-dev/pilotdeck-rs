@@ -1423,74 +1423,6 @@ async fn immediate_start_tools_are_visible() {
 // must not leave a lease behind. `startEntry` gated on a semaphore keeps the
 // startup pending; after the waiter is aborted the next acquire/release pair
 // must stop the generation (old code left leases=1 and never stopped it).
-struct GatedRuntime {
-    servers: Vec<McpServerSpec>,
-    started: Arc<tokio::sync::Semaphore>,
-    gate: Arc<tokio::sync::Semaphore>,
-    finished: Arc<tokio::sync::Semaphore>,
-    stops: Arc<std::sync::atomic::AtomicUsize>,
-}
-impl SessionMcpRuntime for GatedRuntime {
-    fn stop(&self) -> McpFuture<'_, Result<(), RuntimeError>> {
-        Box::pin(async move {
-            self.stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(())
-        })
-    }
-}
-impl McpRuntimePort for GatedRuntime {
-    fn start(&self) -> McpFuture<'_, Result<Vec<McpClientStatusEntry>, RuntimeError>> {
-        Box::pin(async move {
-            self.started.add_permits(1);
-            let _ = self.gate.acquire().await;
-            self.finished.add_permits(1);
-            Ok(self
-                .servers
-                .iter()
-                .map(|server| McpClientStatusEntry {
-                    server_id: server.id.clone(),
-                    status: McpStatus::Ready,
-                    error: None,
-                })
-                .collect())
-        })
-    }
-    fn list_all_tools(&self) -> McpFuture<'_, Result<Vec<McpToolSpec>, RuntimeError>> {
-        Box::pin(async move {
-            Ok(self
-                .servers
-                .iter()
-                .map(|server| McpToolSpec {
-                    server_id: server.id.as_str().into(),
-                    tool_name: "t".into(),
-                    wire_name: format!("mcp__{}__t", server.id).into(),
-                    description: JsString::default(),
-                    input_schema: parse_json(r#"{"type":"object"}"#).unwrap(),
-                    annotations: None,
-                    meta: None,
-                })
-                .collect())
-        })
-    }
-    fn server_info(&self, _server_id: &str) -> Option<McpRuntimeServerInfo> {
-        None
-    }
-    fn call_tool<'a>(
-        &'a self,
-        _server_id: &'a str,
-        _tool_name: &'a JsString,
-        _input: &'a JsValue,
-        _options: McpCallOptions,
-    ) -> McpFuture<'a, Result<McpToolCallResult, McpClientError>> {
-        Box::pin(async {
-            Ok(McpToolCallResult {
-                content: JsValue::Array(Vec::new()),
-                is_error: None,
-            })
-        })
-    }
-}
-
 // Independent gates establish each interleaving; no sleep determines order.
 struct LifecycleGate {
     start: tokio::sync::Semaphore,
@@ -1752,56 +1684,49 @@ async fn last_lease_drop_on_plain_thread_starts_stop() {
     assert_eq!(gate.stops.load(std::sync::atomic::Ordering::SeqCst), 1);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn cancelled_acquire_does_not_leak_a_lease() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+// The last pending acquisition owns cleanup even when no lease was granted.
+#[tokio::test]
+async fn cancelled_last_waiter_stops_shared_startup() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let scratch = Scratch::new("mcp-cancel-last-waiter");
+        let (provider, gates) = lifecycle_provider(&scratch);
+        let plugins = provider_plugins("same");
+        let mut acquire = Box::pin(provider.acquire_shared_runtime(&plugins));
+        poll_pending(acquire.as_mut()).await;
+        let gate = gates.lock().unwrap()[0].clone();
+        drop(acquire);
+        gate.start.add_permits(1);
+        gate.stop_entered.acquire().await.unwrap().forget();
+        gate.stop.add_permits(1);
+        while provider.shared_generation_count() != 0 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(gate.stops.load(std::sync::atomic::Ordering::SeqCst), 1);
+        provider.dispose().await.unwrap();
+    }).await.unwrap();
+}
 
-    let scratch = Scratch::new("mcp-provider-cancel");
-    let started = Arc::new(tokio::sync::Semaphore::new(0));
-    let gate = Arc::new(tokio::sync::Semaphore::new(0));
-    let finished = Arc::new(tokio::sync::Semaphore::new(0));
-    let stops = Arc::new(AtomicUsize::new(0));
-    let factory: McpRuntimeFactory = {
-        let started = started.clone();
-        let gate = gate.clone();
-        let finished = finished.clone();
-        let stops = stops.clone();
-        Arc::new(move |servers| {
-            Arc::new(GatedRuntime {
-                servers,
-                started: started.clone(),
-                gate: gate.clone(),
-                finished: finished.clone(),
-                stops: stops.clone(),
-            }) as Arc<dyn McpRuntimePort>
-        })
-    };
-    let (provider, _dir) = race_provider(&scratch, factory);
-    let plugins = provider_plugins("gated");
-    let acquire = tokio::spawn({
-        let provider = provider.clone();
-        let plugins = plugins.clone();
-        async move { provider.acquire_shared_runtime(&plugins).await }
-    });
-    started.acquire().await.unwrap().forget();
-    // Let the acquire future reach `settled(ready).await` (and, under the
-    // old code, take its lease) before dropping it.
-    tokio::time::sleep(Duration::from_millis(20)).await;
-    acquire.abort();
-    let _ = acquire.await;
-    gate.add_permits(1);
-    finished.acquire().await.unwrap().forget();
-    let lease = provider
-        .acquire_shared_runtime(&plugins)
-        .await
-        .expect("reacquire");
-    assert_eq!(lease.tools().len(), 1);
-    lease.release().await.expect("release");
-    assert_eq!(
-        stops.load(Ordering::SeqCst),
-        1,
-        "a cancelled acquire must not pin the generation"
-    );
+#[tokio::test]
+async fn cancelled_one_of_two_waiters_preserves_shared_startup() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let scratch = Scratch::new("mcp-cancel-one-waiter");
+        let (provider, gates) = lifecycle_provider(&scratch);
+        let plugins = provider_plugins("same");
+        let mut first = Box::pin(provider.acquire_shared_runtime(&plugins));
+        let mut second = Box::pin(provider.acquire_shared_runtime(&plugins));
+        poll_pending(first.as_mut()).await;
+        poll_pending(second.as_mut()).await;
+        let gate = gates.lock().unwrap()[0].clone();
+        drop(first);
+        gate.start.add_permits(1);
+        let lease = second.await.unwrap();
+        assert_eq!(lease.tools().len(), 1);
+        assert_eq!(gate.stops.load(std::sync::atomic::Ordering::SeqCst), 0);
+        gate.stop.add_permits(1);
+        lease.release().await.unwrap();
+        assert_eq!(gate.stops.load(std::sync::atomic::Ordering::SeqCst), 1);
+        provider.dispose().await.unwrap();
+    }).await.unwrap();
 }
 
 // ---------------------------------------------------------------------------

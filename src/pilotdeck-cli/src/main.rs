@@ -132,8 +132,8 @@ fn main() -> ExitCode {
     let env = Env::from_process();
     let code = match std::env::current_dir() {
         Ok(cwd) => run(&argv, &env, &cwd),
-        Err(_) => Err(Failure::Todo(
-            "startup without a readable working directory",
+        Err(error) => Err(Failure::Error(
+            pilotdeck_gateway::process_cwd_diagnostic(&error).1,
         )),
     };
     ExitCode::from(match code {

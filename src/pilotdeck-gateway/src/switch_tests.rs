@@ -455,7 +455,7 @@ impl CronAgentGateway for RejectingGateway {
     }
 }
 
-fn cron_manager(scratch: &Scratch) -> CronManager {
+fn cron_manager(scratch: &Scratch) -> Arc<CronManager> {
     let home = scratch.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     CronManager::new(CronManagerOptions {
@@ -465,6 +465,7 @@ fn cron_manager(scratch: &Scratch) -> CronManager {
         now: None,
         uuid: None,
         logger: None,
+        scheduler_idle_poll_ms: None,
     })
     .expect("#1353 test cron manager constructs")
 }
@@ -509,7 +510,7 @@ fn load_cron_runtime(manager: &CronManager) {
 async fn cron_stop_face_gates_management_and_reports_abort_failures() {
     let scratch = Scratch::new("switch-cron-s1");
     seed_cron_project(&scratch);
-    let manager = Arc::new(cron_manager(&scratch));
+    let manager = cron_manager(&scratch);
     let recording = crate::switch::RecordingCronGateway::wrap(Arc::new(RejectingGateway));
     let failures = recording.failures();
     manager
@@ -574,7 +575,7 @@ async fn cron_stop_face_gates_management_and_reports_abort_failures() {
 async fn cron_stop_face_surfaces_manager_rejection() {
     let scratch = Scratch::new("switch-cron-s2");
     let paths = seed_cron_project(&scratch);
-    let manager = Arc::new(cron_manager(&scratch));
+    let manager = cron_manager(&scratch);
     load_cron_runtime(&manager);
     // The store's read is tolerant of malformed JSON (the TS parse is), so
     // the real stop-path rejection is an I/O failure: the tasks file itself

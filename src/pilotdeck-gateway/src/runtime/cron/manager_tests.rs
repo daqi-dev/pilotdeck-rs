@@ -130,7 +130,7 @@ impl RecordingBody {
 /// taskIds, and (when started) the admission port over a recording body.
 struct Harness {
     home: std::path::PathBuf,
-    manager: CronManager,
+    manager: Arc<CronManager>,
     logger: Arc<RecordingLogger>,
     body: Option<Arc<RecordingBody>>,
     /// Dropped last, so the scratch tree outlives the manager's file writes.
@@ -155,6 +155,7 @@ fn harness(started: bool) -> Harness {
             ))
         })),
         logger: Some(logger.clone()),
+        scheduler_idle_poll_ms: None,
     })
     .unwrap();
     let mut harness = Harness {
@@ -455,6 +456,7 @@ fn run_now_shares_one_clock_read_with_the_task_it_creates() {
         })),
         uuid: Some(Arc::new(move || JsString::from("task-run-now"))),
         logger: Some(Arc::new(RecordingLogger::default())),
+        scheduler_idle_poll_ms: None,
     })
     .unwrap();
     let created = manager.create_task(&create_input("/proj")).unwrap();
@@ -648,7 +650,7 @@ fn start_discovers_projects_and_stop_drains() {
         "stop releases the task session"
     );
     // stop() marks and aborts but leaves the registry to the run's own
-    // finally (TS relies on CronFire's cleanup, #1305).
+    // finally (TS relies on CronFire's cleanup, fire.rs).
     assert_eq!(runtime.active_run_count(), 1);
     assert!(
         runtime
@@ -1199,6 +1201,7 @@ fn replay_gold_cell(cell: &JsValue) {
             ))
         })),
         logger: Some(Arc::new(RecordingLogger::default())),
+        scheduler_idle_poll_ms: None,
     })
     .unwrap();
 

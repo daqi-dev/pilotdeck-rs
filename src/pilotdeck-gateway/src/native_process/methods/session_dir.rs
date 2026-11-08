@@ -172,10 +172,14 @@ impl Requests {
             let Some(id) = session.get("sessionId").and_then(JsValue::as_string) else {
                 continue;
             };
-            let Some((owner, _recorder)) = super::super::assembly::live_recorder(&self.recorders, id) else {
+            let Some((owner, _recorder)) =
+                super::super::assembly::live_recorder(&self.recorders, id)
+            else {
                 continue;
             };
-            if owner != *id && let JsValue::Object(info) = session {
+            if owner != *id
+                && let JsValue::Object(info) = session
+            {
                 info.insert("sessionKey".into(), JsValue::String(owner));
             }
         }
@@ -616,31 +620,63 @@ mod tests {
         let project = requests.options.project.clone();
         let adapter = AsyncTranscriptAdapter::new(
             Arc::new(JsonlTranscriptStore::new()),
-            Arc::new(move |key: &ProjectKey| crate::session_chat_dir(&home, &key.project_root, &key.project_root.to_string_lossy())),
+            Arc::new(move |key: &ProjectKey| {
+                crate::session_chat_dir(
+                    &home,
+                    &key.project_root,
+                    &key.project_root.to_string_lossy(),
+                )
+            }),
         );
-        let storage = adapter.create_session_storage(SessionStorageInput {
-            project_root: project, pilot_home: requests.options.home.clone(),
-            session_id: "tui:project=/fixture:default".into(), now: None,
-        }).unwrap();
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project,
+                pilot_home: requests.options.home.clone(),
+                session_id: "tui:project=/fixture:default".into(),
+                now: None,
+            })
+            .unwrap();
         let writer = Arc::new(storage.transcript);
-        writer.record_session_metadata(
-            &"tui:project=/fixture:default".into(), &"turn".into(),
-            object([("firstPrompt", "original question".into())]),
-        ).unwrap();
+        writer
+            .record_session_metadata(
+                &"tui:project=/fixture:default".into(),
+                &"turn".into(),
+                object([("firstPrompt", "original question".into())]),
+            )
+            .unwrap();
         let recorder = Arc::new(Recorder::from_writer(writer.clone()));
         requests.recorders.lock().unwrap().insert(
-            "tui:project=/fixture:default".into(), Arc::downgrade(&recorder),
+            "tui:project=/fixture:default".into(),
+            Arc::downgrade(&recorder),
         );
         let live = requests.session_list(&object([])).await.unwrap();
-        let rows = match live.get("sessions").unwrap() { JsValue::Array(rows) => rows, _ => panic!("sessions") };
-        let row = rows.iter().find(|r| r.get("sessionId") == Some(&"tui:project=-fixture:default".into())).unwrap();
-        assert_eq!(row.get("sessionKey"), Some(&"tui:project=/fixture:default".into()));
+        let rows = match live.get("sessions").unwrap() {
+            JsValue::Array(rows) => rows,
+            _ => panic!("sessions"),
+        };
+        let row = rows
+            .iter()
+            .find(|r| r.get("sessionId") == Some(&"tui:project=-fixture:default".into()))
+            .unwrap();
+        assert_eq!(
+            row.get("sessionKey"),
+            Some(&"tui:project=/fixture:default".into())
+        );
         drop(recorder);
         drop(writer);
         let cold = requests.session_list(&object([])).await.unwrap();
-        let rows = match cold.get("sessions").unwrap() { JsValue::Array(rows) => rows, _ => panic!("sessions") };
-        let row = rows.iter().find(|r| r.get("sessionId") == Some(&"tui:project=-fixture:default".into())).unwrap();
-        assert!(row.get("sessionKey").is_none(), "cold catalog keeps the baseline shape");
+        let rows = match cold.get("sessions").unwrap() {
+            JsValue::Array(rows) => rows,
+            _ => panic!("sessions"),
+        };
+        let row = rows
+            .iter()
+            .find(|r| r.get("sessionId") == Some(&"tui:project=-fixture:default".into()))
+            .unwrap();
+        assert!(
+            row.get("sessionKey").is_none(),
+            "cold catalog keeps the baseline shape"
+        );
     }
 
     /// #1457 fix-r2: a loaded session owns the transcript writer, so the rename

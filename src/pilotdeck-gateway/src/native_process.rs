@@ -25,6 +25,7 @@ mod capabilities;
 // directly, in the channel subtree rather than this one.
 pub(crate) mod channels;
 mod families;
+pub(crate) mod elicitation;
 mod management;
 mod methods;
 pub use methods::registered_methods;
@@ -50,6 +51,13 @@ mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
 mod tools;
 mod web;
+// #1433: the session MCP tool composition (SessionMcpRuntimeBundle) behind
+// the turn registry — public so the integration test drives the production
+// composition path (`tests/sdk_mcp_session_tools.rs`).
+pub use tools::{
+    SessionMcpRelease, SessionMcpTools, SessionMcpToolsOptions, enabled_session_mcp_servers,
+    session_mcp_tools,
+};
 
 /// Start the isolated native entry through the same host as `pilotdeck server`.
 pub async fn run(options: Options) -> Result<(), ProxyError> {

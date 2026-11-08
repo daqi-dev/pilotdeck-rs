@@ -468,7 +468,8 @@ impl std::fmt::Display for ProcessCwdError {
 }
 impl std::error::Error for ProcessCwdError {}
 
-pub(crate) fn process_cwd_diagnostic(error: &io::Error) -> (&'static str, String) {
+/// Node-compatible startup diagnostic for consumers sharing this filesystem boundary.
+pub fn process_cwd_diagnostic(error: &io::Error) -> (&'static str, String) {
     let source = error
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<ProcessCwdError>())

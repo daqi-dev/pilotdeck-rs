@@ -3,6 +3,7 @@
 //! under `resources/PilotDeck/src/tool/builtin`; filesystem paths are resolved
 //! lexically in UTF-16 first so path identity and state keys keep the original
 //! wire spelling, and only the OS boundary uses an `OsStr`.
+pub mod ask_user_question;
 pub mod bash;
 pub mod edit_file;
 pub mod edit_notebook;
@@ -1413,21 +1414,35 @@ mod errno_tests {
 /// permission decision, never read from a sidecar tool argument.
 #[cfg(unix)]
 pub(super) fn native_sandbox_write_path(
-    path: &JsString, context: &crate::runtime::tools::ToolRunContext,
+    path: &JsString,
+    context: &crate::runtime::tools::ToolRunContext,
 ) -> Result<JsString, crate::runtime::tools::ToolError> {
     use crate::runtime::{project::SandboxMode, tools::sandbox::NativeSandbox};
-    let mode = match context.fields.get("nativeSandboxMode").and_then(JsValue::as_string) {
+    let mode = match context
+        .fields
+        .get("nativeSandboxMode")
+        .and_then(JsValue::as_string)
+    {
         Some(mode) if mode.equals_str("read-only") => SandboxMode::ReadOnly,
         Some(mode) if mode.equals_str("workspace-write") => SandboxMode::WorkspaceWrite,
         _ => return Ok(path.clone()),
     };
-    let temporary_root = context.fields.get("nativeSandboxTemporaryRoot").and_then(JsValue::as_string)
-        .map(os_path).unwrap_or_else(|| PathBuf::from("/tmp"));
+    let temporary_root = context
+        .fields
+        .get("nativeSandboxTemporaryRoot")
+        .and_then(JsValue::as_string)
+        .map(os_path)
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
     let mut root = cwd(context);
     if !permission_mode(context).equals_str("bypassPermissions") {
         for candidate in additional_working_directories(context) {
-            if within_root(path, &candidate) { root = candidate; break; }
+            if within_root(path, &candidate) {
+                root = candidate;
+                break;
+            }
         }
     }
-    NativeSandbox::new(mode, temporary_root).check_write(&os_path(&root), &os_path(path)).map(|_| path.clone())
+    NativeSandbox::new(mode, temporary_root)
+        .check_write(&os_path(&root), &os_path(path))
+        .map(|_| path.clone())
 }

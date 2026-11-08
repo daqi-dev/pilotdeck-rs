@@ -234,8 +234,7 @@ impl InteractionTurn {
             router.turn.authorizations = None;
         }
         let tools = catalog.list().await?;
-        // No question/elicitation port is supplied by these four resources.
-        input.switches.elicitation_available = None;
+        // Availability is supplied by the turn-owned host composition.
         turn.manifest = turn
             .router
             .turn_manifest(

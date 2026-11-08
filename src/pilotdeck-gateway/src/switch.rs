@@ -467,6 +467,10 @@ fn cron_message(error: &CronError) -> String {
 pub struct CronStopHandle {
     manager: Arc<CronManager>,
     stopped: AtomicBool,
+    // An asynchronous caller must observe the preceding stop's completion,
+    // including when its original awaiter was cancelled. Preserve the existing
+    // repeat-call result policy after the first operation has actually returned.
+    stop_serial: Mutex<()>,
     abort_failures: AbortRecord,
 }
 
@@ -475,6 +479,7 @@ impl CronStopHandle {
         Self {
             manager,
             stopped: AtomicBool::new(false),
+            stop_serial: Mutex::new(()),
             abort_failures,
         }
     }
@@ -482,10 +487,19 @@ impl CronStopHandle {
     /// Stop once. A second call (the host teardown after a machine-driven
     /// stop) observes the earlier stop instead of repeating it.
     pub fn stop_once(&self) -> Result<(), CronError> {
+        let _serial = self.stop_serial.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.swap(true, Ordering::SeqCst) {
             return Ok(());
         }
         self.manager.stop()
+    }
+
+    /// Joining the scheduler/tick and synchronous store operations must not
+    /// block the current-thread gateway runtime that advances active turns.
+    pub async fn stop_async(self: &Arc<Self>) -> Result<(), CronError> {
+        let owner = self.clone();
+        tokio::task::spawn_blocking(move || owner.stop_once()).await
+            .map_err(|error| CronError::error(format!("Cron stop worker failed: {error}")))?
     }
 
     pub fn is_stopped(&self) -> bool {
@@ -508,7 +522,7 @@ impl CronStopHandle {
         let handle = self.clone();
         Box::pin(async move {
             close_cron_management(&handle.manager);
-            handle.stop_once().map_err(|error| {
+            handle.stop_async().await.map_err(|error| {
                 StepFailure::step(format!("cron stop failed: {}", cron_message(&error)))
             })?;
             for failure in handle.abort_failures() {

@@ -26,7 +26,7 @@ use crate::{
             Families, Family, ProjectResources, ProjectResourcesFactory, ProjectResourcesOptions,
             ProjectRuntimeRegistry, Resource, RuntimeError, RuntimeProfileOverrides, StageContext,
             memory_bundle::MemoryManagementResource, persistence::PersistenceResources,
-            plugins::PluginResources,
+            plugins::PluginResources, tools_mcp::McpProviderResource,
         },
         replacement::ReplacementCoordinator,
         sdk_session::SdkSessionProjects,
@@ -494,6 +494,14 @@ async fn start_assembly(
         acquire_miss_report.unwrap_or_else(|| Arc::new(|message: &str| eprintln!("{message}")));
     let prepare_acquire_miss_report = acquire_miss_report.clone();
     let prepare_acquire_miss_reported: Arc<std::sync::OnceLock<()>> = Arc::default();
+    // #1433: the prepare closure's MCP composition diagnostics; production
+    // logs to stderr like the factory's session diagnostic.
+    let prepare_mcp_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink> = Some(
+        Arc::new(|message: String, error: Option<RuntimeError>| match error {
+            Some(error) => eprintln!("native session MCP: {message}: {error}"),
+            None => eprintln!("native session MCP: {message}"),
+        }),
+    );
     // The `#[cfg(test)]` seam passes `false` to drive the published-miss branch;
     // production always publishes into the handle the prepare closure reads.
     let build_mcp_config = if publish_mcp_config {
@@ -508,7 +516,7 @@ async fn start_assembly(
     let budget_project = options.project.clone();
     let factory = Arc::new(ProjectSessionFactory::new(FactoryOptions {
         writer_busy_wait_timeout: options.drain_budget,
-        prepare: Arc::new(move |context, _| {
+        prepare: Arc::new(move |context, session_mcp_runtimes| {
             let project = prepare_project.clone();
             let options = prepare_options.clone();
             let env = prepare_env.clone();
@@ -518,6 +526,7 @@ async fn start_assembly(
             let mcp_config_handle = prepare_mcp_config.clone();
             let acquire_miss_report = prepare_acquire_miss_report.clone();
             let acquire_miss_reported = prepare_acquire_miss_reported.clone();
+            let mcp_diagnostic = prepare_mcp_diagnostic.clone();
             let session_overrides = prepare_overrides.clone();
             let sdk = prepare_sdk.clone();
             Box::pin(async move {
@@ -677,6 +686,57 @@ async fn start_assembly(
                         Ok(())
                     })
                 });
+                // #1433: compose the session's MCP tools
+                // (`SessionMcpRuntimeBundle.compose`) from the enabled session
+                // server table — the production read face of
+                // `SdkMcpConfig::session_mcp_servers`. Shared servers lease the
+                // project runtime; per-session stdio servers start under the
+                // factory's per-session registry. An unpublished config keeps
+                // the empty composition: the ask-rule sync above already
+                // reported that wiring miss for this assembly (#1429).
+                let (session_mcp, session_mcp_release) = match mcp_config_handle.get() {
+                    Some(mcp_config) => {
+                        let provider = staged
+                            .owner(Family::McpProvider)
+                            .ok_or_else(|| RuntimeError::new("Native MCP provider is missing."))?;
+                        let provider = provider
+                            .as_any()
+                            .downcast_ref::<McpProviderResource>()
+                            .ok_or_else(|| {
+                                RuntimeError::new("Native MCP provider has the wrong type.")
+                            })?
+                            .provider()
+                            .clone();
+                        // #1433 fix-r1 (review P2#4): read the snapshot's
+                        // already-normalized key — `config/snapshot.rs`
+                        // normalizes it to a finite number with a floor of 1
+                        // (the TS `numberField(..., 5)` + `Math.max(1, …)`),
+                        // so re-clamping here would be a second
+                        // normalization, and the old `as usize` cast
+                        // truncated a fractional cap (TS `size >= 2.5` still
+                        // admits the third registration).
+                        let max_per_session_instances = snapshot
+                            .get("config")
+                            .and_then(|config| config.get("gateway"))
+                            .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
+                            .and_then(JsValue::as_number)
+                            .unwrap_or(5.0);
+                        super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
+                            mcp_config,
+                            provider: &provider,
+                            per_session_runtimes: &session_mcp_runtimes,
+                            session_key: &context.session_key,
+                            max_per_session_instances,
+                            on_diagnostic: mcp_diagnostic.clone(),
+                        })
+                        .await?
+                    }
+                    None => (
+                        super::tools::SessionMcpTools::empty(),
+                        super::tools::SessionMcpRelease::default(),
+                    ),
+                };
+                retained.push(move || Box::pin(async move { session_mcp_release.release().await }));
                 let tail = TailConfig {
                     cwd: Some(options.project.clone()),
                     // #1371: the controlled loop emits no assistant text, so
@@ -719,6 +779,7 @@ async fn start_assembly(
                             config.clone(),
                             interactions,
                             lsp,
+                            session_mcp,
                         )?
                         .with_permission_mode_source(permission_source.clone())
                         .with_permission_rules(native_permission_rules)
@@ -1044,6 +1105,7 @@ async fn start_assembly(
             // submit path.
             let cron_admission = Arc::new(crate::runtime::session::SessionAdmission::default());
             let cron_owner = owner.clone();
+            let execution_options = options.clone();
             let requests = Arc::new(super::requests::Requests {
                 project: build_project,
                 snapshot_enabled,
@@ -1108,6 +1170,8 @@ async fn start_assembly(
                 )));
                 cron.bind_agent_gateway(recording.clone())
                     .map_err(cron::cron_io_error)?;
+                cron.set_execution_project_filter(Arc::new(move |project| execution_options.serves_project(project)))
+                    .map_err(cron::cron_io_error)?;
                 cron.start().map_err(cron::cron_io_error)?;
                 build_cron_slot
                     .set(Arc::new(crate::switch::CronStopHandle::new(
@@ -1158,7 +1222,8 @@ async fn start_assembly(
                         cleanup_observer(
                             "cron",
                             handle
-                                .stop_once()
+                                .stop_async()
+                                .await
                                 .map_err(|error| String::from_utf16_lossy(error.message().units())),
                         )
                         .await

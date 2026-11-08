@@ -572,7 +572,8 @@ async fn ts_seeded_task_survives_the_switch_without_re_execution() {
 
     // The committed history carries exactly the recovery record for the
     // interrupted run — a failed `cron_run_interrupted` entry, never an
-    // executed one; the scheduler half that would fire runs is #1305's.
+    // executed one; the firing half (scheduler.rs/fire.rs, #2295) is not
+    // what this fixture drives.
     let history =
         std::fs::read_to_string(&paths.run_history_file).expect("#1326 committed run history");
     let records: Vec<Value> = history

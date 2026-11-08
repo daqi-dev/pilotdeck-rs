@@ -1,21 +1,27 @@
 //! Cron storage and its one-shot v1 store migration, ported from the TS
 //! baseline `src/cron/storage/` (CronPaths.ts / CronTaskStore.ts /
-//! CronStoreMigration.ts), plus the schedule computation from
-//! `src/cron/runtime/CronSchedule.ts` (and `src/cron/CronTimezone.ts`).
-//! Neither is wired into the gateway process yet: storage is #1216
-//! A8.3-pr1a, schedule computation is #1324 (dispatch splits to #1305,
-//! wiring to #1325).
+//! CronStoreMigration.ts), the schedule computation from
+//! `src/cron/runtime/CronSchedule.ts` (and `src/cron/CronTimezone.ts`), the
+//! runtime from `src/cron/runtime/CronRuntime.ts` + `CronManager.ts`, and
+//! the #2295 periodic dispatch (`CronFire.ts` + `CronScheduler.ts`: the 60s
+//! idle poll with an `isDue` filter, firing on the synchronous
+//! `CronAgentGateway` boundary). Request dispatch is #1326; the
+//! event-stream turn consumption folds into the same boundary.
+mod fire;
 mod manager;
 mod methods;
 mod migration;
 mod paths;
 mod projection;
 mod schedule;
+mod scheduler;
 mod store;
 
+pub use fire::{CronFire, CronFireDeps, CronFirePort, CronRunOutcome};
 pub use manager::{
     CronActiveRun, CronAgentGateway, CronError, CronGatewayBody, CronLogger, CronManager,
     CronManagerConfig, CronManagerOptions, CronRuntime, CronTurnSubmit, NoopCronLogger,
+    CronExecutionProjectFilter,
     SessionAdmissionCronGateway,
 };
 pub use methods::{cron_create, cron_delete, cron_list, cron_run_now, cron_stop, cron_update};
@@ -27,12 +33,17 @@ pub use schedule::{
     DelayUnit, InvalidTimeValue, compute_next_cron_run_at, compute_next_run_at,
     cron_day_fields_use_or, delay_to_milliseconds, is_valid_cron_timezone, resolve_cron_timezone,
 };
+pub use scheduler::{CronScheduler, DEFAULT_IDLE_POLL_MS, SchedulerDeps};
 pub use store::CronTaskStore;
 
 #[cfg(test)]
 mod manager_tests;
 #[cfg(test)]
 mod schedule_tests;
+#[cfg(test)]
+mod scheduler_tests;
+#[cfg(test)]
+mod host_integration_tests;
 #[cfg(test)]
 mod tests;
 
