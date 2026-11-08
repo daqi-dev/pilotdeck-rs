@@ -53,3 +53,7 @@ python3 …/slot-probe-residual/negative-controls.py --smoke          # 真 ps/p
 段直接跑全量（fix-r1 P2-a 5）。macOS / Linux（procps 4.0.4）宿主 `ps -Aww`
 对 argv 控制字节的转义实测与 item 3 保守判法的依据见
 `_tmp/20261026-issue-2516/fix-r1/RESULT.md`（仓库证据目录，不进提交）。
+换行豁免残余的登记正本见 `model-complete/README.md`「已知残余」段（前提：
+探针信任本机 PATH，PATH 受控时整表清点均不在边界内；两平台实测与
+9331 样本穷举存主仓 `_tmp/20261109-2516-fixr1-harvest/evidence/`，
+跟进单 #2609）。

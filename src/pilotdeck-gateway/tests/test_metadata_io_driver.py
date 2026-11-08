@@ -4416,15 +4416,19 @@ self_check_controls_run | return | return problems
         # #1556 后的守卫多数是分行写的）：增删任意一条守卫、把某条守卫的码改掉，都必须红。
         guards = self.script_guards(script)
         self.assertEqual(Counter(int(code) for _, code in guards),
-                         Counter({3: 2, 4: 9, 64: 1, 69: 2}),
+                         Counter({3: 4, 4: 9, 64: 1, 69: 2}),
                          '#1632 every cargo-slots.sh guard: how many guards exit with which code')
         self.assertEqual({int(code) for _, code in guards}, used,
                          '#1692 §10 every raised non-zero code is a guarded failure, and '
                          'every guard exits with a code the script really raises')
+        # #2506 / #2516 fix-r3：四条取样守卫逐条钉死（取样失败 / 输出为空 / 零可解析行 /
+        # 缺调用者 pid），删任意一条都会让该形态回到「在跑 0 → 放行」。
         self.assertEqual([msg for msg, _ in guards if msg.startswith('cargo-slots: ps ')],
                          ['cargo-slots: ps 取样失败，无法判断名额（不按 0 放行）',
-                          'cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）'],
-                         '#1632 the two sampling guards keep their diagnostics, in order')
+                          'cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）',
+                          'cargo-slots: ps 输出零可解析行，无法判断名额（不按 0 放行）',
+                          'cargo-slots: ps 快照缺调用者 pid，无法判断名额（不按 0 放行）'],
+                         '#1632 the sampling guards keep their diagnostics, in order')
         gates = {key.value: ast.literal_eval(value)
                  for key, value in zip(cases.keys, cases.values)}
         for name, code in codes.items():
@@ -4697,15 +4701,34 @@ self_check_controls_run | return | return problems
                                    'PDRS_CARGO_SLOTS_CACHE_DIR': str(Path(tmp)/'cache')})
 
     def assert_cargo_slots_fails_closed(self, script, tmp, label):
-        """取样不可用时必须 rc=3，且绝不打印「在跑 N」——打印了就是把空样本读成 0 放行。"""
-        for case, body in (('ps exits non-zero', '#!/bin/sh\nexit 1\n'),
-                           ('ps prints nothing', '#!/bin/sh\nexit 0\n'),
-                           # 残缺采样：先输出一行再非零退出。只有这一格能把「取样失败」
-                           # 那条守卫和「输出为空」那条分开——前两格都会被空输出守卫兜住。
-                           ('ps prints rows then fails',
-                            '#!/bin/sh\nprintf "  123 1 cargo\\n"\nexit 1\n')):
+        """取样不可用时必须 rc=3，且绝不打印「在跑 N」——打印了就是把空样本读成 0 放行。
+
+        #2506 / #2516 fix-r3：rc=3 之外还逐格钉**该格应有的守卫消息**。取样守卫从两条
+        变成四条（零可解析行 / 缺调用者 pid）后，只看 rc 的翻转变异体会被更深的守卫
+        兜住——守卫条件被翻掉、退出被包进子 shell 或整行被搬走，样本照样在更深一层
+        exit 3，rc 与「不按 0 放行」两格断言照绿。消息是哪条守卫开口的唯一可判差异：
+        真实脚本每格开口不变，变异体必落错消息。
+        """
+        for case, body, expected in (
+                ('ps exits non-zero', '#!/bin/sh\nexit 1\n', 'ps 取样失败'),
+                ('ps prints nothing', '#!/bin/sh\nexit 0\n', 'ps 输出为空'),
+                # 残缺采样：先输出一行再非零退出。只有这一格能把「取样失败」
+                # 那条守卫和「输出为空」那条分开——前两格都会被空输出守卫兜住。
+                ('ps prints rows then fails',
+                 '#!/bin/sh\nprintf "  123 1 cargo\\n"\nexit 1\n', 'ps 取样失败')):
             done = self.run_cargo_slots(script, tmp, body)
             self.assertEqual(done.returncode, 3, f'#1632 {label} / {case}: {done.stderr}')
+            self.assertIn(expected, done.stderr,
+                          f'#1632 {label} / {case} fails via its own guard, not a deeper one')
+            # 而且只允许这一条开口：exit 被包进子 shell / 守卫行被搬走的形态里，诊断
+            # 照发（子 shell 里 echo 不受 exit 影响），单看「消息在场」分不出来；其余
+            # 三条取样守卫的消息必须缺席，双消息即红。
+            for fragment in ('ps 取样失败', 'ps 输出为空', 'ps 输出零可解析行',
+                             'ps 快照缺调用者 pid'):
+                if fragment != expected:
+                    self.assertNotIn(fragment, done.stderr,
+                                     f'#1632 {label} / {case} leaks another sampling guard: '
+                                     f'{fragment}')
             self.assertIn('不按 0 放行', done.stderr, f'#1632 {label} / {case} explains itself')
             self.assertNotIn('在跑', done.stdout, f'#1632 {label} / {case} reports no slot count')
 
@@ -4740,6 +4763,92 @@ self_check_controls_run | return | return problems
                                        msg=f'#1632 the behaviour check must catch {label}'):
                     self.assert_cargo_slots_fails_closed(path, tmp, label)
                 print(f'#1632 slot-guard behaviour mutant {label}: KILLED', flush=True)
+
+    def test_cargo_slots_script_fails_closed_on_unparseable_or_callerless_sample(self):
+        # #2506 / #2516 fix-r3（fix-r1 评审 sibling P1 的 bash 半条，与 model-complete
+        # 探针 `slots_from_ps` 的 #1770 fix-r1/fix-r2 守卫对称）：「非空但零可解析行」
+        # 「有可解析行但表内缺调用者 pid」都必须按取样失败（rc=3）处理。旧 awk 对
+        # 不可解析输入照样 `print c+0`，ps 版本/格式漂移打出整表诊断（rc=0）时满槽会被
+        # 读成「有空位」（CLAUDE.md 每机并发上限被穿透）；一张不含本脚本自身 pid 的表
+        # 同样无法作证——真取样里本脚本必然在场。
+        script = Path(__file__).resolve().parents[3]/'scripts/cargo-slots.sh'
+        text = script.read_text()
+        with tempfile.TemporaryDirectory() as tmp:
+            for case, body, needle in (
+                    ('ps prints only diagnostics',
+                     '#!/bin/sh\necho "ps: unsupported output format"\nexit 0\n',
+                     '零可解析行'),
+                    # 有可解析行（一条真形态 cargo 树）但表里没有调用者 pid：旧实现照常给数。
+                    ('ps omits the caller pid',
+                     '#!/bin/sh\nprintf "  123 122 cargo build\\n"\nexit 0\n',
+                     '缺调用者 pid')):
+                done = self.run_cargo_slots(script, tmp, body)
+                self.assertEqual(done.returncode, 3, f'#2506 {case}: {done.stderr}')
+                self.assertIn(needle, done.stderr, f'#2506 {case} names its failure shape')
+                self.assertIn('不按 0 放行', done.stderr, f'#2506 {case} explains itself')
+                self.assertNotIn('在跑', done.stdout, f'#2506 {case} reports no slot count')
+            # 正桩：一张含调用者 pid、含一条真形态 cargo 树、含一条不可解析杂行的正常表
+            # 必须照常判名额（在跑 1 / 上限 4，杂行不计数）。两条新守卫只在快照无法作证
+            # 时才拦——条件翻转与「awk 不再校验行」的负控正是靠这一格杀。
+            # `os.getppid()` 即脚本 `$$`：命令替换的子进程由脚本 shell 直接 fork（实测
+            # outer.sh/fakeps 三次运行 ppid==$$），与 slot-probe-residual 夹具 FAKE_PS
+            # 的 {CALLER_PID} 同一依据。
+            good = self.run_cargo_slots(script, tmp, (
+                '#!/usr/bin/env python3\n'
+                'import os, sys\n'
+                'me = os.getppid()\n'
+                'rows = [f"{me} {me - 1} bash cargo-slots.sh",\n'
+                '        "  200 100 cargo build",\n'
+                '        " 100 50 zsh",\n'
+                '        "  50 1 launchd",\n'
+                '        "   1 0 launchd",\n'
+                '        "junk 100 cargo build"]\n'
+                'sys.stdout.write("".join(row + chr(10) for row in rows))\n'))
+            self.assertEqual(good.returncode, 0, f'#2506 healthy table: {good.stderr}')
+            self.assertIn('在跑 1 / 上限 4', good.stdout,
+                          '#2506 the healthy table counts one tree and ignores the junk row')
+
+            def healthy_table_verdict(script_path):
+                done = self.run_cargo_slots(script_path, tmp, (
+                    '#!/usr/bin/env python3\n'
+                    'import os, sys\n'
+                    'me = os.getppid()\n'
+                    'rows = [f"{me} {me - 1} bash cargo-slots.sh",\n'
+                    '        "  200 100 cargo build",\n'
+                    '        " 100 50 zsh",\n'
+                    '        "  50 1 launchd",\n'
+                    '        "   1 0 launchd",\n'
+                    '        "junk 100 cargo build"]\n'
+                    'sys.stdout.write("".join(row + chr(10) for row in rows))\n'))
+                self.assertEqual(done.returncode, 0,
+                                 f'#2506 the healthy table must pass: {done.stderr}')
+                self.assertIn('在跑 1 / 上限 4', done.stdout,
+                              '#2506 the healthy table counts one tree and ignores the junk row')
+
+            for label, mutant in (
+                    # 两条新守卫的 `||` 翻成 `&&`：健康表（parsed>0 且 me_seen=1）反而被拦，
+                    # 正桩必红。
+                    ('rows-guard-condition-flipped',
+                     text.replace('] || { echo "cargo-slots: ps 输出零可解析行',
+                                  '] && { echo "cargo-slots: ps 输出零可解析行', 1)),
+                    ('caller-guard-condition-flipped',
+                     text.replace('] || { echo "cargo-slots: ps 快照缺调用者 pid',
+                                  '] && { echo "cargo-slots: ps 快照缺调用者 pid', 1)),
+                    # awk 行校验删掉：杂行被当可解析行且其 exe 首词是 cargo，
+                    # 健康表数出第二棵树（在跑 2）。
+                    ('row-validation-dropped',
+                     text.replace('$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && NF >= 3',
+                                  '1', 1)),
+                    # 调用者行不再被标记：任何表都过不了 me_seen 守卫，正桩必红。
+                    ('caller-row-not-tracked',
+                     text.replace('if ($1 == me) me_seen=1', 'if ($1 == 0) me_seen=1', 1))):
+                self.assertNotEqual(mutant, text, f'#2506 the mutant really changed: {label}')
+                path = Path(tmp)/f'{label}.sh'
+                path.write_text(mutant)
+                with self.assertRaises(AssertionError,
+                                       msg=f'#2506 the healthy-table check must catch {label}'):
+                    healthy_table_verdict(path)
+                print(f'#2506 slot-guard behaviour mutant {label}: KILLED', flush=True)
 
     def test_nextest_keeps_workspace_doctests_and_failure_semantics(self):
         jobs = self.ci_jobs(issue='#922')
