@@ -22,6 +22,8 @@ Ctrl-E打开或关闭会话列表，Ctrl-S切换项目和状态分组。空输�
 
 状态、显示缓存及输入合计约8MiB计数，资源不足会明确提示并中止活动回合，逐步移除最新内容，保留可显示的旧历史。它不是进程 RSS 上限。输入最多64KiB，token最多64KiB；工具输出文件最多读取1MiB。终端短暂不可写会等待，整帧一秒后仍无法写入则失败退出。具体计数与尚待人复核的行为差异见 `specs/gateway-parity/diffs/D4-TUI-*.md`。
 
-本片是远端交互实现，不代表完整 D4。输入编辑与粘贴的剩余兼容性继续实现；当前 native 宿主的权限发射和历史读取接线仍有限，fake WS 的权限/history 场景不能代表实际宿主已具备这些能力。真实 provider 与人眼终端体验仍需独立验收。
+输入左右移动、退格与Delete按Unicode字素处理；Delete沿用旧CLI向左删除。终端bracketed paste保留多行正文，64KiB超限或未结束可用Ctrl-C取消，正文不会触发权限应答。一次read收到的普通多字符文字与CR/LF也保留为草稿，另按Enter才提交；不能保证任意分包仍视作同一批粘贴。等待新会话或取消确认时可继续编辑草稿，确认前不会提交。测试、Esc消歧边界与候选差异见[输入说明](tests/fixtures/tui-input/README.md)。
+
+本片是远端交互实现，不代表完整 D4。当前 native 宿主的权限发射和历史读取接线仍有限，fake WS 的权限/history 场景不能代表实际宿主已具备这些能力。真实 provider 与人眼终端体验仍需独立验收。
 
 复现脚本见 [tui-pty README](tests/fixtures/tui-pty/README.md)。Rust 编译和 PTY 验证均在 mbp2，证据保留在主仓 `_tmp/20261108-cli-tui/`；真实执行的 bin 必须与本轮源码指纹绑定，不能仅凭增量构建退出0判断来源。

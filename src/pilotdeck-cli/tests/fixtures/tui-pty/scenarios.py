@@ -33,11 +33,11 @@ try:
  def type_line(data):os.write(master,data);pause(.5);os.write(master,b'\r')
  wait(lambda:bool(calls('list_sessions')),'list')
  if a.case=='new':
-  type_line(b'/new');wait(lambda:bool(calls('new_session')),'new');type_line(b'old prompt');pause(.1);assert not calls('submit_turn'),'sent while new pending';wait(lambda:any(r.get('out',{}).get('result',{}).get('sessionKey')=='new-session' for r in rows()),'new reply');pause(.3);os.write(master,b'\r');wait(lambda:bool(calls('submit_turn')),'new submit');assert calls('submit_turn')[0]['params']['sessionKey']=='new-session'
+  type_line(b'/new');wait(lambda:bool(calls('new_session')),'new');type_line(b'old prompt');pause(.1);assert not calls('submit_turn'),'sent while new pending';wait(lambda:any(r.get('out',{}).get('result',{}).get('sessionKey')=='new-session' for r in rows()),'new reply');pause(.3);os.write(master,b'\r');wait(lambda:bool(calls('submit_turn')),'new submit');assert calls('submit_turn')[0]['params']['sessionKey']=='new-session';assert calls('submit_turn')[0]['params']['message']=='old prompt'
  elif a.case in ('abort-late','abort-timeout'):
   type_line(b'first');wait(lambda:len(calls('submit_turn'))==1,'first submit');pause(.3);os.write(master,b'\x1b');wait(lambda:len(calls('abort_turn'))==1,'abort sent');wait(lambda:any(r.get('out',{}).get('event',{}).get('type')=='turn_completed' for r in rows()),'old terminal');type_line(b'second');pause(.3);assert len(calls('submit_turn'))==1,'new turn ran before abort confirmation'
   if a.case=='abort-late':
-   wait(lambda:any(r.get('out',{}).get('type')=='response' and r.get('out',{}).get('id')==calls('abort_turn')[0]['id'] for r in rows()),'abort confirmation');pause(.3);os.write(master,b'\r');wait(lambda:len(calls('submit_turn'))==2,'submit after confirmed abort')
+   wait(lambda:any(r.get('out',{}).get('type')=='response' and r.get('out',{}).get('id')==calls('abort_turn')[0]['id'] for r in rows()),'abort confirmation');pause(.3);os.write(master,b'\r');wait(lambda:len(calls('submit_turn'))==2,'submit after confirmed abort');assert calls('submit_turn')[1]['params']['message']=='second'
   else:
    pause(11);wait(lambda:b'reconnect' in raw and b'required' in raw,'abort timeout requires reconnect');os.write(master,b'\r');pause(.5);assert len(calls('submit_turn'))==1,'new turn ran after unknown abort outcome'
  elif a.case=='grapheme':

@@ -16,3 +16,9 @@ mod help;
 
 #[cfg(unix)]
 mod sidebar;
+
+#[cfg(unix)]
+mod input;
+
+#[cfg(unix)]
+mod terminal_input;

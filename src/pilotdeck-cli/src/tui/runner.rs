@@ -8,7 +8,9 @@ use super::{
 };
 use crossterm::{
     cursor::Show,
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{
+        DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode},
 };
@@ -111,13 +113,22 @@ struct TerminalGuard {
     hooks: Vec<signal_hook::SigId>,
     watcher: Option<JoinHandle<()>>,
     stdout_flags: rustix::fs::OFlags,
+    stdin_flags: rustix::fs::OFlags,
 }
 impl TerminalGuard {
     fn enter() -> io::Result<Self> {
         let flags = rustix::fs::fcntl_getfl(io::stdout()).map_err(io::Error::from)?;
+        let stdin_flags = rustix::fs::fcntl_getfl(io::stdin()).map_err(io::Error::from)?;
         rustix::fs::fcntl_setfl(io::stdout(), flags | rustix::fs::OFlags::NONBLOCK)
             .map_err(io::Error::from)?;
+        if let Err(error) =
+            rustix::fs::fcntl_setfl(io::stdin(), stdin_flags | rustix::fs::OFlags::NONBLOCK)
+        {
+            let _ = rustix::fs::fcntl_setfl(io::stdout(), flags);
+            return Err(io::Error::from(error));
+        }
         if let Err(error) = enable_raw_mode() {
+            let _ = rustix::fs::fcntl_setfl(io::stdin(), stdin_flags);
             let _ = rustix::fs::fcntl_setfl(io::stdout(), flags);
             return Err(error);
         }
@@ -135,7 +146,9 @@ impl TerminalGuard {
                     for hook in hooks {
                         signal_hook::low_level::unregister(hook);
                     }
+                    let _ = execute!(io::stdout(), DisableBracketedPaste);
                     let _ = disable_raw_mode();
+                    let _ = rustix::fs::fcntl_setfl(io::stdin(), stdin_flags);
                     let _ = rustix::fs::fcntl_setfl(io::stdout(), flags);
                     return Err(error);
                 }
@@ -146,7 +159,9 @@ impl TerminalGuard {
             while !stopped.load(Ordering::Acquire) {
                 let signal = seen.load(Ordering::Acquire);
                 if signal != 0 {
+                    let _ = execute!(io::stdout(), DisableBracketedPaste);
                     let _ = disable_raw_mode();
+                    let _ = rustix::fs::fcntl_setfl(io::stdin(), stdin_flags);
                     let _ = rustix::fs::fcntl_setfl(io::stdout(), flags);
                     let _ = signal_hook::low_level::emulate_default_handler(signal as i32);
                     return;
@@ -159,6 +174,7 @@ impl TerminalGuard {
             hooks,
             watcher: Some(watcher),
             stdout_flags: flags,
+            stdin_flags,
         })
     }
 }
@@ -168,8 +184,10 @@ impl Drop for TerminalGuard {
         for hook in self.hooks.drain(..) {
             signal_hook::low_level::unregister(hook);
         }
+        let _ = execute!(io::stdout(), DisableBracketedPaste);
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), Show);
+        let _ = rustix::fs::fcntl_setfl(io::stdin(), self.stdin_flags);
         let _ = rustix::fs::fcntl_setfl(io::stdout(), self.stdout_flags);
         if let Some(watcher) = self.watcher.take() {
             let _ = watcher.join();
@@ -316,6 +334,16 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
     let mut chat_scroll = 0usize;
     let mut chat_layout = ChatLayout::default();
     let mut generation = 0u64;
+    let mut terminal_input = super::terminal_input::TerminalInput::default();
+    let mut paste_allowed = false;
+    let mut session_epoch = 0u64;
+    let mut paste_epoch = 0u64;
+    let mut paste_generation = 0u64;
+    let mut last_terminal_size = terminal.size().map_err(|e| e.to_string())?;
+    let mut last_size_check = std::time::Instant::now();
+    terminal.backend_mut().writer_mut().begin_frame();
+    execute!(terminal.backend_mut().writer_mut(), EnableBracketedPaste)
+        .map_err(|e| e.to_string())?;
     let mut consumed_bytes = 0usize;
     let mut turn_task: Option<tokio::task::JoinHandle<()>> = None;
     let outcome: Result<(), String> = async {
@@ -398,6 +426,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                     match result {
                         Ok(value) if !value.is_empty() => {
                             session = value.clone();
+                            session_epoch=session_epoch.wrapping_add(1);
                             focused_index = None;
                             state.messages =
                                 vec![message("system", &format!("New session: {value}"))];
@@ -447,6 +476,7 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                     new_pending = false;
                     sidebar = false;
                     session = key;
+                    session_epoch=session_epoch.wrapping_add(1);
                     focused_index=None;
                     state.messages = messages;
                     consumed_bytes = 0; chat_layout.clear();
@@ -584,8 +614,37 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
             dirty = false;
             }
         }
-        if event::poll(Duration::ZERO).map_err(|e| e.to_string())? {
-            match event::read().map_err(|e| e.to_string())? {
+        if last_size_check.elapsed() >= Duration::from_millis(200) {
+            let size=terminal.size().map_err(|e|e.to_string())?;
+            if size != last_terminal_size {last_terminal_size=size;dirty=true;}
+            last_size_check=std::time::Instant::now();
+        }
+        if paste_epoch != session_epoch || paste_generation != generation || help || sidebar || viewer.is_some() || !state.pending_permissions.is_empty() || state.is_running || new_pending || abort_inflight || connection_uncertain || tool_read_pending {paste_allowed=false;}
+        if let Some(input_event) = terminal_input.poll().map_err(|e|e.to_string())? {
+            match input_event {
+                // A completed text read is ordinary draft input. Busy RPCs gate
+                // submission, not editing; bracketed paste retains its separate
+                // cross-session/generation guard below. CR/LF stay literal here.
+                super::terminal_input::InputEvent::TextBatch(value) => {
+                    if !help && viewer.is_none() && state.pending_permissions.is_empty() {
+                        if !super::input::insert(&mut input, &mut input_cursor, &value) {
+                            input_overflow=true;
+                            if !state.messages.last().is_some_and(|m| text(m.get("text")) == "Input limit reached.") {
+                                state.messages.push(message("error", "Input limit reached."));
+                            }
+                        }
+                        focused_index=None;dirty=true;
+                    }
+                },
+                super::terminal_input::InputEvent::PasteStarted => {paste_epoch=session_epoch;paste_generation=generation;paste_allowed=!help && !sidebar && viewer.is_none() && state.pending_permissions.is_empty() && !state.is_running && !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending;},
+                super::terminal_input::InputEvent::PasteOverflow => {
+                    if paste_allowed && !help && !sidebar && viewer.is_none() && state.pending_permissions.is_empty() && !state.is_running && !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending {
+                        input_overflow=true;state.messages.push(message("error","Paste exceeded the input limit."));dirty=true;
+                    }
+                },
+                super::terminal_input::InputEvent::PasteCancelled => { paste_allowed=false;state.messages.push(message("system","Paste cancelled."));dirty=true; },
+                super::terminal_input::InputEvent::Eof => exit=true,
+                super::terminal_input::InputEvent::Terminal(event) => match event {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     dirty = true;
                     if viewer.is_some() {
@@ -785,9 +844,9 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                                     .modifiers
                                     .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
                             {
-                                if input.len() + c.len_utf8() <= 65536 {
-                                    input.insert(input_cursor, c);
-                                    input_cursor += c.len_utf8();focused_index=None;
+                                let mut charbuf=[0;4];
+                                if super::input::insert(&mut input, &mut input_cursor, c.encode_utf8(&mut charbuf)) {
+                                    focused_index=None;
                                 } else {
                                     input_overflow = true;
                                     if !state.messages.last().is_some_and(|m| text(m.get("text")) == "Input limit reached.") {
@@ -795,24 +854,11 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                                     }
                                 }
                             }
-                            KeyCode::Backspace if input_cursor > 0 => {
-                                let previous = input[..input_cursor]
-                                    .char_indices()
-                                    .next_back()
-                                    .map_or(0, |(i, _)| i);
-                                input.replace_range(previous..input_cursor, "");
-                                input_cursor = previous;focused_index=None;
+                            KeyCode::Backspace | KeyCode::Delete if input_cursor > 0 => {
+                                super::input::delete_previous(&mut input,&mut input_cursor);focused_index=None;
                             }
-                            KeyCode::Left if input_cursor > 0 => {
-                                input_cursor = input[..input_cursor]
-                                    .char_indices()
-                                    .next_back()
-                                    .map_or(0, |(i, _)| i);
-                            }
-                            KeyCode::Right if input_cursor < input.len() => {
-                                input_cursor +=
-                                    input[input_cursor..].chars().next().unwrap().len_utf8();
-                            }
+                            KeyCode::Left if input_cursor > 0 => {input_cursor=super::input::previous(&input,input_cursor);}
+                            KeyCode::Right if input_cursor < input.len() => {input_cursor=super::input::next(&input,input_cursor);}
                             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 input.clear();
                                 input_cursor = 0;
@@ -1053,10 +1099,14 @@ pub async fn run(url: &str, token: &str, home: &Path, cwd: &Path) -> Result<u8, 
                         }
                     }
                 }
-                Event::Resize(_, _) => {
-                    dirty = true;
+                Event::Paste(value) if paste_allowed && !help && !sidebar && viewer.is_none() && state.pending_permissions.is_empty() && !state.is_running && !new_pending && !abort_inflight && !connection_uncertain && !tool_read_pending => {
+                    paste_allowed=false;
+                    if !super::input::insert(&mut input,&mut input_cursor,&value) {input_overflow=true;state.messages.push(message("error","Paste exceeded the input limit."));}
+                    focused_index=None;dirty=true;
                 }
+                Event::Paste(_) => {paste_allowed=false;},
                 _ => {}
+            },
             }
         }
         tokio::task::yield_now().await;

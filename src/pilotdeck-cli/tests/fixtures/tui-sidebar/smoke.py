@@ -64,8 +64,8 @@ try:
   snap('toggle');key(b'\x03');assert child.poll() is None,'sidebar Ctrl-C exited instead of closing'
   os.write(master,b'nonempty');pause(.3);key(b'\x05');wait(lambda:len([r for r in rows() if r.get('in',{}).get('method')=='list_sessions'])>=initial+3,'sidebar reopened')
   if a.slow:pause(1.4)
-  key(b'\x13');key(b'\x1b');key(b'\r');wait(lambda:any(r.get('in',{}).get('method')=='submit_turn' for r in rows()),'submit preserved input')
-  submit=next(r['in'] for r in rows() if r.get('in',{}).get('method')=='submit_turn');assert submit['params']['message']=='nonempty',submit
+  key(b'-batch');key(b'\x13');key(b'\x1b');key(b'\r');wait(lambda:any(r.get('in',{}).get('method')=='submit_turn' for r in rows()),'submit preserved input')
+  submit=next(r['in'] for r in rows() if r.get('in',{}).get('method')=='submit_turn');assert submit['params']['message']=='nonempty-batch',submit
   wait(lambda:any(r.get('out',{}).get('final') for r in rows()),'turn completed');pause(.4);os.write(master,b'\x03');wait(lambda:child.poll() is not None,'exit');after=termios.tcgetattr(slave);exited=child.poll();assert before==after,'terminal not restored';assert exited==0
 
 except BaseException as e:failure=repr(e)

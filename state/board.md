@@ -4793,3 +4793,7 @@ Ratatui runner已接真实终端、同连接流/权限/取消、会话与权限�
 ### 2026-11-08 · SDK token 文件读取安全切片（Codex，本机提交）
 
 SDK文件回退已在Unix接O_NONBLOCK同fd普通文件检查及65536+1有界读取，拒绝FIFO/特殊文件与超限；argv/env优先级、空flag回退/空env不回退、UTF8 lossy+trim、目录/普通IO旧token-required保留，其他读器未改。真实TS19格先采（65537实发、无writer挂起、延迟writer正控），mbp2新token2测试覆盖19金样+15拒绝组合及4个真实fd边界单测，既有SDK/preflight/resume/run/sessions/settings回归全部通过，严格clippy/fmt/build通过，5编译输入hash匹配；证据主仓`_tmp/20261108-cli-sdk-token/r1-evidence/`。独立差异D1-SDK-TOKEN-READ-BOUNDS-001仍未批准、无冻结豁免，仅本机提交；下一步按独立startup路径基线接续，SDK产品保持冻结，不提前标D1/A8/CLI整体完成。
+
+### 2026-11-08 · TUI 输入编辑与有界粘贴（Codex/Terra，仅本机）
+
+字素编辑、64KiB粘贴边界、拆包控制序列及信号恢复已实现；旧回归发现等待/new时批量草稿丢失，改为独立TextBatch保留编辑、仍阻止提前提交。mbp2 r5严格clippy/35库测试/build、26输入+18信号+18旧交互全PASS，399源码/原件哈希匹配，独立复核无确认P0/P1；Darwin全F_GETFL假失败已有纯PTY写正控，原始失败均保留主仓 `_tmp/20261108-cli-tui/input-implementation/`。新D4差异待人复核，不等同完整D4/native权限/history/local fallback或真人实效。HOME首片已在Sol树本地提交、setup延迟解析继续；刚fetch上游ee138b9ee的装配生命周期未改变，#1959未提交清理仍与LocalHost重叠，继续独立产品接线。无GitHub写、本机无Rust编译。
