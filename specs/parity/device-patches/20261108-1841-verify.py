@@ -24,6 +24,13 @@ and the 753-file corpus is held in memory (measured peak well under the
 load_trace loading scratch materializations of the cached bytes. Nothing
 that happens to any input file after its check can change what is compared.
 
+Since fix-r3 the corpus read is path-set-first with an enforced budget: the
+walk over --evidence collects file paths only, the missing/extra comparison
+against the corpus manifest runs before any byte is read, and the bytes are
+then read from the manifest's entries alone under a running total that
+aborts past 500 MB — an unexpected file is rejected by the fail-closed set
+check, never by an out-of-memory.
+
 Usage (must run with -I; writes only to --out, its own temporary scratch
 directories, and a temporary bytecode-cache directory — the same guard every
 apparatus entry point uses, never a __pycache__ next to the baseline):
@@ -36,7 +43,10 @@ apparatus entry point uses, never a __pycache__ next to the baseline):
 
 --manifest and the registration file (20261108-1841.md) default to the copies
 next to this script. --out is created exclusively: an existing file is never
-overwritten, the run writes <name>.attempt-N.<ext> instead.
+overwritten, the run writes <name>.attempt-N.<ext> instead. Neither --out nor
+--manifest may resolve inside the --evidence tree (asserted at entry,
+fix-r3): criterion 0 pins the exact file set, so a file written there would
+make the next recompute report it as unexpected and FAIL.
 
 Criteria (registration 20261108-1841.md):
   0. evidence anchoring: corpus manifest (per-file sha256, exact file set)
@@ -81,11 +91,6 @@ if any(
         for entry in sys.path):
     raise SystemExit('apparatus directory on sys.path; run the entry file directly with -I')
 
-# Same write guard as every apparatus entry point: -I does not disable the
-# bytecode cache, and the spec_from_file_location loads below would otherwise
-# drop a __pycache__/trace.cpython-*.pyc next to the read-only baseline.
-# Placed after the entry assertions above and before any load_module, the
-# same position it occupies in the family header.
 import tempfile
 sys.pycache_prefix = tempfile.mkdtemp(prefix="pdrs-1841-pyc-")
 sys.dont_write_bytecode = True
@@ -134,6 +139,20 @@ NC_BASE = (
 # Git subprocess isolation (concurrency review #3): never inherit GIT_* from
 # the caller, never read a global gitconfig, and always time out.
 GIT_TIMEOUT_SECONDS = 60
+# Corpus memory budget (fix-r3, P2-c+e): the walk over --evidence collects
+# paths only and the bytes come from the manifest's entries alone, under a
+# running total — the 500 MB the registration narrates is asserted here.
+CORPUS_BUDGET_BYTES = 500_000_000
+# Criterion 4's gated controls, pinned by name (fix-r3, P2-b): fix-r2 ruled
+# out an empty gated list, but one control's killed drifting to None would
+# silently shrink the denominator all() judges — the exact name set is
+# asserted instead of just its non-emptiness.
+EXPECTED_GATED = (
+    "NC-A value mutation",
+    "NC-B count mutation",
+    "NC-C exemption boundary",
+    "NC-D within-kind order",
+)
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -335,20 +354,27 @@ def criterion0(evidence: Path, entries: dict[str, str]) -> tuple[dict, Counter, 
     --evidence is read exactly once; the bytes are hashed against the corpus
     manifest and kept as the in-memory corpus cache that every later
     criterion consumes. Then a shape gate over the 150 pairs (boundary #1,
-    fix-r1)."""
-    corpus: dict[str, bytes] = {}
-    for path in evidence.rglob("*"):
-        if not path.is_file():
-            continue
-        rel = "./" + path.relative_to(evidence).as_posix()
-        if rel in corpus:
-            die(f"evidence tree lists {rel} more than once")
-        corpus[rel] = path.read_bytes()
-    missing = sorted(set(entries) - set(corpus))
-    extra = sorted(set(corpus) - set(entries))
+    fix-r1). fix-r3, P2-c+e: the walk collects paths only — the missing/extra
+    set comparison runs before any byte is read, so an unexpected file (a
+    mistyped --evidence, a stray multi-GiB payload) is rejected by the
+    fail-closed path instead of being read first; the bytes then come from
+    the manifest's entries alone, under a 500 MB running total."""
+    rels = {"./" + path.relative_to(evidence).as_posix()
+            for path in evidence.rglob("*") if path.is_file()}
+    missing = sorted(set(entries) - rels)
+    extra = sorted(rels - set(entries))
     if missing or extra:
         die(f"evidence tree does not match corpus manifest: {len(missing)} missing "
             f"(e.g. {missing[:3]}), {len(extra)} unexpected (e.g. {extra[:3]})")
+    corpus: dict[str, bytes] = {}
+    total_size = 0
+    for rel in sorted(entries):
+        data = (evidence / rel).read_bytes()
+        total_size += len(data)
+        if total_size > CORPUS_BUDGET_BYTES:
+            die(f"corpus exceeds the {CORPUS_BUDGET_BYTES}-byte budget after "
+                f"{len(corpus) + 1} files ({total_size} bytes read)")
+        corpus[rel] = data
     mismatched = sorted(rel for rel in entries if sha256_bytes(corpus[rel]) != entries[rel])
     if mismatched:
         die(f"evidence file hash mismatch against corpus manifest: {len(mismatched)} "
@@ -818,11 +844,12 @@ def criterion4(corpus: dict[str, bytes], clean, patched, scratch: Path, budget_h
     }
 
     gated = [name for name, control in controls.items() if control["killed"] is not None]
-    # anthropic boundary #1 (fix-r2): an empty gated list would make the
-    # all() below vacuously true — a silent fake PASS for criterion 4 (e.g.
-    # every killed drifting to None after a future control edit).
-    if not gated:
-        die("criterion4: no gated controls")
+    # fix-r3, P2-b: not just non-empty (fix-r2, anthropic boundary #1) — the
+    # exact four registered gated controls. One control's killed drifting to
+    # None drops it from gated and would leave all() judging a smaller
+    # denominator, so the name set itself is pinned.
+    if sorted(gated) != sorted(EXPECTED_GATED):
+        die(f"criterion4: gated controls {sorted(gated)} != expected {sorted(EXPECTED_GATED)}")
     passed = all(controls[name]["killed"] for name in gated)
     return {
         "name": "4 negative controls",
@@ -883,6 +910,16 @@ def main() -> None:
     script = Path(__file__).resolve()
     registration = script.parent / REGISTRATION_FILENAME
     manifest = (args.manifest or script.parent / MANIFEST_FILENAME).resolve()
+
+    # fix-r3, P2-a: criterion 0 pins the exact file set, so --out (or a
+    # --manifest copy) resolving inside --evidence would poison the anchored
+    # tree — the first run writes it, the next recompute reports it as an
+    # unexpected file and fake-FAILs. Asserted at entry, before any pin or
+    # criterion runs, never narrated only in the README.
+    for name, path in (("--out", args.out), ("--manifest", manifest)):
+        if path is not None and path.resolve().is_relative_to(args.evidence):
+            die(f"{name} must not resolve inside the --evidence tree: {path} "
+                f"(criterion 0 pins the exact file set)")
 
     # Registration pins (fix-r1): the patch file, this script and the corpus
     # manifest are each sha256-anchored by the registration file, which is
