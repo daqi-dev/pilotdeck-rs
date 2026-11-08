@@ -127,10 +127,12 @@ struct AttachEntry {
 /// a registered spelling) still contributes.
 struct RegisteredAttachment {
     /// #1446 — the Node `path.resolve` spelling of the client-sent path
-    /// (`allowed.add(resolve(attachment.path))`, composer :182). The note
-    /// line prints this spelling (`safeAllowedAttachmentPath`, composer
-    /// :167-171); a symlinked project spelling or a mid-path link keeps it
-    /// distinct from `resolved`.
+    /// (`allowed.add(resolve(attachment.path))`, composer :182). This is
+    /// the allowedReadFiles lexical spelling; the #2495 note pass re-derives
+    /// the same spelling from `entries` through the same resolve
+    /// (`attachment_lexical` below — the two are equal by construction,
+    /// `safeAllowedAttachmentPath`, composer :167-171); a symlinked project
+    /// spelling or a mid-path link keeps it distinct from `resolved`.
     lexical: PathBuf,
     /// The canonicalized spelling (`allowed.add(resolve(await
     /// port.realpath(attachment.path)))`, composer :183) — the containment
@@ -534,6 +536,16 @@ fn cached_process_cwd() -> Option<PathBuf> {
     let cwd = std::env::current_dir().ok()?;
     *cached = Some(cwd.clone());
     Some(cwd)
+}
+
+/// The Node `path.resolve` spelling of a client-sent attachment path —
+/// `allowed.add(resolve(attachment.path))`, composer :182. The registration
+/// pass and the #2495 note pass must derive the identical spelling for the
+/// membership test, so both call this one helper instead of re-spelling
+/// the resolve (a drift here silently drops note lines, not a compile
+/// error).
+fn attachment_lexical(cwd: &Path, entry: &AttachEntry) -> PathBuf {
+    resolve_path(cwd, Path::new(&entry.path))
 }
 
 /// TS AttachmentResolver.ts:171 — the file too-large diagnostic.
@@ -1130,8 +1142,11 @@ pub(super) fn compose_attachment_turn(
             continue;
         }
         // P1-f (gate boundary#1) — composer :181: only attachments with a
-        // truthy `metadata.channelKey` enter allowedReadFiles and the path
-        // note (uploaded lease attachments, bundle :57-62, never do).
+        // truthy `metadata.channelKey` enter allowedReadFiles (uploaded
+        // lease attachments, bundle :57-62, never do). #2495 — the note
+        // lines and the hasInspectable accumulation no longer key on this
+        // registration gate: they read the whole entry list through the
+        // allowedReadFiles membership test below.
         if metadata.is_file() && entry.channel_key {
             // #1446 — composer :182-183 registers both spellings: the
             // lexical `resolve(attachment.path)` and the canonicalized
@@ -1139,10 +1154,7 @@ pub(super) fn compose_attachment_turn(
             // lease guard's lexical pre-filter holds it against an absolute
             // root), so the process cwd a TS `path.resolve` would consult
             // never changes the result.
-            let lexical = resolve_path(
-                &cached_process_cwd().unwrap_or_default(),
-                Path::new(&entry.path),
-            );
+            let lexical = attachment_lexical(&cached_process_cwd().unwrap_or_default(), entry);
             registered.push(RegisteredAttachment {
                 lexical,
                 resolved: resolved.clone(),
@@ -1340,17 +1352,28 @@ pub(super) fn compose_attachment_turn(
     // lexical spelling but a different inspectable still counts, while the
     // note line itself is deduped on the lexical spelling to the first
     // entry (`seen` on `normalized`, :105 — #1446).
+    //
+    // #2495 fix-r1 (boundary review) — an honest residual of the #1461 r3
+    // lazy cwd cache extends here: a *relative* entry path read while the
+    // cwd is cold-unreadable resolves against an empty cwd, so membership
+    // never holds and the entry silently loses its note line and its
+    // inspectable contribution, where TS `path.resolve` throws `uv_cwd`
+    // (ENOENT) on that same cold read — Node v22.22.0 measured,
+    // `_tmp/20261026-issue-2495/fix-r1/probe/cwd-deleted*.out`; a warm
+    // process keeps returning its cached spelling on both sides). See
+    // `cached_process_cwd` for the tracked followup (a crate-level cache
+    // seeded at gateway start, A7.4-TOOLBUDGET-CWD-001 area).
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut note_lines: Vec<String> = Vec::new();
     let mut has_inspectable = false;
+    // One cwd read for the whole pass — the cache is immutable after its
+    // seed (#1461 r2/r3), so a per-entry lock+clone would buy nothing.
+    let process_cwd = cached_process_cwd().unwrap_or_default();
     for entry in &entries {
         if entry.path.is_empty() {
             continue;
         }
-        let lexical = resolve_path(
-            &cached_process_cwd().unwrap_or_default(),
-            Path::new(&entry.path),
-        );
+        let lexical = attachment_lexical(&process_cwd, entry);
         if !allowed.contains(&lexical) {
             continue;
         }
