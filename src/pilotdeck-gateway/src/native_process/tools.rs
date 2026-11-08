@@ -1280,6 +1280,9 @@ async fn release_mcp_parts(
 pub struct SessionMcpToolsOptions<'a> {
     /// The SDK-owned session server table (`set_mcp_servers` commits here).
     pub mcp_config: &'a SdkMcpConfig,
+    /// The same frozen plugin generation used by this session's skills/hooks.
+    /// Enabled SDK entries override these declarations, as in the TS bundle.
+    pub plugin_servers: Option<&'a JsObject>,
     pub provider: &'a ProjectMcpRuntimeProvider,
     /// The session factory's per-session registry; gateway disposal drains
     /// it (`ProjectSessionFactory.mcp`).
@@ -1308,6 +1311,11 @@ pub async fn session_mcp_tools(
 ) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
     let session_key = String::from_utf16_lossy(options.session_key.units());
     let servers = enabled_session_mcp_servers(options.mcp_config, options.session_key);
+    let mut combined = options.plugin_servers.cloned().unwrap_or_default();
+    for (name, config) in servers.own_entries() {
+        combined.insert(name.clone(), config.clone());
+    }
+    let servers = combined;
     let diagnostic = |message: String, error: Option<RuntimeError>| {
         if let Some(sink) = &options.on_diagnostic {
             sink(message, error);
@@ -1759,6 +1767,7 @@ mod tests {
     ) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
         session_mcp_tools(SessionMcpToolsOptions {
             mcp_config: config,
+            plugin_servers: None,
             provider,
             per_session_runtimes: runtimes,
             session_key: &JsString::from(session_key),
@@ -1766,6 +1775,71 @@ mod tests {
             on_diagnostic,
         })
         .await
+    }
+
+    #[tokio::test]
+    async fn plugin_mcp_servers_join_session_tools_with_sdk_precedence() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input("s", &[("collision", true), ("disabled", true)]))
+            .await
+            .unwrap();
+        config
+            .toggle_mcp_server(&toggle_input("s", "disabled", false))
+            .await
+            .unwrap();
+        let declarations = set_input(
+            "s",
+            &[
+                ("plugin_shared", false),
+                ("plugin_private", true),
+                ("collision", false),
+                ("disabled", false),
+            ],
+        );
+        let plugins = declarations.get("servers").unwrap().as_object().unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let provider = fake_provider(events.clone(), false);
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        let (tools, release) = session_mcp_tools(SessionMcpToolsOptions {
+            mcp_config: &config,
+            plugin_servers: Some(plugins),
+            provider: &provider,
+            per_session_runtimes: &runtimes,
+            session_key: &"s".into(),
+            max_per_session_instances: 5.0,
+            on_diagnostic: None,
+        })
+        .await
+        .unwrap();
+        let names = |tools: &[Arc<McpBridgeTool>]| {
+            tools
+                .iter()
+                .map(|tool| tool.spec().wire_name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(tools.shared()),
+            vec![
+                JsString::from("mcp__plugin_shared__echo"),
+                "mcp__disabled__echo".into()
+            ]
+        );
+        assert_eq!(
+            names(tools.per_session()),
+            vec![
+                JsString::from("mcp__plugin_private__echo"),
+                "mcp__collision__echo".into()
+            ]
+        );
+        assert_eq!(runtimes.size(), 1);
+        release.release().await.unwrap();
+        assert_eq!(runtimes.size(), 0);
+        provider.dispose().await.unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec!["stop:per-session", "stop:shared"]
+        );
     }
 
     #[tokio::test]

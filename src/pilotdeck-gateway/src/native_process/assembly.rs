@@ -787,6 +787,7 @@ async fn start_assembly(
                     .await
                     .map_err(|error| RuntimeError::new(error.to_string()))?;
                 let plugin_hooks = skill_lease.contributions.hooks.clone();
+                let plugin_mcp_servers = skill_lease.contributions.mcp_servers.clone();
                 let native_skills = if skills_disabled {
                     super::skills::NativeSkills::disabled()
                 } else if let Some(scope) = &fork_scope {
@@ -903,6 +904,7 @@ async fn start_assembly(
                             .unwrap_or(5.0);
                         super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
                             mcp_config,
+                            plugin_servers: Some(&plugin_mcp_servers),
                             provider: &provider,
                             per_session_runtimes: &session_mcp_runtimes,
                             session_key: &context.session_key,
