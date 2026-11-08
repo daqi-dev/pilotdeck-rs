@@ -538,21 +538,18 @@ impl SessionOwner {
         if project_paused(&state, context.project_key.as_ref()) {
             return Box::pin(async { Err(RuntimeError::new("Project is being deleted.")) });
         }
-        if state.project_binding
-            && let Some(project) = context.project_key.as_ref()
-        {
+        if state.project_binding {
+            let Some(project) = context.project_key.as_ref() else {
+                return Box::pin(async { Err(project_mismatch()) });
+            };
             let record_mismatch = state
                 .records
                 .get(&context.session_key)
-                .and_then(|record| record.context.project_key.as_ref())
-                .is_some_and(|owned| owned != project);
+                .is_some_and(|record| record.context.project_key.as_ref() != Some(project));
             let pending_mismatch = state.pending.iter().any(|pending| {
                 pending.session_key == context.session_key
                     && pending.completion.borrow().is_none()
-                    && pending
-                        .project
-                        .as_ref()
-                        .is_some_and(|owned| owned != project)
+                    && pending.project.as_ref() != Some(project)
             });
             let request_mismatch = state
                 .project_scopes

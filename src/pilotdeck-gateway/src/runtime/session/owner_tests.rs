@@ -2334,3 +2334,30 @@ async fn native_owner_close_keeps_retained_replay_scoped_to_original_project() {
     drop(scope);
     bounded(owner.shutdown()).await.unwrap();
 }
+
+#[tokio::test]
+async fn native_project_binding_rejects_unbound_creation_before_and_during_scope() {
+    let mut options = SessionOwnerOptions::new(Arc::new(Probe::default()));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    owner.enforce_project_binding();
+    let mut missing = context("shared");
+    missing.project_key = None;
+    assert!(matches!(bounded(owner.get_or_create(missing.clone())).await,
+        Err(ref error) if error.message.starts_with("PROJECT_SESSION_MISMATCH:")),
+        "native unbound creation must not create a wildcard owner");
+    let a = JsString::from("A");
+    let scope = owner.reserve_project(&"shared".into(), Some(&a), &a).unwrap();
+    assert!(matches!(bounded(owner.get_or_create(missing.clone())).await,
+        Err(ref error) if error.message.starts_with("PROJECT_SESSION_MISMATCH:")),
+        "native unbound creation must not bypass an active request scope");
+    assert!(owner.current_handle(&"shared".into()).is_none());
+    drop(scope);
+    bounded(owner.shutdown()).await.unwrap();
+    // Generic embeddings keep their original optional-project contract.
+    let mut generic = SessionOwnerOptions::new(Arc::new(Probe::default()));
+    generic.idle_sweep_interval_ms = 0;
+    let generic = SessionOwner::new(generic);
+    bounded(generic.get_or_create(missing)).await.unwrap();
+    bounded(generic.shutdown()).await.unwrap();
+}

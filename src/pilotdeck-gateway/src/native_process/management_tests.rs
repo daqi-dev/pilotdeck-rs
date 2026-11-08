@@ -1135,14 +1135,6 @@ fn oracle_capabilities(state: &str) -> &'static [Value] {
         .unwrap_or_else(|| panic!("#1231 TS capability array missing at contract.{state}"))
 }
 
-/// Providers the management fixture leaves unbound, so their names are absent
-/// from every live advertisement here even though the TS fixture configures
-/// them: `setup()` builds the `MemoryGateway` without a projection
-/// (`MemoryGateway::is_enabled()` is false). The memory pair is exercised by
-/// `memory_management_request_disabled_gateway_returns_unavailable`, so
-/// filtering it here does not remove the only assertion covering it.
-const PROVIDERS_UNBOUND_IN_FIXTURE: &[&str] = &["memory_list", "memory_wipe"];
-
 /// The exact capability set `describe_server` must advertise (#1231).
 ///
 /// Derived from what the TS baseline actually recorded rather than from a
@@ -1150,8 +1142,9 @@ const PROVIDERS_UNBOUND_IN_FIXTURE: &[&str] = &["memory_list", "memory_wipe"];
 /// `describe_server` output for the three fixture config states, all three
 /// carrying the same 50 names. The Rust set is
 ///
-///   recorded − `capabilities::NOT_ADVERTISED` − providers this fixture does
-///   not bind (memory pair, and the snapshot triplet without `--storage-root`)
+///   recorded − `capabilities::NOT_ADVERTISED` − the snapshot triplet when
+///   `--storage-root` is absent. The live assembly always binds the dynamic
+///   memory projection; per-project disabled memory is checked at dispatch.
 ///
 /// so the only way to omit a name the baseline records is to declare it, with
 /// its reason, in one of those two lists — and a name the table invents or
@@ -1166,7 +1159,6 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
                 .iter()
                 .any(|(declared, _)| declared == name)
         })
-        .filter(|name| !PROVIDERS_UNBOUND_IN_FIXTURE.contains(name))
         .filter(|name| {
             with_snapshots
                 || !matches!(*name, "snapshot_list" | "snapshot_get" | "snapshot_restore")
