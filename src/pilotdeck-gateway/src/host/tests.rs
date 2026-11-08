@@ -59,6 +59,13 @@ struct Handler {
     /// Test gate for gated-event: the first non-final event waits here.
     event_gate: Arc<Notify>,
     gated_event: bool,
+    /// Wall clock when the handler's final-event callback ran. Anchors the
+    /// #1891 post-terminal cleanup bound at the peer's last frame: everything
+    /// the bound measures (finish_terminal → close → dispose → receipt poll)
+    /// happens after it, so the granted spawn/execution margins cannot trip
+    /// it. First writer wins; a second final is a protocol violation the
+    /// surrounding assertions own.
+    final_at: std::sync::OnceLock<std::time::Instant>,
 }
 impl Handler {
     fn new(mode: &str) -> Arc<Self> {
@@ -98,6 +105,7 @@ impl Handler {
             large_response: mode == "response-byte-limit",
             event_gate: Arc::new(Notify::new()),
             gated_event: mode == "gated-event",
+            final_at: std::sync::OnceLock::new(),
         })
     }
 }
@@ -142,6 +150,9 @@ impl HostHandler for Handler {
         {
             cancel.cancel(Some(self.cancel_reason.clone()));
             cancel.cancel(Some("ignored-second-reason".into()));
+        }
+        if event.get("final").and_then(JsValue::as_bool) == Some(true) {
+            let _ = self.final_at.set(std::time::Instant::now());
         }
         let never = self.event_never;
         let applied = self.applied_events.clone();
@@ -248,8 +259,11 @@ impl Receipt {
     fn assert_pass(&self, mode: &str) {
         // The peer writes this after the host closes its stdin, so it may still be
         // in flight when the result arrives (#230); wait briefly before judging.
+        // #1891 fix-r2: the write is a real-peer round trip in flight, so the
+        // poll window joins the liveness margins instead of racing loaded-CI
+        // scheduling (the old 5 s was the same bet fix-r1 removed elsewhere).
         let expected = format!("PASS {mode}\n");
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         let mut text = std::fs::read_to_string(&self.0).unwrap_or_default();
         while text != expected && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
@@ -324,14 +338,18 @@ fn request() -> ExecuteRequest {
         operation_deadline: None,
     }
 }
-async fn run(mode: &str) -> Result<ExecuteResult, HostError> {
+async fn run(mode: &str) -> (Result<ExecuteResult, HostError>, Arc<Handler>) {
+    let handler = Handler::new(mode);
     let (mut command, receipt) = peer(mode);
-    let client = HostClient::spawn(&mut command, Some(&"fixture".into()), limits()).await?;
-    let result = client.execute(request(), Handler::new(mode)).await;
+    let client = match HostClient::spawn(&mut command, Some(&"fixture".into()), limits()).await {
+        Ok(client) => client,
+        Err(error) => return (Err(error), handler),
+    };
+    let result = client.execute(request(), handler.clone()).await;
     if result.is_ok() {
         receipt.assert_pass(mode);
     }
-    result
+    (result, handler)
 }
 
 #[tokio::test]
@@ -349,32 +367,46 @@ async fn handshake_execute_ack_and_terminal() {
         "rejected",
         "cleanup-hang",
     ] {
-        let started = Instant::now();
         // #1891: receipt-wired run failure; the failure point and the
         // pass/fail condition are unchanged — the label only makes the
-        // negative-control shrink mutant observable by name.
+        // negative-control shrink mutant observable by name. fix-r2 (review
+        // P1-1): the label is the row-table literal `negative_receipt`
+        // matches byte-for-byte; the mode rides inside the error payload,
+        // not the assertion text.
+        let (run_result, handler) = run(mode).await;
         let result = crate::test_negative_receipt::expect_ok(
-            run(mode).await,
-            &format!("#1891 host fixture run failed: {mode}"),
+            run_result.map_err(|error| format!("{mode}: {error:?}")),
+            "#1891 host fixture run failed",
         );
         assert_eq!(
             matches!(result, ExecuteResult::Rejected(_)),
-            mode == "rejected"
+            mode == "rejected",
+            "{mode}: terminal/rejected shape"
         );
         // Protocol semantics, not a timing race: the bound only guards the
         // unbounded-cleanup regression (the peer's own hang is a 60 s sleep,
-        // `fixture.py` cleanup-hang). The elapsed span covers Python startup
-        // and the peer round trips, so it must tolerate a loaded CI worker
-        // instead of racing it (#308/#978) — but it must also stay strictly
-        // below that 60 s hang, or the regression it exists to catch would
-        // complete inside the bound. 30 s is 5x the worst loaded startup ever
-        // recorded (6 s, the #1080 gates incident) with half the hang to
-        // spare. fix-r1: was 10 s, which re-tightened the #1891 margins to a
-        // wall-clock bet on the very scheduling the relaxation tolerates.
-        assert!(
-            started.elapsed() < Duration::from_secs(30),
-            "unbounded cleanup: {mode}"
-        );
+        // `fixture.py` cleanup-hang), so it must stay strictly below that
+        // 60 s hang — but it must also stay looser than the clocks the same
+        // run grants. fix-r2 (review P1-2): fix-r1 measured from before
+        // run(), so the granted 60 s handshake margin could legally trip the
+        // 30 s bound on a loaded host. The bound now applies to cleanup-hang
+        // only (the one mode with a hanging peer) and is anchored at the
+        // handler's final-event callback — the peer's last frame. The span
+        // it measures (finish_terminal → close → dispose → receipt poll) is
+        // granted close_timeout (1 s) plus the 60 s receipt poll, both far
+        // below 30 s when healthy, while a cleanup that waited on the
+        // peer's 60 s sleep completes past it. The other ten modes hang no
+        // peer; their anti-hang bound is the suite's terminate-after.
+        if mode == "cleanup-hang" {
+            let anchored = handler
+                .final_at
+                .get()
+                .expect("#1891 cleanup-hang terminal reached the handler");
+            assert!(
+                anchored.elapsed() < Duration::from_secs(30),
+                "unbounded cleanup: {mode}"
+            );
+        }
         println!("HOST_PASS {mode}");
     }
 }
@@ -414,7 +446,7 @@ async fn cancelled_and_failed_terminal_results_are_accepted() {
         ("failed-error", "failed", "error"),
         ("failed-max-turns", "failed", "max_turns"),
     ] {
-        let ExecuteResult::Terminal(event) = run(mode).await.unwrap() else {
+        let ExecuteResult::Terminal(event) = run(mode).await.0.unwrap() else {
             panic!("expected terminal: {mode}");
         };
         assert!(text_is(event.get("outcome"), outcome), "{mode}");
@@ -472,7 +504,7 @@ async fn four_required_negative_controls() {
             "before execute reached a terminal",
         ),
     ] {
-        let error = run(mode).await.expect_err(mode);
+        let error = run(mode).await.0.expect_err(mode);
         assert_eq!(error.kind, kind, "{mode}: {error}");
         assert_eq!(error.accepted, accepted, "{mode}: {error}");
         assert!(error.message.contains(reason), "{mode}: {error}");
@@ -495,7 +527,7 @@ async fn handshake_and_execute_correlation_negative_controls() {
         ("rejected-error-message", "controlled failure message"),
         ("rejected-unknown", "unknown error"),
     ] {
-        let error = run(mode).await.expect_err(mode);
+        let error = run(mode).await.0.expect_err(mode);
         assert_eq!(error.kind, HostErrorKind::Protocol, "{mode}: {error}");
         assert!(!error.accepted, "{mode}: {error}");
         assert!(error.message.contains(reason), "{mode}: {error}");
@@ -670,7 +702,7 @@ async fn invalid_frames_sequences_and_terminal_never_succeed() {
         ("no-streaming", "streaming execute"),
         ("malformed", "Malformed NDJSON"),
     ] {
-        let error = run(mode).await.expect_err(mode);
+        let error = run(mode).await.0.expect_err(mode);
         assert!(error.message.contains(reason), "{mode}: {error}");
         println!("HOST_REJECT {mode}: {error}");
     }
@@ -695,13 +727,19 @@ async fn callbacks_do_not_block_input_or_run_twice() {
         println!("HOST_PASS {mode}");
     }
     let started = Instant::now();
-    let error = run("callback-disconnect").await.unwrap_err();
+    let error = run("callback-disconnect").await.0.unwrap_err();
     assert_eq!(error.kind, HostErrorKind::Disconnected);
     // The kind above is the oracle (an execution timeout would surface as
     // Timeout); this wall bound only guards gross hangs, so it must not race
     // Python startup on a loaded CI worker (#308). fix-r1 (#1891): kept
     // strictly looser than the `limits()` margins the same spawn grants.
-    assert!(error.accepted && started.elapsed() < Duration::from_secs(70));
+    // fix-r2 (review P2): the span includes the spawn, so the bound must
+    // cover the granted handshake 60 s + execution 60 s plus teardown — the
+    // 70 s form re-tightened it to "handshake plus 10 s".
+    assert!(
+        error.accepted && started.elapsed() < Duration::from_secs(130),
+        "callback-disconnect span: {error}"
+    );
     println!("HOST_REJECT callback-disconnect: {error}");
 }
 #[tokio::test]
@@ -1655,10 +1693,10 @@ async fn cancel_disconnect_and_timeout_preserve_unknown_progress() {
             Some(handler.applied_events.load(Ordering::SeqCst) as f64 - 1.0)
         );
     }
-    let error = run("disconnect").await.unwrap_err();
+    let error = run("disconnect").await.0.unwrap_err();
     assert_eq!(error.last_applied_sequence, Some(-1.0));
     assert_eq!(error.stream_id, Some("stream".into()));
-    let error = run("rejected-nonfinal").await.unwrap_err();
+    let error = run("rejected-nonfinal").await.0.unwrap_err();
     assert_eq!(error.last_applied_sequence, None);
     assert_eq!(error.stream_id, None);
 }

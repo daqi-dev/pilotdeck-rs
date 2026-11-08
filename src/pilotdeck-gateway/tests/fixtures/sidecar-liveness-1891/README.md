@@ -2,7 +2,9 @@
 
 #1891 把九个同源测试位点的活性看门狗放宽到 #1851 的 60 s 形态（首字节
 `FIRST_BYTE`、`bounded_liveness`/`bounded`/`next` 看门狗、真实 peer 的
-`Limits` 余量）。本目录证明放宽没有把看门狗变成建议：每行把一个放宽后的
+`Limits` 余量）。fix-r2 起行表覆盖全部九位点（`module_host/tests.rs` 的
+`FIRST_BYTE` 是 fix-r1 漏登记的第五个首字节位）。本目录证明放宽没有把看门狗
+变成建议：每行把一个放宽后的
 窗口缩到任何健康 fixture 都不可能完成的值，因此判死不需要任何环境负载，
 杀招全部落在位点自己的稳定 oracle 文本上（这些断言在 #1891 同一改动里接
 上了 `negative_receipt` 协议；无 `PDRS_NEGATIVE_RECEIPTS` 环境时行为与
@@ -20,6 +22,7 @@
 | approvals-first-byte-shrunk | 同上 | `module_host::approvals::tests::auth_missing` | `#1350 cell auth-missing …` |
 | native-http-first-byte-shrunk | 同上 | `native_http::tests::health_get` | `#1209 cell health-get …` |
 | native-ws-first-byte-shrunk | 同上 | `native_ws::tests::upgrade_budget_boundary_matches_ts` | `#1351 every boundary cell produced bytes or closed` |
+| module-host-first-byte-shrunk | 同上（fix-r2 补：第五个同源位） | `module_host::tests::auth_missing` | `#1349 cell auth-missing produced no bytes and stayed open` |
 | host-factory-liveness-shrunk | `bounded_liveness` 超时实参 1 ns | `runtime::turn::host_factory::tests::live_session_shares_recorder_and_reads_current_history` | `sidecar liveness wait timed out` |
 | live-tail-bounded-shrunk | `bounded` 超时实参 1 ns | `runtime::turn::live::tail_tests::live_tail_progress_and_drop` | `#742 live tail bounded` |
 | interaction-host-liveness-shrunk | `bounded_liveness` 超时实参 1 ns | `runtime::project::factory::tests::interaction_host::host_consumes_actual_generations_across_reload_and_live_stdio` | `sidecar liveness wait timed out` |
@@ -35,7 +38,7 @@
 ```sh
 export CARGO_TARGET_DIR=<target-dir>
 python3 -I src/pilotdeck-gateway/tests/fixtures/sidecar-liveness-1891/negative_controls.py \
-    <NEW_OUTPUT_DIR>            # 全部 10 行：positive → 变异 → 编译 → kill → 还原 → restored
+    <NEW_OUTPUT_DIR>            # 全部 11 行：positive → 变异 → 编译 → kill → 还原 → restored
 python3 -I .../negative_controls.py --check   # 只验锚（过期即报错退出，绝不判 SURVIVED）
 ```
 
