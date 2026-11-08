@@ -272,11 +272,21 @@ impl WebhookChannel {
 /// Loader mount: builds the adapter from the `webhook` loader option object
 /// (`build_options` already forwarded `extra.port` / `extra.secret`;
 /// [`WebhookChannel::from_options`] applies the TS constructor's
-/// nullish-then-`Number()` coercions field by field).
+/// nullish-then-`Number()` coercions field by field). #2301 fix-r1: the TS
+/// constructor's `Number(options.port ?? DEFAULT_PORT)` throws on a failed
+/// toPrimitive, the loader's catch records the key and continues, and the
+/// channel never enters the startup array — the mount applies the same check
+/// at construction (`rateLimit` / `maxBodyBytes` never travel through the
+/// loader literal, so `port` is the only coercion the loader can observe).
 pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
     mounts.register(
         "webhook",
         Arc::new(|options: &JsObject| {
+            if let Some(port) = options.get("port").filter(|value| !nullish(value))
+                && let Some(error) = crate::js_value::number_conversion_type_error(port)
+            {
+                return Err(ChannelError::Plain(error.to_owned()));
+            }
             Ok(Arc::new(WebhookChannel::from_options(options)) as Arc<dyn ChannelAdapter>)
         }),
     );

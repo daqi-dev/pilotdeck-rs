@@ -55,8 +55,11 @@ const WEBSOCKET_ERROR: &str = "Error: websocket error";
 /// `connections.open` or handshake leaves `app` empty here, where the TS
 /// instance keeps `this.app` set after `new BoltApp(...)` threw; the
 /// divergence is unobservable without a socket (no inbound frames reach
-/// `sendReply`) and is registered in A8.3-CH-SLACK-001 范围 item 6, to be
-/// settled with the production wiring.
+/// `sendReply`) and is registered in A8.3-CH-SLACK-001 范围 item 6. That item
+/// reached its decision point with the #2301 production wiring
+/// (`production_loader_mounts` + `create_startup_configured`): the R1
+/// correction keeps the divergence as-is — the wiring has no retry / re-entry
+/// path, so the two states still cannot be told apart.
 struct LiveApp {
     sink: Option<
         futures_util::stream::SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
@@ -1138,9 +1141,10 @@ fn strip_mentions(units: &[u16]) -> Vec<u16> {
     out
 }
 
-/// `slack::register`: the loader-table mount (the sms precedent — production
-/// assembly has no loader-table construction point yet, so no production
-/// wiring exists; registered in the parity ledger as A8.3-CH-SLACK-001).
+/// `slack::register`: the loader-table mount (the sms precedent). The
+/// production assembly calls it through `production_loader_mounts`
+/// (`create_startup_configured`, #2301); the wiring correction is registered
+/// in the parity ledger as A8.3-CH-SLACK-001-R1.
 pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
     mounts.register(
         "slack",

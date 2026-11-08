@@ -65,9 +65,18 @@ pub fn noop_close_host() -> CloseHost {
 /// installed…` anchors the #1853 r1 probe recorded on the TS side).
 pub fn console_channel_log() -> ChannelLog {
     Arc::new(|level: &str, message: &str| match level {
-        "info" => println!("{message}"),
-        _ => eprintln!("{message}"),
+        "info" => console_log_line(&mut std::io::stdout(), message),
+        _ => console_log_line(&mut std::io::stderr(), message),
     })
+}
+
+/// One console line on an explicit sink. `console.log` / `console.error`
+/// never fail the channel lifecycle, while `println!` panics when the write
+/// fails (std behavior) — a closed stdout would abort an adapter's task after
+/// it saved its listener state, stranding the listener (#2301 fix-r1 review
+/// P0). The write error is dropped instead, like TS's best-effort console.
+pub(crate) fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
+    let _ = writeln!(sink, "{message}");
 }
 
 /// The production loader-table mounts (#2301): one per implemented loader
@@ -148,20 +157,22 @@ pub struct NativeChannels {
     config: Arc<JsValue>,
 }
 
-/// The `ChannelStartDeps.turn_gateway` the feishu adapter is constructed with.
-/// It forwards to a [`SubmitterTurnGateway`] once the assembly publishes the
+/// The `ChannelStartDeps.turn_gateway` the whole channel server is
+/// constructed with (feishu was the first consumer, hence the name). It
+/// forwards to a [`SubmitterTurnGateway`] once the assembly publishes the
 /// native submitter; until then `submit` fails with the same
-/// "not started" shape as a missing gateway.
+/// "not started" shape as a missing gateway. Each request keeps its own
+/// channel identity: every adapter submits its `TurnRequest.channel_key`,
+/// and the gateway carries it through (#2301 fix-r1 — it used to overwrite
+/// the requester's key with this handle's construction-time feishu one).
 struct FeishuTurnGateway {
     submitter: OnceLock<Arc<TurnSubmitter>>,
-    channel_key: ChannelKey,
 }
 
 impl FeishuTurnGateway {
     fn new() -> Self {
         Self {
             submitter: OnceLock::new(),
-            channel_key: feishu_key(),
         }
     }
 
@@ -172,7 +183,7 @@ impl FeishuTurnGateway {
     fn inner(&self) -> Option<SubmitterTurnGateway> {
         self.submitter
             .get()
-            .map(|submitter| SubmitterTurnGateway::new(submitter.clone(), self.channel_key.clone()))
+            .map(|submitter| SubmitterTurnGateway::new(submitter.clone()))
     }
 }
 
