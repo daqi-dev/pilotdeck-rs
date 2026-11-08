@@ -1439,7 +1439,21 @@ impl SubmitCwdService for Cwd {
 }
 impl SubmitHostServices for Services {
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
-        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {
+        // #2562: the filter skips `undefined` *and* `null`, the same nullish
+        // read the request admission gate got in #2272 (requests.rs). The
+        // submit path's TS source is `workspaceIdResolver(input.projectKey)`
+        // (InProcessGateway.ts:954) and the local resolver is
+        // `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot,
+        // pilotHome)` (createLocalGateway.ts:1026-1028), so an explicit null is
+        // "not provided" and takes the configured-project fallback instead of
+        // the type error. Node v22.22.0 probes:
+        // `_tmp/20261026-issue-2562/ts-probe/probe-{resolver,submit}.out`.
+        // A non-string keeps the type error (the TS resolver chain throws on
+        // it too — `resolve(7)` is ERR_INVALID_ARG_TYPE).
+        if let Some(project) = input
+            .get("projectKey")
+            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
+        {
             let project = project
                 .as_string()
                 .and_then(|s| s.to_utf8().ok())

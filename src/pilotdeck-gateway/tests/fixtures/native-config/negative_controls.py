@@ -33,6 +33,12 @@ SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_d
 # #1864 read-side precedent (mutate the writer, assert on the reader) — so the
 # path joins SOURCE_TEXTS / LITERAL_ANCHORS below like LIVE and TOOLS did.
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+# #2562: the submit path's projectKey gate (SubmitHostServices::workspace_id in
+# services.rs) — the same nullish read #2272 gave the admission source above.
+# Its bound assertion lives in the management tests, so both files join
+# SOURCE_TEXTS / LITERAL_ANCHORS.
+SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
+MANAGEMENT_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/management_tests.rs'
 # #1604: `require_text` / `trim_guard` — the guard the session directory now
 # delegates to. Two mutants below target it; the bound tests stay the
 # session-directory ones.
@@ -305,6 +311,35 @@ mutations = [
      '                .filter(|v| !v.is_undefined())',
      DIR + 'resume_session_blank_key_gate_order',
      '#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key'),
+    # ── #2562: the submit path's gate is the same nullish read (the TS submit
+    # source is `workspaceIdResolver(input.projectKey)` →
+    # `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot)`,
+    # probes `_tmp/20261026-issue-2562/ts-probe/`). Dropping the null arm
+    # restores the pre-#2562 shape where an explicit null was answered the
+    # `projectKey must be a valid path string.` type error instead of falling
+    # back to the configured project, so the recorder-on null cell must die.
+    ('submit-null-refused', SERVICES,
+     '        if let Some(project) = input\n'
+     '            .get("projectKey")\n'
+     '            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))\n'
+     '        {',
+     '        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {',
+     'native_process::management_tests::submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided',
+     '#2562 explicit null is not an error with the recorder on'),
+    # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
+    # path — with the null arm dropped the admission refusal (isolated-project
+    # message) answers before the method's own `?.trim()` gate, so the null
+    # cell's domain-message assertion must die. Same mutant text as
+    # `admission-null-refused` above: one code point, two bound tests.
+    ('admission-null-refused-close-project', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'close_project_sessions_null_project_key_is_the_domain_error',
+     '#2564 a null projectKey keeps the domain message'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -416,6 +451,10 @@ mutations = [
 # Known softness: the presence test is a plain whole-file substring, so a pin
 # whose text also sits in a comment still reads as present. That only weakens
 # the warning, never turns a broken run green (the run itself is fail-closed).
+#
+# #2562 r0: SERVICES / MANAGEMENT_TESTS joined the scanned files with the two
+# rows below, so the counts moved to 48 rows / 38 literal-anchor entries; the
+# derived counts in the paragraph above describe the #2065 table as it was.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -449,6 +488,8 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
     (SESSION_DIR, '#2272 a null projectKey falls back like a missing one, '
                   'so the sessionKey gate answers the blank key'),
+    (SESSION_DIR, '#2564 a null projectKey keeps the domain message'),
+    (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
@@ -463,7 +504,8 @@ LITERAL_ANCHORS = [
 # not name a path outside this tuple (checked below) -- a pin the completeness
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
-                REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS)
+                REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
+                MANAGEMENT_TESTS)
 
 
 def _assertions(case):
