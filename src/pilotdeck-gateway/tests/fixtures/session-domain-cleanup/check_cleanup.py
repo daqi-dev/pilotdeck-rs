@@ -4019,6 +4019,27 @@ _FOLD_MAX_ITEMS = 1_000_000
 # ``_FOLD_MAX_BITS == _FOLD_MAX_ITEMS``.
 _FOLD_SIZE_WORK_CAP = _FOLD_MAX_ITEMS * 4
 
+# fix-r12 (DS concurrency#1 r11 P1, probe-verified — fix-r12-audit/
+# probe-r12-p1.out): the per-fold work cap does not compose into a bound
+# on one audited file's audit pass.  The audit re-draws a fresh allowance
+# for every expression it folds — ``_exit_arms`` starts one per IfExp
+# test and one per BoolOp operand, ``_helper_exits_zero`` calls it up to
+# three times per summary value — so an ~11 KiB crafted file with ~778
+# mid-weight folds stays legal per fold yet reaches the 180 s harness
+# timeout (measured 0.2314 s per fold).  While an audit pass budget is
+# active the fold wrapper draws from this shared cell instead of minting
+# a fresh one, so all of one file's fold work shares a single allowance;
+# exhausting it degrades to ``_LITERAL_TEST_UNRESOLVED``, which the arm
+# callers resolve fail-closed (an empty arm set certifies nothing).
+# 4x the fold cap keeps one legal at-cap fold (plus the ordinary audit
+# work of a real file) inside a file's allowance with margin.  The audit
+# activates it per audited file and clears it after the loop; outside an
+# active pass the cell is None and the wrapper mints one fresh budget
+# per top-level fold exactly as before (the self-test pins and the
+# direct ``test_safety`` calls run there).
+_AUDIT_PASS_BUDGET = None
+_AUDIT_PASS_WORK_CAP = _FOLD_SIZE_WORK_CAP * 4
+
 # A call is only a proven slot source when its callee's own return path is
 # audited -- i.e. the callee is one of the registered points above.  Any other
 # call is opaque and fails closed (MiniMax boundary r11 P0-1).  The exemption
@@ -4405,6 +4426,11 @@ def _literal_test_value(node, budget=None):
     a fold pass nothing (one fresh budget per top-level expression), and
     the fold's internal recursion threads the same list down so nested
     container literals cannot draw a new allowance per level.
+
+    fix-r12 (DS concurrency#1 r11 P1): when an audit pass budget is
+    active (``_AUDIT_PASS_BUDGET``), a top-level fold that would mint a
+    fresh allowance draws from that shared cell instead, so one audited
+    file's whole fold work stays bounded; see the cell's declaration.
     """
     try:
         return _literal_test_value_fold(node, budget)
@@ -4512,7 +4538,11 @@ def _literal_test_value_fold(node, budget=None):
     tests 197.5 s).
     """
     if budget is None:
-        budget = [_FOLD_SIZE_WORK_CAP]
+        # fix-r12 (DS concurrency#1 r11 P1): an active audit pass budget
+        # replaces the minted allowance, so the audited file's whole fold
+        # work shares one cell instead of one per top-level fold.
+        budget = (_AUDIT_PASS_BUDGET if _AUDIT_PASS_BUDGET is not None
+                  else [_FOLD_SIZE_WORK_CAP])
     if isinstance(node, ast.Constant):
         return node.value
     if isinstance(node, ast.UnaryOp):
@@ -4532,20 +4562,23 @@ def _literal_test_value_fold(node, budget=None):
             return _LITERAL_TEST_UNRESOLVED
         return _LITERAL_TEST_UNRESOLVED
     if isinstance(node, ast.BoolOp):
-        values = [_literal_test_value(value, budget) for value in node.values]
-        if any(value is _LITERAL_TEST_UNRESOLVED for value in values):
-            return _LITERAL_TEST_UNRESOLVED
-        result = values[0]
-        for value in values[1:]:
-            if isinstance(node.op, ast.And):
-                if not result:
-                    break
-                result = value
-            else:
-                if result:
-                    break
-                result = value
-        return result
+        # fix-r12 (DS concurrency#2 r11 P2, probe-verified —
+        # fix-r12-audit/probe-r12-p1.out B): fold lazily and stop at the
+        # settling operand, the mirror of the interpreter's own
+        # short-circuit — the same settle rule ``_exit_arms`` gained in
+        # fix-r5.  The eager form folded and retained every operand value
+        # before the reduce (300 operands of ``'x' * 999999`` held ~292 MB
+        # of folded strings from a 5.4 KB source) and propagated an
+        # UNRESOLVED operand the interpreter can never reach.
+        for index, operand in enumerate(node.values):
+            value = _literal_test_value(operand, budget)
+            if value is _LITERAL_TEST_UNRESOLVED:
+                return _LITERAL_TEST_UNRESOLVED
+            settles = (bool(value) if isinstance(node.op, ast.Or)
+                       else not value)
+            if settles or index == len(node.values) - 1:
+                return value
+        return _LITERAL_TEST_UNRESOLVED
     if isinstance(node, ast.Compare):
         left = _literal_test_value(node.left, budget)
         for op, comparator in zip(node.ops, node.comparators):
@@ -6767,6 +6800,7 @@ def aggregation_audit():
     requires every registered point's return paths to compute batch status and
     exit codes only through the shared function.
     """
+    global _AUDIT_PASS_BUDGET
     files = [path for path in (
         sorted((ROOT / 'scripts/gateway-parity').rglob('*.py'))
         + sorted(Path(__file__).resolve().parent.glob('*.py')))
@@ -6779,6 +6813,7 @@ def aggregation_audit():
     proven_by_rel = {}
     poisoned_by_rel = {}
     failures = []
+    audit_pass_files = 0
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
     product_words = set(getattr(md.common, 'BATCH_STATUS_ORDER', ()))
@@ -6813,6 +6848,15 @@ def aggregation_audit():
             failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
                             f'{rel}: {type(error).__name__}: {error}')
             continue
+        # fix-r12 (DS concurrency#1 r11 P1): every fold below re-draws a
+        # fresh per-fold allowance (one per IfExp test, one per BoolOp
+        # operand, up to three per summary value), so per-fold caps alone
+        # bound nothing at the file level.  One shared allowance per
+        # audited file bounds the whole pass; exhausting it degrades folds
+        # to ``_LITERAL_TEST_UNRESOLVED``, which the arm callers resolve
+        # fail-closed.
+        _AUDIT_PASS_BUDGET = [_AUDIT_PASS_WORK_CAP]
+        audit_pass_files += 1
         for node in ast.walk(tree):
             if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                     and node.name == 'aggregate_status'
@@ -6857,6 +6901,15 @@ def aggregation_audit():
             failures.append(f'#892 aggregation-audit: duplicate aggregation point '
                             f'name {duplicate[0]}:{duplicate[1]}')
         found.update(scanned)
+
+    # fix-r12 (DS concurrency#1 r11 P1): the pass budget belongs to the
+    # audited-file loop above; the self-test probes below run on fresh
+    # per-fold budgets exactly like the direct ``test_safety`` calls.
+    _AUDIT_PASS_BUDGET = None
+    if audit_pass_files == 0:
+        failures.append('#892 aggregation-audit: the file loop never '
+                        'activated an audit-pass fold budget; the per-file '
+                        'bound is not wired (#1652)')
 
     # #892 r26: the registry keys on the *importing* file, so the file that
     # actually defines a cross-file proven source was never judged -- a
@@ -7824,6 +7877,43 @@ def aggregation_audit():
     if _literal_test_value(ast.parse('(True, False)', mode='eval').body) != (True, False):
         failures.append('#892 aggregation-audit: the container fold changed '
                         'bool folding (1 bit each, floored) (#1652)')
+    # #1652 fix-r12 (DS concurrency#1 r11 P1, probe-verified —
+    # fix-r12-audit/probe-r12-p1.out A): the audit-pass budget is the
+    # mechanism the per-file loop activates — while it is set, a
+    # top-level fold draws from the shared cell instead of minting, so
+    # several mid-weight folds exhaust it and a later one fails closed
+    # where per-fold minting kept folding.  (A reduced allowance keeps
+    # the pin deterministic and cheap: one ~1e6-visit pile per fold.)
+    _pass_probe = ast.parse("([''] * 999999,)", mode='eval').body
+    _AUDIT_PASS_BUDGET = [2_000_000]
+    try:
+        _early = _literal_test_value(_pass_probe)
+        _late = _early
+        for _ in range(4):
+            _late = _literal_test_value(_pass_probe)
+    finally:
+        _AUDIT_PASS_BUDGET = None
+    if (_early is _LITERAL_TEST_UNRESOLVED
+            or _late is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: a later fold on the same '
+                        'audit-pass allowance folded instead of failing '
+                        'closed (#1652)')
+    # #1652 fix-r12 (DS concurrency#2 r11 P2, probe-verified —
+    # fix-r12-audit/probe-r12-p1.out B): the BoolOp value fold is lazy —
+    # a settling operand ends the fold, so a zero-size pile behind it is
+    # never folded (the eager form returned UNRESOLVED here) and never
+    # retained (~292 MB from a 5.4 KB source).  The mirror direction
+    # stays fail-closed: an unresolvable operand *before* the settling
+    # one still rejects the whole value.
+    if _literal_test_value(ast.parse(
+            "'a' or ([''] * 999999, [''] * 999999, [''] * 999999, "
+            "[''] * 999999, [''] * 999999)", mode='eval').body) != 'a':
+        failures.append('#892 aggregation-audit: the BoolOp value fold lost '
+                        'its short-circuit (#1652)')
+    if (_literal_test_value(ast.parse("1/0 and 'a'", mode='eval').body)
+            is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: the BoolOp value fold kept '
+                        'an unresolvable pre-settle operand (#1652)')
     # #1652 fix-r8 (MM sibling r7 P1, probe-verified — M1/M1c): the relay
     # family's shared-call exemption is judged on the exit arms — a name
     # (or a local dict slot) bound to a dead-arm BoolOp

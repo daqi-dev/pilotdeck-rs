@@ -3493,6 +3493,15 @@ class RetirementScoring(unittest.TestCase):
              [{'direction': 'send',
                'frame': {'type': 'request', 'method': 'submit_turn', 'id': []}}],
              ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r12 (DS sibling#1 r11 P2): the id *missing entirely* is the
+            # same unusable-id shape — the frame row still /ws-HITs (the hit
+            # reading is wider than the wire count; pinned in
+            # test_entry_inventory_ws_hit_requires_list_frames) but backs no
+            # wire outcome, so the round fails closed here too.
+            ('frames dict row without a usable id', 'frames',
+             [{'direction': 'send',
+               'frame': {'type': 'request', 'method': 'submit_turn'}}],
+             ('rounds', 0, 'status'), 'FAIL'),
             ('frames unhashable frame method', 'frames',
              [{'direction': 'send',
                'frame': {'type': 'request', 'method': ['x'], 'id': 1}}],
@@ -3794,6 +3803,26 @@ class RetirementScoring(unittest.TestCase):
             ws = next(entry for entry in inventory['entries'] if entry['entry'] == '/ws')
             self.assertEqual(ws['status'], 'HIT', f'#48 legal frames must still HIT: {ws}')
 
+            # fix-r12 (DS sibling#1 r11 P2): the hit reading is deliberately
+            # wider than the wire count (session_domain.py:2882-2886) — a
+            # frame dict without a *usable id* still proves the live upgrade
+            # (the frame-bearing predicate counts it), while the wire pass
+            # additionally requires a usable id, so that row backs no wire
+            # outcome and the round fails EVIDENCE_BACKING (the paired
+            # round-status pin for this exact shape lives in
+            # test_report_keeps_full_faces...: "frames dict row without a
+            # usable id").  Tightening the hit predicate onto the wire
+            # reading would flip this HIT to NO_HIT and keep every other
+            # case green.
+            no_id_frames = [{'direction': 'send',
+                             'frame': {'type': 'request', 'method': 'submit_turn'}}]
+            inventory = self.session._retirement_entry_inventory(
+                baseline, round_row('round-02b', no_id_frames))
+            ws = next(entry for entry in inventory['entries'] if entry['entry'] == '/ws')
+            self.assertEqual(ws['status'], 'HIT',
+                             f'#48 a frame dict without a usable id still HITs '
+                             f'(the hit reading is wider than the wire count): {ws}')
+
             # fix-r4 (DS r3 sibling P1): a truthy non-list http/outcomes
             # observation is an unobserved set here too — never the TypeError
             # at the first ``for`` that collapsed the whole 16-face report
@@ -4029,6 +4058,14 @@ class RetirementScoring(unittest.TestCase):
             {'rows': [{'pid': 2 ** 31 - 1}], 'declared': [2 ** 31 - 1],
              'declaredAlive': True})['status'], 'PASS',
             'the top of the pid domain still judges PASS')
+        # fix-r12 (DS boundary#1 r11 P2): the pid domain's first legal value
+        # too — the port matrix got its bottom pin in the same round; here
+        # an off-by-one tightening (``1 < pid``) would otherwise keep every
+        # case green while rejecting pid 1.
+        self.assertEqual(self.session._retirement_census_verdict(
+            {'rows': [{'pid': 1}], 'declared': [1],
+             'declaredAlive': True})['status'], 'PASS',
+            'the bottom of the pid domain still judges PASS')
         verdict = self.session._retirement_census_verdict(
             {'rows': [{'pid': 7}], 'declared': [7, 0], 'declaredAlive': True})
         self.assertEqual(verdict['status'], 'FAIL')
@@ -4158,39 +4195,39 @@ class RetirementScoring(unittest.TestCase):
         # last legal port.  fix-r11 (DS simplify r10 P3): the two loops
         # share one ``cases`` table so the verdict path and the report
         # path cannot drift apart on the next domain value.
-        cases = (('zero', 0, ['127.0.0.1:0']),
-                 ('boolean', True, ['127.0.0.1:True']),
-                 ('boundary', 65536, ['127.0.0.1:65536']),
-                 ('oversized', 70000, ['127.0.0.1:70000']))
-        for tag, port, addresses in cases:
+        # fix-r12 (DS boundary#1 + sibling#4 r11 P2+P3): the domain's
+        # *first* legal port is pinned too — only the top had a PASS pin,
+        # so an off-by-one tightening at the bottom (``1 < p``) kept every
+        # case green while rejecting port 1 — and both domain ends now
+        # live in the same table with an ``expect`` column, so the PASS
+        # side shares the no-drift guarantee instead of repeating the
+        # listeners/ports shape as literals at each read path.
+        cases = (('zero', 0, ['127.0.0.1:0'], 'FAIL'),
+                 ('boolean', True, ['127.0.0.1:True'], 'FAIL'),
+                 ('boundary', 65536, ['127.0.0.1:65536'], 'FAIL'),
+                 ('oversized', 70000, ['127.0.0.1:70000'], 'FAIL'),
+                 ('bottom', 1, ['127.0.0.1:1'], 'PASS'),
+                 ('top', 65535, ['127.0.0.1:65535'], 'PASS'))
+        for tag, port, addresses, expect in cases:
             verdict = self.session._retirement_listener_verdict(
                 {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}, port)
-            self.assertEqual(verdict['status'], 'FAIL', f'#49 {tag}: {verdict}')
-            self.assertEqual(verdict['rule'], 'LISTENER_EXPOSURE', f'#49 {tag}')
-            self.assertIn('not a real port', verdict['detail'], f'#49 {tag}')
-        self.assertEqual(self.session._retirement_listener_verdict(
-            {'pid': 7, 'addresses': ['127.0.0.1:65535'], 'loopbackOnly': True},
-            65535)['status'], 'PASS',
-            '#49 the top of the port domain still judges PASS')
+            self.assertEqual(verdict['status'], expect, f'#49 {tag}: {verdict}')
+            if expect == 'FAIL':
+                self.assertEqual(verdict['rule'], 'LISTENER_EXPOSURE', f'#49 {tag}')
+                self.assertIn('not a real port', verdict['detail'], f'#49 {tag}')
         # The report gate reads the same shapes as a missing observation.
         expected = ['submit_turn', 'run_get']
-        for tag, port, addresses in cases:
+        for tag, port, addresses, expect in cases:
             row = self._stream_ok_round_row()
             row['ports'] = {'mock': 28761, 'gateway': port}
             row['listeners'] = {'pid': 7, 'addresses': addresses, 'loopbackOnly': True}
             report = self._report_for(row, expected)
             face = report['hostAudit']['listeners'][0]
-            self.assertEqual(face['status'], 'FAIL', f'#49 report {tag}: {face}')
+            self.assertEqual(face['status'], expect, f'#49 report {tag}: {face}')
         row = self._stream_ok_round_row()
         report = self._report_for(row, expected)
         self.assertEqual(report['hostAudit']['listeners'][0]['status'], 'PASS',
                          '#49 the healthy port still judges PASS')
-        row = self._stream_ok_round_row()
-        row['ports'] = {'mock': 28761, 'gateway': 65535}
-        row['listeners'] = {'pid': 7, 'addresses': ['127.0.0.1:65535'], 'loopbackOnly': True}
-        report = self._report_for(row, expected)
-        self.assertEqual(report['hostAudit']['listeners'][0]['status'], 'PASS',
-                         '#49 report: the top of the port domain still judges PASS')
 
     def test_audit_native_rejects_oversized_witness_pids(self):
         # fix-r9 (DS sibling r8 P2, probe-verified — fix-r9-audit/
@@ -4225,6 +4262,15 @@ class RetirementScoring(unittest.TestCase):
             self.session.audit_native(evidence, {'host': 'rust', 'processRoles': []})
         self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS',
                             'the top of the pid domain is a legal witness shape')
+        # fix-r12 (DS boundary#1 r11 P2): the witness gate's domain bottom —
+        # pid 1 fails only on the honest contract mismatch, never on the
+        # real-pid rule itself, the twin of the census pin above.
+        evidence['processes'] = [{'pid': 1, 'argv': ['pilotdeck'],
+                                  'role': 'host'}]
+        with self.assertRaises(self.session.EvidenceError) as raised:
+            self.session.audit_native(evidence, {'host': 'rust', 'processRoles': []})
+        self.assertNotEqual(raised.exception.rule, 'PROCESS_WITNESS',
+                            'the bottom of the pid domain is a legal witness shape')
 
     def _fake_baseline(self, root, break_route=False, drop_listener=False):
         """Synthetic baseline whose parse reproduces the real 13/4 entry set."""
