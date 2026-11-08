@@ -170,6 +170,10 @@ python3 …/negative-controls.py --self-test-timeout  # 进程组回收实测
 python3 …/negative-controls.py --self-test-hold     # 供外部信号测试持住真实变异
 ```
 
-cargo 槽位在变异**之前**检查并有界等待；`ps` 被沙箱拒绝时回退到 `pgrep -x`
-的 cargo 入口名，两个探针都失败则拒绝变异（绝不把失败当 0）。子进程以独立
-进程组启动，超时或收到信号都先 SIGTERM 再 SIGKILL 整组并回收。
+cargo 槽位在变异**之前**检查并有界等待，计数口径与 scripts/cargo-slots.sh 对齐：
+单次 `ps -Aww -o pid=,ppid=,args=` 取样后按祖先链去重，同一棵进程树只在其根上计
+一次（`cargo clippy` 会派生 `cargo-clippy` 再派生 `cargo check`，按名逐数会把一个
+槽记成 2–3 个，#1566 项 1）。`ps` 被沙箱拒绝时回退到 `pgrep -x` 的 cargo 入口名——
+pgrep 拿不到 ppid，只能给下界：读数非零时立即拒绝变异（不等满槽位等待期），
+两个探针都失败同样拒绝变异（绝不把失败当 0）。子进程以独立进程组启动，
+超时或收到信号都先 SIGTERM 再 SIGKILL 整组并回收。

@@ -15,10 +15,15 @@ Recovery protocol (concurrency P2):
   (or to an unknown value). `--recover` restores only a value that matches the
   recorded mutation; unknown edits are never overwritten.
 - The cargo slot check runs *before* the mutation, waits a bounded time, and
-  uses the same process-name criterion as scripts/cargo-slots.sh. `ps` is the
-  primary probe; when the sandbox denies `ps`, `pgrep -x` for the known cargo
-  entry points is the fallback, and a failure of both probes is fatal (never
-  treated as zero).
+  counts cargo process *trees* the way scripts/cargo-slots.sh does: one
+  `ps -Aww -o pid=,ppid=,args=` sample, then only processes whose whole
+  ancestor chain holds no cargo (#1566 item 1 -- counting every first-word
+  match double counts, since `cargo clippy` spawns `cargo-clippy` which in
+  turn spawns `cargo check`: three matches, one slot). When the sandbox
+  denies `ps`, the `pgrep -x` fallback cannot see ppid, so it only bounds
+  the count from below and never releases a mutation: a nonzero reading
+  refuses immediately instead of waiting out the slot deadline. A failure
+  of both probes is fatal (never treated as zero).
 - Every in-place run also enters `negative_process.mutating_sources`: it takes
   the shared `.negative-source.lock` and refuses to start unless the whole
   gateway product tree matches HEAD, so a residue from any SIGKILLed control
@@ -722,23 +727,63 @@ def install_signal_handlers() -> None:
 
 
 def slots_from_ps() -> tuple[int | None, str]:
-    """Same criterion as scripts/cargo-slots.sh: first command word is cargo."""
+    """Count cargo process trees, the criterion scripts/cargo-slots.sh uses.
+
+    One `ps -Aww -o pid=,ppid=,args=` sample (the wide single snapshot avoids
+    counts torn between two samples), then a process counts only when no cargo
+    appears anywhere in its ancestor chain: each tree is counted once, at its
+    root. The walk follows the whole chain rather than only the direct parent
+    to cover cargo -> rustc -> build-script -> cargo (a build.rs spawning
+    cargo) with non-cargo processes in between. Matching the first command
+    word alone -- what the old docstring claimed was "the same criterion" --
+    double counts: `cargo clippy` spawns `cargo-clippy`, which spawns
+    `cargo check`, three matches for one slot (#1566 item 1).
+    """
     try:
-        result = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True)
+        result = subprocess.run(
+            ["ps", "-Aww", "-o", "pid=,ppid=,args="], capture_output=True, text=True
+        )
     except OSError as error:
         return None, f"ps failed: {error}"
     if result.returncode != 0:
         return None, f"ps exit {result.returncode}: {result.stderr.strip()}"
-    count = 0
+    if not result.stdout.strip():
+        return None, "ps output empty"
+    parent: dict[int, int] = {}
+    cargo_pids: set[int] = set()
     for line in result.stdout.splitlines():
-        parts = line.split()
-        if parts and re.fullmatch(r"(?:.*/)?cargo(?:-[a-z]+)?", parts[0]):
+        fields = line.split(None, 2)
+        if len(fields) < 3 or not fields[0].isdigit() or not fields[1].isdigit():
+            continue
+        pid, ppid = int(fields[0]), int(fields[1])
+        parent[pid] = ppid
+        words = fields[2].split()
+        if words and re.fullmatch(r"(?:.*/)?cargo(?:-[a-z]+)?", words[0]):
+            cargo_pids.add(pid)
+    count = 0
+    for pid in cargo_pids:
+        ancestor = parent.get(pid)
+        # 4096 hops matches cargo-slots.sh: enough for any real chain, while
+        # still terminating a torn snapshot whose parent map contains a cycle.
+        hops = 0
+        while ancestor is not None and ancestor not in cargo_pids and hops < 4096:
+            ancestor = parent.get(ancestor)
+            hops += 1
+        if ancestor not in cargo_pids:
             count += 1
     return count, ""
 
 
 def slots_from_pgrep() -> tuple[int | None, str]:
-    """Fallback when `ps` is denied: count known cargo entry-point names."""
+    """Fallback when `ps` is denied: a lower bound, never a count.
+
+    `pgrep -x` cannot report ppid, so the ancestor dedup above is impossible
+    here: a per-name tally counts one tree's `cargo`, `cargo-clippy` and
+    `cargo check` separately. Without parentage the honest reading is "at
+    least one cargo tree is alive" whenever any known entry point exists, so
+    that is what this probe returns; `wait_for_slot` refuses to release a
+    mutation on it (#1566 item 1).
+    """
     names = [
         "cargo",
         "cargo-clippy",
@@ -750,17 +795,18 @@ def slots_from_pgrep() -> tuple[int | None, str]:
         "cargo-bench",
         "cargo-doc",
     ]
-    total = 0
+    any_alive = False
     for name in names:
         try:
             result = subprocess.run(["pgrep", "-x", name], capture_output=True, text=True)
         except OSError as error:
             return None, f"pgrep -x {name} failed: {error}"
         if result.returncode == 0:
-            total += len([line for line in result.stdout.splitlines() if line.strip()])
+            if any(line.strip() for line in result.stdout.splitlines()):
+                any_alive = True
         elif result.returncode != 1:
             return None, f"pgrep -x {name} exit {result.returncode}: {result.stderr.strip()}"
-    return total, ""
+    return (1 if any_alive else 0), ""
 
 
 def cargo_slots() -> tuple[int, str, str]:
@@ -796,6 +842,21 @@ def wait_for_slot() -> None:
     deadline = time.monotonic() + SLOT_WAIT_SECONDS
     while True:
         count, source, note = cargo_slots()
+        # #1566 item 1: a nonzero reading from the pgrep fallback is only a
+        # lower bound -- the true tree count needs ppid, which pgrep cannot
+        # give. It can neither rise to "full" (so the wait below would end)
+        # nor be trusted as "free", so refuse immediately instead of holding
+        # the mutated source for SLOT_WAIT_SECONDS on an unknowable number.
+        # Zero is exact here (no entry point alive means no tree), so only
+        # the nonzero bound refuses.
+        if source == "pgrep":
+            if count == 0:
+                print(f"negctl: cargo slot free: 0/{CARGO_CAP} (probe=pgrep, no cargo entry point alive, {note})")
+                return
+            raise SystemExit(
+                "negctl: ps denied and the pgrep fallback can only bound the cargo "
+                f"count from below (>={count}); refusing to mutate"
+            )
         if count < CARGO_CAP:
             print(f"negctl: cargo slot free: {count}/{CARGO_CAP} (probe={source}, {note})")
             return
