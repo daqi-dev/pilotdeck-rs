@@ -28,25 +28,35 @@ fn find_external(value:&JsValue,path:&str,depth:usize)->Option<String>{
 }
 fn local_ref<'a>(root:&'a JsValue,r:&JsString)->Option<&'a JsValue>{
     let raw=r.to_utf8().ok()?;if raw=="#"{return Some(root);}let path=raw.strip_prefix("#/")?;let mut current=root;
-    for segment in path.split('/') { let segment=segment.replace("~1","/").replace("~0","~"); current=match current{JsValue::Object(o)=>o.get(&segment)?,JsValue::Array(a)=>a.get(segment.parse::<usize>().ok()?)?,_=>return None}; }
-    Some(current)
+    for segment in path.split('/') {
+        let bytes=segment.as_bytes();let mut decoded=Vec::with_capacity(bytes.len());let mut i=0;
+        while i<bytes.len(){if bytes[i]==b'%' {if i+2>=bytes.len(){return None;}
+            let hex=|b:u8|match b{b'0'..=b'9'=>Some(b-b'0'),b'a'..=b'f'=>Some(b-b'a'+10),b'A'..=b'F'=>Some(b-b'A'+10),_=>None};
+            decoded.push(hex(bytes[i+1])?*16+hex(bytes[i+2])?);i+=3;}else{decoded.push(bytes[i]);i+=1;}}
+        let segment=String::from_utf8(decoded).ok()?;let mut plain=String::new();let mut chars=segment.chars();
+        while let Some(c)=chars.next(){if c=='~'{match chars.next()?{'0'=>plain.push('~'),'1'=>plain.push('/'),_=>return None;}}else{plain.push(c);}}
+        current=match current{JsValue::Object(o)=>o.get(&plain)?,JsValue::Array(a)=>a.get(plain.parse::<usize>().ok()?)?,_=>return None};
+    }Some(current)
 }
-fn compile_node<'a>(value:&'a JsValue,root:&'a JsValue,resource:&'a JsValue,path:&str,depth:usize,nodes:&mut usize,inherited:Option<&str>)->Result<(),String>{
+fn compile_node<'a>(value:&'a JsValue,root:&'a JsValue,resource:&'a JsValue,path:&str,depth:usize,nodes:&mut usize,anchors:&mut HashSet<(usize,JsString)>,inherited:Option<&str>)->Result<(),String>{
     *nodes+=1;if *nodes>100_000||depth>MAX_DEPTH{return Err(compile_error("schema exceeds the native validation budget"));}
     if value.as_bool().is_some(){return Ok(());}let Some(o)=obj(value)else{return Err(compile_error("schema must be object or boolean"));};
     for(k,_)in o.own_entries(){let k=k.to_utf8().map_err(|_|compile_error("invalid keyword"))?;if !KEYS.contains(&k.as_str()){return Err(compile_error(format!("strict mode: unknown keyword: \"{k}\"")));}}
     let resource=if exists(value,"$id"){value}else{resource};
-    let own_type=text(value,"type").and_then(|s|s.to_utf8().ok());
+    let own_type=text(value,"type").and_then(|s|s.to_utf8().ok()).or_else(||match value.get("type") {
+        Some(JsValue::Array(a))=>a.iter().filter_map(JsValue::as_string).find(|s|!s.equals_str("null")).and_then(|s|s.to_utf8().ok()),_=>None });
     let context=own_type.as_deref().or(inherited);
     if let Some(kind)=value.get("type") {
         let valid=|v:&JsValue|v.as_string().is_some_and(|s|["object","array","string","number","integer","boolean","null"].iter().any(|k|s.equals_str(k)));
         let good=match kind {JsValue::Array(a)=>!a.is_empty()&&a.iter().all(valid),_=>valid(kind)};
         if !good{return Err(compile_error(format!("schema is invalid: data{}/type must be equal to one of the allowed values, data{}/type must be array, data{}/type must match a schema in anyOf",&path[1..],&path[1..],&path[1..])));}
-        if let JsValue::Array(a)=kind { if a.iter().filter(|v|v.as_string().is_some_and(|s|!s.equals_str("null"))).count()>1 {
+        if let JsValue::Array(a)=kind {let mut seen=std::collections::HashMap::new();for(i,v)in a.iter().enumerate(){let k=v.as_string().unwrap();if let Some(j)=seen.insert(k.clone(),i){return Err(compile_error(format!("schema is invalid: data{}/type must be equal to one of the allowed values, data{}/type must NOT have duplicate items (items ## {j} and {i} are identical), data{}/type must match a schema in anyOf",&path[1..],&path[1..],&path[1..])));}}
+            if a.iter().filter(|v|v.as_string().is_some_and(|s|!s.equals_str("null"))).count()>1 {
             return Err(compile_error(format!("strict mode: use allowUnionTypes to allow union type keyword at \"{path}\" (strictTypes)"))); }}
     }
     for key in ["minLength","maxLength","minItems","maxItems","minProperties","maxProperties","minContains","maxContains"] {
-        if exists(value,key)&&num(value,key).is_none_or(|n|!n.is_finite()||n<0.0||n.fract()!=0.0){return Err(compile_error(format!("{key} must be a non-negative integer")));}
+        if exists(value,key)&&num(value,key).is_none_or(|n|!n.is_finite()||n.fract()!=0.0){return Err(compile_error(format!("schema is invalid: data{}/{key} must be integer",&path[1..])));}
+        if num(value,key).is_some_and(|n|n<0.0){return Err(compile_error(format!("schema is invalid: data{}/{key} must be >= 0",&path[1..])));}
     }
     for key in ["minimum","maximum","exclusiveMinimum","exclusiveMaximum","multipleOf"] {
         if exists(value,key)&&num(value,key).is_none_or(|n|!n.is_finite()){return Err(compile_error(format!("schema is invalid: data{}/{key} must be number",&path[1..])));}
@@ -56,18 +66,23 @@ fn compile_node<'a>(value:&'a JsValue,root:&'a JsValue,resource:&'a JsValue,path
     for key in ["$schema","$id","$dynamicRef","$dynamicAnchor","$recursiveRef","$comment","title","description","pattern","format","contentEncoding","contentMediaType"] {if exists(value,key)&&text(value,key).is_none(){return Err(compile_error(format!("{key} must be string")));}}
     if let Some(enumeration)=value.get("enum"){if !matches!(enumeration,JsValue::Array(a) if !a.is_empty()){return Err(compile_error("enum must have non-empty array"));}}
     if let Some(deps)=value.get("dependentRequired"){let deps=obj(deps).ok_or_else(||compile_error("dependentRequired must be object"))?;
-        for(_,required)in deps.own_entries(){if !matches!(required,JsValue::Array(a) if a.iter().all(|v|v.as_string().is_some())){return Err(compile_error("dependentRequired values must be arrays of strings"));}}}
+        for(name,required)in deps.own_entries(){if !matches!(required,JsValue::Array(a) if a.iter().all(|v|v.as_string().is_some())){return Err(compile_error("dependentRequired values must be arrays of strings"));}
+            if let JsValue::Array(a)=required {let mut seen=std::collections::HashMap::new();for(i,v)in a.iter().enumerate(){let k=v.as_string().unwrap();if let Some(j)=seen.insert(k.clone(),i){return Err(compile_error(format!("schema is invalid: data{}/dependentRequired/{} must NOT have duplicate items (items ## {i} and {j} are identical)",&path[1..],String::from_utf16_lossy(name.units()))));}}}
+        }}
     if let Some(anchor)=text(value,"$dynamicAnchor") {let Ok(anchor)=anchor.to_utf8() else{return Err(compile_error("schema is invalid: data/$dynamicAnchor must match pattern \"^[A-Za-z_][-A-Za-z0-9._]*$\""));};
         let mut chars=anchor.chars();if !chars.next().is_some_and(|c|c.is_ascii_alphabetic()||c=='_')||!chars.all(|c|c.is_ascii_alphanumeric()||matches!(c,'_'|'-'|'.')){return Err(compile_error("schema is invalid: data/$dynamicAnchor must match pattern \"^[A-Za-z_][-A-Za-z0-9._]*$\""));}}
+    if let Some(anchor)=text(value,"$dynamicAnchor"){if !anchors.insert((resource as *const JsValue as usize,anchor.clone())){return Err(compile_error(format!("reference \"#{}\" resolves to more than one schema",String::from_utf16_lossy(anchor.units()))));}}
     if exists(value,"$recursiveAnchor")&&text(value,"$recursiveAnchor").is_none(){return Err(compile_error("schema is invalid: data/$recursiveAnchor must be string"));}
-    if let Some(r)=value.get("$ref") {let Some(r)=r.as_string()else{return Err(compile_error("$ref must be string"));};if local_ref(resource,r).is_none(){return Err(compile_error("can't resolve local reference"));}}
+    if let Some(r)=value.get("$ref") {let Some(r)=r.as_string()else{return Err(compile_error("$ref must be string"));};if local_ref(resource,r).is_none(){let reference=String::from_utf16_lossy(r.units());let id=text(resource,"$id").map(|v|String::from_utf16_lossy(v.units())).unwrap_or_else(||"#".into());return Err(compile_error(format!("can't resolve reference {reference} from id {id}")));}}
     if let Some(JsValue::Array(required))=value.get("required") {let props=value.get("properties").and_then(obj);
         let mut seen:std::collections::HashMap<JsString,usize>=std::collections::HashMap::new();
         for (index,key) in required.iter().enumerate() {let Some(key)=key.as_string()else{return Err(compile_error("required must be array of strings"));};
             if let Some(previous)=seen.insert(key.clone(),index){return Err(compile_error(format!("schema is invalid: data{}/required must NOT have duplicate items (items ## {index} and {previous} are identical)",&path[1..])));}
             if props.is_none_or(|p|p.get_key(key).is_none()){return Err(compile_error(format!("strict mode: required property \"{}\" is not defined at \"{path}\" (strictRequired)",String::from_utf16_lossy(key.units()))));}}
     }else if exists(value,"required"){return Err(compile_error("required must be array"));}
+    if !exists(value,"contains")&&(exists(value,"maxContains")||exists(value,"minContains")){let name=if exists(value,"maxContains"){"maxContains"}else{"minContains"};return Err(compile_error(format!("strict mode: \"{name}\" without \"contains\" is ignored")));}
     if num(value,"minContains")==Some(0.0)&& !exists(value,"maxContains")&&exists(value,"contains"){return Err(compile_error("strict mode: \"minContains\" == 0 without \"maxContains\": \"contains\" keyword ignored"));}
+    if value.get("nullable").and_then(JsValue::as_bool)==Some(false) && matches!(value.get("type"),Some(JsValue::Array(a)) if a.iter().any(|v|v.as_string().is_some_and(|s|s.equals_str("null")))) {return Err(compile_error("type: null contradicts nullable: false"));}
     if value.get("nullable").and_then(JsValue::as_bool)==Some(true)&& !exists(value,"type"){return Err(compile_error("\"nullable\" cannot be used without \"type\""));}
     if let Some(pattern)=text(value,"pattern"){compile_regex(pattern).map_err(compile_error)?;}
     if let Some(fmt)=text(value,"format"){let f=fmt.to_utf8().map_err(|_|compile_error("invalid format"))?;if !["date","time","date-time","iso-time","iso-date-time","duration","uri","uri-reference","uri-template","url","email","hostname","ipv4","ipv6","uuid","json-pointer","json-pointer-uri-fragment","relative-json-pointer","regex","byte","password","binary","int32","int64","float","double"].contains(&f.as_str()){return Err(compile_error(format!("unknown format \"{f}\" ignored in schema at path \"{path}\"")));}}
@@ -79,14 +94,14 @@ fn compile_node<'a>(value:&'a JsValue,root:&'a JsValue,resource:&'a JsValue,path
     if (exists(value,"then")||exists(value,"else"))&&!exists(value,"if") {let keyword=if exists(value,"then"){"then"}else{"else"};return Err(compile_error(format!("strict mode: \"{keyword}\" without \"if\" is ignored")));}
     if exists(value,"if")&&!exists(value,"then")&&!exists(value,"else"){return Err(compile_error("strict mode: \"if\" without \"then\" and \"else\" is ignored"));}
     for key in ["$defs","properties","patternProperties","dependentSchemas"]{if let Some(v)=value.get(key){let m=obj(v).ok_or_else(||compile_error(format!("{key} must be object")))?;
-        for(k,child)in m.own_entries(){if key=="patternProperties"{compile_regex(k).map_err(compile_error)?;}compile_node(child,root,resource,&format!("{path}/{key}/{}",String::from_utf16_lossy(k.units())),depth+1,nodes,if key=="dependentSchemas"{context}else{None})?;}}}
-    for key in ["items","contains","propertyNames","additionalProperties","unevaluatedProperties","unevaluatedItems","not","if","then","else","contentSchema"]{if let Some(child)=value.get(key){compile_node(child,root,resource,&format!("{path}/{key}"),depth+1,nodes,if ["if","then","else","not"].contains(&key){context}else{None})?;}}
-    for key in ["allOf","anyOf","oneOf","prefixItems"]{if let Some(v)=value.get(key){let JsValue::Array(a)=v else{return Err(compile_error(format!("{key} must be array")));};if a.is_empty(){return Err(compile_error(format!("{key} must NOT have fewer than 1 items")));}for(i,child)in a.iter().enumerate(){compile_node(child,root,resource,&format!("{path}/{key}/{i}"),depth+1,nodes,if key=="prefixItems"{None}else{context})?;}}}
+        for(k,child)in m.own_entries(){if key=="patternProperties"{compile_regex(k).map_err(compile_error)?;}compile_node(child,root,resource,&format!("{path}/{key}/{}",String::from_utf16_lossy(k.units())),depth+1,nodes,anchors,if key=="dependentSchemas"{context}else{None})?;}}}
+    for key in ["items","contains","propertyNames","additionalProperties","unevaluatedProperties","unevaluatedItems","not","if","then","else","contentSchema"]{if let Some(child)=value.get(key){compile_node(child,root,resource,&format!("{path}/{key}"),depth+1,nodes,anchors,if ["if","then","else","not"].contains(&key){context}else{None})?;}}
+    for key in ["allOf","anyOf","oneOf","prefixItems"]{if let Some(v)=value.get(key){let JsValue::Array(a)=v else{return Err(compile_error(format!("{key} must be array")));};if a.is_empty(){return Err(compile_error(format!("{key} must NOT have fewer than 1 items")));}for(i,child)in a.iter().enumerate(){compile_node(child,root,resource,&format!("{path}/{key}/{i}"),depth+1,nodes,anchors,if key=="prefixItems"{None}else{context})?;}}}
     Ok(())
 }
 pub(super) fn validate(schema:&JsValue)->Result<(),String>{
     if let Some(error)=find_external(schema,"$",0){return Err(error);}
-    compile_node(schema,schema,schema,"#",0,&mut 0,None)
+    compile_node(schema,schema,schema,"#",0,&mut 0,&mut HashSet::new(),None)
 }
 #[derive(Default)]
 struct Mark { properties:HashSet<JsString>, items:HashSet<usize> }

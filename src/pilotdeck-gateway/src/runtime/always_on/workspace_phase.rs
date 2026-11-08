@@ -29,6 +29,17 @@ impl Drop for ContextGuard {
     fn drop(&mut self) { self.registry.unregister(&self.session); }
 }
 impl WorkspacePhase {
+    async fn cleanup_uncommitted(&self, handle: Option<WorkspaceHandle>, mut error: ControlError) -> ControlError {
+        if let Some(handle) = handle {
+            if handle.created_identity.is_none() {
+                error.message.push_str("; workspace was not created by this phase; retained.");
+            } else if let Err(cleanup) = self.workspace.dispose(handle, false).await {
+                error.message = format!("{}; owned workspace cleanup failed: {}", error.message, String::from_utf16_lossy(cleanup.message.units()));
+                error.code = "workspace_cleanup_failed".into();
+            }
+        }
+        error
+    }
     pub async fn run(&self, run_id: &str, title: JsString, state: &JsValue)
         -> Result<WorkspacePhaseResult, ControlError> {
         let project = self.project.to_utf8().map_err(|_| failure("invalid_project", "Project path is not representable"))?;
@@ -64,13 +75,19 @@ impl WorkspacePhase {
             channel_key: "always-on/workspace".into(), run_id: format!("{run_id}.workspace").as_str().into(),
             message: JsString::from_utf16(prompt), cwd: project.as_str().into(), permission_mode: "bypassPermissions".into(),
             bypass_available: true, can_prompt: false,
-            exclude_tools: ["enter_plan_mode", "exit_plan_mode", "ask_user_question"].into_iter().map(JsString::from).collect(),
+            exclude_tools: crate::config::session_overrides::UNATTENDED_SESSION_EXCLUDED_TOOLS.into_iter().map(JsString::from).collect(),
             permission_deny: Vec::new(), context_registry: self.contexts.clone(), register_automation_tools: true,
             observer: self.observer.clone() };
         let submitted = self.gateway.run_phase(request).await;
         drop(lease); drop(context_guard);
         handlers.drain().await;
-        let mut result = submitted?;
+        let mut result = match submitted {
+            Ok(result) => result,
+            Err(error) => {
+                let handle = state_ref.lock().await.handle.take();
+                return Err(self.cleanup_uncommitted(handle, error).await);
+            }
+        };
         result.finish().await;
         let created = state_ref.lock().await.handle.clone();
         let (handle, reused) = match created {
@@ -91,11 +108,42 @@ impl WorkspacePhase {
         let cycle_id = (self.uuid)(); let now = (self.now)();
         let cycles = self.cycles.clone(); let state_store = self.state.clone();
         let run = handle.run_id.clone(); let id = cycle_id.clone(); let workspace = handle.cycle_workspace();
+        let preserve = Arc::new(std::sync::atomic::AtomicBool::new(reused));
+        let committed = preserve.clone(); let selected_cwd = handle.cwd.clone();
+        let mut uncertain = false;
         let cycle = storage::run(move || {
-            let cycle = cycles.create(&workspace, run, id.as_str().into(), now)?;
-            state_store.set_active_work_cycle_id(&id, now)?;
-            Ok(cycle)
-        }).await.map_err(|e| failure("workspace_prepare_failed", e.to_string()))?;
+            let cycle = match cycles.create(&workspace, run, id.as_str().into(), now) {
+                Ok(cycle) => { committed.store(true, std::sync::atomic::Ordering::Release); cycle },
+                Err(error) => {
+                    // Atomic rename may have committed before a later sync
+                    // error. Never delete a durable or uncertain reference.
+                    match cycles.references_workspace(&selected_cwd) {
+                        Ok(false) => {},
+                        Ok(true) => { committed.store(true, std::sync::atomic::Ordering::Release); },
+                        Err(_) => { committed.store(true, std::sync::atomic::Ordering::Release); uncertain = true; },
+                    }
+                    return Ok((Err(error), uncertain));
+                }
+            };
+            let outcome = state_store.set_active_work_cycle_id(&id, now).map(|_| cycle);
+            Ok((outcome, uncertain))
+        }).await;
+        let cycle = match cycle {
+            Ok((Ok(cycle), _)) => cycle,
+            Ok((Err(error), uncertain)) => {
+                let mut error = failure("workspace_prepare_failed", error.to_string());
+                if preserve.load(std::sync::atomic::Ordering::Acquire) {
+                    error.message.push_str(if uncertain { "; cycle persistence is uncertain; workspace retained." } else { "; durable cycle owns workspace; workspace retained." });
+                    return Err(error);
+                }
+                return Err(self.cleanup_uncommitted(Some(handle), error).await);
+            }
+            Err(error) => {
+                // A failed blocking task provides no definitive transaction
+                // result. Preserve rather than guessing that rename failed.
+                return Err(failure("workspace_prepare_failed", format!("{error}; persistence outcome unknown; workspace retained.")));
+            }
+        };
         Ok(WorkspacePhaseResult { handle, cycle, reused })
     }
 }
@@ -108,7 +156,7 @@ mod tests {
             builtin::bash::runner::NativeOwnedShellCommandRunner}}};
     use std::{future::Future, path::Path, pin::Pin};
 
-    struct Gateway;
+    pub(super) struct Gateway;
     impl AlwaysOnAgentGateway for Gateway {
         fn abort_turn<'a>(&'a self, _: super::super::manager::GatewayAbortInput<'a>)
             -> Pin<Box<dyn Future<Output = Result<(), JsString>> + Send + 'a>> { Box::pin(async { Ok(()) }) }
@@ -131,7 +179,7 @@ mod tests {
             })
         }
     }
-    struct Observer;
+    pub(super) struct Observer;
     impl PhaseObserver for Observer {
         fn on_event<'a>(&'a self, _: &'a JsString, _: &'a JsString, _: &'a JsString, _: &'a JsValue)
             -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> { Box::pin(async {}) }
@@ -163,4 +211,57 @@ mod tests {
         provider.dispose(result.handle, false).await.unwrap(); provider.close().await.unwrap();
         registry.dispose().await.unwrap(); std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[cfg(test)]
+mod failure_cleanup_tests {
+    use super::*;
+    use std::{future::Future, path::{Path, PathBuf}, pin::Pin, os::unix::fs::PermissionsExt};
+    use crate::runtime::{project::{ProjectRuntimeRegistry, ResourceBundle}, tools::builtin::bash::runner::NativeOwnedShellCommandRunner};
+    struct GatewayFault { paths: super::super::AlwaysOnPaths, fault: &'static str }
+    impl AlwaysOnAgentGateway for GatewayFault {
+        fn abort_turn<'a>(&'a self, _: super::super::manager::GatewayAbortInput<'a>) -> Pin<Box<dyn Future<Output=Result<(),JsString>>+Send+'a>> { Box::pin(async { Ok(()) }) }
+        fn run_phase<'a>(&'a self, request: PhaseRequest) -> Pin<Box<dyn Future<Output=Result<super::super::manager::PhaseResult,ControlError>>+Send+'a>> {
+            Box::pin(async move {
+                let result = super::tests::Gateway.run_phase(request).await?;
+                match self.fault {
+                    "phase" => return Err(failure("injected_phase_failure", "phase failed after actual workspace tool success")),
+                    "index" => std::fs::set_permissions(self.paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o500)).unwrap(),
+                    "state" => std::fs::create_dir(&self.paths.state_file).unwrap(),
+                    _ => unreachable!(),
+                }
+                Ok(result)
+            })
+        }
+    }
+    struct Scratch(PathBuf);
+    impl Drop for Scratch { fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.0); } }
+    async fn fixture(fault: &'static str) {
+        let root = Scratch(std::env::temp_dir().join(format!("pdrs-workspace-cleanup-{}", uuid::Uuid::new_v4())));
+        let project = root.0.join("project"); let home = root.0.join("home");
+        std::fs::create_dir_all(&project).unwrap(); std::fs::create_dir_all(&home).unwrap(); std::fs::write(project.join("source"), "ORIGINAL").unwrap();
+        let project = project.canonicalize().unwrap(); let home = home.canonicalize().unwrap();
+        let md = crate::metadata::Metadata { home: home.clone(), cwd: Default::default(), files: crate::metadata::NativeFiles };
+        let paths = super::super::resolve_always_on_paths(&home, project.to_str().unwrap(), &md).unwrap();
+        std::fs::create_dir_all(paths.cycle_index_file.parent().unwrap()).unwrap();
+        std::fs::write(&paths.cycle_index_file, r#"{"schemaVersion":1,"cycles":[]}"#).unwrap();
+        let registry = Arc::new(ProjectRuntimeRegistry::new(project.clone(), Arc::new(|_: &Path, _: &mut ResourceBundle| Ok(()))));
+        let provider = Arc::new(NativeWorkspace::new(paths.clone(), Arc::new(registry.acquire(None).unwrap()), Arc::new(NativeOwnedShellCommandRunner), Some(vec![("PATH".into(), "/usr/bin:/bin".into()), ("HOME".into(), home.to_str().unwrap().into())])).unwrap());
+        let cycles = Arc::new(WorkCycleStore::new(paths.clone()));
+        let phase = WorkspacePhase { project: project.to_str().unwrap().into(), gateway: Arc::new(GatewayFault { paths: paths.clone(), fault }), contexts: Arc::new(AlwaysOnRunContextRegistry::new()), observer: Arc::new(super::tests::Observer), workspace: provider.clone(), cycles: cycles.clone(), state: Arc::new(DiscoveryStateStore::new(paths.clone())), now: Arc::new(||0.0), uuid: Arc::new(|| "cleanup-cycle".into()), chinese: false };
+        let result = phase.run("cleanup-run", "fixture".into(), &JsValue::Object(Default::default())).await;
+        if fault == "index" { std::fs::set_permissions(paths.cycle_index_file.parent().unwrap(), std::fs::Permissions::from_mode(0o700)).unwrap(); }
+        let target = paths.snapshots_dir().join("cleanup-run"); let cycle = cycles.read_apply("cleanup-cycle".into()).await.unwrap();
+        let closed = provider.close().await; let drained = registry.dispose().await;
+        assert!(result.is_err()); assert!(closed.is_ok()); assert!(drained.is_ok());
+        if fault == "state" {
+            assert!(target.exists(), "a committed cycle must retain its actual workspace even when set-active fails");
+            let cycle = cycle.unwrap().0; assert_eq!(cycle.workspace.unwrap().cwd.to_utf8().unwrap(), target.to_string_lossy());
+            assert!(result.err().unwrap().message.contains("durable cycle owns workspace"));
+        } else { assert!(cycle.is_none()); assert!(!target.exists(), "uncommitted newly created workspace must be reclaimed: {fault}"); }
+        assert_eq!(std::fs::read(project.join("source")).unwrap(), b"ORIGINAL");
+    }
+    #[tokio::test] async fn phase_failure_reclaims_only_the_new_workspace() { fixture("phase").await; }
+    #[tokio::test] async fn cycle_write_failure_reclaims_an_unreferenced_workspace() { fixture("index").await; }
+    #[tokio::test] async fn set_active_failure_retains_the_already_durable_cycle_workspace() { fixture("state").await; }
 }

@@ -24,6 +24,7 @@ impl From<io::Error> for WorkspaceError {
 #[derive(Clone, Debug)]
 pub(crate) struct WorkspaceHandle {
     pub run_id: JsString, pub project_key: JsString, pub strategy: String, pub cwd: JsString, pub metadata: JsObject,
+    pub(super) created_identity: Option<Arc<File>>,
 }
 impl WorkspaceHandle {
     pub(crate) fn cycle_workspace(&self) -> JsObject {
@@ -118,7 +119,7 @@ impl NativeWorkspace {
             (top.exit_code == Some(0) && head.exit_code == Some(0)).then_some(crate::metadata::js_trim(&top.stdout).to_owned())
         } else { None };
         let selected = if strategy == "auto" { if top.is_some() { "git-worktree" } else { "snapshot-copy" } } else { strategy };
-        let (cwd, metadata) = match selected {
+        let (cwd, metadata, created_identity) = match selected {
             "git-worktree" => {
                 let top = top.ok_or_else(|| WorkspaceError::new("workspace_prepare_failed", "git rev-parse failed for the selected project."))?;
                 self.prepare_git(&project, &top, &id, &title, signal).await?
@@ -129,9 +130,9 @@ impl NativeWorkspace {
             }
             _ => return Err(WorkspaceError::new("workspace_unavailable", format!("workspace strategy \"{selected}\" is not available."))),
         };
-        Ok(WorkspaceHandle { run_id, project_key: self.0.paths.project_key.as_str().into(), strategy: selected.into(), cwd: cwd.to_string_lossy().as_ref().into(), metadata })
+        Ok(WorkspaceHandle { run_id, project_key: self.0.paths.project_key.as_str().into(), strategy: selected.into(), cwd: cwd.to_string_lossy().as_ref().into(), metadata, created_identity: Some(created_identity) })
     }
-    async fn prepare_git(&self, project: &Arc<File>, top: &str, id: &str, title: &JsString, signal: Option<AbortSignal>) -> Result<(PathBuf, JsObject), WorkspaceError> {
+    async fn prepare_git(&self, project: &Arc<File>, top: &str, id: &str, title: &JsString, signal: Option<AbortSignal>) -> Result<(PathBuf, JsObject, Arc<File>), WorkspaceError> {
         let project_root = self.0.project.clone(); let top_path = PathBuf::from(top);
         let (repository, repository_path) = self.io(move || {
             let canonical = top_path.canonicalize()?;
@@ -154,20 +155,65 @@ impl NativeWorkspace {
         expect_ok(&branch, "git rev-parse --abbrev-ref HEAD")?;
         let commit = self.command(&repository, &repository_path, &["git", "rev-parse", "HEAD"], signal.clone()).await?;
         expect_ok(&commit, "git rev-parse HEAD")?;
-        let paths = self.0.paths.clone(); let run = id.to_owned();
-        let (target, _pinned_target) = self.io(move || workspace_copy::new_target(&paths, "git-worktree", &run)).await?;
         let branch_name = format!("always-on/{id}");
-        let target_text = target.to_str().ok_or_else(|| WorkspaceError::new("workspace_prepare_failed", "Always-On worktree path is not representable."))?;
-        let result = self.command(&repository, &repository_path, &["git", "worktree", "add", "-b", &branch_name, target_text, crate::metadata::js_trim(&commit.stdout)], signal).await?;
-        expect_ok(&result, "git worktree add")?;
-        // Revalidate the result using this generation's expected base. It is
-        // also the admission used by persisted cycles after a host restart.
-        let paths = self.0.paths.clone(); let target_copy = target.clone();
-        self.io(move || workspace_copy::owned_workspace(&paths, "git-worktree", &target_copy)).await?;
-        let mut metadata = JsObject::new();
-        for (key, value) in [("repoRoot", top), ("baseBranch", crate::metadata::js_trim(&branch.stdout)), ("baseCommit", crate::metadata::js_trim(&commit.stdout)), ("branchName", branch_name.as_str())] { metadata.insert(key.into(), value.into()); }
-        let _ = project; // project fd remains held through the entire prepare.
-        Ok((target, metadata))
+        let branch_ref = format!("refs/heads/{branch_name}");
+        let base_commit = crate::metadata::js_trim(&commit.stdout).to_owned();
+        // A zero old value atomically reserves a previously absent ref. A
+        // pre-existing/user-created branch is never claimed for rollback.
+        let zero = "0".repeat(base_commit.len());
+        let claimed = self.command(&repository, &repository_path, &["git", "update-ref", &branch_ref, &base_commit, &zero], signal.clone()).await?;
+        expect_ok(&claimed, "git update-ref create workspace branch")?;
+        let mut created = None;
+        let prepared = async {
+            let paths = self.0.paths.clone(); let run = id.to_owned();
+            let (target, pinned_target) = self.io(move || workspace_copy::new_target(&paths, "git-worktree", &run)).await?;
+            created = Some((target.clone(), pinned_target.clone()));
+            let target_text = target.to_str().ok_or_else(|| WorkspaceError::new("workspace_prepare_failed", "Always-On worktree path is not representable."))?;
+            let result = self.command(&repository, &repository_path, &["git", "worktree", "add", target_text, &branch_name], signal).await?;
+            expect_ok(&result, "git worktree add")?;
+            let paths = self.0.paths.clone(); let target_copy = target.clone(); let selected = pinned_target.clone();
+            self.io(move || { let admitted = workspace_copy::owned_workspace(&paths, "git-worktree", &target_copy)?;
+                checked_directory_identity(&selected, &admitted)
+            }).await?;
+            let mut metadata = JsObject::new();
+            for (key, value) in [("repoRoot", top), ("baseBranch", crate::metadata::js_trim(&branch.stdout)), ("baseCommit", base_commit.as_str()), ("branchName", branch_name.as_str())] { metadata.insert(key.into(), value.into()); }
+            Ok((target, metadata, pinned_target))
+        }.await;
+        let _ = project;
+        match prepared {
+            Ok(value) => Ok(value),
+            Err(error) => match self.rollback_git_prepare(&repository, &repository_path, created, &branch_ref, &base_commit).await {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(WorkspaceError::new("workspace_cleanup_failed", format!("{}; owned workspace rollback failed: {}", String::from_utf16_lossy(error.message.units()), String::from_utf16_lossy(cleanup.message.units())))),
+            },
+        }
+    }
+    async fn rollback_git_prepare(&self, repository: &Arc<File>, repository_path: &Path, created: Option<(PathBuf, Arc<File>)>, branch_ref: &str, base_commit: &str) -> Result<(), WorkspaceError> {
+        let current = self.command(repository, repository_path, &["git", "rev-parse", "--verify", branch_ref], None).await?;
+        if current.exit_code != Some(0) || crate::metadata::js_trim(&current.stdout) != base_commit {
+            return Err(WorkspaceError::new("workspace_cleanup_failed", "Workspace branch changed after creation; preserving its assets."));
+        }
+        if let Some((target, pinned)) = created {
+            let selected = pinned.clone(); let path = target.clone();
+            // A replaced directory is foreign even under our run namespace.
+            let canonical = self.io(move || checked_command_path(&selected, &path)).await?;
+            let target_text = canonical.to_str().ok_or_else(|| WorkspaceError::new("workspace_cleanup_failed", "Workspace rollback path is not representable."))?;
+            let removed = self.command(repository, repository_path, &["git", "worktree", "remove", "--force", target_text], None).await?;
+            if removed.exit_code != Some(0) {
+                let paths = self.0.paths.clone(); let copy = target.clone();
+                self.io(move || workspace_copy::remove_created(&paths, "git-worktree", &copy, &pinned)).await?;
+                // No global prune: only this exact newly owned registration
+                // may be removed. Prove a failed remove left no registration.
+                let listed = self.command(repository, repository_path, &["git", "worktree", "list", "--porcelain", "-z"], None).await?;
+                expect_ok(&listed, "git worktree list")?;
+                if listed.stdout.split('\0').any(|entry| entry.strip_prefix("worktree ") == Some(target_text)) {
+                    return Err(WorkspaceError::new("workspace_cleanup_failed", "Created workspace registration remains after rollback."));
+                }
+            }
+        }
+        // Compare-and-delete cannot remove a branch changed by another actor.
+        let deleted = self.command(repository, repository_path, &["git", "update-ref", "-d", branch_ref, base_commit], None).await?;
+        expect_ok(&deleted, "git update-ref rollback workspace branch")
     }
     pub(crate) async fn authorize_cycle(&self, cycle: super::WorkCycleRecord) -> Result<WorkspaceHandle, WorkspaceError> {
         self.owned(move |owner| Box::pin(async move {
@@ -180,7 +226,7 @@ impl NativeWorkspace {
                 Ok(())
             }).await?;
             let workspace = cycle.workspace.ok_or_else(|| WorkspaceError::new("missing_workspace", "Cycle has no associated workspace to apply"))?;
-            owner.authorize_handle(WorkspaceHandle { run_id: cycle.created_by_run_id, project_key: cycle.project_key, strategy: workspace.strategy, cwd: workspace.cwd, metadata: workspace.metadata }).await
+            owner.authorize_handle(WorkspaceHandle { run_id: cycle.created_by_run_id, project_key: cycle.project_key, strategy: workspace.strategy, cwd: workspace.cwd, metadata: workspace.metadata, created_identity: None }).await
         })).await
     }
 
@@ -192,7 +238,7 @@ impl NativeWorkspace {
                 .ok_or_else(|| WorkspaceError::new("invalid_workspace", format!("Legacy workspace {field} must be a string.")));
             let strategy = required("strategy")?.to_utf8().map_err(|_| WorkspaceError::new("invalid_workspace", "Legacy workspace strategy is not representable."))?;
             let handle = WorkspaceHandle { run_id: required("runId")?, project_key: owner.0.paths.project_key.as_str().into(), strategy,
-                cwd: required("cwd")?, metadata: workspace.get("metadata").and_then(JsValue::as_object).cloned().unwrap_or_default() };
+                cwd: required("cwd")?, created_identity: None, metadata: workspace.get("metadata").and_then(JsValue::as_object).cloned().unwrap_or_default() };
             owner.authorize_handle(handle).await
         })).await
     }
@@ -207,7 +253,12 @@ impl NativeWorkspace {
         if keep { return Ok(()); }
         self.owned(move |owner| Box::pin(async move {
             let cwd = native_path(&handle.cwd)?; let paths = owner.0.paths.clone(); let strategy = handle.strategy.clone(); let copy = cwd.clone();
-            let directory = owner.io(move || workspace_copy::owned_workspace(&paths, &strategy, &copy)).await?;
+            let selected = handle.created_identity.clone();
+            let directory = owner.io(move || {
+                let directory = workspace_copy::owned_workspace(&paths, &strategy, &copy)?;
+                if let Some(selected) = selected { checked_directory_identity(&selected, &directory)?; }
+                Ok(directory)
+            }).await?;
             if handle.strategy == "git-worktree" {
                 owner.verify_git_project(&directory, &cwd, None).await?;
                 let root = owner.0.project.clone(); let repository = owner.io(move || workspace_copy::pin_project(&root)).await?;
@@ -306,6 +357,14 @@ impl NativeWorkspace {
         }
         Ok(result)
     }
+}
+fn checked_directory_identity(selected: &File, current: &File) -> io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let selected = selected.metadata()?; let current = current.metadata()?;
+    if selected.dev() != current.dev() || selected.ino() != current.ino() {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Created workspace was replaced before cleanup."));
+    }
+    Ok(())
 }
 fn checked_command_path(directory: &File, path: &Path) -> io::Result<PathBuf> {
     use std::os::unix::fs::MetadataExt;

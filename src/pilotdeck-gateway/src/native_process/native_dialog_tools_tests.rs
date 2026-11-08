@@ -5,7 +5,8 @@ use crate::metadata::object;
 async fn native_session_tools_publish_durable_dialogs_and_deliver_all_four_answers() {
     let mut config = JsObject::new();
     config.insert("userDialogKinds".into(), JsValue::Array(["input", "select", "confirm", "form"].map(JsValue::from).to_vec()));
-    let (_scratch, tools, recorder, identity) = make_tools(config, Arc::default(), RuleSetHandle::empty());
+    let rules = RuleSetHandle::empty();
+    let (_scratch, tools, recorder, identity) = make_tools(config, Arc::default(), rules.clone());
     let bus = Arc::new(std::sync::Mutex::new(crate::user_dialog::GatewayUserDialogBus::connected(Default::default())));
     let dialog = crate::native_process::assembly::user_dialog::prepare_dialogs(
         tools.options.home.clone(), tools.options.project.clone(), identity.session_id.clone(), false, bus.clone()).await.unwrap();
@@ -45,8 +46,6 @@ async fn native_session_tools_publish_durable_dialogs_and_deliver_all_four_answe
         ]), object([("name", "value".into())]), "values"),
     ] {
         let id = JsString::from(format!("dialog-call-{index}"));
-        let decision = permission.request(name.into(), id.clone(), input.clone(), vec![], signal.clone()).await.unwrap();
-        assert_eq!(decision.get("behavior"), Some(&"allow".into()));
         let execution = ports.tool_execution.clone(); let context = context.clone();
         let task = tokio::spawn(async move { execution.execute_all(vec![ToolCall { id, name: name.into(), input }], context).await });
         let request = tokio::time::timeout(Duration::from_secs(3), async {
@@ -67,6 +66,17 @@ async fn native_session_tools_publish_durable_dialogs_and_deliver_all_four_answe
         assert_eq!(result[0].get("data").and_then(|v| v.get(field)), Some(&answer));
         assert!(!journal.exists(), "settlement durably removes the pending request");
     }
+    // Real policy deny must still win over the tool's read-only default.
+    // Direct `permission.request` is the forced PermissionRequest prompt API,
+    // not the normal per-tool policy decision (and can_prompt=false denies it).
+    rules.update_member("deny", |items| items.push(PermissionRule::new("policy", "deny", "request_user_input").into()));
+    let denied = tokio::time::timeout(Duration::from_secs(3), ports.tool_execution.execute_all(
+        vec![ToolCall { id: "denied-call".into(), name: "request_user_input".into(),
+            input: object([("prompt", "Must not be emitted".into())]) }], context.clone())).await.unwrap().unwrap();
+    assert_eq!(denied[0].get("type"), Some(&"error".into()), "{denied:?}");
+    assert_eq!(denied[0].get("error").and_then(|e| e.get("code")), Some(&"permission_denied".into()));
+    assert_eq!(observed.lock().unwrap().len(), 4, "denied dialog reached the UI");
+    assert_eq!(bus.lock().unwrap().pending_count(&identity.session_id), 0);
     signal.cancel(); lifecycle.close().await; permission.close();
     assert_eq!(bus.lock().unwrap().pending_count(&identity.session_id), 0);
 }

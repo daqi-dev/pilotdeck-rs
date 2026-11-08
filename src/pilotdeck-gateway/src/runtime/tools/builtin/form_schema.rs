@@ -309,6 +309,16 @@ mod tests {
         assert!(budget>100_000,"engine must signal exhausted work, not a normal non-match");
     }
     #[test]
+    fn fixed_node_draft2020_metaschema_and_resource_oracle() {
+        let fixture=pilotdeck_protocol::parse_json(include_str!("../../../../tests/fixtures/user-dialog-cli/meta-oracle.json")).unwrap();
+        let Some(JsValue::Array(rows))=fixture.get("records") else {panic!("records")};assert_eq!(rows.len(),17);
+        for row in rows {let schema=row.get("schema").unwrap();let expected=row.get("result").unwrap();let actual=validate_schema(schema);
+            assert_eq!(actual.is_ok(),expected.get("ok").and_then(JsValue::as_bool).unwrap(),"{:?}",row.get("id"));
+            if let Err(error)=actual {assert_eq!(Some(error.as_str()),expected.get("message").and_then(JsValue::as_string).and_then(|s|s.to_utf8().ok()).as_deref(),"{:?}",row.get("id"));}
+            else {assert_eq!(accepts_form_dialog_answer(schema,row.get("answer").unwrap()),row.get("accepted").and_then(JsValue::as_bool).unwrap(),"{:?}",row.get("id"));}
+        }
+    }
+    #[test]
     fn fixed_node_format_oracle_preserves_surrogates() {
         let fixture=pilotdeck_protocol::parse_json(include_str!("../../../../tests/fixtures/user-dialog-cli/formats-oracle.json")).unwrap();
         let Some(JsValue::Array(rows))=fixture.get("records") else {panic!("records")};assert_eq!(rows.len(),32);

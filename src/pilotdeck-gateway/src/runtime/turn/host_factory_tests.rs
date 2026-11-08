@@ -2197,7 +2197,7 @@ async fn sop_real_nodes_share_one_parent_admission_and_restore_isolated_history(
     let mut events = Vec::new(); while let Some(event) = bounded_liveness(stream.next()).await.unwrap() { events.push(event); }
     drop(stream); bounded(session.dispose()).await.unwrap(); bounded(registry.dispose()).await.unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 1, "node execution must use the captured outer services");
-    assert_eq!(*outcomes.lock().unwrap(), vec![2, 1, 2], "isolated node must exclude parent history and reopen its own prior accepted input");
+    assert_eq!(*outcomes.lock().unwrap(), vec![2, 1, 2], "isolated node must exclude parent history and reopen its own prior accepted input; full parent events: {events:?}");
     for kind in ["turn_started", "input_accepted", "turn_completed"] { assert_eq!(events.iter().filter(|event| event.get("type") == Some(&kind.into())).count(), 1, "one parent {kind}"); }
     assert_eq!(events.iter().filter(|event| event.get("type") == Some(&"model_request_started".into())).count(), 3);
     let read = crate::storage::read_transcript(recorder.writer().path()).unwrap();
@@ -2218,7 +2218,8 @@ async fn sop_cancel_drains_the_real_node_and_retains_the_old_generation() {
     session.abort(&"cancel probe".into()).unwrap();
     let mut terminal = None; while let Some(event) = bounded_liveness(stream.next()).await.unwrap() { if event.get("type") == Some(&"turn_completed".into()) { terminal = Some(event); } }
     drop(stream); bounded(session.dispose()).await.unwrap(); bounded(registry.dispose()).await.unwrap();
-    assert_eq!(terminal.unwrap().get("result").and_then(|result| result.get("type")), Some(&"aborted".into()));
+    let terminal = terminal.unwrap();
+    assert_eq!(terminal.get("result").and_then(|result| result.get("type")), Some(&"aborted".into()), "full SOP cancel terminal: {terminal:?}");
     assert_peer_reaped(&pid).await; assert_eq!(old.lease_count(), 0);
     let read = crate::storage::read_transcript(recorder.writer().path()).unwrap();
     assert_eq!(read.entries.iter().filter(|entry| entry.get("type") == Some(&"accepted_input".into())).count(), 1);

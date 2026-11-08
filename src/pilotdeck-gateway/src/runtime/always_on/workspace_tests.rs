@@ -162,3 +162,36 @@ async fn command_uses_a_real_canonical_cwd_with_spaces_and_aliases() {
     let result = result.unwrap(); assert_eq!(result.exit_code, Some(0));
     assert_eq!(result.stdout.trim(), cwd.canonicalize().unwrap().to_str().unwrap());
 }
+
+#[tokio::test]
+async fn failed_git_post_checkout_rolls_back_only_its_created_tree_and_branch() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new(); let root = Path::new(&fixture.paths.project_key); fixture.initialize_git(root).await;
+    let hook = root.join(".git/hooks/post-checkout"); std::fs::write(&hook, "#!/bin/sh\nexit 19\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let provider = fixture.provider(Arc::new(NativeOwnedShellCommandRunner));
+    let refused = provider.prepare("git-worktree", "hook-failure".into(), "fixture".into(), None).await;
+    assert!(refused.is_err()); assert!(!fixture.paths.worktrees_dir().join("hook-failure").exists());
+    assert_ne!(fixture.git(root, &["show-ref", "--verify", "--quiet", "refs/heads/always-on/hook-failure"]).await.exit_code, Some(0));
+    let listed = fixture.git(root, &["worktree", "list", "--porcelain"]).await.stdout;
+    assert!(!listed.contains("hook-failure"), "failed prepare must leave no owned registration");
+    std::fs::remove_file(hook).unwrap();
+    let handle = provider.prepare("git-worktree", "hook-failure".into(), "retry".into(), None).await.unwrap();
+    provider.dispose(handle, false).await.unwrap(); provider.close().await.unwrap(); fixture.registry.dispose().await.unwrap();
+}
+#[tokio::test]
+async fn failed_prepare_preserves_existing_branch_and_replaced_owned_directory() {
+    let fixture = Fixture::new(); let root = Path::new(&fixture.paths.project_key); fixture.initialize_git(root).await;
+    assert_eq!(fixture.git(root, &["branch", "always-on/foreign"]).await.exit_code, Some(0));
+    let foreign = fixture.paths.worktrees_dir().join("foreign"); std::fs::create_dir_all(&foreign).unwrap(); std::fs::write(foreign.join("sentinel"), "FOREIGN").unwrap();
+    let provider = fixture.provider(Arc::new(NativeOwnedShellCommandRunner));
+    assert!(provider.prepare("git-worktree", "foreign".into(), "fixture".into(), None).await.is_err());
+    assert_eq!(fixture.git(root, &["show-ref", "--verify", "--quiet", "refs/heads/always-on/foreign"]).await.exit_code, Some(0));
+    assert_eq!(std::fs::read(foreign.join("sentinel")).unwrap(), b"FOREIGN");
+    let handle = provider.prepare("snapshot-copy", "replace".into(), "fixture".into(), None).await.unwrap();
+    let original = native_path(&handle.cwd).unwrap(); let retained = original.with_extension("kept"); std::fs::rename(&original, &retained).unwrap();
+    std::fs::create_dir(&original).unwrap(); std::fs::write(original.join("sentinel"), "REPLACEMENT").unwrap();
+    assert!(provider.dispose(handle, false).await.is_err(), "fresh handle must reject a replaced directory");
+    assert_eq!(std::fs::read(original.join("sentinel")).unwrap(), b"REPLACEMENT"); assert!(retained.exists());
+    provider.close().await.unwrap(); fixture.registry.dispose().await.unwrap();
+}

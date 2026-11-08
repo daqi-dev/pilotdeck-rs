@@ -118,7 +118,7 @@ fn walk_files(source: &File, target: Option<&File>, limits: CopyLimits) -> io::R
     Ok(bytes)
 }
 #[allow(clippy::unnecessary_cast)] // stat dev/inode differ between Darwin and Linux.
-pub(super) fn snapshot(paths: &AlwaysOnPaths, project: &Arc<File>, run: &str, limits: CopyLimits) -> io::Result<(PathBuf, JsObject)> {
+pub(super) fn snapshot(paths: &AlwaysOnPaths, project: &Arc<File>, run: &str, limits: CopyLimits) -> io::Result<(PathBuf, JsObject, Arc<File>)> {
     let size = walk_files(project, None, limits)?;
     let base = paths.snapshots_dir();
     let source = Path::new(&paths.project_key).canonicalize()?;
@@ -141,7 +141,7 @@ pub(super) fn snapshot(paths: &AlwaysOnPaths, project: &Arc<File>, run: &str, li
         return match cleanup { Ok(()) => Err(error), Err(cleanup) => Err(io::Error::other(format!("{error}; owned snapshot cleanup failed: {cleanup}"))) };
     }
     let mut metadata = JsObject::new(); metadata.insert("copyStrategy".into(), "fs.cp".into()); metadata.insert("baseSize".into(), size.to_string().as_str().into());
-    Ok((target, metadata))
+    Ok((target, metadata, destination))
 }
 pub(super) fn remove_owned(paths: &AlwaysOnPaths, strategy: &str, cwd: &Path) -> io::Result<()> {
     let _pinned = owned_workspace(paths, strategy, cwd)?;
@@ -149,6 +149,17 @@ pub(super) fn remove_owned(paths: &AlwaysOnPaths, strategy: &str, cwd: &Path) ->
     let canonical = cwd.canonicalize()?; let canonical_base = base.canonicalize()?;
     let leaf = canonical.strip_prefix(canonical_base).map_err(|_| io::ErrorKind::PermissionDenied)?;
     crate::project_files::remove_tree_at(&parent, leaf, cwd)
+}
+
+/// Failure cleanup must refer to the actual descriptor returned by exclusive
+/// creation, not a newly admitted replacement at the same path.
+pub(super) fn remove_created(paths: &AlwaysOnPaths, strategy: &str, cwd: &Path, expected: &File) -> io::Result<()> {
+    let current = match owned_workspace(paths, strategy, cwd) { Ok(current) => current, Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()), Err(error) => return Err(error) };
+    let actual = current.metadata()?; let selected = expected.metadata()?;
+    if actual.dev() != selected.dev() || actual.ino() != selected.ino() {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Created workspace was replaced before cleanup."));
+    }
+    remove_owned(paths, strategy, cwd)
 }
 
 #[cfg(test)]
@@ -171,7 +182,7 @@ mod tests {
         std::fs::create_dir_all(source.join("nested/node_modules")).unwrap(); std::fs::write(source.join("nested/node_modules/kept"), "KEPT").unwrap();
         std::fs::write(root.0.join("external"), "EXTERNAL").unwrap();
         std::os::unix::fs::symlink("../external", source.join("link")).unwrap();
-        let (target, metadata) = snapshot(&paths, &project, "run", CopyLimits::default()).unwrap();
+        let (target, metadata, _) = snapshot(&paths, &project, "run", CopyLimits::default()).unwrap();
         assert_eq!(std::fs::read(target.join("a.txt")).unwrap(), b"COPY-INPUT");
         assert!(!target.join("node_modules").exists());
         assert_eq!(std::fs::read(target.join("nested/node_modules/kept")).unwrap(), b"KEPT");

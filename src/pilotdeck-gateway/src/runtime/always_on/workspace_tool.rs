@@ -76,7 +76,7 @@ mod tests {
     impl WorkspacePrepare for Provider {
         fn prepare<'a>(&'a self, strategy: &'a str, run: JsString, _: JsString, _: Option<AbortSignal>)
             -> Pin<Box<dyn Future<Output = Result<WorkspaceHandle, WorkspaceError>> + Send + 'a>> {
-            Box::pin(async move { Ok(WorkspaceHandle { run_id: run, project_key: "/p".into(), strategy: strategy.into(), cwd: "/p/workspace".into(), metadata: JsObject::new() }) })
+            Box::pin(async move { Ok(WorkspaceHandle { run_id: run, project_key: "/p".into(), strategy: strategy.into(), cwd: "/p/workspace".into(), metadata: JsObject::new(), created_identity: None }) })
         }
     }
     fn context() -> ToolRunContext {

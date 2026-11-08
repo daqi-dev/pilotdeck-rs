@@ -210,6 +210,18 @@ impl WorkCycleStore {
         Self { paths }
     }
 
+    /// Failure cleanup may remove only a workspace with no durable cycle
+    /// reference. Scan all entries, including duplicate ids, before deciding.
+    pub(crate) fn references_workspace(&self, cwd: &JsString) -> io::Result<bool> {
+        let root = super::storage::root_for(&self.paths.state_file);
+        let Some(raw) = super::storage::read(&root, &self.paths.cycle_index_file, super::storage::INDEX_BYTES)? else { return Ok(false); };
+        let raw = String::from_utf8_lossy(&raw); super::storage::check_json(&raw)?;
+        let parsed = parse_json(&raw).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
+        let index = parsed.as_object().filter(|index| index.get("schemaVersion") == Some(&JsValue::Number(1.0)) && matches!(index.get("cycles"), Some(JsValue::Array(_))))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Cycle ownership index is not verifiable."))?;
+        Ok(find_entry(index, "cycles", |entry| entry.get("workspace").and_then(JsValue::as_object).and_then(|workspace| workspace.get("cwd")).and_then(JsValue::as_string) == Some(cwd)).is_some())
+    }
+
     fn read_index(&self) -> io::Result<JsObject> {
         read_index_object(&self.paths.cycle_index_file, "cycles")
     }
