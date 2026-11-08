@@ -4,11 +4,14 @@ import {pathToFileURL} from 'node:url';
 if(process.version!=='v22.22.0'||process.versions.icu!=='78.2')throw Error('Node/ICU mismatch');
 const root=process.env.PDRS_BASELINE;
 if(!root)throw Error('PDRS_BASELINE required');
+function verifySource() {
 for(const rel of ['src/context/input/InputProcessor.ts','src/context/extension/PluginRuntimeExtensionResolver.ts','src/agent/turn/TurnInputProcessor.ts']) {
  const expected=execFileSync('git',['-C',root,'show','cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85:'+rel]);
  const actual=readFileSync(root+'/'+rel);
  if(!expected.equals(actual))throw Error('source mismatch '+rel);
 }
+}
+verifySource();
 if(!process.env.PDRS_ORACLE_OUT)throw Error('PDRS_ORACLE_OUT required');
 const {InputProcessor}=await import(pathToFileURL(root+'/src/context/input/InputProcessor.ts').href);
 const {TurnInputProcessor}=await import(pathToFileURL(root+'/src/agent/turn/TurnInputProcessor.ts').href);
@@ -20,4 +23,5 @@ const cases=[['plain',{type:'text',text:'hello'}],['leading',{type:'text',text:'
 const results=cases.map(([id,input])=>({id,input,processed:processor.process(input),turn:turn.accept(input)}));
 source.commands[0].content='changed';source.commands.push({name:'late',content:'new'});
 results.push({id:'snapshot',old:processor.process({type:'text',text:'/demo'}),late:processor.process({type:'text',text:'/late'})});
+verifySource();
 writeFileSync(process.env.PDRS_ORACLE_OUT!,JSON.stringify({node:process.version,icu:process.versions.icu,results},null,2),{flag:'wx'});

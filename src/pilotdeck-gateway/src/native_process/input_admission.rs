@@ -261,7 +261,8 @@ mod tests {
             .unwrap();
             let (processed, should_call_model) = admission.process_input(
                 &parsed.input,
-                raw.get("isMeta").and_then(JsValue::as_bool) == Some(true),
+                raw.get("isMeta")
+                    .is_some_and(crate::runtime::turn::submit::truthy),
             );
             let projected = crate::runtime::turn::runner::TurnInput {
                 input: processed,
