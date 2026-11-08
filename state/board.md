@@ -5118,3 +5118,8 @@ r103全目标编译过；bundle12、配置FIFO/超限保快照1、owned shell3�
 ### 2026-11-09 05:39 · 自动化主链与 SDK 交互生产接线
 
 本机正本878638a2b：NativeFire发现/工作区/执行/报告/应用已真实接到factory和项目代，r105全目标编译过、AO96过2时间夹具失败1忽略，workspace5和journal3全过；native487、background150全过。r107新SDK四工具/受限journal/重启list-answer写真实transcript接线，全目标编译过、dialog2/form legacy3/recovery7/SDK参数1/native491全过；AO97过1失败1忽略，d1旧与新夹具均单独同bin过，已定位首次虚拟sleep跨过真实IO完成导致下一tick延后，按1000ms首tick等待修后待并行复验，原失败保全。用户dialog取消清理已补共享session owner drain及固定TS工具11格oracle，SOP错误message7文件片已逐hash整合，均待下一mbp2首编；完整Draft2020/JS regex仍待补，SOP host/controller主片尚未全交，完整CLI不标完成。两家非作者新审在跑，首个DeepSeek调用401已切回主仓key来源、随后一次缺coverage不计PASS。只本机提交、Rust全mbp2、无GitHub写；唯一正本和旧快照保持。
+
+
+### 2026-11-09 06:16 · SOP 执行器与 SDK 消费链继续补齐
+
+r113 固定 d16309700 在 mbp2 全目标编译通过，Always-On106过0失败1忽略、native496过0失败66忽略、恢复8项通过；SOP host两失败已区分夹具缺usage/不支持cancel与真实续跑生命周期缺口，表单两差异另修后待验，不以整轮脚本0当全绿。现已逐hash整合SOP执行controller八文件、SOP模型验证与恢复同答幂等/异答拒绝片，尚未编译；SDK taskBudget、managedTools、managedModels仍补实际消费者。SOP startup guard暂保留直到真实执行装配验证。完整CLI仍未完成；仅本机源码/证据/提交，Rust全部mbp2，无GitHub写，旧快照保留。

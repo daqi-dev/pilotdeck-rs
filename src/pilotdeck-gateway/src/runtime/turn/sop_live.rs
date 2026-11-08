@@ -184,6 +184,8 @@ impl Executor {
     }
 }
 impl SopNodeExecutor for Executor {
+    fn model_validator(&self) -> Result<super::super::loop_control::SopModelValidator, HostError> { self.prepared.template.model_validator(self.prepared.parent.clone()) }
+
     fn run<'a>(&'a self, plan: SopNodePlan) -> SopFuture<'a, Result<SopNodeOutcome, HostError>> { Box::pin(self.run_node(plan)) }
     fn append_parent_reply<'a>(&'a self, message: JsValue) -> SopFuture<'a, Result<(), HostError>> {
         let recorder = self.recorder.clone(); let lease = self.lease.clone(); let identity = self.request.identity.clone();

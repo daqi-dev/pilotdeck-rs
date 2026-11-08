@@ -37,6 +37,26 @@ impl NodeTemplate {
     pub(super) fn capture(ports: &SessionPorts, identity: &ExecutionIdentity, deployment: Deployment, limits: Limits, expected: Option<JsString>, native_terminal_errors: bool) -> Self {
         Self { deployment, limits, expected, native_terminal_errors, model_session: identity.session_id.clone(), model: ports.model.clone(), tool_results_dir: ports.tool_results_dir.clone(), context_runtime: ports.context_runtime.clone(), context_identity: ports.context_identity.clone(), context_config: ports.context_config.clone(), execution: ports.tool_execution.clone(), tool_context: ports.tool_context.clone(), observer: ports.tool_observer.clone(), plan: ports.plan_todo.clone(), permission: ports.interaction.permission.clone(), signal: ports.interaction.signal.clone(), switches: ports.interaction.switches }
     }
+    pub(super) fn model_validator(&self, parent: Arc<InteractionTurn>) -> Result<super::loop_control::SopModelValidator, HostError> {
+        use crate::runtime::project::{ProjectResources, Resource, model::RouterResources};
+        let lease = parent.fork_generation()?;
+        let context = lease.runtime().resources().get::<ProjectResources>().ok_or_else(|| HostError::new(HostErrorKind::Session, "SOP project resources are missing."))?.context();
+        let resource = context.resource(Resource::Router).ok_or_else(|| HostError::new(HostErrorKind::Session, "SOP model router is missing."))?;
+        let router = resource.as_any().downcast_ref::<RouterResources>().ok_or_else(|| HostError::new(HostErrorKind::Session, "SOP model router has the wrong type."))?.router.clone();
+        let policy = self.model.managed_model_policy.clone();
+        Ok(Arc::new(move |selection: JsObject| {
+            let router = router.clone(); let policy = policy.clone();
+            // Capture the *current outer authority*, never a run-id lookup or
+            // a new generation acquire. A stored validator expires on close.
+            let held = parent.fork_generation();
+            Box::pin(async move {
+                let _held = held?;
+                let provider = selection.get("provider").and_then(JsValue::as_string).ok_or_else(|| HostError::new(HostErrorKind::Protocol, "SOP node model provider must be a string."))?;
+                let model = selection.get("model").and_then(JsValue::as_string).ok_or_else(|| HostError::new(HostErrorKind::Protocol, "SOP node model name must be a string."))?;
+                router.validate_model_selection(provider, model, policy.as_ref()).map_err(|error| crate::host::ModuleError { message: error.message, code: Some(error.code.into()), canonical: None, retryable: None, retry_after_ms: None }.into())
+            })
+        }))
+    }
     pub(super) async fn prepare(&self, parent: Arc<InteractionTurn>, identity: &ExecutionIdentity, recorder: Arc<Recorder>, plan: &SopNodePlan) -> Result<NodeHost, HostError> {
         let lease = parent.fork_generation()?;
         let execution: Arc<dyn capability::ToolExecution> = Arc::new(BorrowedTools(self.execution.clone()));
