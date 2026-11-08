@@ -361,7 +361,16 @@ class E2ETests(unittest.TestCase):
                                   mock.patch.object(c, 'wait_observation', side_effect=c.wait_observation if real_settle else
                                                     lambda home, project, key, run, frames, request, deadline, **kwargs:
                                                     c.read_observation(home, project, key, run, frames, request, retain=True)),
-                                  mock.patch.object(c, 'SESSION_PROVIDER_DELAY', 0.0)):
+                                  mock.patch.object(c, 'SESSION_PROVIDER_DELAY', 0.0),
+                                  # #2396: this mock gateway replays registered
+                                  # output frames but never publishes the s2-s4
+                                  # product witness receipts, so every
+                                  # receipt-gated case would otherwise burn the
+                                  # stimulus driver's full bounded waits. The
+                                  # real collection keeps the generous bounds;
+                                  # here only the budget is shrunk.
+                                  mock.patch.object(c.stimulus_driver, 'CASE_BUDGET_SECONDS', 1.0),
+                                  mock.patch.object(c.stimulus_driver, 'MILESTONE_SECONDS', 0.2)):
                         stack.enter_context(patch)
                     provider_guard.close()
                     c._native_run(cls.host, cls.sidecar, output, cls.port, session_domain=True)

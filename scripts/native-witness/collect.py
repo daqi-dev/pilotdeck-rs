@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import signal
 import socket
 import threading
@@ -26,6 +27,9 @@ spec.loader.exec_module(w)
 spec = importlib.util.spec_from_file_location('native_stimulus_plan', Path(__file__).with_name('stimulus_plan.py'))
 stimuli = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(stimuli)
+spec = importlib.util.spec_from_file_location('native_stimulus_driver', Path(__file__).with_name('stimulus_driver.py'))
+stimulus_driver = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(stimulus_driver)
 # Explicit source load preserves the frozen auditor's isolated sys.path and
 # records executed bytes for its existing provenance guard.
 common_path = Path(__file__).resolve().parents[1] / 'gateway-parity/common.py'
@@ -173,10 +177,32 @@ class WireClient:
         w.need(isinstance(value, dict), 'received JSON frame must be an object')
         return value
 
+    def receive_poll(self, timeout):
+        """One frame if it arrives within `timeout` seconds, else None.
 
-def native_run(gateway, sidecar, output, port=28999, session_domain=False):
+        The stimulus driver multiplexes the socket with the product's witness
+        directories and must never block on the socket: the native final frame
+        is itself gated behind held durable writes (#1370), so waiting on a
+        frame while a barrier release is pending would deadlock the
+        choreography. Frames already sitting in ``self.buffer`` — several
+        wire frames routinely coalesce into one TCP segment, so the socket
+        itself never becomes readable again until they are parsed — are
+        drained first; only then is the socket selected on. Reading only after
+        select fires keeps the recorder contract: only a complete, parsed
+        frame is ever recorded as a row.
+        """
+        if self.buffer:
+            return self.receive()
+        readable, _, _ = select.select([self.socket], [], [], timeout)
+        if not readable:
+            return None
+        return self.receive()
+
+
+def native_run(gateway, sidecar, output, port=28999, session_domain=False, registry='on'):
     w.need(sys.platform == 'linux', 'Linux only; macOS eslogger + root deferred')
     w.need(28999 <= port <= 29008, 'gateway port must be in 28999 series')
+    w.need(registry in ('on', 'off'), '#2396 registry capture group must be on or off')
     with lease_signals(), ExitStack() as lease:
         try:
             lease.enter_context(parity_lock(timeout=1))
@@ -186,9 +212,11 @@ def native_run(gateway, sidecar, output, port=28999, session_domain=False):
         # The shared lease spans the bind handoff and provider cleanup.
         for candidate, reuse_address in ((port, False), (port + 1, True)):
             probe_bind(candidate, reuse_address=reuse_address)
-        result = _native_run(gateway, sidecar, output, port, session_domain=session_domain)
+        result = _native_run(gateway, sidecar, output, port, session_domain=session_domain,
+                             registry=registry)
     print(json.dumps({'status': 'WITNESS_CAPTURED', 'scoring': 'NOT_RUN',
-                      'sessionDomain': bool(session_domain), 'output': str(Path(output).resolve())}))
+                      'sessionDomain': bool(session_domain), 'registry': registry,
+                      'output': str(Path(output).resolve())}))
     return result
 
 
@@ -209,6 +237,13 @@ SESSION_PROVIDER_DELAY = 1.5
 # #1140 settle arbitration: all 72 measured writes preceded final (p95 -10 ms).
 # Ten seconds leaves ample margin while bounding stalled/missing durable writes.
 SESSION_SETTLE_LIMIT_SECONDS = 10
+# #2396 registry-off capture group: a cell whose frozen expectation demands an
+# applicable registry can never settle that surface when the process-frozen
+# switch keeps FileRunRegistry closed. The wait_observation semantics stay
+# untouched; the caller just bounds those waits so the off capture still fits
+# its window (the row is already honestly NOT_RUN on the construction
+# receipt — this only shortens the wait before that is recorded).
+SESSION_OFF_REGISTRY_SETTLE_SECONDS = 2
 SESSION_SETTLE_INTERVAL_SECONDS = 0.05
 # RunRegistry.append permits failed -> completed; failed needs the final
 # error frame as well as a persisted error result (see wait_observation).
@@ -294,21 +329,25 @@ session_key = w.native.session_key
 
 
 def case_plan(case):
-    """Full input plan plus legacy transport timing, never proof of execution.
+    """Full input plan plus transport timing, never proof of execution.
 
-    The text-only provider still lacks the registered outcome, phase and
-    storage hooks. In particular after-complete is timeout-first in TS; the
-    legacy fast response below does NOT implement that order. session_row
-    withholds the scoring observation until all target boundaries are attested.
+    #2396: the registered orders are driven through the real controlled loop
+    (#1371), which never calls the provider, so `delay` stays 0 for every
+    case. unknown-first/known-final-first release the outcome while the turn
+    is still open, so their timer must be slow enough to stay unfired (the TS
+    timer.clear edge); every timeout-first family — including after-complete
+    and known-final-before-timeout-pending, whose TS counterpart fires the
+    timer by hand while the return/outcome is held — must let the real 400 ms
+    timer expire during the hold, exactly like TS `fire()`.
     """
     stimulus = stimuli.plan(case)
-    if stimulus['order'] in stimuli.ORDERS:
+    if stimulus['order'] in ('unknown-first', 'known-final-first'):
         return {'timeoutMs': SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0, 'stimulus': stimulus}
-    return {'timeoutMs': SESSION_TIMEOUT_MS, 'delay': SESSION_PROVIDER_DELAY, 'stimulus': stimulus}
+    return {'timeoutMs': SESSION_TIMEOUT_MS, 'delay': 0.0, 'stimulus': stimulus}
 
 
-def session_row(case, identity, observation, source):
-    execution = stimuli.execution(case_plan(case)['stimulus'])
+def session_row(case, identity, observation, source, evidence=None):
+    execution = stimuli.execution(case_plan(case)['stimulus'], evidence)
     row = {'case': case, 'identity': identity, 'stimulus': execution,
            'observation': observation}
     if execution['status'] != 'WITNESSED':
@@ -515,7 +554,7 @@ def wait_ready(tracer, folder, port, deadline):
         time.sleep(0.01)
 
 
-def _native_run(gateway, sidecar, output, port, session_domain=False):
+def _native_run(gateway, sidecar, output, port, session_domain=False, registry='on'):
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     home, project = output / 'home', output / 'project'
@@ -529,6 +568,19 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
     # written at receive time and published as its own receipt-pinned
     # artifact; #1206 this is a same-collector consistency copy of the rows.
     driver_hello = {}
+    # #2396 s2-s4 stimulus driver: one loop directory the gateway validates at
+    # startup and every sidecar freezes at its own spawn, and one storage
+    # control directory armed per case (plan.md section 1). Case 1 is
+    # prepared before launch, so loop.json is already valid when the gateway
+    # resolves its process-wide entry; later cases are relayed between turns.
+    # The registry switch is process-frozen, so one capture carries exactly
+    # one on/off setting; both captures still drive the full 72-case manifest.
+    control = stimulus_driver.StimulusDriver(output / 'stimulus' / 'loop',
+                                             output / 'stimulus' / 'storage',
+                                             registry_on=(registry == 'on')) \
+        if session_domain else None
+    if control is not None:
+        control.prepare(cases[0], 1, stimuli.plan(cases[0]), 'run-01')
 
     class Provider(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -622,32 +674,58 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
                     driver_hello['identities'] = []
                     # One connection, one hello, 72 sequential turns: every
                     # case gets its own session and run, so per-case surfaces
-                    # never alias. Transport timing alone does not execute a
-                    # registered stimulus; session_row requires its witnesses.
+                    # never alias. #2396: the stimulus driver owns the receive
+                    # loop, multiplexing the socket with the product's witness
+                    # receipts; transport timing alone still does not execute a
+                    # registered stimulus — session_row withholds the scoring
+                    # observation until every boundary has raw receipts.
                     for index, case in enumerate(cases, start=1):
                         run_id = f'run-{index:02d}'
                         request_id = f'case-{index:02d}'
                         key = session_key(case)
+                        plan = case_plan(case)
+                        if index > 1:
+                            # Relay the frozen sidecar plan between cases:
+                            # sidecar N spawns during submit N, so it freezes
+                            # case N's plan at its own startup (plan.md §1).
+                            control.prepare(case, index, plan['stimulus'], run_id)
                         client.send({'type': 'request', 'id': request_id, 'method': 'submit_turn', 'params': {
                             'projectKey': str(project), 'sessionKey': key, 'runId': run_id,
                             'channelKey': 'session-domain', 'message': f'[native-witness:{case}] controlled wait',
-                            'allowedTools': [], 'timeoutMs': case_plan(case)['timeoutMs']}})
-                        received = []
-                        while True:
-                            frame = client.receive()
-                            received.append(frame)
-                            if frame.get('id') == request_id and frame.get('final'):
-                                break
+                            'allowedTools': [], 'timeoutMs': plan['timeoutMs']}})
+                        driven = control.drive(case, plan['stimulus'], client, request_id,
+                                               deadline, timeout_ms=plan['timeoutMs'])
+                        received = driven['received']
                         # #1363 (#10): a manifest case absent from the frozen
                         # expectations is a structural drift, not a bare KeyError
                         # that aborts the whole batch without a rule.
                         expectation = expectations.get(case)
                         w.need(expectation is not None,
                                'session expectations missing manifest case: ' + case)
+                        settle = deadline
+                        if (registry == 'off' and expectation['registry']['applicable']):
+                            settle = time.monotonic() + SESSION_OFF_REGISTRY_SETTLE_SECONDS
                         observation, identity, source = wait_observation(
-                            home, str(project), key, run_id, received, request_id, deadline,
+                            home, str(project), key, run_id, received, request_id, settle,
                             expectation=expectation)
-                        row = session_row(case, identity, observation, source)
+                        # Disarm before the next case arms so a stale barrier
+                        # can never fire on it; this case's receipts are already
+                        # in the witness directories the evidence harvest reads.
+                        control.disarm()
+                        # Registry surfaces come from the same settled
+                        # observation the scoring reads, unwrapped from their
+                        # seq envelopes. The registry-off closure evidence is
+                        # the product's own stderr receipt plus the collector's
+                        # file-absence observation — never the absence alone.
+                        surfaces = (observation or {}).get('registry', {})
+                        evidence = control.evidence(
+                            case, run_id, request_id, driven,
+                            (folder / 'stderr.log').read_text(errors='replace'),
+                            [entry.get('event') for entry in surfaces.get('events', [])
+                             if isinstance(entry, dict)],
+                            surfaces.get('record') or None,
+                            source.get('registryText') is None)
+                        row = session_row(case, identity, observation, source, evidence=evidence)
                         rows.append(row)
                         driver_hello['identities'].append(identity)
                         sources.append(source)
@@ -681,9 +759,14 @@ def _native_run(gateway, sidecar, output, port, session_domain=False):
             # Complete owned provider cleanup before capture publishes success.
             stop_provider()
 
+        environment = {'HOME': str(home), 'PILOT_HOME': str(home),
+                       'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'}
+        if control is not None:
+            # The three s2-s4 entries resolve once per process (#1369/#1370/
+            # #1371); sidecars inherit them from the gateway.
+            environment.update(control.environment())
         launch, evidence = w.capture(contract, output / 'capture',
-                                      {'HOME': str(home), 'PILOT_HOME': str(home),
-                                       'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
+                                      environment,
                                       timeout=SESSION_LIMIT_SECONDS if session_domain else w.LIMIT_SECONDS,
                                       limit=SESSION_LIMIT_SECONDS, defer_receipt=session_domain,
                                       exercise=exercise, validate=validate, ownership=common.LIVE_GROUPS)
@@ -743,9 +826,14 @@ def main():
                         help='#1140 drive the frozen 72-case E1 manifest through one gateway '
                              'and publish observer rows plus per-case three-surface observations '
                              '(session-domain/) for the deadline scoring suite')
+    parser.add_argument('--registry', choices=('on', 'off'), default='on',
+                        help='#2396 process-frozen run-registry capture group: the on capture '
+                             'witnesses the registry cells, the off capture the no-registry '
+                             'cells; both drive the full 72-case manifest')
     args = parser.parse_args()
     try:
-        native_run(args.gateway, args.sidecar, args.output, args.port, session_domain=args.session_domain)
+        native_run(args.gateway, args.sidecar, args.output, args.port,
+                   session_domain=args.session_domain, registry=args.registry)
     except Blocked as error:
         print(json.dumps({'status': 'BLOCKED', 'scoring': 'NOT_RUN', 'error': str(error)}))
         return 2

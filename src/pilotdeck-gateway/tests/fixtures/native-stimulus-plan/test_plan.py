@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -425,6 +426,410 @@ class PlanTests(unittest.TestCase):
                             and order[:1] == ['lock'] and 'child' in order, marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
+
+
+class FakeProduct:
+    """Scripted stand-in for the s2-s4 product surfaces the driver polls.
+
+    Witness receipts are written the way the product writes them (atomic,
+    into ``<dir>/witness``) so the driver's delta scanning is what is under
+    test; frames come from the step script. No receipt is ever fabricated by
+    the collector side of this simulation.
+    """
+
+    def __init__(self, loop_dir, storage_dir, pid=4242):
+        self.loop_dir, self.storage_dir, self.pid = Path(loop_dir), Path(storage_dir), pid
+        self.loop_seq = 0
+
+    def _publish(self, directory, name, receipt):
+        witness = Path(directory) / 'witness'
+        witness.mkdir(parents=True, exist_ok=True)
+        (witness / name).write_text(json.dumps(receipt))
+
+    def loop(self, phase, key, **extra):
+        """One sidecar/gateway receipt in the loop stimulus witness dir."""
+        receipt = {'seq': self.loop_seq, 'pid': self.pid, 'site': 'loop',
+                   'phase': phase, 'key': key, 'at': '2026-11-08T00:00:00Z'}
+        receipt.update(extra)
+        self._publish(self.loop_dir, f'{self.pid:08d}-{self.loop_seq:06d}.json', receipt)
+        self.loop_seq += 1
+
+    def fence(self, phase, key):
+        receipt = {'seq': self.loop_seq, 'pid': self.pid, 'site': 'fence',
+                   'phase': phase, 'key': key, 'at': '2026-11-08T00:00:00Z'}
+        self._publish(self.loop_dir, f'{self.pid:08d}-{self.loop_seq:06d}.json', receipt)
+        self.loop_seq += 1
+
+    def storage(self, site, phase, key, seq, **extra):
+        receipt = {'seq': seq, 'site': site, 'phase': phase, 'key': key,
+                   'at': '2026-11-08T00:00:00Z'}
+        receipt.update(extra)
+        self._publish(self.storage_dir, f'{seq:06d}.json', receipt)
+
+    def control(self, name, *, storage=False):
+        # loop and storage each have a release.json; the caller names which.
+        directory = self.storage_dir if storage or name == 'stimulus.json' else self.loop_dir
+        return json.loads((Path(directory) / name).read_text())
+
+
+class FakeClient:
+    """One scripted step per ``receive_poll``; callable steps may publish."""
+
+    def __init__(self, steps, product):
+        self.steps, self.product = list(steps), product
+
+    def receive_poll(self, timeout):
+        if not self.steps:
+            return None
+        step = self.steps.pop(0)
+        return step(self.product) if callable(step) else step
+
+
+def frame(request_id, seq, event, final=False):
+    return {'type': 'event', 'id': request_id, 'seq': seq, 'final': final, 'event': event}
+
+
+def drive_case(case, steps, *, run_id='run-01', request_id='case-01', timeout_ms=400,
+               registry_events=None):
+    """Prepare, drive and collect evidence for one scripted case.
+
+    The stderr text and registry surfaces stand in for the product's own
+    records so ``evidence['construction']`` carries a parsed (still scripted,
+    but product-shaped) entry; everything else is what the driver really saw.
+    """
+    plan = c.stimuli.plan(case)
+    registry = plan['registry']
+    with tempfile.TemporaryDirectory(prefix='stimulus-drive-') as folder:
+        driver = c.stimulus_driver.StimulusDriver(Path(folder) / 'loop',
+                                                  Path(folder) / 'storage',
+                                                  registry_on=registry)
+        driver.prepare(case, 1, plan, run_id)
+        client = FakeClient(steps, FakeProduct(driver.loop_dir, driver.storage_dir))
+        with mock.patch.object(c.stimulus_driver, 'CASE_BUDGET_SECONDS', 1.0), \
+                mock.patch.object(c.stimulus_driver, 'MILESTONE_SECONDS', 0.05), \
+                mock.patch.object(c.stimulus_driver, 'POLL_SECONDS', 0.001):
+            driven = driver.drive(case, plan, client, request_id, time.monotonic() + 5,
+                                  timeout_ms=timeout_ms)
+        stderr = (f'native run registry {"on" if registry else "off"}\n'
+                  f'native storage stimulus on {driver.storage_dir}\n'
+                  f'native loop stimulus on {driver.loop_dir}\n')
+        if registry_events is None and registry:
+            registry_events = [{'type': 'model_request_started'},
+                               {'type': 'agent_status', 'event': 'turn_timeout'}]
+        return driver.evidence(case, run_id, request_id, driven, stderr,
+                               registry_events or [], {'state': 'failed'} if registry else None,
+                               not registry)
+
+
+class AdapterTests(unittest.TestCase):
+    """#2396 s2-s4 adapter: choreography, evidence binding and attestation."""
+
+    def test_storage_arms_match_the_arming_table(self):
+        marker = '#2396 per-case arms follow plan section 6, one barrier-or-fault per site'
+        for index, plan in enumerate(c.stimuli.plans(), start=1):
+            with self.subTest(case=plan['case']):
+                variant = plan['variant']
+                arms = c.stimulus_driver.storage_arms(plan['case'], index, variant)
+                writer, registry = arms['writer'], arms['registry']
+                self.assertTrue(not (writer.get('barrier') and writer.get('fault'))
+                                and not (registry.get('barrier') and registry.get('fault')), marker)
+                if variant.get('slowStatus'):
+                    self.assertTrue(writer.get('barrier', {}).get('key') == 'turn_timeout', marker)
+                if variant.get('slowCatchStatus'):
+                    self.assertTrue(writer.get('barrier', {}).get('key') == 'gateway_submit_failed', marker)
+                if variant.get('failStatus'):
+                    self.assertTrue(writer.get('fault', {}).get('key') == variant['failStatus'], marker)
+                special = (variant.get('slowAppend') == 'turn_timeout'
+                           and variant.get('failStatus') == 'turn_timeout')
+                if variant.get('slowAppend'):
+                    expected = 'error:turn_timeout' if special else 'agent_status:' + variant['slowAppend']
+                    self.assertTrue(registry.get('barrier', {}).get('key') == expected, marker)
+                if variant.get('failAppend'):
+                    self.assertTrue(registry.get('fault', {}).get('key') == variant['failAppend'], marker)
+                for site in (writer, registry):
+                    for arm in site.values():
+                        self.assertTrue(arm.get('id', '').startswith(f"{plan['case']}#{index}-")
+                                        and arm.get('boundMs', 8000) == 8000, marker)
+                second = c.stimulus_driver.second_append_key(variant)
+                self.assertTrue(second == (None if special and variant.get('slowAppend')
+                                            else 'error:' + variant['slowAppend']
+                                            if variant.get('slowAppend') else None), marker)
+
+    def test_driver_slow_status_choreography(self):
+        marker = '#2396 slowStatus: block gates the outcome release, FIFO then release precedes final'
+        case = 'no-registry-slow/status-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', 'no-registry-slow/status-slow/model#1', planPhase='model'), prefix)[1],
+            lambda p: p.loop('wait', 'no-registry-slow/status-slow/model#1', planPhase='model'),
+            lambda p: p.storage('writer', 'block', 'turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('writer', 'queued', 'turn_result', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: (self.assertEqual(p.control('release.json', storage=True), {'seq': 1}, marker),
+                       p.storage('writer', 'release', 'turn_timeout', 3),
+                       p.storage('writer', 'complete', 'turn_timeout', 4), final)[3],
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        actions = [action['action'] for action in evidence['controlActions']]
+        self.assertTrue(actions.index('release-loop') < actions.index('control.status.fifo.checked')
+                        < actions.index('release-storage'), marker)
+        fifo = next(action for action in evidence['controlActions']
+                   if action['action'] == 'control.status.fifo.checked')
+        self.assertTrue(fifo['detail']['queuedKey'] == 'turn_result', marker)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'WITNESSED'
+                        and {w['target'] for w in verdict['witnesses']}
+                        == {'registry', 'phase', 'order', 'slowStatus'}, marker)
+        self.assertTrue(evidence['notes']['outcomeReleaseAfterFinal'] is False, marker)
+
+    def test_driver_slow_append_two_barriers(self):
+        marker = '#2396 slowAppend: first block, FIFO, release, re-arm the second key, release'
+        case = 'registry-slow/status-fast-append-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+
+        def rearm_key(p):
+            arms = p.control('stimulus.json')
+            return arms['registry']['barrier']['key'], arms['registry']['barrier']['id']
+
+        steps = [
+            lambda p: (p.loop('input', 'registry-slow/status-fast-append-slow/model#1'), prefix)[1],
+            lambda p: p.loop('wait', 'registry-slow/status-fast-append-slow/model#1', planPhase='model'),
+            lambda p: p.storage('registry', 'block', 'agent_status:turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('registry', 'queued', 'error:turn_timeout', 2),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: (self.assertEqual(p.control('release.json', storage=True), {'seq': 1}, marker),
+                       rearm_key(p))[0],
+            lambda p: (self.assertEqual(rearm_key(p), ('error:turn_timeout',
+                                                       'registry-slow/status-fast-append-slow/model#1-r2'), marker),
+                       p.storage('registry', 'block', 'error:turn_timeout', 3, boundMs=8000))[1],
+            lambda p: (self.assertEqual(p.control('release.json', storage=True), {'seq': 3}, marker),
+                       p.storage('registry', 'release', 'agent_status:turn_timeout', 4),
+                       p.storage('registry', 'release', 'error:turn_timeout', 5), final)[3],
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        actions = [action['action'] for action in evidence['controlActions']]
+        self.assertTrue(actions.index('control.registry.fifo.checked')
+                        < actions.index('release-storage')
+                        < actions.index('rearm-storage'), marker)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'WITNESSED'
+                        and 'slowAppend' in {w['target'] for w in verdict['witnesses']}, marker)
+
+    def test_driver_known_final_pending_release(self):
+        marker = '#2396 K-P: known outcome first, return held, released only after the final frame'
+        case = 'no-registry-fast/known-final-before-timeout-pending/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        timeout = frame('case-01', 1, {'type': 'agent_status', 'event': 'turn_timeout'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: self._assert_outcome_released(p, 'known'),
+            lambda p: p.loop('return', 'block'),
+            timeout,
+            final,
+            lambda p: (self.assertEqual(p.control('release.json'),
+                                        {'id': case + '#1', 'stage': 'return'}, marker),
+                       p.loop('return', 'release'), p.loop('final', 'completed-suppressed'))[2],
+        ]
+        evidence = drive_case(case, steps)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'WITNESSED', marker + ': ' + json.dumps(verdict['missing']))
+        # The held return released only after the timer-decided final; the
+        # completion receipt that follows the delivery is `completed` when the
+        # bounded delivery lands (the real smoke's outcome) and
+        # `completed-suppressed` when the retired turn rejects it — both are
+        # this cell, only the release order is pinned.
+        self.assertTrue(evidence['notes']['returnReleaseAfterFinal'] is True, marker)
+        keys = {receipt['key'] for receipt in evidence['loopReceipts']
+                if receipt['phase'] == 'final'}
+        self.assertTrue(keys <= {'completed', 'completed-suppressed'}, marker)
+
+    def test_driver_after_complete_fence(self):
+        marker = '#2396 after-complete: the fence complete receipt gates the late unknown release'
+        case = 'no-registry-fast/after-complete/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        timeout = frame('case-01', 1, {'type': 'agent_status', 'event': 'turn_timeout'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1', planPhase='model'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            timeout,
+            final,
+            lambda p: self._assert_outcome_withheld(p),
+            lambda p: p.fence('complete', 'run-01'),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        self.assertTrue(evidence['notes']['outcomeReleaseAfterFinal'] is True, marker)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'WITNESSED', marker + ': ' + json.dumps(verdict['missing']))
+
+    def test_driver_unknown_first_timer_observation(self):
+        marker = '#2396 unknown-first: release before final, timer.clear observed, no timeout frame'
+        case = 'no-registry-fast/unknown-first/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 1, {'type': 'turn_completed'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1', planPhase='model'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            lambda p: self._assert_outcome_released(p, 'unknown'),
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps, timeout_ms=30000)
+        notes = evidence['notes']
+        self.assertTrue(notes['outcomeReleaseAfterFinal'] is False
+                        and notes['noTimeoutFrameBeforeFinal'] is True
+                        and notes['finalElapsedMs'] < notes['timeoutMs'] == 30000, marker)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'WITNESSED', marker + ': ' + json.dumps(verdict['missing']))
+
+    def test_adapter_precise_missing_per_target(self):
+        marker = '#2396 a target without its raw receipts keeps the row NOT_RUN with a precise missing'
+        case = 'no-registry-slow/status-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        verdicts = {}
+        base = None
+        for damaged in ('intact', 'wait', 'fifo', 'outcome-release', 'prefix'):
+            steps = [
+                lambda p: (p.loop('input', case + '#1', planPhase='model'), prefix)[1],
+                lambda p: p.loop('wait', case + '#1', planPhase='model'),
+                lambda p: p.storage('writer', 'block', 'turn_timeout', 1, boundMs=8000),
+                lambda p: p.storage('writer', 'queued', 'turn_result', 2),
+                lambda p: p.storage('writer', 'release', 'turn_timeout', 3),
+                lambda p: p.storage('writer', 'complete', 'turn_timeout', 4),
+                lambda p: final,
+                lambda p: p.loop('final', 'result_unknown'),
+            ]
+            evidence = drive_case(case, steps)
+            if damaged == 'wait':
+                evidence['loopReceipts'] = [row for row in evidence['loopReceipts']
+                                            if row['phase'] != 'wait']
+            elif damaged == 'fifo':
+                evidence['controlActions'] = [row for row in evidence['controlActions']
+                                              if row['action'] != 'control.status.fifo.checked']
+                evidence['storageReceipts'] = [row for row in evidence['storageReceipts']
+                                               if row['phase'] != 'queued']
+            elif damaged == 'outcome-release':
+                evidence['controlActions'] = [row for row in evidence['controlActions']
+                                              if not (row['action'] == 'release-loop'
+                                                      and row['detail'].get('stage') == 'outcome')]
+            elif damaged == 'prefix':
+                evidence['frames'] = [row for row in evidence['frames']
+                                      if row['type'] != 'model_request_started']
+            verdicts[damaged] = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+            if damaged == 'intact':
+                base = verdicts[damaged]
+        self.assertTrue(base['status'] == 'WITNESSED', marker)
+        self.assertTrue('loop/wait receipt' in verdicts['wait']['missing'][0]
+                        and any('control.status.fifo.checked' in row
+                                for row in verdicts['fifo']['missing']), marker)
+        self.assertTrue(verdicts['prefix']['status'] == 'NOT_RUN'
+                        and any('client.frame(' in row for row in verdicts['prefix']['missing']), marker)
+        self.assertTrue(verdicts['outcome-release']['status'] == 'NOT_RUN'
+                        and any('control.release.unknown' in row
+                                for row in verdicts['outcome-release']['missing']), marker)
+        for damaged, verdict in verdicts.items():
+            if damaged != 'intact':
+                self.assertTrue(verdict['status'] == 'NOT_RUN' and verdict['missing'], marker + ': ' + damaged)
+                # The passing targets keep their witnesses; only the damaged
+                # one is named in the missing list.
+                self.assertTrue(all(row['target'] not in {item.split(':')[0] for item in verdict['missing']}
+                                    for row in verdict['witnesses']), marker)
+
+    def test_adapter_cross_case_receipts_do_not_attest(self):
+        marker = '#2396 receipts keyed to another plan never witness this case'
+        case = 'no-registry-slow/status-slow/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', 'other-case#7', planPhase='model'), prefix)[1],
+            lambda p: p.loop('wait', 'other-case#7', planPhase='model'),
+            lambda p: p.storage('writer', 'block', 'turn_timeout', 1, boundMs=8000),
+            lambda p: p.storage('writer', 'queued', 'turn_result', 2),
+            lambda p: final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        phase_missing = [row for row in verdict['missing'] if row.startswith('phase')]
+        self.assertTrue(verdict['status'] == 'NOT_RUN' and len(phase_missing) == 1
+                        and 'loop/input receipt' in phase_missing[0]
+                        and 'loop/wait receipt' in phase_missing[0], marker)
+
+    def test_adapter_registry_closure_requires_product_receipt(self):
+        marker = '#2396 no-registry closure is the product receipt, never file absence alone'
+        case = 'no-registry-fast/fast/model'
+        prefix = frame('case-01', 0, {'type': 'model_request_started'})
+        timeout = frame('case-01', 1, {'type': 'agent_status', 'event': 'turn_timeout'})
+        final = frame('case-01', 2, {'type': 'error', 'code': 'turn_timeout'}, final=True)
+        steps = [
+            lambda p: (p.loop('input', case + '#1', planPhase='model'), prefix)[1],
+            lambda p: p.loop('wait', case + '#1', planPhase='model'),
+            timeout,
+            final,
+            lambda p: p.loop('final', 'result_unknown'),
+        ]
+        evidence = drive_case(case, steps)
+        verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], evidence)
+        self.assertTrue(verdict['status'] == 'WITNESSED', marker + ': ' + json.dumps(verdict['missing']))
+        for damaged, missing_row in (
+                ({'construction': dict(evidence['construction'], runRegistry='on')},
+                 'registry: closure receipt (native run registry off)'),
+                ({'construction': dict(evidence['construction'], runRegistry=None)},
+                 'registry: closure receipt (native run registry off)'),
+                ({'runsJsonAbsent': False},
+                 'registry: closure check (runs.json absent across the case)')):
+            verdict = c.stimuli.execution(c.case_plan(case)['stimulus'], dict(evidence, **damaged))
+            self.assertTrue(verdict['status'] == 'NOT_RUN'
+                            and verdict['missing'] == [missing_row], marker)
+        # The registry cell of the same shape demands the on-construction
+        # receipt plus this run's registry surfaces; its own receipts, re-keyed
+        # to its plan, then witness it in full.
+        registry_case = 'registry-fast/fast/model'
+        registry_plan = c.stimuli.plan(registry_case)
+        plan_id = registry_case + '#1'
+        rekeyed = [dict(receipt, key=plan_id) if receipt.get('phase') in ('input', 'wait')
+                   else dict(receipt) for receipt in evidence['loopReceipts']]
+        off = dict(evidence, planId=plan_id, loopReceipts=rekeyed)
+        verdict = c.stimuli.execution(registry_plan, off)
+        # The re-keyed evidence has no registry surfaces at all, so phase also
+        # misses its registry.append witness; the registry row itself must be
+        # the full three-part missing.
+        registry_rows = [row for row in verdict['missing'] if row.startswith('registry:')]
+        self.assertTrue(verdict['status'] == 'NOT_RUN'
+                        and registry_rows == ['registry: construction receipt (native run registry on); '
+                                              'registry applicability (runs.json record for this run); '
+                                              'registry events (runs.json events for this run)'], marker)
+        on = dict(off, construction=dict(evidence['construction'], runRegistry='on'),
+                  registryRecord={'state': 'failed'},
+                  registryEvents=[{'type': 'model_request_started'},
+                                  {'type': 'agent_status', 'event': 'turn_timeout'}],
+                  runsJsonAbsent=False)
+        verdict = c.stimuli.execution(registry_plan, on)
+        self.assertTrue(verdict['status'] == 'WITNESSED', marker + ': ' + json.dumps(verdict['missing']))
+
+    @staticmethod
+    def _assert_outcome_released(product, outcome):
+        release = product.control('release.json')
+        assert release.get('stage') == 'outcome' and release.get('outcome') == outcome, release
+        return None
+
+    @staticmethod
+    def _assert_outcome_withheld(product):
+        try:
+            release = product.control('release.json')
+        except FileNotFoundError:
+            return None  # nothing released at all yet — withheld
+        assert release.get('stage') != 'outcome', release
+        return None
 
 
 if __name__ == '__main__':

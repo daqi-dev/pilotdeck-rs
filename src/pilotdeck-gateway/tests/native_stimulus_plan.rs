@@ -29,8 +29,9 @@ mod baseline;
 /// Instrumenting `_native_run` in a scratch copy recorded **two** entries during
 /// that single control (`_tmp/20261107-issue-1408/07-reachability-probe.log`).
 /// The 19 controls as a whole take 0.9 s
-/// (`_tmp/20261107-issue-1408/01-baseline-full19.txt`), so nothing legitimate
-/// comes anywhere near the backstop.
+/// (`_tmp/20261107-issue-1408/01-baseline-full19.txt`); the #2396 adapter
+/// controls add ~0.6 s of in-process scripted drives (same measurement run:
+/// 28 controls, 1.4 s), so nothing legitimate comes anywhere near the backstop.
 fn fixture_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/native-stimulus-plan/test_plan.py")
@@ -86,6 +87,15 @@ fn native_stimulus_plan_controls() {
         "PlanTests.test_registry_free_settle_synthetic_control",
         "PlanTests.test_unknown_and_detached_plan",
         "PlanTests.test_unwitnessed_is_not_run",
+        "AdapterTests.test_storage_arms_match_the_arming_table",
+        "AdapterTests.test_driver_slow_status_choreography",
+        "AdapterTests.test_driver_slow_append_two_barriers",
+        "AdapterTests.test_driver_known_final_pending_release",
+        "AdapterTests.test_driver_after_complete_fence",
+        "AdapterTests.test_driver_unknown_first_timer_observation",
+        "AdapterTests.test_adapter_precise_missing_per_target",
+        "AdapterTests.test_adapter_cross_case_receipts_do_not_attest",
+        "AdapterTests.test_adapter_registry_closure_requires_product_receipt",
     ]);
 }
 
