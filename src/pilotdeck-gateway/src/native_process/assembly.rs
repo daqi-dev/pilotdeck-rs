@@ -1691,8 +1691,7 @@ pub(super) fn apply_session_overrides(
                 parts.push(existing.clone());
             }
         }
-        let content = crate::metadata::js_trim(content);
-        if !content.is_empty() {
+        if !crate::metadata::js_trim(content).is_empty() {
             parts.push(JsString::from(content));
         }
         let mut joined = Vec::new();
@@ -2009,7 +2008,7 @@ mod surrogate_style_regression {
             .as_string()
             .unwrap();
         let mut expected = vec![65, 0xd800, 66];
-        expected.extend("\n\nstyle".encode_utf16());
+        expected.extend("\n\n  style  ".encode_utf16());
         assert_eq!(value.units(), expected);
     }
 }
