@@ -10,6 +10,24 @@ home=out/"home";project=out/"project";home.mkdir();project.mkdir()
 legacy=home/"projects/000-fixture";legacy.mkdir(parents=True)
 (legacy/".cwd").write_text(str(project))
 rows=[];wire=[];wire_lock=threading.Lock();errors=[];ready=queue.Queue();lines=queue.Queue();children=[];success=False
+threads=[];threads_lock=threading.Lock();sockets=set();sockets_lock=threading.Lock();cleanup_done=False;term_seen=False
+def spawn(fn,*args):
+ def guarded():
+  try:fn(*args)
+  except Exception as e:errors.append("thread: "+repr(e))
+ t=threading.Thread(target=guarded,daemon=True)
+ with threads_lock:threads.append(t)
+ t.start();return t
+class TrackedServer(socketserver.ThreadingMixIn):
+ daemon_threads=True;block_on_close=False
+ def process_request(self,request,address):
+  with sockets_lock:sockets.add(request)
+  spawn(self.process_request_thread,request,address)
+ def shutdown_request(self,request):
+  try:super().shutdown_request(request)
+  finally:
+   with sockets_lock:sockets.discard(request)
+ def handle_error(self,request,address):errors.append("server handler: "+traceback.format_exc())
 class Provider(http.server.BaseHTTPRequestHandler):
  protocol_version="HTTP/1.1"
  def log_message(self,*_):pass
@@ -25,7 +43,8 @@ class Provider(http.server.BaseHTTPRequestHandler):
    msg={"id":"fixture","model":"mock","choices":[{"index":0,"delta":delta,"finish_reason":finish}]}
    self.wfile.write(("data: "+json.dumps(msg)+"\n\n").encode());self.wfile.flush()
   self.wfile.write(b"data: [DONE]\n\n");self.wfile.flush();self.close_connection=True
-provider=http.server.ThreadingHTTPServer(("127.0.0.1",0),Provider);provider.daemon_threads=True;threading.Thread(target=provider.serve_forever,daemon=True).start()
+class ProviderServer(TrackedServer,http.server.HTTPServer):pass
+provider=ProviderServer(("127.0.0.1",0),Provider);spawn(provider.serve_forever)
 (home/"pilotdeck.yaml").write_text("schemaVersion: 1\nagent: {model: fixture/mock}\nmodel:\n  providers:\n    fixture:\n      protocol: openai\n      url: http://127.0.0.1:"+str(provider.server_port)+"/v1\n      apiKey: fixture-only\n      models: {mock: {}}\nmemory: {enabled: false}\n")
 token=home/"token";token.write_text("fixture-token\n")
 def fresh_port():
@@ -46,11 +65,13 @@ def exchange(sock,frame):
  return json.loads(data)
 def hello(sock,id):
  return exchange(sock,{"kind":"request","messageId":id,"method":"hello","payload":{}})
-class Relay(socketserver.ThreadingTCPServer):allow_reuse_address=True;daemon_threads=False;block_on_close=True
+class Relay(TrackedServer,socketserver.TCPServer):allow_reuse_address=True
 class Forward(socketserver.BaseRequestHandler):
  def handle(self):
   try:
-   other=direct();buffers={self.request:b"",other:b""};opposite={self.request:other,other:self.request}
+   other=direct()
+   with sockets_lock:sockets.add(other)
+   buffers={self.request:b"",other:b""};opposite={self.request:other,other:self.request}
    while True:
     readable,_,_=select.select([self.request,other],[],[],.2)
     for source in readable:
@@ -69,8 +90,10 @@ class Forward(socketserver.BaseRequestHandler):
   except (BrokenPipeError,ConnectionResetError,OSError):pass
   except Exception as e:errors.append(repr(e))
   finally:
-   if "other" in locals():other.close()
-relay=Relay(("127.0.0.1",0),Forward);threading.Thread(target=relay.serve_forever,daemon=True).start()
+   if "other" in locals():
+    with sockets_lock:sockets.discard(other)
+    other.close()
+relay=Relay(("127.0.0.1",0),Forward);spawn(relay.serve_forever)
 side_env=env|{"PILOTDECK_AGENT_LOOP_TCP_HOST":"127.0.0.1","PILOTDECK_AGENT_LOOP_TCP_PORT":str(port)}
 (out/"storage").mkdir()
 host_env=env|{"PILOTDECK_AGENT_LOOP_TRANSPORT":"tcp","PILOTDECK_AGENT_LOOP_TCP_HOST":"127.0.0.1","PILOTDECK_AGENT_LOOP_TCP_PORT":str(relay.server_address[1])}
@@ -78,9 +101,43 @@ host=client=sidecar=None;result={}
 def terminate_requested(signum, _frame):
  raise SystemExit("received signal " + str(signum))
 signal.signal(signal.SIGTERM, terminate_requested)
+def cleanup():
+ global cleanup_done,term_seen
+ if cleanup_done:return
+ cleanup_done=True
+ # Later TERM is recorded instead of interrupting evidence preservation.
+ def during_cleanup(_signum,_frame):
+  global term_seen
+  term_seen=True
+ signal.signal(signal.SIGTERM,during_cleanup)
+ for child in reversed(children):
+  try:
+   if child.poll() is None:
+    try:os.killpg(child.pid,signal.SIGTERM);child.wait(timeout=3)
+    except subprocess.TimeoutExpired:os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=3)
+  except ProcessLookupError:pass
+  except Exception as e:errors.append("child cleanup: "+repr(e))
+ # Shutdown loops on daemon helpers; neither server_close nor a stray peer may
+ # pin the driver. Force-close all tracked sockets before joining producers.
+ for label,server in (("relay",relay),("provider",provider)):
+  def stop_server(server=server):server.shutdown();server.server_close()
+  t=threading.Thread(target=stop_server,daemon=True);t.start();t.join(3)
+  if t.is_alive():errors.append(label+" shutdown timed out")
+ with sockets_lock:open_sockets=list(sockets)
+ for sock in open_sockets:
+  try:sock.shutdown(socket.SHUT_RDWR)
+  except OSError:pass
+  try:sock.close()
+  except OSError:pass
+ deadline=time.monotonic()+5
+ with threads_lock:joined=list(threads)
+ for thread in joined:
+  thread.join(max(0,deadline-time.monotonic()))
+  if thread.is_alive():errors.append("thread join timed out: "+thread.name)
+ if term_seen:errors.append("SIGTERM received during cleanup")
 try:
  sidecar=subprocess.Popen([str(a.sidecar)],cwd=project,env=side_env,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,start_new_session=True);children.append(sidecar)
- threading.Thread(target=log_stream,args=(sidecar.stderr,out/"sidecar.stderr"),daemon=True).start()
+ spawn(log_stream,sidecar.stderr,out/"sidecar.stderr")
  deadline=time.monotonic()+20
  while True:
   if sidecar.poll() is not None:raise RuntimeError("sidecar exited before listen")
@@ -92,7 +149,7 @@ try:
  assert h1["moduleInstanceId"]==h2["moduleInstanceId"] and h1["connectionGeneration"]!=h2["connectionGeneration"],(h1,h2)
  one.close();two.close()
  host=subprocess.Popen([str(a.control),"serve","--home",str(home),"--project",str(project),"--listen","127.0.0.1:0","--token-file",str(token),"--sidecar",str(a.sidecar),"--drain-ms","2000","--storage-root",str(out/"storage")],cwd=out,env=host_env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,start_new_session=True);children.append(host)
- threading.Thread(target=log_stream,args=(host.stderr,out/"gateway.stderr",b"native listening "),daemon=True).start()
+ spawn(log_stream,host.stderr,out/"gateway.stderr",b"native listening ")
  deadline=time.monotonic()+25
  while ready.empty():
   if host.poll() is not None:raise RuntimeError("gateway exited before readiness: "+str(host.returncode))
@@ -106,7 +163,7 @@ try:
     f.write(line);f.flush()
     try:lines.put(json.loads(line))
     except Exception as e:errors.append(repr(e))
- threading.Thread(target=collect,daemon=True).start()
+ spawn(collect)
  def send(id,method,params):
   client.stdin.write((json.dumps({"jsonrpc":"2.0","id":id,"method":method,"params":params})+"\n").encode());client.stdin.flush()
  def until(id,timeout=35):
@@ -143,6 +200,7 @@ try:
  marker_before=marker_state()
  if a.case!="normal":marker.chmod(0)
  marker_after=marker_state()
+ if a.case!="normal":assert marker_after[0]["mode"]=="0o0" and marker_after[0]["text"].startswith("unreadable:"),("marker still readable",marker_after)
  send("registered-projects","gateway.call",{"method":"list_projects","params":{}})
  registered=until("registered-projects")
  projects=registered.get("result",{}).get("projects",[])
@@ -153,15 +211,8 @@ try:
  second=run_turn("after","after-marker")
  assert second.get("result",{}).get("terminal",{}).get("finishReason")=="completed",second
  send("health","gateway.call",{"method":"describe_server","params":{}});health=until("health",timeout=4);assert "result" in health,health
- # Close the gateway-owned connections and join every relay handler before
- # inspecting wire or errors. The finally block remains safe after this drain.
- for child in reversed(children):
-  if child.poll() is None:
-   try:os.killpg(child.pid,signal.SIGTERM);child.wait(timeout=3)
-   except (ProcessLookupError,subprocess.TimeoutExpired):
-    try:os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=3)
-    except ProcessLookupError:pass
- relay.shutdown();relay.server_close()
+ # Join every registered error producer before inspecting wire/errors.
+ cleanup()
  with wire_lock:
   executed=[x["frame"] for x in wire if x["direction"]=="to_sidecar" and x["frame"].get("method")=="execute"]
   events=[x["frame"] for x in wire if x["direction"]=="to_gateway" and x["frame"].get("kind")=="event"]
@@ -181,13 +232,17 @@ try:
 except BaseException as e:
  result={"pass":False,"error":repr(e),"traceback":traceback.format_exc(),"control_sha256":hashlib.sha256(a.control.read_bytes()).hexdigest(),"sidecar_sha256":hashlib.sha256(a.sidecar.read_bytes()).hexdigest()}
 finally:
- for child in reversed(children):
-  if child.poll() is None:
-   try:os.killpg(child.pid,signal.SIGTERM);child.wait(timeout=3)
-   except (ProcessLookupError,subprocess.TimeoutExpired):
-    try:os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=3)
-    except ProcessLookupError:pass
- relay.shutdown();relay.server_close();provider.shutdown();provider.server_close()
- (out/"wire.json").write_text(json.dumps(wire,indent=2)+"\n");(out/"provider.json").write_text(json.dumps(rows,indent=2)+"\n");(out/"result.json").write_text(json.dumps(result,indent=2)+"\n")
- print(json.dumps({"pass":success,"error":result.get("error")}))
+ try:cleanup()
+ except BaseException as e:errors.append("cleanup failed: "+repr(e))
+ if term_seen and "SIGTERM received during cleanup" not in errors:errors.append("SIGTERM received during cleanup")
+ if errors:
+  success=False
+  result["pass"]=False
+  result["cleanupErrors"]=list(errors)
+ for name,value in (("wire.json",wire),("provider.json",rows),("result.json",result)):
+  try:(out/name).write_text(json.dumps(value,indent=2)+"\n")
+  except Exception as e:
+   success=False
+   print("evidence write failed: "+name+": "+repr(e),flush=True)
+ print(json.dumps({"pass":success,"error":result.get("error"),"cleanupErrors":errors}))
  raise SystemExit(0 if success else 1)

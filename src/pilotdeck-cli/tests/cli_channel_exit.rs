@@ -592,6 +592,10 @@ impl TokenCase {
                     32 * 1024 * 1024
                 })
                 .unwrap();
+        } else if kind == "empty" {
+            fs::write(&token, b"").unwrap();
+        } else if kind == "directory" {
+            fs::create_dir(&token).unwrap();
         } else if kind == "valid-boundary" {
             let mut bytes = vec![b' '; 65_536];
             let value = b"channel-fake-token";
@@ -614,22 +618,45 @@ impl TokenCase {
     fn spawn(&self, argv: &[&str]) -> ChildOwner {
         self.spawn_with_stdin(argv, Stdio::null())
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(unix)]
     fn spawn_tui(&self) -> (ChildOwner, std::os::fd::OwnedFd) {
-        use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
-        use std::os::unix::ffi::OsStrExt;
-        let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
-        rustix::io::fcntl_setfd(&master, rustix::io::FdFlags::CLOEXEC).unwrap();
-        grantpt(&master).unwrap();
-        unlockpt(&master).unwrap();
-        let name = ptsname(&master, Vec::new()).unwrap();
-        let slave = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(std::ffi::OsStr::from_bytes(name.as_bytes()))
-            .unwrap();
-        let process = self.spawn_with_stdin(&["tui"], Stdio::from(slave));
-        (process, master)
+        // rustix 1.1.5 exposes ptsname only on these Unix targets. Unsupported
+        // targets must fail explicitly rather than silently run without a PTY.
+        #[cfg(any(
+            target_vendor = "apple",
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos"
+        ))]
+        {
+            use rustix::pty::{OpenptFlags, grantpt, openpt, ptsname, unlockpt};
+            use std::os::unix::ffi::OsStrExt;
+            let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY).unwrap();
+            rustix::io::fcntl_setfd(&master, rustix::io::FdFlags::CLOEXEC).unwrap();
+            grantpt(&master).unwrap();
+            unlockpt(&master).unwrap();
+            let name = ptsname(&master, Vec::new()).unwrap();
+            let slave = fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(std::ffi::OsStr::from_bytes(name.as_bytes()))
+                .unwrap();
+            let process = self.spawn_with_stdin(&["tui"], Stdio::from(slave));
+            (process, master)
+        }
+        #[cfg(not(any(
+            target_vendor = "apple",
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "illumos"
+        )))]
+        {
+            panic!("TUI token process fixture requires rustix ptsname support on this Unix target");
+        }
     }
     fn spawn_with_stdin(&self, argv: &[&str], stdin: Stdio) -> ChildOwner {
         ChildOwner(
@@ -656,7 +683,7 @@ impl TokenCase {
                 .unwrap(),
         )
     }
-    fn assert_unchanged(&self, kind: &str) {
+    fn assert_inputs_unchanged(&self, kind: &str) {
         assert_eq!(
             token_identity(&self.token),
             self.before,
@@ -667,6 +694,9 @@ impl TokenCase {
             self.yaml,
             "{kind}: configuration unchanged"
         );
+    }
+    fn assert_unchanged(&self, kind: &str) {
+        self.assert_inputs_unchanged(kind);
         assert!(
             !self.home.join("projects").exists(),
             "{kind}: no in-process host state"
@@ -833,8 +863,19 @@ async fn default_channel_token_files_are_bounded_and_preserve_ordinary_wire() {
 
 /// Both command entry points must propagate the shared reader's resource error
 /// after their actual health check, before WS or local-host/terminal startup.
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 #[tokio::test(flavor = "current_thread")]
+#[cfg_attr(
+    not(any(
+        target_vendor = "apple",
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "illumos"
+    )),
+    ignore = "pinned rustix has no ptsname API on this platform"
+)]
 async fn cron_and_tui_token_resources_fail_before_connection_or_local_fallback() {
     let _lease = Lease::acquire().await;
     let listener = TcpListener::bind("127.0.0.1:18789")
@@ -857,6 +898,73 @@ async fn cron_and_tui_token_resources_fail_before_connection_or_local_fallback()
             answer_token_health(&listener).await;
             assert_token_resource_refusal(process, &listener, kind).await;
             case.assert_unchanged(kind);
+        }
+    }
+}
+
+/// Empty and ordinary directory reads are unavailable discovery credentials,
+/// not the resource-refusal errors above. Exercise each real command branch.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+#[cfg_attr(
+    not(any(
+        target_vendor = "apple",
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "illumos"
+    )),
+    ignore = "pinned rustix has no ptsname API on this platform"
+)]
+async fn cron_and_tui_empty_and_directory_tokens_keep_ordinary_fallback() {
+    let _lease = Lease::acquire().await;
+    let listener = TcpListener::bind("127.0.0.1:18789")
+        .await
+        .expect("owned token fallback regression requires port 18789 free");
+    for argv in [vec!["cron", "list"], vec!["tui"]] {
+        for kind in ["empty", "directory"] {
+            let case = TokenCase::new(kind);
+            let (process, _terminal) = if argv[0] == "tui" {
+                let (process, master) = case.spawn_tui();
+                (process, Some(master))
+            } else {
+                (case.spawn(&argv), None)
+            };
+            answer_token_health(&listener).await;
+            let output = finish_output(process).await;
+            assert_eq!(output.status.code(), Some(1), "{}:{kind}", argv[0]);
+            assert!(output.stdout.is_empty(), "{}:{kind}", argv[0]);
+            if argv[0] == "cron" {
+                assert_eq!(
+                    output.stderr, b"pilotdeck cron requires a running pilotdeck server.\n",
+                    "{kind}: original cron unavailable output"
+                );
+                case.assert_unchanged(kind);
+            } else {
+                assert_eq!(
+                    output.stderr, b"pilotdeck tui requires an interactive output terminal.\n",
+                    "{kind}: local startup reached output-terminal admission"
+                );
+                let projects: Vec<_> = fs::read_dir(case.home.join("projects"))
+                    .expect("ordinary token failure must create LocalHost project state")
+                    .map(|entry| entry.unwrap().path())
+                    .collect();
+                assert_eq!(projects.len(), 1, "{kind}: one owned project only");
+                assert_eq!(
+                    fs::read(projects[0].join(".cwd")).unwrap(),
+                    case.project.to_str().unwrap().as_bytes(),
+                    "{kind}: LocalHost marker must identify the isolated project"
+                );
+                case.assert_inputs_unchanged(kind);
+            }
+            assert!(
+                timeout(Duration::from_millis(150), listener.accept())
+                    .await
+                    .is_err(),
+                "{}:{kind}: unavailable token must not open a WebSocket",
+                argv[0]
+            );
         }
     }
 }

@@ -34,3 +34,9 @@ Unix 默认 channel 在 health 成功后复用 SDK 的同 fd 有界 reader：最
 `cron` 与 TUI 的远端发现也复用 `sdk::token::read`：Unix 健康检查成功后遇特殊文件/超限 token 明确退出，不把资源拒绝吞作不可用；普通 IO/目录/空 token 仍按各入口原合同处理（cron 输出需要运行 server；TUI 回退 LocalHost）。server 的凭据创建/重用保留独立严格 raw-byte reader，目录与读取失败不得据此被吞掉并生成新凭据。范围见新增 `D1-SDK-TOKEN-READ-BOUNDS-001-R2`，原条目和 R1 不回写。
 
 `cron_and_tui_token_resources_fail_before_connection_or_local_fallback` 仅 macOS 运行八格真实进程：两入口各覆盖无 writer FIFO、持有 writer FIFO、65537 字节和 32 MiB 稀疏文件；TUI stdin 使用真实 PTY，stdout/stderr 独立 pipe。复用本册的端口租约、health 200、精确错误/退出、零 WS、配置/token 身份不变及无 LocalHost 状态检查，原默认七格和 oracle 不变。新回归尚待协调者 mbp2 执行，不能计通过；普通成功仍引用既有 cron 金样/TUI PTY，未重新采 TS 异常文件时序。
+
+## Unix 入口回归补充（P2）
+
+资源八格与 `spawn_tui` 现注册在 Unix；固定 rustix 1.1.5 的 `ptsname` API 在 Apple/Linux/Android/FreeBSD/Fuchsia/illumos 暴露，夹具只在这些平台编译 PTY 分支，其他 Unix 两项测试保留并显式 ignore，原因是 pinned rustix 没有 ptsname API；若强制 include-ignored，helper 明确失败，不裸跑或计伪 PASS。这里只静态核对 Linux 和 macOS API 可用；实际运行证据仍由 mbp2 提供，不声称 Linux/其他 Unix 已运行。R2 保留当时仅 macOS 矩阵的原记录，不回写冻结条目。
+
+`cron_and_tui_empty_and_directory_tokens_keep_ordinary_fallback` 增加两入口各空文件/目录共四格：health 200 后，cron 精确输出原 UNAVAILABLE；TUI 真实 PTY stdin、stdout pipe，精确输出交互输出终端错误，并核真实新增的唯一 `.cwd` 内容为隔离 project，证明已进入 LocalHost。两入口都核无 WS、token/config 身份保全；不再假设缺失 sidecar 必然先报错。原默认七格、资源八格及正常金样不变。候选完成时仅检查格式，新增四格和 Unix 注册尚待协调者 mbp2 编译运行，不计通过。
