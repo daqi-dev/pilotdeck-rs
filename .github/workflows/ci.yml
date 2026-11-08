@@ -232,7 +232,7 @@ jobs:
     # 外层预算必须**大于**全 job 内部最坏和 + 开销（r11 P0）：self_check.py
     # 遍历实际 steps 求和，并与 RETIREMENT_STEP_ORDER 双向互证；未知贡献规则即红。
     # 直跑 emit/check 各有声明上限 5 min；直跑负控按其模块登记推导：
-    # (参考轮数 5 + 跨轮 1 + 负控 18 + 正控 2) × 600 s = 15600 s 原始上限，
+    # (参考轮数 5 + 跨轮 1 + 负控 17 + 正控 0) × 600 s = 13800 s 原始上限，
     # 再由该 step 的 30 min 声明限到 1800 s（与自检 NEGCTL 上限同源）。
     # 七项自检 3260 s + 变异自检 4200 s（沿用 _assert_pass_counting 互证）
     # → 全有效内部和 9860 s ≈ 164.3 min；checkout/setup/upload 显式共享 300 s

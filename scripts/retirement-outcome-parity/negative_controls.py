@@ -1300,6 +1300,9 @@ def run_positive(positive, out_root, oracle):
     except Exception as error:  # noqa: BLE001
         record.update(verdict='INVALID', reason=f'verify failed: {error!r}')
         return record
+    record.update(verdict='HELD' if ok else 'BROKEN', reason=reason)
+    return record
+
 
 def build_parser():
     """正式解析器：选项表与 ``build_classifier`` **同源**（``PARSER_OPTIONS``）。

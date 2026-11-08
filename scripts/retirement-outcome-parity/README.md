@@ -279,14 +279,14 @@ queue 都跑（只受 `scope` 的 docs-only 分类控制，不做 paths 过滤�
 | checkout / 安装 PyYAML / upload | `JOB_OVERHEAD_STEPS` 显式共享 overhead 桶，桶集合双向核覆盖 | 共享下方 300 s 余量 |
 | 直跑 emit | step 声明 `timeout-minutes: 5`，守卫钉住且求和读取声明 | 300 s |
 | 直跑 check | step 声明 `timeout-minutes: 5`，同上 | 300 s |
-| 直跑负控 | 读 `negative_controls` 的参考轮集合、控件登记与 `CHECK_TIMEOUT_SECONDS`；再应用 step 声明 `timeout-minutes: 30`（登记与自检 NEGCTL 同源） | 原始 (5+1+18+2)×600 = 15600 s；有效 min(15600, 1800) = 1800 s |
+| 直跑负控 | 读 `negative_controls` 的参考轮集合、控件登记与 `CHECK_TIMEOUT_SECONDS`；再应用 step 声明 `timeout-minutes: 30`（登记与自检 NEGCTL 同源） | 原始 (5+1+17+0)×600 = 13800 s；有效 min(13800, 1800) = 1800 s |
 | 七项自检 | EMIT + CHECK + NEGCTL + 一趟 LOCK + WRITES | 3260 s |
 | 变异自检 | (LOCK_CHECK_PASSES−1)×LOCK + CONTROL_CHECK_SUBPROCESSES×CHECK | 4200 s |
 
 两项自检沿用 r10 内部推导：LOCK 单趟 660 s（4×60 s 等锁 + 2×60 s wait +
 敌意锁 3×50 s + 守卫 fd 3×50 s），共六趟；WRITES 4×50 s；control_check 三趟
 各 300 s。公式与 `_assert_pass_counting` 的调用点互证不变。完整内部和
-原始和 **23660 s ≈ 394.3 min**；直跑负控加声明上限后，有效内部和
+原始和 **21860 s ≈ 364.3 min**；直跑负控加声明上限后，有效内部和
 **9860 s ≈ 164.3 min**，外层 **170×60 = 10200 > 9860 + 300 s**。
 本轮采用任务书修项 3 的 step 上限路线：仅把外层抬到 400 min 无法满足
 `ubuntu-latest` 的托管 job [6 小时平台上限](https://docs.github.com/en/actions/reference/limits)；
