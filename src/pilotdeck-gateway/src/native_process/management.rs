@@ -234,7 +234,8 @@ impl Requests {
         // before awaiting the catalog's own blocking loader/list jobs, so even
         // a single available blocking thread can make progress.
         let project = self.project.clone();
-        let lease = tokio::task::spawn_blocking(move || project.acquire(None))
+        let project_root = self.options.project.clone();
+        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&project_root)))
             .await
             .map_err(|e| RequestError::new(e.to_string()))?
             .map_err(|e| RequestError::new(e.to_string()))?;
@@ -300,7 +301,7 @@ impl Requests {
         // release included); invalidation must not dispose an in-flight request.
         let lease = self
             .project
-            .acquire(None)
+            .acquire(Some(&self.options.project))
             .map_err(|e| RequestError::new(e.to_string()))?;
         let resources = lease
             .runtime()

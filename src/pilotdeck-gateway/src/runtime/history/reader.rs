@@ -368,7 +368,7 @@ impl crate::runtime::turn::read::SessionHistoryReader for NativeHistoryReader {
                 // Read the existing project generation; do not construct a separate
                 // model or configuration snapshot for the history endpoint.
                 let lease = project_runtime
-                    .acquire(None)
+                    .acquire(Some(&files.project))
                     .map_err(|e| map(e.to_string()))?;
                 let resources = lease
                     .runtime()

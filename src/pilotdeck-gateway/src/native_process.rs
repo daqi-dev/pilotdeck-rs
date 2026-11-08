@@ -18,6 +18,8 @@ mod background_archive;
 mod deployment;
 mod local_host;
 mod projects;
+#[cfg(test)]
+mod multi_project_history_tests;
 mod server_host;
 pub use local_host::{LocalHost, LocalHostOptions};
 pub use server_host::{
