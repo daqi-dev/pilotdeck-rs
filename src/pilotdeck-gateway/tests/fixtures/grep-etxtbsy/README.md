@@ -271,16 +271,30 @@ panic 用例
   绑定 `an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe`
   的 `#1409 this process is the scan's own source and must never be skipped`。
 - `zombie-leader-is-terminal`（#1409 第 1 条，r2 复审 concurrency，Linux，绑定
-  单元测试）：`blind_source` 把 `Z`/`X` 直接当终态，不问线程组是否真死——线程
-  组长 `pthread_exit()` 后 `Z` 已成立，而共享 fd 表的其余线程仍开着写端，
+  单元测试）：`Z`/`X` 直接当终态，不问线程组是否真死——线程组长
+  `pthread_exit()` 后 `Z` 已成立，而共享 fd 表的其余线程仍开着写端，
   `/proc/<tgid>/fd` 恰好在这个状态回 EACCES（cb8 6.17 实测：组长 `Z`、worker
   `S`、fd 目录 EACCES、非阻塞读读端 EAGAIN 即仍有写端，
   `_tmp/20261107-issue-1409/zombie-leader-probe3.log`）。扫描会跳过唯一仍持有
   写端的来源。绑定 `a_live_group_behind_a_zombie_leader_is_not_terminal` 的
   `#1409 a zombie leader with a live group has not released its descriptors`。
+  **#2142 起 `Z`/`X` 判据收口为单一函数 `terminal_state`**（枚举首查与收尾重查
+  都调它，此前两处各写一遍、可对同一 pid 给出相反结论），本变异体锚点随迁到
+  该函数本体——删掉组死检查即在**两个入口**同时 fail-open。
 - `thread-group-dead-ignores-live-tasks`（#1409 第 1 条，同上）：判定函数
   `thread_group_is_dead` 对活任务视而不见——只要列出一个任务就判组已死，运行中
   的进程一旦 fd 目录被藏起来就变成可跳过。同一单元测试判杀。
+- `terminal-state-hardcoded-false`（#2142 新增，Linux，绑定单元测试）：共享判据
+  `terminal_state` 写死永不出终态（`if false &&` 形态，同
+  `thread-group-dead-ignores-live-tasks` 先例）——死线程组不再可跳过，扫描对每具
+  尸体都 fail-closed；这是此前无变异体钉住的方向（另两个 zombie-leader 变异体
+  都朝 fail-open，settle 变异体只钉超时臂）。绑定
+  `an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe`（该用例的
+  本进程分类**真正走 settle 入口**：自身 related 且非终态，每次
+  `blind_source(self)` 都沉入收尾重查；#2142 起它还在同一条断言里以一个已死未
+  收割的组钉住**两个入口**的 `Terminal` 判定——单断言元组，变异载荷同时携带两
+  个半边的错值，只有两入口真正共用判据时这个判杀才成立）的
+  `#2142 a dead thread group must be terminal`。
 - `blind-source-self-unrelated`（#1409 第 1 条，P1 复审补，Linux，绑定
   单元测试）：来源分类短路成「一律 Unrelated」——本进程自己也变成可跳过，
   任何宿主一旦藏起某进程的描述符，扫描都会当成「那里没有」照常出干净结论。
@@ -342,6 +356,6 @@ Linux 宿主（cb8 / CI）上成立。其余 Linux 契约变异体分两类，**
 变异体在任意 unix 宿主上确定性判杀（非 unix 无该测试模块）。
 cargo 不得带 `-q`（共享执行器靠逐测试行判读）。
 
-<!-- mutants: total=35 lib=2 test=33 unix=16 linux-survives=9 linux-invalid=10 -->
-<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks blind-source-self-unrelated -->
+<!-- mutants: total=36 lib=2 test=34 unix=16 linux-survives=9 linux-invalid=11 -->
+<!-- linux-contract: script-direct-write helper-in-process-write boundary-write-end-filter-removed boundary-fdinfo-read-error boundary-fdinfo-parse-error boundary-fdinfo-unknown-passed stranger-subreaper-removed stranger-reap-removed stranger-pid-kill-removed stranger-pid-reap-removed scan-descriptor-dir-unreadable scan-fd-link-unreadable boundary-grace-removed boundary-grace-never-evicts link-failure-always-release blind-source-settle-always-terminal zombie-leader-is-terminal thread-group-dead-ignores-live-tasks terminal-state-hardcoded-false blind-source-self-unrelated -->
 

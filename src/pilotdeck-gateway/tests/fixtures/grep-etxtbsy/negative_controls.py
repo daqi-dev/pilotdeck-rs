@@ -796,13 +796,15 @@ cases = [
     # fd table — `/proc/<tgid>/fd` answers EACCES in exactly that state (cb8
     # 6.17, `_tmp/20261107-issue-1409/zombie-leader-probe3.log`), so the scan
     # would skip the one source that still holds the write end.
+    # #2142: the criterion is one function now (`terminal_state`), so the
+    # anchor is its body — the mutation fail-opens BOTH entries (the
+    # enumeration's first check and the settle re-check), where before it
+    # could only reach the enumeration's copy.
     ('zombie-leader-is-terminal', publication,
-     '''    if matches!(state, 'Z' | 'X') && thread_group_is_dead(pid) {
-        return BlindSource::Terminal;
-    }''',
-     '''    if matches!(state, 'Z' | 'X') {
-        return BlindSource::Terminal;
-    }''',
+     '''    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+''',
+     '''    matches!(state, 'Z' | 'X')
+''',
      publication_target, leader_unit,
      '#1409 a zombie leader with a live group has not released its descriptors'),
     # #1409 item 1 (r2 review, concurrency): the group-liveness check itself,
@@ -818,6 +820,25 @@ cases = [
         }''',
      publication_target, leader_unit,
      '#1409 a zombie leader with a live group has not released its descriptors'),
+    # #2142: the shared criterion, hardcoded never to fire — the `if false &&`
+    # shape of thread-group-dead-ignores-live-tasks, applied to the one
+    # function both entries consult. A dead thread group stops being terminal,
+    # so the scan fails closed on every corpse it should have skipped: the
+    # direction no existing mutant pinned (zombie-leader-is-terminal and
+    # thread-group-dead-ignores-live-tasks both fail OPEN, and the settle
+    # mutant only pins the deadline arm). Bound to the blind-source unit test,
+    # the one that genuinely walks the settle entry (its own process is
+    # related and non-terminal, so every blind_source(self) descends into the
+    # settle) and that pins the Terminal verdict of both entries on one dead
+    # pid in a single assert: the failure payload carries both halves, so the
+    # kill exists only while both entries really share the criterion.
+    ('terminal-state-hardcoded-false', publication,
+     '''    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+''',
+     '''    false && matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+''',
+     publication_target, blind_unit,
+     '#2142 a dead thread group must be terminal'),
     # #1409 item 1: the source classification itself. Anyone unreadable is
     # skipped once the relation check is short-circuited — this process
     # included — which is the shape that would let a host hide a descendant's
@@ -861,6 +882,7 @@ INVALID_OFF_LINUX = (
     'blind-source-settle-always-terminal',
     'zombie-leader-is-terminal',
     'thread-group-dead-ignores-live-tasks',
+    'terminal-state-hardcoded-false',
     'stranger-pid-reap-removed',
     'blind-source-self-unrelated',
 )

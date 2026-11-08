@@ -1934,6 +1934,19 @@ fn thread_group_is_dead(pid: &str) -> bool {
     seen != 0
 }
 
+/// #2142 (#1409 r3 simplify review): the one definition of "this state means
+/// the source is terminal" — `Z`/`X` alone proves nothing (a zombie leader
+/// with a live thread group still shares its fd table, see
+/// [`thread_group_is_dead`]), only a dead thread group behind the state does.
+/// [`blind_source`] and [`settles_into_a_terminal_source`] both end here, so
+/// the enumeration's first check and the settle re-check cannot disagree on
+/// the same pid — the two used to write the criterion out twice, and the
+/// negative controls anchored only the enumeration's copy.
+#[cfg(target_os = "linux")]
+fn terminal_state(pid: &str, state: char) -> bool {
+    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+}
+
 /// #1409: classify a source whose `/proc` reads failed, for the scan's
 /// "may this be skipped" decision.
 #[cfg(target_os = "linux")]
@@ -1949,8 +1962,9 @@ fn blind_source(pid: &str) -> BlindSource {
         return BlindSource::Related;
     };
     // A zombie leader with a live group has not released its descriptors, so
-    // "terminal" is the whole group being dead, not one task reporting `Z`.
-    if matches!(state, 'Z' | 'X') && thread_group_is_dead(pid) {
+    // "terminal" is the whole group being dead, not one task reporting `Z`
+    // (#2142: one criterion, shared with the settle re-check).
+    if terminal_state(pid, state) {
         return BlindSource::Terminal;
     }
     if descended_from_this_process(pid) {
@@ -1974,14 +1988,15 @@ const BLIND_SOURCE_SETTLE: Duration = Duration::from_millis(50);
 /// #1409: re-read a related source's state until it either proves terminal —
 /// a dead thread group, a dead task, or gone — or the settle window runs out,
 /// in which case it is still an unknown and the scan fails closed on it. A
-/// zombie leader alone is not terminal: see [`thread_group_is_dead`].
+/// zombie leader alone is not terminal: the verdict is [`terminal_state`]'s,
+/// the one definition the enumeration's first check also uses (#2142).
 #[cfg(target_os = "linux")]
 fn settles_into_a_terminal_source(pid: &str) -> BlindSource {
     let deadline = Instant::now() + BLIND_SOURCE_SETTLE;
     loop {
         match fs::read_to_string(format!("/proc/{pid}/stat")) {
             Ok(stat) => match stat_fields(&stat) {
-                Some(('Z' | 'X', _)) if thread_group_is_dead(pid) => {
+                Some((state, _)) if terminal_state(pid, state) => {
                     return BlindSource::Terminal;
                 }
                 Some(_) => {}
@@ -2187,7 +2202,16 @@ fn the_stat_fields_are_read_after_the_last_parenthesis() {
 /// #1409: the classification that decides whether a failed `/proc` read may
 /// be passed over. This process is always related — its own descriptors are
 /// what the scan reads first — init cannot descend from this test process,
-/// and a reaped child is gone.
+/// and a reaped child is gone. #2142: this test also walks the settle entry —
+/// `blind_source` of this very process passes the enumeration's first check
+/// as non-terminal and descends into [`settles_into_a_terminal_source`] — so
+/// it is where the Terminal side of the shared [`terminal_state`] criterion
+/// is pinned, through both entries on one dead pid: a killed, un-reaped group
+/// with no live task must read `Terminal` from the enumeration's first check
+/// and from the settle re-check alike. One assert holds both verdicts, so a
+/// criterion that drifts — or is hardcoded away — shows both halves flipping
+/// in the failure payload, not only the fail-open side the zombie-leader
+/// mutants pin on their probe.
 #[cfg(target_os = "linux")]
 #[test]
 fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
@@ -2220,6 +2244,40 @@ fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
         BlindSource::Vanished,
         "#1409 a reaped process is gone and holds nothing"
     );
+    // #2142: the Terminal verdict of the shared criterion, through both
+    // entries, on one pid. The probe is killed but not reaped, so it is still
+    // in `/proc` as an all-`Z` group — terminal for the enumeration's first
+    // check (inside `blind_source`) and for the settle re-check (called
+    // directly, the entry a related-but-alive source reaches when the first
+    // check does not fire). Both calls are one expression, so the mutant that
+    // hardcodes the criterion away fails with both verdicts in its payload.
+    let mut dead = process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("#2142 spawn the dead-group probe");
+    let dead_pid = dead.id().to_string();
+    dead.kill().expect("#2142 kill the dead-group probe");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let stat = fs::read_to_string(format!("/proc/{dead_pid}/stat")).unwrap_or_default();
+        if matches!(stat_fields(&stat), Some(('Z', _))) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "#2142 the dead-group probe must become a zombie, not stay {stat:?}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        (
+            blind_source(&dead_pid),
+            settles_into_a_terminal_source(&dead_pid)
+        ),
+        (BlindSource::Terminal, BlindSource::Terminal),
+        "#2142 a dead thread group must be terminal through both the enumeration and the settle"
+    );
+    let _ = dead.wait().expect("#2142 reap the dead-group probe");
 }
 
 /// #1409 r2 review (concurrency): a `Z` state is the leader's, not the
