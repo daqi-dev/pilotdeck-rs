@@ -90,7 +90,10 @@ verify（任何人可复算；`--evidence` 指向 #1841 证据目录，不重录
 FAIL；fix-r3 起这是入口机械断言，落内即 FAIL-CLOSED；fix-r4 起符号链接与父目录口径：
 `--out`/`--manifest` 本身是符号链接、或其所在目录落在 `--evidence` 内，均 FAIL-CLOSED
 ——实际写入位置是未解析路径的父目录，`open("x")` 遇符号链接必 EEXIST、attempt 文件落
-在链接旁边）：
+在链接旁边；fix-r5 起身份口径（#1033「Identity, not spelling」先例）：大小写不敏感卷
+（darwin 默认 APFS）上同一目录的不同拼写按 `os.path.samefile` 文件身份判——最近存在
+祖先链上任意一级与 `--evidence` 同一即 FAIL-CLOSED，守卫判定中任何 OSError（如符号
+链接环 ELOOP）也一律 FAIL-CLOSED）：
 
 ```bash
 python3 -I specs/parity/device-patches/20261108-1841-verify.py \
