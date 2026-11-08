@@ -1095,8 +1095,13 @@ def _returned_summary_dicts(value):
     A conditional or boolean arm hands back the same dict a plain ``return``
     would, so every arm is expanded: ``return {'status': 'PASS'} if cond else
     report`` used to read as "no dict returned", and the whole return path went
-    unaudited (GLM r6 boundary P0-1).
+    unaudited (GLM r6 boundary P0-1).  A *constant* condition is not a branch
+    (#1652 fix-r3, DS sibling P2): only the arm the interpreter can take is a
+    return the function can produce, so the dead arm's dict is not judged —
+    pre-fix it was, a false red.
     """
+    if isinstance(value, ast.IfExp):
+        value = _constant_ifexp(value) or value
     if isinstance(value, ast.IfExp):
         arms = (value.body, value.orelse)
     elif isinstance(value, ast.BoolOp):
@@ -4077,7 +4082,12 @@ def _returned_names(value):
     ``return payload if cond else report`` returns one of two local summaries;
     until the arms were expanded only a plain tuple of names was resolved, so
     the bound dicts behind them were never slot-checked (GLM r6 boundary P0-1).
+    A *constant* condition folds first, mirroring ``_returned_summary_dicts``
+    (#1652 fix-r3, DS sibling P2): the dead arm is not a name the function
+    can hand back.
     """
+    if isinstance(value, ast.IfExp):
+        value = _constant_ifexp(value) or value
     if isinstance(value, ast.Name):
         return [value.id]
     if isinstance(value, ast.IfExp):
@@ -6782,6 +6792,25 @@ def aggregation_audit():
                        for slot in unshared_status_slots(nested_starred[1]))):
         failures.append('#892 aggregation-audit: detector self-test did not flag a '
                         'clean status inside a starred literal spread (#1652)')
+    # #1652 fix-r3 (DS sibling P2): the return-path enumeration folds constant
+    # conditionals exactly like the slot layer — a dead arm's clean dict is not
+    # a summary the function can return (pre-fix it was judged: false red),
+    # while the live arm keeps being judged (the fix must not over-fold).
+    folded_dead_arm = ast.parse(
+        "def _folded_dead_arm_summary(report):\n"
+        "    return report if True else {'status': 'PASS'}\n")
+    if _returned_summary_dicts(folded_dead_arm.body[0].body[0].value):
+        failures.append('#892 aggregation-audit: detector self-test judged the '
+                        'dead arm of a constant conditional on the return path (#1652)')
+    if _returned_names(folded_dead_arm.body[0].body[0].value) != ['report']:
+        failures.append('#892 aggregation-audit: detector self-test did not fold '
+                        'the dead arm away from the return names (#1652)')
+    folded_live_arm = ast.parse(
+        "def _folded_live_arm_summary(report):\n"
+        "    return {'status': 'PASS'} if True else report\n")
+    if not _returned_summary_dicts(folded_live_arm.body[0].body[0].value):
+        failures.append('#892 aggregation-audit: detector self-test let folding '
+                        'hide the live arm of a constant conditional (#1652)')
 
     def _probe892_function(name):
         return next((node for node in probe892.body

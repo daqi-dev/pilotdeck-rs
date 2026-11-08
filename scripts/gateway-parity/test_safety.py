@@ -3385,6 +3385,31 @@ class RetirementScoring(unittest.TestCase):
              {'rows': [{'peer': '180.101.242.203:443', 'raw': 'x'}], 'unparsed': 5,
               'commandStatus': 'ok'},
              ('hostAudit', 'network', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 boundary P0): the discriminating loopback-only
+            # variant — the row above fails on its undeclared peer, so only
+            # this one proves a broken unparsed tally itself cannot read as a
+            # clean loopback sample (pre-fix-r3 it degraded to [] and PASSed).
+            ('connections unparsed non-list loopback-only', 'connections',
+             {'rows': [{'peer': '127.0.0.1:49153', 'raw': 'x'}], 'unparsed': 5,
+              'commandStatus': 'ok'},
+             ('hostAudit', 'network', 0, 'status'), 'BLOCKED'),
+            # fix-r3 (DS r2 concurrency): a corrupt peer value is unusable, and
+            # must not raise out of the class-4 control's set arithmetic.
+            ('connections peer non-str', 'connections',
+             {'rows': [{'peer': {'a': 1}, 'raw': 'x'}], 'commandStatus': 'ok'},
+             ('hostAudit', 'network', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 concurrency): a truthy non-list census rows sample
+            # is an unusable observation — never a TypeError out of the
+            # controls that drops every measured face.
+            ('census truthy non-list rows', 'census',
+             {'rows': 5, 'declared': [7], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'BLOCKED'),
+            # fix-r3 (DS r2 concurrency): an unhashable pid is an unusable
+            # observation read as undeclared (FAIL), never a TypeError out of
+            # the control attribution.
+            ('census unhashable pid', 'census',
+             {'rows': [{'pid': ['x']}, {'pid': 7}], 'declared': [7], 'declaredAlive': True},
+             ('hostAudit', 'processCensus', 0, 'status'), 'FAIL'),
             ('listeners', 'listeners', KeyError, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
             ('listeners null', 'listeners', None, ('hostAudit', 'listeners', 0, 'status'), 'FAIL'),
             ('listeners null addresses', 'listeners',
@@ -3405,15 +3430,33 @@ class RetirementScoring(unittest.TestCase):
             # out of the scorer or the controls.
             ('outcomes non-dict row', 'outcomes', [None],
              ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 boundary): a non-str method value is a missing
+            # method — MISSING_FIELD fails the round, never a TypeError out of
+            # the scorer's set/sorted arithmetic that would drop all rounds.
+            ('outcomes method non-str', 'outcomes',
+             [{'method': None, 'outcome': 'ok', 'shape': 'request'}],
+             ('rounds', 0, 'status'), 'FAIL'),
             ('frames', 'frames', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('frames null', 'frames', None, ('rounds', 0, 'status'), 'FAIL'),
             ('frames non-dict rows', 'frames', [None, 123, 'x'],
+             ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 boundary/sibling): a truthy non-list frames value
+            # is not proof of a live websocket upgrade — /ws reads NO_HIT (the
+            # discriminating /ws assertions live in
+            # test_entry_inventory_ws_hit_requires_list_frames; here the row
+            # documents that the scorer itself still fails fail-closed without
+            # raising on the corrupt shape).
+            ('frames truthy non-list', 'frames', {'a': 1},
              ('rounds', 0, 'status'), 'FAIL'),
             ('http', 'http', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('http null', 'http', None, ('rounds', 0, 'status'), 'FAIL'),
             ('processes', 'processes', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('driverExitCode', 'driverExitCode', KeyError, ('rounds', 0, 'status'), 'FAIL'),
             ('driverExitCode null', 'driverExitCode', None, ('rounds', 0, 'status'), 'FAIL'),
+            # fix-r3 (DS r2 boundary): a JSON false is not the exit code 0 it
+            # compares equal to — the round fails ROUND_EXECUTION instead of
+            # passing on a corrupt artifact.
+            ('driverExitCode false', 'driverExitCode', False, ('rounds', 0, 'status'), 'FAIL'),
             ('label', 'label', KeyError, ('rounds', 0, 'round'), None),
             ('runtime', 'runtime', KeyError, None, None),
         )
@@ -3511,6 +3554,40 @@ class RetirementScoring(unittest.TestCase):
                 self.assertTrue(health['status'] == 'NO_HIT',
                                 f'#47 {tag} status is an unusable probe: {health}')
                 self.assertIn('/health', inventory['unhit'])
+
+    def test_entry_inventory_ws_hit_requires_list_frames(self):
+        # fix-r3 (DS r2 boundary/sibling): the /ws hit is proven by wire
+        # frames — a truthy non-list (or an all-non-dict list) frames value
+        # is not proof of a live upgrade, so /ws reads NO_HIT and lands in
+        # ``unhit`` instead of HITting on any truthy value (pre-fix-r3 the
+        # face could PASS on a corrupt artifact while the wire pass had
+        # already treated those rows as carrying no frame).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            baseline = self._fake_baseline(root)
+            home = root / 'home'
+            home.mkdir()
+            (home / 'pilotdeck.yaml').write_text('schemaVersion: 1\n')
+
+            def round_row(label, frames):
+                return {'label': label, 'http': [{'path': '/health', 'status': 200}],
+                        'frames': frames,
+                        'outcomes': [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
+                        'runtime': {'pilotHome': str(home)}}
+
+            for tag, bad_frames in (('truthy non-list', {'a': 1}),
+                                    ('all non-dict rows', [None, 123, 'x'])):
+                inventory = self.session._retirement_entry_inventory(
+                    baseline, round_row('round-01', bad_frames))
+                ws = next(entry for entry in inventory['entries']
+                          if entry['entry'] == '/ws')
+                self.assertEqual(ws['status'], 'NO_HIT',
+                                 f'#48 {tag} is not proof of a live upgrade: {ws}')
+                self.assertIn('/ws', inventory['unhit'])
+            inventory = self.session._retirement_entry_inventory(
+                baseline, round_row('round-02', self._frames(final=True)))
+            ws = next(entry for entry in inventory['entries'] if entry['entry'] == '/ws')
+            self.assertEqual(ws['status'], 'HIT', f'#48 legal frames must still HIT: {ws}')
 
     def test_control_attribution_requires_the_injected_object(self):
         # P1 (#1355 fix-r4d): a control PASS must be attributed to the object

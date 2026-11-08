@@ -1726,6 +1726,18 @@ def _retirement_census_pid(row):
     return row.get('pid') if isinstance(row, dict) else None
 
 
+def _retirement_hashable(value):
+    """Set-safe projection of an observation value (#1588 r1 fix-r3, DS concurrency).
+
+    Pids and peers come straight from observation rows; an unhashable one
+    (list/dict) is an unusable observation already read as fail-closed by its
+    own verdict.  Project it to its repr so the control attributions' set
+    arithmetic cannot raise (which would collapse the whole 16-face report
+    into a ROUND_EVIDENCE stub) while distinct unhashable shapes stay distinct.
+    """
+    return value if isinstance(value, (int, str)) else repr(value)
+
+
 def _retirement_census_verdict(census):
     """R3 (#1355 fix-r2): an unobservable census is not an empty host set.
 
@@ -1846,11 +1858,19 @@ def _retirement_network_verdict(connections):
     rows = connections.get('rows')
     rows = rows if isinstance(rows, list) else []
     unparsed = [row for row in rows if not isinstance(row, dict) or row.get('peer') is None]
-    # fix-r2 (DS concurrency P2): the unparsed tally is normalised to its
-    # declared shape — a truthy non-list must not turn the face into a
-    # TypeError (``unparsed += 5``).
+    # fix-r2 (DS concurrency P2) kept the tally type-safe; fix-r3 (DS r2
+    # boundary P0, both the boundary and concurrency roles) closes the
+    # direction it opened: a truthy non-list ``unparsed`` is a broken
+    # observation, not an empty one — degrading it to [] read "all peers
+    # loopback, probe clean" (observable=True → PASS) out of a corrupt
+    # artifact.  It counts as one unparsed row so the round blocks; a falsy
+    # value (None/0/'') stays "no unparsed lines" and does not disturb a
+    # legal shape.
     raw_unparsed = connections.get('unparsed')
-    unparsed += raw_unparsed if isinstance(raw_unparsed, list) else []
+    if isinstance(raw_unparsed, list):
+        unparsed += raw_unparsed
+    elif raw_unparsed:
+        unparsed.append({'peer': None, 'raw': repr(raw_unparsed)})
     undeclared = [row.get('peer') for row in rows
                   if isinstance(row, dict) and _retirement_peer_is_undeclared(row.get('peer'))]
     # Observability is the shape of the observation (#1355 fix-r4f): a
@@ -1984,9 +2004,14 @@ def score_retirement_round(row, expected):
     if problems:
         verdict['rules'] = problems
         return verdict
-    if row.get('driverExitCode') != 0:
+    # fix-r3 (DS r2 boundary): a JSON ``false`` is not the exit code 0 it
+    # compares equal to — only a true non-bool int zero counts as a clean
+    # driver exit, the same shape guard the probe status side already has.
+    driver_exit = row.get('driverExitCode')
+    if not (isinstance(driver_exit, int) and not isinstance(driver_exit, bool)
+            and driver_exit == 0):
         problems.append({'rule': 'ROUND_EXECUTION',
-                         'detail': f"driver exited {row.get('driverExitCode')!r}"})
+                         'detail': f"driver exited {driver_exit!r}"})
     outcomes = row.get('outcomes') or []
     if not outcomes:
         problems.append({'rule': 'ZERO_TESTS', 'detail': 'no method outcome rows'})
@@ -2004,6 +2029,14 @@ def score_retirement_round(row, expected):
             if field not in outcome_row:
                 missing_fields.append({'field': field, 'row': outcome_row})
         method, status = outcome_row.get('method'), outcome_row.get('outcome')
+        # fix-r3 (DS r2 boundary): a non-str method value is the same unusable
+        # observation as a missing one — None mixed into executed made
+        # ``sorted(executed_set)`` raise (and an unhashable one died at the
+        # set()), which the report wrapper collapsed into a full-face BLOCKED
+        # with ``rounds == []``, dropping every measured round.
+        if not isinstance(method, str):
+            missing_fields.append({'field': 'method', 'row': outcome_row})
+            continue
         if status not in RETIREMENT_OUTCOME_STATUSES:
             unknown.append(method)
             continue
@@ -2228,7 +2261,11 @@ def _retirement_controls(round_row, expected, verdict=None):
     # reports unestablished instead of raising AttributeError.
     census = round_row.get('census')
     census = census if isinstance(census, dict) else {}
-    census_rows = census.get('rows') or []
+    # fix-r3 (DS r2 concurrency): a truthy non-list rows sample is an unusable
+    # observation — normalise to [] instead of raising TypeError out of the
+    # controls (which run before every audit face and would drop all of them).
+    census_rows = census.get('rows')
+    census_rows = census_rows if isinstance(census_rows, list) else []
     gateway_pid = _retirement_gateway_pid(round_row)
     if gateway_pid is None or not any(_retirement_census_pid(row) == gateway_pid
                                       for row in census_rows):
@@ -2261,7 +2298,7 @@ def _retirement_controls(round_row, expected, verdict=None):
             original_census = _retirement_census_verdict(
                 {'rows': census_rows, 'declared': declared_original,
                  'declaredAlive': census.get('declaredAlive')})
-            undeclared_before = {_retirement_census_pid(row)
+            undeclared_before = {_retirement_hashable(_retirement_census_pid(row))
                                  for row in original_census.get('undeclared') or []}
             census_verdict = _retirement_census_verdict(
                 {'rows': census_rows, 'declared': declared,
@@ -2271,9 +2308,13 @@ def _retirement_controls(round_row, expected, verdict=None):
                    # Attribution is the declared-set delta: exactly the gateway
                    # pid becomes undeclared.  A leftover row the round already
                    # had is in undeclared_before and cannot carry the class.
+                   # fix-r3 (DS r2 concurrency): both sides go through the
+                   # hashable projection — an unhashable pid in the round's
+                   # own rows must not raise out of the attribution.
                    caused=lambda verdict: (
-                       {_retirement_census_pid(row) for row in verdict.get('undeclared') or []}
-                       == undeclared_before | {gateway_pid}))
+                       {_retirement_hashable(_retirement_census_pid(row))
+                        for row in verdict.get('undeclared') or []}
+                       == undeclared_before | {_retirement_hashable(gateway_pid)}))
     # 3. 全走 unavailable: every outcome becomes CAPABILITY_UNAVAILABLE, wire kept consistent.
     mutated = copy.deepcopy(round_row)
     for outcome_row in mutated.get('outcomes') or []:
@@ -2349,7 +2390,11 @@ def _retirement_controls(round_row, expected, verdict=None):
                     f'the control round already reports {injected_peer!r} as an undeclared peer, '
                     'so the injected peer cannot be told apart from the pre-existing one')
     else:
-        undeclared_before = set(original_network.get('undeclared') or [])
+        # fix-r3 (DS r2 concurrency): a corrupt row can carry a non-str (even
+        # unhashable) peer — project both sides so the attribution's set
+        # arithmetic cannot raise out of the controls.
+        undeclared_before = {_retirement_hashable(peer)
+                             for peer in original_network.get('undeclared') or []}
         mutated_connections = copy.deepcopy(connections)
         mutated_connections['rows'] = (mutated_connections.get('rows') or []) + [
             {'peer': injected_peer, 'raw': 'controlled mutation'}]
@@ -2360,8 +2405,9 @@ def _retirement_controls(round_row, expected, verdict=None):
                         'so adding a non-loopback peer cannot be established')
         else:
             record('FORWARDING_MISLABELED', injection, 'NETWORK_FALLBACK', network_verdict, {},
-                   caused=lambda verdict: (set(verdict.get('undeclared') or [])
-                                           == undeclared_before | {injected_peer}))
+                   caused=lambda verdict: (
+                       {_retirement_hashable(peer) for peer in verdict.get('undeclared') or []}
+                       == undeclared_before | {_retirement_hashable(injected_peer)}))
     # 5. R1 (#1355 fix-r2): a stream method recorded as an error outcome with
     # every receive frame stripped (send kept) must still fail EVIDENCE_BACKING
     # — the pre-fix scorer passed exactly this shape.
@@ -2622,8 +2668,14 @@ def _retirement_entry_inventory(baseline, round_row):
             continue
         if name == '/ws':
             # The whole driver session is one live upgrade; wire frames prove it.
+            # fix-r3 (DS r2 boundary/sibling): a truthy non-list (or an
+            # all-non-dict list) frames observation is not proof of a live
+            # upgrade — the wire pass already treats non-dict rows as carrying
+            # no frame (#1588 r1 §1), so the hit reading agrees instead of
+            # passing on any truthy value.
             frames = round_row.get('frames')
-            hit, reason = bool(frames), (None if frames else 'no websocket frames recorded')
+            hit = isinstance(frames, list) and any(isinstance(frame, dict) for frame in frames)
+            reason = None if hit else 'no websocket frames recorded'
         else:
             hit = any(p[1] not in (None, 404) for p in matched)
             reason = None if hit else 'route answered 404 or was unreachable'
