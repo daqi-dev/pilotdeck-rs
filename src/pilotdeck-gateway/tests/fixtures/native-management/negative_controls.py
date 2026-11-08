@@ -7,6 +7,7 @@ Every mutant must compile, kill its exact test, and pass after restoration.
 from pathlib import Path
 import difflib
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -99,7 +100,7 @@ mutations.append(('commands-nested-blocking', SOURCE, 'return Some(self.commands
 # flag (which became unused after native skill execution was installed).
 mutations.append(('skill-execution-enabled', ROOT / 'src/pilotdeck-gateway/src/native_process/skills.rs', 'if !self.1 {', 'if false && !self.1 {', 'native_process::skills::tests::disabled_skills_do_not_register_execution', '#1231 disabled skills do not enable execution'))
 
-mutations.append(('management-nested-acquire', SOURCE, 'let lease = self\n            .project\n            .acquire(None)\n            .map_err(|e| RequestError::new(e.to_string()))?;', 'let project = self.project.clone();\n        let lease = tokio::task::spawn_blocking(move || project.acquire(None)).await.map_err(|e| RequestError::new(e.to_string()))?.map_err(|e| RequestError::new(e.to_string()))?;', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
+mutations.append(('management-nested-acquire', SOURCE, 'let lease = self\n            .project\n            .acquire(Some(&self.options.project))\n            .map_err(|e| RequestError::new(e.to_string()))?;', 'let project = self.project.clone();\n        let root = self.options.project.clone();\n        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&root))).await.map_err(|e| RequestError::new(e.to_string()))?.map_err(|e| RequestError::new(e.to_string()))?;', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
 
 mutations.append(('query-surrogate-lossy', SOURCE, 'Some(JsValue::String(text)) => Some(text.clone()),', 'Some(JsValue::String(text)) => Some(String::from_utf16_lossy(text.units()).into()),', TEST, '#1231 method wire result'))
 
@@ -209,28 +210,26 @@ mutations.append((
     '        Ok(Some(resource.management().clone()))',
     'native_process::assembly::memory::tests::memory_management_holds_the_generation_lease_through_the_call',
     '#1456 the returned service must own a generation lease'))
-# #1456 review (two lineages): the widened catalog resolution also accepts
-# every *other* registered project and the virtual General workspace; without
-# the isolation gate `memory_wipe` with a foreign key clears the served
-# project's memory.
+# Registered foreign roots must select their own generation. The old control
+# names remain: acquisition failure must not fall back to A, and a textual
+# prefix must not alias a distinct registered project to A.
 mutations.append((
     'memory-foreign-project-served',
     ASSEMBLY_MEMORY,
-    '        if !self.serves_project(project_key) {',
-    '        if false && !self.serves_project(project_key) {',
-    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
+    '            .acquire(Some(&root))\n'
+    '            .map_err(MemoryProviderError::from)?;',
+    '            .acquire(Some(&root)).or_else(|_| self.project.acquire(None))\n'
+    '            .map_err(MemoryProviderError::from)?;',
+    'native_process::assembly::memory::tests::selected_project_staging_failure_preserves_error_without_fallback',
     'must not reach the served project'))
-# #1456 r2 (codex sibling P2): the gate must be *project*-exact. Degrading the
-# shared predicate to a textual prefix admits a registered sibling whose
-# spelling starts with the served root (`<tmp>/project-2`) and would wipe the
-# served project's memory; the prefix-sharing fixture cell must kill it.
 mutations.append((
     'memory-foreign-project-served-by-prefix',
     ASSEMBLY_MEMORY,
-    '            .is_ok_and(|key| self.options.serves_project(&key))',
-    '            .is_ok_and(|key| key\n'
-    '                .starts_with(self.options.project.to_string_lossy().as_ref()))',
-    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
+    '            .acquire(Some(&root))\n'
+    '            .map_err(MemoryProviderError::from)?;',
+    '            .acquire(if root.to_string_lossy().starts_with(self.options.project.to_string_lossy().as_ref()) { None } else { Some(&root) })\n'
+    '            .map_err(MemoryProviderError::from)?;',
+    'native_process::assembly::memory::tests::registered_memory_projects_are_routed_to_their_own_provider',
     'must not reach the served project'))
 # #1320 fix-r2: resolve_settings is advertised (fix-r1 F7), so the
 # rename-to-unwired control keeps the exact wired capability set pinned.
@@ -714,8 +713,14 @@ def main():
         run_env = dict(env)
         if child_case is not None:
             run_env.update(PDRS_SESSION_IO_CASE='marker', PDRS_SESSION_IO_METHOD=child_case)
-        result = run_owned(command + args, cwd=ROOT, env=run_env,
-                           timeout=30 if child_case is not None and '--no-run' not in args else 900)
+        try:
+            result = run_owned(command + args, cwd=ROOT, env=run_env,
+                               timeout=30 if child_case is not None and '--no-run' not in args else 900)
+        except subprocess.TimeoutExpired as error:
+            def raw(value):
+                return value if isinstance(value, bytes) else (value or '').encode('utf-8')
+            (out / (label + '.log')).write_bytes(raw(error.stdout) + raw(error.stderr))
+            raise
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
         return result
 
