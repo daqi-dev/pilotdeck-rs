@@ -9,7 +9,7 @@ import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, new_output_directory, run_owned, wait_for_slot
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -27,6 +27,16 @@ mutations = [
     ('omit-sop', SOURCE, '    sop: sop::METHODS,', '    sop: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-config', SOURCE, '    config: config::METHODS,', '    config: &[],', TEST, '#1305 registry contains every wired method'),
     ('omit-upload', SOURCE, '    upload: upload::METHODS,', '    upload: &[],', TEST, '#1305 registry contains every wired method'),
+    # #1627: the remaining wired families get the same one-row coverage as
+    # the eight above -- omitting each family's slice must fail the same
+    # registry completeness assertion.
+    ('omit-history', SOURCE, '    history: history::METHODS,', '    history: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-mcp', SOURCE, '    mcp: mcp::METHODS,', '    mcp: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-tools', SOURCE, '    tools: tools::METHODS,', '    tools: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-session-dir', SOURCE, '    session_dir: session_dir::METHODS,', '    session_dir: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-steer', SOURCE, '    steer: steer::METHODS,', '    steer: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-permission', SOURCE, '    permission: permission::METHODS,', '    permission: &[],', TEST, '#1305 registry contains every wired method'),
+    ('omit-user-dialog', SOURCE, '    user_dialog: user_dialog::METHODS,', '    user_dialog: &[],', TEST, '#1305 registry contains every wired method'),
     ('duplicate-method', SOURCE, '    runs: runs::METHODS,', '    runs: &["run_get", "run_events", "run_reattach", "run_get"],', TEST, '#1305 registry contains no duplicate method'),
     ('management-gate-missing', MANAGEMENT, '                | "snapshot_get"', '                | "snapshot_get_removed"', GATE_TEST, '#1305 management gate matches registered family'),
     ('management-gate-extra', MANAGEMENT, '                | "commands_list"', '                | "commands_list" | "run_get"', GATE_TEST, '#1305 management gate matches registered family'),
@@ -64,8 +74,7 @@ def main():
         raise SystemExit('#1305 unknown/duplicate mutation name')
     if selected:
         selected_rows = [case for case in selected_rows if case.mutation in selected]
-    out = Path(args[0]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    out = new_output_directory(Path(args[0]).resolve())
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml', '-p', 'pilotdeck-gateway', '--lib']
     results = []
