@@ -35,8 +35,9 @@ v22.22.0 / ICU 78.2）：`null` 与未给逐格同答——`resume` 回显（nul
 `projectKey:null`）、`close` `undefined`、`delete` `SESSION_NOT_FOUND` / 空白键
 `INVALID_SESSION_KEY` / `sessionKey is required.`、`rename`/`tag`
 `{"updated":true}`；原始输出
-`_tmp/20261026-issue-2563/ts-probe/probe-null-r11.out`（worker 沙箱树，探针
-import 指向其 runner 副本）。收货复跑补溯源（#2601 评审 ds/boundary#4）：同
+`_tmp/20261109-2563-harvest/ts-probe/probe-null-r11.out`（主仓收货副本；原件在
+worker 沙箱树 `_tmp/20261026-issue-2563/ts-probe/`、探针 import 指向其 runner
+副本，树回收后以主仓副本为准）。收货复跑补溯源（#2601 评审 ds/boundary#4）：同
 版本 Node v22.22.0 / ICU 78.2 在主仓冻结基线 `resources/PilotDeck`
 （`cc7c4e653`）上同形复测 12 格，探针 import 直指其
 `dist/src/cli/createLocalGateway.js`（sha256
@@ -152,7 +153,9 @@ R9 五条差异的其余四条（① `resume/close` 上 Rust 多出的 `sessionK
   `git show HEAD:…` 相同）：`cargo test --offline -p pilotdeck-gateway --lib
   native_process::methods::session_dir::tests` → `19 passed; 0 failed; 0
   ignored`，日志含 `Compiling`（非旧制品），原始输出
-  `_tmp/20261026-issue-2563/rust-probe/gate-order-tests-r11.out`；
+  `_tmp/20261109-2563-harvest/rust-probe/gate-order-tests-r11.out`（主仓收货
+  副本，原件在 worker 沙箱树
+  `_tmp/20261026-issue-2563/rust-probe/`，树回收后以主仓副本为准）；
   `null_project_key_falls_back_and_non_string_stays_refused_by_admission`
   单跑 `1 passed; 0 failed`。
 - 账本闸门：`python3 -I scripts/gateway-parity/check_frozen.py --base
