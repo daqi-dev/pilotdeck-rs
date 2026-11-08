@@ -232,41 +232,46 @@ mod tests {
         teardown(&requests).await;
     }
 
-    // The always-on rounds walk the same shared admission gate as every other
-    // session request: an unserved projectKey is refused by the entry gate
-    // before the family runs, and the configured project is admitted through
-    // to the envelope (issue acceptance: "always-on 轮次走同一接纳器").
+    // Fixed TS InProcessGateway does not inspect projectKey in the
+    // unconfigured apply branch. The common native view still accepts each
+    // key shape before the identical envelope is returned.
     #[tokio::test]
     async fn always_on_rounds_share_the_admission_gate() {
         let (_scratch, requests) = std::panic::catch_unwind(setup).expect("#1313 fixture setup");
-        let params = crate::metadata::object([("projectKey", "/wrong/project".into())]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
-        negative_assert_eq!(
-            result
-                .expect_err("#1313 wrong project is refused")
-                .code
-                .as_str(),
-            "gateway_request_failed",
-            "#1313 always_on_apply admission gate refuses an unserved project"
-        );
-        let project_key = requests.options.project.to_string_lossy().into_owned();
-        let params = crate::metadata::object([
-            ("projectKey", project_key.as_str().into()),
-            ("workCycleId", "wc1".into()),
-        ]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
-        let value =
-            result.unwrap_or_else(|error| panic!("#1313 served project is admitted: {error:?}"));
-        negative_assert_eq!(
-            value
-                .get("error")
-                .and_then(|e| e.get("code"))
-                .and_then(JsValue::as_string),
-            Some(&JsString::from("not_configured")),
-            "#1313 always_on_apply admission gate admits the configured project"
-        );
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-multiproject-gates/oracle.json"
+        ))
+        .unwrap();
+        let cases = match oracle.get("cases").unwrap() {
+            JsValue::Array(cases) => cases,
+            _ => panic!("cases"),
+        };
+        for (name, key) in [
+            ("null-always", JsValue::Null),
+            ("number-always", JsValue::Number(5.0)),
+            ("foreign-always", JsValue::from("/wrong/project")),
+        ] {
+            let expected = cases
+                .iter()
+                .find(|case| {
+                    case.get("id")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|id| id.equals_str(name))
+                })
+                .unwrap();
+            let result = GatewayRequests::request(
+                &requests,
+                JsString::from("always_on_apply"),
+                crate::metadata::object([("projectKey", key)]),
+            )
+            .await
+            .unwrap();
+            negative_assert_eq!(
+                Some(&result),
+                expected.get("value"),
+                "#1313 unconfigured envelope matches fixed TS"
+            );
+        }
         teardown(&requests).await;
     }
 

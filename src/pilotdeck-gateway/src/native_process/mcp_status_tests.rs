@@ -576,44 +576,72 @@ async fn nullish_params_report_the_type_error() {
         .expect("#1432 harness owner shutdown");
 }
 
-/// The isolation admission gate answers before the shared config: a `null`
-/// or non-string `projectKey` fails the configured-project check and is
-/// refused as an unserved key. The shared config's own contract differs
-/// (`runtime/mcp/sdk.rs`: nullish keeps the injected fallback, a non-string
-/// raises `ERR_INVALID_ARG_TYPE`); that divergence is the #1311-era
-/// isolation admission this route shares with every other method, not
-/// something the #1432 wiring introduces. These two cells pin the current
-/// admission answer so the divergence stays visible instead of drifting.
+/// The fixed TS runtime resolves nullish project keys against its fallback;
+/// Node path resolution rejects numbers before touching a project provider.
 #[tokio::test]
 async fn null_and_non_string_project_keys_stay_refused_by_admission() {
-    for params in [
+    let oracle = parse_json(include_str!(
+        "../../tests/fixtures/native-multiproject-gates/oracle.json"
+    ))
+    .unwrap();
+    let cases = match oracle.get("cases").unwrap() {
+        JsValue::Array(cases) => cases,
+        _ => panic!("cases"),
+    };
+    let case = |name: &str| {
+        cases
+            .iter()
+            .find(|case| {
+                case.get("id")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|id| id.equals_str(name))
+            })
+            .unwrap()
+    };
+    let harness = harness();
+    let null = call(
+        &harness.requests,
+        "mcp_server_status",
         r#"{"projectKey":null,"sessionKey":"s"}"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(Some(&null), case("null-mcp").get("value"));
+    assert_eq!(
+        harness.probe.events(),
+        vec!["resolve:null".to_string(), "refresh".to_string()]
+    );
+    harness.probe.clear_events();
+    let error = call(
+        &harness.requests,
+        "mcp_server_status",
         r#"{"projectKey":5,"sessionKey":"s"}"#,
-    ] {
-        let harness = harness();
-        let error = call(&harness.requests, "mcp_server_status", params)
-            .await
-            .expect_err("#1432 admission must refuse null and non-string project keys");
-        assert_eq!(
-            "gateway_request_failed", error.code,
-            "#1432 the admission refusal carries the family fallback code"
-        );
-        assert_eq!(
-            error
-                .message
-                .to_utf8()
-                .expect("#1432 admission message must be UTF-8"),
-            "The isolated native process serves only its configured project.",
-            "#1432 the isolation gate answers before the shared config"
-        );
-        assert!(
-            harness.probe.events().is_empty(),
-            "#1432 a refused key must not reach the resolver"
-        );
-        harness
-            .owner
-            .shutdown()
-            .await
-            .expect("#1432 harness owner shutdown");
-    }
+    )
+    .await
+    .expect_err("number must reach Node-path type validation");
+    assert_eq!(
+        Some(&JsValue::from(error.code.as_str())),
+        case("number-mcp").get("code")
+    );
+    assert_eq!(
+        Some(&JsValue::String(error.message.clone())),
+        case("number-mcp").get("message")
+    );
+    assert!(
+        harness.probe.events().is_empty(),
+        "invalid key must not call the provider"
+    );
+    let foreign = call(
+        &harness.requests,
+        "mcp_server_status",
+        r#"{"projectKey":"/foreign","sessionKey":"s"}"#,
+    )
+    .await
+    .unwrap();
+    assert_eq!(Some(&foreign), case("foreign-mcp").get("value"));
+    assert_eq!(
+        harness.probe.events(),
+        vec!["resolve:/foreign".to_string(), "refresh".to_string()]
+    );
+    harness.owner.shutdown().await.unwrap();
 }

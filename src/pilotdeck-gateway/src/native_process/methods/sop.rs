@@ -24,7 +24,7 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
-            let _ = (method, params);
+            let _ = params;
 
             // The isolated native process never attaches an SOP runtime, so
             // both methods return CAPABILITY_UNAVAILABLE. For sop_resume the
@@ -49,9 +49,11 @@ impl Requests {
             // validation in the downstream callback is never reached. A frame
             // missing sessionKey — or any other required field — therefore
             // answers CAPABILITY_UNAVAILABLE, not a validation error.
-            Err(unavailable(
-                "StaffDeck SOP is not configured on this isolated native process.",
-            ))
+            Err(unavailable(if method == "sop_status" {
+                "StaffDeck SOP status is unavailable."
+            } else {
+                "StaffDeck SOP resume is unavailable."
+            }))
         })
     }
 }
@@ -84,29 +86,92 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_status: valid sessionKey + wrong projectKey → shared entry gate in
-    // Requests::request rejects before sop_request runs, code is gateway_request_failed.
-    // The per-method guard that used to live in sop_request was dead code because
-    // native_process/requests.rs:179-188 always intercepts first with a different error code.
+    // Fixed TS asks for the optional SOP capability before reading projectKey;
+    // the native process retains its previously documented local error text.
     #[tokio::test]
     async fn sop_status_rejects_wrong_project() {
         let (_scratch, requests) =
             std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
-        let params = crate::metadata::object([
-            ("sessionKey", "s1".into()),
-            ("projectKey", "/wrong/project".into()),
-        ]);
-        let result = crate::runtime::turn::gateway::GatewayRequests::request(
-            &requests,
-            pilotdeck_protocol::JsString::from("sop_status"),
-            params,
-        )
-        .await;
-        negative_assert_eq!(
-            result.unwrap_err().code.as_str(),
-            "gateway_request_failed",
-            "#1312 sop_status wrong project rejected by shared entry gate"
-        );
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-multiproject-gates/oracle.json"
+        ))
+        .unwrap();
+        let cases = match oracle.get("cases").unwrap() {
+            pilotdeck_protocol::JsValue::Array(cases) => cases,
+            _ => panic!("cases"),
+        };
+        for (name, key) in [
+            ("null-sop", pilotdeck_protocol::JsValue::Null),
+            ("number-sop", pilotdeck_protocol::JsValue::Number(5.0)),
+            (
+                "foreign-sop",
+                pilotdeck_protocol::JsValue::from("/wrong/project"),
+            ),
+        ] {
+            let expected = cases
+                .iter()
+                .find(|case| {
+                    case.get("id")
+                        .and_then(pilotdeck_protocol::JsValue::as_string)
+                        .is_some_and(|id| id.equals_str(name))
+                })
+                .unwrap();
+            let params =
+                crate::metadata::object([("sessionKey", "s1".into()), ("projectKey", key)]);
+            let error = crate::runtime::turn::gateway::GatewayRequests::request(
+                &requests,
+                pilotdeck_protocol::JsString::from("sop_status"),
+                params,
+            )
+            .await
+            .unwrap_err();
+            negative_assert_eq!(
+                Some(&pilotdeck_protocol::JsValue::from(error.code.as_str())),
+                expected.get("code"),
+                "#1312 unconfigured SOP code matches fixed TS"
+            );
+            assert_eq!(
+                Some(&pilotdeck_protocol::JsValue::String(error.message.clone())),
+                expected.get("message"),
+                "#1312 status message matches fixed TS"
+            );
+        }
+        for (name, key) in [
+            ("null-resume", pilotdeck_protocol::JsValue::Null),
+            ("number-resume", pilotdeck_protocol::JsValue::Number(5.0)),
+            (
+                "foreign-resume",
+                pilotdeck_protocol::JsValue::from("/wrong/project"),
+            ),
+        ] {
+            let expected = cases
+                .iter()
+                .find(|case| {
+                    case.get("id")
+                        .and_then(pilotdeck_protocol::JsValue::as_string)
+                        .is_some_and(|id| id.equals_str(name))
+                })
+                .unwrap();
+            let params =
+                crate::metadata::object([("sessionKey", "s1".into()), ("projectKey", key)]);
+            let error = crate::runtime::turn::gateway::GatewayRequests::request(
+                &requests,
+                pilotdeck_protocol::JsString::from("sop_resume"),
+                params,
+            )
+            .await
+            .unwrap_err();
+            negative_assert_eq!(
+                Some(&pilotdeck_protocol::JsValue::from(error.code.as_str())),
+                expected.get("code"),
+                "#1312 resume code matches fixed TS"
+            );
+            assert_eq!(
+                Some(&pilotdeck_protocol::JsValue::String(error.message.clone())),
+                expected.get("message"),
+                "#1312 resume message matches fixed TS"
+            );
+        }
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
         requests
             .project
@@ -284,7 +349,7 @@ mod tests {
         );
         negative_assert_eq!(
             error.message.to_utf8().expect("#1312 message UTF-8"),
-            "StaffDeck SOP is not configured on this isolated native process.",
+            "StaffDeck SOP status is unavailable.",
             "#1312 sop_status full path reaches the sop family, not the generic fallback"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
