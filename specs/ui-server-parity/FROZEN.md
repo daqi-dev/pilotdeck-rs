@@ -71,7 +71,7 @@ bece605c49006c2f13f5de1a5550dc82616c5f469a0d172b164a765f5457cbd6  ../../scripts/
 fce6b194ea7ac70698fcc957e5064a2f51633852ed6adeb298d65529f0ac2976  ../../scripts/ui-server-parity/test_chat_driver.mjs
 d796d56ee40603bd9f9c0ef9c735eb118867b722ec57cc0e57b8cf1245bd36b6  ../../scripts/ui-server-parity/test_compare.py
 17b60d89802f87ec968354ed5d34969498a906b264fcff3dab9781e8215341c7  ../../scripts/ui-server-parity/test_coverage.py
-0d19757e5cca65a9217a9308e548e2ff730e63e14bcb4b7712c53fd687193b45  ../../scripts/ui-server-parity/test_frozen.py
+be2fa9d9ef76f05b2773db19fde04870ae85ed0cd7b141814c63d7679cc382fd  ../../scripts/ui-server-parity/test_frozen.py
 43a7089678997c03dea57219faf29a67b8325c98078ac4696e788b760bb98a5b  ../../scripts/ui-server-parity/test_multimodal.py
 6bcc00d4e369a0374d8366110f849ed79f212e0f0bdfe9848372953150418f40  ../../scripts/ui-server-parity/test_recording.py
 9ccf2a7fef528fdfecea33b8c9dc0c9cbd2982f09631b6fe2f3e377dca122d5e  ../../scripts/ui-server-parity/verify_auth.mjs
