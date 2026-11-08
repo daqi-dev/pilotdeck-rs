@@ -107,7 +107,7 @@ mod tests {
     #[test]
     fn native_journal_rejects_fifo_links_and_limits_without_changing_original() {
         let root = root(); let path = root.join("journal"); let native = NativeJournalFiles::new(&root, &path).unwrap();
-        rustix::fs::mkfifoat(rustix::fs::CWD, &path, Mode::from_raw_mode(0o600)).unwrap();
+        assert!(std::process::Command::new("mkfifo").arg(&path).status().unwrap().success());
         assert!(native.read().is_err()); assert!(native.write(b"valid").is_err()); std::fs::remove_file(&path).unwrap();
         let outside = root.join("outside"); std::fs::write(&outside, b"original").unwrap(); symlink(&outside, &path).unwrap();
         assert!(native.read().is_err()); assert!(native.write(b"changed").is_err()); assert_eq!(std::fs::read(&outside).unwrap(), b"original"); std::fs::remove_file(&path).unwrap();
