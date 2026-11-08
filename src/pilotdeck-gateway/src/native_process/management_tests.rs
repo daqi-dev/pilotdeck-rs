@@ -2434,6 +2434,138 @@ async fn snapshot_workspace_id_prefers_registered_marker() {
         .expect("#1323 marker shutdown");
 }
 
+/// #2562: `Services::workspace_id`'s projectKey gate reads the key the way the
+/// TS submit path does — `InProcessGateway.ts:954` hands `input.projectKey` to
+/// `workspaceIdResolver` and the local resolver is
+/// `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot, pilotHome)`
+/// (createLocalGateway.ts:1026-1028), so an explicit `projectKey: null` is
+/// "not provided": it falls back to the configured project on both recorder
+/// states instead of the pre-#2562 `projectKey must be a valid path string.`
+/// error. Node v22.22.0 probes:
+/// `_tmp/20261026-issue-2562/ts-probe/probe-{resolver,submit}.out` (null
+/// behaves byte-identically to an omitted key end-to-end; a non-string 7
+/// throws ERR_INVALID_ARG_TYPE, so the two controls below pin that the
+/// nullish fix did not widen the gate for non-strings).
+#[tokio::test]
+async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided() {
+    use crate::runtime::turn::submit_host::SubmitHostServices as _;
+    let (scratch, requests) = setup();
+    let storage_root = scratch.0.join("snapshot-storage");
+    let recorder = std::sync::Arc::new(
+        crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(
+            crate::storage::WorkspaceSnapshotConfig {
+                root: storage_root.to_string_lossy().into_owned(),
+                snapshot_root: storage_root.to_string_lossy().into_owned(),
+            },
+        ),
+    );
+    let services = |recorder: Option<
+        std::sync::Arc<crate::storage::ContentAddressedWorkspaceSnapshotRecorder>,
+    >| {
+        super::services::Services {
+            options: requests.options.clone(),
+            project: requests.project.clone(),
+            env: requests.env.clone(),
+            recorders: std::sync::Arc::default(),
+            owner: crate::runtime::session::SessionOwner::new(
+                crate::runtime::session::SessionOwnerOptions::new(std::sync::Arc::new(
+                    SnapshotFactory,
+                )),
+            ),
+            snapshot_recorder: recorder,
+            upload_store: std::sync::Arc::new(crate::upload::UploadStore::new(
+                crate::upload::UploadStoreOptions::new(
+                    |_: &pilotdeck_protocol::JsString| {
+                        Err(crate::upload::UploadError::dialog(
+                            "PROJECT_NOT_FOUND",
+                            "unavailable in test",
+                        ))
+                    },
+                    || Ok(vec![]),
+                ),
+            )),
+        }
+    };
+    let null_input =
+        pilotdeck_protocol::parse_json(r#"{"projectKey":null}"#).expect("#2562 null input JSON");
+    let omitted_input = pilotdeck_protocol::parse_json("{}").expect("#2562 omitted input JSON");
+
+    // (1) Recorder on: the explicit null answers the configured project's id,
+    // exactly like an omitted key.
+    let on = services(Some(recorder));
+    let null_id = on
+        .workspace_id(&null_input)
+        .expect("#2562 explicit null is not an error with the recorder on")
+        .expect("#2562 explicit null answers an id with the recorder on")
+        .to_utf8()
+        .expect("#2562 the null-key id is UTF-8");
+    let omitted_id = on
+        .workspace_id(&omitted_input)
+        .expect("#2562 an omitted key is not an error with the recorder on")
+        .expect("#2562 an omitted key answers an id with the recorder on")
+        .to_utf8()
+        .expect("#2562 the omitted-key id is UTF-8");
+    negative_assert_eq!(
+        null_id,
+        omitted_id,
+        "#2562 a null projectKey falls back to the configured project like an omitted one"
+    );
+
+    // (2) Recorder off: the explicit null answers `None` like an omitted key.
+    let off = services(None);
+    let null_answer = off
+        .workspace_id(&null_input)
+        .expect("#2562 explicit null is not an error with the recorder off");
+    negative_assert!(
+        null_answer.is_none(),
+        "#2562 a null projectKey answers None with the recorder off"
+    );
+
+    // (3) Non-string control: the nullish fix must not admit a number — the
+    // gate still answers the type error both sides of the TS chain reject.
+    let seven_input =
+        pilotdeck_protocol::parse_json(r#"{"projectKey":7}"#).expect("#2562 seven input JSON");
+    let error = on
+        .workspace_id(&seven_input)
+        .expect_err("#2562 a non-string projectKey still fails the gate");
+    negative_assert_eq!(
+        error.code,
+        "gateway_submit_failed",
+        "#2562 a non-string projectKey keeps the submit-failure code"
+    );
+    negative_assert_eq!(
+        error.message,
+        "projectKey must be a valid path string.",
+        "#2562 a non-string projectKey keeps the type message"
+    );
+
+    // (4) Unserved string control: a foreign string is still refused, so the
+    // fallback in (1) is the configured project, not "anything goes".
+    let unserved_input = pilotdeck_protocol::parse_json(
+        &serde_json::json!({"projectKey": "/nonexistent/pdrs-2562"}).to_string(),
+    )
+    .expect("#2562 unserved input JSON");
+    let error = on
+        .workspace_id(&unserved_input)
+        .expect_err("#2562 an unserved project string is refused");
+    negative_assert_eq!(
+        error.code,
+        "CAPABILITY_UNAVAILABLE",
+        "#2562 an unserved project string keeps the isolated-project code"
+    );
+    negative_assert_eq!(
+        error.message,
+        "The isolated native process serves only its configured project.",
+        "#2562 an unserved project string keeps the isolated-project message"
+    );
+
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2562 test owner shutdown");
+}
+
 /// #1323 boundary P1: TS `/^-+|-+$/g` trims both ends of the legacy slug.
 #[test]
 fn legacy_project_id_trims_leading_dashes() {
