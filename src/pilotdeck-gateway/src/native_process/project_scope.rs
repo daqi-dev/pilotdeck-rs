@@ -146,6 +146,26 @@ pub(super) fn upload_store(home: PathBuf) -> std::sync::Arc<crate::upload::Uploa
     ))
 }
 
+/// Dialog-style registered-project admission. Kept separate from lexical
+/// selection because SDK style/usage/seed methods allow unregistered roots.
+pub(super) fn registered(home: &Path, project: &JsValue) -> Result<PathBuf, RequestError> {
+    let metadata = crate::metadata::Metadata {
+        home: home.to_path_buf(),
+        cwd: PathBuf::new(),
+        files: super::methods::session_dir::BoundedSessionMarkers::new(),
+    };
+    let result = crate::session_model::resolve_project(&metadata, project);
+    if metadata.files.was_refused() {
+        return Err(RequestError::new("Unsafe project marker."));
+    }
+    result.map(PathBuf::from).map_err(|error| RequestError {
+        code: error.code,
+        message: error.message,
+        details: None,
+        validation: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

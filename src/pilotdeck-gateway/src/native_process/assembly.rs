@@ -63,6 +63,7 @@ use std::{
 };
 
 mod cron;
+mod dialog_recovery;
 mod mcp;
 mod memory;
 mod sdk_adapter;
@@ -1360,6 +1361,11 @@ async fn start_assembly(
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),
                 sdk_config: Some(sdk_port.clone()),
+                dialog_recovery: Some(Arc::new(dialog_recovery::NativeDialogRecovery::new(
+                    options.home.clone(),
+                    options.project.clone(),
+                    sdk_port.clone(),
+                ))),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
             let services = Arc::new(super::services::Services {

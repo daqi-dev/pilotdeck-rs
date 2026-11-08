@@ -131,6 +131,17 @@ pub trait SubmitTaskBudgetSnapshot: Send + Sync {
 }
 /// `options.clearRecoveredUserDialogs` (InProcessGateway.ts:1183-1191).
 pub trait SubmitDialogRecovery: Send + Sync {
+    /// Hosts may preserve the original project argument (including malformed
+    /// values) while the RunRef carries an immutable canonical owner identity.
+    /// Generic embeddings keep their measured clear_recovered call unchanged.
+    fn clear_recovered_input<'a>(
+        &'a self,
+        session: &'a JsString,
+        project: Option<&'a JsString>,
+        _input: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        self.clear_recovered(session, project)
+    }
     fn clear_recovered<'a>(
         &'a self,
         session: &'a JsString,
@@ -706,7 +717,7 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
             }
             if let Some(recovery) = self.options.dialog_recovery.as_ref() {
                 if let Err(error) = recovery
-                    .clear_recovered(&run.session_key, run.project_key.as_ref())
+                    .clear_recovered_input(&run.session_key, run.project_key.as_ref(), input)
                     .await
                 {
                     return Ok(vec![with_hint(
