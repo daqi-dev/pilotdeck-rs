@@ -433,6 +433,20 @@ class WitnessTests(unittest.TestCase):
             self.assertTrue(observation['frames'] == [{'type': 'model_request_started'}],
                             '#2396 the foreign frame is dropped, this request\'s '
                             'yield frames are scored in seq order')
+            # #2396 fix-r4: only a well-formed foreign id is dropped.  A dict
+            # entry whose id is missing (or not a string) is not positively
+            # foreign — it still reaches the strict projection and fails
+            # closed there; the r3 predicate silently widened it away (DS
+            # concurrency P2#2).  The own frames stay complete (terminal
+            # included), so a drop would have scored a healthy observation.
+            malformed = [own[0],
+                         {'type': 'event', 'seq': 5, 'final': False,
+                          'event': {'type': 'model_request_started'}},
+                         own[1]]
+            with self.assertRaises(w.native.Incomplete, msg='#2396 an id-less dict '
+                                'frame fails the projection instead of being dropped'):
+                c.read_observation(home, str(project), 'session-1', 'run-01',
+                                   malformed, request_id='case-01')
 
     def test_recorder_rows_audit(self):
         # A real loopback WebSocket exchange: every observer row the frozen

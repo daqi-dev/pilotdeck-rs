@@ -435,11 +435,16 @@ def read_observation(home, project, session, run_id, received, request_id=None, 
     # left in the socket buffer by the previous case's turn — which the
     # strict projection would reject as a whole-read failure (an honest
     # retry, then a collection error) instead of scoring this request's
-    # frames.  Drop only the foreign frames, keeping this request's in their
-    # seq order; a non-object entry still reaches the projection and fails
-    # closed there (#2396 fix-r3, DS sibling P1).
+    # frames.  Drop only frames that positively identify as foreign (a
+    # well-formed non-empty string id different from this request's);
+    # non-object entries and dict entries with a missing or non-string id
+    # still reach the projection and fail closed there — dropping those
+    # would widen the filter past what it claims (#2396 fix-r3, DS sibling
+    # P1; fix-r4, DS concurrency P2#2).
     own = [frame for frame in received
-           if not isinstance(frame, dict) or frame.get('id') == request_id]
+           if not isinstance(frame, dict)
+           or not (isinstance(frame.get('id'), str) and frame.get('id')
+                   and frame.get('id') != request_id)]
     observation['frames'] = w.native.project_envelopes(request_id, own)['frames']
     return (observation, identity, source) if retain else observation
 
