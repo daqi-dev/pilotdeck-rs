@@ -1,8 +1,12 @@
 # specs/parity/device-patches — 对拍装置补丁登记（append-only）
 
 > 2026-11-08 #1841 首建（AI 代批，待人复核）。本目录与 `diffs/`、`frozen/` 同形态：只追加、
-> 子目录内文件不进 `FROZEN.md` 的哈希清单（`check_frozen.py` 只扫 `specs/parity` 顶层文件，
-> `--base` 模式核的是 git 历史，本目录内容不进 git 历史）。
+> 子目录内文件不进 `FROZEN.md` 的哈希清单（`check_frozen.py` 只扫 `specs/parity` 顶层文件；
+> `--base` 模式只对 `diffs/` 与 `accepted-diffs.md` 做 git 历史 append-only 核，**不覆盖本目录**）。
+> 本目录内容**会**进 git 历史：目录秩序分两层保障——登记件 `Patch:`/`Verify:`/`Corpus:` 行
+> 钉了 sha256 的文件（patch、verify 脚本、corpus manifest）由 verify 脚本机械校验，不符即
+> FAIL-CLOSED；未钉 sha 的文件（登记件、本 README）没有机械 gate，靠 git 历史与人工复核
+> （改动走新登记件，不原地改写）。
 
 ## 一、device patch 是什么
 
@@ -23,7 +27,8 @@
 3. **两家非作者评审**（不同谱系），收敛到无 P0/P1；评审路径写进登记件。
 4. **真实数据复算**：不只跑注入负控——必须对在盘真实证据全量复算（对照只证明能抓注入错误，
    真实数据复算才证明不误伤，memory「ruler-real-data」）。
-5. **登记**：在本目录新增登记件 + patch + verify 脚本（三件同名前缀 `YYYYMMDD-<issue>`）。
+5. **登记**：在本目录新增登记件 + patch + verify 脚本（同名前缀 `YYYYMMDD-<issue>`；证据语料
+   固定的单再加一份 corpus manifest，登记件 `Corpus:` 行钉其 sha256，由 verify 逐文件锚定）。
 
 **改判分语义须明确授权**：device patch 不得改变 `scripts/parity/g03_compare.py`、`score.py`、
 S 集、分母、k 值的任何判定结果；登记件必须显式声明「G03 判分语义不变」。没有授权的改判
@@ -49,7 +54,9 @@ S 集、分母、k 值的任何判定结果；登记件必须显式声明「G03 
 - 放置判断: <新文件为什么放本目录、为什么不是 scripts/parity 或 specs/parity 顶层>
 ```
 
-同日同单再登记用 `YYYYMMDD-<issue>-r2.md`。已登记文件原字节冻结，修改或撤销另开新文件。
+同日同单再登记用 `YYYYMMDD-<issue>-r2.md`。已登记文件的字节保障以登记件钉的 sha256 为准：
+patch / verify / corpus manifest 三类被钉文件由 verify 机械校验（改一个字节即 FAIL-CLOSED），
+登记件与其余文件靠 git 历史与人工复核——修改或撤销一律另开新文件，不原地改写。
 
 ## 四、应用时机约束
 
@@ -72,7 +79,9 @@ shasum -a 256 <PD>/tools/agent-loop-parity/trace.py
 # 回滚：git -C <PD> checkout -- tools/agent-loop-parity/trace.py，然后重核 clean sha
 ```
 
-verify（任何人可复算；`--evidence` 指向 #1841 证据目录，不重录）：
+verify（任何人可复算；`--evidence` 指向 #1841 证据目录，不重录；登记件与 corpus manifest
+默认取 verify 脚本同目录的 `20261108-1841.md` / `20261108-1841-corpus-manifest.txt`，
+也可用 `--manifest` 显式指定）：
 
 ```bash
 python3 -I specs/parity/device-patches/20261108-1841-verify.py \
@@ -82,5 +91,16 @@ python3 -I specs/parity/device-patches/20261108-1841-verify.py \
   --out <结果 json 路径>
 ```
 
-verify 内部同样 fail-closed：基线 sha 不符拒绝；`git apply --check` / `git apply` 失败拒绝；
-apply 后 sha 不符拒绝。退出码 0 才算过。
+corpus manifest（证据语料固定的单；在证据目录内生成，输出写到本目录，其整文件 sha256 即
+`find . -type f | sort | xargs shasum -a 256 | shasum -a 256` 的整树摘要）：
+
+```bash
+(cd <证据目录> && find . -type f | sort | xargs shasum -a 256) \
+  > specs/parity/device-patches/<前缀>-corpus-manifest.txt
+```
+
+verify 内部同样 fail-closed：登记件三处 sha 钉（patch / verify 自身 / manifest）与 `Change:`
+old/new 不符拒绝；基线 sha 不符拒绝；`git apply --check` / `git apply` 失败拒绝；apply 后
+sha 不符拒绝；证据 753 文件逐件 sha256 与 manifest 不符、trace 为空、kind 条数直方图偏离
+写死值、census "n/a" 均拒绝。`--out` 独占创建：已存在则写 `<名>.attempt-N.<扩展名>`，
+永不覆盖旧结果。退出码 0 才算过。
