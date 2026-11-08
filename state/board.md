@@ -5038,24 +5038,7 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 现场指针：`_tmp/20261109-2498-2501-harvest/`（#2498 评审 + 补捞证据）· `_tmp/20261109-2532-fixr2-harvest/`（task2.md 收货续单）· `_tmp/20261107-coord/sweep-0305.md`（六灯 sweep 正本）· `_tmp/20261107-coord/patrol-0231.md`（沿 02:3x 段）。
 
-### 2026-11-09 独立能力包提取（Codex）
 
-从固定 main e8d80 提取 Budget、Context 纯算法、Anthropic 协议及必要 Protocol coercion，gateway 保留 I/O/状态/权限；不含 Kernel backend/BOOT/CLI 路由。包级首轮62通过/1原忽略，原 gateway context 首轮72通过/3原忽略；正在收窄未消费API并升级到本批新基线 f50ad6c84。dev-launch 本机技能缺失已检索，不冒充双谱系评审；正式独立评审由协调者/C接续。变异锚点按实际算法迁移，原冻结 oracle 不改。下一步：新基线定向回归、独立consumer、负控与评审。
+## 2026-11-09 #2549 controlled baseline upgrade
 
-### 2026-11-09 能力包提取修复轮（Codex）
-
-固定新基线 f50ad6c84；独立consumer已运行，最终gateway context 71通过/3原忽略。独立审查抓到分组估计错误降格与NEL误作JS whitespace：前者实际负控失败后泛型透传原HostError正控通过，后者Node边界与候选负控证实后复用原metadata精确字符集；保留日志。删除未消费Budget policy/模型errors与header API，必要helper和coercion由gateway委托单一实现，原负控只迁源码锚、原oracle不改。当前在完成修复后回归/负控，前次审查混入WIP只记发现清单，最终clean候选另作双谱系审查。
-
-### 2026-11-09 能力包 PR 收口（Codex）
-
-Refs #2540。139127 两家四角色正式审查已收齐，7类P2本轮处置：截断算法改单源委托且保原port结构；空白全UTF16/真值边界补pin；consumer根目录显式target和locked；变异注明源码独占并用已有原子写/原子还原；恢复wrapper保原HostError签名；重复signedzero删去、原负控绑定保留。3包和Protocol strict Clippy已通过，README改中文。正在以指定ed748c375（相对f50仅board）整理提交并做最终针对性回归/单家增量审查，未push/开PR。
-
-### 2026-11-09 能力包 PR CI 最小修复（Codex）
-
-Refs #2540。#2549 CI 的 gateway strict Clippy 抓到原budget-only helper迁出后孤立doc空行；删误贴注释。checkpoint_prefix_len逐字等价副本改由Context提供同一纯helper，gateway原调用委托；仅这两处生产修复。此前新包strict Clippy不覆盖gateway，正在补gateway all-targets严格检查及原rolling-checkpoint/context回归。另4fixture旧截断写按#2550跟进，不扩大本轮。
-
-补记：gateway all-targets strictClippy实际覆盖后再抓到本PR故障测试2处clone_on_copy，去冗余clone不改断言；首失败保留，修后全target -D warnings exit0。
-
-### 2026-11-09 能力包 PR 新main组合（Codex）
-
-Refs #2540。固定f04ecd0b新基线，只有board冲突保留上游+本轮记录，原4834保独立ref及全部证据。重基前后src/.github提取补丁SHA256完全相同（725201c4…），不把旧CI冒充新组合通过。CI真实发现独立smoke/probe锁缺3包：仅补3本地包与gateway边，无外部依赖版本/校验和变化；正在跑实际--locked probe及新版HTTP1.0/脚本/原能力回归。未push，不改冻结oracle。
+Preserved reviewed 789 and archived its successful CI run42516196226. Rebased the seven extraction commits onto fixed main43a; src/.github binary patch is byte-identical. New-combination locked tests: three libraries + Protocol 58 passed/1 ignored; standalone consumer passed; gateway storage 178 passed/6 ignored; fmt passed. Old CI is not evidence for the new head; full new CI and new external review remain pending. No push or scope expansion.
