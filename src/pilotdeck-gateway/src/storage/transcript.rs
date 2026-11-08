@@ -292,14 +292,27 @@ fn bounded_transcript_limit_is_inclusive_and_next_byte_is_rejected() {
     use std::io::Write;
     let path = std::env::temp_dir().join(format!("pdrs-transcript-limit-{}", uuid::Uuid::new_v4()));
     let mut file = fs::File::create(&path).unwrap();
-    assert_eq!(read_transcript_bounded(&path).unwrap().snapshot.unwrap().0.len(), 0);
+    assert_eq!(
+        read_transcript_bounded(&path)
+            .unwrap()
+            .snapshot
+            .unwrap()
+            .0
+            .len(),
+        0
+    );
     // Whitespace is a legal empty transcript; keep the IO boundary independent
     // of malformed-record semantics and exercise the actual descriptor reader.
     let chunk = vec![b' '; 1024 * 1024];
-    for _ in 0..50 { file.write_all(&chunk).unwrap(); }
+    for _ in 0..50 {
+        file.write_all(&chunk).unwrap();
+    }
     file.sync_all().unwrap();
     let at_limit = read_transcript_bounded(&path).unwrap();
-    assert_eq!(at_limit.snapshot.as_ref().unwrap().0.len() as u64, MAX_BYTES);
+    assert_eq!(
+        at_limit.snapshot.as_ref().unwrap().0.len() as u64,
+        MAX_BYTES
+    );
     drop(at_limit);
     file.write_all(b" ").unwrap();
     file.sync_all().unwrap();

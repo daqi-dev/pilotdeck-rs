@@ -125,17 +125,25 @@ enum CatalogDirectory {
     Legacy(Arc<dyn Fn(&ProjectKey) -> PathBuf + Send + Sync>),
     Bounded(Arc<dyn Fn(&ProjectKey) -> Result<PathBuf, ManagerError> + Send + Sync>),
 }
-pub struct TranscriptSessionCatalog { directory: CatalogDirectory }
+pub struct TranscriptSessionCatalog {
+    directory: CatalogDirectory,
+}
 
 impl TranscriptSessionCatalog {
     pub fn new(adapter: Arc<AsyncTranscriptAdapter>) -> Self {
-        Self { directory: CatalogDirectory::Legacy(Arc::new(move |project| adapter.project_chat_dir(project))) }
+        Self {
+            directory: CatalogDirectory::Legacy(Arc::new(move |project| {
+                adapter.project_chat_dir(project)
+            })),
+        }
     }
 
     pub(crate) fn new_bounded(
         resolve: impl Fn(&ProjectKey) -> Result<PathBuf, ManagerError> + Send + Sync + 'static,
     ) -> Self {
-        Self { directory: CatalogDirectory::Bounded(Arc::new(resolve)) }
+        Self {
+            directory: CatalogDirectory::Bounded(Arc::new(resolve)),
+        }
     }
 }
 
@@ -148,11 +156,18 @@ impl SessionCatalogPort for TranscriptSessionCatalog {
         // Filter `always-on-*` names before opening any file (P1-2), then sort
         // by mtime and apply JS `slice` pagination (P2 negative-end).
         let sessions = match &self.directory {
-            CatalogDirectory::Legacy(resolve) =>
-                file_catalog::list_sessions(&resolve(&project), &input.project_root, input.include_internal),
-            CatalogDirectory::Bounded(resolve) =>
-                file_catalog::list_sessions_bounded(&resolve(&project)?, &input.project_root, input.include_internal),
-        }.map_err(|message| ManagerError::with_message("SyntaxError", None, message))?;
+            CatalogDirectory::Legacy(resolve) => file_catalog::list_sessions(
+                &resolve(&project),
+                &input.project_root,
+                input.include_internal,
+            ),
+            CatalogDirectory::Bounded(resolve) => file_catalog::list_sessions_bounded(
+                &resolve(&project)?,
+                &input.project_root,
+                input.include_internal,
+            ),
+        }
+        .map_err(|message| ManagerError::with_message("SyntaxError", None, message))?;
         Ok(paginate(
             sessions.into_iter().map(|(_, info)| info).collect(),
             input.offset.unwrap_or(0.0),

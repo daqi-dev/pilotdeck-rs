@@ -654,14 +654,24 @@ pub(super) fn module_response(call: &JsValue, result: Result<JsObject, HostError
 /// result. Unknown outcomes and arbitrary malformed finals stay on the original
 /// strict path. Header/payload copies must agree before any error is preserved.
 fn native_terminal_error(event: EventRef<'_>) -> Option<JsObject> {
-    if !event.final_event || event.outcome != Some(ModuleOutcome::Failed)
+    if !event.final_event
+        || event.outcome != Some(ModuleOutcome::Failed)
         || !event.event_type.equals_str("agent.execute.failed")
-        || event.payload.len() != 1 { return None; }
-    let error=event.payload.get("error")?.as_object()?;
-    let code=error.get("code")?.as_string().filter(|code| !code.is_empty())?;
+        || event.payload.len() != 1
+    {
+        return None;
+    }
+    let error = event.payload.get("error")?.as_object()?;
+    let code = error
+        .get("code")?
+        .as_string()
+        .filter(|code| !code.is_empty())?;
     error.get("message")?.as_string()?;
     if event.fields.get("code").and_then(JsValue::as_string) != Some(code)
-        || event.fields.get("error").and_then(JsValue::as_object) != Some(error) { return None; }
+        || event.fields.get("error").and_then(JsValue::as_object) != Some(error)
+    {
+        return None;
+    }
     Some(error.clone())
 }
 pub(super) fn validate_event(
@@ -794,29 +804,52 @@ mod native_terminal_tests {
         pilotdeck_protocol::parse_json(r#"{"kind":"event","messageId":"final","eventType":"agent.execute.failed","streamId":"stream","sequence":0,"runId":"run","operationId":"operation","requestId":"request","final":true,"outcome":"failed","code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","error":{"code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","message":"native \ud800 failure","extra":7},"payload":{"error":{"code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","message":"native \ud800 failure","extra":7}}}"#).unwrap()
     }
     fn event(value: &JsValue) -> EventRef<'_> {
-        let MessageRef::Event(event)=decode(value).unwrap() else {panic!("event")};event
+        let MessageRef::Event(event) = decode(value).unwrap() else {
+            panic!("event")
+        };
+        event
     }
     #[test]
     fn native_factory_error_retains_exact_utf16_object_without_weakening_default_terminal() {
-        let value=frame();let event=event(&value);
-        let original=event.payload.get("error").unwrap().as_object().unwrap();
-        assert_eq!(native_terminal_error(event).as_ref(),Some(original));
-        let identity=ExecutionIdentity {request_id:"request".into(),run_id:"run".into(),operation_id:"operation".into(),session_id:"session".into(),turn_id:"turn".into()};
-        let strict=validate_event(event,&identity,&Cancellation::new()).unwrap_err();
-        assert_eq!(strict.kind,HostErrorKind::Protocol);
-        assert_eq!(strict.message,"Sidecar terminal payload does not contain an AgentLoop result.");
+        let value = frame();
+        let event = event(&value);
+        let original = event.payload.get("error").unwrap().as_object().unwrap();
+        assert_eq!(native_terminal_error(event).as_ref(), Some(original));
+        let identity = ExecutionIdentity {
+            request_id: "request".into(),
+            run_id: "run".into(),
+            operation_id: "operation".into(),
+            session_id: "session".into(),
+            turn_id: "turn".into(),
+        };
+        let strict = validate_event(event, &identity, &Cancellation::default()).unwrap_err();
+        assert_eq!(strict.kind, HostErrorKind::Protocol);
+        assert_eq!(
+            strict.message,
+            "Sidecar terminal payload does not contain an AgentLoop result."
+        );
     }
     #[test]
     fn malformed_copies_and_unknown_outcomes_are_never_native_failures() {
-        for (key,replacement) in [
-            ("outcome",JsValue::from("completed")),
-            ("outcome",JsValue::from("result_unknown")),
-            ("code",JsValue::from("another-code")),
-            ("payload",JsValue::Object(JsObject::new())),
-            ("error",pilotdeck_protocol::parse_json(r#"{"code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","message":"different"}"#).unwrap()),
+        for (key, replacement) in [
+            ("outcome", JsValue::from("completed")),
+            ("outcome", JsValue::from("result_unknown")),
+            ("code", JsValue::from("another-code")),
+            ("payload", JsValue::Object(JsObject::new())),
+            (
+                "error",
+                pilotdeck_protocol::parse_json(
+                    r#"{"code":"REQUEST_CACHE_LOCALE_COLLATION_PROFILE","message":"different"}"#,
+                )
+                .unwrap(),
+            ),
         ] {
-            let mut value=frame();let JsValue::Object(fields)=&mut value else {panic!("frame")};fields.insert(key.into(),replacement);
-            assert!(native_terminal_error(event(&value)).is_none(),"{key}");
+            let mut value = frame();
+            let JsValue::Object(fields) = &mut value else {
+                panic!("frame")
+            };
+            fields.insert(key.into(), replacement);
+            assert!(native_terminal_error(event(&value)).is_none(), "{key}");
         }
     }
 }

@@ -100,8 +100,12 @@ fn _make_adapter(requests: &Requests) -> AsyncTranscriptAdapter {
 static NATIVE_SESSION_IO: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
     std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
 
-pub(in crate::native_process) async fn session_io_permit() -> Result<tokio::sync::OwnedSemaphorePermit, RequestError> {
-    NATIVE_SESSION_IO.clone().acquire_owned().await
+pub(in crate::native_process) async fn session_io_permit()
+-> Result<tokio::sync::OwnedSemaphorePermit, RequestError> {
+    NATIVE_SESSION_IO
+        .clone()
+        .acquire_owned()
+        .await
         .map_err(|_| RequestError::new("Native session IO is unavailable."))
 }
 
@@ -132,40 +136,53 @@ impl BoundedSessionMarkers {
 }
 impl crate::metadata::Files for BoundedSessionMarkers {
     fn entries(&self, path: &std::path::Path) -> std::io::Result<Vec<(String, bool)>> {
-        if self.was_refused() { return Err(self.limit()); }
+        if self.was_refused() {
+            return Err(self.limit());
+        }
         let mut entries = Vec::new();
         for entry in std::fs::read_dir(path)? {
             let entry = entry?;
             let used = self.entries.get().saturating_add(1);
-            if used > 16_384 { return Err(self.limit()); }
+            if used > 16_384 {
+                return Err(self.limit());
+            }
             self.entries.set(used);
             entries.push((entry.file_name(), entry.file_type()?.is_dir()));
         }
         entries.sort_by(|a, b| a.0.as_encoded_bytes().cmp(b.0.as_encoded_bytes()));
-        Ok(entries.into_iter().map(|(name, dir)| (name.to_string_lossy().into_owned(), dir)).collect())
+        Ok(entries
+            .into_iter()
+            .map(|(name, dir)| (name.to_string_lossy().into_owned(), dir))
+            .collect())
     }
     fn stat(&self, path: &std::path::Path) -> std::io::Result<crate::metadata::Stat> {
         crate::metadata::Files::stat(&crate::metadata::NativeFiles, path)
     }
     fn read(&self, path: &std::path::Path) -> std::io::Result<Vec<u8>> {
-        if self.was_refused() { return Err(self.limit()); }
+        if self.was_refused() {
+            return Err(self.limit());
+        }
         let bytes = crate::metadata::Files::read(&self.inner, path)?;
         let used = self.bytes.get().saturating_add(bytes.len());
-        if used > 16 * 1024 * 1024 { return Err(self.limit()); }
+        if used > 16 * 1024 * 1024 {
+            return Err(self.limit());
+        }
         self.bytes.set(used);
         Ok(bytes)
     }
 }
 
 pub(in crate::native_process) fn bounded_chat_dir(
-    home: &std::path::Path, project: &std::path::Path,
+    home: &std::path::Path,
+    project: &std::path::Path,
 ) -> Result<std::path::PathBuf, RequestError> {
     let metadata = crate::metadata::Metadata {
         home: home.to_path_buf(),
         cwd: std::path::PathBuf::new(),
         files: BoundedSessionMarkers::new(),
     };
-    let result = metadata.process_chat_dir(&project.to_string_lossy())
+    let result = metadata
+        .process_chat_dir(&project.to_string_lossy())
         .map_err(|error| RequestError::new(error.to_string()));
     if metadata.files.was_refused() {
         return Err(RequestError::new("Unsafe project marker."));
@@ -174,13 +191,16 @@ pub(in crate::native_process) fn bounded_chat_dir(
 }
 
 async fn resolve_chat_dir(
-    home: std::path::PathBuf, project: std::path::PathBuf,
+    home: std::path::PathBuf,
+    project: std::path::PathBuf,
 ) -> Result<(std::path::PathBuf, tokio::sync::OwnedSemaphorePermit), RequestError> {
     let permit = session_io_permit().await?;
     tokio::task::spawn_blocking(move || {
         let dir = bounded_chat_dir(&home, &project)?;
         Ok((dir, permit))
-    }).await.map_err(|_| RequestError::new("Native session path reader stopped unexpectedly."))?
+    })
+    .await
+    .map_err(|_| RequestError::new("Native session path reader stopped unexpectedly."))?
 }
 
 impl Requests {
@@ -230,11 +250,12 @@ impl Requests {
             offset: Some(offset),
             include_internal: false,
         };
-        let (chat_dir, permit) = resolve_chat_dir(home, std::path::PathBuf::from(project_root.as_str())).await?;
+        let (chat_dir, permit) =
+            resolve_chat_dir(home, std::path::PathBuf::from(project_root.as_str())).await?;
         let mut sessions = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let catalog = Arc::new(TranscriptSessionCatalog::new_bounded(
-                move |_: &ProjectKey| Ok(chat_dir.clone())
+                move |_: &ProjectKey| Ok(chat_dir.clone()),
             ));
             GatewaySessionCatalogConsumer::new(catalog).list(&input)
         })
@@ -422,8 +443,12 @@ impl Requests {
         // #1457 fix-r1: same single-writer fence the config family uses; two
         // fresh writers that both restore the tail and append `sequence + 1`
         // leave the transcript unloadable.
-        let (chat_dir, permit) = resolve_chat_dir(self.options.home.clone(), project_root.clone()).await?;
-        let fence_path = chat_dir.join(format!("{}.jsonl", crate::storage::sanitize_session_id(&key)));
+        let (chat_dir, permit) =
+            resolve_chat_dir(self.options.home.clone(), project_root.clone()).await?;
+        let fence_path = chat_dir.join(format!(
+            "{}.jsonl",
+            crate::storage::sanitize_session_id(&key)
+        ));
         let write_fence = transcript_locks::acquire(&fence_path).await?;
         // #1457 fix-r2: a loaded session owns the transcript writer (and the
         // writer lease) with an in-memory sequence, so the metadata entry goes
@@ -596,8 +621,12 @@ impl Requests {
         // writer for the tail it restores. Looking the recorder up first left a
         // window where a concurrent close retired it between lookup and append,
         // and the retired writer's no-op append reported `recorded: true`.
-        let (chat_dir, permit) = resolve_chat_dir(self.options.home.clone(), self.options.project.clone()).await?;
-        let fence_path = chat_dir.join(format!("{}.jsonl", crate::storage::sanitize_session_id(&session_key)));
+        let (chat_dir, permit) =
+            resolve_chat_dir(self.options.home.clone(), self.options.project.clone()).await?;
+        let fence_path = chat_dir.join(format!(
+            "{}.jsonl",
+            crate::storage::sanitize_session_id(&session_key)
+        ));
         let write_fence = transcript_locks::acquire(&fence_path).await?;
         let live_recorder = super::super::assembly::live_recorder(&self.recorders, &session_key);
         let recorders = self.recorders.clone();

@@ -611,8 +611,9 @@ impl LiveTurn for LiveTurnStream {
                     // Keep the original UTF16 fields and the recorder's real
                     // current state; never invent an empty AgentLoop snapshot.
                     let failure = JsValue::Object((**detail).clone());
-                    return self.begin_recording(RecordingAction::Fail(failure),
-                        JsValue::Null, true, None).await;
+                    return self
+                        .begin_recording(RecordingAction::Fail(failure), JsValue::Null, true, None)
+                        .await;
                 }
                 return match result {
                     Some(result) => match self.finish(result) {

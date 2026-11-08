@@ -1644,14 +1644,15 @@ mod async_capture_tests {
     #[tokio::test]
     async fn same_text_old_steer_is_never_used_before_the_new_exact_receipt_is_bound() {
         use crate::host::modules::ModuleRouter;
+        use crate::runtime::project::FamilyResource;
         use crate::runtime::{
             async_hooks::AsyncHookTurnHandle, hooks::Cancellation,
             project::interaction_steer::InteractionSteer,
         };
         use std::sync::atomic::Ordering;
         let owner = owner();
-        let key = "session".into();
-        let run = "same".into();
+        let key: JsString = "session".into();
+        let run: JsString = "same".into();
         let lookup = owner.weak_async_turn_lookup();
         let resource = InteractionSteer::default();
         let records = Arc::new(SteerRecords::default());
@@ -1708,7 +1709,7 @@ mod async_capture_tests {
             .unwrap();
         let receipt = new_steer.async_hook_info().unwrap();
         assert!(
-            (old.bind_steer)(receipt.clone()).is_err(),
+            (old.bind_steer)(new_steer.async_hook_info().unwrap()).is_err(),
             "old callback cannot bind a successor"
         );
         (new.bind_steer)(receipt).unwrap();

@@ -34,7 +34,9 @@ fn unavailable() -> RequestError {
     )
 }
 
-struct BoundedManagerProjects { home: std::path::PathBuf }
+struct BoundedManagerProjects {
+    home: std::path::PathBuf,
+}
 impl ManagerProjectResolver for BoundedManagerProjects {
     fn resolve_project_key(&self, project_key: &[u16]) -> Result<std::path::PathBuf, ManagerError> {
         let metadata = crate::metadata::Metadata {
@@ -46,7 +48,8 @@ impl ManagerProjectResolver for BoundedManagerProjects {
         if metadata.files.was_refused() {
             return Err(ManagerError::plain("Error", "Unsafe project marker."));
         }
-        result.map(std::path::PathBuf::from)
+        result
+            .map(std::path::PathBuf::from)
             .ok_or_else(|| ManagerError::unknown_project_key(project_key))
     }
 }
@@ -92,7 +95,9 @@ impl Requests {
                 Ok(permit) => Some(permit),
                 Err(error) => return Some(Err(error)),
             }
-        } else { None };
+        } else {
+            None
+        };
         let requests = self.clone();
         let method = method.to_owned();
         let params = params.clone();
@@ -201,7 +206,9 @@ impl Requests {
             let gateway = ManagerGateway::from_parts(
                 Some(Arc::new(catalog)),
                 None,
-                BoundedManagerProjects { home: self.options.home.clone() },
+                BoundedManagerProjects {
+                    home: self.options.home.clone(),
+                },
                 &self.options.project,
                 &self.options.home,
             );
