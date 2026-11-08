@@ -1,0 +1,496 @@
+{
+  "records": [
+    {
+      "scenario": "normal",
+      "entries": [
+        {
+          "type": "session_metadata",
+          "sessionId": "real",
+          "turnId": "t",
+          "metadata": {
+            "title": "Saved title"
+          }
+        },
+        {
+          "type": "accepted_input",
+          "sessionId": "real",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "  user one  "
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "real",
+          "turnId": "t",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": " answer "
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "real",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "real",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-02T03:04:05.678Z",
+            "completedAt": "2026-01-02T03:05:05.678Z"
+          }
+        }
+      ],
+      "calls": [
+        [
+          "read",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "sessionId": "real"
+          }
+        ],
+        [
+          "list",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "includeInternal": false
+          }
+        ]
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session \"Saved title\" — 2 messages."
+          },
+          {
+            "type": "json",
+            "value": {
+              "sessionId": "real",
+              "title": "Saved title",
+              "messageCount": 2,
+              "conversation": [
+                {
+                  "role": "user",
+                  "text": "user one",
+                  "createdAt": ""
+                },
+                {
+                  "role": "assistant",
+                  "text": "answer",
+                  "createdAt": ""
+                }
+              ]
+            }
+          }
+        ],
+        "data": {
+          "sessionId": "real",
+          "title": "Saved title",
+          "messageCount": 2,
+          "conversation": [
+            {
+              "role": "user",
+              "text": "user one",
+              "createdAt": ""
+            },
+            {
+              "role": "assistant",
+              "text": "answer",
+              "createdAt": ""
+            }
+          ]
+        },
+        "metadata": {
+          "runId": "run"
+        }
+      }
+    },
+    {
+      "scenario": "incomplete",
+      "entries": [
+        {
+          "type": "session_metadata",
+          "sessionId": "real",
+          "turnId": "t",
+          "metadata": {
+            "title": "Saved title"
+          }
+        },
+        {
+          "type": "accepted_input",
+          "sessionId": "real",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "  user one  "
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "real",
+          "turnId": "t",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": " answer "
+              }
+            ]
+          }
+        }
+      ],
+      "calls": [
+        [
+          "read",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "sessionId": "real"
+          }
+        ],
+        [
+          "list",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "includeInternal": false
+          }
+        ]
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session \"Saved title\" — 1 messages."
+          },
+          {
+            "type": "json",
+            "value": {
+              "sessionId": "real",
+              "title": "Saved title",
+              "messageCount": 1,
+              "conversation": [
+                {
+                  "role": "user",
+                  "text": "user one",
+                  "createdAt": ""
+                }
+              ]
+            }
+          }
+        ],
+        "data": {
+          "sessionId": "real",
+          "title": "Saved title",
+          "messageCount": 1,
+          "conversation": [
+            {
+              "role": "user",
+              "text": "user one",
+              "createdAt": ""
+            }
+          ]
+        },
+        "metadata": {
+          "runId": "run"
+        }
+      }
+    },
+    {
+      "scenario": "empty",
+      "entries": [],
+      "calls": [
+        [
+          "read",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "sessionId": "real"
+          }
+        ]
+      ],
+      "error": {
+        "code": "tool_execution_failed",
+        "message": "Could not read session real: No transcript entries found."
+      }
+    },
+    {
+      "scenario": "alias",
+      "entries": [
+        {
+          "type": "session_metadata",
+          "sessionId": "real",
+          "turnId": "t",
+          "metadata": {
+            "title": "Saved title"
+          }
+        },
+        {
+          "type": "accepted_input",
+          "sessionId": "real",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "  user one  "
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "real",
+          "turnId": "t",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": " answer "
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "real",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "real",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-02T03:04:05.678Z",
+            "completedAt": "2026-01-02T03:05:05.678Z"
+          }
+        }
+      ],
+      "calls": [
+        [
+          "read",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "sessionId": "real"
+          }
+        ],
+        [
+          "list",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "includeInternal": false
+          }
+        ]
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session \"Saved title\" — 2 messages."
+          },
+          {
+            "type": "json",
+            "value": {
+              "sessionId": "real",
+              "title": "Saved title",
+              "messageCount": 2,
+              "conversation": [
+                {
+                  "role": "user",
+                  "text": "user one",
+                  "createdAt": ""
+                },
+                {
+                  "role": "assistant",
+                  "text": "answer",
+                  "createdAt": ""
+                }
+              ]
+            }
+          }
+        ],
+        "data": {
+          "sessionId": "real",
+          "title": "Saved title",
+          "messageCount": 2,
+          "conversation": [
+            {
+              "role": "user",
+              "text": "user one",
+              "createdAt": ""
+            },
+            {
+              "role": "assistant",
+              "text": "answer",
+              "createdAt": ""
+            }
+          ]
+        },
+        "metadata": {
+          "runId": "run"
+        }
+      }
+    },
+    {
+      "scenario": "truncate",
+      "entries": [
+        {
+          "type": "session_metadata",
+          "sessionId": "real",
+          "turnId": "t",
+          "metadata": {
+            "title": "Saved title"
+          }
+        },
+        {
+          "type": "accepted_input",
+          "sessionId": "real",
+          "turnId": "t",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "  user one  "
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "real",
+          "turnId": "t",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "real",
+          "turnId": "t",
+          "result": {
+            "type": "success",
+            "sessionId": "real",
+            "turnId": "t",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-02T03:04:05.678Z",
+            "completedAt": "2026-01-02T03:05:05.678Z"
+          }
+        }
+      ],
+      "calls": [
+        [
+          "read",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "sessionId": "real"
+          }
+        ],
+        [
+          "list",
+          {
+            "projectRoot": "/project",
+            "pilotHome": "/home",
+            "includeInternal": false
+          }
+        ]
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Session \"Saved title\" — 2 messages."
+          },
+          {
+            "type": "json",
+            "value": {
+              "sessionId": "real",
+              "title": "Saved title",
+              "messageCount": 2,
+              "conversation": [
+                {
+                  "role": "user",
+                  "text": "user one",
+                  "createdAt": ""
+                },
+                {
+                  "role": "assistant",
+                  "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...",
+                  "createdAt": ""
+                }
+              ]
+            }
+          }
+        ],
+        "data": {
+          "sessionId": "real",
+          "title": "Saved title",
+          "messageCount": 2,
+          "conversation": [
+            {
+              "role": "user",
+              "text": "user one",
+              "createdAt": ""
+            },
+            {
+              "role": "assistant",
+              "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx...",
+              "createdAt": ""
+            }
+          ]
+        },
+        "metadata": {
+          "runId": "run"
+        }
+      }
+    }
+  ]
+}
