@@ -116,7 +116,7 @@ pub(crate) struct ApplyPhaseInput<'a> {
     #[allow(dead_code)]
     pub plans: &'a [DiscoveryPlanRecord],
     #[allow(dead_code)]
-    pub project_name: Option<&'a str>,
+    pub project_name: Option<&'a JsString>,
     #[allow(dead_code)]
     pub project_root: &'a str,
 }
@@ -453,7 +453,7 @@ mod tests {
                 run_id: "run-1",
                 cycle: &workspaceless,
                 plans: &[],
-                project_name: Some("P"),
+                project_name: Some(&"P".into()),
                 project_root: "/proj/a",
             })
             .await
@@ -486,7 +486,7 @@ mod tests {
                 run_id: "run-2",
                 cycle: &cycle,
                 plans: &[],
-                project_name: Some("P"),
+                project_name: Some(&"P".into()),
                 project_root: "/proj/a",
             })
             .await

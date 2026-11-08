@@ -114,7 +114,7 @@ impl SessionTools {
                 cwd: config.get("cwd").and_then(JsValue::as_string).cloned()
                     .unwrap_or_else(|| options.project.to_string_lossy().into_owned().into()),
                 can_prompt: Some(false),
-                bypass_available: Some(true),
+                bypass_available: Some(config.get("bypassAvailable") != Some(&JsValue::Bool(false))),
                 ..Default::default()
             });
         let goal = crate::runtime::goal::GoalRuntime::new(
@@ -153,6 +153,11 @@ impl SessionTools {
             #[cfg(unix)]
             native_sandbox: None,
         })
+    }
+
+    fn execution_cwd(&self) -> JsString {
+        self.config.get("cwd").and_then(JsValue::as_string).cloned()
+            .unwrap_or_else(|| self.options.project.to_string_lossy().as_ref().into())
     }
 
     pub(super) fn with_automation(mut self, automation: Option<super::session_overrides::AutomationOverrides>) -> Self {
@@ -324,7 +329,7 @@ impl SessionTools {
         };
         // These flags belong to this invocation, never the session's shared
         // permission-mode state. A managed false remains a policy ceiling.
-        let policy_disabled = self
+        let policy_disabled = self.config.get("canPrompt") == Some(&JsValue::Bool(false)) || self
             .config
             .get("managedPermissions")
             .and_then(|v| v.get("canPrompt"))
@@ -345,7 +350,7 @@ impl SessionTools {
         if let Some(automation) = &self.automation {
             turn_context.can_prompt &= automation.can_prompt;
             if !automation.can_prompt { turn_context.policy_can_prompt = Some(false); }
-            turn_context.bypass_available = automation.bypass_available;
+            turn_context.bypass_available &= automation.bypass_available;
         }
         turn_context.rules = self.permission_rules.snapshot();
         if let Some(files) = &self.plan_files {
@@ -548,7 +553,7 @@ impl SessionTools {
         let sdk_file_notifier = sdk_file_slot.as_ref().map(|slot| {
             let slot = slot.clone();
             let session = identity.session_id.clone();
-            let cwd: JsString = self.options.project.to_string_lossy().as_ref().into();
+            let cwd = self.execution_cwd();
             let callback: Arc<
                 dyn Fn(
                         crate::runtime::tools::builtin::FileUpdateNotice,
@@ -700,7 +705,7 @@ impl SessionTools {
             shell: self.native_sandbox.as_ref().map(|sandbox| {
                 Arc::new(crate::runtime::hooks::exec::SandboxedHookShell {
                     sandbox: sandbox.clone(),
-                    workspace: self.options.project.to_string_lossy().as_ref().into(),
+                    workspace: self.execution_cwd(),
                 }) as Arc<dyn crate::runtime::hooks::exec::ShellPort>
             }),
             http: Some(

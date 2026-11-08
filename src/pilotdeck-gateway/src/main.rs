@@ -5,6 +5,11 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio::net::TcpListener;
 #[tokio::main]
 async fn main() -> Result<(), ProxyError> {
+    if let Some(code) =
+        pilotdeck_gateway::native_installation_owner_helper(std::env::args_os().skip(1))
+    {
+        std::process::exit(code);
+    }
     // Node's process-wide SIGXFSZ ignore (a write past RLIMIT_FSIZE reports
     // EFBIG instead of killing the process); register the same disposition
     // at startup through tokio's safe signal API so every fs write in this

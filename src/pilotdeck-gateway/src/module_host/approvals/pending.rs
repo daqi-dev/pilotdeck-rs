@@ -117,6 +117,127 @@ impl PendingSopStore {
         Ok(())
     }
 
+    pub(crate) fn apply_resume(
+        &self,
+        input: &StoreResumeInput,
+    ) -> Result<JsValue, ApprovalFailure> {
+        self.resume_locked(input)
+    }
+    pub(crate) fn snapshot(
+        &self,
+        input: &StoreStatusInput,
+    ) -> Result<Option<JsValue>, ApprovalFailure> {
+        self.status_locked(input)
+    }
+
+    /// Error messages are relevant to the CLI control callback even though
+    /// the public HTTP transport intentionally sends only the code.
+    pub(crate) fn resume_message(&self, input: &StoreResumeInput, code: &str) -> String {
+        let root = (self.profiles)(input.project_key.as_ref());
+        let guard = self.states.lock().expect("#1350 pending store lock");
+        let current = root.and_then(|root| guard.get(&(root, input.session_key.clone())));
+        match code {
+            "SOP_NOT_WAITING" => {
+                "The StaffDeck SOP session is not waiting for a resumable result.".into()
+            }
+            "SOP_WAIT_STALE" => "The StaffDeck SOP wait identifier is no longer active.".into(),
+            "SOP_RESUME_SOURCE_INVALID" => format!(
+                "This wait requires source '{}'.",
+                if current
+                    .and_then(|c| c.wait.as_ref())
+                    .and_then(|w| w.get("kind"))
+                    == Some(&JsValue::from("handoff"))
+                {
+                    "human"
+                } else {
+                    "external_task"
+                }
+            ),
+            "SOP_REVISION_CONFLICT" => format!(
+                "Expected SOP revision {}, found {}.",
+                input.expected_revision.unwrap_or(f64::NAN),
+                current.map_or(1.0, |c| c.revision)
+            ),
+            "SOP_APPROVAL_PIN_INVALID" | "SOP_APPROVAL_ASSIGNEE_REQUIRED" => current
+                .and_then(|c| pinned_approval(c).err())
+                .map_or_else(|| code.into(), |e| e.message.into()),
+            "SOP_APPROVAL_AUTH_REQUIRED" => {
+                "Authenticated native subject and original session access are required.".into()
+            }
+            "SOP_APPROVAL_FORBIDDEN" => "Handoff is not assigned to this member.".into(),
+            "SOP_REVISION_REQUIRED" => "Approval requires the original revision.".into(),
+            "SOP_APPROVAL_LEGACY_RECEIPT" => {
+                "Old receipt has no authenticated approval facts.".into()
+            }
+            "SOP_RESUME_REQUEST_CONFLICT" => {
+                let duplicate = current.and_then(|c| c.resume_requests.get_key(&input.request_id));
+                let auth = duplicate.and_then(|d| d.get("authorization"));
+                let authority_conflict = matches!(input.source, ResumeSource::Human)
+                    && auth.is_some_and(|a| {
+                        !deep_strict_equal(
+                            &a.get("authority").cloned().unwrap_or(JsValue::Undefined),
+                            &authority_value(input.authority.as_ref()),
+                        ) || a.get("expectedRevision").and_then(JsValue::as_number)
+                            != input.expected_revision
+                    });
+                if authority_conflict {
+                    "Approval request belongs to a different subject or original revision.".into()
+                } else {
+                    "This request id already belongs to a different SOP resume payload.".into()
+                }
+            }
+            _ => code.into(),
+        }
+    }
+
+    /// Export the normalized durable record without duplicating resume/receipt
+    /// mathematics in the production disk adapter. Optional delivery facts are
+    /// selected from the original record by the same TS migration predicate.
+    pub(crate) fn persisted(
+        &self,
+        project_key: Option<&JsValue>,
+        session_id: &JsString,
+        original: &JsValue,
+    ) -> Result<Option<JsValue>, ApprovalFailure> {
+        let root =
+            ((self.profiles)(project_key)).ok_or_else(|| state_error("SOP_MODULE_DISABLED"))?;
+        let guard = self.states.lock().expect("#1350 pending store lock");
+        let Some(current) = guard.get(&(root, session_id.clone())) else {
+            return Ok(None);
+        };
+        let mut result = JsObject::new();
+        result.insert("schemaVersion".into(), JsValue::Number(3.0));
+        result.insert(
+            "sessionId".into(),
+            JsValue::String(current.session_id.clone()),
+        );
+        result.insert("bundle".into(), current.bundle.clone());
+        result.insert("state".into(), current.state.clone());
+        result.insert("revision".into(), JsValue::Number(current.revision));
+        if let Some(wait) = &current.wait {
+            result.insert("wait".into(), wait.clone());
+        }
+        if let Some(delivery) = original
+            .get("replyDelivery")
+            .filter(|value| is_reply_delivery(value))
+        {
+            result.insert("replyDelivery".into(), delivery.clone());
+        }
+        result.insert(
+            "resumeRequests".into(),
+            JsValue::Object(current.resume_requests.clone()),
+        );
+        result.insert(
+            "updatedAt".into(),
+            original
+                .get("updatedAt")
+                .filter(|value| value.as_string().is_some())
+                .cloned()
+                .unwrap_or_else(|| "1970-01-01T00:00:00.000Z".into()),
+        );
+        Ok(Some(JsValue::Object(result)))
+    }
+
     fn status_locked(&self, input: &StoreStatusInput) -> Result<Option<JsValue>, ApprovalFailure> {
         // `StaffDeckSopControlPlane.store(projectKey)`: the profile gate
         // precedes every session lookup.
@@ -842,4 +963,33 @@ pub(crate) fn corrupt_seeded_state_for_test(
         .get_mut(&(root, JsString::from(session)))
         .expect("#1473 the corruption target must be seeded first");
     entry.state = state;
+}
+
+fn is_reply_delivery(value: &JsValue) -> bool {
+    value.as_object().is_some()
+        && value.get("turnId").and_then(JsValue::as_string).is_some()
+        && value
+            .get("phase")
+            .and_then(JsValue::as_string)
+            .is_some_and(|s| s.equals_str("pending") || s.equals_str("durable"))
+        && value.get("result").is_some_and(|result| {
+            result.as_object().is_some()
+                && result.get("status").and_then(JsValue::as_string).is_some()
+                && result
+                    .get("replyFragment")
+                    .and_then(JsValue::as_string)
+                    .is_some()
+                && result
+                    .get("slotUpdates")
+                    .and_then(JsValue::as_object)
+                    .is_some()
+                && matches!(result.get("events"), Some(JsValue::Array(_)))
+        })
+        && value
+            .get("committedAt")
+            .and_then(JsValue::as_string)
+            .is_some()
+        && value
+            .get("durableAt")
+            .is_none_or(|v| v.is_undefined() || v.as_string().is_some())
 }

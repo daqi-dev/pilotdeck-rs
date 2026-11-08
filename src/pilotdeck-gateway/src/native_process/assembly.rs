@@ -63,6 +63,7 @@ use std::{
 };
 
 pub(super) mod automation;
+mod automation_lifetime;
 mod always_on;
 mod cron;
 mod dialog_recovery;
@@ -338,6 +339,7 @@ pub(super) async fn start_with_webhook(
         crate::channel::feishu::FeishuWebhookSlot::resolver(&slot),
         super::switch_wiring::AssemblySwitchHandles {
             cron: switch_slots.cron.get().cloned(),
+            automation: switch_slots.automation.get().cloned(),
             channels: switch_slots.channels.get().cloned().ok_or_else(|| {
                 ProxyError::from("channel assembly slot was not constructed during assembly")
             })?,
@@ -1253,7 +1255,7 @@ async fn start_assembly(
     // on the #1327 ChannelServer). The same config snapshot drives the
     // `adapters.weixin.enabled` startup gate and the ChannelStartDeps config;
     // #1326 takes the `cron` section off the same load.
-    let (channel_assembly, cron_section) = {
+    let (channel_assembly, automation_config) = {
         use crate::runtime::project::ConfigSource;
         let config = crate::runtime::project::NativeConfigSource::new(
             options.project.clone(),
@@ -1307,10 +1309,10 @@ async fn start_assembly(
         }
         // #1326 A8 U8: the `cron:` section travels to the builder below, which
         // is the only place that constructs `CronManager`.
-        let cron_section = if mode == AssemblyMode::Server {
-            config.get("cron").cloned()
-        } else {
-            None
+        let automation_config = automation::ProjectAutomationConfig {
+            cron: (mode == AssemblyMode::Server).then(|| config.get("cron").cloned()).flatten(),
+            always_on: (mode == AssemblyMode::Server).then(|| config.get("alwaysOn")
+                .map(crate::runtime::always_on::AlwaysOnConfig::from_section)).flatten(),
         };
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
@@ -1336,8 +1338,36 @@ async fn start_assembly(
         if let Some(slots) = &switch_slots {
             let _ = slots.channels.set(channel_assembly.clone());
         }
-        (channel_assembly, cron_section)
+        (channel_assembly, automation_config)
     };
+    let automation_home = options.home.clone();
+    let automation_bundle = crate::runtime::always_on::storage::run(move || {
+        automation::ProjectAutomationBundle::new(automation::ProjectAutomationBundleOptions {
+            config: automation_config, pilot_home: automation_home,
+            make_always_on: always_on::native_factory(), make_cron: cron::native_factory(),
+        }).map(Arc::new)
+    }).await;
+    let automation_bundle = match automation_bundle {
+        Ok(bundle) => bundle,
+        Err(error) => {
+            let _ = factory.dispose().await;
+            let _ = project.dispose().await;
+            return Err(error.into());
+        }
+    };
+    let automation_lifetime = automation_lifetime::NativeAutomationLifetime::new(automation_bundle.clone());
+    if let Some(slots) = &switch_slots {
+        let stopping = automation_lifetime.clone();
+        let stop: super::switch_wiring::AutomationStop = Arc::new(move || {
+            let future = stopping.stop();
+            Box::pin(async move { future.await.map_err(crate::switch::StepFailure::step) })
+        });
+        slots.automation.set(stop).map_err(|_| std::io::Error::other("Automation stop slot already occupied."))?;
+    }
+    let published_automation = Arc::new(automation::PublishedAutomation::default());
+    let build_automation = automation_lifetime.clone();
+    let initialize_automation = automation_lifetime.clone();
+    let cleanup_automation = automation_lifetime.clone();
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
     // #1326: the builder constructs the one `CronManager` on the gateway
@@ -1356,7 +1386,7 @@ async fn start_assembly(
     let cleanup_cron_slot = build_cron_slot.clone();
     let lookup_forks = fork_registry.clone();
     let budget = options.drain_budget;
-    let host = TurnGateway::start_with_cleanup_budget(
+    let host = TurnGateway::start_with_initializer(
         TurnReplayOptions::new(),
         // #1746: the failure path waits out this embedding's own drain budget
         // (the cleanup below bounds itself by the same value), so a slow but
@@ -1435,7 +1465,12 @@ async fn start_assembly(
             // six names stay out of capabilities and every call answers the
             // `requireCron` gate. A build failure fails the whole assembly
             // through the same `project.dispose()` fallback below.
-            let cron = cron::build(cron_section.as_ref(), &options.home)?;
+            let cron = automation_bundle.cron_manager();
+            build_automation.bind_runtime(tokio::runtime::Handle::current())?;
+            let standalone_project = build_project.clone();
+            let standalone_options = options.clone();
+            let standalone_env = env.clone();
+            let automation_overrides = session_overrides.clone();
             // #1326: the cron port's own volatile fence. It must NOT be the
             // owner's `SessionAdmission`: `SessionAdmissionCronGateway` holds
             // its fence for the whole of `run_turn`, and that call ends in
@@ -1472,7 +1507,7 @@ async fn start_assembly(
                 prepare_weixin_login: (mode == AssemblyMode::Server)
                     .then(|| build_channels.prepare_login_callback()),
                 cron: cron.clone(),
-                automation: None,
+                automation: Some(published_automation.clone()),
                 settings: settings.gateway,
                 session_overrides,
                 clear_sdk_state: Some(Arc::new(move |session| {
@@ -1507,48 +1542,49 @@ async fn start_assembly(
             // while the turn's real admission still happens in the submit
             // path; `start()` failing here fails the assembly through the
             // `project.dispose()` fallback below.
-            if let Some(cron) = cron.as_ref() {
-                let body = Arc::new(cron::NativeCronGatewayBody::new(
-                    cron_owner.clone(),
-                    submitter.clone(),
-                    tokio::runtime::Handle::current(),
-                ));
-                let cron_shutdown = body.shutdown_signal();
-                // #1353 A7: the recording wrapper the switch machine's S1
-                // face reads. `CronManager::stop` aborts in-flight runs
-                // through the bound gateway and swallows every rejection
-                // (the `let _ =` in manager.rs stop), so the rejection has
-                // to be recorded where the face can report it. Delegation is
-                // behavior-preserving.
-                let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(Arc::new(
-                    crate::runtime::cron::SessionAdmissionCronGateway::new(
-                        cron_admission.clone(),
-                        body,
-                    ),
-                )));
-                cron.bind_agent_gateway(recording.clone())
-                    .map_err(cron::cron_io_error)?;
-                cron.set_execution_project_filter(Arc::new(move |project| {
-                    execution_options.serves_project(project)
-                }))
-                .map_err(cron::cron_io_error)?;
-                cron::bind_callbacks(
-                    cron,
-                    build_channels.server().clone(),
-                    tokio::runtime::Handle::current(),
-                    cron_shutdown.clone(),
-                )
-                .map_err(cron::cron_io_error)?;
-                cron.start().map_err(cron::cron_io_error)?;
-                build_cron_slot
-                    .set(Arc::new(crate::switch::CronStopHandle::new_native(
-                        cron.clone(),
-                        recording.failures(),
-                        std::time::Duration::from_secs(15),
-                        Arc::new(move || cron_shutdown.cancel()),
-                    )))
-                    .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
-            }
+            let automation_body = Arc::new(always_on::NativeAlwaysOnGatewayBody::new(
+                cron_owner.clone(), submitter.clone(), automation_overrides,
+                tokio::runtime::Handle::current(), build_automation.shutdown.clone(),
+            ));
+            let standalone = always_on::standalone_factory(standalone_project, standalone_options,
+                standalone_env, automation_body.clone());
+            let plain_cron = Arc::new(crate::runtime::cron::SessionAdmissionCronGateway::new(
+                cron_admission.clone(), Arc::new(cron::NativeCronGatewayBody::new(
+                    cron_owner.clone(), submitter.clone(), tokio::runtime::Handle::current()))));
+            let cron_submitter = submitter.clone();
+            let cron_runtime = tokio::runtime::Handle::current();
+            let cron_channels = build_channels.clone();
+            let busy_owner = cron_owner.clone();
+            let stopping_automation = build_automation.clone();
+            automation_bundle.attach(automation::ProjectAutomationAttachment {
+                agent_gateway: automation::ProjectAutomationAgentGateway {
+                    always_on: automation_body, cron: plain_cron,
+                    native_cron_bind: Some(Arc::new(move |manager| {
+                        let body = Arc::new(cron::NativeCronGatewayBody::new(
+                            cron_owner.clone(), cron_submitter.clone(), cron_runtime.clone()));
+                        let shutdown = body.shutdown_signal();
+                        let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(Arc::new(
+                            crate::runtime::cron::SessionAdmissionCronGateway::new(cron_admission.clone(), body))));
+                        manager.bind_agent_gateway(recording.clone()).map_err(cron::cron_io_error)?;
+                        let options = execution_options.clone();
+                        manager.set_execution_project_filter(Arc::new(move |project| options.serves_project(project)))
+                            .map_err(cron::cron_io_error)?;
+                        cron::bind_callbacks(&manager, cron_channels.server().clone(), cron_runtime.clone(), shutdown.clone())
+                            .map_err(cron::cron_io_error)?;
+                        let stop = Arc::new(crate::switch::CronStopHandle::new_native(manager,
+                            recording.failures(), Duration::from_secs(15), Arc::new(move || shutdown.cancel())));
+                        // Initial compatibility handle; reload generations are owned
+                        // and stopped through the complete automation lifetime.
+                        let _ = build_cron_slot.set(stop.clone());
+                        Ok(stop)
+                    })),
+                },
+                is_project_busy: Some(Arc::new(move |project| busy_owner.has_active_user_turn(&project.into()))),
+                update_subsystems: Arc::new(move |update| {
+                    if stopping_automation.is_stopping() { published_automation.clear(); }
+                    else { published_automation.publish(update, standalone.clone()); }
+                }),
+            })?;
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
             // every channel start receives) before any channel can construct.
             // The builder runs exactly once per host, so a second publish is
@@ -1574,6 +1610,7 @@ async fn start_assembly(
                 submitter,
             })
         },
+        async move { initialize_automation.start().await },
         async move {
             // #1746: the host awaits this future on its own failure path before
             // reporting the error, so the deadline lives here; the shutdown
@@ -1599,6 +1636,7 @@ async fn start_assembly(
                     }
                     None => Ok(()),
                 };
+                let automation_stop = cleanup_observer("automation", cleanup_automation.stop().await).await;
                 // #1328 A8.3: stop the channel assembly and flush its durable
                 // mapper state — the closeServer + flushChannelState pair
                 // (PilotDeckServerShutdownBundle.ts:33-37: channels stop before
@@ -1624,7 +1662,7 @@ async fn start_assembly(
                     cleanup_diagnostic(error);
                 }
                 let mut outcome = sessions.and(project);
-                for failure in [cron_stop.err(), channel_stop.err(), channel_flush.err()]
+                for failure in [cron_stop.err(), automation_stop.err(), channel_stop.err(), channel_flush.err()]
                     .into_iter()
                     .flatten()
                 {

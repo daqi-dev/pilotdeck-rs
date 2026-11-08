@@ -38,7 +38,10 @@
 //! `ui/server/staffdeck-approval-authority.mjs` and performs network calls);
 //! it stays injected, never implemented here.
 #![cfg_attr(not(test), allow(dead_code))]
-mod pending;
+pub(crate) mod disk;
+pub(crate) mod native_auth;
+pub(crate) mod native_http;
+pub(crate) mod pending;
 
 use crate::{Body, model_catalog::trim};
 use bytes::Bytes;

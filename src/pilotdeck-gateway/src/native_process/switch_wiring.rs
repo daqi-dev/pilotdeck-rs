@@ -40,8 +40,11 @@ use super::channels::NativeChannels;
 /// The handles `start_with_webhook` hands the embedding that drives the
 /// machine: the cron stop handle (absent when no `cron:` section was
 /// configured) and the channel assembly.
+pub(crate) type AutomationStop = Arc<dyn Fn() -> FaceFuture + Send + Sync>;
+
 pub(crate) struct AssemblySwitchHandles {
     pub(crate) cron: Option<Arc<CronStopHandle>>,
+    pub(crate) automation: Option<AutomationStop>,
     pub(crate) channels: Arc<NativeChannels>,
 }
 
@@ -51,6 +54,7 @@ pub(crate) struct AssemblySwitchHandles {
 /// through `OnceLock`s the embedding reads once the builder has run.
 #[derive(Clone, Default)]
 pub(crate) struct AssemblySwitchSlots {
+    pub(crate) automation: Arc<std::sync::OnceLock<AutomationStop>>,
     pub(crate) cron: Arc<std::sync::OnceLock<Arc<CronStopHandle>>>,
     pub(crate) channels: Arc<std::sync::OnceLock<Arc<NativeChannels>>>,
 }
@@ -94,6 +98,7 @@ impl AdmissionGate {
 /// clone and the embedding keeps another for the post-halt walk.
 #[derive(Clone)]
 pub(crate) struct ProductionFaces {
+    automation: Option<AutomationStop>,
     cron: Option<Arc<CronStopHandle>>,
     admission: AdmissionGate,
     phased: Arc<PhasedRun>,
@@ -109,11 +114,17 @@ impl ProductionFaces {
         phased: Arc<PhasedRun>,
     ) -> Self {
         Self {
+            automation: None,
             cron,
             admission,
             phased,
             entries_drained: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub(crate) fn with_automation_stop(mut self, automation: Option<AutomationStop>) -> Self {
+        self.automation = automation;
+        self
     }
 
     /// The death march after a halted machine. This embedding's switch is
@@ -157,6 +168,7 @@ impl ProductionFaces {
 
 impl SwitchFaces for ProductionFaces {
     fn stop_automation(&self) -> FaceFuture {
+        if let Some(stop) = &self.automation { return stop(); }
         match &self.cron {
             // S1: close the management face (A6) before the stop, stop the
             // manager exactly once, report the swallowed abort rejections

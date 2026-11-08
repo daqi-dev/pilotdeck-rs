@@ -1,0 +1,3640 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "fixed": "2026-01-02T03:04:05.000Z",
+  "sources": {
+    "src/sop/staffdeck/SopStateStore.ts": "6b5f6dfad649e2f68a434356c626ab37c9e94bc74a9fecfdc2f9df784b844a0d",
+    "ui/server/staffdeck-approval-authority.mjs": "5313eef4276cbc38ebb3b0c42474ec2663c2b8293694ff520fca68fb912ad361"
+  },
+  "forbidden": 0,
+  "cases": [
+    {
+      "name": "create",
+      "steps": [
+        {
+          "operation": {
+            "method": "loadOrCreate",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "fixture"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "slots_json": {},
+                "skill_stack_json": [],
+                "successful_tool_names": []
+              },
+              "revision": 1,
+              "resumeRequests": {},
+              "updatedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "slots_json": {},
+              "skill_stack_json": [],
+              "successful_tool_names": []
+            },
+            "revision": 1,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "loadOrCreate",
+            "args": [
+              "s1",
+              {
+                "sops": []
+              },
+              "other"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "slots_json": {},
+                "skill_stack_json": [],
+                "successful_tool_names": []
+              },
+              "revision": 1,
+              "resumeRequests": {},
+              "updatedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "slots_json": {},
+              "skill_stack_json": [],
+              "successful_tool_names": []
+            },
+            "revision": 1,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "migration",
+      "initial": {
+        "schemaVersion": 1,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 0,
+        "resumeRequests": {
+          "bad": {}
+        },
+        "updatedAt": 4,
+        "unknown": "drop",
+        "wait": {
+          "kind": "bogus"
+        }
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "loadOrCreate",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "fixture"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "active",
+                "slots_json": {
+                  "old": "retained"
+                }
+              },
+              "revision": 1,
+              "resumeRequests": {},
+              "updatedAt": "1970-01-01T00:00:00.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 1,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 0,
+            "resumeRequests": {
+              "bad": {}
+            },
+            "updatedAt": 4,
+            "unknown": "drop",
+            "wait": {
+              "kind": "bogus"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "replace-external",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "replace",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "waiting_external_task",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-external"
+                }
+              },
+              3
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "waiting_external_task",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-external"
+                }
+              },
+              "revision": 4,
+              "wait": {
+                "id": "wait-external",
+                "kind": "external_task",
+                "skillId": "fixture",
+                "stepId": "node",
+                "createdAt": "2026-01-02T03:04:05.000Z"
+              },
+              "resumeRequests": {},
+              "updatedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 4,
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "replace",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "waiting_external_task",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-external"
+                }
+              },
+              4
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "waiting_external_task",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-external"
+                }
+              },
+              "revision": 5,
+              "wait": {
+                "id": "wait-external",
+                "kind": "external_task",
+                "skillId": "fixture",
+                "stepId": "node",
+                "createdAt": "2026-01-02T03:04:05.000Z"
+              },
+              "resumeRequests": {},
+              "updatedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 5,
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "status",
+            "args": [
+              "s1"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "sessionId": "s1",
+              "revision": 5,
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "waiting_external_task",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-external"
+                }
+              },
+              "wait": {
+                "id": "wait-external",
+                "kind": "external_task",
+                "skillId": "fixture",
+                "stepId": "node",
+                "createdAt": "2026-01-02T03:04:05.000Z"
+              }
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 5,
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "replace-handoff",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "replace",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "handoff",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-human"
+                }
+              },
+              3
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "handoff",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-human"
+                }
+              },
+              "revision": 4,
+              "wait": {
+                "id": "wait-human",
+                "kind": "handoff",
+                "skillId": "fixture",
+                "stepId": "node",
+                "createdAt": "2026-01-02T03:04:05.000Z"
+              },
+              "resumeRequests": {},
+              "updatedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "handoff",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-human"
+              }
+            },
+            "revision": 4,
+            "wait": {
+              "id": "wait-human",
+              "kind": "handoff",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "status",
+            "args": [
+              "s1"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "sessionId": "s1",
+              "revision": 4,
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "handoff",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-human"
+                }
+              },
+              "wait": {
+                "id": "wait-human",
+                "kind": "handoff",
+                "skillId": "fixture",
+                "stepId": "node",
+                "createdAt": "2026-01-02T03:04:05.000Z"
+              },
+              "approval": {
+                "waitId": "wait-human",
+                "revision": 4,
+                "skillId": "fixture",
+                "version": "v1",
+                "nodeId": "node",
+                "assigneeUserId": "approver"
+              }
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "handoff",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-human"
+              }
+            },
+            "revision": 4,
+            "wait": {
+              "id": "wait-human",
+              "kind": "handoff",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "replace-conflict",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "replace",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "waiting_external_task",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "awaiting_input_json": {
+                  "wait_id": "wait-external"
+                }
+              },
+              2
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_REVISION_CONFLICT",
+            "message": "The SOP changed during preparation."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "external-resume",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-external",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-external",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": true,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-external",
+                "message": "conflict",
+                "expectedRevision": 3,
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_RESUME_REQUEST_CONFLICT",
+            "message": "This request id already belongs to a different SOP resume payload."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "external-validation",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "stale",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_WAIT_STALE",
+            "message": "The StaffDeck SOP wait identifier is no longer active."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        },
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-external",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "human",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_RESUME_SOURCE_INVALID",
+            "message": "This wait requires source 'external_task'."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        },
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-external",
+                "message": "resume fixture",
+                "expectedRevision": 2,
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_REVISION_CONFLICT",
+            "message": "Expected SOP revision 2, found 3."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "not-waiting",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-external",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing",
+      "steps": [
+        {
+          "operation": {
+            "method": "status",
+            "args": [
+              "s1"
+            ]
+          },
+          "outcome": {
+            "ok": true
+          }
+        },
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-external",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          }
+        }
+      ]
+    },
+    {
+      "name": "human-resume",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "handoff",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-human"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-human",
+          "kind": "handoff",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-human",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "human",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "authority": {
+                  "tenantId": "tenant",
+                  "sessionId": "s1",
+                  "subject": {
+                    "tenantId": "tenant",
+                    "source": "web",
+                    "disabled": false,
+                    "userId": "approver",
+                    "role": "member"
+                  }
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-human",
+                "source": "human",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "authorization": {
+                  "authority": {
+                    "tenantId": "tenant",
+                    "sessionId": "s1",
+                    "subject": {
+                      "tenantId": "tenant",
+                      "source": "web",
+                      "disabled": false,
+                      "userId": "approver",
+                      "role": "member"
+                    }
+                  },
+                  "approval": {
+                    "waitId": "wait-human",
+                    "revision": 3,
+                    "skillId": "fixture",
+                    "version": "v1",
+                    "nodeId": "node",
+                    "assigneeUserId": "approver"
+                  },
+                  "expectedRevision": 3
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-human",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "human",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "authority": {
+                  "tenantId": "tenant",
+                  "sessionId": "s1",
+                  "subject": {
+                    "tenantId": "tenant",
+                    "source": "web",
+                    "disabled": false,
+                    "userId": "approver",
+                    "role": "member"
+                  }
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": true,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-human",
+                "source": "human",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "authorization": {
+                  "authority": {
+                    "tenantId": "tenant",
+                    "sessionId": "s1",
+                    "subject": {
+                      "tenantId": "tenant",
+                      "source": "web",
+                      "disabled": false,
+                      "userId": "approver",
+                      "role": "member"
+                    }
+                  },
+                  "approval": {
+                    "waitId": "wait-human",
+                    "revision": 3,
+                    "skillId": "fixture",
+                    "version": "v1",
+                    "nodeId": "node",
+                    "assigneeUserId": "approver"
+                  },
+                  "expectedRevision": 3
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "human-denied",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "handoff",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-human"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-human",
+          "kind": "handoff",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-human",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "human",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_APPROVAL_AUTH_REQUIRED",
+            "message": "Authenticated native subject and original session access are required."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "handoff",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-human"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-human",
+              "kind": "handoff",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        },
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-human",
+                "message": "resume fixture",
+                "expectedRevision": 3,
+                "source": "human",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "authority": {
+                  "tenantId": "tenant",
+                  "sessionId": "s1",
+                  "subject": {
+                    "tenantId": "tenant",
+                    "source": "web",
+                    "disabled": false,
+                    "userId": "other",
+                    "role": "member"
+                  }
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_APPROVAL_FORBIDDEN",
+            "message": "Handoff is not assigned to this member."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "handoff",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-human"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-human",
+              "kind": "handoff",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        },
+        {
+          "operation": {
+            "method": "resume",
+            "args": [
+              {
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "waitId": "wait-human",
+                "message": "resume fixture",
+                "source": "human",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "authority": {
+                  "tenantId": "tenant",
+                  "sessionId": "s1",
+                  "subject": {
+                    "tenantId": "tenant",
+                    "source": "web",
+                    "disabled": false,
+                    "userId": "approver",
+                    "role": "member"
+                  }
+                }
+              }
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_REVISION_REQUIRED",
+            "message": "Approval requires the original revision."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "handoff",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-human"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-human",
+              "kind": "handoff",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "delivery",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "commitSubmission",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "completed",
+                "slots_json": {
+                  "old": "retained"
+                }
+              },
+              3,
+              "turn-1",
+              {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              }
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "completed",
+                "slots_json": {
+                  "old": "retained"
+                }
+              },
+              "revision": 4,
+              "replyDelivery": {
+                "turnId": "turn-1",
+                "phase": "pending",
+                "result": {
+                  "status": "completed",
+                  "replyFragment": "fixture reply",
+                  "slotUpdates": {
+                    "new": "value"
+                  },
+                  "events": []
+                },
+                "committedAt": "2026-01-02T03:04:05.000Z"
+              },
+              "resumeRequests": {},
+              "updatedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "completed",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 4,
+            "replyDelivery": {
+              "turnId": "turn-1",
+              "phase": "pending",
+              "result": {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              },
+              "committedAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "replyDelivery",
+            "args": [
+              "s1"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "turnId": "turn-1",
+              "phase": "pending",
+              "result": {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              },
+              "committedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "completed",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 4,
+            "replyDelivery": {
+              "turnId": "turn-1",
+              "phase": "pending",
+              "result": {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              },
+              "committedAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "markReplyDurable",
+            "args": [
+              "s1",
+              "turn-1"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "turnId": "turn-1",
+              "phase": "durable",
+              "result": {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              },
+              "committedAt": "2026-01-02T03:04:05.000Z",
+              "durableAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "completed",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 4,
+            "replyDelivery": {
+              "turnId": "turn-1",
+              "phase": "durable",
+              "result": {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              },
+              "committedAt": "2026-01-02T03:04:05.000Z",
+              "durableAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "markReplyDurable",
+            "args": [
+              "s1",
+              "turn-1"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "turnId": "turn-1",
+              "phase": "durable",
+              "result": {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              },
+              "committedAt": "2026-01-02T03:04:05.000Z",
+              "durableAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "completed",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 4,
+            "replyDelivery": {
+              "turnId": "turn-1",
+              "phase": "durable",
+              "result": {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              },
+              "committedAt": "2026-01-02T03:04:05.000Z",
+              "durableAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "clearReplyDelivery",
+            "args": [
+              "s1",
+              "wrong-turn"
+            ]
+          },
+          "outcome": {
+            "ok": true
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "completed",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 4,
+            "replyDelivery": {
+              "turnId": "turn-1",
+              "phase": "durable",
+              "result": {
+                "status": "completed",
+                "replyFragment": "fixture reply",
+                "slotUpdates": {
+                  "new": "value"
+                },
+                "events": []
+              },
+              "committedAt": "2026-01-02T03:04:05.000Z",
+              "durableAt": "2026-01-02T03:04:05.000Z"
+            },
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "clearReplyDelivery",
+            "args": [
+              "s1",
+              "turn-1"
+            ]
+          },
+          "outcome": {
+            "ok": true
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "completed",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 4,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "replyDelivery",
+            "args": [
+              "s1"
+            ]
+          },
+          "outcome": {
+            "ok": true
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "completed",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 4,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "authority",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "authority",
+            "args": [
+              "s1",
+              3
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "sopId": "fixture",
+              "sopVersion": "v1",
+              "nodeId": "node",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "authority",
+            "args": [
+              "s1",
+              2
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_REVISION_CONFLICT",
+            "message": "The SOP authority is stale."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "authority-inactive",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "handoff",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-human"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-human",
+          "kind": "handoff",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "authority",
+            "args": [
+              "s1",
+              3
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_AUTHORITY_STATE_INACTIVE",
+            "message": "The SOP is not executing."
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "handoff",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-human"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-human",
+              "kind": "handoff",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "successful-tools",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "steps": [
+        {
+          "operation": {
+            "method": "recordSuccessfulTools",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "fixture",
+              [
+                "read_file",
+                "",
+                "read_file",
+                "write_file"
+              ]
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "active",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "successful_tool_names": [
+                  "read_file",
+                  "write_file"
+                ]
+              },
+              "revision": 4,
+              "resumeRequests": {},
+              "updatedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              },
+              "successful_tool_names": [
+                "read_file",
+                "write_file"
+              ]
+            },
+            "revision": 4,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "operation": {
+            "method": "recordSuccessfulTools",
+            "args": [
+              "s1",
+              {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "fixture",
+              [
+                "read_file"
+              ]
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "schemaVersion": 3,
+              "sessionId": "s1",
+              "bundle": {
+                "sops": [
+                  {
+                    "id": "fixture",
+                    "skill_id": "fixture",
+                    "version": "v1",
+                    "content": {
+                      "nodes": [
+                        {
+                          "node_id": "node",
+                          "assignee_user_id": "approver"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "state": {
+                "version": 1,
+                "selected_skill_id": "fixture",
+                "active_skill_id": "fixture",
+                "active_step_id": "node",
+                "status": "active",
+                "slots_json": {
+                  "old": "retained"
+                },
+                "successful_tool_names": [
+                  "read_file",
+                  "write_file"
+                ]
+              },
+              "revision": 5,
+              "resumeRequests": {},
+              "updatedAt": "2026-01-02T03:04:05.000Z"
+            }
+          },
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              },
+              "successful_tool_names": [
+                "read_file",
+                "write_file"
+              ]
+            },
+            "revision": 5,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    }
+  ],
+  "auth": [
+    {
+      "name": "member",
+      "user": {
+        "tenant_id": "tenant",
+        "id": "approver",
+        "source": "web",
+        "disabled": false,
+        "role": "member"
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": true,
+        "result": {
+          "tenantId": "tenant",
+          "userId": "approver",
+          "source": "web",
+          "role": "member",
+          "disabled": false
+        }
+      }
+    },
+    {
+      "name": "admin",
+      "user": {
+        "tenant_id": "tenant",
+        "id": "approver",
+        "source": "web",
+        "disabled": false,
+        "role": "admin"
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": true,
+        "result": {
+          "tenantId": "tenant",
+          "userId": "approver",
+          "source": "web",
+          "role": "admin",
+          "disabled": false
+        }
+      }
+    },
+    {
+      "name": "wrong-user",
+      "user": {
+        "tenant_id": "tenant",
+        "id": "other",
+        "source": "web",
+        "disabled": false,
+        "role": "member"
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": false,
+        "name": "Error",
+        "code": "APPROVAL_SUBJECT_MISMATCH",
+        "status": 403,
+        "message": "This identity is not the configured native approver."
+      }
+    },
+    {
+      "name": "wrong-tenant",
+      "user": {
+        "tenant_id": "other",
+        "id": "approver",
+        "source": "web",
+        "disabled": false,
+        "role": "member"
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": false,
+        "name": "Error",
+        "code": "APPROVAL_SUBJECT_MISMATCH",
+        "status": 403,
+        "message": "This identity is not the configured native approver."
+      }
+    },
+    {
+      "name": "wrong-source",
+      "user": {
+        "tenant_id": "tenant",
+        "id": "approver",
+        "source": "api",
+        "disabled": false,
+        "role": "member"
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": false,
+        "name": "Error",
+        "code": "APPROVAL_SUBJECT_MISMATCH",
+        "status": 403,
+        "message": "This identity is not the configured native approver."
+      }
+    },
+    {
+      "name": "disabled",
+      "user": {
+        "tenant_id": "tenant",
+        "id": "approver",
+        "source": "web",
+        "disabled": true,
+        "role": "member"
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": false,
+        "name": "Error",
+        "code": "APPROVAL_SUBJECT_MISMATCH",
+        "status": 403,
+        "message": "This identity is not the configured native approver."
+      }
+    },
+    {
+      "name": "wrong-role",
+      "user": {
+        "tenant_id": "tenant",
+        "id": "approver",
+        "source": "web",
+        "disabled": false,
+        "role": "owner"
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": false,
+        "name": "Error",
+        "code": "APPROVAL_SUBJECT_MISMATCH",
+        "status": 403,
+        "message": "This identity is not the configured native approver."
+      }
+    },
+    {
+      "name": "empty-bearer",
+      "user": {
+        "tenant_id": "tenant",
+        "id": "approver",
+        "source": "web",
+        "disabled": false,
+        "role": "member"
+      },
+      "bearer": "",
+      "requests": [],
+      "outcome": {
+        "ok": false,
+        "name": "Error",
+        "code": "APPROVAL_AUTH_REQUIRED",
+        "status": 401,
+        "message": "The approver must sign in."
+      }
+    },
+    {
+      "name": "rejected",
+      "status": 401,
+      "user": {
+        "tenant_id": "tenant",
+        "id": "approver",
+        "source": "web",
+        "disabled": false,
+        "role": "member"
+      },
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": false,
+        "name": "Error",
+        "code": "APPROVAL_AUTH_REJECTED",
+        "status": 401,
+        "message": "StaffDeck rejected the approver identity."
+      }
+    },
+    {
+      "name": "null-user",
+      "user": null,
+      "requests": [
+        {
+          "url": "http://127.0.0.1:1/api/auth/me",
+          "method": "GET",
+          "headers": {
+            "authorization": "Bearer fixture-bearer",
+            "accept": "application/json"
+          },
+          "redirect": "error"
+        }
+      ],
+      "outcome": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'tenant_id')"
+      }
+    }
+  ]
+}

@@ -607,8 +607,14 @@ impl ProjectAutomationBundle {
         // Construction is intentionally effect-free (:200-203): a malformed
         // new config cannot tear down a working provider generation, and a
         // factory failure here propagates without touching the current one.
-        let candidate = self
-            .stage(&input.config, Some(&previous), changes)
+        let config = input.config.clone();
+        let staging_previous = previous.clone();
+        let home = self.pilot_home.clone();
+        let make_always_on = self.make_always_on.clone();
+        let make_cron = self.make_cron.clone();
+        let candidate = tokio::task::spawn_blocking(move || Self::stage_with(
+            &config, Some(&staging_previous), changes, &home, &make_always_on, &make_cron))
+            .await.map_err(|error| AutomationError::provider(error.to_string()))?
             .map_err(|error| AutomationError::provider(error.to_string()))?;
         if !started {
             let generation = candidate;

@@ -765,6 +765,11 @@ fn write_output(text: &str) -> io::Result<()> {
     output.flush()
 }
 fn main() -> std::process::ExitCode {
+    if let Some(code) =
+        pilotdeck_gateway::native_installation_owner_helper(std::env::args_os().skip(1))
+    {
+        return std::process::ExitCode::from(code as u8);
+    }
     let args: Vec<_> = env::args_os().skip(1).collect();
     if args.is_empty() || (args.len() == 1 && args[0] == "--help") {
         return if write_output(HELP).is_ok() {

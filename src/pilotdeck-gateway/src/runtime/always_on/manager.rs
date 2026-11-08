@@ -223,7 +223,7 @@ impl AlwaysOnRunContextRegistry {
 pub(crate) struct ApplyInput {
     pub project_key: String,
     pub work_cycle_id: String,
-    pub project_name: Option<String>,
+    pub project_name: Option<JsString>,
 }
 
 pub(crate) struct AbortInput {
@@ -602,7 +602,7 @@ impl AlwaysOnRuntime {
                     run_id: &fire_run_id,
                     cycle: &cycle,
                     plans: &plans,
-                    project_name: project_name.as_deref(),
+                    project_name: project_name.as_ref(),
                     project_root: &project_root,
                 })
                 .await?;

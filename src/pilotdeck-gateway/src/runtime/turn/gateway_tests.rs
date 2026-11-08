@@ -1674,3 +1674,62 @@ fn a_caller_budget_decides_the_failure_teardown_bound() {
         "#1746 the caller's budget must bound the wait, took {elapsed:?}"
     );
 }
+
+#[tokio::test]
+async fn owned_producer_initializer_precedes_ready_and_failure_disposes_owner() {
+    for outcome in ["ready", "failure", "deadline"] {
+        let ready = Arc::new(AtomicBool::new(false));
+        let cleaned = Arc::new(AtomicBool::new(false));
+        let owner_slot = Arc::new(std::sync::Mutex::new(None));
+        let builder_owner = owner_slot.clone();
+        let initialize_ready = ready.clone();
+        let cleanup_done = cleaned.clone();
+        let (host_thread, initialized_thread) = oneshot::channel();
+        let host = TurnGateway::start_with_initializer(
+            TurnReplayOptions::new(), Duration::from_millis(100),
+            move |coordinator| {
+                let session = Arc::new(Session { thread: std::thread::current().id(),
+                    native: vec![], coordinator: coordinator.clone(), accepted: Gate::new(),
+                    terminal: Gate::new(), end: Gate::new(), aborts: AtomicUsize::new(0) });
+                let mut options = SessionOwnerOptions::new(Arc::new(Factory(session)));
+                options.idle_sweep_interval_ms = 0;
+                let owner = SessionOwner::new(options);
+                *builder_owner.lock().unwrap() = Some(owner.clone());
+                host_thread.send(std::thread::current().id()).unwrap();
+                let interactions = Arc::new(GatewayInteractionCoordinator::default());
+                Ok(GatewayServices {
+                    submitter: Arc::new(TurnSubmitter { owner, coordinator, registry: None,
+                        projector: Arc::new(GatewayAgentEventProjector::new(Default::default()).unwrap()),
+                        host: Arc::new(Host { interactions: interactions.clone(), finally_failure: false }),
+                        workspace_admissions: WorkspaceAdmissions::default() }),
+                    interactions, requests: Arc::new(Requests),
+                })
+            },
+            async move {
+                assert_eq!(initialized_thread.await.unwrap(), std::thread::current().id());
+                tokio::time::sleep(Duration::from_millis(2)).await;
+                match outcome {
+                    "ready" => { initialize_ready.store(true, Ordering::SeqCst); Ok(()) },
+                    "failure" => Err("producer refused startup".into()),
+                    _ => std::future::pending().await,
+                }
+            },
+            async move { cleanup_done.store(true, Ordering::SeqCst); Ok(()) },
+        );
+        match outcome {
+            "ready" => {
+                let host = host.expect("initialized producer must publish readiness");
+                assert!(ready.load(Ordering::SeqCst));
+                assert!(!cleaned.load(Ordering::SeqCst));
+                host.shutdown(Duration::from_secs(1)).await.unwrap();
+            }
+            _ => {
+                let error = host.err().expect("failed producer cannot publish a usable gateway");
+                assert!(!ready.load(Ordering::SeqCst));
+                assert!(error.to_string().contains(if outcome == "failure" { "producer refused" } else { "deadline" }));
+            }
+        }
+        assert!(cleaned.load(Ordering::SeqCst));
+        assert!(owner_slot.lock().unwrap().as_ref().unwrap().begin_turn(&"s".into(), &"r".into()).is_none());
+    }
+}

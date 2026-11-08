@@ -170,7 +170,7 @@ pub(super) async fn run_embedding(
         switch_handles.cron,
         switch_wiring::AdmissionGate::new(switch_handles.channels, trigger),
         phased,
-    );
+    ).with_automation_stop(switch_handles.automation);
     let machine = crate::switch::SwitchMachine::new(
         faces.clone(),
         crate::switch::SwitchTimeouts::production(options.drain_budget),

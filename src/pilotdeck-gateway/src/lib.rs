@@ -23,6 +23,8 @@ mod model_catalog;
 pub mod model_cost;
 mod module_host;
 #[doc(hidden)]
+pub use module_host::approvals::native_auth::maybe_owner_helper as native_installation_owner_helper;
+#[doc(hidden)]
 pub mod mutants;
 mod native_archive;
 mod native_http;

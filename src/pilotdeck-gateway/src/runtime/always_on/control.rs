@@ -76,7 +76,10 @@ impl AlwaysOnControl for Control {
             match method {
                 "always_on_apply" => {
                     let id = text(read(&params, "workCycleId")?)?;
-                    let name = read(&params, "projectName")?.filter(|v| !v.is_undefined()).map(|v| text(Some(v))).transpose()?;
+                    let name = read(&params, "projectName")?.filter(|v| !v.is_undefined()).map(|v| {
+                        crate::js_value::to_string_units_checked(v).map(JsString::from_utf16)
+                            .map_err(|_| err("gateway_request_failed", "Cannot convert projectName to string"))
+                    }).transpose()?;
                     let value = manager.apply_cycle(&ApplyInput { project_key: manager_project, work_cycle_id: id, project_name: name })
                         .await.map_err(|e| err("gateway_request_failed", e.to_string()))?;
                     let mut out = JsObject::new(); out.insert("sessionKey".into(), JsValue::String(value.session_key.as_str().into()));

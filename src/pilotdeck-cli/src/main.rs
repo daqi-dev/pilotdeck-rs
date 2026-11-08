@@ -125,6 +125,11 @@ pub fn stderr_line(text: &str) {
 }
 
 fn main() -> ExitCode {
+    if let Some(code) =
+        pilotdeck_gateway::native_installation_owner_helper(std::env::args_os().skip(1))
+    {
+        return ExitCode::from(code as u8);
+    }
     let argv: Vec<String> = std::env::args_os()
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned())

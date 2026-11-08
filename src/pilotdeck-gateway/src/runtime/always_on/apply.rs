@@ -19,15 +19,14 @@ pub(crate) struct WorkspaceDiff {
 pub(crate) trait ApplyWorkspace: Send + Sync {
     fn diff<'a>(
         &'a self,
-        strategy: &'a str,
-        workspace: &'a str,
-        project_root: &'a str,
+        cycle: &'a super::cycles::WorkCycleRecord,
     ) -> Pin<Box<dyn Future<Output = Result<WorkspaceDiff, ControlError>> + Send + 'a>>;
 }
 
 /// The production sink persists the same project/run events as discovery.
 pub(crate) trait ApplyEvents: Send + Sync {
     fn emit(&self, run_id: &str, phase: &str, error: Option<&ControlError>);
+    fn drain<'a>(&'a self) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 }
 
 pub(crate) struct ApplyPhase {
@@ -56,7 +55,7 @@ impl ApplyPhase {
             code: "invalid_workspace".into(),
             message: "Workspace path cannot be represented by the native filesystem".into(),
         })?;
-        let diff = self.workspace.diff(&workspace.strategy, &workspace_cwd, input.project_root).await?;
+        let diff = self.workspace.diff(input.cycle).await?;
         let project_key = self.project_key.to_utf8().map_err(|_| ControlError {
             code: "invalid_project".into(),
             message: "Project path cannot be represented by the native filesystem".into(),
@@ -69,10 +68,10 @@ impl ApplyPhase {
             if let Some(value) = &plan.title { title.extend_from_slice(value.units()); }
         }
         let title = JsString::from_utf16(title);
-        let branch = workspace.metadata.get_property("branchName")
-            .and_then(|value| value.as_string()).and_then(|value| value.to_utf8().ok());
-        let prompt = apply_prompt(input.project_name.unwrap_or(""), input.project_root,
-            &workspace_cwd, &workspace.strategy, &title, &input.cycle.id, branch.as_deref(), &diff, self.chinese);
+        let branch = workspace.metadata.get_property("branchName").and_then(|value| value.as_string());
+        let missing_name = JsString::from("undefined");
+        let prompt = apply_prompt(input.project_name.unwrap_or(&missing_name), input.project_root,
+            &workspace_cwd, &workspace.strategy, &title, &input.cycle.id, branch, &diff, self.chinese);
         let request = PhaseRequest {
             project_key: self.project_key.clone(),
             session_key: session_key.as_str().into(),
@@ -95,27 +94,32 @@ impl ApplyPhase {
             error
         });
         self.events.emit(input.run_id, if error.is_some() { "run_failed" } else { "apply_completed" }, error.as_ref());
+        self.events.drain().await;
         result.finish().await;
         Ok(ApplyPhaseResult { session_key, error })
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn apply_prompt(project: &str, root: &str, cwd: &str, strategy: &str, title: &JsString,
-    id: &JsString, branch: Option<&str>, diff: &WorkspaceDiff, chinese: bool) -> JsString {
+fn apply_prompt(project: &JsString, root: &str, cwd: &str, strategy: &str, title: &JsString,
+    id: &JsString, branch: Option<&JsString>, diff: &WorkspaceDiff, chinese: bool) -> JsString {
+    let mut units: Vec<u16> = if chinese { "为项目 ".encode_utf16().collect() } else { "Apply the isolated workspace changes to project ".encode_utf16().collect() };
+    units.extend_from_slice(project.units());
     let mut out = if chinese {
-        format!("为项目 {project} 应用工作区变更。请直接合并已有改动，不要创建新计划。\n项目根目录：{root}\n隔离工作区：{cwd}（{strategy}）\n计划：")
+        format!(" 应用工作区变更。请直接合并已有改动，不要创建新计划。\n项目根目录：{root}\n隔离工作区：{cwd}（{strategy}）\n计划：")
     } else {
-        format!("Apply the isolated workspace changes to project {project}; do not create a new plan.\nProject root: {root}\nWorkspace: {cwd} ({strategy})\nPlan: ")
+        format!("; do not create a new plan.\nProject root: {root}\nWorkspace: {cwd} ({strategy})\nPlan: ")
     };
-    let mut units: Vec<u16> = out.encode_utf16().collect();
+    units.extend(out.encode_utf16());
     units.extend_from_slice(title.units());
     units.extend(" (".encode_utf16());
     units.extend_from_slice(id.units());
     units.extend(")\n".encode_utf16());
     out.clear();
     if let Some(branch) = branch.filter(|branch| !branch.is_empty()) {
-        out.push_str(&format!("Branch: {branch}\n"));
+        units.extend("Branch: ".encode_utf16());
+        units.extend_from_slice(branch.units());
+        units.push(10);
     }
     let empty = diff.text.to_utf8().is_ok_and(|text| text.trim().is_empty());
     if empty {
@@ -163,7 +167,7 @@ mod tests {
     }
     struct Workspace;
     impl ApplyWorkspace for Workspace {
-        fn diff<'a>(&'a self, _: &'a str, _: &'a str, _: &'a str)
+        fn diff<'a>(&'a self, _: &'a WorkCycleRecord)
             -> Pin<Box<dyn Future<Output = Result<WorkspaceDiff, ControlError>> + Send + 'a>> {
             Box::pin(async { Ok(WorkspaceDiff { text: "diff-content".into(), file_count: 1, truncated: false }) })
         }
@@ -174,6 +178,7 @@ mod tests {
         fn emit(&self, _: &str, phase: &str, _: Option<&ControlError>) {
             self.0.lock().unwrap().push(phase.into());
         }
+        fn drain<'a>(&'a self) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>> { Box::pin(async {}) }
     }
     impl PhaseObserver for Events {
         fn on_event<'a>(&'a self, _: &'a JsString, _: &'a JsString, _: &'a JsString,
@@ -194,7 +199,7 @@ mod tests {
                 cwd: "/workspace".into(), metadata: Default::default() }), plan_ids: Vec::new(),
             created_at: "".into(), created_by_run_id: "".into() };
         let result = phase.run(ApplyPhaseInput { run_id: "run", cycle: &cycle, plans: &[],
-            project_name: Some("Project"), project_root: "/project" }).await.unwrap();
+            project_name: Some(&"Project".into()), project_root: "/project" }).await.unwrap();
         assert_eq!(result.session_key, "always-on/apply:project=/project:run=run");
         assert!(result.error.is_none());
         let requests = gateway.0.lock().unwrap();
@@ -255,7 +260,17 @@ mod tests {
             file_count: 1,
             truncated: true,
         };
-        let prompt = apply_prompt("p", "/p", "/w", "git-worktree", &"title".into(), &"id".into(), None, &diff, false);
+        let prompt = apply_prompt(&"p".into(), "/p", "/w", "git-worktree", &"title".into(), &"id".into(), None, &diff, false);
         assert!(prompt.units().ends_with(&[b'x' as u16, 0xd83d]));
+    }
+
+    #[test]
+    fn project_name_and_branch_keep_lone_surrogates() {
+        let project = JsString::from_utf16(vec![0xd800]);
+        let branch = JsString::from_utf16(vec![0xdc00]);
+        let diff = WorkspaceDiff { text: "x".into(), file_count: 1, truncated: false };
+        let prompt = apply_prompt(&project, "/p", "/w", "git-worktree", &"title".into(), &"id".into(), Some(&branch), &diff, false);
+        assert!(prompt.units().contains(&0xd800));
+        assert!(prompt.units().contains(&0xdc00));
     }
 }

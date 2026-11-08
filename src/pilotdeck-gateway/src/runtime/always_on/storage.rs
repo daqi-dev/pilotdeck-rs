@@ -294,3 +294,9 @@ mod tests {
         drop(permit); assert_eq!(slots.available_permits(), 1);
     }
 }
+
+/// Directory-only fd variant for native workspace staging; the synthetic
+/// leaf is never created and no caller-supplied file is opened.
+pub(crate) fn directory(root: &Path, path: &Path, create: bool) -> io::Result<File> {
+    parent(root, &path.join(".always-on-directory-anchor"), create).map(|(directory, _)| directory)
+}

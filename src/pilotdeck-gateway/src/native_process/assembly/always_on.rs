@@ -6,6 +6,9 @@
 //! `bind_agent_gateway`: the abort face, `NativeAlwaysOnGatewayBody`, which
 //! ends in the gateway's synchronous abort prefix exactly like the cron
 //! counterpart (`assembly/cron.rs`).
+mod standalone;
+pub(super) use standalone::standalone_factory;
+
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;

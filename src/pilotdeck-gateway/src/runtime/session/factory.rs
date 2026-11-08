@@ -1767,7 +1767,7 @@ fn real_user(message: &JsValue) -> bool {
             !text.is_empty() && text != "[system: the conversation above has been compacted. please continue with the current task.]" && !["<compact-boundary","<snip-boundary","<memory-context>","<internal-compaction-control","<hook_context"].iter().any(|p| text.starts_with(p))
         }))
 }
-fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
+pub(crate) fn project(entries: &[JsValue]) -> Result<DurableSessionState, RuntimeError> {
     #[cfg(test)]
     PROJECTION_VISITS.with(|visits| visits.set(visits.get() + entries.len()));
     let completed: HashSet<_> = entries

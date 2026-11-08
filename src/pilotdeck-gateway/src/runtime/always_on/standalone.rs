@@ -72,14 +72,13 @@ impl StandaloneApply for Standalone {
                 Some(value) => {
                     let units = crate::js_value::to_string_units_checked(value)
                         .map_err(|_| failure("gateway_request_failed", "Cannot convert projectName to string"))?;
-                    Some(String::from_utf16(&units)
-                        .map_err(|_| failure("invalid_input", "Project name cannot be represented in this prompt"))?)
+                    Some(JsString::from_utf16(units))
                 },
             };
             let run_id = uuid::Uuid::new_v4().to_string();
             let result = backend.phase.run(ApplyPhaseInput {
                 run_id: &run_id, cycle: &cycle, plans: &plans,
-                project_name: name.as_deref(), project_root: &selected,
+                project_name: name.as_ref(), project_root: &selected,
             }).await?;
             Ok(envelope(&result.session_key, result.error))
         })

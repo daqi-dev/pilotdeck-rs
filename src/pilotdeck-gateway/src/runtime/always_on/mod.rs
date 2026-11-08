@@ -22,13 +22,16 @@
 // inline with their own `#[allow(dead_code)]`; this umbrella covers the
 // rest of the unported surface (paths, mutators, tick entries).
 #![allow(dead_code)]
+mod chat_tool;
 mod tools;
 pub(crate) use tools::register_tools;
-mod apply;
-mod standalone;
+pub(crate) mod event_sink;
+pub(crate) mod apply;
+pub(crate) mod standalone;
 mod control;
 mod report_tool;
 mod report_contract;
+mod plan_tool;
 mod plan_contract;
 mod cycles;
 mod fire;
@@ -41,6 +44,9 @@ pub(crate) mod storage;
 mod scheduler;
 mod state;
 mod watcher;
+mod workspace;
+mod workspace_copy;
+pub(crate) use workspace::{NativeWorkspace, NativeWorkspaceDiff, WorkspaceError, WorkspaceHandle};
 
 pub(crate) use control::{AlwaysOnControl, StandaloneApply, create_control};
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
