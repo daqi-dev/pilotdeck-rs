@@ -138,7 +138,9 @@ impl SubmitReplacement for NativeSubmitReplacement {
 /// pending-turn rejection. They return wire events (including usage/command
 /// short-circuits); empty means admission may proceed.
 pub trait SubmitAdmission: Send + Sync {
-    fn take_turn_budget(&self, _run: &RunRef)->JsValue { JsValue::Undefined }
+    fn take_turn_budget(&self, _run: &RunRef) -> JsValue {
+        JsValue::Undefined
+    }
     fn release_turn(&self, _session: &JsString, _run: &JsString) {}
 
     fn normalize<'a>(
@@ -170,6 +172,13 @@ pub trait SubmitAdmission: Send + Sync {
         _session: &'a JsString,
     ) -> SubmitFuture<'a, Option<JsString>> {
         Box::pin(async { None })
+    }
+    fn sdk_models<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        Box::pin(async { Ok(None) })
     }
     fn sdk_hooks<'a>(
         &'a self,
@@ -397,11 +406,19 @@ impl SubmitHost for GatewaySubmitHost {
             let task_budget = self.admission.take_turn_budget(run);
             if let JsValue::Object(ref mut object) = options {
                 for key in ["maxTurns", "maxBudgetUsd"] {
-                    if let Some(value)=input.get(key).filter(|v|!matches!(v,JsValue::Null|JsValue::Undefined)) { object.insert(key.into(),value.clone()); }
+                    if let Some(value) = input
+                        .get(key)
+                        .filter(|v| !matches!(v, JsValue::Null | JsValue::Undefined))
+                    {
+                        object.insert(key.into(), value.clone());
+                    }
                 }
-                if let Some(total)=task_budget.get("totalUsd") {
-                    object.insert("taskBudgetUsd".into(),total.clone());
-                    object.insert("initialTaskBudgetSpentUsd".into(),field(&task_budget,"spentUsd").clone());
+                if let Some(total) = task_budget.get("totalUsd") {
+                    object.insert("taskBudgetUsd".into(), total.clone());
+                    object.insert(
+                        "initialTaskBudgetSpentUsd".into(),
+                        field(&task_budget, "spentUsd").clone(),
+                    );
                 }
                 for (source, target) in [
                     ("mode", "permissionMode"),
@@ -502,6 +519,13 @@ impl SubmitHost for GatewaySubmitHost {
         session: &'a JsString,
     ) -> SubmitFuture<'a, Option<JsString>> {
         self.admission.sdk_permission_mode(session)
+    }
+    fn sdk_models<'a>(
+        &'a self,
+        session: &'a JsString,
+        project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        self.admission.sdk_models(session, project)
     }
     fn sdk_hooks<'a>(
         &'a self,

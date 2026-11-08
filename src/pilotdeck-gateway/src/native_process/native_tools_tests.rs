@@ -88,6 +88,7 @@ fn harness_with_hook_settings(
             base_permission_mode: None,
             sdk_hooks: None,
             sdk_permission_mode: sdk.map(Into::into),
+            sdk_models: None,
             can_prompt: None,
             policy_can_prompt: None,
             emit: Arc::new(move |event| {
@@ -703,6 +704,7 @@ fn turn_and_session_hooks_use_their_distinct_emitters() {
             can_prompt: Some(true),
             policy_can_prompt: None,
             sdk_permission_mode: None,
+            sdk_models: None,
             sdk_hooks: None,
             emit: Arc::new(move |event| {
                 turn_sink.lock().unwrap().push(event);
@@ -741,4 +743,40 @@ fn turn_and_session_hooks_use_their_distinct_emitters() {
         .unwrap();
     assert_eq!(turn_events.lock().unwrap().len(), 1);
     assert_eq!(session_events.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn sdk_model_options_reach_real_turn_router_and_remain_turn_owned() {
+    use crate::runtime::model::router::{ManagedModelPolicy, RouterModelRef};
+    use crate::runtime::turn::interaction::SdkModelOptions;
+    let (_scratch, tools, recorder, identity) =
+        make_tools(JsObject::new(), Arc::default(), RuleSetHandle::empty());
+    let policy = ManagedModelPolicy {
+        allow: vec!["allowed/*".into()],
+        deny: vec!["allowed/blocked".into()],
+    };
+    let fallback = RouterModelRef::new("allowed".into(), "backup".into());
+    let ports = tools.turn_with_authority(
+        &identity,
+        recorder,
+        Cancellation::new(),
+        Some(TurnInteractionAuthority {
+            permission_mode: None,
+            base_permission_mode: None,
+            can_prompt: Some(false),
+            policy_can_prompt: None,
+            sdk_permission_mode: None,
+            sdk_hooks: None,
+            sdk_models: Some(SdkModelOptions {
+                policy: Some(policy.clone()),
+                fallback: vec![fallback.clone()],
+            }),
+            emit: Arc::new(|_| false),
+        }),
+    );
+    assert_eq!(ports.model.managed_model_policy, Some(policy));
+    assert_eq!(ports.model.fallback_models, vec![fallback]);
+    let mut changed = ports.model.fallback_models.clone();
+    changed.clear();
+    assert_eq!(ports.model.fallback_models.len(), 1);
 }

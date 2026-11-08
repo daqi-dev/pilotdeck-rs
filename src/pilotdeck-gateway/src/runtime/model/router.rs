@@ -997,18 +997,53 @@ fn disabled_decision(input: &RouterDecisionInput) -> JsValue {
 }
 
 fn managed_model_allowed(policy: &ManagedModelPolicy, model: &RouterModelRef) -> bool {
-    let provider = model.provider.to_utf8().unwrap_or_default();
-    let name = model.model.to_utf8().unwrap_or_default();
+    let mut prefix = model.provider.units().to_vec();
+    prefix.push(u16::from(b'/'));
+    let mut qualified = prefix.clone();
+    qualified.extend_from_slice(model.model.units());
+    prefix.push(u16::from(b'*'));
     let matches = |selector: &JsString| {
-        let selector = selector.to_utf8().unwrap_or_default();
-        selector == "*"
-            || selector == format!("{provider}/*")
-            || selector == format!("{provider}/{name}")
+        selector.equals_str("*")
+            || selector.units() == prefix.as_slice()
+            || selector.units() == qualified.as_slice()
     };
     if policy.deny.iter().any(matches) {
         return false;
     }
     policy.allow.is_empty() || policy.allow.iter().any(matches)
+}
+
+#[cfg(test)]
+mod native_managed_model_utf16_tests {
+    use super::*;
+    #[test]
+    fn managed_selectors_preserve_unpaired_surrogates() {
+        let model = RouterModelRef::new(JsString::from_utf16(vec![0xd800]), "model".into());
+        let exact = JsString::from_utf16(vec![0xd800, 47, 109, 111, 100, 101, 108]);
+        let other = JsString::from_utf16(vec![0xd801, 47, 109, 111, 100, 101, 108]);
+        assert!(managed_model_allowed(
+            &ManagedModelPolicy {
+                allow: vec![exact],
+                deny: vec![]
+            },
+            &model
+        ));
+        assert!(!managed_model_allowed(
+            &ManagedModelPolicy {
+                allow: vec![other],
+                deny: vec![]
+            },
+            &model
+        ));
+        let wildcard = JsString::from_utf16(vec![0xd800, 47, 42]);
+        assert!(!managed_model_allowed(
+            &ManagedModelPolicy {
+                allow: vec![],
+                deny: vec![wildcard]
+            },
+            &model
+        ));
+    }
 }
 
 fn join_message(prefix: &str, model: &RouterModelRef, suffix: &str) -> JsString {

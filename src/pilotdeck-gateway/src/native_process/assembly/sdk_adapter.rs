@@ -30,7 +30,9 @@ impl SdkRuntimeResolver for NativeSdkResolver {
         let root = project_key
             .map(super::super::project_scope::resolve)
             .transpose()
-            .map_err(|error| SdkSessionError::raw("Error", String::from_utf16_lossy(error.message.units())))?;
+            .map_err(|error| {
+                SdkSessionError::raw("Error", String::from_utf16_lossy(error.message.units()))
+            })?;
         let lease = self
             .project
             .acquire(root.as_deref())
@@ -134,6 +136,71 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
             }))
         })
     }
+    fn models<'a>(
+        &'a self,
+        session: &'a JsString,
+        project: Option<&'a JsString>,
+    ) -> SubmitFuture<
+        'a,
+        Result<Option<crate::runtime::turn::interaction::SdkModelOptions>, SubmitError>,
+    > {
+        Box::pin(async move {
+            let registry = self.registry.lock().await;
+            let Some(config) = registry.session_config(session) else {
+                return Ok(None);
+            };
+            let effective_project = project
+                .cloned()
+                .or_else(|| registry.session_project(session));
+            let runtime = registry
+                .options()
+                .resolver
+                .resolve(effective_project.as_ref())
+                .map_err(sdk_submit_error)?;
+            let model = runtime
+                .snapshot
+                .get("config")
+                .and_then(|v| v.get("agent"))
+                .and_then(|v| v.get("model"));
+            let parent = model.and_then(|m| {
+                Some(crate::runtime::model::router::RouterModelRef::new(
+                    m.get("provider")?.as_string()?.clone(),
+                    m.get("model")?.as_string()?.clone(),
+                ))
+            });
+            let enforced = registry
+                .options()
+                .organization_policy
+                .as_ref()
+                .and_then(|p| p.settings.as_ref())
+                .and_then(|s| s.enforced_session_settings.as_ref())
+                .and_then(|s| s.get("agent"))
+                .and_then(|a| a.get("fallbackModel"));
+            Ok(Some(super::sdk_model::model_options(
+                config, parent, enforced,
+            )))
+        })
+    }
+    fn assert_model<'a>(
+        &'a self,
+        session: &'a JsString,
+        selection: Option<&'a JsValue>,
+        project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async move {
+            let selected = selection.and_then(|v| {
+                Some(crate::runtime::sdk_session::ModelRef {
+                    provider: v.get("provider")?.as_string()?.clone(),
+                    model: v.get("model")?.as_string()?.clone(),
+                })
+            });
+            self.registry
+                .lock()
+                .await
+                .assert_model_allowed(session, selected.as_ref(), project)
+                .map_err(sdk_submit_error)
+        })
+    }
     fn set<'a>(
         &'a self,
         session: &'a JsString,
@@ -176,7 +243,12 @@ pub(super) fn apply_prompt_config(target: &mut pilotdeck_protocol::JsObject, sdk
     if let Some(skills) = sdk.get("skills").filter(|value| !value.is_undefined()) {
         target.insert("nativeSkillSelection".into(), skills.clone());
     }
-    for key in ["systemPrompt", "appendSystemPrompt", "planModeInstructions", "userDialogKinds"] {
+    for key in [
+        "systemPrompt",
+        "appendSystemPrompt",
+        "planModeInstructions",
+        "userDialogKinds",
+    ] {
         if let Some(value) = sdk.get(key).filter(|value| !value.is_undefined()) {
             target.insert(key.into(), value.clone());
         }
@@ -195,13 +267,23 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
     validate_agents(object.get("agents"))?;
     if let Some(value) = object.get("userDialogKinds").filter(|v| !v.is_undefined()) {
         let valid = match value {
-            JsValue::Array(kinds) if !kinds.is_empty() => kinds.iter().enumerate().all(|(index, kind)|
-                kind.as_string().is_some_and(|s| ["input", "select", "confirm", "form"].iter().any(|allowed| s.equals_str(allowed)))
-                && !kinds[..index].contains(kind)),
+            JsValue::Array(kinds) if !kinds.is_empty() => {
+                kinds.iter().enumerate().all(|(index, kind)| {
+                    kind.as_string().is_some_and(|s| {
+                        ["input", "select", "confirm", "form"]
+                            .iter()
+                            .any(|allowed| s.equals_str(allowed))
+                    }) && !kinds[..index].contains(kind)
+                })
+            }
             _ => false,
         };
-        if !valid { return Err(SubmitError::new("INVALID_SDK_SESSION_CONFIG",
-            "userDialogKinds must be a non-empty unique array containing only input, select, confirm, or form.")); }
+        if !valid {
+            return Err(SubmitError::new(
+                "INVALID_SDK_SESSION_CONFIG",
+                "userDialogKinds must be a non-empty unique array containing only input, select, confirm, or form.",
+            ));
+        }
     }
 
     if let Some(skills) = object.get("skills").filter(|value| !value.is_undefined())
@@ -227,6 +309,8 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
         ![
             "permissionMode",
             "taskBudget",
+            "managedModels",
+            "fallbackModel",
             "hooks",
             "includeHookEvents",
             "userDialogKinds",
@@ -699,14 +783,25 @@ mod user_dialog_config_tests {
     use crate::metadata::object;
     #[test]
     fn dialog_kinds_are_unique_nonempty_and_projected_without_loss() {
-        for raw in ["null", "[]", "[false]", "[\"input\",\"input\"]", "[\"other\"]", "\"input\""] {
+        for raw in [
+            "null",
+            "[]",
+            "[false]",
+            "[\"input\",\"input\"]",
+            "[\"other\"]",
+            "\"input\"",
+        ] {
             let value = pilotdeck_protocol::parse_json(raw).unwrap();
-            let error = validate_supported_config(&object([("userDialogKinds", value)])).unwrap_err();
+            let error =
+                validate_supported_config(&object([("userDialogKinds", value)])).unwrap_err();
             assert_eq!(error.code, "INVALID_SDK_SESSION_CONFIG");
         }
-        let kinds = pilotdeck_protocol::parse_json("[\"form\",\"input\",\"select\",\"confirm\"]").unwrap();
-        let config = object([("userDialogKinds", kinds.clone())]);assert!(validate_supported_config(&config).is_ok());
-        let mut projected = pilotdeck_protocol::JsObject::new();apply_prompt_config(&mut projected, &config);
-        assert_eq!(projected.get("userDialogKinds"),Some(&kinds));
+        let kinds =
+            pilotdeck_protocol::parse_json("[\"form\",\"input\",\"select\",\"confirm\"]").unwrap();
+        let config = object([("userDialogKinds", kinds.clone())]);
+        assert!(validate_supported_config(&config).is_ok());
+        let mut projected = pilotdeck_protocol::JsObject::new();
+        apply_prompt_config(&mut projected, &config);
+        assert_eq!(projected.get("userDialogKinds"), Some(&kinds));
     }
 }

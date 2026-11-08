@@ -231,6 +231,13 @@ pub trait SubmitHost: Send + Sync {
     ) -> SubmitFuture<'a, Option<JsString>> {
         Box::pin(async { None })
     }
+    fn sdk_models<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
     fn sdk_hooks<'a>(
         &'a self,
         _session: &'a JsString,
@@ -1149,6 +1156,10 @@ impl TurnSubmitter {
                     base_permission_mode: field(input, "basePermissionMode").as_string().cloned(),
                     can_prompt: field(input, "canPrompt").as_bool(),
                     sdk_permission_mode: self.host.sdk_permission_mode(&run.session_key).await,
+                    sdk_models: self
+                        .host
+                        .sdk_models(&run.session_key, run.project_key.as_ref())
+                        .await?,
                     sdk_hooks,
                     policy_can_prompt: (field(
                         field(field(input, "sdkSessionConfig"), "managedPermissions"),

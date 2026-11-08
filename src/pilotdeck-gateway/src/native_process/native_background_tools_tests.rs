@@ -23,6 +23,7 @@ async fn native_task_tools_use_permission_once_and_share_the_real_runtime() {
             policy_can_prompt: None,
             sdk_hooks: None,
             sdk_permission_mode: None,
+            sdk_models: None,
             emit: Arc::new(move |event| {
                 answerer.decide_permission(
                     &"session".into(),

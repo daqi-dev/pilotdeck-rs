@@ -295,8 +295,12 @@ impl TurnHostFactory {
         }
     }
 
-    pub(crate) fn with_loop_controller(mut self, controller: Arc<dyn super::loop_control::HostLoopController>) -> Self {
-        self.loop_controller = Some(controller); self
+    pub(crate) fn with_loop_controller(
+        mut self,
+        controller: Arc<dyn super::loop_control::HostLoopController>,
+    ) -> Self {
+        self.loop_controller = Some(controller);
+        self
     }
 
     pub(crate) fn with_input_admission(
@@ -376,7 +380,10 @@ impl TurnHostFactory {
             close_timeout
         })
         .with_unique_tcp_request_id(unique_tcp_request_id);
-        let session = match loop_controller { Some(controller) => session.with_loop_controller(controller), None => session };
+        let session = match loop_controller {
+            Some(controller) => session.with_loop_controller(controller),
+            None => session,
+        };
         let session = match agent_config {
             Some(config) => session.with_agent_config(config),
             None => session,
@@ -444,7 +451,43 @@ impl TurnHostFactory {
         }
         .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
         let ports = (self.ports)(identity, recorder, signal, authority);
-        let node_template = self.loop_controller.as_ref().map(|_| Arc::new(super::sop_executor::NodeTemplate::capture(&ports, identity, deployment.clone(), self.limits, self.expected_module_id.clone(), self.native_terminal_errors)));
+        if let Some(controller) = &self.loop_controller {
+            let catalog = ports.tool_execution.clone()
+                as Arc<dyn crate::host::modules::capability::ToolCatalog>;
+            let validation = tokio::time::timeout(
+                self.limits.close_timeout,
+                controller.validate_tools(catalog),
+            )
+            .await;
+            let validation = validation.unwrap_or_else(|_| {
+                Err(HostError::new(
+                    HostErrorKind::Session,
+                    "SOP required-tool validation exceeded its host budget.",
+                ))
+            });
+            if let Err(error) = validation {
+                // No sidecar has started. Still drain the owned tool port if
+                // catalog initialization produced native owned work.
+                let execution = ports.tool_execution.clone();
+                let _ = tokio::time::timeout(self.limits.close_timeout, async move {
+                    let _ = execution.dispose().await;
+                    execution.wait_closed().await
+                })
+                .await;
+                return Err(error);
+            }
+        }
+
+        let node_template = self.loop_controller.as_ref().map(|_| {
+            Arc::new(super::sop_executor::NodeTemplate::capture(
+                &ports,
+                identity,
+                deployment.clone(),
+                self.limits,
+                self.expected_module_id.clone(),
+                self.native_terminal_errors,
+            ))
+        });
         let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.
@@ -504,14 +547,22 @@ impl TurnHostFactory {
         Self::assemble_bound(lease, identity, ports, None, None, None).await
     }
     pub(super) async fn assemble_sop(
-        lease: RuntimeLease, identity: &ExecutionIdentity, ports: SessionPorts,
-        binding: Option<Arc<dyn super::loop_control::SopRunBinding>>, route: Option<JsObject>, model_session: JsString,
+        lease: RuntimeLease,
+        identity: &ExecutionIdentity,
+        ports: SessionPorts,
+        binding: Option<Arc<dyn super::loop_control::SopRunBinding>>,
+        route: Option<JsObject>,
+        model_session: JsString,
     ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
         Self::assemble_bound(lease, identity, ports, binding, route, Some(model_session)).await
     }
     async fn assemble_bound(
-        lease: RuntimeLease, identity: &ExecutionIdentity, ports: SessionPorts,
-        binding: Option<Arc<dyn super::loop_control::SopRunBinding>>, route: Option<JsObject>, model_session: Option<JsString>,
+        lease: RuntimeLease,
+        identity: &ExecutionIdentity,
+        ports: SessionPorts,
+        binding: Option<Arc<dyn super::loop_control::SopRunBinding>>,
+        route: Option<JsObject>,
+        model_session: Option<JsString>,
     ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
         let SessionPorts {
             model,
@@ -574,17 +625,41 @@ impl TurnHostFactory {
             })?;
         let mut result = ModuleRouter {
             model: if binding.is_some() || route.is_some() {
-                let composed = model_port::ports(router.router.clone(), router.model_config.clone(), recorder, model, &model_session);
+                let composed = model_port::ports(
+                    router.router.clone(),
+                    router.model_config.clone(),
+                    recorder,
+                    model,
+                    &model_session,
+                );
                 let mut execution = composed.execution;
                 let mut materializer = composed.materializer;
                 if let Some(binding) = &binding {
                     execution = binding.model(execution);
                     materializer = binding.materializer(materializer);
                 }
-                if let Some(route) = route { execution = Arc::new(super::sop_executor::NodeModel { inner: execution, route }); }
-                let mut handler = crate::host::modules::model::Handler::with_ports(execution, composed.metadata, turn_context);
-                handler.materializer = materializer; handler
-            } else { model_port::compose(router.router.clone(), router.model_config.clone(), recorder, model, turn_context) },
+                if let Some(route) = route {
+                    execution = Arc::new(super::sop_executor::NodeModel {
+                        inner: execution,
+                        route,
+                    });
+                }
+                let mut handler = crate::host::modules::model::Handler::with_ports(
+                    execution,
+                    composed.metadata,
+                    turn_context,
+                );
+                handler.materializer = materializer;
+                handler
+            } else {
+                model_port::compose(
+                    router.router.clone(),
+                    router.model_config.clone(),
+                    recorder,
+                    model,
+                    turn_context,
+                )
+            },
             ..Default::default()
         };
         if let Some(resource) = context.resource(Resource::TokenAccounting) {
@@ -653,7 +728,10 @@ impl TurnHostFactory {
             }
         };
         if let Some(runtime) = context_runtime {
-            let runtime = binding.as_ref().map_or_else(|| runtime.clone(), |binding| binding.context(runtime.clone()));
+            let runtime = binding.as_ref().map_or_else(
+                || runtime.clone(),
+                |binding| binding.context(runtime.clone()),
+            );
             result.context = context::Handler::new(
                 runtime,
                 context_identity,

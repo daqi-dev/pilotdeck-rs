@@ -112,10 +112,15 @@ impl SessionTools {
     ) -> Result<Self, RuntimeError> {
         let context =
             permission::create_default_permission_context(DefaultPermissionContextOptions {
-                cwd: config.get("cwd").and_then(JsValue::as_string).cloned()
+                cwd: config
+                    .get("cwd")
+                    .and_then(JsValue::as_string)
+                    .cloned()
                     .unwrap_or_else(|| options.project.to_string_lossy().into_owned().into()),
                 can_prompt: Some(false),
-                bypass_available: Some(config.get("bypassAvailable") != Some(&JsValue::Bool(false))),
+                bypass_available: Some(
+                    config.get("bypassAvailable") != Some(&JsValue::Bool(false)),
+                ),
                 ..Default::default()
             });
         let goal = crate::runtime::goal::GoalRuntime::new(
@@ -157,21 +162,36 @@ impl SessionTools {
         })
     }
 
-    pub(super) fn with_user_dialog(mut self, config: Option<super::assembly::user_dialog::NativeDialogConfig>) -> Self {
+    pub(super) fn with_user_dialog(
+        mut self,
+        config: Option<super::assembly::user_dialog::NativeDialogConfig>,
+    ) -> Self {
         self.user_dialog = config;
         self
     }
 
     fn execution_cwd(&self) -> JsString {
-        self.config.get("cwd").and_then(JsValue::as_string).cloned()
+        self.config
+            .get("cwd")
+            .and_then(JsValue::as_string)
+            .cloned()
             .unwrap_or_else(|| self.options.project.to_string_lossy().as_ref().into())
     }
 
-    pub(super) fn with_automation(mut self, automation: Option<super::session_overrides::AutomationOverrides>) -> Self {
+    pub(super) fn with_automation(
+        mut self,
+        automation: Option<super::session_overrides::AutomationOverrides>,
+    ) -> Self {
         if let Some(automation) = &automation {
-            let denied = self.binding.context.disallowed_tools.get_or_insert_with(Vec::new);
+            let denied = self
+                .binding
+                .context
+                .disallowed_tools
+                .get_or_insert_with(Vec::new);
             for name in &automation.exclude_tools {
-                if !denied.contains(name) { denied.push(name.clone()); }
+                if !denied.contains(name) {
+                    denied.push(name.clone());
+                }
             }
         }
         self.automation = automation;
@@ -336,11 +356,12 @@ impl SessionTools {
         };
         // These flags belong to this invocation, never the session's shared
         // permission-mode state. A managed false remains a policy ceiling.
-        let policy_disabled = self.config.get("canPrompt") == Some(&JsValue::Bool(false)) || self
-            .config
-            .get("managedPermissions")
-            .and_then(|v| v.get("canPrompt"))
-            == Some(&JsValue::Bool(false))
+        let policy_disabled = self.config.get("canPrompt") == Some(&JsValue::Bool(false))
+            || self
+                .config
+                .get("managedPermissions")
+                .and_then(|v| v.get("canPrompt"))
+                == Some(&JsValue::Bool(false))
             || authority
                 .as_ref()
                 .is_some_and(|a| a.policy_can_prompt == Some(false));
@@ -356,7 +377,9 @@ impl SessionTools {
         turn_context.policy_can_prompt = policy_disabled.then_some(false);
         if let Some(automation) = &self.automation {
             turn_context.can_prompt &= automation.can_prompt;
-            if !automation.can_prompt { turn_context.policy_can_prompt = Some(false); }
+            if !automation.can_prompt {
+                turn_context.policy_can_prompt = Some(false);
+            }
             turn_context.bypass_available &= automation.bypass_available;
         }
         turn_context.rules = self.permission_rules.snapshot();
@@ -392,8 +415,14 @@ impl SessionTools {
             self.lsp.clone(),
             &self.mcp,
         );
-        if self.user_dialog.is_some() && let Some(JsValue::Array(kinds)) = self.config.get("userDialogKinds") {
-            let kinds: Vec<_> = kinds.iter().filter_map(JsValue::as_string).cloned().collect();
+        if self.user_dialog.is_some()
+            && let Some(JsValue::Array(kinds)) = self.config.get("userDialogKinds")
+        {
+            let kinds: Vec<_> = kinds
+                .iter()
+                .filter_map(JsValue::as_string)
+                .cloned()
+                .collect();
             builtin::user_dialog::register_user_dialog_tools(&tools, &kinds)
                 .expect("native opt-in dialog tool names are unique");
         }
@@ -414,9 +443,17 @@ impl SessionTools {
                     .expect("native plan tool names are unique");
             }
         }
-        if let Some(contexts) = self.automation.as_ref().and_then(|value| value.context_registry.as_ref()) {
-            crate::runtime::always_on::register_tools(&tools, contexts.clone(), &identity.session_id)
-                .expect("native automation tool names are unique");
+        if let Some(contexts) = self
+            .automation
+            .as_ref()
+            .and_then(|value| value.context_registry.as_ref())
+        {
+            crate::runtime::always_on::register_tools(
+                &tools,
+                contexts.clone(),
+                &identity.session_id,
+            )
+            .expect("native automation tool names are unique");
         }
         self.skills.register(&tools);
         if let Some(web) = &self.web {
@@ -614,8 +651,19 @@ impl SessionTools {
         });
         let user_dialog = self.user_dialog.as_ref().map(|dialog| {
             let emit = permission_emit.clone();
-            let mut options = crate::user_dialog::ChannelOptions::new(identity.session_id.clone(), dialog.bus.clone(),
-                Arc::new(move |event| if emit(event) { Ok(()) } else { Err(crate::user_dialog::DialogError::Invalid("User dialog event owner is no longer active.".into())) }));
+            let mut options = crate::user_dialog::ChannelOptions::new(
+                identity.session_id.clone(),
+                dialog.bus.clone(),
+                Arc::new(move |event| {
+                    if emit(event) {
+                        Ok(())
+                    } else {
+                        Err(crate::user_dialog::DialogError::Invalid(
+                            "User dialog event owner is no longer active.".into(),
+                        ))
+                    }
+                }),
+            );
             options.journal = dialog.journal.clone();
             Arc::new(dialog.port.with_options(options)) as capability::RuntimeContext
         });
@@ -762,6 +810,15 @@ impl SessionTools {
         SessionPorts {
             model: RouterModelPortOptions {
                 is_main_agent: self.fork_scope.is_none(),
+                managed_model_policy: authority
+                    .as_ref()
+                    .and_then(|a| a.sdk_models.as_ref())
+                    .and_then(|m| m.policy.clone()),
+                fallback_models: authority
+                    .as_ref()
+                    .and_then(|a| a.sdk_models.as_ref())
+                    .map(|m| m.fallback.clone())
+                    .unwrap_or_default(),
                 project_path: Some(self.options.project.to_string_lossy().into_owned().into()),
                 agent_model: self
                     .config

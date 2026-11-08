@@ -110,7 +110,9 @@ impl context::ContextRuntime for Context {
         let base = self.base.clone();
         let binding = self.binding.clone();
         Box::pin(async move {
-            let instruction = binding.instruction().await?;
+            let instruction = binding
+                .instruction(input.fields.get("stepId").unwrap_or(&JsValue::Undefined))
+                .await?;
             let mut units = input
                 .fields
                 .get("appendSystemPrompt")

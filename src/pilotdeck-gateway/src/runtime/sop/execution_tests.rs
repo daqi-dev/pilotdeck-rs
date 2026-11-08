@@ -28,7 +28,17 @@ impl JsonTransport for Owner {
         } else {
             let request = pilotdeck_protocol::parse_json(input.body.as_deref().unwrap()).unwrap();
             let operation = input.url.path().rsplit('/').next().unwrap();
-            self.calls.lock().unwrap().push(operation.into());
+            let mut calls = self.calls.lock().unwrap();
+            if operation == "prepare" {
+                let suffix = if calls.is_empty() { 0 } else { 7 };
+                assert_eq!(
+                    field(&request, "requestId"),
+                    &JsValue::from(format!("sop.prepare:session:turn:{suffix}").as_str()),
+                    "owner request follows actual model step, not repeated preflight id"
+                );
+            }
+            calls.push(operation.into());
+            drop(calls);
             let payload = match operation {
                 "prepare" => crate::metadata::object([
                     ("state", field(&self.fixtures, "state").clone()),
@@ -126,6 +136,16 @@ impl SopNodeExecutor for Executor {
                 display(field(&prepared, "appendSystemPrompt"))
                     .contains("Follow fixture instruction.")
             );
+            let mut fields = JsObject::new();
+            fields.insert("stepId".into(), JsValue::Number(7.0));
+            binding
+                .context(Arc::new(Context))
+                .prepare_for_model(context::ContextInput {
+                    fields,
+                    abort_signal: None,
+                    budget_evaluator: None,
+                })
+                .await?;
             let tools = binding.tools(Arc::new(EmptyTools));
             let catalog = tools.list().await?;
             assert_eq!(catalog.len(), 1);
@@ -286,7 +306,10 @@ async fn actual_sop_control_commits_owner_result_before_parent_delivery_and_clea
     assert_eq!(executor.cleanup.load(Ordering::SeqCst), 1);
     assert_eq!(executor.replies.lock().unwrap().len(), 1);
     assert_eq!(executor.events.lock().unwrap().len(), 1);
-    assert_eq!(*http.calls.lock().unwrap(), vec!["prepare", "submit"]);
+    assert_eq!(
+        *http.calls.lock().unwrap(),
+        vec!["prepare", "prepare", "submit"]
+    );
     let state = std::fs::read(root.join("state/sessions/c2Vzc2lvbg.json")).unwrap();
     let state = pilotdeck_protocol::parse_json(std::str::from_utf8(&state).unwrap()).unwrap();
     assert_eq!(

@@ -62,20 +62,21 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+mod always_on;
 pub(super) mod automation;
 mod automation_lifetime;
-mod always_on;
 mod cron;
 pub(super) mod dialog_recovery;
 mod mcp;
 mod memory;
 mod sdk_adapter;
-mod task_budget;
 mod sdk_dispatch;
 pub(super) mod sdk_hooks;
+mod sdk_model;
 pub(crate) mod snapshot;
 mod steer;
 mod style_reload;
+mod task_budget;
 pub(super) mod user_dialog;
 
 pub type Recorders = Arc<Mutex<HashMap<JsString, Weak<Recorder>>>>;
@@ -466,10 +467,16 @@ async fn start_assembly(
     .await
     .map_err(|error| format!("Native project registration task failed: {error}"))??;
     let project = project_registry(&options, &env);
-    let sop = super::sop_control::NativeSopControl::new(options.clone(), env.clone(), project.clone())
-        .map_err(|error| String::from_utf16_lossy(super::sop_control::request_error(error).message.units()))?;
+    let sop =
+        super::sop_control::NativeSopControl::new(options.clone(), env.clone(), project.clone())
+            .map_err(|error| {
+                String::from_utf16_lossy(super::sop_control::request_error(error).message.units())
+            })?;
     if let Some(slots) = &switch_slots {
-        slots.approvals.set(sop.bridge()).map_err(|_| "SOP approval slot is already occupied")?;
+        slots
+            .approvals
+            .set(sop.bridge())
+            .map_err(|_| "SOP approval slot is already occupied")?;
     }
     let snapshot_enabled = snapshot::snapshot_enabled(&options, &project).await?;
     let snapshot_recorder =
@@ -1053,6 +1060,19 @@ async fn start_assembly(
                     let port = dialog.port.clone();
                     retained.push(move || Box::pin(async move { port.close().await; Ok(()) }));
                 }
+                // The profile is the immutable snapshot that supplied this
+                // session's model, tools, storage and original admission.
+                let sop_profile=snapshot.get("config").and_then(|v|v.get("modules")).and_then(|v|v.get("sop")).filter(|v|!matches!(v,JsValue::Undefined|JsValue::Null)).cloned();
+                let sop_controller=if config.get("isSubagent")!=Some(&JsValue::Bool(true)) {
+                    match sop_profile {
+                        Some(profile)=>Some(crate::runtime::sop::controller::StaffDeckController::load(profile,Arc::new(crate::module_host::approvals::native_http::HyperJsonTransport::from_env(&env,None))).await.map_err(|error|{
+                            let mut runtime=RuntimeError::new(error.message.clone());
+                            if let Some(module)=error.module_error {runtime=runtime.with_js_error(crate::runtime::project::RuntimeJsError{name:"Error".into(),code:module.code.map(|s|String::from_utf16_lossy(s.units())),message:module.message,requires_host:false});}
+                            runtime
+                        })?),
+                        None=>None,
+                    }
+                }else{None};
                 Ok(PreparedSession {
                     resources: retained,
                     tail,
@@ -1072,13 +1092,15 @@ async fn start_assembly(
                                 let config=sdk.prompt_config(&session).await;
                                 let sdk_hooks=crate::runtime::turn::admission::SubmitSdkSessionConfig::hooks(sdk.as_ref(),&session)
                                     .await.map_err(|error|RuntimeError::new(error.message))?;
+                                let sdk_models=crate::runtime::turn::admission::SubmitSdkSessionConfig::models(sdk.as_ref(),&session,None)
+                                    .await.map_err(|error|RuntimeError::new(error.message))?;
                                 let sdk_permission_mode=sdk.permission_mode(&session).await;
                                 let can_prompt=Some(seed.as_ref().map(|authority|authority.can_prompt.unwrap_or(true)).unwrap_or(false));
                                 let policy_can_prompt=(seed.as_ref().is_some_and(|authority|authority.policy_can_prompt==Some(false))
                                     || config.as_ref().and_then(|config|config.get("managedPermissions")).and_then(|permissions|permissions.get("canPrompt"))==Some(&JsValue::Bool(false))).then_some(false);
                                 Ok(Some(crate::runtime::turn::interaction::TurnInteractionAuthority{
                                     permission_mode:None,base_permission_mode:None,can_prompt,policy_can_prompt,
-                                    sdk_permission_mode,sdk_hooks,emit,
+                                    sdk_permission_mode,sdk_hooks,sdk_models,emit,
                                 }))
                             })
                         }))?;
@@ -1128,7 +1150,7 @@ async fn start_assembly(
                         let ports = ports
                             .with_background_tasks(background_tasks)
                             .with_native_sandbox(native_sandbox);
-                        Ok(TurnHostFactory::new_with_authority(
+                        let factory=TurnHostFactory::new_with_authority(
                             project,
                             deployment,
                             native_host_limits(options.drain_budget),
@@ -1152,7 +1174,8 @@ async fn start_assembly(
                         // already-live session picks the change up without a
                         // close. The source reads the same store the selector
                         // method writes.
-                        .with_permission_mode_source(permission_source))
+                        .with_permission_mode_source(permission_source);
+                        Ok(match sop_controller {Some(controller)=>factory.with_loop_controller(controller),None=>factory})
                     }),
                 })
             })
@@ -1339,9 +1362,16 @@ async fn start_assembly(
         // #1326 A8 U8: the `cron:` section travels to the builder below, which
         // is the only place that constructs `CronManager`.
         let automation_config = automation::ProjectAutomationConfig {
-            cron: (mode == AssemblyMode::Server).then(|| config.get("cron").cloned()).flatten(),
-            always_on: (mode == AssemblyMode::Server).then(|| config.get("alwaysOn")
-                .map(crate::runtime::always_on::AlwaysOnConfig::from_section)).flatten(),
+            cron: (mode == AssemblyMode::Server)
+                .then(|| config.get("cron").cloned())
+                .flatten(),
+            always_on: (mode == AssemblyMode::Server)
+                .then(|| {
+                    config
+                        .get("alwaysOn")
+                        .map(crate::runtime::always_on::AlwaysOnConfig::from_section)
+                })
+                .flatten(),
         };
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
@@ -1372,15 +1402,23 @@ async fn start_assembly(
     let automation_home = options.home.clone();
     let automation_project = project.clone();
     let automation_env = env.clone();
-    let automation_frame_bytes = native_host_limits(options.drain_budget).max_frame_bytes
+    let automation_frame_bytes = native_host_limits(options.drain_budget)
+        .max_frame_bytes
         .min(crate::native_ws::MAX_OUTPUT_PAYLOAD);
     let automation_bundle = crate::runtime::always_on::storage::run(move || {
         automation::ProjectAutomationBundle::new(automation::ProjectAutomationBundleOptions {
-            config: automation_config, pilot_home: automation_home,
-            make_always_on: always_on::native_factory(automation_project, automation_env, automation_frame_bytes),
+            config: automation_config,
+            pilot_home: automation_home,
+            make_always_on: always_on::native_factory(
+                automation_project,
+                automation_env,
+                automation_frame_bytes,
+            ),
             make_cron: cron::native_factory(),
-        }).map(Arc::new)
-    }).await;
+        })
+        .map(Arc::new)
+    })
+    .await;
     let automation_bundle = match automation_bundle {
         Ok(bundle) => bundle,
         Err(error) => {
@@ -1389,14 +1427,18 @@ async fn start_assembly(
             return Err(error.into());
         }
     };
-    let automation_lifetime = automation_lifetime::NativeAutomationLifetime::new(automation_bundle.clone());
+    let automation_lifetime =
+        automation_lifetime::NativeAutomationLifetime::new(automation_bundle.clone());
     if let Some(slots) = &switch_slots {
         let stopping = automation_lifetime.clone();
         let stop: super::switch_wiring::AutomationStop = Arc::new(move || {
             let future = stopping.stop();
             Box::pin(async move { future.await.map_err(crate::switch::StepFailure::step) })
         });
-        slots.automation.set(stop).map_err(|_| std::io::Error::other("Automation stop slot already occupied."))?;
+        slots
+            .automation
+            .set(stop)
+            .map_err(|_| std::io::Error::other("Automation stop slot already occupied."))?;
     }
     let published_automation = Arc::new(automation::PublishedAutomation::default());
     let build_automation = automation_lifetime.clone();
@@ -1439,11 +1481,18 @@ async fn start_assembly(
                 None,
             ));
             let dialog_recovery = Arc::new(dialog_recovery::NativeDialogRecovery::new(
-                options.home.clone(), options.project.clone(), sdk_port.clone()));
+                options.home.clone(),
+                options.project.clone(),
+                sdk_port.clone(),
+            ));
             let admission = SubmitAdmissionOptions {
                 interactions: interactions.clone(),
                 sdk_config: Some(sdk_port.clone()),
-                task_budget: Some(Arc::new(task_budget::NativeTaskBudget { ledger: budget_ledger.clone(), sdk: sdk_port.clone(), fallback: options.project.clone() })),
+                task_budget: Some(Arc::new(task_budget::NativeTaskBudget {
+                    ledger: budget_ledger.clone(),
+                    sdk: sdk_port.clone(),
+                    fallback: options.project.clone(),
+                })),
                 dialog_recovery: Some(dialog_recovery.clone()),
                 ..SubmitAdmissionOptions::new(replacement.clone())
             };
@@ -1495,19 +1544,35 @@ async fn start_assembly(
             )?;
             let config_reload = Arc::downgrade(&build_automation);
             settings.store.subscribe(Arc::new(move |event| {
-                let changed = |family: &str| event.changed_paths.iter().any(|path|
-                    path.to_utf8().ok().is_some_and(|path| path == family || path.starts_with(&format!("{family}."))));
+                let changed = |family: &str| {
+                    event.changed_paths.iter().any(|path| {
+                        path.to_utf8().ok().is_some_and(|path| {
+                            path == family || path.starts_with(&format!("{family}."))
+                        })
+                    })
+                };
                 let always_on_changed = changed("alwaysOn");
                 let cron_changed = changed("cron");
-                if !(always_on_changed || cron_changed) { return; }
+                if !(always_on_changed || cron_changed) {
+                    return;
+                }
                 if let Some(owner) = config_reload.upgrade() {
                     let config = event.next_snapshot.get("config");
                     owner.request_reload(automation::ProjectAutomationReloadInput {
                         config: automation::ProjectAutomationConfig {
-                            always_on: (mode == AssemblyMode::Server).then(|| config.and_then(|c| c.get("alwaysOn"))
-                                .map(crate::runtime::always_on::AlwaysOnConfig::from_section)).flatten(),
-                            cron: (mode == AssemblyMode::Server).then(|| config.and_then(|c| c.get("cron")).cloned()).flatten(),
-                        }, always_on_changed, cron_changed,
+                            always_on: (mode == AssemblyMode::Server)
+                                .then(|| {
+                                    config.and_then(|c| c.get("alwaysOn")).map(
+                                        crate::runtime::always_on::AlwaysOnConfig::from_section,
+                                    )
+                                })
+                                .flatten(),
+                            cron: (mode == AssemblyMode::Server)
+                                .then(|| config.and_then(|c| c.get("cron")).cloned())
+                                .flatten(),
+                        },
+                        always_on_changed,
+                        cron_changed,
                     });
                 }
             }));
@@ -1569,7 +1634,8 @@ async fn start_assembly(
                         sdk.registry
                             .lock()
                             .await
-                            .clear_session_state_async(&session).await
+                            .clear_session_state_async(&session)
+                            .await
                             .map_err(|error| {
                                 crate::runtime::connection::RequestError::new(error.message)
                             })
@@ -1596,14 +1662,26 @@ async fn start_assembly(
             // path; `start()` failing here fails the assembly through the
             // `project.dispose()` fallback below.
             let automation_body = Arc::new(always_on::NativeAlwaysOnGatewayBody::new(
-                cron_owner.clone(), submitter.clone(), automation_overrides,
-                tokio::runtime::Handle::current(), build_automation.shutdown.clone(),
+                cron_owner.clone(),
+                submitter.clone(),
+                automation_overrides,
+                tokio::runtime::Handle::current(),
+                build_automation.shutdown.clone(),
             ));
-            let standalone = always_on::standalone_factory(standalone_project, standalone_options,
-                standalone_env, automation_body.clone());
+            let standalone = always_on::standalone_factory(
+                standalone_project,
+                standalone_options,
+                standalone_env,
+                automation_body.clone(),
+            );
             let plain_cron = Arc::new(crate::runtime::cron::SessionAdmissionCronGateway::new(
-                cron_admission.clone(), Arc::new(cron::NativeCronGatewayBody::new(
-                    cron_owner.clone(), submitter.clone(), tokio::runtime::Handle::current()))));
+                cron_admission.clone(),
+                Arc::new(cron::NativeCronGatewayBody::new(
+                    cron_owner.clone(),
+                    submitter.clone(),
+                    tokio::runtime::Handle::current(),
+                )),
+            ));
             let cron_submitter = submitter.clone();
             let cron_runtime = tokio::runtime::Handle::current();
             let cron_channels = build_channels.clone();
@@ -1611,31 +1689,58 @@ async fn start_assembly(
             let stopping_automation = build_automation.clone();
             automation_bundle.attach(automation::ProjectAutomationAttachment {
                 agent_gateway: automation::ProjectAutomationAgentGateway {
-                    always_on: automation_body, cron: plain_cron,
+                    always_on: automation_body,
+                    cron: plain_cron,
                     native_cron_bind: Some(Arc::new(move |manager| {
                         let body = Arc::new(cron::NativeCronGatewayBody::new(
-                            cron_owner.clone(), cron_submitter.clone(), cron_runtime.clone()));
+                            cron_owner.clone(),
+                            cron_submitter.clone(),
+                            cron_runtime.clone(),
+                        ));
                         let shutdown = body.shutdown_signal();
-                        let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(Arc::new(
-                            crate::runtime::cron::SessionAdmissionCronGateway::new(cron_admission.clone(), body))));
-                        manager.bind_agent_gateway(recording.clone()).map_err(cron::cron_io_error)?;
+                        let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(
+                            Arc::new(crate::runtime::cron::SessionAdmissionCronGateway::new(
+                                cron_admission.clone(),
+                                body,
+                            )),
+                        ));
+                        manager
+                            .bind_agent_gateway(recording.clone())
+                            .map_err(cron::cron_io_error)?;
                         let options = execution_options.clone();
-                        manager.set_execution_project_filter(Arc::new(move |project| options.serves_project(project)))
+                        manager
+                            .set_execution_project_filter(Arc::new(move |project| {
+                                options.serves_project(project)
+                            }))
                             .map_err(cron::cron_io_error)?;
-                        cron::bind_callbacks(&manager, cron_channels.server().clone(), cron_runtime.clone(), shutdown.clone())
-                            .map_err(cron::cron_io_error)?;
-                        let stop = Arc::new(crate::switch::CronStopHandle::new_native(manager,
-                            recording.failures(), Duration::from_secs(15), Arc::new(move || shutdown.cancel())));
+                        cron::bind_callbacks(
+                            &manager,
+                            cron_channels.server().clone(),
+                            cron_runtime.clone(),
+                            shutdown.clone(),
+                        )
+                        .map_err(cron::cron_io_error)?;
+                        let stop = Arc::new(crate::switch::CronStopHandle::new_native(
+                            manager,
+                            recording.failures(),
+                            Duration::from_secs(15),
+                            Arc::new(move || shutdown.cancel()),
+                        ));
                         // Initial compatibility handle; reload generations are owned
                         // and stopped through the complete automation lifetime.
                         let _ = build_cron_slot.set(stop.clone());
                         Ok(stop)
                     })),
                 },
-                is_project_busy: Some(Arc::new(move |project| busy_owner.has_active_user_turn(&project.into()))),
+                is_project_busy: Some(Arc::new(move |project| {
+                    busy_owner.has_active_user_turn(&project.into())
+                })),
                 update_subsystems: Arc::new(move |update| {
-                    if stopping_automation.is_stopping() { published_automation.clear(); }
-                    else { published_automation.publish(update, standalone.clone()); }
+                    if stopping_automation.is_stopping() {
+                        published_automation.clear();
+                    } else {
+                        published_automation.publish(update, standalone.clone());
+                    }
                 }),
             })?;
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
@@ -1689,7 +1794,8 @@ async fn start_assembly(
                     }
                     None => Ok(()),
                 };
-                let automation_stop = cleanup_observer("automation", cleanup_automation.stop().await).await;
+                let automation_stop =
+                    cleanup_observer("automation", cleanup_automation.stop().await).await;
                 // #1328 A8.3: stop the channel assembly and flush its durable
                 // mapper state — the closeServer + flushChannelState pair
                 // (PilotDeckServerShutdownBundle.ts:33-37: channels stop before
@@ -1715,9 +1821,14 @@ async fn start_assembly(
                     cleanup_diagnostic(error);
                 }
                 let mut outcome = sessions.and(project);
-                for failure in [cron_stop.err(), automation_stop.err(), channel_stop.err(), channel_flush.err()]
-                    .into_iter()
-                    .flatten()
+                for failure in [
+                    cron_stop.err(),
+                    automation_stop.err(),
+                    channel_stop.err(),
+                    channel_flush.err(),
+                ]
+                .into_iter()
+                .flatten()
                 {
                     outcome = outcome.and(Err(failure));
                 }
@@ -1772,7 +1883,10 @@ async fn start_assembly(
     }
 }
 fn native_host_limits(drain_budget: std::time::Duration) -> crate::host::Limits {
-    crate::host::Limits { close_timeout: drain_budget, ..Default::default() }
+    crate::host::Limits {
+        close_timeout: drain_budget,
+        ..Default::default()
+    }
 }
 
 /// #1864 (a): the pure compose step for the three session selections —
@@ -1980,6 +2094,14 @@ fn supports_native_module_binding(name: &JsString, value: &JsValue) -> bool {
     let Some(fields) = value.as_object() else {
         return false;
     };
+    if name.equals_str("sop") {
+        // parseModulesConfig has already checked endpoints, paths and contract.
+        // The selected generation now installs the real StaffDeck controller.
+        return fields.get("enabled") == Some(&JsValue::Bool(true))
+            && (fields.get("provider").and_then(JsValue::as_string).is_some_and(|p|p.equals_str("staffdeck"))
+                || (fields.get("contract")==Some(&JsValue::from("sop.lifecycle/v2"))
+                    && fields.get("transport")==Some(&JsValue::from("sop-http-v2"))));
+    }
     if (name.equals_str("skills") || name.equals_str("knowledge"))
         && fields.own_entries().len() == 1
         && fields.get("enabled") == Some(&JsValue::Bool(false))
@@ -2107,7 +2229,8 @@ pub(super) fn project_resources_factory(
             builtin_plugins_enabled: HashMap::new(),
         })
         .with_interaction(),
-    }).with_bounded_config()
+    })
+    .with_bounded_config()
 }
 
 #[cfg(test)]

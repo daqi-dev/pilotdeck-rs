@@ -31,6 +31,7 @@ async fn native_skill_ask_grant_is_single_use_and_deny_cannot_read_the_catalog()
                 base_permission_mode: None,
                 sdk_hooks: None,
                 sdk_permission_mode: None,
+                sdk_models: None,
                 can_prompt: Some(true),
                 policy_can_prompt: None,
                 emit: Arc::new(move |event| {

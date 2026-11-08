@@ -1190,6 +1190,7 @@ mod queued_slot_tests {
             can_prompt: Some(false),
             policy_can_prompt: None,
             sdk_permission_mode: None,
+            sdk_models: None,
             sdk_hooks: Some(SdkHookState {
                 settings: vec![],
                 active: false,

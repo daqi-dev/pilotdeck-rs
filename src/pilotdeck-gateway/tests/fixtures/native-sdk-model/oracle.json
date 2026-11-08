@@ -1,0 +1,163 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "records": [
+    {
+      "id": "empty",
+      "sdk": {},
+      "enforced": null,
+      "result": {
+        "provider": "fixture",
+        "model": "main",
+        "fallbackModels": null,
+        "managedModelPolicy": null
+      }
+    },
+    {
+      "id": "fallback-exact",
+      "sdk": {
+        "fallbackModel": "fixture/backup"
+      },
+      "enforced": null,
+      "result": {
+        "provider": "fixture",
+        "model": "main",
+        "fallbackModels": [
+          {
+            "provider": "fixture",
+            "model": "backup"
+          }
+        ],
+        "managedModelPolicy": null
+      }
+    },
+    {
+      "id": "fallback-short",
+      "sdk": {
+        "fallbackModel": "backup"
+      },
+      "enforced": null,
+      "result": {
+        "provider": "fixture",
+        "model": "main",
+        "fallbackModels": [
+          {
+            "provider": "fixture",
+            "model": "main"
+          }
+        ],
+        "managedModelPolicy": null
+      }
+    },
+    {
+      "id": "fallback-null-settings",
+      "sdk": {
+        "fallbackModel": null,
+        "settings": {
+          "agent": {
+            "fallbackModel": "fixture/settings"
+          }
+        }
+      },
+      "enforced": null,
+      "result": {
+        "provider": "fixture",
+        "model": "main",
+        "fallbackModels": [
+          {
+            "provider": "fixture",
+            "model": "settings"
+          }
+        ],
+        "managedModelPolicy": null
+      }
+    },
+    {
+      "id": "enforced-null",
+      "sdk": {
+        "fallbackModel": "fixture/backup"
+      },
+      "enforced": null,
+      "result": {
+        "provider": "fixture",
+        "model": "main",
+        "fallbackModels": null,
+        "managedModelPolicy": null
+      }
+    },
+    {
+      "id": "enforced-exact",
+      "sdk": {
+        "fallbackModel": "fixture/backup"
+      },
+      "enforced": "enforced/model",
+      "result": {
+        "provider": "fixture",
+        "model": "main",
+        "fallbackModels": [
+          {
+            "provider": "enforced",
+            "model": "model"
+          }
+        ],
+        "managedModelPolicy": null
+      }
+    },
+    {
+      "id": "policy",
+      "sdk": {
+        "managedModels": {
+          "allow": [
+            "fixture/*"
+          ],
+          "deny": [
+            "fixture/private"
+          ]
+        }
+      },
+      "enforced": null,
+      "result": {
+        "provider": "fixture",
+        "model": "main",
+        "fallbackModels": null,
+        "managedModelPolicy": {
+          "allow": [
+            "fixture/*"
+          ],
+          "deny": [
+            "fixture/private"
+          ]
+        }
+      }
+    },
+    {
+      "id": "utf16",
+      "sdk": {
+        "fallbackModel": "\ud800/\udc00",
+        "managedModels": {
+          "allow": [
+            "\ud800/*"
+          ],
+          "deny": []
+        }
+      },
+      "enforced": null,
+      "result": {
+        "provider": "fixture",
+        "model": "main",
+        "fallbackModels": [
+          {
+            "provider": "\ud800",
+            "model": "\udc00"
+          }
+        ],
+        "managedModelPolicy": {
+          "allow": [
+            "\ud800/*"
+          ],
+          "deny": []
+        }
+      }
+    }
+  ]
+}

@@ -39,9 +39,17 @@ pub struct TurnInteractionAuthority {
     pub can_prompt: Option<bool>,
     pub policy_can_prompt: Option<bool>,
     pub sdk_permission_mode: Option<pilotdeck_protocol::JsString>,
+    pub sdk_models: Option<SdkModelOptions>,
     /// Committed, host-owned SDK configuration for this turn.
     pub sdk_hooks: Option<SdkHookState>,
     pub emit: Arc<dyn Fn(JsValue) -> bool + Send + Sync>,
+}
+
+/// Immutable SDK model policy for this admitted turn, including child forks.
+#[derive(Clone, Default)]
+pub struct SdkModelOptions {
+    pub policy: Option<crate::runtime::model::router::ManagedModelPolicy>,
+    pub fallback: Vec<crate::runtime::model::router::RouterModelRef>,
 }
 
 pub type SdkAsyncRegistrySlot =
@@ -322,39 +330,103 @@ impl InteractionTurn {
         Ok(turn)
     }
     pub(crate) fn fork_generation(&self) -> Result<RuntimeLease, HostError> {
-        self.owned.lock().unwrap_or_else(|e| e.into_inner()).as_ref()
-            .ok_or_else(|| ModuleError::new("SOP parent turn is closed."))?.lease.fork()
+        self.owned
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .ok_or_else(|| ModuleError::new("SOP parent turn is closed."))?
+            .lease
+            .fork()
             .map_err(|e| HostError::new(crate::host::HostErrorKind::Session, e.message))
     }
     pub(crate) async fn borrow_node(
-        self: &Arc<Self>, mut router: ModuleRouter, lease: Arc<RuntimeLease>, identity: &ExecutionIdentity,
-        recorder: Arc<crate::storage::recorder::Recorder>, signal: Cancellation,
+        self: &Arc<Self>,
+        mut router: ModuleRouter,
+        lease: Arc<RuntimeLease>,
+        identity: &ExecutionIdentity,
+        recorder: Arc<crate::storage::recorder::Recorder>,
+        signal: Cancellation,
         switches: crate::host::modules::CompositionSwitches,
     ) -> Result<BorrowedInteractionTurn, HostError> {
-        if self.owned.lock().unwrap_or_else(|e| e.into_inner()).is_none() { return Err(ModuleError::new("SOP parent turn is closed.").into()); }
-        let catalog = router.capability.catalog().ok_or_else(|| ModuleError::new("SOP node capability catalog is missing."))?;
+        if self
+            .owned
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_none()
+        {
+            return Err(ModuleError::new("SOP parent turn is closed.").into());
+        }
+        let catalog = router
+            .capability
+            .catalog()
+            .ok_or_else(|| ModuleError::new("SOP node capability catalog is missing."))?;
         if let Some(permission) = &self.ports.permission {
-            router.permission = crate::host::modules::permission::Handler::new(catalog.clone(), Arc::new(permission.clone()), Arc::new(permission.clone()));
+            router.permission = crate::host::modules::permission::Handler::new(
+                catalog.clone(),
+                Arc::new(permission.clone()),
+                Arc::new(permission.clone()),
+            );
         }
         // TS reuses the native lifecycle and steer capabilities from the outer
         // AgentLoop. Their disposal remains solely the outer owner's job.
         router.lifecycle = self.router.lifecycle.clone();
         router.turn = self.router.turn.clone();
         let abort_signal = signal;
-        router.turn.ports.persist_compaction = Some(crate::host::modules::turn::persist_compaction_to_recorder(
-            recorder, identity.session_id.clone(), identity.turn_id.clone(), Arc::new(move |_| abort_signal.abort())
-        ));
+        router.turn.ports.persist_compaction =
+            Some(crate::host::modules::turn::persist_compaction_to_recorder(
+                recorder,
+                identity.session_id.clone(),
+                identity.turn_id.clone(),
+                Arc::new(move |_| abort_signal.abort()),
+            ));
         // A private node event buffer is not a rebind of the generation/session
         // resource. In particular it cannot revoke the parent's current token.
         let node_events = InteractionEvents::default().bind_turn(
-            event::TurnIdentity::new(identity.session_id.clone(), identity.turn_id.clone()), identity.run_id.clone(), &mut router
+            event::TurnIdentity::new(identity.session_id.clone(), identity.turn_id.clone()),
+            identity.run_id.clone(),
+            &mut router,
         )?;
-        let permission_context = self.manifest.get("permissionContext").and_then(JsValue::as_object).cloned().unwrap_or_default();
-        let manifest = router.turn_manifest(catalog.list().await?.iter().map(|tool| ToolSnapshot::from_definition(tool.as_ref())).collect(),
-            PermissionSnapshot { cwd: permission_context.get("cwd").cloned().unwrap_or(JsValue::Undefined), permission_mode: permission_context.get("mode").cloned().unwrap_or(JsValue::Undefined), permission_context, turn_can_prompt: None }, &switches)
-            .map_err(|missing| ModuleError::new(format!("SOP node handlers missing: {}", missing.join(", "))))?;
-        Ok(BorrowedInteractionTurn { router: Arc::new(router), manifest, parent: self.clone(), events: node_events,
-            lease: Mutex::new(Some(lease)), closed: std::sync::atomic::AtomicBool::new(false), done: watch::channel(None).0, executor: self.executor.clone() })
+        let permission_context = self
+            .manifest
+            .get("permissionContext")
+            .and_then(JsValue::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let manifest = router
+            .turn_manifest(
+                catalog
+                    .list()
+                    .await?
+                    .iter()
+                    .map(|tool| ToolSnapshot::from_definition(tool.as_ref()))
+                    .collect(),
+                PermissionSnapshot {
+                    cwd: permission_context
+                        .get("cwd")
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined),
+                    permission_mode: permission_context
+                        .get("mode")
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined),
+                    permission_context,
+                    turn_can_prompt: None,
+                },
+                &switches,
+            )
+            .map_err(|missing| {
+                ModuleError::new(format!("SOP node handlers missing: {}", missing.join(", ")))
+            })?;
+        Ok(BorrowedInteractionTurn {
+            router: Arc::new(router),
+            manifest,
+            parent: self.clone(),
+            events: node_events,
+            lease: Mutex::new(Some(lease)),
+            closed: std::sync::atomic::AtomicBool::new(false),
+            done: watch::channel(None).0,
+            executor: self.executor.clone(),
+        })
     }
     pub fn manifest(&self) -> &JsObject {
         &self.manifest
@@ -556,51 +628,108 @@ fn resource<T: Clone + 'static>(
 /// A node has fresh dispatcher state, while permission/hooks/steer belong to
 /// the enclosing turn. Closing a node must never close those borrowed ports.
 pub(crate) struct BorrowedInteractionTurn {
-    router: Arc<ModuleRouter>, manifest: JsObject, parent: Arc<InteractionTurn>, events: TurnEvents,
-    lease: Mutex<Option<Arc<RuntimeLease>>>, closed: std::sync::atomic::AtomicBool,
-    done: watch::Sender<Option<Result<(), HostError>>>, executor: Handle,
+    router: Arc<ModuleRouter>,
+    manifest: JsObject,
+    parent: Arc<InteractionTurn>,
+    events: TurnEvents,
+    lease: Mutex<Option<Arc<RuntimeLease>>>,
+    closed: std::sync::atomic::AtomicBool,
+    done: watch::Sender<Option<Result<(), HostError>>>,
+    executor: Handle,
 }
 impl BorrowedInteractionTurn {
-    pub(super) fn manifest(&self) -> &JsObject { &self.manifest }
+    pub(super) fn manifest(&self) -> &JsObject {
+        &self.manifest
+    }
     fn check(&self) -> Result<(), HostError> {
-        if self.closed.load(std::sync::atomic::Ordering::SeqCst) || self.parent.owned.lock().unwrap_or_else(|e| e.into_inner()).is_none() {
+        if self.closed.load(std::sync::atomic::Ordering::SeqCst)
+            || self
+                .parent
+                .owned
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+        {
             Err(ModuleError::new("SOP node interaction is closed.").into())
-        } else { Ok(()) }
+        } else {
+            Ok(())
+        }
     }
     fn close(&self) {
-        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) { return; }
+        if self.closed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            return;
+        }
         self.events.close();
         let lease = self.lease.lock().unwrap_or_else(|e| e.into_inner()).take();
-        let router = self.router.clone(); let parent = self.parent.clone();
-        crate::runtime::cleanup_task::spawn_after(&self.executor, self.done.clone(), || {}, async move {
-            let results = tokio::join!(router.model.dispose(), router.budget.dispose(), router.context.dispose(), router.capability.dispose());
-            // The dispatcher wrapper owns no native child runtime; the parent
-            // retains it through its normal dispose/wait_closed path.
-            let mut first = None;
-            for result in [results.0, results.1, results.2, results.3] { if let Err(error) = result { first.get_or_insert(error); } }
-            drop(parent); drop(lease); first.map_or(Ok(()), Err)
-        });
+        let router = self.router.clone();
+        let parent = self.parent.clone();
+        crate::runtime::cleanup_task::spawn_after(
+            &self.executor,
+            self.done.clone(),
+            || {},
+            async move {
+                let results = tokio::join!(
+                    router.model.dispose(),
+                    router.budget.dispose(),
+                    router.context.dispose(),
+                    router.capability.dispose()
+                );
+                // The dispatcher wrapper owns no native child runtime; the parent
+                // retains it through its normal dispose/wait_closed path.
+                let mut first = None;
+                for result in [results.0, results.1, results.2, results.3] {
+                    if let Err(error) = result {
+                        first.get_or_insert(error);
+                    }
+                }
+                drop(parent);
+                drop(lease);
+                first.map_or(Ok(()), Err)
+            },
+        );
     }
     fn wait_closed(&self) -> HostFuture<()> {
-        let mut done = self.done.subscribe(); Box::pin(async move { loop {
-            if let Some(result) = done.borrow_and_update().clone() { return result; }
-            done.changed().await.map_err(|_| ModuleError::new("SOP node cleanup completion lost."))?;
-        } })
+        let mut done = self.done.subscribe();
+        Box::pin(async move {
+            loop {
+                if let Some(result) = done.borrow_and_update().clone() {
+                    return result;
+                }
+                done.changed()
+                    .await
+                    .map_err(|_| ModuleError::new("SOP node cleanup completion lost."))?;
+            }
+        })
     }
 }
 impl HostHandler for BorrowedInteractionTurn {
     fn module_call(&self, call: JsValue) -> HostFuture<JsObject> {
-        if let Err(error) = self.check() { return Box::pin(async move { Err(error) }); }
+        if let Err(error) = self.check() {
+            return Box::pin(async move { Err(error) });
+        }
         self.router.module_call(call)
     }
     fn validate_event(&self, _: &JsValue) -> Result<crate::host::EventGuard, HostError> {
-        self.check()?; Ok(crate::host::EventGuard::new(|| {}))
+        self.check()?;
+        Ok(crate::host::EventGuard::new(|| {}))
     }
-    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> { self.check()?; self.events.drain() }
+    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        self.check()?;
+        self.events.drain()
+    }
     fn event(&self, event: JsValue) -> HostFuture<()> {
-        if let Err(error) = self.check() { return Box::pin(async move { Err(error) }); }
+        if let Err(error) = self.check() {
+            return Box::pin(async move { Err(error) });
+        }
         self.parent.event(event)
     }
-    fn dispose(&self) -> HostFuture<()> { self.close(); self.wait_closed() }
+    fn dispose(&self) -> HostFuture<()> {
+        self.close();
+        self.wait_closed()
+    }
 }
-impl Drop for BorrowedInteractionTurn { fn drop(&mut self) { self.close(); } }
+impl Drop for BorrowedInteractionTurn {
+    fn drop(&mut self) {
+        self.close();
+    }
+}

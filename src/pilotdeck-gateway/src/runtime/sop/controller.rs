@@ -331,9 +331,9 @@ impl StepBinding {
             .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
-    pub async fn instruction(&self) -> Result<JsString, HostError> {
+    pub async fn instruction(&self, step_id: &JsValue) -> Result<JsString, HostError> {
         if !self.preflight.swap(false, Ordering::SeqCst) {
-            let (next, _) = self.run.prepare(&JsValue::Undefined).await?;
+            let (next, _) = self.run.prepare(step_id).await?;
             *self.current.lock().unwrap_or_else(|e| e.into_inner()) = next;
         }
         let step = self.step();
@@ -351,6 +351,13 @@ impl StepBinding {
     }
 }
 impl HostLoopController for StaffDeckController {
+    fn validate_tools<'a>(
+        &'a self,
+        catalog: Arc<dyn crate::host::modules::capability::ToolCatalog>,
+    ) -> SopFuture<'a, Result<(), HostError>> {
+        Box::pin(async move { self.require_tools(&catalog.list().await?) })
+    }
+
     fn run<'a>(
         &'a self,
         input: SopLoopInput,
@@ -371,14 +378,15 @@ impl HostLoopController for StaffDeckController {
    let sop=field(&step,"skillId").as_string().cloned().unwrap_or_else(||run.selected.clone());let node=field(&step,"nodeId").as_string().cloned().unwrap_or_else(||"".into());
    let isolated=field(&step,"contextMode")==&JsValue::from("new_session");let context=if isolated{SopNodeContext::Isolated{sop:sop.clone(),node:node.clone()}}else{SopNodeContext::Inherit};
    let mut request=continued.clone();request.identity.operation_id=format!("{}:sop-node:{}:{}{}",String::from_utf16_lossy(identity.operation_id.units()),encode(&sop)?,encode(&node)?,if correcting{":correction"}else{""}).as_str().into();request.payload.insert("messages".into(),JsValue::Array(visible.clone()));request.payload.insert("stopOnStructuredOutput".into(),JsValue::Bool(true));let mut agent=request.payload.get("agent").and_then(JsValue::as_object).cloned().unwrap_or_default();agent.insert("stopOnStructuredOutput".into(),JsValue::Bool(true));request.payload.insert("agent".into(),JsValue::Object(agent));
-   let instruction=render(&step,self.store.model_context(session).await.map_err(store_error)?.as_ref());
+   let instruction=if step.is_undefined(){String::new()}else{render(&step,self.store.model_context(session).await.map_err(store_error)?.as_ref())};
    let mut outcome=native.run(SopNodePlan{continuation:correcting,context,request,instruction:instruction.as_str().into(),model_override:model,step:step.clone(),binding:(!step.is_undefined()).then(||Arc::new(binding)as Arc<dyn SopRunBinding>)}).await?;
    let result=&outcome.result;total_turns+=field(result,"turns").as_number().unwrap_or(0.0);total_spent+=field(field(result,"budget"),"turnSpentUsd").as_number().unwrap_or(0.0);if let Some(o)=field(result,"usage").as_object(){for(k,v)in o.own_entries(){if let Some(n)=v.as_number(){let old=usage.get_key(k).and_then(JsValue::as_number).unwrap_or(0.0);usage.insert(k.clone(),JsValue::Number(old+n));}}}if let JsValue::Array(items)=field(result,"permissionDenials"){denials.extend(items.clone());}if !isolated{visible=outcome.messages.clone();}
    let state=self.store.load(session).await.map_err(store_error)?;let active=state.as_ref().is_some_and(|s|active(field(s,"state")));let stop=field(result,"stopReason")==&JsValue::from("completed");
    let max=continued.payload.get("maxTurns").and_then(JsValue::as_number).or_else(||continued.payload.get("agent").and_then(|a|a.get("maxTurns")).and_then(JsValue::as_number));
    if active&&stop&&max.is_some_and(|max|field(result,"turns").as_number().unwrap_or(0.0)>=max){let mut result=result.clone();finish(native,&mut outcome,&mut correction_result).await?;set(&mut result,"type","max_turns".into());set(&mut result,"stopReason","max_turns".into());break result;}
    if active&&crate::runtime::turn::submit::truthy(field(result,"structuredOutput")){finish(native,&mut outcome,&mut correction_result).await?;correcting=false;continue_request(&mut continued,&outcome.result,outcome.messages);continue;}
-   if active&&stop&&run.submission.lock().unwrap_or_else(|e|e.into_inner()).is_none()&&!run.saw_tool_error.load(Ordering::SeqCst){let key=(sop,node);if !corrections.insert(key){return Err(error("SOP_STEP_RESULT_REQUIRED","SOP_STEP_RESULT_REQUIRED: model ended without submitting the active node result"));}correcting=true;correction_result=Some(correction_result.take().map_or_else(||outcome.result.clone(),|previous|merge_result(previous,outcome.result.clone())));continue_request(&mut continued,&outcome.result,outcome.messages);continue;}
+   let has_submission=run.submission.lock().unwrap_or_else(|e|e.into_inner()).is_some();
+   if active&&stop&&!has_submission&&!run.saw_tool_error.load(Ordering::SeqCst){let key=(sop,node);if !corrections.insert(key){return Err(error("SOP_STEP_RESULT_REQUIRED","SOP_STEP_RESULT_REQUIRED: model ended without submitting the active node result"));}correcting=true;correction_result=Some(correction_result.take().map_or_else(||outcome.result.clone(),|previous|merge_result(previous,outcome.result.clone())));continue_request(&mut continued,&outcome.result,outcome.messages);continue;}
    finish(native,&mut outcome,&mut correction_result).await?;break outcome.result;
   };
   set(&mut completed,"turns",JsValue::Number(total_turns));set(&mut completed,"usage",JsValue::Object(usage));set(&mut completed,"permissionDenials",JsValue::Array(denials));if let Some(JsValue::Object(budget))=completed.get("budget"){let mut budget=budget.clone();budget.insert("turnSpentUsd".into(),JsValue::Number(total_spent));set(&mut completed,"budget",JsValue::Object(budget));}

@@ -1,26 +1,12 @@
-//! Port of the TS always-on background runtime's control half
-//! (`src/always-on/`, baseline cc7c4e6): storage paths, the discovery state
-//! and cycle/plan stores, channel leases, the pure gate chain, the discovery
-//! lock, the dormancy signal watcher and the periodic scheduler
-//! (`DiscoveryScheduler.ts`), plus the per-project runtime and multi-project
-//! manager (`AlwaysOnRuntime.ts` / `AlwaysOnManager.ts`) that own them.
+//! Native Always-On runtime: discovery, isolated workspace, execution, report
+//! and apply run through the existing gateway/session owner. NativeFire is
+//! selected by the CLI composition; generic embeddings retain the explicit
+//! control-only fallback until they supply their own FireFactory.
 //!
-//! The deep fire pipeline — the five-phase discovery run, the workspace
-//! strategies, the report tools and the model turns behind
-//! `DiscoveryFire.run` / `runApplyPhase` / `rerunPlan` — is deliberately NOT
-//! ported: those halves return an explicit `internal` error ("not implemented
-//! in this embedding") instead of a fake success. Everything before them is
-//! real: gate reads, state bytes, the `wx` lock, session-key derivation and
-//! the control envelopes.
-//!
-//! Evidence: `tests/fixtures/always-on-2294/` (58 TS-baseline golden records,
-//! Node v22.22.0) drives the tests in this module and the assembly half.
-// The deep fire seam above means most of this port's surface — the fire
-// pipeline's inputs, the lease registry's mutators, the report paths — is
-// driven by those replay tests rather than the shipping build, until the
-// fire half itself is ported. The port's wire-shape items keep the reason
-// inline with their own `#[allow(dead_code)]`; this umbrella covers the
-// rest of the unported surface (paths, mutators, tick entries).
+//! Fixed TS contracts live in tests/fixtures/always-on-2294; native tests also
+//! exercise real Git, workspace cleanup, gateway turns and event draining.
+// Wire-shape and generic embedding entry points remain available to contract
+// tests even where the native CLI uses the richer factory.
 #![allow(dead_code)]
 mod chat_tool;
 mod chat_digest;

@@ -93,6 +93,17 @@ fn selector_matches(selector: &str, model: &ModelRef) -> bool {
 }
 
 /// `assertSdkManagedModelAllowed` against the raw `managedModels` value.
+fn selector_matches_js(selector: &JsString, model: &ModelRef) -> bool {
+    let mut provider = model.provider.units().to_vec();
+    provider.push(u16::from(b'/'));
+    let mut full = provider.clone();
+    full.extend_from_slice(model.model.units());
+    provider.push(u16::from(b'*'));
+    selector.equals_str("*")
+        || selector.units() == provider.as_slice()
+        || selector.units() == full.as_slice()
+}
+
 pub fn assert_managed_model_allowed(
     policy: Option<&JsValue>,
     model: &ModelRef,
@@ -106,7 +117,7 @@ pub fn assert_managed_model_allowed(
     let Some(policy) = policy.as_object() else {
         return Ok(());
     };
-    let strings = |key: &str| -> Vec<String> {
+    let strings = |key: &str| -> Vec<JsString> {
         policy
             .get(key)
             .and_then(|value| array(value))
@@ -114,7 +125,7 @@ pub fn assert_managed_model_allowed(
                 items
                     .iter()
                     .filter_map(JsValue::as_string)
-                    .map(number_text)
+                    .cloned()
                     .collect()
             })
             .unwrap_or_default()
@@ -123,11 +134,11 @@ pub fn assert_managed_model_allowed(
     let allow = strings("allow");
     if !deny
         .iter()
-        .any(|selector| selector_matches(selector, model))
+        .any(|selector| selector_matches_js(selector, model))
         && (allow.is_empty()
             || allow
                 .iter()
-                .any(|selector| selector_matches(selector, model)))
+                .any(|selector| selector_matches_js(selector, model)))
     {
         return Ok(());
     }
@@ -466,5 +477,39 @@ impl OrganizationPolicy {
                 || settings.session_default_sources.is_some()
                 || settings.enforced_session_settings.is_some()
         }) || self.max_task_budget_usd.is_some()
+    }
+}
+
+#[cfg(test)]
+mod native_managed_utf16_tests {
+    use super::*;
+    #[test]
+    fn sdk_managed_model_selector_distinguishes_unpaired_surrogates() {
+        let model = ModelRef {
+            provider: JsString::from_utf16(vec![0xd800]),
+            model: "m".into(),
+        };
+        let mut policy = JsObject::new();
+        policy.insert(
+            "allow".into(),
+            JsValue::Array(vec![JsValue::String(JsString::from_utf16(vec![
+                0xd800, 47, 109,
+            ]))]),
+        );
+        assert!(
+            assert_managed_model_allowed(Some(&JsValue::Object(policy.clone())), &model).is_ok()
+        );
+        policy.insert(
+            "allow".into(),
+            JsValue::Array(vec![JsValue::String(JsString::from_utf16(vec![
+                0xd801, 47, 109,
+            ]))]),
+        );
+        assert_eq!(
+            assert_managed_model_allowed(Some(&JsValue::Object(policy)), &model)
+                .unwrap_err()
+                .code,
+            "SDK_MANAGED_MODEL_DENIED"
+        );
     }
 }

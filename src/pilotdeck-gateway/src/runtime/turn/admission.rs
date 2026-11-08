@@ -103,6 +103,21 @@ pub trait SubmitSdkSessionConfig: Send + Sync {
     ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkHookState>, SubmitError>> {
         Box::pin(async { Ok(None) })
     }
+    fn models<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn assert_model<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _selection: Option<&'a JsValue>,
+        _project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+        Box::pin(async { Ok(()) })
+    }
     fn set<'a>(
         &'a self,
         session: &'a JsString,
@@ -123,7 +138,13 @@ pub trait SubmitModelAssertion: Send + Sync {
 /// `options.taskBudgetSnapshot` (InProcessGateway.ts:1135-1156) resolving
 /// `{ totalUsd, spentUsd }`.
 pub trait SubmitTaskBudgetSnapshot: Send + Sync {
-    fn settle<'a>(&'a self, _session: &'a JsString, _project: Option<&'a JsString>, _run: &'a JsString, _spent: f64) -> SubmitFuture<'a, Result<(), SubmitError>> {
+    fn settle<'a>(
+        &'a self,
+        _session: &'a JsString,
+        _project: Option<&'a JsString>,
+        _run: &'a JsString,
+        _spent: f64,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         Box::pin(async { Ok(()) })
     }
 
@@ -183,7 +204,7 @@ pub struct GatewaySubmitAdmission {
     options: SubmitAdmissionOptions,
     /// `dialogProjectKeys` (InProcessGateway.ts:774); consumption is 7b.
     dialog_project_keys: Mutex<HashMap<JsString, JsValue>>,
-    turn_budgets: Mutex<HashMap<(JsString,JsString),JsValue>>,
+    turn_budgets: Mutex<HashMap<(JsString, JsString), JsValue>>,
 }
 impl GatewaySubmitAdmission {
     pub fn new(options: SubmitAdmissionOptions) -> Self {
@@ -664,6 +685,23 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
         completion: &'a TurnCompletionHandle,
     ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
         Box::pin(async move {
+            if let Some(sdk) = self.options.sdk_config.as_ref() {
+                let explicit = if is(field(input, "modelSelection"), "mode", "model") {
+                    field(input, "modelSelection")
+                } else {
+                    field(input, "modelOverride")
+                };
+                let explicit = matches!(explicit, JsValue::Object(_)).then_some(explicit);
+                if let Err(error) = sdk
+                    .assert_model(&run.session_key, explicit, run.project_key.as_ref())
+                    .await
+                {
+                    return Ok(vec![error_event(run, &error.code, &error.message, true)]);
+                }
+                if completion.is_cancelled() {
+                    return Ok(vec![aborted(run)]);
+                }
+            }
             if let Some(assertion) = self.options.model_assertion.as_ref() {
                 // explicitModel = modelSelection.mode==="model" ?
                 // modelSelection : modelOverride (TS :1116-1118)
@@ -683,7 +721,13 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
                 let budget = budget
                     .snapshot(&run.session_key, run.project_key.as_ref())
                     .await?;
-                self.turn_budgets.lock().unwrap_or_else(|e|e.into_inner()).insert((run.session_key.clone(),run.run_id.clone()), budget.clone());
+                self.turn_budgets
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(
+                        (run.session_key.clone(), run.run_id.clone()),
+                        budget.clone(),
+                    );
                 if completion.is_cancelled() {
                     return Ok(vec![aborted(run)]);
                 }
@@ -745,25 +789,45 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
         })
     }
     /// Budget settlement precedes terminal projection, matching the CLI host.
-    fn observe_event<'a>(&'a self, input: &'a JsValue, event: &'a JsValue) -> SubmitFuture<'a,Result<(),SubmitError>> {
+    fn observe_event<'a>(
+        &'a self,
+        input: &'a JsValue,
+        event: &'a JsValue,
+    ) -> SubmitFuture<'a, Result<(), SubmitError>> {
         Box::pin(async move {
-            if is(event,"type","turn_completed") {
-                let budget=field(field(event,"result"),"budget");
-                if !field(budget,"taskBudgetUsd").is_undefined() && let Some(port)=&self.options.task_budget {
-                    let session=string(field(input,"sessionKey"));
-                    let run=string(field(event,"runId"));
-                    port.settle(&session,field(input,"projectKey").as_string(),&run,
-                        field(budget,"turnSpentUsd").as_number().unwrap_or(f64::NAN)).await?;
+            if is(event, "type", "turn_completed") {
+                let budget = field(field(event, "result"), "budget");
+                if !field(budget, "taskBudgetUsd").is_undefined()
+                    && let Some(port) = &self.options.task_budget
+                {
+                    let session = string(field(input, "sessionKey"));
+                    let run = string(field(event, "runId"));
+                    port.settle(
+                        &session,
+                        field(input, "projectKey").as_string(),
+                        &run,
+                        field(budget, "turnSpentUsd")
+                            .as_number()
+                            .unwrap_or(f64::NAN),
+                    )
+                    .await?;
                 }
             }
             Ok(())
         })
     }
-    fn take_turn_budget(&self, run: &RunRef)->JsValue {
-        self.turn_budgets.lock().unwrap_or_else(|e|e.into_inner()).remove(&(run.session_key.clone(),run.run_id.clone())).unwrap_or(JsValue::Undefined)
+    fn take_turn_budget(&self, run: &RunRef) -> JsValue {
+        self.turn_budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&(run.session_key.clone(), run.run_id.clone()))
+            .unwrap_or(JsValue::Undefined)
     }
     fn release_turn(&self, session: &JsString, run: &JsString) {
-        self.turn_budgets.lock().unwrap_or_else(|e|e.into_inner()).remove(&(session.clone(),run.clone()));
+        self.turn_budgets
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&(session.clone(), run.clone()));
     }
     fn sdk_permission_mode<'a>(
         &'a self,
@@ -773,6 +837,18 @@ impl super::submit_host::SubmitAdmission for GatewaySubmitAdmission {
             match &self.options.sdk_config {
                 Some(port) => port.permission_mode(session).await,
                 None => None,
+            }
+        })
+    }
+    fn sdk_models<'a>(
+        &'a self,
+        session: &'a JsString,
+        project: Option<&'a JsString>,
+    ) -> SubmitFuture<'a, Result<Option<super::interaction::SdkModelOptions>, SubmitError>> {
+        Box::pin(async move {
+            match &self.options.sdk_config {
+                Some(port) => port.models(session, project).await,
+                None => Ok(None),
             }
         })
     }
