@@ -1056,13 +1056,24 @@ async fn project_path_boundaries_worker() {
         let read = requests
             .request("active_turn_snapshot".into(), params.clone())
             .await;
+        // Scope selection is a lexical path contract, not a registry grant.
+        // An unregistered path can return an empty active replay, while archive
+        // and dialog consumers still require their own Metadata registration.
+        let selected = super::project_scope::select(&requests.owner, &options, &params, false)
+            .expect("#1137 request scope selection");
         negative_assert_eq!(
-            read.is_ok(),
-            row["registered"]
-                .as_bool()
-                .expect("#1137 TS boundary registration"),
+            selected.options.project.to_string_lossy().as_ref(),
+            row["resolved"]
+                .as_str()
+                .expect("#1137 resolved TS boundary")
+                .replace("{root}", &scratch.0.to_string_lossy()),
             "#1137 request project guard uses process cwd"
         );
+        assert!(
+            read.is_ok(),
+            "empty replay has no project resources to authorize"
+        );
+        drop(selected);
         negative_assert_eq!(
             services.workspace_id(&params).is_ok(),
             row["storageMatches"]

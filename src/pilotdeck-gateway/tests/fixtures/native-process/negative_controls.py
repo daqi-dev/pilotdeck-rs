@@ -29,6 +29,7 @@ WS_TEST = ROOT / 'src/pilotdeck-gateway/src/native_ws/tests.rs'
 REVIEW_TEST = ROOT / 'src/pilotdeck-gateway/src/native_process/review_tests.rs'
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+PROJECT_SCOPE = ROOT / 'src/pilotdeck-gateway/src/native_process/project_scope.rs'
 REPLACEMENT = ROOT / 'src/pilotdeck-gateway/src/runtime/replacement.rs'
 MARKER_ORACLE = FIXTURES / 'native-cwd-marker/oracle.json'
 MARKER_GENERATOR = FIXTURES / 'native-cwd-marker/generate.mts'
@@ -180,15 +181,15 @@ impl Clone for ReplacementCoordinator {
      'file.write_all(options.project.to_string_lossy().as_bytes())?;',
      'file.write_all(b".")?;',
      'native_process::tests::review::project_options_publish_and_restart_match_ts', '#1137 marker publishes normalized project identity'),
-    # #2083 r1: the request gate now converts the key lossily (same source as
-    # session_close_project), so the anchor follows the new gate shape.
-    ('request-project-base', REQUESTS,
-     'self.options.serves_project(&lossy)',
-     'crate::metadata::resolve(&self.options.project, &lossy) == self.options.project',
+    # The native request now selects a lexical project view. Preserve the
+    # original wrong-base mutation, receipt and five fixed TS path rows.
+    ('request-project-base', PROJECT_SCOPE,
+     '.filter(|key| !(empty_is_default && key.is_empty()))\n        .map(resolve)',
+     '.filter(|key| !(empty_is_default && key.is_empty()))\n        .map(|key| { let shifted = JsString::from(crate::metadata::resolve(&options.project, &String::from_utf16_lossy(key.units())).to_string_lossy().into_owned()); resolve(&shifted) })',
      'native_process::tests::review::project_path_boundaries_worker', '#1137 request project guard uses process cwd'),
     ('submit-project-base', SERVICES,
-     'if !self.options.serves_project(&project) {',
-     'if crate::metadata::resolve(&self.options.project, &project) != self.options.project {',
+     'crate::metadata::resolve_process_identity(Path::new(""), key)',
+     'crate::metadata::resolve_process_identity(&self.options.project, key)',
      'native_process::tests::review::project_path_boundaries_worker', '#1137 submit project guard uses process cwd'),
     ('empty-project-options', MARKER_ORACLE,
      '"options": [', '"options": [], "unusedOptions": [',
@@ -387,7 +388,7 @@ def main():
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
-    guarded = [SOURCE, SERVER_HOST, SKILLS, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
+    guarded = [SOURCE, SERVER_HOST, SKILLS, FAMILIES, ASSEMBLY, TOOLS, SERVICES, REQUESTS, PROJECT_SCOPE, REPLACEMENT, MARKER_ORACLE, MARKER_GENERATOR, TESTS, MAIN, PROCESS_TEST, WS_TEST, REVIEW_TEST, PROCESS, SIGNAL, GENERATOR, ORACLE, Path(__file__).resolve(), FIXTURES / 'negative_process.py',
                FIXTURES / 'negative_suite.py',
                ROOT / 'src/pilotdeck-gateway/tests/common/negative_receipt.rs',
                ROOT / 'src/pilotdeck-gateway/src/lib.rs',

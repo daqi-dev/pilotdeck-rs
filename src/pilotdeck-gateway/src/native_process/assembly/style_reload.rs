@@ -218,7 +218,7 @@ mod tests {
         std::fs::write(plugin.join("plugin.json"), r#"{"name":"style-plugin"}"#).unwrap();
         std::fs::write(plugin.join("output-styles/project-b.md"), "Only B style").unwrap();
         let changed = reload.reload(&input).await.unwrap();
-        assert_eq!(changed.changed, vec![JsString::from("project-b")]);
+        assert_eq!(changed.changed, vec![JsString::from("style-plugin:project-b")]);
         // The fixed TS loop intentionally closes all SDK-selected sessions
         // when projectKey is omitted, even though only the fallback reloads.
         reload.reload(&crate::metadata::object([])).await.unwrap();

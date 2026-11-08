@@ -16,7 +16,15 @@ pub(super) struct SelectedProject {
 
 pub(super) fn resolve(key: &JsString) -> Result<PathBuf, RequestError> {
     crate::metadata::resolve_process_identity(Path::new(""), key)
-        .map_err(|error| RequestError::new(error.to_string()))?
+        .map_err(|error| {
+            let error = crate::config::cwd_error(error);
+            RequestError {
+                code: error.code,
+                message: error.message,
+                details: None,
+                validation: None,
+            }
+        })?
         .map(PathBuf::from)
         .ok_or_else(|| {
             let mut units = "Unknown projectKey: ".encode_utf16().collect::<Vec<_>>();
