@@ -4653,3 +4653,8 @@ PD代码ce7b82422与Kernel661375e7、integration f3c723e组成七二进制候选
 ### 2026-11-08 Kernel 原审批期限终态的产品投影（接入 lane B）
 
 真实 installed8 原gateway在pending Ask到parent期限时，Kernel原root已Cancelled/B Failed，但产品只收到“Gateway stream ended without a terminal result.”。定位为submit pump先按本地timed_out丢原Kernel终态，timer又按legacy分支提前关闭delivery。此次仅Kernel分支请求原取消后在原abort预算内drain：原root response派生且已排队的status/executionId completion独立于worker结束事实；断线、workerpanic或无权威completion仍明确Unknown，已排队真实终态不被晚panic覆盖。timer等flush而不重复poll JoinHandle，sender-drop/timeout有界finish再close；原completion围栏及observe await后复核拒绝旧run晚事件。新增snapshot committed下六种终态/故障分支与超时后新completion拒绝旧observer，原生产负控确实失败；完整submit10 PASS/1原TS再生ignored，冻结submit/UTF16 oracle不改。gateway strict Clippy检查暴露29个既有其他文件诊断，保留FAIL并对照基线，未放宽。新固定gateway真实三态组合待复验，不能用fixture通过代替；默认legacy/桌面P3/M5门槛不变。
+
+
+### 2026-11-08 Kernel 产品 plan 强制只读（接入 lane B）
+
+原 WS submit_turn/CLI permission-mode plan 的同一次有效权限模式现在同时进入组件 prompt 与公开 execution.input limits.read_only；宿主未声明 scheduler.input-limits.v1 时在发送 input 前拒绝。原 operationDeadline 与 read_only 合并保留，default/bypass 不新增授权，managed plan 不能被 basePermissionMode/bypass 提示字段放大。Kernel session 模块21/21通过，含真实UDS外层wire断言与缺能力前置拒绝；specs/parity/README 冻结SHA未变。此项是已有公共Limits接线，不是managed root grant接入；canonical工具alias过滤仍显式不支持，USD taskBudget不映射Kernel quota，桌面P3及默认legacy不变。实际原WS/CLI组合将在固定candidate10独立复验。

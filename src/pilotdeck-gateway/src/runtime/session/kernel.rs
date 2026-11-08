@@ -616,7 +616,10 @@ impl KernelSession {
         native_command: bool,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
         let options = json_value(&options)?;
-        let limits = self.input_limits(&options)?;
+        // Use one effective-mode observation for both the component prompt and
+        // the authenticated outer limits; a setting change cannot split them.
+        let permission_mode = self.turn_permission_mode(&options)?;
+        let limits = self.input_limits(&options, &permission_mode)?;
         let run = options["turnId"]
             .as_str()
             .or_else(|| options["runId"].as_str())
@@ -670,10 +673,7 @@ impl KernelSession {
                 agent.insert(key.into(), value.clone());
             }
         }
-        agent.insert(
-            "permissionMode".into(),
-            json!(text(&self.turn_permission_mode(&options)?)?),
-        );
+        agent.insert("permissionMode".into(), json!(text(&permission_mode)?));
         payload["agent"] = Value::Object(agent);
         for key in ["runMode", "allowPlanModeTools", "basePermissionMode"] {
             if let Some(value) = options.get(key) {
@@ -719,18 +719,30 @@ impl KernelSession {
             context_ref: self.context_ref.clone(),
         }))
     }
-    fn input_limits(&self, options: &Value) -> Result<Option<Value>, RuntimeError> {
-        let Some(deadline) = options["execution"]
+    fn input_limits(
+        &self,
+        options: &Value,
+        permission_mode: &JsString,
+    ) -> Result<Option<Value>, RuntimeError> {
+        let deadline = options["execution"]
             .get("operationDeadline")
-            .filter(|value| !value.is_null())
-        else {
+            .filter(|value| !value.is_null());
+        let read_only = permission_mode.equals_str("plan");
+        if deadline.is_none() && !read_only {
             return Ok(None);
-        };
+        }
         if !self.input_limits_supported {
             return Err(super::kernel_config::unavailable(
                 "scheduler.input-limits.v1",
             ));
         }
+        let mut limits = json!({});
+        if read_only {
+            limits["read_only"] = json!(true);
+        }
+        let Some(deadline) = deadline else {
+            return Ok(Some(limits));
+        };
         let deadline = deadline
             .as_str()
             .ok_or_else(|| error("Native operationDeadline must be an ISO date string."))?;
@@ -744,7 +756,8 @@ impl KernelSession {
                         && *value <= 9_007_199_254_740_991.0
                 })
                 .ok_or_else(|| error("Native operationDeadline is invalid."))?;
-        Ok(Some(json!({"deadline_ms":millis as u64})))
+        limits["deadline_ms"] = json!(millis as u64);
+        Ok(Some(limits))
     }
     fn turn_permission_mode(&self, options: &Value) -> Result<JsString, RuntimeError> {
         let requested = options.get("mode").filter(|value| !value.is_null());
@@ -2713,16 +2726,24 @@ mod recovery_contract_tests {
     fn kernel_deadline_requires_advertised_outer_limits_and_uses_exact_prepared_utc() {
         let mut session = session(std::env::temp_dir().join("no-limit-rpc.sock"));
         let options = json!({"execution":{"operationDeadline":"2030-01-01T00:00:00.000Z"}});
-        assert!(session.input_limits(&options).is_err());
+        assert!(session.input_limits(&options, &"default".into()).is_err());
         session.input_limits_supported = true;
         assert_eq!(
-            session.input_limits(&options).unwrap(),
+            session.input_limits(&options, &"default".into()).unwrap(),
             Some(json!({"deadline_ms":1893456000000_u64}))
         );
-        assert_eq!(session.input_limits(&json!({"maxTurns":5})).unwrap(), None);
+        assert_eq!(
+            session
+                .input_limits(&json!({"maxTurns":5}), &"default".into())
+                .unwrap(),
+            None
+        );
         assert!(
             session
-                .input_limits(&json!({"execution":{"operationDeadline":"invalid"}}))
+                .input_limits(
+                    &json!({"execution":{"operationDeadline":"invalid"}}),
+                    &"default".into()
+                )
                 .is_err()
         );
         let facts = State {
@@ -2737,6 +2758,47 @@ mod recovery_contract_tests {
             "2030-01-01T00:00:00.000Z"
         );
     }
+    #[test]
+    fn kernel_plan_requires_public_limits_and_cannot_be_widened_by_bypass_prompt_fields() {
+        let mut session = session(std::env::temp_dir().join("no-plan-admission.sock"));
+        let options =
+            json!({"turnId":"plan-turn","mode":"plan","basePermissionMode":"bypassPermissions"});
+        assert!(
+            session
+                .submit(
+                    js(&json!({"type":"text","text":"no effect"})).unwrap(),
+                    js(&options).unwrap()
+                )
+                .is_err()
+        );
+        assert!(session.state.lock().unwrap().run.is_none());
+        session.input_limits_supported = true;
+        let mode = session.turn_permission_mode(&options).unwrap();
+        assert_eq!(
+            session.input_limits(&options, &mode).unwrap(),
+            Some(json!({"read_only":true}))
+        );
+        for mode in ["default", "bypassPermissions"] {
+            assert_eq!(
+                session.input_limits(&json!({}), &mode.into()).unwrap(),
+                None,
+                "no mode grants additional host authority"
+            );
+        }
+        session.agent_config = js(&json!({"managedPermissions":{"defaultMode":"plan"}}))
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .clone();
+        let options = json!({"mode":"bypassPermissions"});
+        let mode = session.turn_permission_mode(&options).unwrap();
+        assert_eq!(mode, JsString::from("plan"));
+        assert_eq!(
+            session.input_limits(&options, &mode).unwrap(),
+            Some(json!({"read_only":true}))
+        );
+    }
+
     #[tokio::test]
     async fn kernel_abort_during_preflight_never_opens_rpc_or_admits_new_execution() {
         let mut session = session(std::env::temp_dir().join("no-kernel-rpc.sock"));
@@ -2831,7 +2893,7 @@ mod recovery_contract_tests {
                     "execution.input" => {
                         assert_eq!(
                             req["params"]["limits"],
-                            json!({"deadline_ms":1893456000000_u64})
+                            json!({"deadline_ms":1893456000000_u64,"read_only":true})
                         );
                         assert!(req["params"]["input"].get("limits").is_none());
                         let agent = &req["params"]["input"]["agent"];
