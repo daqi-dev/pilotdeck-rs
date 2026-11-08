@@ -335,6 +335,7 @@ struct Listeners {
 
 struct Inner {
     options: StoreOptions,
+    bounded: bool,
     state: Mutex<State>,
     listeners: Mutex<Listeners>,
     reloading: Mutex<Option<Arc<Flight>>>,
@@ -370,12 +371,23 @@ pub struct ConfigStore {
 impl ConfigStore {
     /// `createPilotConfigStoreSync`: loads the initial snapshot or fails.
     pub fn new(options: StoreOptions) -> Result<Self, Error> {
+        Self::new_with_limits(options, false)
+    }
+
+    /// Native CLI entry points use descriptor-checked, bounded reads for both
+    /// the initial snapshot and every subsequent reload of this store.
+    pub(crate) fn new_bounded(options: StoreOptions) -> Result<Self, Error> {
+        Self::new_with_limits(options, true)
+    }
+
+    fn new_with_limits(options: StoreOptions, bounded: bool) -> Result<Self, Error> {
         let version = options.version.unwrap_or(1.0);
-        let initial = load(&options, version)?;
+        let initial = load(&options, version, bounded)?;
         let next_version = snapshot_version(&initial) + 1.0;
         Ok(Self {
             inner: Arc::new(Inner {
                 options,
+                bounded,
                 state: Mutex::new(State {
                     current: Arc::new(initial),
                     last_reload_diagnostics: vec![],
@@ -501,8 +513,9 @@ impl ConfigStore {
     }
 }
 
-fn load(options: &StoreOptions, version: f64) -> Result<JsValue, Error> {
-    super::load_snapshot(
+fn load(options: &StoreOptions, version: f64, bounded: bool) -> Result<JsValue, Error> {
+    let loader = if bounded { super::load_snapshot_bounded } else { super::load_snapshot };
+    loader(
         &options.pilot_home,
         &options.cwd,
         &options.env,
@@ -705,7 +718,7 @@ fn reload_once(inner: &Arc<Inner>) -> ReloadResult {
         let state = lock(&inner.state);
         (state.current.clone(), state.next_version)
     };
-    match load(&inner.options, version) {
+    match load(&inner.options, version, inner.bounded) {
         Ok(next) => {
             let next = Arc::new(next);
             let changed_paths = diff_config_snapshots(&previous, &next);

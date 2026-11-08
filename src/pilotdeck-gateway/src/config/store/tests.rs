@@ -10,6 +10,33 @@ fn other_model() -> String {
     )
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn bounded_native_store_rejects_fifo_and_oversize_without_losing_snapshot() {
+    let root = Root::new();
+    root.write(BASE);
+    let options = StoreOptions::new(&root.0, &root.0, Env::new());
+    let store = ConfigStore::new_bounded(options.clone()).unwrap();
+    let events = recorder(&store);
+    let original = store.snapshot();
+    let path = root.0.join("pilotdeck.yaml");
+    std::fs::remove_file(&path).unwrap();
+    assert!(std::process::Command::new("/usr/bin/mkfifo")
+        .arg(&path).status().unwrap().success());
+    assert!(ConfigStore::new_bounded(options).is_err());
+    assert!(store.reload("fifo").await.is_err());
+    assert!(Arc::ptr_eq(&original, &store.snapshot()));
+    assert!(events.lock().unwrap().is_empty());
+    std::fs::remove_file(&path).unwrap();
+    std::fs::File::create(&path).unwrap().set_len(8 * 1024 * 1024 + 1).unwrap();
+    assert!(store.reload("oversize").await.is_err());
+    assert!(Arc::ptr_eq(&original, &store.snapshot()));
+    root.write(&other_model());
+    let next = store.reload("recovered").await.unwrap();
+    assert_eq!(version(&next), 2.0);
+    assert_eq!(*events.lock().unwrap(), [(1.0, 2.0)]);
+}
+
 /// A temporary directory this test owns; removed on drop.
 struct Root(PathBuf);
 impl Root {

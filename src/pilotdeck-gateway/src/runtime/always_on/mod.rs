@@ -24,6 +24,7 @@
 #![allow(dead_code)]
 mod chat_tool;
 mod workspace_tool;
+mod workspace_phase;
 mod phase_tools;
 mod tools;
 pub(crate) use tools::register_tools;

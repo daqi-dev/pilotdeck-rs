@@ -49,7 +49,7 @@ async fn startup_failure_finishes_each_resource_after_any_stalled_observer() {
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
         assert_eq!(
             *seen.lock().unwrap(),
-            ["channels", "session", "project"],
+            ["cron", "automation", "channels", "session", "project"],
             "{stalled}"
         );
     }
@@ -446,7 +446,7 @@ async fn cleanup_stops_cron_before_the_channels() {
     let recorded = order.lock().expect("#1326 cleanup order lock").clone();
     negative_assert_eq!(
         recorded,
-        ["cron", "channels", "session", "project"],
+        ["cron", "automation", "channels", "session", "project"],
         "#1326 cron stops first, then the channels, sessions, and project"
     );
 }

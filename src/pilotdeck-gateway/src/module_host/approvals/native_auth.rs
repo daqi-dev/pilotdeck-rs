@@ -75,6 +75,7 @@ impl ApprovalAuthenticator for FixedApprovalAuthenticator {
                     bearer: Some(bearer),
                     body: None,
                     parse_error_body: false,
+                    redirect_error: true,
                     timeout: Duration::from_secs(5),
                 })
                 .await
@@ -406,6 +407,7 @@ pub(crate) async fn authenticate_admission(
                 bearer: Some(bearer),
                 body: None,
                 parse_error_body: false,
+                redirect_error: true,
                 timeout: Duration::from_secs(5),
             })
             .await

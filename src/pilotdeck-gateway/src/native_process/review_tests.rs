@@ -309,7 +309,7 @@ async fn production_cleanup_matrix() {
         if ["release", "cancel", "never"].contains(&mode) {
             negative_assert_eq!(
                 calls.lock().expect("#1071 before cleanup calls").clone(),
-                vec!["channels", "session"],
+                vec!["automation", "channels", "session"],
                 "#1071 production cleanup waits for predecessor"
             );
             if mode != "never" {
@@ -336,9 +336,9 @@ async fn production_cleanup_matrix() {
             if mode == "never" {
                 // #1328: the channel assembly stops before the gateway
                 // lifecycle disposal (PilotDeckServerShutdownBundle.ts:33-37).
-                vec!["channels", "session"]
+                vec!["automation", "channels", "session"]
             } else {
-                vec!["channels", "session", "project"]
+                vec!["automation", "channels", "session", "project"]
             },
             "#1071 production cleanup attempts both resources"
         );
@@ -377,14 +377,14 @@ async fn production_cleanup_matrix() {
         // "channels" entry would turn the fixture into a mirror of this
         // implementation instead of a reading of the baseline.
         negative_assert_eq!(
-            actual_calls.first().copied(),
-            Some("channels"),
-            "#1328 channel assembly stops before the gateway lifecycle disposal"
+            actual_calls.iter().take(2).copied().collect::<Vec<_>>(),
+            vec!["automation", "channels"],
+            "automation and channels stop before the gateway lifecycle disposal"
         );
         let gateway_calls: Vec<&str> = actual_calls
             .iter()
             .copied()
-            .filter(|step| *step != "channels")
+            .filter(|step| !["automation", "channels"].contains(step))
             .collect();
         negative_assert_eq!(
             json!(gateway_calls),

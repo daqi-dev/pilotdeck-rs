@@ -2055,7 +2055,7 @@ pub(crate) fn native_settings_for_process_with_styles(
     let pilot_home = crate::runtime::project::resolve_pilot_home(env, served_project, Some(home));
     let mut store_options = StoreOptions::new(pilot_home.clone(), served_project, env.clone());
     store_options.project = Some(served_project.to_string_lossy().into_owned());
-    let store = ConfigStore::new(store_options).map_err(|error| {
+    let store = ConfigStore::new_bounded(store_options).map_err(|error| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(

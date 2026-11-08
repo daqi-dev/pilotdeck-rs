@@ -28,6 +28,7 @@ pub mod sdk_session;
 pub mod session;
 pub mod settings;
 pub mod snapshot;
+pub(crate) mod sop;
 pub mod steer;
 pub mod tools;
 pub mod turn;

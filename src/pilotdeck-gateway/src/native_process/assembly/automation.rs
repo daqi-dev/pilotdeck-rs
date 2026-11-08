@@ -985,6 +985,66 @@ mod tests {
         config
     }
 
+    #[tokio::test]
+    async fn native_reload_queue_orders_generations_and_shutdown_is_idempotent() {
+        struct PausedStop {
+            log: Arc<Mutex<Vec<String>>>,
+            entered: Arc<tokio::sync::Notify>,
+            release: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+        }
+        impl ProjectAutomationProvider for PausedStop {
+            fn bind_agent_gateway(&self, _: &ProjectAutomationAgentGateway,
+                _: Option<AlwaysOnBindHooks<'_>>) -> io::Result<()> { Ok(()) }
+            fn start(self: Arc<Self>) -> AutomationFuture {
+                Box::pin(async move { push(&self.log, "first.start".into()); Ok(()) })
+            }
+            fn stop(self: Arc<Self>) -> AutomationFuture {
+                Box::pin(async move {
+                    let release = self.release.lock().unwrap().take();
+                    self.entered.notify_one();
+                    if let Some(release) = release { release.await.map_err(|e| e.to_string())?; }
+                    push(&self.log, "first.stop".into()); Ok(())
+                })
+            }
+            fn tools(&self) -> Vec<JsString> { vec![] }
+        }
+        let log = Arc::default();
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let (release, receiver) = tokio::sync::oneshot::channel();
+        let first = Arc::new(PausedStop { log: log.clone(), entered: entered.clone(),
+            release: Mutex::new(Some(receiver)) });
+        let config = ProjectAutomationConfig { always_on: None, cron: empty_cron_section() };
+        let (bundle, opts) = make_bundle(log.clone(), config.clone(), vec![],
+            vec![first, fake("second", &log), fake("third", &log)]);
+        let published = attach_bundle(&bundle, false);
+        let lifetime = super::super::automation_lifetime::NativeAutomationLifetime::new(Arc::new(bundle));
+        lifetime.bind_runtime(tokio::runtime::Handle::current()).unwrap();
+        lifetime.start().await.unwrap();
+        let reload = || ProjectAutomationReloadInput {
+            config: config.clone(), always_on_changed: false, cron_changed: true,
+        };
+        lifetime.request_reload(reload());
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified()).await.unwrap();
+        lifetime.request_reload(reload());
+        // The second requested generation cannot bind/start through the first
+        // generation's still-owned stop, even though both callers returned.
+        assert!(!actual_log(&log).iter().any(|line| line == "second.start"));
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while published.lock().unwrap().len() < 3 { tokio::task::yield_now().await; }
+        }).await.unwrap();
+        lifetime.stop().await.unwrap();
+        lifetime.stop().await.unwrap();
+        lifetime.request_reload(reload());
+        tokio::task::yield_now().await;
+        assert!(lifetime.shutdown.is_cancelled());
+        assert_eq!(opts.lock().unwrap().cron_count, 3);
+        let events = actual_log(&log);
+        let lifecycle: Vec<_> = events.iter().filter(|line| line.ends_with(".start") || line.ends_with(".stop")).map(String::as_str).collect();
+        assert_eq!(lifecycle, ["first.start", "first.stop", "second.start", "second.stop", "third.start", "third.stop"]);
+        assert!(published.lock().unwrap().last().unwrap().cron.is_none());
+    }
+
     fn disabled_ao_config() -> AlwaysOnConfig {
         let mut config = AlwaysOnConfig::default_config();
         config.projects = vec![("/p".into(), false)];
