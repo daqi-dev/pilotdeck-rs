@@ -46,7 +46,11 @@ S 集、分母、k 值的任何判定结果；登记件必须显式声明「G03 
 - 范围: <只动哪个函数 / 哪个 kind；明确不放宽什么（值、条数、同 kind 内顺序、其他 kind）>
 - Change: <基线内路径> old=<改动前全量 sha256> new=<改动后全量 sha256>（基线 `cc7c4e65`）
 - Patch: <本目录内 patch 文件名>（git diff 格式，只含被改文件）
+  sha256=<patch 文件 sha256>
 - Verify: <本目录内 verify 脚本名> 与复现命令
+  sha256=<verify 脚本 sha256>
+- Corpus: <本目录内 corpus manifest 文件名>（证据语料固定的单；整文件 sha256 即证据树整树摘要）
+  sha256=<manifest sha256>
 - 评审与批准: PR 号 + 两家非作者评审路径（收货后由协调者补终值）
 - 复算证据: <证据目录路径>（原始输出，不重录）
 - G03 判分语义: 不变（显式声明）
@@ -81,15 +85,26 @@ shasum -a 256 <PD>/tools/agent-loop-parity/trace.py
 
 verify（任何人可复算；`--evidence` 指向 #1841 证据目录，不重录；登记件与 corpus manifest
 默认取 verify 脚本同目录的 `20261108-1841.md` / `20261108-1841-corpus-manifest.txt`，
-也可用 `--manifest` 显式指定）：
+也可用 `--manifest` 显式指定；**`--out` 必须落在 `--evidence` 之外**——判据 0 是精确文件
+集，结果 JSON 写进证据目录会让下一次复算报「unexpected file」假 FAIL）：
 
 ```bash
 python3 -I specs/parity/device-patches/20261108-1841-verify.py \
   --baseline <PD>/tools/agent-loop-parity/trace.py \
   --patch specs/parity/device-patches/20261108-1841-trace-context-budget-position.patch \
   --evidence <证据目录> \
-  --out <结果 json 路径>
+  --out <结果 json 路径>   # 证据目录之外
 ```
+
+verify 内部同样 fail-closed：登记件三处 sha 钉（patch / verify 自身 / manifest）与 `Change:`
+old/new 不符拒绝；基线 sha 不符拒绝；`git apply --check` / `git apply` 失败拒绝；apply 后
+sha 不符拒绝；证据语料对照 corpus manifest **缺失、多余、逐件 sha256 不符均 FAIL-CLOSED**
+（不是只核哈希：文件集必须精确相等）、trace 为空、kind 条数直方图偏离写死值、census "n/a"
+均拒绝。锚定语义为 **validate-once 全链**（fix-r2）：manifest、patch、每个证据文件各只读
+一次，哈希校验后判分一律消费已核字节（manifest 条目从已核字节解析、`git apply -` 从 stdin
+吃已核 patch 字节、证据语料整树缓存在内存、`load_trace` 从缓存的 scratch 物化副本加载），
+校验之后磁盘上的任何变动都改不了比对内容。`--out` 独占创建：已存在则写
+`<名>.attempt-N.<扩展名>`，永不覆盖旧结果。退出码 0 才算过。
 
 corpus manifest（证据语料固定的单；在证据目录内生成，输出写到本目录，其整文件 sha256 即
 `find . -type f | sort | xargs shasum -a 256 | shasum -a 256` 的整树摘要）：
@@ -98,9 +113,3 @@ corpus manifest（证据语料固定的单；在证据目录内生成，输出�
 (cd <证据目录> && find . -type f | sort | xargs shasum -a 256) \
   > specs/parity/device-patches/<前缀>-corpus-manifest.txt
 ```
-
-verify 内部同样 fail-closed：登记件三处 sha 钉（patch / verify 自身 / manifest）与 `Change:`
-old/new 不符拒绝；基线 sha 不符拒绝；`git apply --check` / `git apply` 失败拒绝；apply 后
-sha 不符拒绝；证据 753 文件逐件 sha256 与 manifest 不符、trace 为空、kind 条数直方图偏离
-写死值、census "n/a" 均拒绝。`--out` 独占创建：已存在则写 `<名>.attempt-N.<扩展名>`，
-永不覆盖旧结果。退出码 0 才算过。

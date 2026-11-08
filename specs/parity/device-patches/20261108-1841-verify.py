@@ -14,6 +14,16 @@ the registration file (20261108-1841.md), and every one of the 753 evidence
 files must hash to its corpus-manifest line. Any mismatch aborts before any
 comparison result is reported.
 
+Since fix-r2 the anchoring is validate-once end to end (the same discipline
+fix-r1 applied to the baseline): the corpus manifest, the patch file and
+every evidence file are read exactly once, hash-checked against their pins,
+and every later criterion consumes those verified bytes — the manifest
+entries are parsed from the pinned bytes, git applies the patch from stdin,
+and the 753-file corpus is held in memory (measured peak well under the
+500 MB budget, see the registration file) with the frozen path-based
+load_trace loading scratch materializations of the cached bytes. Nothing
+that happens to any input file after its check can change what is compared.
+
 Usage (must run with -I; writes only to --out, its own temporary scratch
 directories, and a temporary bytecode-cache directory — the same guard every
 apparatus entry point uses, never a __pycache__ next to the baseline):
@@ -45,25 +55,49 @@ Criteria (registration 20261108-1841.md):
 """
 from __future__ import annotations
 
+import sys
+
+# Same four-part entry guard as every apparatus entry point (scripts/parity/
+# check_frozen.py:11-37, g03_compare.py, self_compare.py, check_ruler.py,
+# controls/run_all.py); fix-r2, DS sibling #3 + simplify #1 — the guard is
+# asserted, not narrated in the docstring.
+# -I keeps PYTHONPATH, user site and the script directory out of module
+# resolution; without it, exit before loading any apparatus module.
+if not sys.flags.isolated:
+    raise SystemExit(f'run with -I: python3 -I {__file__}')
+
+if sys.version_info < (3, 11) or 'os' not in sys.modules:
+    raise SystemExit('os must be preloaded from CPython 3.11+ frozen modules')
+import os
+
+_boot_dir = os.path.dirname(os.path.realpath(__file__))
+# Identity, not spelling: a case-insensitive alias, a symlinked spelling or a
+# mixed ``//`` form names this very directory while the string differs
+# (#1033). Nonexistent sys.path entries skip; an empty entry means cwd.
+if any(
+        os.path.isdir(entry or os.curdir)
+        and os.path.isdir(_boot_dir)
+        and os.path.samefile(entry or os.curdir, _boot_dir)
+        for entry in sys.path):
+    raise SystemExit('apparatus directory on sys.path; run the entry file directly with -I')
+
+# Same write guard as every apparatus entry point: -I does not disable the
+# bytecode cache, and the spec_from_file_location loads below would otherwise
+# drop a __pycache__/trace.cpython-*.pyc next to the read-only baseline.
+# Placed after the entry assertions above and before any load_module, the
+# same position it occupies in the family header.
+import tempfile
+sys.pycache_prefix = tempfile.mkdtemp(prefix="pdrs-1841-pyc-")
+sys.dont_write_bytecode = True
+
 import argparse
 import hashlib
 import importlib.util
 import json
-import os
 import re
 import subprocess
-import sys
-import tempfile
 from collections import Counter
 from pathlib import Path
-
-# Same write guard as every apparatus entry point (scripts/parity/
-# check_frozen.py, g03_compare.py, self_compare.py, check_ruler.py,
-# controls/run_all.py): -I does not disable the bytecode cache, and the
-# spec_from_file_location loads below would otherwise drop a
-# __pycache__/trace.cpython-*.pyc next to the read-only baseline.
-sys.pycache_prefix = tempfile.mkdtemp(prefix="pdrs-1841-pyc-")
-sys.dont_write_bytecode = True
 
 CLEAN_SHA256 = "6f4139c9f5938a5bd3e44f6a6bed69a69104e593d9c580bbc2f37c5c56c0d289"
 PATCHED_SHA256 = "53a1c7f6f50dead912e420e5c20e5e57dafc89b9e370b371174a39fe770e1ce6"
@@ -119,28 +153,39 @@ def load_module(path: Path, name: str):
     return module
 
 
-def read_jsonl(path: Path) -> list[dict]:
-    """JSONL reader that splits on \\n only (never str.splitlines)."""
+def read_jsonl(data: bytes) -> list[dict]:
+    """JSONL reader over already-anchored bytes; splits on \\n only (never
+    str.splitlines, #1140 r6/r9: U+2028/U+2029/U+0085/\\x0b/\\x0c would cut a
+    record in half)."""
     records: list[dict] = []
-    text = path.read_text(encoding="utf-8")
-    for line in text.split("\n"):
+    for line in data.decode("utf-8").split("\n"):
         if line.strip():
             records.append(json.loads(line))
     return records
 
 
-def run_git(cwd: Path, *args: str) -> None:
+def run_git(cwd: Path, *args: str, input_bytes: bytes | None = None) -> None:
+    """Git subprocess isolation (concurrency review #3): never inherit GIT_*
+    from the caller, never read a global gitconfig, and always time out.
+    input_bytes feeds the command's stdin — `git apply -` reads the pinned
+    patch bytes through the pipe, so the patch file is never opened again
+    after its pin check (fix-r2, P1-a)."""
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     command = ["git", "--no-optional-locks", "-c", "core.fsmonitor=false",
                 "-c", "core.hooksPath=/dev/null", *args]
     try:
-        proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True,
-                              env=env, timeout=GIT_TIMEOUT_SECONDS)
+        if input_bytes is None:
+            proc = subprocess.run(command, cwd=cwd, capture_output=True, text=True,
+                                  env=env, timeout=GIT_TIMEOUT_SECONDS)
+        else:
+            proc = subprocess.run(command, cwd=cwd, capture_output=True,
+                                  env=env, timeout=GIT_TIMEOUT_SECONDS, input=input_bytes)
     except subprocess.TimeoutExpired:
         die(f"git {' '.join(args)} timed out after {GIT_TIMEOUT_SECONDS}s")
+    stderr = proc.stderr.decode("utf-8", "replace") if isinstance(proc.stderr, bytes) else proc.stderr
     if proc.returncode != 0:
-        die(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
+        die(f"git {' '.join(args)} failed: {stderr.strip()}")
 
 
 def parse_registration(path: Path) -> dict[str, str]:
@@ -175,12 +220,17 @@ def parse_registration(path: Path) -> dict[str, str]:
     return pins
 
 
-def parse_manifest(manifest: Path) -> dict[str, str]:
-    """corpus manifest lines: '<sha256>  ./relative/path' (two spaces)."""
-    if not manifest.exists():
-        die(f"corpus manifest not found: {manifest}")
+def parse_manifest(manifest: Path, data: bytes) -> dict[str, str]:
+    """corpus manifest lines: '<sha256>  ./relative/path' (two spaces).
+    fix-r2 (P1-a): parses the already-pinned bytes passed in — the manifest
+    file itself is never opened here, so the entries always come from the
+    very bytes the Corpus: pin verified."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        die(f"corpus manifest is not utf-8: {error}")
     entries: dict[str, str] = {}
-    for number, line in enumerate(manifest.read_text(encoding="utf-8").split("\n"), 1):
+    for number, line in enumerate(text.split("\n"), 1):
         if not line:
             continue
         match = re.fullmatch(r"([0-9a-f]{64})  (\./.+)", line)
@@ -246,49 +296,73 @@ def is_position_noise_removal(signature: tuple[str, str, str]) -> tuple[bool, st
     return True, value.get("kind")
 
 
-def discover_pairs(evidence: Path) -> list[tuple[str, str, Path, Path]]:
-    pairs = []
-    for sidecar in sorted(evidence.glob("*/rounds/*/*.pilotdeck-current-sidecar.jsonl")):
-        native = Path(str(sidecar).replace("-sidecar.jsonl", "-native.jsonl"))
-        if not native.exists():
-            die(f"sidecar trace without native counterpart: {sidecar}")
-        label = sidecar.parts[-4]
-        round_name = sidecar.parts[-2]
-        pairs.append((label, round_name, native, sidecar))
+SIDECAR_REL_PATTERN = re.compile(
+    r"^\./([^/]+)/rounds/([^/]+)/([^/]+)\.pilotdeck-current-sidecar\.jsonl$")
+
+
+def discover_pairs(corpus: dict[str, bytes]) -> list[tuple[str, str, str, str]]:
+    """Pair enumeration over the anchored corpus file set (fix-r2, P1-a):
+    exactly the shape the old */rounds/*/*.pilotdeck-current-sidecar.jsonl
+    glob matched, but derived from the criterion-0 cache — the evidence
+    tree is never scanned again after the read-and-hash pass."""
+    pairs: list[tuple[str, str, str, str]] = []
+    for rel in sorted(corpus):
+        match = SIDECAR_REL_PATTERN.fullmatch(rel)
+        if not match:
+            continue
+        label, round_name, scenario = match.groups()
+        native = f"./{label}/rounds/{round_name}/{scenario}.pilotdeck-current-native.jsonl"
+        if native not in corpus:
+            die(f"sidecar trace without native counterpart: {rel}")
+        pairs.append((label, round_name, native, rel))
     return pairs
+
+
+def load_trace_from_bytes(module, data: bytes, scratch: Path, name: str):
+    """Materialize anchored corpus bytes in the run's own scratch directory
+    and load them with the frozen baseline loader (its API is path-based).
+    The bytes the comparator sees are the bytes criterion 0 hashed: the
+    evidence tree is never opened again (fix-r2, P1-a)."""
+    path = scratch / name
+    path.write_bytes(data)
+    return module.load_trace(path)
 
 
 # ---------------------------------------------------------------- criterion 0
 
-def criterion0(evidence: Path, manifest: Path) -> tuple[dict, Counter]:
-    """Evidence anchoring: per-file sha256 against the corpus manifest, then
-    a shape gate over the 150 pairs (boundary #1, fix-r1)."""
-    entries = parse_manifest(manifest)
-    actual: dict[str, str] = {}
+def criterion0(evidence: Path, entries: dict[str, str]) -> tuple[dict, Counter, dict[str, bytes]]:
+    """Evidence anchoring, validate-once (fix-r2, P1-a): every file under
+    --evidence is read exactly once; the bytes are hashed against the corpus
+    manifest and kept as the in-memory corpus cache that every later
+    criterion consumes. Then a shape gate over the 150 pairs (boundary #1,
+    fix-r1)."""
+    corpus: dict[str, bytes] = {}
     for path in evidence.rglob("*"):
         if not path.is_file():
             continue
         rel = "./" + path.relative_to(evidence).as_posix()
-        actual[rel] = sha256_bytes(path.read_bytes())
-    missing = sorted(set(entries) - set(actual))
-    extra = sorted(set(actual) - set(entries))
+        if rel in corpus:
+            die(f"evidence tree lists {rel} more than once")
+        corpus[rel] = path.read_bytes()
+    missing = sorted(set(entries) - set(corpus))
+    extra = sorted(set(corpus) - set(entries))
     if missing or extra:
         die(f"evidence tree does not match corpus manifest: {len(missing)} missing "
             f"(e.g. {missing[:3]}), {len(extra)} unexpected (e.g. {extra[:3]})")
-    mismatched = sorted(rel for rel in entries if actual[rel] != entries[rel])
+    mismatched = sorted(rel for rel in entries if sha256_bytes(corpus[rel]) != entries[rel])
     if mismatched:
         die(f"evidence file hash mismatch against corpus manifest: {len(mismatched)} "
             f"files differ (e.g. {mismatched[:3]})")
 
-    pairs = discover_pairs(evidence)
+    pairs = discover_pairs(corpus)
     if len(pairs) != 150:
         die(f"expected 150 native/sidecar pairs under {evidence}, found {len(pairs)}")
     histograms = {kind: Counter() for kind in TRACE_SHAPE_KINDS}
-    for _, _, native, sidecar in pairs:
-        for trace_path in (native, sidecar):
-            records = read_jsonl(trace_path)
+    for _, _, native_rel, sidecar_rel in pairs:
+        for rel in (native_rel, sidecar_rel):
+            records = read_jsonl(corpus[rel])
             if not records:
-                die(f"trace {trace_path} is empty (corpus shape gate)")
+                die(f"trace {rel} is empty (corpus shape gate)")
             for kind in TRACE_SHAPE_KINDS:
                 histograms[kind][sum(1 for r in records if r.get("kind") == kind)] += 1
     for kind in TRACE_SHAPE_KINDS:
@@ -307,20 +381,25 @@ def criterion0(evidence: Path, manifest: Path) -> tuple[dict, Counter]:
         },
         "passed": True,
     }
-    return result, histograms["context.budget"]
+    return result, histograms["context.budget"], corpus
 
 
 # ---------------------------------------------------------------- criterion 1
 
-def criterion1(baseline: Path, patch: Path) -> tuple[dict, bytes, bytes]:
-    """Patch applicability. Returns the hash-verified clean and patched
-    bytes so main() never has to re-read the baseline from disk (fix-r1,
-    concurrency #1: validate-once, use-once)."""
+def criterion1(baseline: Path, patch_bytes: bytes) -> tuple[dict, bytes, bytes]:
+    """Patch applicability over the pinned patch bytes (fix-r2, P1-a: the
+    patch file is never re-read — `git apply -` consumes the very bytes the
+    Patch: pin verified, through a pipe). Returns the hash-verified clean and
+    patched bytes so main() never has to re-read the baseline from disk
+    (fix-r1, concurrency #1: validate-once, use-once)."""
     clean_bytes = baseline.read_bytes()
     if sha256_bytes(clean_bytes) != CLEAN_SHA256:
         die(f"baseline {baseline} sha256 {sha256_bytes(clean_bytes)} != registered {CLEAN_SHA256}")
 
-    patch_text = patch.read_text(encoding="utf-8")
+    try:
+        patch_text = patch_bytes.decode("utf-8")
+    except UnicodeDecodeError as error:
+        die(f"patch bytes are not utf-8: {error}")
     targets = re.findall(r"^diff --git a/(\S+) b/(\S+)$", patch_text, re.M)
     if len(targets) != 1 or targets[0] != (TARGET_PATH, TARGET_PATH):
         die(f"patch must touch exactly {TARGET_PATH}, found: {targets}")
@@ -332,8 +411,8 @@ def criterion1(baseline: Path, patch: Path) -> tuple[dict, bytes, bytes]:
         target.write_bytes(clean_bytes)
         run_git(repo, "init", "-q", ".")
         run_git(repo, "add", TARGET_PATH)
-        run_git(repo, "apply", "--check", str(patch))
-        run_git(repo, "apply", str(patch))
+        run_git(repo, "apply", "--check", "-", input_bytes=patch_bytes)
+        run_git(repo, "apply", "-", input_bytes=patch_bytes)
         patched_bytes = target.read_bytes()
         patched_sha = sha256_bytes(patched_bytes)
         if patched_sha != PATCHED_SHA256:
@@ -352,8 +431,8 @@ def criterion1(baseline: Path, patch: Path) -> tuple[dict, bytes, bytes]:
         "targets": [TARGET_PATH],
         "steps": [
             "baseline sha256 == registered clean value",
-            "git apply --check OK (isolated repo, file staged at tools/agent-loop-parity/trace.py)",
-            "git apply OK, applied sha256 == registered patched value",
+            "git apply --check - OK (isolated repo, file staged at tools/agent-loop-parity/trace.py, pinned patch bytes on stdin)",
+            "git apply - OK (pinned bytes on stdin), applied sha256 == registered patched value",
             "git checkout -- restore, sha256 == clean value",
         ],
         "passed": True,
@@ -363,18 +442,26 @@ def criterion1(baseline: Path, patch: Path) -> tuple[dict, bytes, bytes]:
 
 # ---------------------------------------------------------------- criterion 2
 
-def criterion2(evidence: Path, clean, patched, census_deviations: set[tuple[str, str]] | None = None) -> dict:
-    pairs = discover_pairs(evidence)
+def removed_rows_count(entry: dict) -> int:
+    """Total deleted rows recorded for one changed pair (the per-row counts
+    the result JSON carries). The registration says every changed pair loses
+    exactly two insertion rows; criterion 2 gates on it (fix-r2, DS
+    boundary #2)."""
+    return sum(row["count"] for row in entry["removed"])
+
+
+def criterion2(pairs, clean, patched, corpus: dict[str, bytes], scratch: Path,
+               census_deviations: set[tuple[str, str]] | None = None) -> dict:
     if len(pairs) != 150:
-        die(f"expected 150 native/sidecar pairs under {evidence}, found {len(pairs)}")
+        die(f"expected 150 native/sidecar pairs in the anchored corpus, found {len(pairs)}")
 
     changed: list[dict] = []
     unchanged = 0
     residual_mismatch: list[str] = []
     clean_pass = 0
-    for label, round_name, native, sidecar in pairs:
-        left = clean.load_trace(native)
-        right = clean.load_trace(sidecar)
+    for label, round_name, native_rel, sidecar_rel in pairs:
+        left = load_trace_from_bytes(clean, corpus[native_rel], scratch, "c2-native.jsonl")
+        right = load_trace_from_bytes(clean, corpus[sidecar_rel], scratch, "c2-sidecar.jsonl")
         clean_rows = Counter(row_signature(d) for d in clean.compare_trace_details(left, right).semantic)
         patched_rows = Counter(row_signature(d) for d in patched.compare_trace_details(left, right).semantic)
         if not clean_rows:
@@ -410,6 +497,7 @@ def criterion2(evidence: Path, clean, patched, census_deviations: set[tuple[str,
         and unchanged == 135
         and all(entry["added_count"] == 0 for entry in changed)
         and all(entry["attributable"] for entry in changed)
+        and all(removed_rows_count(entry) == 2 for entry in changed)
         and not residual_mismatch
         and matches_census
     )
@@ -421,6 +509,7 @@ def criterion2(evidence: Path, clean, patched, census_deviations: set[tuple[str,
         "unchanged_pairs": unchanged,
         "only_deletions": all(entry["added_count"] == 0 for entry in changed),
         "all_deletions_attributable": all(entry["attributable"] for entry in changed),
+        "two_removals_per_changed_pair": all(removed_rows_count(entry) == 2 for entry in changed),
         "residual_rows_preserved": not residual_mismatch,
         "residual_mismatch": residual_mismatch,
         "changed_matches_census_deviations": matches_census,
@@ -454,22 +543,24 @@ def classify_census(records: list[dict]) -> str:
     return "cb_after"
 
 
-def criterion3(evidence: Path) -> dict:
-    reference = evidence / "census-all-labels.txt"
-    if not reference.exists():
-        die(f"missing census reference {reference}")
-    expected = [line.split("\t", 1)[1] for line in reference.read_text(encoding="utf-8").split("\n") if line.startswith("DEVIATION\t")]
+def criterion3(corpus: dict[str, bytes], pairs) -> dict:
+    reference_rel = "./census-all-labels.txt"
+    if reference_rel not in corpus:
+        die(f"missing census reference {reference_rel} in the anchored corpus")
+    expected = [line.split("\t", 1)[1]
+                for line in corpus[reference_rel].decode("utf-8").split("\n")
+                if line.startswith("DEVIATION\t")]
 
     tally: Counter = Counter()
     rows: list[str] = []
-    for label, round_name, native, sidecar in discover_pairs(evidence):
+    for label, round_name, native_rel, sidecar_rel in pairs:
         side = "ts" if round_name.startswith("ts-") else "rust"
-        sc = classify_census(read_jsonl(sidecar))
-        nc = classify_census(read_jsonl(native))
+        sc = classify_census(read_jsonl(corpus[sidecar_rel]))
+        nc = classify_census(read_jsonl(corpus[native_rel]))
         tally[(side, sc)] += 1
         tally[(side, "native:" + nc)] += 1
         if sc != nc:
-            scenario = sidecar.name.split(".pilotdeck-current-sidecar")[0]
+            scenario = Path(sidecar_rel).name.split(".pilotdeck-current-sidecar")[0]
             rows.append(f"{label}\t{round_name}\t{scenario}\t{sc}\t{nc}")
 
     passed = rows == expected
@@ -500,7 +591,7 @@ def write_temp_trace(records: list[dict], path: Path) -> None:
     path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
 
 
-def criterion4(evidence: Path, clean, patched, scratch: Path, budget_histogram: Counter) -> dict:
+def criterion4(corpus: dict[str, bytes], clean, patched, scratch: Path, budget_histogram: Counter) -> dict:
     # NC-D precondition (fix-r1, boundary #3): the fallback construction
     # assumes exactly one context.budget per trace; the histogram comes from
     # the criterion-0 shape gate and is asserted here, not just narrated.
@@ -509,25 +600,26 @@ def criterion4(evidence: Path, clean, patched, scratch: Path, budget_histogram: 
             f"{dict(sorted(budget_histogram.items()))} != {{1: 300}}")
 
     label, round_name, scenario = NC_BASE
-    native = evidence / label / "rounds" / round_name / f"{scenario}.pilotdeck-current-native.jsonl"
-    sidecar = evidence / label / "rounds" / round_name / f"{scenario}.pilotdeck-current-sidecar.jsonl"
-    if not native.exists() or not sidecar.exists():
-        die(f"negative-control base pair missing: {native}")
-    left = clean.load_trace(native)
-    right = clean.load_trace(sidecar)
+    native_rel = f"./{label}/rounds/{round_name}/{scenario}.pilotdeck-current-native.jsonl"
+    sidecar_rel = f"./{label}/rounds/{round_name}/{scenario}.pilotdeck-current-sidecar.jsonl"
+    for rel in (native_rel, sidecar_rel):
+        if rel not in corpus:
+            die(f"negative-control base pair missing from the anchored corpus: {rel}")
+    left = load_trace_from_bytes(clean, corpus[native_rel], scratch, "nc-base-native.jsonl")
+    right = load_trace_from_bytes(clean, corpus[sidecar_rel], scratch, "nc-base-sidecar.jsonl")
     base_clean, base_patched = nc_result(clean, patched, left, right)
     if base_clean["fail"] or base_patched["fail"]:
         die("NC base pair must pass both comparators with zero semantic differences")
 
-    raw_left = read_jsonl(native)
-    raw_right = read_jsonl(sidecar)
+    raw_left = read_jsonl(corpus[native_rel])
+    raw_right = read_jsonl(corpus[sidecar_rel])
 
     def find_index(records: list[dict], kind: str, event: str | None = None) -> int:
         for index, record in enumerate(records):
             if record.get("kind") == kind and (event is None or record.get("event") == event):
                 return index
         wanted = f"{kind}({event})" if event else kind
-        die(f"negative-control base pair has no {wanted} record: {native}")
+        die(f"negative-control base pair has no {wanted} record: {sidecar_rel}")
 
     def with_sidecar(records: list[dict]) -> tuple[dict, dict]:
         sidecar_file = scratch / "nc-sidecar.jsonl"
@@ -585,6 +677,17 @@ def criterion4(evidence: Path, clean, patched, scratch: Path, budget_histogram: 
     # model.request boundary AND past durable.status(turn_timeout): a position
     # change the reviewed continuable comparator would forgive; strict mode
     # (clean and patched) must still fail.
+    # anthropic boundary #3 (fix-r2): the fixture relocates *the*
+    # durable.status(context_budget) record — if the base sidecar ever
+    # carried more (or fewer) than one, find_index would pick the first and
+    # the injection signal would be ambiguous. Measured on the anchored
+    # corpus: exactly one; asserted, not narrated.
+    ds_count = sum(1 for record in raw_right
+                   if record.get("kind") == "durable.status"
+                   and record.get("event") == "context_budget")
+    if ds_count != 1:
+        die(f"NC-C fixture: expected exactly 1 durable.status(context_budget) record "
+            f"in the base sidecar, found {ds_count}")
     mutant = [dict(r) for r in raw_right]
     ds_index = find_index(mutant, "durable.status", "context_budget")
     request_index = find_index(mutant, "model.request")
@@ -613,12 +716,24 @@ def criterion4(evidence: Path, clean, patched, scratch: Path, budget_histogram: 
     # to BOTH comparators: project_semantic_trace orders durable records only
     # within their own actor stream (pre-existing reviewed projection, not a
     # relaxation of this patch). Recorded as evidence, expected PASS.
+    # fix-r2, DS boundary #1: the pop at ds_index shifts the first
+    # model.request one slot left, so "immediately after the first
+    # model.request" is slot request_index, not request_index + 1 (the old
+    # slot landed past the model.response that follows the request, crossing
+    # a boundary the control's own text says it does not cross).
     mutant = [dict(r) for r in raw_right]
     record = mutant.pop(ds_index)
-    mutant.insert(request_index + 1, record)
+    mutant.insert(request_index, record)
+    # The record must now sit immediately after the first model.request:
+    # the request shifted to request_index - 1 when ds_index was popped, and
+    # the insert landed the record at request_index.
+    if mutant[request_index] is not record \
+            or mutant[request_index - 1].get("kind") != "model.request":
+        die("NC-C-literal fixture: insert slot is not immediately after the first model.request")
     c_clean, c_patched = with_sidecar(mutant)
     controls["NC-C literal request-boundary only (documented)"] = {
-        "injection": "move durable.status(context_budget) just past the first model.request",
+        "injection": "move durable.status(context_budget) to immediately after the first model.request",
+        "inserted_after_kind": mutant[request_index - 1].get("kind"),
         "clean": c_clean,
         "patched": c_patched,
         "note": (
@@ -703,6 +818,11 @@ def criterion4(evidence: Path, clean, patched, scratch: Path, budget_histogram: 
     }
 
     gated = [name for name, control in controls.items() if control["killed"] is not None]
+    # anthropic boundary #1 (fix-r2): an empty gated list would make the
+    # all() below vacuously true — a silent fake PASS for criterion 4 (e.g.
+    # every killed drifting to None after a future control edit).
+    if not gated:
+        die("criterion4: no gated controls")
     passed = all(controls[name]["killed"] for name in gated)
     return {
         "name": "4 negative controls",
@@ -767,22 +887,31 @@ def main() -> None:
     # Registration pins (fix-r1): the patch file, this script and the corpus
     # manifest are each sha256-anchored by the registration file, which is
     # itself the append-only, human-reviewed anchor of the directory.
+    # Validate-once (fix-r2, P1-a): each of the three is read exactly once —
+    # the manifest entries below are parsed from the very bytes the Corpus:
+    # pin verified, and criterion 1 applies the very bytes the Patch: pin
+    # verified (git reads them from stdin) — so none of the three files is
+    # ever opened again after its check.
     pins = parse_registration(registration)
     self_sha = sha256_bytes(script.read_bytes())
     if self_sha != pins["verify"]:
         die(f"verify script sha256 {self_sha} != registration Verify: pin {pins['verify']}")
-    patch_sha = sha256_bytes(args.patch.read_bytes())
+    patch_bytes = args.patch.read_bytes()
+    patch_sha = sha256_bytes(patch_bytes)
     if patch_sha != pins["patch"]:
         die(f"patch file {args.patch} sha256 {patch_sha} != registration Patch: pin {pins['patch']}")
     if not manifest.exists():
         die(f"corpus manifest does not exist: {manifest}")
-    manifest_sha = sha256_bytes(manifest.read_bytes())
+    manifest_bytes = manifest.read_bytes()
+    manifest_sha = sha256_bytes(manifest_bytes)
     if manifest_sha != pins["corpus"]:
         die(f"corpus manifest {manifest} sha256 {manifest_sha} != registration Corpus: pin {pins['corpus']}")
+    entries = parse_manifest(manifest, manifest_bytes)
 
-    criterion_0, budget_histogram = criterion0(args.evidence, manifest)
-    criterion_1, clean_bytes, patched_bytes = criterion1(args.baseline, args.patch)
-    criterion_3 = criterion3(args.evidence)
+    criterion_0, budget_histogram, corpus = criterion0(args.evidence, entries)
+    pairs = discover_pairs(corpus)
+    criterion_1, clean_bytes, patched_bytes = criterion1(args.baseline, patch_bytes)
+    criterion_3 = criterion3(corpus, pairs)
 
     with tempfile.TemporaryDirectory(prefix="pdrs-1841-verify-") as tmp:
         scratch = Path(tmp)
@@ -799,10 +928,10 @@ def main() -> None:
             die("clean and patched modules must not alias")
 
         criterion_2 = criterion2(
-            args.evidence, clean, patched,
+            pairs, clean, patched, corpus, scratch,
             census_deviations=set(criterion_3["deviation_pairs"]),
         )
-        criterion_4 = criterion4(args.evidence, clean, patched, scratch, budget_histogram)
+        criterion_4 = criterion4(corpus, clean, patched, scratch, budget_histogram)
 
     result = {
         "issue": 1841,
