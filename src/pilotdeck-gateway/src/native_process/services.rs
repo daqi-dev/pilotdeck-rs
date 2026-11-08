@@ -117,9 +117,14 @@ struct AttachEntry {
 }
 
 /// A path attachment that resolved inside the lease root and opened as a
-/// regular file. allowedReadFiles and the path-note lines come from these,
-/// mirroring TS `collectRegisteredAttachmentReadFiles`
-/// (GatewayAttachmentTurnComposer.ts:173-193, `kind === "file"` only).
+/// regular file. allowedReadFiles comes from these, mirroring TS
+/// `collectRegisteredAttachmentReadFiles` (GatewayAttachmentTurnComposer.ts
+/// :173-193, `kind === "file"` only). #2495 — the note lines and the
+/// hasInspectable accumulation read the whole attachment list below, not
+/// this table: TS gates both only on the allowedReadFiles membership test
+/// (`safeAllowedAttachmentPath`, composer :103/:144), so a second entry
+/// with the same lexical spelling (or an unregistered entry colliding with
+/// a registered spelling) still contributes.
 struct RegisteredAttachment {
     /// #1446 — the Node `path.resolve` spelling of the client-sent path
     /// (`allowed.add(resolve(attachment.path))`, composer :182). The note
@@ -131,11 +136,6 @@ struct RegisteredAttachment {
     /// port.realpath(attachment.path)))`, composer :183) — the containment
     /// authority and the second allowedReadFiles entry.
     resolved: PathBuf,
-    /// Raw attachment name; the note cleans it (composer :108-109).
-    name: String,
-    /// `isReadFileInspectableAttachment` (composer :153-165) — the input the
-    /// diagnostics guidance branches on (:142-151).
-    inspectable: bool,
 }
 
 /// Outcome of the per-attachment lease guard.
@@ -687,8 +687,10 @@ fn attachment_diagnostics_guidance(
              runtime is missing, run {FUNASR_INSTALL_COMMAND} and retry the tool in this session."
         );
     }
-    // :142-151 — no registered inspectable attachment left → the conversion
-    // form; otherwise the read_file-scoped form.
+    // :142-151 — no attachment with an allowedReadFiles spelling left
+    // inspectable → the conversion form; otherwise the read_file-scoped form
+    // (#2495: the accumulation is the caller's whole-list `some(...)`
+    // pass, never gated by the note dedup).
     if !has_inspectable {
         return "Some attachments were not shown inline. These registered files are not \
                 directly inspectable with read_file; ask for a supported export or \
@@ -1144,8 +1146,6 @@ pub(super) fn compose_attachment_turn(
             registered.push(RegisteredAttachment {
                 lexical,
                 resolved: resolved.clone(),
-                name: entry.name.clone(),
-                inspectable: is_read_file_inspectable(entry),
             });
         }
         // TS composer :230-233 — audio stays a registered path reference for
@@ -1312,17 +1312,13 @@ pub(super) fn compose_attachment_turn(
         }
     }
 
-    // TS composer :98-111 — the note lines come from registered paths,
-    // deduped by the lexical spelling (`seen` on `normalized`); #1446
-    // (composer :173-193) allowedReadFiles is the Set of both spellings per
-    // attachment — the note pass and the collection pass dedup
-    // independently, so a duplicate lexical spelling with a different
-    // realpath still contributes its canonical entry.
-    let mut seen: HashSet<PathBuf> = HashSet::new();
+    // TS composer :173-193 — `collectRegisteredAttachmentReadFiles`: the
+    // allowed list is the Set of both spellings per registered attachment
+    // (#1446). The note pass below and this collection dedup independently,
+    // so a duplicate lexical spelling with a different realpath still
+    // contributes its canonical entry.
     let mut allowed: HashSet<PathBuf> = HashSet::new();
-    let mut note_lines: Vec<String> = Vec::new();
     let mut allowed_paths: Vec<JsValue> = Vec::new();
-    let mut has_inspectable = false;
     for attachment in &registered {
         for spelling in [&attachment.lexical, &attachment.resolved] {
             if !allowed.insert(spelling.clone()) {
@@ -1332,19 +1328,45 @@ pub(super) fn compose_attachment_turn(
                 spelling.to_string_lossy().into_owned().as_str(),
             ));
         }
-        if !seen.insert(attachment.lexical.clone()) {
+    }
+    // TS composer :98-111/:142-146 — the note lines and the hasInspectable
+    // accumulation both cover every attachment whose `resolve(path)`
+    // spelling is a member of allowedReadFiles (`safeAllowedAttachmentPath`,
+    // :103/:144): registered channel attachments, and an unregistered entry
+    // colliding with a registered spelling (ts-probe
+    // `_tmp/20261026-issue-2495/probe/probe.out` D/E). #2495 —
+    // `hasInspectableAttachment` is an `attachments.some(...)` over the whole
+    // list, never gated by the note dedup: a second entry with the same
+    // lexical spelling but a different inspectable still counts, while the
+    // note line itself is deduped on the lexical spelling to the first
+    // entry (`seen` on `normalized`, :105 — #1446).
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut note_lines: Vec<String> = Vec::new();
+    let mut has_inspectable = false;
+    for entry in &entries {
+        if entry.path.is_empty() {
             continue;
         }
-        let normalized = attachment.lexical.to_string_lossy().into_owned();
+        let lexical = resolve_path(
+            &cached_process_cwd().unwrap_or_default(),
+            Path::new(&entry.path),
+        );
+        if !allowed.contains(&lexical) {
+            continue;
+        }
+        has_inspectable |= is_read_file_inspectable(entry);
+        if !seen.insert(lexical.clone()) {
+            continue;
+        }
+        let normalized = lexical.to_string_lossy().into_owned();
         // composer :108 — `normalized.split(/[\\/]/).pop() || "attachment"`.
         let fallback_name = normalized
             .split(['/', '\\'])
             .next_back()
             .filter(|segment| !segment.is_empty())
             .unwrap_or("attachment");
-        let name = clean_attachment_name(&attachment.name, fallback_name);
+        let name = clean_attachment_name(&entry.name, fallback_name);
         note_lines.push(format!("- {name}: {normalized}"));
-        has_inspectable |= attachment.inspectable;
     }
 
     // TS composer :114-122 — the guidance takes a diagnostics form when any
