@@ -140,6 +140,82 @@ impl<'a> TurnSet<'a> {
         }
     }
 }
+pub(super) fn inject_compact(
+    e: &JsValue,
+    messages: &mut Vec<JsValue>,
+    key: &JsString,
+    project: Option<&JsValue>,
+    budget: &mut super::budget::Budget,
+) -> Result<(), ProjectionError> {
+    let boundary = f(e, "boundary");
+    let mut payload = JsObject::new();
+    if is(f(boundary, "subtype"), "compact_boundary")
+        && !f(boundary, "compactMetadata").is_undefined()
+    {
+        let m = f(boundary, "compactMetadata");
+        if truth(f(m, "timeline")) {
+            payload.insert("timeline".into(), f(m, "timeline").clone());
+        }
+        if f(m, "compactionId")
+            .as_string()
+            .is_some_and(|v| !v.units().is_empty())
+        {
+            payload.insert("compactionId".into(), f(m, "compactionId").clone());
+        }
+        for k in ["trigger", "preTokens", "postTokens", "messagesSummarized"] {
+            payload.insert(k.into(), f(m, k).clone());
+        }
+        for k in [
+            "targetTokens",
+            "summaryGenerated",
+            "checkpointMerged",
+            "finalRatio",
+        ] {
+            let v = f(m, k);
+            if (matches!(k, "targetTokens" | "finalRatio") && v.as_number().is_some())
+                || (matches!(k, "summaryGenerated" | "checkpointMerged") && v.as_bool().is_some())
+            {
+                payload.insert(k.into(), v.clone());
+            }
+        }
+        for k in ["level", "stage", "stageLabel"] {
+            payload.insert(k.into(), f(m, k).clone());
+        }
+    }
+    let mut o = base(
+        e,
+        key,
+        project,
+        identifier(e, key, "-compact-"),
+        "system".into(),
+        "compact_boundary".into(),
+    );
+    // timeline precedes turnId/sequence in the wire shape.
+    if truth(payload.get("timeline").unwrap_or(&JsValue::Undefined)) {
+        let mut r = JsObject::new();
+        for (k, v) in o.entries() {
+            if k.equals_str("turnId") {
+                r.insert(
+                    "timeline".into(),
+                    payload
+                        .get("timeline")
+                        .cloned()
+                        .unwrap_or(JsValue::Undefined),
+                );
+            }
+            r.insert(k.clone(), v.clone());
+        }
+        o = r;
+    }
+    o.insert("text".into(), "Context compacted".into());
+    o.insert("payload".into(), JsValue::Object(payload));
+    source(&mut o);
+    if truth(f(e, "entryId")) {
+        o.insert("entryId".into(), f(e, "entryId").clone());
+    }
+    insert_ordered(messages, JsValue::Object(o), budget)?;
+    Ok(())
+}
 /// Add entries after canonical messages using the TS history ordering contract.
 pub(super) fn inject(
     entries: &[JsValue],
@@ -185,77 +261,9 @@ pub(super) fn inject(
     }
     // Insertion families run in this order; equal sequence retains prior rows.
     for e in entries {
-        if !is(f(e, "type"), "control_boundary") || !is(f(f(e, "boundary"), "kind"), "compact") {
-            continue;
+        if is(f(e, "type"), "control_boundary") && is(f(f(e, "boundary"), "kind"), "compact") {
+            inject_compact(e, messages, key, project, budget)?;
         }
-        let boundary = f(e, "boundary");
-        let mut payload = JsObject::new();
-        if is(f(boundary, "subtype"), "compact_boundary")
-            && !f(boundary, "compactMetadata").is_undefined()
-        {
-            let m = f(boundary, "compactMetadata");
-            if truth(f(m, "timeline")) {
-                payload.insert("timeline".into(), f(m, "timeline").clone());
-            }
-            if f(m, "compactionId")
-                .as_string()
-                .is_some_and(|v| !v.units().is_empty())
-            {
-                payload.insert("compactionId".into(), f(m, "compactionId").clone());
-            }
-            for k in ["trigger", "preTokens", "postTokens", "messagesSummarized"] {
-                payload.insert(k.into(), f(m, k).clone());
-            }
-            for k in [
-                "targetTokens",
-                "summaryGenerated",
-                "checkpointMerged",
-                "finalRatio",
-            ] {
-                let v = f(m, k);
-                if (matches!(k, "targetTokens" | "finalRatio") && v.as_number().is_some())
-                    || (matches!(k, "summaryGenerated" | "checkpointMerged")
-                        && v.as_bool().is_some())
-                {
-                    payload.insert(k.into(), v.clone());
-                }
-            }
-            for k in ["level", "stage", "stageLabel"] {
-                payload.insert(k.into(), f(m, k).clone());
-            }
-        }
-        let mut o = base(
-            e,
-            key,
-            project,
-            identifier(e, key, "-compact-"),
-            "system".into(),
-            "compact_boundary".into(),
-        );
-        // timeline precedes turnId/sequence in the wire shape.
-        if truth(payload.get("timeline").unwrap_or(&JsValue::Undefined)) {
-            let mut r = JsObject::new();
-            for (k, v) in o.entries() {
-                if k.equals_str("turnId") {
-                    r.insert(
-                        "timeline".into(),
-                        payload
-                            .get("timeline")
-                            .cloned()
-                            .unwrap_or(JsValue::Undefined),
-                    );
-                }
-                r.insert(k.clone(), v.clone());
-            }
-            o = r;
-        }
-        o.insert("text".into(), "Context compacted".into());
-        o.insert("payload".into(), JsValue::Object(payload));
-        source(&mut o);
-        if truth(f(e, "entryId")) {
-            o.insert("entryId".into(), f(e, "entryId").clone());
-        }
-        insert_ordered(messages, JsValue::Object(o), budget)?;
     }
     super::subagent::inject(entries, messages, budget)?;
     for e in entries {

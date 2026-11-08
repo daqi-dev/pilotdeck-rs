@@ -224,10 +224,17 @@ pub(super) type AcquireMissReport = Arc<dyn Fn(&str) + Send + Sync>;
 const MCP_ASK_SYNC_SKIPPED: &str = "native session: MCP ask rule sync skipped \
      (the config was not published before the session acquire)";
 
-/// Inputs the assembly normally creates itself and only tests vary. Production
-/// always uses `Default`: the rule-set registry is created in place, the MCP
-/// config is published, and an acquire miss goes to stderr.
+/// The embedding owns activation; all modes share the same runtime and cleanup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AssemblyMode {
+    Server,
+    LocalCli,
+}
+
+/// Wiring inputs. Server entries keep Default; the local embedding only
+/// changes mode. Rule-set/publication/report overrides remain test-only seams.
 pub(super) struct AssemblySeams {
+    pub mode: AssemblyMode,
     pub permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub acquire_miss_report: Option<AcquireMissReport>,
     pub publish_mcp_config: bool,
@@ -236,6 +243,7 @@ pub(super) struct AssemblySeams {
 impl Default for AssemblySeams {
     fn default() -> Self {
         Self {
+            mode: AssemblyMode::Server,
             permission_rule_sets: None,
             acquire_miss_report: None,
             publish_mcp_config: true,
@@ -356,9 +364,29 @@ pub(super) async fn start_observed_with_permission_rule_sets(
         None,
         None,
         AssemblySeams {
+            mode: AssemblyMode::Server,
             permission_rule_sets: Some(permission_rule_sets),
             acquire_miss_report: Some(miss_report),
             publish_mcp_config,
+        },
+    )
+    .await
+}
+
+/// The process-independent CLI host uses the same services and cleanup, but
+/// does not activate the background services owned by a gateway server.
+pub(super) async fn start_local(options: Options, env: Env) -> Result<TurnGateway, ProxyError> {
+    start_assembly(
+        options,
+        env,
+        crate::upload::CLEANUP_INTERVAL,
+        Arc::new(|_, result| Box::pin(async move { result })),
+        Arc::new(|error| eprintln!("native project cleanup: {error}")),
+        None,
+        None,
+        AssemblySeams {
+            mode: AssemblyMode::LocalCli,
+            ..Default::default()
         },
     )
     .await
@@ -376,6 +404,7 @@ async fn start_assembly(
     seams: AssemblySeams,
 ) -> Result<TurnGateway, ProxyError> {
     let AssemblySeams {
+        mode,
         permission_rule_sets,
         acquire_miss_report,
         publish_mcp_config,
@@ -765,7 +794,9 @@ async fn start_assembly(
     // detached schedule (#1439); the JoinHandle is dropped, not awaited. An
     // idle tick never blocks shutdown, but a sweep already running inside
     // `spawn_blocking` is not cancelled by the drop — see `spawn_cleanup`.
-    crate::upload::spawn_cleanup(&upload_store, upload_cleanup_interval);
+    if mode == AssemblyMode::Server {
+        crate::upload::spawn_cleanup(&upload_store, upload_cleanup_interval);
+    }
     let cleanup_factory = factory.clone();
     let cleanup_project = project.clone();
     // #1746: exactly one teardown may run. The host polls this cleanup itself
@@ -811,13 +842,18 @@ async fn start_assembly(
         // channel that will never respond. The second check covers the
         // bundle keys outside `UNMIGRATED_CHANNEL_KEYS` (`weixin` is built,
         // `feishu` is not yet — #1329).
-        let rejected = crate::channel::loader::reject_unmigrated_channels(config.get("adapters"))
-            .and_then(|()| {
-                crate::channel::loader::reject_unimplemented_bundle_channels(
-                    config.get("adapters"),
-                    super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
-                )
-            });
+        let rejected = if mode == AssemblyMode::Server {
+            crate::channel::loader::reject_unmigrated_channels(config.get("adapters")).and_then(
+                |()| {
+                    crate::channel::loader::reject_unimplemented_bundle_channels(
+                        config.get("adapters"),
+                        super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
+                    )
+                },
+            )
+        } else {
+            Ok(())
+        };
         if let Err(error) = rejected {
             // Same teardown order as the failure branch below (#1328): the
             // session factory first, then the project registry.
@@ -830,7 +866,11 @@ async fn start_assembly(
         }
         // #1326 A8 U8: the `cron:` section travels to the builder below, which
         // is the only place that constructs `CronManager`.
-        let cron_section = config.get("cron").cloned();
+        let cron_section = if mode == AssemblyMode::Server {
+            config.get("cron").cloned()
+        } else {
+            None
+        };
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
                 pilot_home: options.home.clone(),
@@ -959,7 +999,8 @@ async fn start_assembly(
                 // The CLI `prepareWeixinLogin` callback (pilotdeck.ts:240-247):
                 // hot-start the weixin channel on request, after the same
                 // durable-state restore as a config-enabled start.
-                prepare_weixin_login: Some(build_channels.prepare_login_callback()),
+                prepare_weixin_login: (mode == AssemblyMode::Server)
+                    .then(|| build_channels.prepare_login_callback()),
                 cron: cron.clone(),
                 settings: settings.gateway,
                 session_overrides,
@@ -1111,11 +1152,13 @@ async fn start_assembly(
             // #1328: start config-enabled channels (pilotdeckServer.ts:288-296)
             // once the builder has published the gateway port.
             let mut startup = Vec::new();
-            if let Some(feishu) = channel_assembly.create_startup_feishu().await {
-                startup.push(feishu);
-            }
-            if let Some(weixin) = channel_assembly.create_startup_weixin().await {
-                startup.push(weixin);
+            if mode == AssemblyMode::Server {
+                if let Some(feishu) = channel_assembly.create_startup_feishu().await {
+                    startup.push(feishu);
+                }
+                if let Some(weixin) = channel_assembly.create_startup_weixin().await {
+                    startup.push(weixin);
+                }
             }
             if !startup.is_empty() {
                 channel_assembly.server().start_channels(startup);

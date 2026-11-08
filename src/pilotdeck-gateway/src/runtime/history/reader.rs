@@ -8,7 +8,7 @@ use std::{
 };
 use tokio::sync::Semaphore;
 
-static READ_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+pub(super) static READ_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 /// Restrict only history's marker reads; existing project lookup semantics and
 /// other NativeFiles consumers remain unchanged. Refusals must not fall back
 /// to a different project's lexical identifier.
@@ -54,7 +54,7 @@ impl crate::metadata::Files for HistoryMarkerFiles {
         }
     }
 }
-fn history_path(files: &HistoryFiles, session: &JsString) -> Result<PathBuf, String> {
+pub(super) fn history_path(files: &HistoryFiles, session: &JsString) -> Result<PathBuf, String> {
     let lookup = crate::metadata::Metadata {
         home: files.home.clone(),
         cwd: files.project.clone(),
@@ -73,7 +73,10 @@ fn history_path(files: &HistoryFiles, session: &JsString) -> Result<PathBuf, Str
 }
 
 /// Resolve the TS background-task relative path without allowing traversal.
-fn background_path(input: &JsValue, chat: &std::path::Path) -> Result<Option<PathBuf>, String> {
+pub(super) fn background_path(
+    input: &JsValue,
+    chat: &std::path::Path,
+) -> Result<Option<PathBuf>, String> {
     if !input
         .get("sessionKind")
         .and_then(JsValue::as_string)

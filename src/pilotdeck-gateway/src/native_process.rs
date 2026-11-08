@@ -9,6 +9,8 @@ use std::{
     time::Duration,
 };
 mod assembly;
+mod local_host;
+pub use local_host::{LocalHost, LocalHostOptions};
 // The advertised capability table lived as a literal inside `requests.rs`
 // until #1352; it is its own module so the table, its exception list and the
 // test that pins both to the recorded TS oracle sit next to each other.

@@ -275,7 +275,9 @@ impl GatewayConnection {
             session,
         });
         Box::pin(async move {
-            let _history_permit = if method.equals_str("read_session_messages") {
+            let _history_permit = if method.equals_str("read_session_messages")
+                || method.equals_str("read_subagent_messages")
+            {
                 Some(Arc::new(
                     HISTORY_REQUEST_SLOTS
                         .clone()
@@ -356,7 +358,9 @@ impl GatewayConnection {
                     out.insert("id".into(), id);
                     out.insert("ok".into(), JsValue::Bool(true));
                     out.insert("result".into(), result);
-                    if method.equals_str("read_session_messages") {
+                    if method.equals_str("read_session_messages")
+                        || method.equals_str("read_subagent_messages")
+                    {
                         // Encode the complete response, including its id and active
                         // stream, off the socket executor and only once. A large
                         // request id can itself exhaust the frame; in that case the

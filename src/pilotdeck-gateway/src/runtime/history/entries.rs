@@ -8,7 +8,7 @@ fn field<'a>(v: &'a JsValue, k: &str) -> &'a JsValue {
 fn is(v: &JsValue, s: &str) -> bool {
     v.as_string().is_some_and(|value| value.equals_str(s))
 }
-fn visible(message: &JsValue) -> bool {
+pub(super) fn visible(message: &JsValue) -> bool {
     let metadata = field(message, "metadata");
     !match field(metadata, "synthetic") {
         JsValue::Undefined | JsValue::Null => false,

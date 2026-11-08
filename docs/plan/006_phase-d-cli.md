@@ -6,7 +6,7 @@
 
 命令及 profile 的唯一明细是 [产品入口总账](../../specs/product-coverage/entries.json)，由独立枚举器从固定 Git 对象读源码验证。包括 package.json 的两个 bin、手写 argv 分派、默认/未知参数路径、叶命令及别名、TUI slash 子树、实际读取的选项和 sidecar 部署 profile。help 文本不完整，不能用它或候选 parser 作为完整标准。行为以同参数、同输入的基线实测为准；已批准差异必须有明确期望及登记，首次装置定标不得根据 Rust 结果放宽规则。
 
-`pilotdeck` 当前 main 入口仍只输出版本。候选 `codex/cli-server@1fdb99b` 只提供过渡代理 server/help/version；空参数输出版本、未知命令报错及严格参数 parser 不符合原版默认分流，不能整包合入。D1/D2 按基线重新实现，候选可复用部分须逐项复核。`pilotdeck server` 同时绑定 A 的 gateway/后台与 B 的 UI 编排，D 负责命令参数、输出、退出及组合验收。sidecar 协议属于 C；Rust 不支持 factory/TCP 已另建 #130，现有 stdio 证据不能覆盖它们。
+2026-11-08 当前本地 CLI 已实现 SDK、本地命令、全平台 setup、默认远端模式、TUI、独立 control serve/call/stream 及原生主 history；旧 server/update、默认本地宿主、native权限和机器接口余项仍未完成，最新代码和证据以board为准。早期候选 `codex/cli-server@1fdb99b` 的过渡代理 server/help/version不作为标准：空参数输出版本、未知命令报错及严格parser不符合基线。`pilotdeck server` 同时绑定 A 的 gateway/后台与 B 的 UI 编排，D 负责命令参数、输出、退出及组合验收。sidecar 协议属于 C；Rust 不支持 factory/TCP 已另建 #130，现有 stdio 证据不能覆盖它们。
 
 ## 任务与依赖
 
@@ -33,3 +33,7 @@
 ## 收尾与真实使用
 
 各 issue 关闭前逐项对齐入口与验收场景，扫描占位/转发/只打印版本入口，到点 P2 须有明确处置（已修 / 已并入别的单 / 判定不修并写理由 / 已降级 / 已升级；处置定义见 CLAUDE.md 问题分级，#2063 B，决策卡 `state/decisions-20261107.md`「#2063 B：伞单判据放宽——P0/P1 全清 + 每张 P2 有处置」）；提供源码行号、四面比较原件和独立审阅。gateway 依赖命令必须有 Rust 实际处理、无业务 TS 回退证据。所有命令完成、旧 CLI 退役、切换/重启/回滚通过，并由人在最终组合上完成 CLI/TUI 实际任务后，阶段 D 才完成。AI 准备隔离候选和步骤，未真人使用的项目始终记「待人工验收」。
+
+## 2026-11-08 完整 CLI 连续执行
+
+用户再次要求完成完整CLI，并授权重新计划后完成；保留本文件全部范围和既有判据。执行顺序是子代理历史 → 默认LocalHost/权限 → 旧server → update → 机器schema/watch及必要流 → 逐入口兼容收尾/组合验收；update独立候选和LocalHost接入分析并行准备。工程实现不再等同于单片收货，完整工作未完成就继续下一片；真人验收不得冒签。唯一开发树为 `cli-gateway-setup/pilotdeck-rs`，只本机提交、所有Rust在mbp2，旧8e32保留不再写。详细持有人/依赖与操作证据见主仓 `_tmp/20261108-cli-completion/plan.md`，不修改冻结标准或升级固定TS参照。

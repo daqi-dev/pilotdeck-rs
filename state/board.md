@@ -4854,3 +4854,10 @@ setup现按TS独立env||join目录规则处理HOME未设，显式PILOT_HOME保�
 ### 2026-11-08 · 统一树 native history 实测收货（Codex，仅本机）
 
 最新抓取main `12f919509` 已合入 `04e32da66`；4282个tree entry中4280个无重叠路径精确符合两侧并集，native_ws逐字为上游+常量可见性，board冲突的双方完整append均保留；两个原WIP快照仍为祖先，旧8e32仍clean/锁定未删。native read_session_messages已接既有runtime/TurnGateway，实现普通/背景历史、完整投影/分页/usage/活动stream合并；真实TS99格中97格完整投影/异常与2格读前路径边界分别覆盖。mbp2 r6严格clippy通过，history12/connection25/catalog1/turn-read24/storage45/adapter13通过，CLI serve退出2/stream3/六格消费者父1及显式native共享宿主2通过（其余TS外置/helper ignored据实保留）；此前r4全CLI505通过。真实control serve+Rust sidecar+fake provider、旧SDK、PTY /switch及termios、取消、重启只读恢复、背景独有内容、越界/symlink/FIFO/超限与marker恢复全部通过，原进程/sidecar清理通过。r5最终串行构建→执行副本→运行→源/bin复核：2979源前后相同、4bin与同轮构建记录一致；前3次探针错误假设及r4中间Cargo导致的两CLI指纹变化原件不覆盖。产品、fixture与真实驱动已归入唯一树，证据主仓 `_tmp/20261108-cli-consolidation/README.md`；两个非作者静态增量审无确认P0/P1，不冒称正式双谱系合并闸门/真人实效。安全差异仍未接受/待人复核，无冻结豁免；未标完整CLI/A/native权限/local fallback完成，后续按只读分流继续独立CLI切片。仅本机提交，全部Rust在mbp2，无GitHub写入。
+
+
+### 2026-11-08 · 完整 CLI 重排并连续执行（Codex）
+
+用户明确要求完成完整CLI并允许重计划，已同步最新main244bf5818且保全da297104b成果；按006计划和主仓 `_tmp/20261108-cli-completion/plan.md` 连续推进：Terra先接子代理历史，Sol并行准备update完整候选/实采，独立审计解LocalHost/权限与#1959实际接入，root统一整合和mbp2验证；产品只在canonical单写者串行落地，不新树、不动旧8e32、不向GitHub写。主关键路径仍是默认本地宿主/权限、旧server和update，不以parser或单片报告当全部完成；必要发行偏好已向人集中提问，其余工作继续。
+
+> 2026-11-08 15:20 CLI持续实施：已合并子代理历史和共享LocalHost候选并保存本机检查点；mbp2严格Gateway库clippy通过，history16测15过，thinking缺text投影与TS的undefined省略行为不符，正在修复，未标验收通过。LocalHost首轮测试编译的引用错误已修。并行候选还包括默认CLI/TUI内存连接、四件同代源码安装更新；权限每turn接线继续。冻结核验PASS（30项），原始证据主仓 `_tmp/20261108-cli-completion/verify-r{1,2}`；下一步修已知失败、串行整合候选并继续server/机器接口，全部仅本机提交、mbp2编译。
