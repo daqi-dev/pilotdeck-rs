@@ -2887,3 +2887,81 @@ async fn raw_until_close(port: u16, request: &str) -> (String, bool) {
         }
     }
 }
+
+// ---------------------------------------------------------------- loader
+
+// #2301: the mount is the production construction seam — the startup assembly
+// registers it through `production_loader_mounts` and calls
+// `load_enabled_channels` (pilotdeckServer.ts:288-296, the loadEnabledChannels
+// port). The mount forwards `extra.port` / `extra.secret`;
+// `WebhookChannel::from_options` applies the TS nullish-then-`Number()`
+// coercions, so a concrete port through the loader config reaches the real
+// listener and the TS dist start line — `webhook: listening on
+// http://127.0.0.1:<port> — routes: (none configured)` (no routes survive
+// `build_options`) — is observable. The port is an OS-assigned free port (bind
+// :0, read, drop, rebind through the channel), the same trick the busy-port
+// blocker uses, rather than a hard-coded constant that could collide on a
+// shared runner.
+#[tokio::test]
+async fn loader_mount_builds_webhook_channel() {
+    let mut mounts = crate::channel::loader::ChannelLoaderMounts::default();
+    register(&mut mounts);
+    assert!(mounts.is_registered("webhook"), "#1334 loader mount key");
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("#2301 free-port probe");
+    let port = probe.local_addr().expect("#2301 probe address").port();
+    drop(probe);
+    let adapters = parse_json(
+        &json!({
+            "webhook": {"enabled": true, "extra": {"port": port}},
+            "telegram": {"enabled": false},
+        })
+        .to_string(),
+    )
+    .expect("#2301 adapters JSON");
+    let mut errors = Vec::new();
+    let channels = crate::channel::loader::load_enabled_channels(
+        Some(&adapters),
+        &crate::channel::loader::LoadEnabledChannelsOptions { pilot_home: None },
+        &mounts,
+        &mut |message| errors.push(message),
+    );
+    assert!(errors.is_empty(), "#2301 loader errors: {errors:?}");
+    assert_eq!(channels.len(), 1, "#2301 exactly the webhook channel loads");
+    assert_eq!(channels[0].channel_key().to_string(), "webhook");
+
+    // The constructed adapter really listens through the mount's options: the
+    // start line is the TS dist anchor and the port accepts a connection.
+    let logs: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let sink = logs.clone();
+    let handle = channels[0]
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: Some(Arc::new(move |level: &str, message: &str| {
+                sink.lock()
+                    .expect("#2301 log sink")
+                    .push((level.to_owned(), message.to_owned()));
+            })),
+            turn_gateway: None,
+        })
+        .await
+        .expect("#2301 loader-built webhook start");
+    let listening =
+        format!("webhook: listening on http://127.0.0.1:{port} — routes: (none configured)");
+    assert!(
+        logs.lock()
+            .expect("#2301 log sink")
+            .iter()
+            .any(|(level, message)| level == "info" && message == &listening),
+        "#2301 the TS dist anchor line {listening:?} in {:?}",
+        logs.lock().expect("#2301 log sink")
+    );
+    TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#2301 the loader-built listener accepts connections");
+    handle.stop("test").await.expect("#2301 webhook stop");
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
+        "#2301 the listener is gone after stop"
+    );
+}

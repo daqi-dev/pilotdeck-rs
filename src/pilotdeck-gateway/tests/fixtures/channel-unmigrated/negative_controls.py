@@ -22,7 +22,7 @@ MUTATIONS = [
      '    "telegram",\n    "qq",',
      '    "qq",',
      [('rejects_unmigrated_telegram', '#1386 unmigrated channel must reject startup'),
-      ('loader_keys_partition_rejected_and_silent_subset',
+      ('loader_keys_partition_rejected_and_implemented',
        '#1853 nine loader keys sit in the unmigrated rejection table')]),
     # M2: the rejection is silenced into a skip; any one of the 11 cases kills
     # (#1343: bluebubbles and #1344: slack left the table, so their rejection
@@ -116,19 +116,19 @@ MUTATIONS = [
      'for key in CHANNEL_LOADER_KEYS {',
      [('rejects_unmigrated_qq', '#1386 unmigrated channel must reject startup'),
       ('rejects_unmigrated_wecom', '#1386 unmigrated channel must reject startup')]),
-    # M12 (#1853 r2 review): the loader table gains a key in none of the
-    # three groups; the partition covering cell must kill it — without this
+    # M12 (#1853 r2 review, #2301 terminal): the loader table gains a key in
+    # neither group; the partition covering cell must kill it — without this
     # row nothing pinned the fail-closed cell of
-    # `loader_keys_partition_rejected_and_silent_subset` (M1 only covers the
+    # `loader_keys_partition_rejected_and_implemented` (M1 only covers the
     # nine-key count).
     ('loader-table-gains-ungrouped-key', source / 'loader.rs',
      'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",',
      'pub const CHANNEL_LOADER_KEYS: [&str; 16] = [\n    "probe1853",\n    "telegram",',
-     'loader_keys_partition_rejected_and_silent_subset',
-     '#1853 every loader key is rejected, silent-subset, or native-mount'),
-    # M13 (#1853 r2 r1 review): the loader table loses the silent key `sms`;
-    # the silent-group reverse closure must kill it (M1/M12 only touch the
-    # count and covering cells).
+     'loader_keys_partition_rejected_and_implemented',
+     '#2301 every loader key is rejected or implemented'),
+    # M13 (#1853 r2 r1 review, #2301 terminal): the loader table loses the
+    # implemented key `sms`; the implemented-group reverse closure must kill
+    # it (M1/M12 only touch the count and covering cells).
     ('loader-table-loses-silent-sms', source / 'loader.rs',
      'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",\n    "discord",\n'
      '    "slack",\n    "matrix",\n    "mattermost",\n    "signal",\n    "whatsapp",\n'
@@ -136,8 +136,8 @@ MUTATIONS = [
      'pub const CHANNEL_LOADER_KEYS: [&str; 14] = [\n    "telegram",\n    "discord",\n'
      '    "slack",\n    "matrix",\n    "mattermost",\n    "signal",\n    "whatsapp",\n'
      '    "bluebubbles",\n    "dingtalk",\n    "wecomCallback",\n    "email",',
-     'loader_keys_partition_rejected_and_silent_subset',
-     '#1853 every silent-subset key is a loader-table key'),
+     'loader_keys_partition_rejected_and_implemented',
+     '#2301 every implemented loader key is a loader-table key'),
     # M14 (#1853 r2 r1 review): the rejection table gains a key that is
     # neither a loader key nor a strict bundle key; the rejection-side
     # reverse closure must kill it (the count stays nine — probe1853 is not a
@@ -145,7 +145,7 @@ MUTATIONS = [
     ('rejection-table-gains-foreign-key', source / 'loader.rs',
      '    "telegram",\n    "qq",\n    "wecom",\n];',
      '    "telegram",\n    "probe1853",\n    "qq",\n    "wecom",\n];',
-     'loader_keys_partition_rejected_and_silent_subset',
+     'loader_keys_partition_rejected_and_implemented',
      '#1853 every rejection-table key is a loader key or a strict bundle key'),
     # M15 (#1853 r2 r1 review): the bundle table gains the silent key `sms`;
     # the bundle-outside-loader cell fires first (sms is a loader key), which
@@ -153,29 +153,32 @@ MUTATIONS = [
     ('bundle-gains-silent-sms', source / 'loader.rs',
      'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];',
      'pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "sms"];',
-     'loader_keys_partition_rejected_and_silent_subset',
+     'loader_keys_partition_rejected_and_implemented',
      '#1853 bundle keys stay outside the loader table'),
-    # M16 (#1853 r2 r3 review, two families hit the same cell): the loader
-    # table loses the native-mount key `slack` — the covering cell only
-    # iterates the loader table, so only the native group's membership closure
-    # catches it. The array length is decremented alongside, exactly like a
-    # real regression would, so the mutant compiles (same pattern as M13).
+    # M16 (#1853 r2 r3 review, #2301 terminal): the loader table loses the
+    # implemented key `slack` — the covering cell only iterates the loader
+    # table, so only the implemented group's membership closure catches it
+    # (same family as M13 on a second key). The array length is decremented
+    # alongside, exactly like a real regression would, so the mutant compiles
+    # (same pattern as M13).
     ('native-mount-loses-loader-key', source / 'loader.rs',
      'pub const CHANNEL_LOADER_KEYS: [&str; 15] = [\n    "telegram",\n    "discord",\n'
      '    "slack",',
      'pub const CHANNEL_LOADER_KEYS: [&str; 14] = [\n    "telegram",\n    "discord",',
-     'loader_keys_partition_rejected_and_silent_subset',
-     '#1853 native-mount key is a loader-table key'),
-    # M17 (#1853 r2 r3 review): a silent key is duplicated into the native
-    # group — behavior cells cannot catch a key in both pinned groups, so the
-    # disjointness assertion is the only kill.
-    ('native-gains-silent-sms', source / 'tests.rs',
-     'const NATIVE_MOUNT_KEYS: [&str; 1] = ["slack"];',
-     'const NATIVE_MOUNT_KEYS: [&str; 2] = ["slack", "sms"];',
-     'loader_keys_partition_rejected_and_silent_subset',
-     '#1853 silent-subset key is not a native-mount key'),
-    # M18 (#1853 r2 r3 review): the module subset whitelist loses a silent
-    # key; the silent-group reverse closure must kill it.
+     'loader_keys_partition_rejected_and_implemented',
+     '#2301 every implemented loader key is a loader-table key'),
+    # M17 (#1853 r2 r3 review, #2301 terminal): a rejected key is duplicated
+    # into the implemented group — behavior cells cannot catch a key in both
+    # pinned groups, so the disjointness assertion is the only kill (it runs
+    # before the whitelist closure for exactly this reason).
+    ('implemented-gains-rejected-telegram', source / 'tests.rs',
+     'const IMPLEMENTED_LOADER_KEYS: [&str; 6] = [\n        "slack",',
+     'const IMPLEMENTED_LOADER_KEYS: [&str; 7] = [\n        "telegram",\n        "slack",',
+     'loader_keys_partition_rejected_and_implemented',
+     '#2301 every implemented loader key is outside the rejection table'),
+    # M18 (#1853 r2 r3 review, #2301 terminal): the module subset whitelist
+    # loses an implemented key; the implemented-group reverse closure must
+    # kill it.
     ('subset-whitelist-loses-silent-sms', source / 'tests.rs',
      'const SUBSET_CHANNEL_KEYS: [&str; 8] = [\n    "weixin",\n    "feishu",\n'
      '    "apiServer",\n    "webhook",\n    "wecomCallback",\n    "sms",\n'
@@ -183,15 +186,15 @@ MUTATIONS = [
      'const SUBSET_CHANNEL_KEYS: [&str; 7] = [\n    "weixin",\n    "feishu",\n'
      '    "apiServer",\n    "webhook",\n    "wecomCallback",\n'
      '    "bluebubbles",\n    "slack",\n];',
-     'loader_keys_partition_rejected_and_silent_subset',
-     '#1853 every silent-subset key is in the module subset whitelist'),
-    # M19 (#1853 r2 r3 review): the module subset whitelist gains a key in
-    # none of the three groups; the subset reverse closure must kill it.
+     'loader_keys_partition_rejected_and_implemented',
+     '#2301 every implemented loader key is in the module subset whitelist'),
+    # M19 (#1853 r2 r3 review, #2301 terminal): the module subset whitelist
+    # gains a key in neither group; the subset reverse closure must kill it.
     ('subset-whitelist-gains-foreign-key', source / 'tests.rs',
      'const SUBSET_CHANNEL_KEYS: [&str; 8] = [\n    "weixin",',
      'const SUBSET_CHANNEL_KEYS: [&str; 9] = [\n    "probe1853",\n    "weixin",',
-     'loader_keys_partition_rejected_and_silent_subset',
-     '#1853 every module subset key is silent-subset, bundle, or native-mount'),
+     'loader_keys_partition_rejected_and_implemented',
+     '#2301 every module subset key is implemented or a bundle key'),
 ]
 
 
