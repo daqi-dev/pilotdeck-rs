@@ -5045,3 +5045,7 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-09 能力包提取修复轮（Codex）
 
 固定新基线 f50ad6c84；独立consumer已运行，最终gateway context 71通过/3原忽略。独立审查抓到分组估计错误降格与NEL误作JS whitespace：前者实际负控失败后泛型透传原HostError正控通过，后者Node边界与候选负控证实后复用原metadata精确字符集；保留日志。删除未消费Budget policy/模型errors与header API，必要helper和coercion由gateway委托单一实现，原负控只迁源码锚、原oracle不改。当前在完成修复后回归/负控，前次审查混入WIP只记发现清单，最终clean候选另作双谱系审查。
+
+### 2026-11-09 能力包 PR 收口（Codex）
+
+Refs #2540。139127 两家四角色正式审查已收齐，7类P2本轮处置：截断算法改单源委托且保原port结构；空白全UTF16/真值边界补pin；consumer根目录显式target和locked；变异注明源码独占并用已有原子写/原子还原；恢复wrapper保原HostError签名；重复signedzero删去、原负控绑定保留。3包和Protocol strict Clippy已通过，README改中文。正在以指定ed748c375（相对f50仅board）整理提交并做最终针对性回归/单家增量审查，未push/开PR。
