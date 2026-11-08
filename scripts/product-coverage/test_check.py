@@ -176,6 +176,16 @@ class CoverageControls(unittest.TestCase):
         self.assertEqual(literal_table_lines(
             ['pub const T: &[&str] =', '    // why wrap', '    &[',
              '    "a",', '];']), {4, 5})
+        # a wrapped opener that leaves the `&` on the declaration line
+        # (`= &` ⏎ `[`) is the same rustfmt split and stays a table
+        # (fix-r4, codex r3 boundary P0: the fix-r3 `=`/`,` tail alone
+        # dropped this form back to range-only — a false-PASS regression)
+        self.assertEqual(literal_table_lines(
+            ['pub const T: &[&str] = &', '    [', '    "a",', '    "b",', '];']),
+            {3, 4, 5})
+        self.assertEqual(literal_table_lines(
+            ['pub const T: &[&str] = &', '    // why wrap', '    [',
+             '    "a",', '];']), {4, 5})
         # a closure body mentioning static is not a key table, even though
         # the line above a bare `[` declares a binding-shaped word
         # (fix-r3, DS boundary P2#2: title.rs / recovery.rs shapes)
