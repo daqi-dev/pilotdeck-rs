@@ -94,7 +94,8 @@ FAIL；fix-r3 起这是入口机械断言，落内即 FAIL-CLOSED；fix-r4 起�
 （darwin 默认 APFS）上同一目录的不同拼写按 `os.path.samefile` 文件身份判——最近存在
 祖先链上任意一级与 `--evidence` 同一即 FAIL-CLOSED，守卫判定中任何 OSError（如符号
 链接环 ELOOP）也一律 FAIL-CLOSED；fix-r6 起起点物理化口径：身份链起点先经
-`os.path.realpath(os.path.abspath(...))` 锚定 cwd 并折叠 `..` 与符号链接——
+`os.path.realpath(path)` 直连（fix-r7 更正）锚定 cwd，逐组件解析：遇链接先跟，再折叠
+其后的 `..`（与内核 open 的解析序一致）；不得先套 `abspath` 词法消掉 `link/..`——
 `missing/../ev` 类变体、cwd 在树内的相对 `--out`、经链接落树内三类起点均归一到真实
 父链再判；守卫判定中任何 OSError / RuntimeError（3.11/3.12 符号链接环上 `resolve()`
 抛 RuntimeError）/ ValueError（路径嵌 NUL）一律 FAIL-CLOSED，退化 `--out`（指向目录、

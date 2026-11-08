@@ -51,9 +51,11 @@ fix-r4), or by filesystem identity: two spellings of one directory on a
 case-insensitive volume are one directory, judged by os.path.samefile over the
 nearest existing ancestor chain (the identity reading is fix-r5) — and since
 fix-r6 that chain starts from the physicalized spelling
-(realpath(abspath(path))), so a `..` over a not-yet-existing directory, a
+(realpath(path), direct since fix-r7), so a `..` over a not-yet-existing directory, a
 relative --out with the cwd inside the tree and a symlink landing inside the
-tree all reduce to the real ancestor chain before the walk; any OSError,
+tree all reduce to the real ancestor chain before the walk; realpath anchors
+relative paths to the cwd and resolves components left to right, following a
+symlink before folding a subsequent `..` (the kernel open order); any OSError,
 RuntimeError (resolve() over a symlink loop on Python 3.11/3.12) or ValueError
 (embedded NUL) while judging dies at entry, and a degenerate --out (a
 directory, or a parent that is a regular file) dies at entry too: criterion 0
@@ -922,14 +924,17 @@ def _sits_in_evidence(path: Path, evidence: Path) -> bool:
     (the write-stage mkdir(parents=True) then folded the `..` back into the
     tree — scenario A) and a relative `--out` with the cwd inside the tree
     never climbed above Path('.') (scenario B). The start point is now the
-    PHYSICAL spelling: os.path.realpath(os.path.abspath(path)) anchors the
-    path to the cwd and folds `..` and symlinks kernel-side (a symlink loop
+    PHYSICAL spelling: os.path.realpath(path) directly (fix-r7) anchors the
+    path to the cwd and resolves components left to right, following a symlink
+    before folding a subsequent `..` (the kernel open order). abspath must
+    not run first: its lexical normalization would discard `link/..` before
+    the link is resolved, so the walk could miss the evidence tree (a symlink loop
     yields the loop spelling, which the OSError branch below still fails
     closed on; an embedded NUL raises ValueError, caught by the guard's
     except), so every start-normalized variant — case aliases, `..` over
     missing levels, links landing inside the tree — reduces to the real
     ancestor chain before the samefile walk."""
-    anchor = Path(os.path.realpath(os.path.abspath(path)))
+    anchor = Path(os.path.realpath(path))
     q = anchor if anchor.exists() else anchor.parent
     while True:
         try:
@@ -1001,7 +1006,8 @@ def main() -> None:
     # path spelling, so a `..` over a not-yet-existing directory and a
     # relative --out with the cwd inside the tree both stayed off the
     # ancestor chain while the write still landed inside. _sits_in_evidence
-    # now starts from the physicalized spelling (realpath(abspath)); the
+    # now starts from the physicalized spelling (realpath(path), direct since
+    # fix-r7: follow links before folding subsequent `..`, anchoring cwd too); the
     # manifest default-branch resolve() moved into this same fail-closed zone
     # (a symlink loop raises RuntimeError on Python 3.11/3.12, not OSError;
     # an embedded NUL raises ValueError on every version), and a degenerate
