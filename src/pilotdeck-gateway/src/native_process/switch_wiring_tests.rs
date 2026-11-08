@@ -62,6 +62,16 @@ impl GatewayRequests for WiringRequests {
 /// tree alive for as long as the faces are used (dropping it early would
 /// leave the flush face writing into a deleted directory).
 async fn wiring_harness(drain_budget: Duration) -> (SocketAddr, ProductionFaces, Scratch) {
+    wiring_harness_over(drain_budget, None).await
+}
+
+/// The harness over a channel the caller pre-seeds: `extra` is started
+/// through the real admission path before the faces are wired, so the halt
+/// walk's close join has a running handle to bound.
+async fn wiring_harness_over(
+    drain_budget: Duration,
+    extra: Option<Arc<dyn crate::channel::protocol::ChannelAdapter>>,
+) -> (SocketAddr, ProductionFaces, Scratch) {
     let home = Scratch::new("1353-switch-harness");
     let host = native_ws_fixture(Arc::new(WiringRequests));
     let server = NativeWsServer::bind(
@@ -83,6 +93,13 @@ async fn wiring_harness(drain_budget: Duration) -> (SocketAddr, ProductionFaces,
         report_status: None,
         close_host: None,
     }));
+    if let Some(adapter) = extra {
+        channels
+            .server()
+            .hot_start_channel(adapter)
+            .await
+            .expect("#2363 the pre-seeded harness channel starts");
+    }
     let (trigger, trigger_rx) = watch::channel(false);
     let phased = Arc::new(server.run_phased(trigger_stop(trigger_rx), drain_budget));
     let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased);
@@ -344,4 +361,76 @@ async fn an_expired_drain_halts_and_the_death_march_closes_the_survivor() {
         "#1353 A5: the close reason states the switch"
     );
     survivor.read_eof().await;
+}
+
+/// A channel that starts fine but never answers its stop — the hung shape
+/// the halt walk's close bound exists for.
+struct HangingStop;
+impl crate::channel::protocol::ChannelHandle for HangingStop {
+    fn stop(
+        &self,
+        _: &str,
+    ) -> crate::channel::protocol::BoxFuture<Result<(), crate::channel::protocol::ChannelError>>
+    {
+        Box::pin(std::future::pending())
+    }
+}
+struct HangingChannel {
+    key: crate::channel::protocol::ChannelKey,
+}
+impl crate::channel::protocol::ChannelAdapter for HangingChannel {
+    fn channel_key(&self) -> &crate::channel::protocol::ChannelKey {
+        &self.key
+    }
+    fn start(
+        &self,
+        _: crate::channel::protocol::ChannelStartDeps,
+    ) -> crate::channel::protocol::BoxFuture<
+        Result<
+            Arc<dyn crate::channel::protocol::ChannelHandle>,
+            crate::channel::protocol::ChannelError,
+        >,
+    > {
+        Box::pin(async {
+            Ok(Arc::new(HangingStop) as Arc<dyn crate::channel::protocol::ChannelHandle>)
+        })
+    }
+}
+
+/// #2363: the death march's close-timeout branch — a channel stop that never
+/// returns must surface as an explicit bound failure instead of keeping a
+/// halted process alive. The close join is bounded at the entries backstop
+/// (the drain budget plus its slack), so the test runs on the paused clock:
+/// the only timer on the test runtime is the close bound itself (the host
+/// drain underneath runs on its own real-clock thread), making the bound
+/// deterministic — the real-time spelling would spend the whole slack.
+#[tokio::test(start_paused = true)]
+async fn a_hung_channel_stop_exceeds_the_halt_close_bound() {
+    let (_, faces, _home) = wiring_harness_over(
+        Duration::from_millis(250),
+        Some(Arc::new(HangingChannel {
+            key: crate::channel::protocol::ChannelKey::new("hanging"),
+        })),
+    )
+    .await;
+    let close_bound = Duration::from_millis(250 + crate::switch::BACKSTOP_SLACK_MS);
+    let started = tokio::time::Instant::now();
+    let teardown = faces.finish_after_halt().await;
+    let elapsed = started.elapsed();
+    // The negative-control anchor (`switch-halt-close-swallowed` deletes
+    // this branch's failure report): the receipt-emitting assertion leads,
+    // so a swallowed hung close cannot pass as a completed walk.
+    negative_assert!(
+        matches!(&teardown, Err(error) if error.to_string()
+            .contains("channel close: exceeded the halt close bound")),
+        "#2363 the hung channel stop is reported as exceeding the halt close bound"
+    );
+    assert!(
+        elapsed >= close_bound,
+        "#2363 the walk waits out the full close bound {close_bound:?}, got {elapsed:?}"
+    );
+    assert!(
+        elapsed < close_bound + Duration::from_secs(2),
+        "#2363 the walk still terminates within the bound's delivery slack, got {elapsed:?}"
+    );
 }

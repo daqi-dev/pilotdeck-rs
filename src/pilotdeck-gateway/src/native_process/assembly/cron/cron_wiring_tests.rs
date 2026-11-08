@@ -328,6 +328,31 @@ async fn a_stopped_manager_rejects_the_six_management_methods() {
     // run inside a block that ends the guard's scope before the await.
     {
         let frames = text.0.lock().expect("#1353 frames lock");
+        // #2363: the aggregate gate control — the receipt-emitting anchor of
+        // the `switch-cron-management-open` negative control (it bypasses the
+        // `cron_management_closed` check at the routing seam), so the first
+        // failing assertion names the gate itself. A method counts as ungated
+        // when its after frame is missing, answers ok, or carries any code
+        // other than the switch rejection.
+        let ungated = crate::runtime::cron::CRON_METHODS
+            .iter()
+            .filter(|method| {
+                match frames
+                    .iter()
+                    .find(|frame| frame["id"] == format!("after-{method}"))
+                {
+                    Some(after) => {
+                        after["ok"] != false || after["error"]["code"] != "SWITCH_IN_PROGRESS"
+                    }
+                    None => true,
+                }
+            })
+            .count();
+        negative_assert_eq!(
+            ungated,
+            0,
+            "#2363 every management method answers the closed-gate rejection"
+        );
         for method in crate::runtime::cron::CRON_METHODS {
             let after = frames
                 .iter()

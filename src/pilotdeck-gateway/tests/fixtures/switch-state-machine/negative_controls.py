@@ -5,11 +5,13 @@ compilation and nonce receipts.
 No source replacement: use the shared tree lock + working-tree SHA contract.
 Caller supplies CARGO_TARGET_DIR; all selected rows run before the summary exit.
 
-The four rows cover the machine's own contract on the matrix §四 failure
+The seven rows cover the machine's own contract on the matrix §四 failure
 semantics — the A2 halt branch, the A8 gate release point, the DC-1/A3 cap
-clause of the shared timeout predicate — and the production wiring's A10 flush
-precondition. Each row's anchor is the receipt-emitting assertion inside the
-named test, so only that assertion's panic can kill its mutant.
+clause of the shared timeout predicate — the production wiring's A10 flush
+precondition, and the three #2363 follow-ups: the halt walk's close-timeout
+branch, the backstop spelling's own cap clause, and the A6 management gate at
+the cron routing seam. Each row's anchor is the receipt-emitting assertion
+inside the named test, so only that assertion's panic can kill its mutant.
 """
 import argparse
 import json
@@ -29,8 +31,11 @@ MACHINE = ROOT / 'src/pilotdeck-gateway/src/switch.rs'
 MACHINE_TESTS = ROOT / 'src/pilotdeck-gateway/src/switch_tests.rs'
 WIRING = ROOT / 'src/pilotdeck-gateway/src/native_process/switch_wiring.rs'
 WIRING_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/switch_wiring_tests.rs'
+CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
+CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/cron/cron_wiring_tests.rs'
 MACHINE_PREFIX = 'switch_tests::'
 WIRING_PREFIX = 'native_process::switch_wiring_tests::'
+CRON_PREFIX = 'native_process::assembly::cron::cron_wiring_tests::'
 
 switches = [
     # A2: the halt branch in `SwitchMachine::bounded` deleted — the face's
@@ -54,6 +59,23 @@ switches = [
     ('switch-flush-before-drain', WIRING,
      WIRING_PREFIX + 'the_flush_face_rejects_until_the_entries_have_drained',
      '#1353 A10: flush rejects before the entry drain completed'),
+    # #2363 item 1: the halt walk's close-timeout branch — the failure report
+    # for a hung channel stop deleted, so the bound is exceeded silently.
+    ('switch-halt-close-swallowed', WIRING,
+     WIRING_PREFIX + 'a_hung_channel_stop_exceeds_the_halt_close_bound',
+     '#2363 the hung channel stop is reported as exceeding the halt close bound'),
+    # #2363 item 2: the backstop spelling's own cap clause deleted — the
+    # shared spelling's mutant never covered this copy, so an over-cap value
+    # passes as a bounded backstop.
+    ('switch-backstop-unbounded-timeout', MACHINE,
+     MACHINE_PREFIX + 'backstop_timeout_predicate_rejects_unbounded_values',
+     '#2363 the backstop spelling rejects the uncapped value'),
+    # #2363 item 7: the A6 gate at the cron routing seam — the
+    # `cron_management_closed` check bypassed, so the stopped manager keeps
+    # serving the six management methods (the TS baseline's D5 shape).
+    ('switch-cron-management-open', CRON,
+     CRON_PREFIX + 'a_stopped_manager_rejects_the_six_management_methods',
+     '#2363 every management method answers the closed-gate rejection'),
 ]
 
 
@@ -67,7 +89,8 @@ def main():
     preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
     # One list feeds both the binding and the file reads: a row cannot bind
     # one module and audit another (the #1890 rule).
-    modules = ((MACHINE_PREFIX, MACHINE_TESTS), (WIRING_PREFIX, WIRING_TESTS))
+    modules = ((MACHINE_PREFIX, MACHINE_TESTS), (WIRING_PREFIX, WIRING_TESTS),
+               (CRON_PREFIX, CRON_TESTS))
     sources = {path: path.read_text() for _, path in modules}
     for _, _, test, assertion in switches:
         file, short = bind_module_file(test, modules)
@@ -89,7 +112,7 @@ def main():
     for key in ('PDRS_MUTANT', ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'CARGO_TERM_QUIET'):
         env.pop(key, None)
     guarded = [
-        MACHINE, MACHINE_TESTS, WIRING, WIRING_TESTS,
+        MACHINE, MACHINE_TESTS, WIRING, WIRING_TESTS, CRON, CRON_TESTS,
         ROOT / 'src/pilotdeck-gateway/src/lib.rs',
         ROOT / 'src/pilotdeck-gateway/src/native_process.rs',
         ROOT / 'src/pilotdeck-gateway/src/mutants.rs',

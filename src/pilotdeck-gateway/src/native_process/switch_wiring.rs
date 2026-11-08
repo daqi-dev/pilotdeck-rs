@@ -139,7 +139,14 @@ impl ProductionFaces {
         match close_result {
             Ok(Ok(())) => {}
             Ok(Err(error)) => failures.push(format!("channel close: {}", error.message())),
-            Err(_) => failures.push("channel close: exceeded the halt close bound".to_owned()),
+            Err(_) => {
+                // `switch-halt-close-swallowed` (negative control, #2363):
+                // this branch's failure report deleted, so the hung channel
+                // stop is no longer surfaced by the halt walk.
+                if !crate::mutants::on("switch-halt-close-swallowed") {
+                    failures.push("channel close: exceeded the halt close bound".to_owned());
+                }
+            }
         }
         if let Err(error) = finish {
             failures.push(error.to_string());
