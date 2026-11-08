@@ -5,13 +5,15 @@ compilation and nonce receipts.
 No source replacement: use the shared tree lock + working-tree SHA contract.
 Caller supplies CARGO_TARGET_DIR; all selected rows run before the summary exit.
 
-The seven rows cover the machine's own contract on the matrix §四 failure
+The ten rows cover the machine's own contract on the matrix §四 failure
 semantics — the A2 halt branch, the A8 gate release point, the DC-1/A3 cap
 clause of the shared timeout predicate — the production wiring's A10 flush
-precondition, and the three #2363 follow-ups: the halt walk's close-timeout
-branch, the backstop spelling's own cap clause, and the A6 management gate at
-the cron routing seam. Each row's anchor is the receipt-emitting assertion
-inside the named test, so only that assertion's panic can kill its mutant.
+precondition, and the six #2363 follow-ups: the halt walk's close-timeout
+branch, the backstop spelling's own cap clause, the A6 management gate at
+the cron routing seam, the halt walk's owner-finish timeout branch, and the
+S4 half's once-only verdict (the error-path early escape and the cancelled
+run's re-run). Each row's anchor is the receipt-emitting assertion inside
+the named test, so only that assertion's panic can kill its mutant.
 """
 import argparse
 import json
@@ -31,6 +33,7 @@ MACHINE = ROOT / 'src/pilotdeck-gateway/src/switch.rs'
 MACHINE_TESTS = ROOT / 'src/pilotdeck-gateway/src/switch_tests.rs'
 WIRING = ROOT / 'src/pilotdeck-gateway/src/native_process/switch_wiring.rs'
 WIRING_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/switch_wiring_tests.rs'
+NATIVE_WS = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
 CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
 CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/cron/cron_wiring_tests.rs'
 MACHINE_PREFIX = 'switch_tests::'
@@ -76,6 +79,24 @@ switches = [
     ('switch-cron-management-open', CRON,
      CRON_PREFIX + 'a_stopped_manager_rejects_the_six_management_methods',
      '#2363 every management method answers the closed-gate rejection'),
+    # #2363 item 4: the halt walk's owner-finish timeout branch — the failure
+    # report for a hung S4 half deleted, so the bound is exceeded silently
+    # and the process exit is kept alive by the hang.
+    ('switch-halt-owner-swallowed', WIRING,
+     WIRING_PREFIX + 'a_hung_host_teardown_exceeds_the_halt_owner_bound',
+     '#2363 the hung owner finish is reported as exceeding the halt owner bound'),
+    # #2363 item 5, error path: the pre-fix early escape restored — the host
+    # shutdown error returns before the verdict is recorded, so the revisit
+    # sees the interrupted marker instead of the recorded failure.
+    ('native-ws-finish-error-escape', NATIVE_WS,
+     WIRING_PREFIX + 'an_erroring_owner_finish_is_recorded_for_the_revisit',
+     '#2363 the revisit observes the recorded host shutdown failure'),
+    # #2363 item 5, drop path: the in-progress marker deleted, so a revisit
+    # after a cancelled first run re-runs the whole S4 half — another round
+    # of close frames, aborts and host shutdowns.
+    ('native-ws-finish-rerun', NATIVE_WS,
+     WIRING_PREFIX + 'an_interrupted_owner_finish_is_not_rerun_by_the_revisit',
+     '#2363 the interrupted owner finish is reported, not re-run'),
 ]
 
 
@@ -112,7 +133,7 @@ def main():
     for key in ('PDRS_MUTANT', ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'CARGO_TERM_QUIET'):
         env.pop(key, None)
     guarded = [
-        MACHINE, MACHINE_TESTS, WIRING, WIRING_TESTS, CRON, CRON_TESTS,
+        MACHINE, MACHINE_TESTS, WIRING, WIRING_TESTS, NATIVE_WS, CRON, CRON_TESTS,
         ROOT / 'src/pilotdeck-gateway/src/lib.rs',
         ROOT / 'src/pilotdeck-gateway/src/native_process.rs',
         ROOT / 'src/pilotdeck-gateway/src/mutants.rs',

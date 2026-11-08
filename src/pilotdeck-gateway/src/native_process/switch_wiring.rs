@@ -128,13 +128,38 @@ impl ProductionFaces {
     /// keep a halted process alive. Entries-scale, like the machine's own
     /// S2 backstop — the drain budget plus its slack — so a close that
     /// honors the budget is still joined to completion.
+    ///
+    /// #2363: the S4 half (`PhasedRun::finish`) spends the same owner-scale
+    /// deadline. A hung finish — a host teardown that never answers, an
+    /// un-abortable connection parked in the abort join — must not keep a
+    /// halted process alive either: the timeout is reported as the walk's
+    /// own failure and the walk returns, leaving the exit to the embedding.
     pub(crate) async fn finish_after_halt(&self) -> Result<(), crate::ProxyError> {
         let close = self.admission.seal();
         let drained = self.phased.drained().await;
         let close_bound =
             self.phased.drain_budget() + Duration::from_millis(crate::switch::BACKSTOP_SLACK_MS);
+        // #2363: one owner-scale deadline for the whole walk — the close join
+        // and the S4 half spend the same bound, and the S4 half does not
+        // re-arm a fresh one. A halted process must not be kept alive longer
+        // than a single owner scale, so a hung close followed by a hung
+        // finish still exits within the one bound (and an S4 that honors its
+        // own internal deadlines after a close that already spent the bound
+        // is cut short by the walk's deadline, not waited out on top of it).
+        // A deadline that does not fit the clock is awaited without one —
+        // the #1949 waiver spelling the host drain itself uses
+        // (`gateway.rs`); the 1s here is the same tick-conversion headroom.
+        let deadline = tokio::time::Instant::now()
+            .checked_add(close_bound)
+            .filter(|deadline| deadline.checked_add(Duration::from_secs(1)).is_some());
         let close_result = tokio::time::timeout(close_bound, close).await;
-        let finish = self.phased.finish().await;
+        let finish_result = match deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline, self.phased.finish()).await,
+            // The waiver band: a drain budget too large for the clock keeps
+            // the pre-#2363 unbounded S4 await rather than panicking at
+            // timer registration.
+            None => Ok(self.phased.finish().await),
+        };
         let mut failures = Vec::new();
         match close_result {
             Ok(Ok(())) => {}
@@ -148,8 +173,17 @@ impl ProductionFaces {
                 }
             }
         }
-        if let Err(error) = finish {
-            failures.push(error.to_string());
+        match finish_result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => failures.push(error.to_string()),
+            Err(_) => {
+                // `switch-halt-owner-swallowed` (negative control, #2363):
+                // this branch's failure report deleted, so the hung owner
+                // finish is no longer surfaced by the halt walk.
+                if !crate::mutants::on("switch-halt-owner-swallowed") {
+                    failures.push("owner finish: exceeded the halt owner bound".to_owned());
+                }
+            }
         }
         // `drained() == false` already surfaces through `finish()`'s own
         // reporting; nothing else reads it here.
