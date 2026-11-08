@@ -6,11 +6,13 @@
   budget   切片夹具的体积预算（单文件 ≤ 1 MiB、总量 ≤ 5 MiB，铁律 8 的入库上限）
   emit     `emit` 从入库夹具复算金样，必须与已提交的 `ts-oracle.json` **逐字节**相同
   check    `check` 5 轮全 PASS，且 `p7Evaluated` 为真（跨轮稳定性真的核过）
-  negctl   负控 N1–N17 全 KILLED（任一 SURVIVED / INVALID 即红）
+  negctl   负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD（任一非 KILLED / 非 HELD 即红）
   lock     输出目录互斥：第二个进程必须**等**第一个（不是静默并行）
   wiring   `.github/workflows/ci.yml` 里这四件事都接着，且 `check` 聚合 job 依赖它；
-           pr-gate.yml（合并闸门第 2、3 步的宿主）同一巡走：根键白名单 + 每个 run
-           step 钉 `shell: bash` + 每个 uses step 的 `with` 逐键钉死
+           pr-gate.yml（合并闸门第 2、3 步的宿主）同一巡走：根键白名单 + job `if`
+           逐字 + step 顺序/键集/env/run 标量逐字 + 每个 run step 钉 `shell: bash` +
+           每个 uses step 的 `with` 逐键钉死；retirement job 的外层 timeout-minutes
+           必须大于本装置内部超时的最坏和
 
 用法：
   python3 -I scripts/retirement-outcome-parity/self_check.py            # 全部
@@ -90,6 +92,13 @@ def _load_checker():
 
 CHECK = _load_checker()
 EXPECTED_CONTROLS = CHECK.EXPECTED_CONTROLS
+EXPECTED_POSITIVES = CHECK.EXPECTED_POSITIVES
+# 各检查子进程的内部超时（评审 r9 P2：外层 timeout-minutes 的预算算式要用它们，
+# 之前是散在调用点的字面量——抬哪个都改不动派生断言）。最坏和见
+# INTERNAL_WORST_CASE_SECONDS。
+EMIT_TIMEOUT_SECONDS = 300
+CHECK_TIMEOUT_SECONDS = 300
+NEGCTL_TIMEOUT_SECONDS = 1800
 
 # 铁律 8 的入库上限：单文件超 10 MB 要先想清楚。这里收得更紧，给未来重采留余量。
 FIXTURE_FILE_LIMIT_BYTES = 1 << 20          # 1 MiB
@@ -102,6 +111,8 @@ LOCK_PROBE_WAIT_TIMEOUT_SECONDS = 60.0
 # 预置敌意锁文件（FIFO / 符号链接 / 目录）时，持锁方必须**很快**失败；这个上限只用来
 # 把「挂起」判成红，正常路径远低于它。
 LOCK_HOSTILE_TIMEOUT_SECONDS = 20.0
+# 敌意样本超时路径上的清理 wait（kill 后收尸）：计入外层预算的最坏和。
+HOSTILE_CLEANUP_WAIT_SECONDS = 30.0
 # 与 check_outcome_parity.LOCK_BASENAME 同步的**字面**副本：故意不 import，
 # 这样改了常量却忘了改控件会当场红（下面还有一条源码断言兜住重命名）。
 LOCK_BASENAME_LITERAL = '.retirement-outcome-parity.lock'
@@ -174,8 +185,9 @@ def check_budget(fixtures=None):
     return f'{len(per_file)} files, total {total} B, max {max(per_file.values())} B'
 
 
-def fixture_round_dirs():
-    rounds = sorted(path for path in FIXTURES.iterdir()
+def fixture_round_dirs(fixtures=None):
+    root = Path(fixtures or FIXTURES)
+    rounds = sorted(path for path in root.iterdir()
                     if (path / 'driver' / 'methods.json').is_file())
     if len(rounds) != EXPECTED_ROUNDS:
         raise CheckFailure(f'expected {EXPECTED_ROUNDS} fixture rounds, '
@@ -200,7 +212,7 @@ def check_emit():
         for round_dir in rounds:
             command += ['--round', str(round_dir)]
         result = subprocess.run(command, capture_output=True, text=True,
-                                timeout=300, check=False)
+                                timeout=EMIT_TIMEOUT_SECONDS, check=False)
         if result.returncode != 0:
             raise CheckFailure(f'emit rc={result.returncode}: '
                                f'{result.stderr.strip()[:800]}')
@@ -212,9 +224,40 @@ def check_emit():
     return f'byte-identical to {ORACLE.name} ({len(committed)} B)'
 
 
-def check_check():
+def _provenance_methods_digests(fixtures=None):
+    """解析 `fixtures/PROVENANCE.md` 登记的**原始采集** methods sha256 表。
+
+    评审 r9 P2（boundary#4）：r8 的「5 轮 sha256 互异」只挡**字节级同片**——保留
+    `(outcome, errorCode)` 不变、每轮塞一个判据不消费的字节即可骗过机检（解析值
+    集合断言在 P7 稳定判据下恒真空洞：5 轮解析值必须逐轮相同，否则 check 本身就
+    FAIL——见 RESULT 的实测）。真正钉住「5 份独立采集」的外部锚是 PROVENANCE 表
+    登记的**原始采集哈希**（对照 #1477 仓外原始数据可审计）；这里把入库件的复算
+    哈希与该表交叉核对：改任何一份入库 methods.json（哪怕只加一个不消费字节）
+    都当场红。表格式漂移（行缺失 / 哈希列不再是 64 hex）fail-closed 判红，不猜。
+    """
+    provenance = Path(fixtures or FIXTURES) / 'PROVENANCE.md'
+    try:
+        text = provenance.read_text(encoding='utf-8')
+    except OSError as error:
+        raise CheckFailure(f'cannot read {provenance}: {error}') from error
+    digests = {}
+    for match in re.finditer(
+            r'^\| (round-\d{2}) \| `([0-9a-f]{64})` \| 同左 \|$', text, re.M):
+        if match.group(1) in digests:
+            raise CheckFailure(
+                f'{provenance}: round {match.group(1)} is registered twice in the '
+                'original-collection digest table')
+        digests[match.group(1)] = match.group(2)
+    if not digests:
+        raise CheckFailure(
+            f'{provenance}: no original-collection digest rows parsed; the '
+            'provenance cross-check refuses to pass on an unparsable table')
+    return digests
+
+
+def check_check(fixtures=None):
     """`check` 必须对入库的 5 轮全 PASS，并且 P7 真的跨轮核过。"""
-    rounds = fixture_round_dirs()
+    rounds = fixture_round_dirs(fixtures)
     # P7 非退化的机检（评审 r8 P2）：5 轮 methods.json / frames.jsonl 的 sha256 必须
     # 各自互异。`check` 报告不携带文件哈希（P7 判据只读解析后的 (outcome, errorCode)，
     # 文件哈希不进判据），所以这里直接对入库夹具文件复算——切回「去掉容差字段」的
@@ -229,6 +272,21 @@ def check_check():
             f'{len(methods_digests)} distinct methods.json and {len(frames_digests)} '
             'distinct frames.jsonl sha256; re-slicing that drops the tolerance fields '
             'makes the rounds byte-identical and collapses the provenance audit chain')
+    # r9 P2（boundary#4）：互异只挡「字节级同片」，挡不住「同源重切片 + 每轮塞一个
+    # 不消费字节」。入库 methods.json 的复算哈希还必须与 PROVENANCE 表登记的
+    # **原始采集**哈希逐轮全等（原始数据在仓外可审计，攻击者改了入库件却改不了
+    # #1477 的采集记录；同步改表即改审计链，属可见伪造而非静默漂移）。
+    recomputed = {round_dir.name: _sha256_file(round_dir / 'driver' / 'methods.json')
+                  for round_dir in rounds}
+    provenance = _provenance_methods_digests(fixtures)
+    if provenance != recomputed:
+        raise CheckFailure(
+            'fixture methods.json digests no longer match the registered '
+            'original-collection digests in fixtures/PROVENANCE.md: '
+            f'provenance {sorted(provenance)}, recomputed {sorted(recomputed)}; '
+            'a byte added to (or re-sliced from) any round breaks the independent-'
+            'collection audit chain even when every (outcome, errorCode) stays '
+            'golden-identical')
     command = [sys.executable, '-I', str(CHECKER), 'check', '--oracle', str(ORACLE)]
     for round_dir in rounds:
         command += ['--round', str(round_dir)]
@@ -252,23 +310,34 @@ def check_check():
 
 
 def check_negctl():
-    """负控必须全部 KILLED。"""
+    """负控必须全部 KILLED、正控必须全部 HELD（#2143 起 PC1–PC2 与 N1–N18 同跑）。"""
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-negctl-') as tmp:
         result = subprocess.run(
             [sys.executable, '-I', str(CONTROLS), '--output', tmp],
-            capture_output=True, text=True, timeout=1800, check=False)
+            capture_output=True, text=True, timeout=NEGCTL_TIMEOUT_SECONDS,
+            check=False)
         summary_path = Path(tmp) / 'summary.json'
         if not summary_path.is_file():
             raise CheckFailure(f'negative controls produced no summary '
                                f'(rc={result.returncode}): {result.stderr.strip()[:800]}')
         summary = json.loads(summary_path.read_text(encoding='utf-8'))
     counts = summary.get('counts') or {}
+    positive_counts = summary.get('positiveCounts') or {}
     if result.returncode != 0 or summary.get('status') != 'PASS':
         raise CheckFailure(f'negative controls rc={result.returncode} '
-                           f'status={summary.get("status")!r} counts={counts}')
+                           f'status={summary.get("status")!r} counts={counts} '
+                           f'positiveCounts={positive_counts}')
     if counts.get('KILLED') != EXPECTED_CONTROLS:
         raise CheckFailure(f'expected {EXPECTED_CONTROLS} KILLED, got {counts}')
-    return f'{counts["KILLED"]}/{EXPECTED_CONTROLS} KILLED, 0 SURVIVED/INVALID'
+    # 正控条数同样钉死（r9 合并补全）：build_positives 被删空时 positiveCounts 全 0、
+    # status 仍 PASS——「应当 PASS 的性质」静默失保。
+    if (positive_counts.get('HELD') != EXPECTED_POSITIVES
+            or positive_counts.get('BROKEN') or positive_counts.get('INVALID')):
+        raise CheckFailure(f'expected {EXPECTED_POSITIVES} positives HELD '
+                           f'(0 BROKEN / INVALID), got {positive_counts}')
+    return (f'{counts["KILLED"]}/{EXPECTED_CONTROLS} KILLED, '
+            f'{positive_counts["HELD"]}/{EXPECTED_POSITIVES} HELD, '
+            '0 SURVIVED/INVALID/BROKEN')
 
 
 def _spawn_lock_holder(root, hold_seconds, stdin, checker=None):
@@ -348,7 +417,7 @@ def _assert_lock_path_rejected(root, label, checker=None):
         out, err = process.communicate(timeout=LOCK_HOSTILE_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         process.kill()
-        process.wait(timeout=30)
+        process.wait(timeout=HOSTILE_CLEANUP_WAIT_SECONDS)
         raise CheckFailure(
             f'{label}: `output_lock` hung on a planted non-regular lock file '
             f'(no exit within {LOCK_HOSTILE_TIMEOUT_SECONDS:.0f}s)')
@@ -364,7 +433,66 @@ def _assert_lock_path_rejected(root, label, checker=None):
     return process.returncode
 
 
-def check_lock(checker=None):
+# 负控执行器的**守卫 fd**（`_output_lock_guard_fd`）在敌意锁文件上的上限：正常路径
+# 立即返回（打开失败 / S_ISREG 拒 → 当被占），这个上限只把「挂起」判成红。
+GUARD_FD_TIMEOUT_SECONDS = 20.0
+# 子进程里直接调 negative_controls.invalidate_stale_summary(respect_output_lock=True)
+# 的最小驱动（与 LOCK_HOLDER / WRITE_PROBE 同族口径：先设 pycache_prefix 再加载模块
+# ——预置的 unchecked-hash pyc 不能替我们说 KEPT）。
+GUARD_PROBE = r'''
+import importlib.util, sys, tempfile
+try:
+    sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+except OSError:
+    print('guard probe: cannot reserve a fresh pycache prefix', file=sys.stderr)
+    raise SystemExit(2)
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location('negative_controls', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+kept = module.invalidate_stale_summary(sys.argv[2], respect_output_lock=True)
+print(f'GUARD {"KEPT" if kept else "DROPPED"}', flush=True)
+'''
+
+
+def _assert_guard_fd_fail_closed(controls, root, label):
+    """预置敌意锁文件时，负控的守卫 fd 必须把目录当**被占**处理：不挂死、不删已
+    发布的 summary.json（评审 r9 P2，README「同一口径」承诺的机器证据）。
+
+    - 守卫丢了 `O_NONBLOCK`：预置无读者端的 FIFO 上 `open(O_RDONLY)` 永久阻塞——
+      整个执行器连同 CI job 一起挂死（超时判红）；
+    - 守卫丢了 `S_ISREG` 判定：目录 / FIFO 被当成「锁」探到空闲 → 已发布的
+      summary.json 被删（哨兵内容变没）；
+    - 守卫丢了 `O_NOFOLLOW`：符号链接被跟随到普通文件 → 同上删 summary。
+    """
+    process = subprocess.Popen(
+        [sys.executable, '-I', '-c', GUARD_PROBE, str(controls), str(root)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        out, err = process.communicate(timeout=GUARD_FD_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=HOSTILE_CLEANUP_WAIT_SECONDS)
+        raise CheckFailure(
+            f'{label}: the summary guard fd hung on a planted non-regular lock '
+            f'file (no exit within {GUARD_FD_TIMEOUT_SECONDS:.0f}s); the guard '
+            'must open with O_NONBLOCK and treat the directory as occupied')
+    if process.returncode != 0 or b'GUARD KEPT' not in out:
+        raise CheckFailure(
+            f'{label}: the summary guard fd failed on a planted hostile lock '
+            f'file (rc={process.returncode}, out={out[-200:]!r}, '
+            f'err={err[-200:]!r})')
+    sentinel = root / 'summary.json'
+    if not sentinel.is_file() \
+            or sentinel.read_text(encoding='utf-8') != '{"sentinel": "must-survive"}':
+        raise CheckFailure(
+            f'{label}: the summary guard deleted a published summary.json while '
+            'the lock path was hostile; the guard must fail closed (treat the '
+            'directory as occupied) instead of trusting a non-regular lock file')
+    return process.returncode
+
+
+def check_lock(checker=None, controls=None):
     """两个进程抢同一输出目录：第二个必须等（不是静默并行写）。
 
     时序**事件驱动**，不靠固定秒数：第一个取锁后停在那里等释放信号，第二个启动后
@@ -378,7 +506,8 @@ def check_lock(checker=None):
     取锁信号与时戳合并为单次 print 消除切分窗口，两道修法互为冗余。
     之后再验一遍**敌意锁文件**路径：预置 FIFO / 目录 / 符号链接时必须快速失败。
     ``checker`` 只给变异自检（control_lock 的弱化 flock 样本）用：默认加载本装置的
-    check_outcome_parity.py。
+    check_outcome_parity.py；``controls`` 同理（r9：守卫 fd 样本的变异副本），默认
+    加载本装置的 negative_controls.py。
     """
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-lock-') as tmp:
         root = Path(tmp) / 'out'
@@ -395,8 +524,9 @@ def check_lock(checker=None):
             waited = time.monotonic() - started
             if b'waiting for output lock' not in seen:
                 raise CheckFailure(
-                    'second holder never reported waiting: the output directory is '
-                    f'not actually mutually exclusive (got {seen[-400:]!r})')
+                    'second holder never reported waiting for the output lock '
+                    f'(got {seen[-400:]!r}); the waiting report is the observable '
+                    'half of mutual exclusion')
             # 看到「等锁」才放开第一个：第二个随后取到锁、读 stdin 见 EOF 退出。
             first.stdin.write(b'\n')
             first.stdin.flush()
@@ -413,7 +543,7 @@ def check_lock(checker=None):
             for process in (first, second):
                 if process is not None and process.poll() is None:
                     process.kill()
-                    process.wait(timeout=30)
+                    process.wait(timeout=HOSTILE_CLEANUP_WAIT_SECONDS)
         if first_rc != 0:
             raise CheckFailure(f'first lock holder rc={first_rc}: '
                                f'{first.stderr.read()[:400]!r}')
@@ -452,9 +582,23 @@ def check_lock(checker=None):
             hostile = Path(tempfile.mkdtemp(prefix='pdrs-retirement-lock-bad-', dir=tmp))
             plant(hostile / LOCK_BASENAME_LITERAL)
             hostile_rcs.append(_assert_lock_path_rejected(hostile, label, checker))
+        # 负控执行器自己的**守卫 fd**（`_output_lock_guard_fd`，模块体早退路径用）也要
+        # 在同一批敌意锁文件上守住（评审 r9 P2 = r8 sibling#5/boundary#5）：README 承诺
+        # 它与真锁「同一口径」打开（O_NONBLOCK + S_ISREG + O_NOFOLLOW），此前没有
+        # 机器证据——退回 `O_RDWR`/无 `O_NONBLOCK` 无任何断言抓。探针预置已发布的
+        # summary.json：守卫必须把目录当**被占**处理（保住已发布结果），且不挂死。
+        guard_rcs = []
+        for label, plant in LOCK_HOSTILE_PLANTS:
+            hostile = Path(tempfile.mkdtemp(prefix='pdrs-retirement-lock-guard-', dir=tmp))
+            plant(hostile / LOCK_BASENAME_LITERAL)
+            (hostile / 'summary.json').write_text('{"sentinel": "must-survive"}',
+                                                  encoding='utf-8')
+            guard_rcs.append(_assert_guard_fd_fail_closed(
+                Path(controls or CONTROLS), hostile, label))
     return (f'second waited {waited:.2f}s for the output lock '
             f'(ACQUIRED {acquired_at:.6f} >= first RELEASED {released_at:.6f}); '
-            f'non-regular lock paths rejected with rc={hostile_rcs}')
+            f'non-regular lock paths rejected with rc={hostile_rcs}; '
+            f'summary guard fd fail-closed with rc={guard_rcs}')
 
 
 # —— r7（评审 MM sibling#1，b 类）：`write_at` 的敌意写目标。——
@@ -513,7 +657,7 @@ def _assert_write_target_rejected(plant, label, keep_reader_open=None):
             out, err = process.communicate(timeout=WRITE_HOSTILE_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=30)
+            process.wait(timeout=HOSTILE_CLEANUP_WAIT_SECONDS)
             raise CheckFailure(
                 f'{label}: `write_at` hung on a planted non-regular write target '
                 f'(no exit within {WRITE_HOSTILE_TIMEOUT_SECONDS:.0f}s)')
@@ -547,6 +691,33 @@ def check_writes():
         hostile_rcs.append(
             _assert_write_target_rejected(plant, label, keep_reader_open=reader))
     return f'non-regular write targets rejected with rc={hostile_rcs}'
+
+
+# —— 外层预算的派生算式（评审 r9 P2 concurrency#2 = boundary#3 = sibling#4）——
+# r8 注释自设的判据是「外层 timeout-minutes > 装置内部超时最坏和」，但当时按
+# 45→55 min 抬的数没有把守卫 fd 探针与变异自检的第二、三趟锁探针算进去（55 min
+# < 内部最坏和）。这里把算式落成常量：check_wiring 钉 ci.yml 的 timeout-minutes 值
+# 并断言不等式，抬高任何内部等待上限而忘了抬外层时当场红。
+# check_lock 单趟最坏等待：4×等锁读（LOCKED / 等锁提示 / RELEASED / ACQUIRED）+
+# 2×进程 wait（各 LOCK_PROBE_WAIT_TIMEOUT_SECONDS）+ 敌意锁 3×(20 + 清理 30 s)
+# + 守卫 fd 探针 3×(20 + 清理 30 s)。
+LOCK_WORST_CASE_SECONDS = (
+    6 * LOCK_PROBE_WAIT_TIMEOUT_SECONDS
+    + EXPECTED_LOCK_HOSTILE_PLANTS
+    * (LOCK_HOSTILE_TIMEOUT_SECONDS + HOSTILE_CLEANUP_WAIT_SECONDS)
+    + EXPECTED_LOCK_HOSTILE_PLANTS
+    * (GUARD_FD_TIMEOUT_SECONDS + HOSTILE_CLEANUP_WAIT_SECONDS))
+WRITES_WORST_CASE_SECONDS = EXPECTED_WRITE_HOSTILE_TARGETS * (
+    WRITE_HOSTILE_TIMEOUT_SECONDS + HOSTILE_CLEANUP_WAIT_SECONDS)
+# 全 job（七项自检与变异自检是同一个 job 的两个 step，共用同一个 timeout-minutes
+# 兜底）：check_lock 被跑三趟——七项自检 1 趟 + control_lock 两趟（detail 与弱化
+# flock 样本各一）。
+INTERNAL_WORST_CASE_SECONDS = (
+    EMIT_TIMEOUT_SECONDS + CHECK_TIMEOUT_SECONDS + NEGCTL_TIMEOUT_SECONDS
+    + 3 * LOCK_WORST_CASE_SECONDS + WRITES_WORST_CASE_SECONDS)
+# runner 侧非守卫开销（checkout / venv 装 PyYAML / 上传证据）的余量。
+JOB_OVERHEAD_MARGIN_SECONDS = 300
+RETIREMENT_JOB_TIMEOUT_MINUTES = 85
 
 
 # —— 行定位正则，**只**给 wiring_samples() 构造变异样本用：把真实 ci.yml 的文本切成
@@ -599,7 +770,7 @@ GATE_SCRIPTS = {
         '  --oracle scripts/retirement-outcome-parity/ts-oracle.json \\\n'
         '  --round "$F/round-01" --round "$F/round-02" --round "$F/round-03" \\\n'
         '  --round "$F/round-04" --round "$F/round-05"\n',
-    '负控 N1–N17 全 KILLED':
+    '负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD':
         'python3 -I scripts/retirement-outcome-parity/negative_controls.py \\\n'
         '  --output "$RUNNER_TEMP/retirement-outcome-parity-negctl"\n',
     '装置守卫自检（七项）':
@@ -615,7 +786,7 @@ RETIREMENT_STEP_ORDER = (
     ('setup', '安装钉死 PyYAML（#2017-A）'),
     ('gate', 'emit 复算与金样逐字节比对'),
     ('gate', 'check 5 轮'),
-    ('gate', '负控 N1–N17 全 KILLED'),
+    ('gate', '负控 N1–N18 全 KILLED、正控 PC1–PC2 全 HELD'),
     ('gate', '装置守卫自检（七项）'),
     ('gate', '接线守卫变异自检'),
     ('uses', '上传负控证据'),
@@ -648,6 +819,48 @@ WORKFLOW_USE_WITH_KEYS = {
 # pr-gate.yml 的 job 直属键白名单（评审 r8 P1-2）：`pr-gate` job 现只有 if / runs-on /
 # steps；job 级 `continue-on-error` 会让 check-pr-gate 步全红而 job 仍 success。
 PR_GATE_JOB_KEYS = frozenset({'if', 'runs-on', 'steps'})
+# —— r9 P0（boundary#1 = sibling#1 = concurrency#1，三形态全绿）——
+# r8 的 pr-gate 巡走只钉外壳（根键 / job 键 / shell / with），不钉 job `if` 值、
+# step 直属键集合与 `run` 标量：step 加 `continue-on-error: true`、job `if: false`
+# （被跳过的必需检查按 README invariant 报 success）、`run: exit 0` 三个静默废闸门
+# 的形态都全绿。对照 ci.yml 闸门 step 同口径（GATE_SCRIPTS 逐字 + step 键白名单）：
+PR_GATE_JOB_CONDITION = 'github.event.pull_request.draft == false'
+# step 列表按**顺序**登记（对照 RETIREMENT_STEP_ORDER）：删一个 step、插一个
+# `run: exit 0` 的 step、或调换两步，都会让合并闸门跑的不是登记的样子。
+PR_GATE_STEP_ORDER = (
+    ('uses', 'actions/checkout@v4'),
+    ('run', '显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）'),
+    ('run', '角色审计结果块与 issue 关联'),
+)
+# 两个 run step 的直属键白名单：fetch 基线步带 `continue-on-error`（登记值恰为
+# `true`——取不到 base 只影响「沿用」，不挡 head 一致的 PR）与 env；check-pr-gate 步
+# 只有 name / env / shell / run——给它加 `continue-on-error: true` 即步全红而 job 仍
+# success（P0 形态①）。键集**恰等**（不是子集）：多一键少一键都是漂移。
+PR_GATE_STEP_KEYS = {
+    '显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）':
+        frozenset({'name', 'continue-on-error', 'env', 'shell', 'run'}),
+    '角色审计结果块与 issue 关联': frozenset({'name', 'env', 'shell', 'run'}),
+}
+# env 键集合同样逐字登记：PR_HEAD / PR_BASE 换名或被删，check-pr-gate.py 拿到的
+# 就是另一个世界（静默错判），而 run 标量与 job 键逐字不变。
+PR_GATE_STEP_ENV_KEYS = {
+    '显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）':
+        frozenset({'BASE_REF', 'PR_HEAD'}),
+    '角色审计结果块与 issue 关联': frozenset({'PR_BODY', 'PR_HEAD', 'PR_BASE'}),
+}
+# 两个 run step 的脚本逐字钉死（GATE_SCRIPTS 同口径，按解析后的完整标量比对）：
+# fetch 步是 literal 块；check 步是单行 plain 标量（解析值就是源码行）——`exit 0`
+# 换壳（P0 形态③）、`|| true` 后缀、折叠块改字一律逐字不等即红。
+PR_GATE_SCRIPTS = {
+    '显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）':
+        'git fetch --no-tags origin '
+        '"+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" "${PR_HEAD}"\n'
+        'git rev-parse --verify "origin/${BASE_REF}^{commit}"\n'
+        'git rev-parse --verify "${PR_HEAD}^{commit}"\n',
+    '角色审计结果块与 issue 关联': 'python3 -I scripts/check-pr-gate.py',
+}
+# checkout 步的 `with` 键集合恰为 {fetch-depth}（补丁指纹要算 git diff base...head）。
+PR_GATE_CHECKOUT_WITH_KEYS = frozenset({'fetch-depth'})
 # 每个 run step 都必须显式 `shell: bash`（评审 r7 P0）：step 级 `shell:` 优先于
 # workflow / job 级 `defaults.run.shell`（GitHub workflow syntax："You can override
 # the default shell settings … using the `shell` keyword"），因此这一行是
@@ -871,13 +1084,18 @@ def _sweep_workflow_steps(yaml, path, jobs):
 
 
 def _check_pr_gate_wiring(path):
-    """pr-gate.yml 同一口径巡走（评审 r8 P1-2）。
+    """pr-gate.yml 同一口径巡走（评审 r8 P1-2 + r9 P0 step 级钉死）。
 
     合并闸门第 2、3 步（git fetch 基线步、check-pr-gate.py 步）住在这份文件里，而
     此前 self_check 与兄弟守卫都只读 ci.yml：对它加根级 `defaults.run.shell:
     /bin/true {0}` 即让 check-pr-gate 步无条件 rc=0，**合并闸门假 PASS** 且无守卫
     变红。口径与 ci.yml 同一巡走：唯一文档、根键白名单、job 直属键白名单、每个
     run step 显式 `shell: bash`、每个 uses step 的 `with` 键集按 action 钉死。
+    r9 P0 起（对照 retirement job 的 job `if` 逐字 + 闸门 step 键白名单 + run 标量
+    逐字）再钉四层：job `if` 逐字、step 顺序与条数、每个 run step 的直属键集合
+    （含 `continue-on-error` 登记值）与 env 键集合、每个 run step 的 `run` 标量
+    逐字——`run: exit 0` 换壳 / step `continue-on-error: true` / job `if: false`
+    三个静默废闸门的形态必须全红。
     """
     yaml, root = _workflow_root(path)
     gate_pairs = _pairs(yaml, path, root, 'the pr-gate workflow')
@@ -895,7 +1113,94 @@ def _check_pr_gate_wiring(path):
     if set(jobs) != {'pr-gate'}:
         raise CheckFailure(f'{path}: the pr-gate workflow must carry exactly the '
                            f'`pr-gate` job, found {sorted(jobs)}')
-    _job_map(yaml, path, jobs, 'pr-gate', PR_GATE_JOB_KEYS)
+    gate_job = _job_map(yaml, path, jobs, 'pr-gate', PR_GATE_JOB_KEYS)
+
+    # job `if` 逐字（r9 P0 形态②）：被跳过的必需检查被 GitHub 报成 success，
+    # `if: false` 之外任何漂移（如 draft 反转）都让合并闸门换了一个世界。
+    gate_condition = _normalised_expression(_scalar_text(
+        yaml, path, gate_job.get('if'), 'the `pr-gate` job `if`'))
+    expected_gate_condition = _normalised_expression(PR_GATE_JOB_CONDITION)
+    if gate_condition != expected_gate_condition:
+        raise CheckFailure(
+            f'{path}: the `pr-gate` job condition is `{gate_condition}` but must be '
+            f'exactly `{expected_gate_condition}`; a skipped required job is '
+            'reported as success by GitHub, so nothing else would block the merge '
+            'on draft PRs / reopened PRs the gate must cover')
+
+    steps = _step_list(yaml, path, gate_job.get('steps'), 'pr-gate')
+    if len(steps) != len(PR_GATE_STEP_ORDER):
+        raise CheckFailure(
+            f'{path}: the `pr-gate` job must keep exactly {len(PR_GATE_STEP_ORDER)} '
+            f'steps (found {len(steps)}); adding, dropping or reordering steps '
+            'changes which script actually runs')
+    for step, (kind, wanted) in zip(steps, PR_GATE_STEP_ORDER):
+        if kind == 'uses':
+            unknown = set(step) - {'name', 'uses', 'with'}
+            if unknown or 'uses' not in step:
+                raise CheckFailure(
+                    f'{path}: the pr-gate checkout step must stay an action '
+                    f'(`uses:`), found {sorted(step)}; an inserted `run:` step is '
+                    'not the registered fetch')
+            uses = _scalar_text(yaml, path, step['uses'], 'the pr-gate checkout `uses`')
+            if uses != wanted:
+                raise CheckFailure(
+                    f'{path}: the pr-gate checkout step uses `{uses}` but must use '
+                    f'exactly `{wanted}`; the patch fingerprint needs this action')
+            with_keys = _step_with_keys(yaml, path, step, 'the pr-gate checkout step')
+            if with_keys != PR_GATE_CHECKOUT_WITH_KEYS:
+                raise CheckFailure(
+                    f'{path}: the pr-gate checkout step must carry exactly the '
+                    f'registered `with` keys {sorted(PR_GATE_CHECKOUT_WITH_KEYS)}, '
+                    f'found {sorted(with_keys)}; the merge fingerprint needs a full '
+                    'clone (fetch-depth: 0), and any other key changes which tree '
+                    'the gate reads')
+            continue
+        label = _scalar_text(yaml, path, step['name'], f'`{wanted}` `name`')
+        if label != wanted:
+            raise CheckFailure(
+                f'{path}: expected the `{wanted}` step at this position, '
+                f'found `{label}`')
+        allowed = PR_GATE_STEP_KEYS[wanted]
+        if set(step) != allowed:
+            raise CheckFailure(
+                f'{path}: pr-gate run step `{wanted}` may only carry '
+                f'{sorted(allowed)}, found {sorted(step)}; a step-level '
+                '`continue-on-error` swallows a red check-pr-gate while the job '
+                'stays success, and any stray key can replace what runs')
+        if 'continue-on-error' in step and _scalar_text(
+                yaml, path, step['continue-on-error'],
+                f'`{wanted}` `continue-on-error`') != 'true':
+            raise CheckFailure(
+                f'{path}: pr-gate run step `{wanted}` `continue-on-error` must '
+                'stay exactly `true`; it is a registered design decision (a missing '
+                'base only downgrades fingerprinting, it must not gate the job)')
+        env_keys = frozenset(
+            key for key, _ in _pairs(yaml, path, step['env'], f'`{wanted}` `env`'))
+        if env_keys != PR_GATE_STEP_ENV_KEYS[wanted]:
+            raise CheckFailure(
+                f'{path}: pr-gate run step `{wanted}` env must carry exactly the '
+                f'registered keys {sorted(PR_GATE_STEP_ENV_KEYS[wanted])}, found '
+                f'{sorted(env_keys)}; a dropped `PR_HEAD`/`PR_BASE`/`BASE_REF` '
+                'silently hands check-pr-gate.py a different world while every '
+                'pinned `run` scalar stays verbatim-identical')
+        if _scalar_text(yaml, path, step['shell'],
+                        f'`{wanted}` `shell`') != PINNED_STEP_SHELL:
+            raise CheckFailure(
+                f'{path}: pr-gate run step `{wanted}` must pin `shell: '
+                f'{PINNED_STEP_SHELL}`; any other value (e.g. `/bin/true {{0}}`) '
+                'replaces what actually executes')
+        script_node = step['run']
+        if '\n' in PR_GATE_SCRIPTS[wanted]:
+            # 多行脚本必须是 literal 块（`|`）：plain 续行折叠 / `>` 折叠都会改字。
+            script = _gate_run_text(yaml, path, script_node, wanted)
+        else:
+            script = _scalar_text(yaml, path, script_node, f'`{wanted}` `run`')
+        if script != PR_GATE_SCRIPTS[wanted]:
+            raise CheckFailure(
+                f'{path}: pr-gate run step `{wanted}` does not run the registered '
+                f'script ({_first_line_diff(script, PR_GATE_SCRIPTS[wanted])}); '
+                'the parsed scalar is pinned verbatim, so an `exit 0` swap, an '
+                '`|| true` suffix or a folded block all change the text')
     _sweep_workflow_steps(yaml, path, jobs)
 
 
@@ -925,7 +1230,13 @@ def check_wiring(workflow=None, pr_gate=None):
     - pr-gate.yml（合并闸门第 2、3 步的宿主，r8 P1）同一巡走：根键白名单 +
       每个 run step 钉 `shell: bash` + 每个 uses step 的 `with` 逐键钉死——
       check-pr-gate step 被 workflow 级 `defaults.run.shell` 静默 rc=0 时
-      **没有任何**守卫会看见（此前两个守卫都只读 ci.yml）；
+      **没有任何**守卫会看见（此前两个守卫都只读 ci.yml）；r9 P0 起再钉
+      job `if` 逐字、step 顺序 / 直属键集（含 `continue-on-error` 登记值）/
+      env 键集 / `run` 标量逐字（`exit 0` 换壳、step `continue-on-error`、
+      job `if: false` 三形态必须全红）；
+    - retirement job 的外层 `timeout-minutes` 值钉死且必须大于装置内部超时的
+      最坏和 + 开销余量（r9 P2 concurrency#2，派生算式
+      INTERNAL_WORST_CASE_SECONDS——外层不够时挂住的检查退化为平台硬杀）；
     - 聚合 `check` job 依赖 retirement job，`if` 归一化后恰为 `always()`（GitHub 把
       被跳过的 job 报成 success，而 `check` 自己是必需检查）；Require step 只有
       `name` / `if` / `run` / `shell` 四个键，`run` 恰为 `exit 1`，`if` 归一化后逐字
@@ -963,6 +1274,30 @@ def check_wiring(workflow=None, pr_gate=None):
             f'{path}: `{RETIREMENT_JOB}` job condition is `{job_condition}` but must be '
             f'exactly `{expected_job_condition}`; any other condition can skip the job '
             'on PRs the classifier does not mark docs-only')
+
+    # 外层预算（评审 r9 P2 concurrency#2）：值钉死 + 派生不等式。判据是 r8 注释
+    # 自设的「外层 > 内部最坏和」——内部超时打不满时失败由装置自己收口成红，
+    # 外层不够则失败退化为平台硬杀（job 记 cancelled，哪个检查红了都看不见）。
+    timeout_text = _scalar_text(
+        yaml, path, retirement.get('timeout-minutes'),
+        f'`{RETIREMENT_JOB}` job `timeout-minutes`')
+    if timeout_text != str(RETIREMENT_JOB_TIMEOUT_MINUTES):
+        raise CheckFailure(
+            f'{path}: `{RETIREMENT_JOB}` job timeout-minutes is `{timeout_text}` '
+            f'but must stay exactly `{RETIREMENT_JOB_TIMEOUT_MINUTES}`; the outer '
+            f'budget must exceed the internal worst-case sum '
+            f'{INTERNAL_WORST_CASE_SECONDS:.0f}s (see INTERNAL_WORST_CASE_SECONDS), '
+            'or a hanging check degrades into a runner hard-kill (cancelled, no '
+            'summary of which check failed)')
+    if (RETIREMENT_JOB_TIMEOUT_MINUTES * 60
+            <= INTERNAL_WORST_CASE_SECONDS + JOB_OVERHEAD_MARGIN_SECONDS):
+        raise CheckFailure(
+            f'the registered outer budget {RETIREMENT_JOB_TIMEOUT_MINUTES} min '
+            f'(= {RETIREMENT_JOB_TIMEOUT_MINUTES * 60}s) no longer exceeds the '
+            f'internal worst-case sum {INTERNAL_WORST_CASE_SECONDS:.0f}s + '
+            f'{JOB_OVERHEAD_MARGIN_SECONDS}s overhead; raise the outer budget or '
+            'tighten the internal wait caps (this inequality is the r8 comment\'s '
+            'self-imposed criterion, now machine-checked)')
 
     steps = _step_list(yaml, path, retirement.get('steps'), RETIREMENT_JOB)
     if len(steps) != len(RETIREMENT_STEP_ORDER):
@@ -1167,7 +1502,8 @@ def control_budget():
 
 
 def control_lock():
-    """锁守卫的三个方向都要能红：并发不串行、敌意锁文件被接受、时戳锚抓错行。
+    """锁守卫的四个方向都要能红：并发不串行、敌意锁文件被接受、时戳锚抓错行、
+    负控守卫 fd 退回旧口径。
 
     * 串行性（变异：把 `output_lock` 里等锁的**阻塞 flock 换成 pass**——吞掉
       `BlockingIOError` 继续跑的完整弱化形态）与敌意锁文件由 `check_lock`
@@ -1180,6 +1516,12 @@ def control_lock():
       ② 弱化 flock 变异——临时 checker 副本里把阻塞 flock 换成 `pass`，第二个
       持锁子的 ACQUIRED 提前到第一个的 RELEASED 之前，时戳序断言必须红（吞掉
       `BlockingIOError` 的弱化照样打出「等锁」字符串，只有时戳序拦得住）。
+      锚串只认时戳序分支的专属文案（r9 P2 concurrency#3：两个分支曾共享
+      'not actually mutually exclusive' 子串，前者触发时控件被算 KILLED 而时戳序
+      从未验证——等待分支文案已改写，锚不再共享）。
+    * r9 P2（sibling#5 = boundary#5）守卫 fd 控件：临时 negative_controls 副本
+      逐个退回 r8 之前的口径（去 `O_NONBLOCK` / 去 `S_ISREG` / 去 `O_NOFOLLOW`），
+      check_lock 的守卫 fd 探针必须红在各自的专属判定上。
     """
     detail = check_lock()
     interleaved = b'LOCKED ACQUIRED 1.500000000\nRELEASED 2.500000000\n'
@@ -1213,7 +1555,8 @@ def control_lock():
         try:
             check_lock(mutated)
         except CheckFailure as error:
-            if 'not actually mutually exclusive' not in str(error):
+            if 'not actually mutually exclusive' not in str(error) \
+                    or 'weakened flock' not in str(error):
                 raise CheckFailure(
                     f'weakened flock rejected by the wrong judgment: {error}') from error
         else:
@@ -1221,6 +1564,44 @@ def control_lock():
                 'the timestamp-ordering guard did not reject a weakened flock '
                 '(blocking flock replaced by pass — the second holder proceeds '
                 'while the first still holds the lock); the r8 P0 fix has rotted')
+
+        # 守卫 fd 的三种退化（r9 P2）。每种都必须红在**点名的判定**上：锚串取自
+        # `_assert_guard_fd_fail_closed` 的两条专属文案，别的判定（真锁敌意探针）
+        # 不含这些串。
+        guard_source = CONTROLS.read_text(encoding='utf-8')
+        for guard_label, old, new, anchor in (
+                ('guard fd without O_NONBLOCK',
+                 'os.O_RDONLY | os.O_CREAT | nofollow | nonblock',
+                 'os.O_RDONLY | os.O_CREAT | nofollow',
+                 'the summary guard fd hung on a planted non-regular lock'),
+                ('guard fd without the S_ISREG check',
+                 'if not stat_module.S_ISREG(info.st_mode):',
+                 'if False:',
+                 'the summary guard deleted a published summary'),
+                ('guard fd without O_NOFOLLOW',
+                 'os.O_RDONLY | os.O_CREAT | nofollow | nonblock',
+                 'os.O_RDONLY | os.O_CREAT | nonblock',
+                 'the summary guard deleted a published summary')):
+            if guard_source.count(old) != 1:
+                raise CheckFailure(f'the guard-fd anchor for `{guard_label}` is '
+                                   'not uniquely present in '
+                                   f'{CONTROLS.name} to mutate; update this '
+                                   'control with the current anchor')
+            mutated_controls = Path(tmp) / 'negative_controls.py'
+            mutated_controls.write_text(guard_source.replace(old, new, 1),
+                                       encoding='utf-8')
+            try:
+                check_lock(controls=mutated_controls)
+            except CheckFailure as error:
+                if anchor not in str(error):
+                    raise CheckFailure(
+                        f'{guard_label} rejected by the wrong judgment: '
+                        f'{error}') from error
+            else:
+                raise CheckFailure(
+                    f'the summary guard fd check did not reject `{guard_label}` '
+                    '(the guard regressed to the pre-r8 open discipline and '
+                    'nothing turned red); the r9 fix has rotted')
     return detail
 
 
@@ -1591,37 +1972,130 @@ def wiring_samples():
         else:
             outside.append(line)
     samples.append(('job-outside-jobs', ''.join(outside)))
+
+    # —— r9（评审 P2 concurrency#2）：外层预算被砍。timeout-minutes 低于装置内部
+    # 最坏和（INTERNAL_WORST_CASE_SECONDS 派生机检）时，挂住的检查打不满自己的
+    # 内部超时、失败退化为平台硬杀（cancelled，哪个检查红了都看不见）。——
+    timeout_line = f'    timeout-minutes: {RETIREMENT_JOB_TIMEOUT_MINUTES}\n'
+    if text.count(timeout_line) != 1:
+        raise CheckFailure('the retirement job does not carry exactly one '
+                           f'`{timeout_line.strip()}` line to mutate')
+    samples.append(('retirement-job-timeout-lowered', text.replace(
+        timeout_line, '    timeout-minutes: 55\n', 1)))
     return samples
 
 
 def pr_gate_samples():
-    """pr-gate.yml 的接线变异样本 `[(名字, 变异后的 workflow 文本)]`（评审 r8 P1-2）。
+    """pr-gate.yml 的接线变异样本 `[(名字, 变异后的 workflow 文本)]`（r8 P1-2 + r9 P0）。
 
     pr-gate.yml 是合并闸门第 2、3 步（git fetch base / check-pr-gate.py）的宿主，
     此前**没有任何守卫读这个文件**：根级 `defaults.run.shell: /bin/true {0}` 让
     check-pr-gate step 无条件 rc=0 → 合并闸门假 PASS，而 ci.yml 两个守卫逐字全等。
-    两条样本各测一个新判定：
+    r9 P0 起再加 step 级三形态（评审 boundary#1 = sibling#1 = concurrency#1）：
     - `pr-gate-step-shell-removed`：check-pr-gate step（合并闸门本体）的
-      `shell: bash` 被删——该步裸奔继承任何 defaults（全 workflow 巡走的 shell
-      判定在 pr-gate.yml 上的落点）；
+      `shell: bash` 被删——r9 修正：pr-gate.yml:37 的 shell 行带行尾注释，
+      r8 的字面量 `'        shell: bash'` 匹配不到它、`shells[-1]` 落在 fetch 步
+      ——docstring 声称删 check 步、实际删的是 fetch 步的 shell，名不副实。
+      r9 起 step 直属键集**恰等**登记先行拦下（found 缺 `shell`），全 workflow
+      巡走的 shell 判定仍是兜底（本样本锚定键集判定）；
     - `pr-gate-root-defaults-shell`：根级 `defaults.run.shell`（根键白名单判定
-      在 pr-gate.yml 上的落点）。
+      在 pr-gate.yml 上的落点）；
+    - `pr-gate-job-if-false`：job `if: false`——被跳过的必需检查被 GitHub 报成
+      success（P0 形态②，job `if` 逐字判定的落点）；
+    - `pr-gate-gate-continue-on-error`：check 步加 `continue-on-error: true`
+      （P0 形态①，step 键集白名单的落点）；
+    - `pr-gate-run-exit-0`：check 步 `run` 换壳 `exit 0`（P0 形态③，run 标量
+      逐字判定的落点）；
+    - `pr-gate-fetch-continue-on-error-removed` / `pr-gate-fetch-continue-on-error-
+      swapped`：fetch 基线步的登记键被删 / 登记值被换（fetch 步键集与值钉死的
+      落点——键集白名单对两个 run step 分开登记）；
+    - `pr-gate-env-key-added`：check 步 env 加一个未登记键（env 键集钉死的落点）；
+    - `pr-gate-gate-step-removed`：整个 check 步被删（step 顺序/条数钉死的落点）。
     """
     text = PR_GATE.read_text(encoding='utf-8')
     lines = text.splitlines(keepends=True)
     samples = []
-    shells = [index for index, line in enumerate(lines)
-               if line.rstrip('\n') == '        shell: bash']
-    if not shells:
-        raise CheckFailure('the pr-gate workflow has no `shell: bash` line to drop')
-    dropped = lines[:shells[-1]] + lines[shells[-1] + 1:]
-    samples.append(('pr-gate-step-shell-removed', ''.join(dropped)))
+
+    def step_range(name):
+        start = next((index for index, line in enumerate(lines)
+                      if line.rstrip('\n') == f'      - name: {name}'), None)
+        if start is None:
+            raise CheckFailure(f'the pr-gate workflow has no `{name}` step to mutate')
+        end = next((index for index in range(start + 1, len(lines))
+                    if STEP_ITEM.match(lines[index])
+                    or JOB_HEADER.match(lines[index].rstrip('\n'))), len(lines))
+        return start, end
+
+    gate_start, gate_end = step_range('角色审计结果块与 issue 关联')
+    fetch_start, fetch_end = step_range('显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）')
+
+    # r9 修正：check 步的 shell 行带行尾注释（pr-gate.yml:37），按「行首值 + 可选
+    # 注释」锚定，真正删掉 check 步的 shell 而不是 fetch 步的。
+    gate_shell = next((index for index in range(gate_start, gate_end)
+                       if re.fullmatch(r'        shell: bash(\s*#.*)?\n',
+                                       lines[index])), None)
+    if gate_shell is None:
+        raise CheckFailure('the pr-gate check step has no `shell: bash` line to drop')
+    samples.append(('pr-gate-step-shell-removed', ''.join(
+        lines[:gate_shell] + lines[gate_shell + 1:])))
+
     if text.count('\njobs:\n') != 1:
         raise CheckFailure('the pr-gate workflow must carry exactly one `jobs:` line '
                            'to anchor the root-level defaults injection')
     samples.append(('pr-gate-root-defaults-shell', text.replace(
         '\njobs:\n',
         '\ndefaults:\n  run:\n    shell: /bin/true {0}\njobs:\n', 1)))
+
+    # P0 形态②：job `if: false`。
+    job_if = next((index for index, line in enumerate(lines)
+                   if line.rstrip('\n') == '    if: github.event.pull_request.draft == false'),
+                  None)
+    if job_if is None:
+        raise CheckFailure('the pr-gate workflow has no registered job `if:` line '
+                           'to mutate')
+    samples.append(('pr-gate-job-if-false', ''.join(
+        lines[:job_if] + ['    if: false\n'] + lines[job_if + 1:])))
+
+    # P0 形态①：check 步加 step 级 `continue-on-error: true`（步全红而 job 仍
+    # success）。键集白名单（恰等）当场红。
+    samples.append(('pr-gate-gate-continue-on-error', ''.join(
+        lines[:gate_start + 1] + ['        continue-on-error: true\n']
+        + lines[gate_start + 1:])))
+
+    # P0 形态③：check 步 run 换壳。登记标量是单行 `python3 -I scripts/check-pr-gate.py`。
+    gate_run = next((index for index in range(gate_start, gate_end)
+                     if lines[index].rstrip('\n')
+                     == '        run: python3 -I scripts/check-pr-gate.py'), None)
+    if gate_run is None:
+        raise CheckFailure('the pr-gate check step has no registered `run:` line '
+                           'to swap')
+    samples.append(('pr-gate-run-exit-0', ''.join(
+        lines[:gate_run] + ['        run: exit 0\n'] + lines[gate_run + 1:])))
+
+    # fetch 基线步的登记键 continue-on-error 被删 / 登记值被换：键集（恰等）与
+    # 值钉死两个判定各自要有违反路径，删错方向才看得见。
+    fetch_coe = next((index for index in range(fetch_start, fetch_end)
+                      if lines[index].startswith('        continue-on-error:')), None)
+    if fetch_coe is None:
+        raise CheckFailure('the pr-gate fetch step has no `continue-on-error:` '
+                           'line to mutate')
+    samples.append(('pr-gate-fetch-continue-on-error-removed', ''.join(
+        lines[:fetch_coe] + lines[fetch_coe + 1:])))
+    swapped = list(lines)
+    swapped[fetch_coe] = '        continue-on-error: false\n'
+    samples.append(('pr-gate-fetch-continue-on-error-swapped', ''.join(swapped)))
+
+    # env 键集：check 步 env 加未登记键。
+    gate_env = next((index for index in range(gate_start, gate_end)
+                     if lines[index].rstrip('\n') == '        env:'), None)
+    if gate_env is None:
+        raise CheckFailure('the pr-gate check step has no `env:` block to mutate')
+    samples.append(('pr-gate-env-key-added', ''.join(
+        lines[:gate_env + 1] + ['          EXTRA: drift\n'] + lines[gate_env + 1:])))
+
+    # 整步删除：step 条数 / 顺序钉死。
+    samples.append(('pr-gate-gate-step-removed', ''.join(
+        lines[:gate_start] + lines[gate_end:])))
     return samples
 
 
@@ -1631,8 +2105,11 @@ def pr_gate_samples():
 # 一致），值为该样本失败文案必含的锚串——锚串落点同时证明变异体仍是可解析的单文档
 # YAML（否则红在解析失败）。`control_wiring` 断言样本集合与登记簿**逐名全等**（少一条
 # = 有形态失保，多一条 = 没登记就上岗），任何一条红在别的判定上都算 misattributed；
-# 数量同步登记在装置 README（r8 起三十六条）。锚串全部取自真实运行的失败文案
-# （2026-11-07 实测，`_tmp/20261107-issue-1809-r7/` 与 `_tmp/20261107-issue-1809-r8/`）。
+# 条数另钉死在 `EXPECTED_WIRING_SAMPLES`（评审 r9 P2 sibling#3：样本 + 锚串**一起**
+# 删时逐名全等照样成立、登记簿静默缩水——对齐 LOCK_HOSTILE_PLANTS 先例）；数量
+# 同步登记在装置 README（r9 起四十四条）。锚串全部取自真实运行的失败文案
+# （2026-11-07/08 实测，`_tmp/20261107-issue-1809-r7/`、`_tmp/20261107-issue-1809-r8/`
+# 与本轮 `_tmp/20261026-issue-1809/fix-r9/`）。
 SAMPLE_FAILURE_ANCHORS = {
     'removed': 'no `retirement-outcome-parity` job under `jobs:`',
     'commented-out': 'no `retirement-outcome-parity` job under `jobs:`',
@@ -1670,19 +2147,85 @@ SAMPLE_FAILURE_ANCHORS = {
     'require-if-continuation': 'the aggregate Require step condition',
     'folded-block': 'is a folded block',
     'job-outside-jobs': 'no `retirement-outcome-parity` job under `jobs:`',
-    'pr-gate-step-shell-removed': 'has a run step without the pinned `shell: bash`',
+    'retirement-job-timeout-lowered': 'must stay exactly `85`',
+    'pr-gate-step-shell-removed': "found ['env', 'name', 'run']",
     'pr-gate-root-defaults-shell':
         'the pr-gate workflow carries the unregistered root key',
+    'pr-gate-job-if-false': 'the `pr-gate` job condition',
+    'pr-gate-gate-continue-on-error': "may only carry ['env', 'name', 'run', 'shell']",
+    'pr-gate-run-exit-0': 'does not run the registered script',
+    'pr-gate-fetch-continue-on-error-removed':
+        "found ['env', 'name', 'run', 'shell']",
+    'pr-gate-fetch-continue-on-error-swapped':
+        '`continue-on-error` must stay exactly `true`',
+    'pr-gate-env-key-added': 'env must carry exactly the registered keys',
+    'pr-gate-gate-step-removed': 'must keep exactly 3 steps',
 }
+# 条数常量（评审 r9 P2 sibling#3）：与 LOCK_HOSTILE_PLANTS 同口径——删样本 +
+# 删锚串两边一起删时逐名全等仍成立，条数当场红。数量同步登记在装置 README。
+EXPECTED_WIRING_SAMPLES = 44
+
+
+def control_check():
+    """P7 非退化机检的两个方向都要能红（评审 r9 P2 = r8 boundary#4）。
+
+    变异体就是评审点名的攻击形态：保留全部判据消费字段（`(outcome, errorCode)`
+    逐轮不变），只给一份 `methods.json` 塞一个**不消费**的尾字节——sha256 互异
+    照样成立（仍 5 个互异值）、checker 照样 PASS，只有 PROVENANCE 交叉核对能红。
+    第二个方向：删掉 PROVENANCE 表里的一行登记（登记簿静默缩水）。
+    """
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-check-') as tmp:
+        root = Path(tmp) / 'fixtures'
+        shutil.copytree(FIXTURES, root)
+        target = root / 'round-03' / 'driver' / 'methods.json'
+        with open(target, 'ab') as handle:  # 判据 json.loads 会忽略的尾随空白
+            handle.write(b' ')
+        try:
+            check_check(root)
+        except CheckFailure as error:
+            if 'fixtures/PROVENANCE.md' not in str(error):
+                raise CheckFailure(
+                    f'unconsumed byte rejected by the wrong judgment: {error}') from error
+        else:
+            raise CheckFailure(
+                'the provenance cross-check did not reject an unconsumed trailing '
+                'byte (five byte-distinct rounds re-sliced from one collection '
+                'would pass as "independent"); the r9 fix has rotted')
+    with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-check-') as tmp:
+        root = Path(tmp) / 'fixtures'
+        shutil.copytree(FIXTURES, root)
+        table = root / 'PROVENANCE.md'
+        lines = table.read_text(encoding='utf-8').split('\n')
+        rows = [index for index, line in enumerate(lines)
+                if re.match(r'^\| round-\d{2} \| `[0-9a-f]{64}` \|', line)]
+        if len(rows) != EXPECTED_ROUNDS:
+            raise CheckFailure('the provenance digest table does not carry '
+                                f'{EXPECTED_ROUNDS} rows to drop; update this '
+                                'control with the current anchor')
+        del lines[rows[0]]
+        table.write_text('\n'.join(lines), encoding='utf-8')
+        try:
+            check_check(root)
+        except CheckFailure as error:
+            if 'fixtures/PROVENANCE.md' not in str(error):
+                raise CheckFailure(
+                    f'missing provenance row rejected by the wrong judgment: '
+                    f'{error}') from error
+        else:
+            raise CheckFailure('the provenance cross-check did not reject a '
+                               'fixture set with a dropped registration row')
+    return 'unconsumed bytes and dropped provenance rows are both rejected'
 
 
 def control_wiring():
     """`wiring_samples() + pr_gate_samples()` 的每一条都必须让接线守卫变红。
 
     样本集合必须与 `SAMPLE_FAILURE_ANCHORS` 登记簿逐名全等（评审 r7 P1：样本被删 /
-    漏登记时不能静默缩水）；每条样本的失败文案必须含各自的锚串（红在别的判定 =
-    形态被误杀，对该形态零回归保护）。ci.yml 变异体配真实 pr-gate.yml、pr-gate.yml
-    变异体配真实 ci.yml（r8 P1-2）：另一侧的意外红不能挡住 / 冒充点名的判定。
+    漏登记时不能静默缩水）且条数等于 `EXPECTED_WIRING_SAMPLES`（r9 P2 sibling#3：
+    样本 + 锚串一起删时逐名全等仍成立，条数当场红）；每条样本的失败文案必须含各自
+    的锚串（红在别的判定 = 形态被误杀，对该形态零回归保护）。ci.yml 变异体配真实
+    pr-gate.yml、pr-gate.yml 变异体配真实 ci.yml（r8 P1-2）：另一侧的意外红不能
+    挡住 / 冒充点名的判定。
     """
     samples = wiring_samples() + pr_gate_samples()
     labels = [label for label, _ in samples]
@@ -1692,6 +2235,11 @@ def control_wiring():
             f'wiring sample set drifted from the registry: got {labels}, '
             f'registered {registered}; a missing sample leaves that mutation '
             'shape unprotected and an unregistered sample proves nothing')
+    if len(samples) != EXPECTED_WIRING_SAMPLES:
+        raise CheckFailure(
+            f'the wiring sample registry carries {len(samples)} samples but '
+            f'{EXPECTED_WIRING_SAMPLES} are registered; deleting a sample (and '
+            'its anchor) must go red here, not silently narrow the guard')
     survived = []
     misattributed = []
     with tempfile.TemporaryDirectory(prefix='pdrs-retirement-ctl-wiring-') as tmp:
@@ -1726,6 +2274,7 @@ def control_wiring():
 
 CONTROLS_FOR_CHECK = {
     'budget': control_budget,
+    'check': control_check,
     'lock': control_lock,
     'wiring': control_wiring,
 }

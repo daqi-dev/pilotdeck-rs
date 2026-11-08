@@ -532,7 +532,10 @@ CHECK = load_checker()
 CAPABILITY_UNAVAILABLE = CHECK.CAPABILITY_UNAVAILABLE
 # 控件条数同源读 check_outcome_parity（评审 r7 P1）：执行器拿到 controls 后核
 # 数量，控件集被删空 / 删部分时**空真不得判 PASS**——rc2 收口，不发布 summary。
+# r9 合并补全：正控（#2143 PC1–PC2）同一守卫——build_positives 被删空时
+# positiveCounts 全 0，`BROKEN == 0 and INVALID == 0` 照样空真判 PASS。
 EXPECTED_CONTROLS = CHECK.EXPECTED_CONTROLS
+EXPECTED_POSITIVES = CHECK.EXPECTED_POSITIVES
 
 
 class OutputError(Exception):
@@ -1472,6 +1475,13 @@ def run_locked(args, out_root):
         print(f'negative_controls: assembled {len(controls)} controls but '
               f'{EXPECTED_CONTROLS} are registered (N1–N{EXPECTED_CONTROLS}); '
               'refusing to judge an unexpected control set', file=sys.stderr)
+        return 2
+    if len(positives) != EXPECTED_POSITIVES:
+        # 正控集同一守卫（r9 合并补全，#2143）：删空 build_positives 时
+        # positiveCounts 全 0，status 仍 PASS——「应当 PASS 的性质」静默失保。
+        print(f'negative_controls: assembled {len(positives)} positives but '
+              f'{EXPECTED_POSITIVES} are registered (PC1–PC{EXPECTED_POSITIVES}); '
+              'refusing to judge an unexpected positive set', file=sys.stderr)
         return 2
 
     records = []

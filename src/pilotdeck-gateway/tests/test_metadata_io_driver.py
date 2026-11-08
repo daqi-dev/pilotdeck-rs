@@ -718,6 +718,247 @@ class EnvironmentControls(unittest.TestCase):
                    'carries the unregistered `with` keys')
         self.check_ci_mutations(cases, 'test_ci_uses_steps_pin_their_with_keys', '#1809')
 
+    def pr_gate_parsed(self, issue='#1809'):
+        """PyYAML 解析后的 pr-gate.yml 根节点（单文档、无重复根键）。
+
+        #1809 r9（评审 P0）：合并闸门本体 pr-gate.yml 此前在本守卫侧零覆盖
+        （r7/r8 的巡走只读 ci.yml）。与 self_check._check_pr_gate_wiring 同一
+        口径：只在构造变异样本时用行式锚点，**判定**一律走解析后的完整标量。
+        """
+        try:
+            import yaml
+        except ImportError as error:
+            self.fail(f'{issue} PyYAML is required for the parsed gate guards (pinned '
+                      f'{self.pinned_pyyaml_version}, installed by the CI step '
+                      '安装钉死 PyYAML): {error}')
+        self.assertEqual(yaml.__version__, self.pinned_pyyaml_version,
+                         f'{issue} PyYAML version is pinned (see ci_parsed_jobs); '
+                         'a different YAML build may parse the workflow differently')
+        text = (Path(__file__).resolve().parents[3]
+                / '.github/workflows/pr-gate.yml').read_text()
+        documents = list(yaml.compose_all(text))
+        self.assertEqual(len(documents), 1, f'{issue} exactly one YAML document')
+        root = documents[0]
+        self.assertIsInstance(root, yaml.MappingNode, f'{issue} the workflow is a mapping')
+        root_keys = [key.value for key, _ in root.value]
+        self.assertEqual(len(root_keys), len(set(root_keys)), f'{issue} no duplicate root keys')
+        return yaml, root
+
+    def test_pr_gate_wiring_is_pinned_by_parsed_yaml(self):
+        # #1809 r9（评审 P0）：pr-gate.yml 承载合并闸门第 2、3 步（git fetch 基线
+        # / check-pr-gate.py），三种静默废闸门的手法此前在本守卫侧全绿——step
+        # `continue-on-error: true`（步全红而 job 仍 success）、job `if: false`
+        # （被跳过的必需检查被 GitHub 报成 success）、`run: exit 0`（换壳）。
+        # 判定镜像 self_check._check_pr_gate_wiring：根键白名单、唯一 job、job
+        # 直属键恰等、job `if` 逐字、step 顺序与条数、逐 step 键集/env 键集/
+        # continue-on-error 登记值/shell/run 标量逐字。
+        yaml, root = self.pr_gate_parsed()
+        root_keys = [key.value for key, _ in root.value]
+        # 根键白名单：workflow 级 `defaults.run.shell` 会替换每个不带自身 `shell:`
+        # 的 run step 的 shell（r7 P0 的执行层手法），白名单外出现即红。
+        self.assertLessEqual(set(root_keys),
+                             {'name', 'on', 'jobs', 'permissions', 'concurrency',
+                              'run-name'},
+                             '#1809 the pr-gate root keys are inside the registered '
+                             'whitelist; a workflow-level `defaults.run.shell` '
+                             're-shells every run step and neither the ci.yml '
+                             'guards nor a job-level scan would see it')
+        self.assertIn('jobs', root_keys, '#1809 the pr-gate workflow has a `jobs:` mapping')
+        jobs_node = next(value for key, value in root.value if key.value == 'jobs')
+        self.assertIsInstance(jobs_node, yaml.MappingNode,
+                              '#1809 the pr-gate `jobs:` is a mapping')
+        job_names = [key.value for key, _ in jobs_node.value]
+        self.assertEqual(job_names, ['pr-gate'],
+                         '#1809 the pr-gate workflow carries only the registered '
+                         '`pr-gate` job')
+        job = next(value for key, value in jobs_node.value if key.value == 'pr-gate')
+        self.assertIsInstance(job, yaml.MappingNode, '#1809 the pr-gate job is a mapping')
+        fields = {}
+        for field, node in job.value:
+            self.assertNotIn(field.value, fields, '#1809 no duplicate pr-gate job keys')
+            fields[field.value] = node
+        self.assertEqual(set(fields), {'if', 'runs-on', 'steps'},
+                          '#1809 the pr-gate job keys are exactly the registered set')
+        # P0 形态②：job `if` 逐字。draft 判断是登记过的唯一条件，`if: false`
+        # 之外任何漂移（如 draft 反转）都让合并闸门换了一个世界。
+        self.assertIsInstance(fields['if'], yaml.ScalarNode,
+                              '#1809 the pr-gate job condition is a scalar')
+        self.assertEqual(fields['if'].value, 'github.event.pull_request.draft == false',
+                         '#1809 the pr-gate job condition is the registered draft '
+                         'guard; a skipped required job is reported as success by '
+                         'GitHub, so nothing else would block the merge')
+        steps_node = fields['steps']
+        self.assertIsInstance(steps_node, yaml.SequenceNode,
+                              '#1809 the pr-gate job has a step sequence')
+        steps = []
+        for item in steps_node.value:
+            self.assertIsInstance(item, yaml.MappingNode,
+                                  '#1809 every pr-gate step is a mapping')
+            step = {}
+            for field, node in item.value:
+                self.assertNotIn(field.value, step, '#1809 no duplicate step keys')
+                step[field.value] = node
+            steps.append(step)
+        self.assertEqual(len(steps), 3,
+                         '#1809 the pr-gate job keeps exactly the registered three '
+                         'steps (checkout / fetch / gate)')
+        checkout, fetch, gate = steps
+        # step 1：uses checkout——键只许 uses/with（加 name），uses 值逐字，with
+        # 键集合恰为 {fetch-depth}（加 ref/repository 会让闸门跑另一棵树）。
+        self.assertLessEqual(set(checkout), {'name', 'uses', 'with'},
+                             '#1809 the pr-gate checkout step keys are inside the '
+                             'registered set')
+        self.assertIn('uses', checkout,
+                      '#1809 the pr-gate checkout step stays an action (`uses:`)')
+        self.assertEqual(checkout['uses'].value, 'actions/checkout@v4',
+                         '#1809 the pr-gate checkout step pins the registered action')
+        with_node = checkout.get('with')
+        self.assertIsInstance(with_node, yaml.MappingNode,
+                              '#1809 the pr-gate checkout `with` is a mapping')
+        with_keys = frozenset(key.value for key, _ in with_node.value)
+        self.assertEqual(with_keys, {'fetch-depth'},
+                         '#1809 the pr-gate checkout `with` keys are exactly the '
+                         'registered set; the merge fingerprint needs a full clone '
+                         '(fetch-depth: 0) and any other key changes which tree the '
+                         'gate reads')
+        # steps 2/3：run step 直属键集合恰等（分步登记）——P0 形态①（闸门步加
+        # `continue-on-error: true`）与删 shell 都先红在这里。
+        self.assertEqual(set(fetch), {'name', 'continue-on-error', 'env', 'shell', 'run'},
+                         '#1809 the fetch step keys are exactly the registered set')
+        self.assertEqual(set(gate), {'name', 'env', 'shell', 'run'},
+                         '#1809 the gate step keys are exactly the registered set')
+        self.assertEqual(fetch['name'].value,
+                         '显式取 base 分支与 PR head（不依赖 checkout 的默认 refspec）',
+                         '#1809 the fetch step keeps its registered name')
+        self.assertEqual(gate['name'].value, '角色审计结果块与 issue 关联',
+                         '#1809 the gate step keeps its registered name')
+        self.assertIsInstance(fetch['continue-on-error'], yaml.ScalarNode,
+                              '#1809 the fetch `continue-on-error` is a scalar')
+        self.assertEqual(fetch['continue-on-error'].value, 'true',
+                         '#1809 the fetch step `continue-on-error` stays exactly '
+                         '`true`; it is a registered design decision (a missing base '
+                         'only downgrades fingerprinting, it must not gate the job)')
+        fetch_env = frozenset(key.value for key, _ in fetch['env'].value)
+        self.assertEqual(fetch_env, {'BASE_REF', 'PR_HEAD'},
+                         '#1809 the fetch step env keys are exactly the registered set')
+        gate_env = frozenset(key.value for key, _ in gate['env'].value)
+        self.assertEqual(gate_env, {'PR_BODY', 'PR_HEAD', 'PR_BASE'},
+                         '#1809 the gate step env keys are exactly the registered '
+                         'set; a dropped or added key silently hands check-pr-gate.py '
+                         'a different world while every pinned `run` scalar stays '
+                         'verbatim-identical')
+        for label, step in (('fetch', fetch), ('gate', gate)):
+            self.assertIsInstance(step['shell'], yaml.ScalarNode,
+                                  f'#1809 the pr-gate {label} step shell is a scalar')
+            self.assertEqual(step['shell'].value, 'bash',
+                             f'#1809 the pr-gate {label} step pins `shell: bash` '
+                             '(parsed); any other value (e.g. `/bin/true {0}`) '
+                             'replaces what actually executes')
+        # run 标量逐字（literal 块按解析后的完整值比对，不认行式巧合）。
+        self.assertEqual(fetch['run'].value,
+                         'git fetch --no-tags origin '
+                         '"+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" '
+                         '"${PR_HEAD}"\n'
+                         'git rev-parse --verify "origin/${BASE_REF}^{commit}"\n'
+                         'git rev-parse --verify "${PR_HEAD}^{commit}"\n',
+                         '#1809 the fetch step runs the registered fetch script')
+        self.assertEqual(gate['run'].value, 'python3 -I scripts/check-pr-gate.py',
+                         '#1809 the gate step runs the registered gate script; the '
+                         'parsed scalar is pinned verbatim, so an `exit 0` swap, an '
+                         '`|| true` suffix or a folded block all change the text')
+
+    def test_pr_gate_rejects_wiring_drift(self):
+        text = (Path(__file__).resolve().parents[3]
+                / '.github/workflows/pr-gate.yml').read_text()
+        gate_name = '      - name: 角色审计结果块与 issue 关联\n'
+        fetch_coe = ('        continue-on-error: true  # 取不到只影响「沿用」'
+                     '（指纹算不出 → 拒收旧块），不挡 head 一致的 PR\n')
+        cases = []
+
+        def mutate(label, old, new, message):
+            self.assertEqual(text.count(old), 1, f'#1809 unique pr-gate anchor: {label}')
+            cases.append((label, text.replace(old, new, 1), message))
+
+        # 根级 defaults.run.shell：根键白名单判定在 pr-gate.yml 上的落点。
+        mutate('pr-gate-root-defaults-shell', '\njobs:\n',
+               '\ndefaults:\n  run:\n    shell: /bin/true {0}\njobs:\n',
+               '#1809 the pr-gate root keys are inside the registered whitelist')
+        # P0 形态②：job `if: false`——job `if` 逐字判定的落点。
+        mutate('pr-gate-job-if-false', '    if: github.event.pull_request.draft == false\n',
+               '    if: false\n',
+               '#1809 the pr-gate job condition is the registered draft guard')
+        # P0 形态①：闸门步加 step 级 `continue-on-error: true`——步全红而 job 仍
+        # success。键集恰等判定当场红。
+        mutate('pr-gate-gate-continue-on-error', gate_name,
+               gate_name + '        continue-on-error: true\n',
+               '#1809 the gate step keys are exactly the registered set')
+        # r8 样本删错步的修正：闸门步的 shell 行带行尾注释（pr-gate.yml:37），
+        # 旧字面量 `'        shell: bash'` 匹配不到它、`shells[-1]` 落在 fetch 步
+        # ——docstring 声称删 check 步、实际删的是 fetch 步。r9 起键集恰等先行
+        # 拦下（found 缺 `shell`），shell 值钉死是兜底。
+        mutate('pr-gate-step-shell-removed',
+               '        shell: bash  # r8 P1-2：合并闸门本体——check-pr-gate step '
+               '不许被 defaults 换壳\n',
+               '',
+               '#1809 the gate step keys are exactly the registered set')
+        # P0 形态③：闸门步 run 换壳 `exit 0`——run 标量逐字判定的落点。
+        mutate('pr-gate-run-exit-0', '        run: python3 -I scripts/check-pr-gate.py\n',
+               '        run: exit 0\n',
+               '#1809 the gate step runs the registered gate script')
+        # fetch 基线步的登记键被删 / 登记值被换：键集恰等与值钉死两个判定各
+        # 自要有违反路径，删错方向才看得见。
+        mutate('pr-gate-fetch-continue-on-error-removed', fetch_coe, '',
+               '#1809 the fetch step keys are exactly the registered set')
+        mutate('pr-gate-fetch-continue-on-error-swapped', fetch_coe,
+               '        continue-on-error: false\n',
+               '#1809 the fetch step `continue-on-error` stays exactly `true`')
+        # env 键集：闸门步 env 加未登记键。
+        mutate('pr-gate-env-key-added', gate_name + '        env:\n',
+               gate_name + '        env:\n          EXTRA: drift\n',
+               '#1809 the gate step env keys are exactly the registered set')
+        # 整步删除：step 顺序/条数钉死的落点。
+        self.assertEqual(text.count(gate_name), 1, '#1809 unique gate step anchor')
+        cases.append(('pr-gate-gate-step-removed', text.split(gate_name, 1)[0],
+                      '#1809 the pr-gate job keeps exactly the registered three steps'))
+        self.check_ci_mutations(cases, 'test_pr_gate_wiring_is_pinned_by_parsed_yaml',
+                                '#1809', mutated='pr-gate.yml')
+
+    def test_retirement_job_bounds_its_wall_clock(self):
+        # #1632 / #1692 §1 的 timeout 钉死范式，#1809 r9（评审 P2 预算算式）：
+        # 合并把守卫 fd 探针（每形态 20 s 超时 + 30 s 清理）与 PC1–PC2 正控带进
+        # 负控步骤后，内部最坏和 = emit/check/negctl 超时 300+300+1800 s + 锁与
+        # 探针三趟（每趟 4×60 s 等锁 + 3×(20+30) s 敌意锁 + 3×(20+30) s 守卫 fd）
+        # + 写目标 4×50 s = 4580 s ≈ 76.3 min。外层超时若先到，步骤被 SIGKILL、
+        # 证据目录半途而废而闸门读不到红。85 min = 5100 s > 4580 + 300 s job
+        # 开销余量（与 self_check.check_wiring 的派生不等式同口径）。
+        body = self.ci_jobs('#1809')['retirement-outcome-parity']
+        self.assertIn('    timeout-minutes: 85\n', body,
+                      '#1809 the retirement job bounds its own wall clock above the '
+                      'internal worst case')
+        self.assertGreater(85 * 60, 4580 + 300,
+                            '#1809 the job budget stays above the internal worst '
+                            'case sum plus job overhead')
+
+    def test_retirement_job_timeout_regressions_are_rejected(self):
+        workflow = self.ci_workflow_fixture()
+        body = self.ci_jobs('#1809')['retirement-outcome-parity']
+        cases = []
+
+        def change(label, old, new, message):
+            self.assertEqual(body.count(old), 1, f'#1809 unique job anchor: {label}')
+            cases.append((label, workflow.replace(body, body.replace(old, new, 1), 1),
+                          message))
+
+        change('retirement-job-timeout-removed', '    timeout-minutes: 85\n', '',
+               '#1809 the retirement job bounds its own wall clock above the '
+               'internal worst case')
+        change('retirement-job-timeout-lowered', '    timeout-minutes: 85\n',
+               '    timeout-minutes: 55\n',
+               '#1809 the retirement job bounds its own wall clock above the '
+               'internal worst case')
+        self.check_ci_mutations(cases, 'test_retirement_job_bounds_its_wall_clock',
+                                '#1809')
+
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()
         jobs = self.ci_jobs()
@@ -906,8 +1147,11 @@ class EnvironmentControls(unittest.TestCase):
                       source.replace(anchor, b'return bool(paths) and all(path.startswith('
                                              b'DOCS_ONLY_PATH) for path in paths)\n', 1),
                       '#1199 board.md.bak prefix path is not docs-only'))
+        # #1809 r9：read_bytes 补丁同 check_ci_mutations 的按文件名路由——变异对象
+        # 是 scripts/ci_scope.py，不是 ci.yml（r9 前全局 return_value 对任何路径都
+        # 喂变异字节，目标测试恰好只读它才没穿帮）。
         self.check_ci_mutations(cases, 'test_ci_scope_whitelist_is_exactly_the_single_board_path',
-                                '#1199', reader='read_bytes')
+                                '#1199', reader='read_bytes', mutated='ci_scope.py')
 
     def test_required_job_runs_shared_isolation_regressions(self):
         command = 'python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
@@ -5334,8 +5578,10 @@ self_check_controls_run | return | return problems
         cases.append(('override-filter-widened',
                       config.replace(b'test(=grep_outputs_match_real_ts) | ', b'', 1),
                       '#922 ci profile preserves'))
+        # #1809 r9：变异对象是 .config/nextest.toml（read_bytes 按文件名路由，见
+        # check_ci_mutations 的注释）。
         self.check_ci_mutations(cases, 'test_nextest_ci_profile_has_no_retries_filters_or_kill_timeout',
-                                '#922 profile', reader='read_bytes')
+                                '#922 profile', reader='read_bytes', mutated='nextest.toml')
 
     def test_rust_job_uses_line_tables_only_debug(self):
         rust = self.ci_jobs()['rust']
@@ -5803,7 +6049,8 @@ self_check_controls_run | return | return problems
         self.check_ci_mutations(self.ci_b2_smoke_mutations(),
                                 'test_b2_and_smoke_keep_commands_in_their_own_jobs', '#918')
 
-    def check_ci_mutations(self, cases, target, issue, reader='read_text'):
+    def check_ci_mutations(self, cases, target, issue, reader='read_text',
+                           mutated='ci.yml'):
         full_name = f'{__name__}.EnvironmentControls.{target}'
         results = []
         # The shared negative_suite runs Rust source mutations; these are only in-memory YAML.
@@ -5814,7 +6061,17 @@ self_check_controls_run | return | return problems
             try:
                 getattr(self, target)()
                 positive = True
-                with patch.object(Path, reader, return_value=workflow):
+                # #1809 r9：按文件名路由——变异文本只喂给被变异的 workflow，其余
+                # 路径回真实文件。旧的全局 return_value 会把 ci.yml 文本喂给任何
+                # read_text：pr-gate.yml 的镜像守卫（r9）读它时拿到的是 ci.yml 的
+                # 内容，变异根本没被测到。普通函数存进类属性仍走描述符协议，实例
+                # 调用照常拿到 path。
+                real = getattr(Path, reader)
+
+                def routed(path, *args, **kwargs):
+                    return (workflow if path.name == mutated
+                            else real(path, *args, **kwargs))
+                with patch.object(Path, reader, routed):
                     try:
                         getattr(self, target)()
                     except AssertionError as error:
@@ -5835,10 +6092,15 @@ self_check_controls_run | return | return problems
         self.assertTrue(results and all(status == 'KILLED' for _, status in results),
                         f'{issue} every mutation must fail its bound assertion: {results}')
 
-    def assert_ci_rejects(self, workflow, test_name, message):
+    def assert_ci_rejects(self, workflow, test_name, message, mutated='ci.yml'):
         # Invoke the real CI check on an in-memory workflow mutation, never edit ci.yml.
         # subTest callers continue through every case even if one mutation survives.
-        with patch.object(Path, 'read_text', return_value=workflow):
+        # #1809 r9：与 check_ci_mutations 同口径按文件名路由（见其注释）。
+        real = Path.read_text
+
+        def routed(path, *args, **kwargs):
+            return workflow if path.name == mutated else real(path, *args, **kwargs)
+        with patch.object(Path, 'read_text', routed):
             with self.assertRaisesRegex(AssertionError, re.escape(message),
                                         msg=f'#904 {test_name} must reject at {message}'):
                 getattr(self, test_name)()
