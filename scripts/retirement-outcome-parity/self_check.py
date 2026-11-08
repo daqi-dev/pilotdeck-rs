@@ -1237,7 +1237,7 @@ def retirement_budget_rows(workflow=None):
             raise CheckFailure(
                 f'#1809 r11 budget rule missing: {identity!r}; every declared '
                 'step needs a derived contribution or a registered overhead bucket')
-        # 保留底层原始推导供复算，再应用声明的硬上限。直跑负控原始 15600 s
+        # 保留底层原始推导供复算，再应用声明的硬上限。直跑负控原始 13800 s
         # 不能只靠 400 min 外层兜底：ubuntu-latest 的 job 平台上限是 6 小时。
         raw_seconds = seconds
         if cap_seconds is not None:
