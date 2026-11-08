@@ -1291,6 +1291,11 @@ async fn write_nul_path_with_a_boundary_fffd_over_http_answers_the_registered_re
     // escape — asserted on the wire bytes, both spellings of the fold. The
     // NUL's `\x00` render arrives JSON-quoted, so the wire carries two
     // backslashes before the x00.
+    // The whole window must survive `invalid_arg_value_message`'s 128-unit
+    // inspect truncation: inspected (with quotes) is len(root) + 14 UTF-16
+    // units, so the fixture root must stay at or below 114 units — the
+    // direct-call nail at the truncation threshold shares this bound, and a
+    // longer TMPDIR would cut the `\x00b.txt'` tail off the message.
     let expected: Vec<u8> = format!("Received '{root_text}/a")
         .into_bytes()
         .into_iter()

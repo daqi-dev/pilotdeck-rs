@@ -67,7 +67,7 @@ def main():
                     (output / f"{name}-{phase}.log").write_text(
                         gate.stdout + gate.stderr + raw + f"\nexit={result.returncode}\n")
                     if phase == "baseline":
-                        valid = result.returncode == 0 and "1 passed" in raw
+                        valid = result.returncode == 0 and " 1 passed; 0 failed" in raw
                     else:
                         valid = (result.returncode == 101 and "1 failed" in raw
                                  and f"oracle hash for {source} does not match" in raw
