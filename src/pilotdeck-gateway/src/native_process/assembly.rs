@@ -1099,10 +1099,7 @@ async fn start_assembly(
                         Ok(TurnHostFactory::new_with_authority(
                             project,
                             deployment,
-                            crate::host::Limits {
-                                close_timeout: options.drain_budget,
-                                ..Default::default()
-                            },
+                            native_host_limits(options.drain_budget),
                             Some("pilotdeck-agent-loop".into()),
                             move |identity, recorder, signal, authority| match authority {
                                 Some(authority) => ports.turn_with_authority(
@@ -1341,10 +1338,15 @@ async fn start_assembly(
         (channel_assembly, automation_config)
     };
     let automation_home = options.home.clone();
+    let automation_project = project.clone();
+    let automation_env = env.clone();
+    let automation_frame_bytes = native_host_limits(options.drain_budget).max_frame_bytes
+        .min(crate::native_ws::MAX_OUTPUT_PAYLOAD);
     let automation_bundle = crate::runtime::always_on::storage::run(move || {
         automation::ProjectAutomationBundle::new(automation::ProjectAutomationBundleOptions {
             config: automation_config, pilot_home: automation_home,
-            make_always_on: always_on::native_factory(), make_cron: cron::native_factory(),
+            make_always_on: always_on::native_factory(automation_project, automation_env, automation_frame_bytes),
+            make_cron: cron::native_factory(),
         }).map(Arc::new)
     }).await;
     let automation_bundle = match automation_bundle {
@@ -1736,6 +1738,10 @@ async fn start_assembly(
         }
     }
 }
+fn native_host_limits(drain_budget: std::time::Duration) -> crate::host::Limits {
+    crate::host::Limits { close_timeout: drain_budget, ..Default::default() }
+}
+
 /// #1864 (a): the pure compose step for the three session selections —
 /// extracted from the prepare closure so the read-back tests exercise the
 /// same logic the next session runs. Mirrors

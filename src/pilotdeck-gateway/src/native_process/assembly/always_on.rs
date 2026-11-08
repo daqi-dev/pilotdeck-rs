@@ -7,6 +7,7 @@
 //! ends in the gateway's synchronous abort prefix exactly like the cron
 //! counterpart (`assembly/cron.rs`).
 mod standalone;
+mod fire;
 pub(super) use standalone::standalone_factory;
 
 use std::future::Future;
@@ -29,9 +30,12 @@ use crate::runtime::{
 /// The native process's one `AlwaysOnManager::new` (test fixtures construct
 /// their own). The bundle only calls this with a live config — every create
 /// condition is its (:287-288) decision.
-pub(super) fn native_factory() -> AlwaysOnFactory {
-    Arc::new(|input| {
+pub(super) fn native_factory(project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+    env: crate::config::Env, max_frame_bytes: usize) -> AlwaysOnFactory {
+    Arc::new(move |input| {
         let home = input.pilot_home.clone();
+        let fire = fire::NativeFireFactory::stage(home.clone(), &input.config, &project,
+            &env, max_frame_bytes)?;
         let manager = AlwaysOnManager::new_with_resolver(AlwaysOnManagerOptions {
             config: input.config,
             pilot_home: input.pilot_home,
@@ -39,6 +43,7 @@ pub(super) fn native_factory() -> AlwaysOnFactory {
             uuid: None,
             logger: None,
         }, |key| bounded_paths(&home, key))?;
+        manager.set_fire_factory(fire)?;
         Ok(Arc::new(NativeAlwaysOnProvider {
             manager: Arc::new(manager),
         }))

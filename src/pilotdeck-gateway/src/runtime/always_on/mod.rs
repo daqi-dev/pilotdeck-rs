@@ -219,3 +219,6 @@ impl AlwaysOnConfig {
             .map(|(_, enabled)| *enabled)
     }
 }
+
+mod native_fire;
+pub(crate) use native_fire::NativeFire;

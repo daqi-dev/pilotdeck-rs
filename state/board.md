@@ -5108,3 +5108,8 @@ r97全目标编译及submit/admission/plugin通过，native两项新steer夹具�
 ### 2026-11-09 04:41 · CLI 两小时接续（继续开发）
 
 r99固定67f120f42在mbp2全目标check、Always-On73项及bundle11项通过，生产fire/standalone/SOP执行尚未全接，未标完整或strict通过。冻结r98真实同宿主双项目CLI33检查通过；首次源码安装与32技能读取成功，第二代update构建等cargo名额600s超时，旧代保留且测试进程清理完成，原失败保全后留最终候选复验。47负控中的loader7/owner18全部KILLED，publish22仍在跑。root继续单一装配/生命周期，Terra完整fire与工具，audit真实workspace与owned runner，Sol SOP controller/client；SOP存储/审批首片已逐hash整合，主树仍有待编译的产品改动。详见主仓 `_tmp/20261108-cli-completion/handoff-0441.md`。只本机提交、Rust只mbp2、无GitHub写；本机目前空闲约27.4GiB，无本轮Rust产物；下一交接06:41，继续实现。
+
+
+### 2026-11-09 05:11 · 自动化工作区与后台恢复实测收口中
+
+r103全目标编译过；bundle12、配置FIFO/超限保快照1、owned shell3、SOP client4及原生审批7实际全过。Always-On87过2失败1忽略：Darwin不接受目录fd路径作cwd，audit按实际canonical路径+fd身份核验修，决定见当日决策卡；native486过1失败66忽略，cold-status测试错用message已改合法event/kind/text待验，r101后台Unknown实缺口已修终态checkpoint先于done并补可控写阻塞/失败测试，未把偶发通过当已修。47负控三组全部KILLED/还原且无残留，原件回收主仓negative-generation-r1/passed；r102一次类型推断编译失败原件保留，r103已修过。Terra真实五阶段engine、Sol SOP业务、audit共享host多node执行仍在实现；root factory候选待engine导出再合，另核出SDK opt-in四类user-dialog工具/恢复尚缺生产接线，继续补。只本机提交，Rust只mbp2，无GitHub写；完整CLI未完成。

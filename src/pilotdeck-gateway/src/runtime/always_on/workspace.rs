@@ -1,6 +1,6 @@
 //! Project-generation-owned native workspace providers. Command ownership,
 //! process groups, timeout and output buffering reuse CommandRunner.
-use std::{fs::File, future::Future, io, os::fd::AsRawFd, path::{Path, PathBuf}, sync::{Arc, Mutex}};
+use std::{fs::File, future::Future, io, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use crate::runtime::{cleanup_task, project::RuntimeLease, tools::builtin::bash::{AbortSignal, CommandOptions, CommandResult, CommandRunner}};
 use tokio::sync::{oneshot, watch};
@@ -113,8 +113,8 @@ impl NativeWorkspace {
         let root = self.0.project.clone();
         let project = self.io(move || workspace_copy::pin_project(&root)).await?;
         let top = if strategy == "auto" || strategy == "git-worktree" {
-            let top = self.command(&project, &["git", "rev-parse", "--show-toplevel"], signal.clone()).await?;
-            let head = self.command(&project, &["git", "rev-parse", "HEAD"], signal.clone()).await?;
+            let top = self.command(&project, &self.0.project, &["git", "rev-parse", "--show-toplevel"], signal.clone()).await?;
+            let head = self.command(&project, &self.0.project, &["git", "rev-parse", "HEAD"], signal.clone()).await?;
             (top.exit_code == Some(0) && head.exit_code == Some(0)).then_some(crate::metadata::js_trim(&top.stdout).to_owned())
         } else { None };
         let selected = if strategy == "auto" { if top.is_some() { "git-worktree" } else { "snapshot-copy" } } else { strategy };
@@ -133,32 +133,32 @@ impl NativeWorkspace {
     }
     async fn prepare_git(&self, project: &Arc<File>, top: &str, id: &str, title: &JsString, signal: Option<AbortSignal>) -> Result<(PathBuf, JsObject), WorkspaceError> {
         let project_root = self.0.project.clone(); let top_path = PathBuf::from(top);
-        let repository = self.io(move || {
+        let (repository, repository_path) = self.io(move || {
             let canonical = top_path.canonicalize()?;
             let selected = project_root.canonicalize()?;
             if !selected.starts_with(&canonical) { return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Always-On git root is outside the admitted project ancestry.")); }
-            workspace_copy::pin_project(&canonical)
+            workspace_copy::pin_project(&canonical).map(|directory| (directory, canonical))
         }).await?;
-        let status = self.command(&repository, &["git", "status", "--porcelain"], signal.clone()).await?;
+        let status = self.command(&repository, &repository_path, &["git", "status", "--porcelain"], signal.clone()).await?;
         expect_ok(&status, "git status --porcelain")?;
         if !crate::metadata::js_trim(&status.stdout).is_empty() {
-            expect_ok(&self.command(&repository, &["git", "add", "-A"], signal.clone()).await?, "git add -A")?;
+            expect_ok(&self.command(&repository, &repository_path, &["git", "add", "-A"], signal.clone()).await?, "git add -A")?;
             let title = String::from_utf16_lossy(title.units()).split(crate::metadata::js_space).filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ");
             let message = format!("chore(always-on): checkpoint before executing {}", if title.is_empty() { "untitled plan" } else { &title });
-            expect_ok(&self.command(&repository, &["git", "commit", "-m", &message], signal.clone()).await?, "git commit")?;
-            let clean = self.command(&repository, &["git", "status", "--porcelain"], signal.clone()).await?;
+            expect_ok(&self.command(&repository, &repository_path, &["git", "commit", "-m", &message], signal.clone()).await?, "git commit")?;
+            let clean = self.command(&repository, &repository_path, &["git", "status", "--porcelain"], signal.clone()).await?;
             expect_ok(&clean, "git status --porcelain")?;
             if !crate::metadata::js_trim(&clean.stdout).is_empty() { return Err(WorkspaceError::new("workspace_prepare_failed", "git worktree remained dirty after the Always-On checkpoint commit.")); }
         }
-        let branch = self.command(&repository, &["git", "rev-parse", "--abbrev-ref", "HEAD"], signal.clone()).await?;
+        let branch = self.command(&repository, &repository_path, &["git", "rev-parse", "--abbrev-ref", "HEAD"], signal.clone()).await?;
         expect_ok(&branch, "git rev-parse --abbrev-ref HEAD")?;
-        let commit = self.command(&repository, &["git", "rev-parse", "HEAD"], signal.clone()).await?;
+        let commit = self.command(&repository, &repository_path, &["git", "rev-parse", "HEAD"], signal.clone()).await?;
         expect_ok(&commit, "git rev-parse HEAD")?;
         let paths = self.0.paths.clone(); let run = id.to_owned();
         let (target, _pinned_target) = self.io(move || workspace_copy::new_target(&paths, "git-worktree", &run)).await?;
         let branch_name = format!("always-on/{id}");
         let target_text = target.to_str().ok_or_else(|| WorkspaceError::new("workspace_prepare_failed", "Always-On worktree path is not representable."))?;
-        let result = self.command(&repository, &["git", "worktree", "add", "-b", &branch_name, target_text, crate::metadata::js_trim(&commit.stdout)], signal).await?;
+        let result = self.command(&repository, &repository_path, &["git", "worktree", "add", "-b", &branch_name, target_text, crate::metadata::js_trim(&commit.stdout)], signal).await?;
         expect_ok(&result, "git worktree add")?;
         // Revalidate the result using this generation's expected base. It is
         // also the admission used by persisted cycles after a host restart.
@@ -197,9 +197,9 @@ impl NativeWorkspace {
         })).await
     }
     async fn authorize_handle(&self, handle: WorkspaceHandle) -> Result<WorkspaceHandle, WorkspaceError> {
-        let path = native_path(&handle.cwd)?; let paths = self.0.paths.clone(); let strategy = handle.strategy.clone();
+        let path = native_path(&handle.cwd)?; let selected_path = path.clone(); let paths = self.0.paths.clone(); let strategy = handle.strategy.clone();
         let directory = self.io(move || workspace_copy::owned_workspace(&paths, &strategy, &path)).await?;
-        if handle.strategy == "git-worktree" { self.verify_git_project(&directory, None).await?; }
+        if handle.strategy == "git-worktree" { self.verify_git_project(&directory, &selected_path, None).await?; }
         Ok(handle)
     }
 
@@ -209,20 +209,20 @@ impl NativeWorkspace {
             let cwd = native_path(&handle.cwd)?; let paths = owner.0.paths.clone(); let strategy = handle.strategy.clone(); let copy = cwd.clone();
             let directory = owner.io(move || workspace_copy::owned_workspace(&paths, &strategy, &copy)).await?;
             if handle.strategy == "git-worktree" {
-                owner.verify_git_project(&directory, None).await?;
+                owner.verify_git_project(&directory, &cwd, None).await?;
                 let root = owner.0.project.clone(); let repository = owner.io(move || workspace_copy::pin_project(&root)).await?;
                 let cwd_text = cwd.to_string_lossy().into_owned();
-                let removed = owner.command(&repository, &["git", "worktree", "remove", "--force", &cwd_text], None).await?;
+                let removed = owner.command(&repository, &owner.0.project, &["git", "worktree", "remove", "--force", &cwd_text], None).await?;
                 if removed.exit_code != Some(0) {
                     let paths = owner.0.paths.clone(); let copy = cwd.clone(); owner.io(move || workspace_copy::remove_owned(&paths, "git-worktree", &copy)).await?;
-                    let _ = owner.command(&repository, &["git", "worktree", "prune"], None).await?;
+                    let _ = owner.command(&repository, &owner.0.project, &["git", "worktree", "prune"], None).await?;
                 }
                 if let Some(branch) = handle.metadata.get("branchName").and_then(JsValue::as_string) {
                     let branch = branch.to_utf8().map_err(|_| WorkspaceError::new("invalid_workspace", "Workspace branch is not representable."))?;
                     // Only the branch corresponding to this owned run may be
                     // removed, never arbitrary persisted metadata commands.
                     let run = cwd.file_name().and_then(|name| name.to_str()).unwrap_or("");
-                    if branch == format!("always-on/{run}") { let _ = owner.command(&repository, &["git", "branch", "-D", &branch], None).await?; }
+                    if branch == format!("always-on/{run}") { let _ = owner.command(&repository, &owner.0.project, &["git", "branch", "-D", &branch], None).await?; }
                 }
             } else {
                 let paths = owner.0.paths.clone(); owner.io(move || workspace_copy::remove_owned(&paths, "snapshot-copy", &cwd)).await?;
@@ -231,10 +231,10 @@ impl NativeWorkspace {
         })).await
     }
 
-    async fn verify_git_project(&self, workspace: &Arc<File>, signal: Option<AbortSignal>) -> Result<(), WorkspaceError> {
+    async fn verify_git_project(&self, workspace: &Arc<File>, workspace_path: &Path, signal: Option<AbortSignal>) -> Result<(), WorkspaceError> {
         let root = self.0.project.clone(); let project = self.io(move || workspace_copy::pin_project(&root)).await?;
-        let selected = self.command(workspace, &["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], signal.clone()).await?;
-        let expected = self.command(&project, &["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], signal).await?;
+        let selected = self.command(workspace, workspace_path, &["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], signal.clone()).await?;
+        let expected = self.command(&project, &self.0.project, &["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], signal).await?;
         expect_ok(&selected, "git rev-parse --git-common-dir")?; expect_ok(&expected, "git rev-parse --git-common-dir")?;
         let selected = PathBuf::from(crate::metadata::js_trim(&selected.stdout)); let expected = PathBuf::from(crate::metadata::js_trim(&expected.stdout));
         self.io(move || {
@@ -253,20 +253,20 @@ impl NativeWorkspace {
         self.owned(move |owner| Box::pin(async move { owner.diff_inner(&strategy, cwd, signal).await })).await
     }
     async fn diff_inner(&self, strategy: &str, cwd: JsString, signal: Option<AbortSignal>) -> Result<NativeWorkspaceDiff, WorkspaceError> {
-        let cwd = native_path(&cwd)?; let cwd_text = cwd.to_string_lossy().into_owned(); let paths = self.0.paths.clone(); let selected = strategy.to_owned();
+        let cwd = native_path(&cwd)?; let workspace_path = cwd.clone(); let cwd_text = cwd.to_string_lossy().into_owned(); let paths = self.0.paths.clone(); let selected = strategy.to_owned();
         let workspace = self.io(move || workspace_copy::owned_workspace(&paths, &selected, &cwd)).await?;
         let (text, count) = if strategy == "git-worktree" {
-            self.verify_git_project(&workspace, signal.clone()).await?;
-            let add = self.command(&workspace, &["git", "add", "-A"], signal.clone()).await?;
+            self.verify_git_project(&workspace, &workspace_path, signal.clone()).await?;
+            let add = self.command(&workspace, &workspace_path, &["git", "add", "-A"], signal.clone()).await?;
             if add.exit_code != Some(0) { return Ok(empty_diff()); }
-            let stat = self.command(&workspace, &["git", "diff", "--cached", "HEAD", "--stat"], signal.clone()).await?;
+            let stat = self.command(&workspace, &workspace_path, &["git", "diff", "--cached", "HEAD", "--stat"], signal.clone()).await?;
             let count = if stat.exit_code == Some(0) { stat.stdout.bytes().filter(|byte| *byte == b'\n').count().saturating_sub(1) } else { 0 };
-            let diff = self.command(&workspace, &["git", "diff", "--cached", "HEAD"], signal).await?;
+            let diff = self.command(&workspace, &workspace_path, &["git", "diff", "--cached", "HEAD"], signal).await?;
             (if diff.exit_code == Some(0) { diff.stdout } else { String::new() }, count)
         } else {
             let root = self.0.project.to_str().ok_or_else(|| WorkspaceError::new("invalid_workspace", "Project root is not representable."))?;
-            // The process is already chdir'd to the pinned selected workspace.
-            let result = self.command(&workspace, &["diff", "-ruN", "--exclude=.git", "--exclude=node_modules", "--exclude=dist", "--exclude=.pilotdeck", "--exclude=.pilotdeck-always-on", root, &cwd_text], signal).await?;
+            // The command uses the identity-checked selected workspace path.
+            let result = self.command(&workspace, &workspace_path, &["diff", "-ruN", "--exclude=.git", "--exclude=node_modules", "--exclude=dist", "--exclude=.pilotdeck", "--exclude=.pilotdeck-always-on", root, &cwd_text], signal).await?;
             if result.exit_code.is_some_and(|code| code > 1) { return Ok(empty_diff()); }
             let count = result.stdout.lines().filter(|line| line.starts_with("diff ")).count();
             (result.stdout, count)
@@ -275,18 +275,21 @@ impl NativeWorkspace {
         let units: Vec<_> = text.encode_utf16().collect(); let truncated = units.len() > DIFF_UNITS;
         Ok(NativeWorkspaceDiff { text: JsString::from_utf16(units.into_iter().take(DIFF_UNITS).collect()), file_count: count, truncated })
     }
-    async fn command(&self, directory: &Arc<File>, args: &[&str], signal: Option<AbortSignal>) -> Result<CommandResult, WorkspaceError> {
+    async fn command(&self, directory: &Arc<File>, directory_path: &Path, args: &[&str], signal: Option<AbortSignal>) -> Result<CommandResult, WorkspaceError> {
         let command = args.iter().map(|arg| quote(arg)).collect::<Vec<_>>().join(" ");
         let mut env = self.0.env.clone().unwrap_or_else(|| std::env::vars_os().map(|(key, value)| (key.to_string_lossy().as_ref().into(), value.to_string_lossy().as_ref().into())).collect());
         // Internal argv commands must not execute a user's login-shell rc
-        // that changes cwd after the descriptor-based child chdir.
+        // that changes cwd after the identity-checked child chdir.
         env.retain(|(key, _)| !key.equals_str("PILOTDECK_SHELL_PATH"));
         env.push(("PILOTDECK_SHELL_PATH".into(), "/bin/sh".into()));
-        #[cfg(target_os = "linux")]
-        let cwd = format!("/proc/self/fd/{}", directory.as_raw_fd());
-        #[cfg(not(target_os = "linux"))]
-        let cwd = format!("/dev/fd/{}", directory.as_raw_fd());
-        let result = self.0.runner.run(command.as_str().into(), CommandOptions { cwd: cwd.as_str().into(), env: Some(env), timeout_ms: 60_000.0, signal,
+        // Darwin /dev/fd directory aliases cannot be used by chdir. Follow the
+        // TS path-based spawn contract, checking against the selected directory
+        // descriptor before and after the owned command. This detects a changed
+        // path, but does not eliminate a same-user rename-and-restore spawn race.
+        let selected = directory.clone(); let path = directory_path.to_owned();
+        let cwd = self.io(move || checked_command_path(&selected, &path)).await?;
+        let cwd_text = cwd.to_str().ok_or_else(|| WorkspaceError::new("invalid_workspace", "Command cwd is not representable."))?;
+        let result = self.0.runner.run(command.as_str().into(), CommandOptions { cwd: cwd_text.into(), env: Some(env), timeout_ms: 60_000.0, signal,
             on_stdout: None, on_stderr: None, max_output_units: Some(COMMAND_UNITS + 64 * 1024 + 8) }).await
             .map_err(|error| WorkspaceError::new(if error.code == "owned_command_not_quiescent" { "workspace_cleanup_failed" } else { "workspace_prepare_failed" }, error.message))?;
         // CommandRunner retains an owned 3s kill/reap timer after TERM. Do
@@ -295,12 +298,24 @@ impl NativeWorkspace {
             crate::process_group::wait_for_group_empty(Some(group), std::time::Duration::from_secs(4)).await;
             if crate::process_group::group_exists(group) { return Err(WorkspaceError::new("workspace_cleanup_failed", "Always-On command group did not quiesce.")); }
         }
+        let selected = directory.clone();
+        self.io(move || checked_command_path(&selected, &cwd).map(|_| ())).await?;
         if result.timed_out { return Err(WorkspaceError::new("workspace_prepare_failed", "Always-On workspace command timed out.")); }
         if result.stdout.encode_utf16().count() >= COMMAND_UNITS || result.stderr.encode_utf16().count() >= COMMAND_UNITS {
             return Err(WorkspaceError::new("workspace_resource_limit", "Always-On workspace command output exceeded its native resource limit."));
         }
         Ok(result)
     }
+}
+fn checked_command_path(directory: &File, path: &Path) -> io::Result<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    let canonical = path.canonicalize()?;
+    let selected = directory.metadata()?;
+    let current = std::fs::metadata(&canonical)?;
+    if !current.is_dir() || current.dev() != selected.dev() || current.ino() != selected.ino() {
+        return Err(io::Error::new(io::ErrorKind::PermissionDenied, "Always-On command cwd no longer matches the admitted directory."));
+    }
+    Ok(canonical)
 }
 fn native_path(value: &JsString) -> Result<PathBuf, WorkspaceError> {
     value.to_utf8().map(PathBuf::from).map_err(|_| WorkspaceError::new("invalid_workspace", "Workspace path is not representable by the native filesystem."))

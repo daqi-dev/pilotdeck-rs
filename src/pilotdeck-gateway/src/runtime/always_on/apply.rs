@@ -6,7 +6,8 @@ use pilotdeck_protocol::JsString;
 
 use super::{
     fire::{ApplyPhaseInput, ApplyPhaseResult, derive_apply_session_key},
-    manager::{AlwaysOnAgentGateway, AlwaysOnRunContextRegistry, ControlError, PhaseObserver, PhaseRequest},
+    manager::{AlwaysOnAgentGateway, AlwaysOnRunContext, AlwaysOnRunContextRegistry, ControlError, PhaseObserver, PhaseRequest},
+    phase_tools::PhaseHandlers,
 };
 
 pub(crate) struct WorkspaceDiff {
@@ -28,6 +29,9 @@ pub(crate) trait ApplyEvents: Send + Sync {
     fn emit(&self, run_id: &str, phase: &str, error: Option<&ControlError>);
     fn drain<'a>(&'a self) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 }
+
+struct ContextGuard { registry: Arc<AlwaysOnRunContextRegistry>, session: String }
+impl Drop for ContextGuard { fn drop(&mut self) { self.registry.unregister(&self.session); } }
 
 pub(crate) struct ApplyPhase {
     pub project_key: JsString,
@@ -88,7 +92,21 @@ impl ApplyPhase {
             observer: self.observer.clone(),
             register_automation_tools: self.register_automation_tools,
         };
-        let mut result = self.gateway.run_phase(request).await?;
+        let context = if self.register_automation_tools {
+            self.contexts.register(AlwaysOnRunContext { session_key: session_key.clone(),
+                run_id: input.run_id.into(), project_key: project_key.clone() })
+                .map_err(|e| ControlError { code: "internal".into(), message: e.to_string() })?;
+            Some(ContextGuard { registry: self.contexts.clone(), session: session_key.clone() })
+        } else { None };
+        let handlers = Arc::new(PhaseHandlers::Execution);
+        let lease = if context.is_some() {
+            Some(handlers.install(&self.contexts, session_key.as_str().into())
+                .map_err(|e| ControlError { code: "internal".into(), message: e.to_string() })?)
+        } else { None };
+        let response = self.gateway.run_phase(request).await;
+        drop(lease); drop(context);
+        handlers.drain().await;
+        let mut result = response?;
         let error = result.error.take().map(|mut error| {
             if error.code.is_empty() { error.code = "apply_failed".into(); }
             error
@@ -153,6 +171,9 @@ mod tests {
         fn run_phase<'a>(&'a self, request: PhaseRequest)
             -> Pin<Box<dyn Future<Output = Result<PhaseResult, ControlError>> + Send + 'a>> {
             Box::pin(async move {
+                if request.register_automation_tools {
+                    assert!(request.context_registry.get(&request.session_key.to_utf8().unwrap()).is_some());
+                }
                 self.0.lock().unwrap().push(request);
                 let mut terminal = pilotdeck_protocol::JsObject::new();
                 terminal.insert("type".into(), pilotdeck_protocol::JsValue::String("turn_completed".into()));
@@ -213,6 +234,24 @@ mod tests {
         assert_eq!(request.exclude_tools.len(), 3);
         assert!(request.message.to_utf8().unwrap().contains("diff-content"));
         assert_eq!(*events.0.lock().unwrap(), ["apply_started", "apply_completed", "closed"]);
+    }
+
+    #[tokio::test]
+    async fn enabled_apply_owns_context_until_turn_finishes() {
+        let gateway = Arc::new(Gateway(Mutex::default(), None, None));
+        let events = Arc::new(Events::default());
+        let contexts = Arc::new(AlwaysOnRunContextRegistry::new());
+        let phase = ApplyPhase { project_key: "/project".into(), gateway,
+            contexts: contexts.clone(), workspace: Arc::new(Workspace), events: events.clone(),
+            observer: events, register_automation_tools: true, chinese: false };
+        let cycle = WorkCycleRecord { raw: Default::default(), id: "cycle".into(), project_key: "/project".into(),
+            status: "active".into(), workspace: Some(WorkCycleWorkspace { strategy: "git-worktree".into(),
+                cwd: "/workspace".into(), metadata: Default::default() }), plan_ids: Vec::new(),
+            created_at: "".into(), created_by_run_id: "".into() };
+        let result = phase.run(ApplyPhaseInput { run_id: "run", cycle: &cycle, plans: &[],
+            project_name: None, project_root: "/project" }).await.unwrap();
+        assert!(result.error.is_none());
+        assert!(contexts.get(&result.session_key).is_none());
     }
 
     #[tokio::test]

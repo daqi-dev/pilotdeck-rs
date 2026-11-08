@@ -122,3 +122,43 @@ async fn caller_cancellation_does_not_release_the_generation_or_skip_close_drain
     let drained = fixture.registry.dispose().await;
     assert!(!prematurely_closed, "close must wait for an accepted operation after its caller vanished"); assert!(held > 0); assert!(closed.is_ok()); assert!(drained.is_ok()); assert_eq!(runtime.lease_count(), 0);
 }
+
+struct ReplacingCwdRunner;
+impl CommandRunner for ReplacingCwdRunner {
+    fn run(&self, _: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
+        Box::pin(async move {
+            let cwd = PathBuf::from(options.cwd.to_utf8().unwrap());
+            std::fs::rename(&cwd, cwd.with_extension("original")).unwrap();
+            std::fs::create_dir(&cwd).unwrap();
+            Ok(CommandResult { exit_code: Some(0), stdout: "must not succeed".into(), stderr: String::new(), timed_out: false, duration_ms: 0.0, pid: None })
+        })
+    }
+}
+#[tokio::test]
+async fn command_cwd_is_identity_checked_before_and_after_spawn() {
+    let fixture = Fixture::new();
+    let cwd = fixture.root.0.join("selected space 'quoted'"); std::fs::create_dir(&cwd).unwrap();
+    let selected = workspace_copy::pin_project(&cwd).unwrap();
+    let other = fixture.root.0.join("foreign"); std::fs::create_dir(&other).unwrap();
+    let provider = fixture.provider(Arc::new(ReplacingCwdRunner));
+    // Mismatch must reject before invoking a runner which mutates its cwd.
+    let before = provider.command(&selected, &other, &["pwd"], None).await;
+    assert!(before.is_err()); assert!(!other.with_extension("original").exists());
+    let after = provider.command(&selected, &cwd, &["pwd"], None).await;
+    assert!(after.is_err(), "a successful child result cannot hide cwd replacement");
+    assert!(cwd.with_extension("original").exists());
+    assert!(provider.close().await.is_ok()); assert!(fixture.registry.dispose().await.is_ok());
+}
+#[tokio::test]
+async fn command_uses_a_real_canonical_cwd_with_spaces_and_aliases() {
+    let fixture = Fixture::new();
+    let cwd = fixture.root.0.join("selected space 'quoted'"); std::fs::create_dir(&cwd).unwrap();
+    let alias = fixture.root.0.join("alias"); std::os::unix::fs::symlink(&cwd, &alias).unwrap();
+    let selected = workspace_copy::pin_project(&alias).unwrap();
+    let provider = fixture.provider(Arc::new(NativeOwnedShellCommandRunner));
+    let result = provider.command(&selected, &alias, &["pwd", "-P"], None).await;
+    let closed = provider.close().await; let drained = fixture.registry.dispose().await;
+    assert!(closed.is_ok()); assert!(drained.is_ok());
+    let result = result.unwrap(); assert_eq!(result.exit_code, Some(0));
+    assert_eq!(result.stdout.trim(), cwd.canonicalize().unwrap().to_str().unwrap());
+}

@@ -54,6 +54,8 @@ pub trait UserDialogJournal: Send + Sync {
 
 pub struct GatewayUserDialogJournal {
     path: PathBuf,
+    #[cfg(unix)]
+    native: Option<super::native_journal::NativeJournalFiles>,
     runtime: DialogRuntime,
     /// Serializes read-modify-write cycles. The channel calls `record`/`remove`
     /// from independent tool threads; TS is single-threaded and needs no lock.
@@ -73,6 +75,8 @@ impl GatewayUserDialogJournal {
     pub fn new(path: PathBuf, options: JournalOptions) -> Self {
         Self {
             path,
+            #[cfg(unix)]
+            native: None,
             runtime: options.runtime,
             lock: Mutex::new(()),
         }
@@ -80,6 +84,18 @@ impl GatewayUserDialogJournal {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    #[cfg(unix)]
+    pub(crate) fn with_native_home(mut self, home: &Path) -> Result<Self> {
+        self.native = Some(super::native_journal::NativeJournalFiles::new(home, &self.path)?);
+        Ok(self)
+    }
+
+    fn remove_file(&self) -> Result<()> {
+        #[cfg(unix)]
+        if let Some(native) = &self.native { return native.remove().map_err(Into::into); }
+        remove_file(&self.path)
     }
 
     /// Inserts or replaces the request with the same `requestId`.
@@ -117,7 +133,7 @@ impl GatewayUserDialogJournal {
             return Ok(());
         }
         if dialogs.is_empty() {
-            return remove_file(&self.path);
+            return self.remove_file();
         }
         self.write(&JournalRecord { dialogs })
     }
@@ -152,12 +168,16 @@ impl GatewayUserDialogJournal {
 
     pub fn clear(&self) -> Result<()> {
         let _guard = self.lock.lock().unwrap();
-        remove_file(&self.path)
+        self.remove_file()
     }
 
     fn read(&self) -> Result<JournalRecord> {
         let value = (|| -> Result<JournalRecord> {
-            let bytes = match fs::read(&self.path) {
+            #[cfg(unix)]
+            let read = self.native.as_ref().map_or_else(|| fs::read(&self.path), |native| native.read());
+            #[cfg(not(unix))]
+            let read = fs::read(&self.path);
+            let bytes = match read {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(JournalRecord {
@@ -191,6 +211,13 @@ impl GatewayUserDialogJournal {
     }
 
     fn write(&self, record: &JournalRecord) -> Result<()> {
+        #[cfg(unix)]
+        if let Some(native) = &self.native {
+            let mut object = JsObject::new();
+            object.insert("version".into(), JsValue::Number(1.0));
+            object.insert("dialogs".into(), JsValue::Array(record.dialogs.clone()));
+            return native.write(json(&JsValue::Object(object))?.as_bytes()).map_err(Into::into);
+        }
         let directory = self.path.parent().unwrap_or_else(|| Path::new("."));
         mkdir(directory)?;
         let name = self
