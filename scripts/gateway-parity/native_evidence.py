@@ -301,7 +301,10 @@ def load_capture(folder):
     folder = Path(folder)
     need(not (folder / 'failure.json').exists(), 'capture carries a failure record')
     receipt = json.loads((folder / 'receipt.json').read_text())
-    need(receipt['status'] == 'WITNESS_CAPTURED' and receipt['tracerExitCode'] == 0,
+    # #2039: receipt.json is a retained JSON original whose bytes are not
+    # sha-pinned, so a tracerExitCode that drifted into a boolean must not
+    # satisfy ``False == 0`` (#1372 same_json, deep defense).
+    need(receipt['status'] == 'WITNESS_CAPTURED' and same_json(receipt['tracerExitCode'], 0),
          'capture was not completed successfully')
     raw = read_trace(folder / 'trace.log')
     for name, key in receipt_artifacts('capture').items():
@@ -345,7 +348,10 @@ def canonical_path(path):
 
 def ws_profile(direction, wire):
     need(direction in ('send', 'receive'), 'WS profile direction')
-    need(wire.get('opcode') == 1 and wire.get('fin') is True and wire.get('rsv') == 0,
+    # #2039: wire records are decoded observer JSON; opcode/rsv are JSON
+    # numbers on the real train, so a drifted boolean is a difference, not
+    # an accepted ``True == 1`` / ``False == 0`` (#1372 same_json).
+    need(same_json(wire.get('opcode'), 1) and wire.get('fin') is True and same_json(wire.get('rsv'), 0),
          'WS profile requires complete text frame without RSV')
     need(wire.get('masked') is (direction == 'send'), 'WS profile mask/direction')
 
@@ -355,7 +361,9 @@ def session_profile(contract, cases):
     need(contract.get('cases') == cases, 'session profile full manifest')
     need(Counter(contract.get('processRoles', [])) == Counter(['host'] + ['sidecar'] * len(cases))
          and set(contract.get('binaries', {})) == {'host', 'sidecar'}, 'session profile roles')
-    need(contract.get('connections') == 1, 'session profile connections')
+    # #2039: the launch contract is a JSON original on the live audit path;
+    # ``True == 1`` must not pass for a drifted connections boolean.
+    need(same_json(contract.get('connections'), 1), 'session profile connections')
     argv = contract['binaries']['host']['argv']
     need(argv.count('--listen') == argv.count('--home') == argv.count('--project') == 1,
          'session profile host arguments')
