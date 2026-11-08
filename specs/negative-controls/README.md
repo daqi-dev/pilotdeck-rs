@@ -114,7 +114,9 @@
 `memory-gateway` · `snapshot-projection` · `regex-proto-budget`（#1456、#1265）与
 #297 r6 起的 `issue-297` · `issue-297-domain-fold`（迁移自原 main 形状，启动四拒
 全走 `refuse()`）与 `sdk-mcp-session-tools`（#1433，`negative_selection` 契约 +
-`EXPECTED_NAMES` 静态名册）。**其余同族入口尚未迁移**，
+`EXPECTED_NAMES` 静态名册）、`mode-routing`（#1354 起同形自管）、`same-json-surfaces`
+（#2422 起自管，#2425/#2431 硬化：CLI 对齐为 `OUT [--memory] [NAME ...]` 后进
+`test_negative_optimize_guards.py` 三条拒跑矩阵）。**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。
@@ -157,16 +159,19 @@
 （未设置 / 空串 / 纯空白走 `negative_selection.missing_target()`，dot / 根 / `src` 内走
 `negative_selection.refuse_unusable_target()` —— 后者不重列取值，直接问
 `negative_process.target_environment`，取值规则只有那一处）都返回 2；
-`TARGET_OPTIONAL` 登记的三个入口按模式各自豁免：`interaction-values` 与
+`TARGET_OPTIONAL` 登记的四个入口按模式各自豁免：`interaction-values` 与
 `turn-submit-admission` 只在**变量未设置**这一档豁免（按 #1166 用共享默认 target），
 空串与纯空白由各自的 `blank_target()` 前置守卫以 2 拒跑，dot / 文件系统或仓库根 /
 `src` 这类目标同样在领取证据目录之前以 2 拒跑——这两个入口是直接 `try:
 target_environment(...) except RuntimeError: refuse(...)`，效果等价于
 `refuse_unusable_target()`（同一份取值规则，只是没有包成谓词）；
-`cli-parity-mock-gateway` 不编译 Cargo，**四档全豁免**，由登记表守卫断言它没有任何
-target 读取；
-**树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）与
-两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）实现，
+`cli-parity-mock-gateway` 与 `same-json-surfaces` 不编译 Cargo，**四档全豁免**，由登记表
+守卫断言它们没有任何 target 读取；
+**树脏 / 领锁超时 / oracle 读不了**三条，自管入口里 `settings-gateway`（`entered` 旗标）、
+两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）与
+`same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）已实现
+（`sdk-signals` 的相位路由 #1885 r8 与 `_negkit/contract.py` 的 `entered` 旗标也各自实现；
+本句枚举的是 `test_negative_optimize_guards.py` 登记面，非全集），
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
 另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
@@ -182,7 +187,7 @@ target 读取；
 这些都由 `test_negative_optimize_guards.py` 机检：不存在的变异名、`CARGO_TARGET_DIR` 不可用
 （未设置 / 空串 / 纯空白 / `.` 四档）、目录已存在三条矩阵覆盖全族。豁免按**模式**登记
 （`interaction-values` / `turn-submit-admission` 只豁免「未设置」，由
-`negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 不编译 Cargo，
-四档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
+`negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 与
+`same-json-surfaces` 不编译 Cargo，四档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
 AST 判；豁免多档的入口不得出现任何 target 读取形态），加个名字不能静默缩小矩阵。
 共享执行器的四分数值仍以 `tests/fixtures/README.md` 为准，不与本节互相替代。
