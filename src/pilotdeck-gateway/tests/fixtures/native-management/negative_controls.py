@@ -507,7 +507,7 @@ mutations.append(('owned-workspace-cwd-unavailable', SESSION_FACTORY,
 mutations.append(('manager-marker-refusal-dropped', SOURCE,
                   '        if metadata.files.was_refused() {\n            return Err(ManagerError::plain("Error", "Unsafe project marker."));\n        }',
                   '        if false && metadata.files.was_refused() {\n            return Err(ManagerError::plain("Error", "Unsafe project marker."));\n        }',
-                  'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_fifo_subprocess',
+                  'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_child',
                   'native manager preserves unsafe marker refusal'))
 
 # Same public resolver is consumed by rename/tag/status/delete/list and rewind.
@@ -515,7 +515,7 @@ mutations.append(('manager-marker-refusal-dropped', SOURCE,
 mutations.append(('session-dir-marker-refusal-message-changed', SESSION_DIR,
                   '    if metadata.files.was_refused() {\n        return Err(RequestError::new("Unsafe project marker."));\n    }',
                   '    if metadata.files.was_refused() {\n        return Err(RequestError::new("Different marker error."));\n    }',
-                  'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_fifo_subprocess',
+                  'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_child',
                   'native session route preserves unsafe marker refusal'))
 
 EXPECTED_TOTAL = 103
@@ -701,10 +701,14 @@ def main():
                   flush=True)
         selected_rows = [case for case in selected_rows if case.mutation not in LINUX_ONLY]
 
-    def run(label, args):
+    def run(label, args, child_case=None):
         slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
-        result = run_owned(command + args, cwd=ROOT, env=env, timeout=900)
+        run_env = dict(env)
+        if child_case is not None:
+            run_env.update(PDRS_SESSION_IO_CASE='marker', PDRS_SESSION_IO_METHOD=child_case)
+        result = run_owned(command + args, cwd=ROOT, env=run_env,
+                           timeout=30 if child_case is not None and '--no-run' not in args else 900)
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
         return result
 
@@ -712,6 +716,12 @@ def main():
         row = dict(mutation=case.mutation, test=case.test, assertion=case.assertion,
                    status='INVALID', reason='', compiled=False)
         args = [case.test, '--', '--exact', '--include-ignored']
+        # Bind the actual assertion-owning subprocess. A parent panic that
+        # embeds a child panic is deliberately not accepted by negative_panic.
+        child_case = {
+            'manager-marker-refusal-dropped': 'manager_sessions',
+            'session-dir-marker-refusal-message-changed': 'rename_session',
+        }.get(case.mutation)
         try:
             # Protect the executable fixture and judge, as well as product bytes.
             with mutating_sources(ROOT, [case.path, Path(__file__).resolve(), ORACLE,
@@ -725,21 +735,21 @@ def main():
                     ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs']) as originals:
                 original = originals[case.path].decode()
                 changed = mutate(case, original)
-                if not passed(run(case.mutation + '-positive', args), case.test):
+                if not passed(run(case.mutation + '-positive', args, child_case), case.test):
                     raise RuntimeError('positive control failed')
                 (out / (case.mutation + '.patch')).write_text(''.join(difflib.unified_diff(
                     original.splitlines(True), changed.splitlines(True), fromfile=str(case.path), tofile=str(case.path))))
                 case.path.write_text(changed)
-                compiled = run(case.mutation + '-compile', ['--no-run'])
+                compiled = run(case.mutation + '-compile', ['--no-run'], child_case)
                 row['compiled'] = compiled.returncode == 0
                 if not row['compiled']:
                     raise RuntimeError('mutant did not compile')
-                row['status'], row['reason'] = classify(run(case.mutation + '-negative', args), case)
+                row['status'], row['reason'] = classify(run(case.mutation + '-negative', args, child_case), case)
                 # Restore and re-run inside the source guard: the restored control
                 # compiles the tree, so it must never race another runner that
                 # takes the same .negative-source.lock (#1440).
                 case.path.write_bytes(originals[case.path])
-                if not passed(run(case.mutation + '-restored', args), case.test):
+                if not passed(run(case.mutation + '-restored', args, child_case), case.test):
                     raise RuntimeError('restored positive control failed')
         except Exception as error:
             row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
