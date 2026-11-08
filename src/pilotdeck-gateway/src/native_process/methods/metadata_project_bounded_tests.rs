@@ -163,7 +163,7 @@ async fn large_summary_and_many_projects_remain_readable() {
         let mut file = std::fs::File::create(&path).unwrap();
         file.set_len(17 * 1024 * 1024).unwrap();
         file.seek(SeekFrom::Start(position)).unwrap();
-        file.write_all(b"\n{\"type\":\"session_metadata\",\"title\":\"fixture title\"}\n")
+        file.write_all(b"\n{\"type\":\"session_metadata\",\"metadata\":{\"title\":\"fixture title\"}}\n")
             .unwrap();
         drop(file);
         let expected = NativeFiles.session_summary(&path, 17 * 1024 * 1024);

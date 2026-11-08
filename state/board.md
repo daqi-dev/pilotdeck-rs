@@ -5059,3 +5059,8 @@ r63七条实际负控六条KILLED，signal-exit-status因旧顶层hooks拒绝断
 ### 2026-11-08 22:18 · 最新 main 真合与 TCP 实机纠错
 
 只读fetch固定origin/main d9dd9a093，六个Cron冲突经Terra逐块与root复核：上游scheduler/完整用例此前已移入本轮，保留其上新增observed events、timeout、channel delivery与drain，不引入第二调度器；证据主仓 `_tmp/20261108-cli-completion/origin-merge-d9dd9`。HTTP合并同时保control与/api/web，真实embedding复用production_listener；双方board保留。r65全目标compile、agent23、71静态、strict、4bin、deployment通过，TCP三项实际socket失败，Darwin原始accept fd证明继承O_NONBLOCK；源修显式blocking，r66复验中。r65冻结bin供真实continuation验证，不把TCP失败算全绿。格式修复仅本轮未进origin的新MODEL-LEASE候选字段拆分以满足六段schema，语义与批准状态未变，历史冻结条目不动。唯一正本/旧树快照/仅本机提交与mbp2编译不变，完整CLI未完成。
+
+
+### 2026-11-08 22:41 · CLI 两小时接续（继续开发）
+
+r67合main后Cron核心357、api-web119、native-http135、全CLI540个实际测试通过（各自ignored不计）；Cronwiring两处路径诊断回归已源修待r69。r66真实TCP端到端与重连不重复provider通过；r65 continuable held/warm/cold/宿主重启实际全链过，子history空reference按真实TS合同核对，未改产品迁就probe。r68观察器初编9处bool构造已修；r69 compile与transport含7TCP实socket通过，其余进行中。独立后台SDK lifecycle、观察器实跑、两实际负控与最终安装/provider继续，双谱系评审尚未收口。现场和责任见主仓 `_tmp/20261108-cli-completion/handoff-2241.md`；唯一正本、双方快照、只本机提交、Rust只mbp2均不变，完整CLI未完成，下个00:41交接后继续。
