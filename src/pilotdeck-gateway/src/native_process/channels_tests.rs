@@ -29,7 +29,7 @@ use crate::runtime::turn::submit::{
     WorkspaceAdmissions,
 };
 use crate::storage::RunRef;
-use pilotdeck_protocol::{JsString, JsValue, parse_json};
+use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -876,6 +876,55 @@ async fn start_with_adapters_alive(adapters_yaml: &str) -> AliveAssembly {
     }
 }
 
+/// #2301 fix-r2 (review P0): an exclusive flock over the fixed ports a test
+/// claims, held from before the pre-probe until the after-stop assertion
+/// (the guard drops when the test does). `flock` semantics, not a mkdir+pid
+/// lock: the kernel releases the lock when the holder dies, so a crashed run
+/// never wedges the port, and a holder that stays alive without finishing
+/// surfaces here as the named 120-second timeout. Conforming runs of this
+/// suite serialize on the lock file instead of racing for the port between
+/// the probe and the channel's bind; a squatter outside this suite still
+/// fails the pre-probe by name.
+struct FixedPortRegion {
+    _files: Vec<std::fs::File>,
+}
+
+fn lock_fixed_port_region(ports: &[u16]) -> FixedPortRegion {
+    let mut files = Vec::new();
+    for port in ports {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(format!("/tmp/pdrs-2301-fixed-port-{port}.lock"))
+            .unwrap_or_else(|error| panic!("#2301 port {port} lock file: {error}"));
+        // Every wait states its termination condition: 120 seconds on the
+        // region, polled non-blocking so the failure is a named one.
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            // `File::try_lock` is `flock(LOCK_EX | LOCK_NB)` on Unix — the
+            // stable std surface of the same kernel lock the workspace's
+            // `unsafe_code = "forbid"` boundary (#448) lets a test reach.
+            match file.try_lock() {
+                Ok(()) => break,
+                Err(std::fs::TryLockError::WouldBlock) => {}
+                Err(error) => panic!("#2301 port {port} flock: {error}"),
+            }
+            if std::time::Instant::now() > deadline {
+                crate::negative_assert!(
+                    false,
+                    "#2301 the fixed-port region for port {port} is still held by \
+                     another run after 120s — rerun when the shared host is idle"
+                );
+                unreachable!("negative_assert! panics");
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        files.push(file);
+    }
+    FixedPortRegion { _files: files }
+}
+
 // #2301: the production startup constructs the configured loader channels
 // (pilotdeckServer.ts:288-296 through `loadEnabledChannels`): every enabled
 // implemented key reaches the channel server and gets its lifecycle entry —
@@ -898,10 +947,22 @@ async fn start_with_adapters_alive(adapters_yaml: &str) -> AliveAssembly {
 // residual window between probe and the channel's bind can still lose the
 // port to another run; that turns into a named failure here or at the
 // after-stop assertion, never a silent pass.
+//
+// #2301 fix-r2 (review P0): the `/health` platform body is byte-identical
+// across runs, so the r1 proof only showed the listener is *a* PilotDeck
+// channel of the right kind — another run's listener answers it just as
+// well. The window itself is now closed for conforming runs: every
+// fixed-port test holds an exclusive cross-process flock over its ports for
+// the whole probe → start → stop → after-stop stretch (see
+// [`lock_fixed_port_region`]), so two parallel runs serialize instead of
+// racing for the port. A squatter that is not this suite still either fails
+// the pre-probe by name or (when it grabs the port inside the window) turns
+// the `/health` probe into the named timeout below, never a silent pass.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn startup_builds_the_enabled_loader_channels() {
     const API_SERVER_PORT: u16 = 28642;
     const WEBHOOK_PORT: u16 = 28643;
+    let _ports = lock_fixed_port_region(&[API_SERVER_PORT, WEBHOOK_PORT]);
     for port in [API_SERVER_PORT, WEBHOOK_PORT] {
         let probe = tokio::net::TcpListener::bind(("127.0.0.1", port)).await;
         crate::negative_assert!(
@@ -986,22 +1047,38 @@ async fn startup_builds_the_enabled_loader_channels() {
 /// "platform":"<platform>"}` (api-server and webhook share the route shape;
 /// the platform string names the channel). A listener that is not this
 /// assembly's channel — the fixed-port hazard the pre-probe guards — does
-/// not answer with this body.
+/// not answer with this body. The whole connect → send → read stretch is
+/// bounded (#2301 fix-r2 review P1 #4): a listener that accepts the
+/// connection but never answers (and never closes it) would park
+/// `read_to_end` forever — the slow-timeout profile only reports, it never
+/// terminates — so the probe fails by name after 5 seconds instead of
+/// hanging the suite.
 async fn assert_health_platform(port: u16, platform: &str) {
-    let mut stream = crate::test_negative_receipt::expect_ok(
-        tokio::net::TcpStream::connect(("127.0.0.1", port)).await,
-        &format!("#2301 the {platform} listener accepts connections"),
-    );
-    crate::test_negative_receipt::expect_ok(
-        stream
-            .write_all(b"GET /health HTTP/1.1\r\nhost: 127.0.0.1\r\nconnection: close\r\n\r\n")
-            .await,
-        &format!("#2301 the {platform} health request is sent"),
-    );
-    let mut response = Vec::new();
-    crate::test_negative_receipt::expect_ok(
-        stream.read_to_end(&mut response).await,
-        &format!("#2301 the {platform} health response is read"),
+    let response = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut stream = crate::test_negative_receipt::expect_ok(
+            tokio::net::TcpStream::connect(("127.0.0.1", port)).await,
+            &format!("#2301 the {platform} listener accepts connections"),
+        );
+        crate::test_negative_receipt::expect_ok(
+            stream
+                .write_all(b"GET /health HTTP/1.1\r\nhost: 127.0.0.1\r\nconnection: close\r\n\r\n")
+                .await,
+            &format!("#2301 the {platform} health request is sent"),
+        );
+        let mut response = Vec::new();
+        crate::test_negative_receipt::expect_ok(
+            stream.read_to_end(&mut response).await,
+            &format!("#2301 the {platform} health response is read"),
+        );
+        response
+    })
+    .await;
+    let response = crate::test_negative_receipt::expect_ok(
+        response,
+        &format!(
+            "#2301 the {platform} listener on port {port} answered /health within 5s — \
+             a listener that accepts but never replies must fail by name, not hang the suite"
+        ),
     );
     let text = String::from_utf8_lossy(&response);
     let expected = format!("\"platform\":\"{platform}\"");
@@ -1015,64 +1092,237 @@ async fn assert_health_platform(port: u16, platform: &str) {
 
 // ------------------------------------------------ #2301 fix-r1 review items
 
-// Review P0 #1: `console_channel_log` writes the adapter lifecycle lines, and
-// the adapter-internal log calls (`api-server: listening on …`,
+// Review P0 #1 (fix-r1): `console_channel_log` writes the adapter lifecycle
+// lines, and the adapter-internal log calls (`api-server: listening on …`,
 // `sms: twilio not installed…`) are not under `ChannelServer`'s `catch_unwind`
 // — only the start task itself is. `println!` / `eprintln!` panic when the
 // write fails (std's macro contract), so a closed stdout would abort the
 // adapter's task after it saved its listener state, stranding the listener.
 // TS's `console.log` / `console.error` never fail the channel; the write error
 // is dropped instead (`console_log_line`).
-struct FailingSink;
-impl std::io::Write for FailingSink {
-    fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
-        Err(std::io::Error::other("sink closed"))
+//
+// Review P0 #2 + P1 #5 (fix-r2): the fix-r1 control only drove the helper
+// directly, so a regression of either *production* closure — the
+// `console_channel_log` closure, or the loader's `console.error` closure in
+// `create_startup_configured` (which `assembly::start` calls synchronously
+// before any channel starts, outside every catch_unwind) — back to
+// `println!`/`eprintln!` survived it. The control below drives both
+// production closures themselves.
+//
+// The level → sink selection is TS `consoleLogger`'s own contract
+// (`info` → stdout, `warn`/`error` → stderr, pilotdeckServer.ts:67-72); the
+// failing-sink probe cannot observe routing (both its sinks fail), so this
+// pins the shared entry's routing first.
+#[derive(Default)]
+struct RecordingSink {
+    contents: String,
+}
+impl std::io::Write for RecordingSink {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.contents.push_str(&String::from_utf8_lossy(buf));
+        Ok(buf.len())
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        Err(std::io::Error::other("sink closed"))
+        Ok(())
     }
 }
 
 #[test]
-fn console_channel_log_survives_a_failing_sink() {
-    let outcome = std::panic::catch_unwind(|| {
-        // The two lifecycle lines the startup test relies on, each written to
-        // a sink that fails every write — the shape `console_channel_log`
-        // hands the adapter's `start` to.
-        super::channels::console_log_line(
-            &mut FailingSink,
-            "api-server: listening on http://127.0.0.1:8642",
-        );
-        super::channels::console_log_line(
-            &mut FailingSink,
-            "sms: twilio not installed; run npm install twilio",
-        );
-    });
-    crate::negative_assert!(
-        outcome.is_ok(),
-        "#2301 a failing console sink must not panic the channel log"
+fn console_channel_log_routes_levels_to_the_console_sinks() {
+    let mut out = RecordingSink::default();
+    let mut err = RecordingSink::default();
+    super::channels::write_console_line(
+        "info",
+        "api-server: listening on http://127.0.0.1:8642",
+        &mut out,
+        &mut err,
+    );
+    super::channels::write_console_line("warn", "weixin: waiting for login", &mut out, &mut err);
+    super::channels::write_console_line(
+        "error",
+        "sms: twilio not installed; run npm install twilio",
+        &mut out,
+        &mut err,
+    );
+    crate::negative_assert_eq!(
+        out.contents,
+        "api-server: listening on http://127.0.0.1:8642\n".to_owned(),
+        "#2301 info-level console lines go to stdout"
+    );
+    crate::negative_assert_eq!(
+        err.contents,
+        "weixin: waiting for login\nsms: twilio not installed; run npm install twilio\n".to_owned(),
+        "#2301 warn/error console lines go to stderr"
     );
 }
 
-// Review P1 #4 (loader level): TS constructs every enabled loader key, and a
-// constructor throw — `Number(options.port)` on `{toString: null}` fails
-// toPrimitive with `TypeError: Cannot convert object to primitive value`
-// (Node v22.22.0 probe: `_tmp/20261026-issue-2301/fix-r1/node-probe/
-// probe1.out`) — is `console.error`ed while the loop continues
-// (loadEnabledChannels.ts:132-136, `probe2.out`: apiServer bad port +
-// webhook port 0 → one error line, `['webhook']`). The Rust mounts must
-// propagate that construction failure instead of always returning Ok, or
-// the key would enter the startup array and fail (or no-op) at start time
-// with no error line at all.
+/// The child marker for [`console_ports_survive_a_failing_sink`]: when set,
+/// this process is the probe itself (the test re-execs its own binary with
+/// the marker and a filter matching only this test).
+const FAILING_CONSOLE_PROBE: &str = "PDRS_2301_FAILING_CONSOLE_PROBE";
+
+#[tokio::test]
+async fn console_ports_survive_a_failing_sink() {
+    if std::env::var_os(FAILING_CONSOLE_PROBE).is_some() {
+        run_failing_console_probe();
+        return;
+    }
+    let mut child =
+        tokio::process::Command::new(std::env::current_exe().expect("#2301 the probe binary path"))
+            .args([
+                "--exact",
+                // `--exact` matches the full libtest path, not the bare name.
+                "native_process::channels_tests::console_ports_survive_a_failing_sink",
+                // libtest's capture would route a mutated `println!` into its
+                // in-memory sink instead of the failing fd, so the probe must run
+                // uncaptured to reach the real console.
+                "--nocapture",
+            ])
+            .env(FAILING_CONSOLE_PROBE, "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("#2301 the failing-console probe process spawns");
+    let stdin = child.stdin.take().expect("#2301 the probe's stdin pipe");
+    let mut stdout = child.stdout.take().expect("#2301 the probe's stdout pipe");
+    let stderr = child.stderr.take().expect("#2301 the probe's stderr pipe");
+    // The child's half blocks reading its stdin until this side closes it,
+    // which orders the handshake: first libtest's startup banner
+    // ("running 1 test") is consumed while the console pipes still have
+    // readers — the child's own startup writes must succeed — then the
+    // readers are dropped (every later write on the child's fds 1/2 fails
+    // with EPIPE, the closed-console hazard), and only then is the child
+    // released through the stdin EOF.
+    let banner = tokio::time::timeout(Duration::from_secs(10), async {
+        let mut seen = Vec::new();
+        let mut chunk = [0u8; 64];
+        loop {
+            let read = stdout
+                .read(&mut chunk)
+                .await
+                .expect("#2301 the probe's console stays readable");
+            if read == 0 {
+                return false;
+            }
+            seen.extend_from_slice(&chunk[..read]);
+            if seen
+                .windows(b"running 1 test".len())
+                .any(|window| window == b"running 1 test")
+            {
+                return true;
+            }
+        }
+    })
+    .await;
+    crate::negative_assert!(
+        matches!(banner, Ok(true)),
+        "#2301 the failing-console probe reached its own test within 10s — the \
+         harness startup line never arrived on the child console"
+    );
+    drop(stdout);
+    drop(stderr);
+    drop(stdin);
+    // Every wait states its termination condition: 30 seconds on the probe,
+    // then it is killed and reported by name.
+    let done = tokio::time::timeout(Duration::from_secs(30), child.wait()).await;
+    let status = match done {
+        Ok(status) => status.expect("#2301 the failing-console probe is waitable"),
+        Err(_) => {
+            let _ = child.start_kill();
+            crate::negative_assert!(
+                false,
+                "#2301 the failing-console probe did not finish within 30s"
+            );
+            unreachable!("negative_assert! panics");
+        }
+    };
+    crate::negative_assert!(
+        status.success(),
+        "#2301 the production console ports must survive a failing console — \
+         `println!`/`eprintln!` panic on a failed write (child exit {status})"
+    );
+}
+
+/// The child half of [`console_ports_survive_a_failing_sink`]: this process is
+/// the re-exec'd test binary, so its stdout and stderr are the pipes the
+/// parent chose. The parent drops the pipes' read ends (both of the child's
+/// console fds now fail every write with EPIPE) and then closes the child's
+/// stdin — the blocking read below returns EOF only at that point, so the
+/// failing console is already in place when the production closures run.
+/// No fd surgery is needed (and none is possible under the workspace's
+/// `unsafe_code = "forbid"`): the pipes were wired by the parent's `spawn`.
+fn run_failing_console_probe() {
+    {
+        use std::io::Read as _;
+        let mut stdin = std::io::stdin();
+        let mut byte = [0u8; 1];
+        while stdin.read(&mut byte).unwrap_or(0) > 0 {}
+    }
+    // Production console port #1: the `console_channel_log` closure
+    // `assembly::start` mounts on the channel server.
+    let log = super::channels::console_channel_log();
+    log("info", "api-server: listening on http://127.0.0.1:8642");
+    log("warn", "weixin: waiting for login");
+    log("error", "sms: twilio not installed; run npm install twilio");
+    // Production console port #2: the loader's `console.error` closure, here
+    // reached through the real `create_startup_configured` — the apiServer
+    // key's `Number(port)` throws, so the error-then-continue loop reports
+    // it while the (empty) rest of the startup constructs.
+    let home = Root::new();
+    let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        pilot_home: home.path(),
+        config: Arc::new(
+            parse_json(
+                r#"{"adapters": {"apiServer": {"enabled": true, "extra": {"port": {"toString": null}}}}}"#,
+            )
+            .expect("#2301 the probe's config parses"),
+        ),
+        weixin: crate::channel::weixin::WeixinChannelOptions::default(),
+        weixin_maker: None,
+        feishu: crate::channel::feishu::FeishuOptions::default(),
+        log: None,
+        report_status: None,
+        close_host: None,
+    }));
+    let startup = channels.create_startup_configured();
+    crate::negative_assert_eq!(
+        startup.len(),
+        0,
+        "#2301 the probe's bad apiServer key constructs nothing"
+    );
+    std::process::exit(0);
+}
+
+// Review P1 #4 (loader level; fix-r2 review P1 #3 + P2-a #6 widened it): TS
+// constructs every enabled loader key, and a constructor throw —
+// `Number(options.port)` failing toPrimitive with `TypeError: Cannot convert
+// object to primitive value` (Node v22.22.0 probes: fix-r1 `probe1.out` for
+// the own-`toString` shape, fix-r2 `probe1.out`/`probe2.out` for the array,
+// nested-array and prototype-carried shapes) — is `console.error`ed while
+// the loop continues (loadEnabledChannels.ts:132-136). The fix-r1 guard only
+// checked an own `toString`, so an array-shaped or prototype-carried port
+// slipped through and the channel constructed where TS records the key and
+// skips it; the guard now walks the same coercion `String(value)` uses
+// (arrays join, the prototype chain the config merge installs is visible),
+// so every throwing shape propagates. The fixture pins one bad shape per
+// mount — apiServer own `toString`, webhook nested array, wecomCallback
+// prototype — plus the keys around them, so no mount can silently drop its
+// guard again.
 #[test]
 fn loader_records_constructor_type_errors_and_continues() {
-    let config = parse_json(
+    let mut config = parse_json(
         r#"{"adapters": {
+            "slack": {"enabled": true},
+            "bluebubbles": {"enabled": true},
+            "wecomCallback": {"enabled": true, "extra": {}},
+            "sms": {"enabled": true},
             "apiServer": {"enabled": true, "extra": {"port": {"toString": null}}},
-            "webhook": {"enabled": true, "extra": {"port": 0}}
+            "webhook": {"enabled": true, "extra": {"port": [[{"toString": null}]]}}
         }}"#,
     )
     .expect("#2301 loader fixture config parses");
+    install_proto_to_string_port(&mut config);
     let mut errors = Vec::new();
     let channels = crate::channel::loader::load_enabled_channels(
         config.get("adapters"),
@@ -1083,10 +1333,14 @@ fn loader_records_constructor_type_errors_and_continues() {
     crate::negative_assert_eq!(
         errors,
         vec![
+            "[adapters] Failed to load channel \"wecomCallback\": TypeError: Cannot convert object to primitive value"
+                .to_owned(),
             "[adapters] Failed to load channel \"apiServer\": TypeError: Cannot convert object to primitive value"
-                .to_owned()
+                .to_owned(),
+            "[adapters] Failed to load channel \"webhook\": TypeError: Cannot convert object to primitive value"
+                .to_owned(),
         ],
-        "#2301 the constructor's Number() failure is the loader's one console.error line"
+        "#2301 every mount reports its Number() failure as the loader's console.error line"
     );
     let keys: Vec<String> = channels
         .iter()
@@ -1094,9 +1348,43 @@ fn loader_records_constructor_type_errors_and_continues() {
         .collect();
     crate::negative_assert_eq!(
         keys,
-        vec!["webhook".to_owned()],
-        "#2301 the keys after the failed constructor still construct"
+        vec![
+            "slack".to_owned(),
+            "bluebubbles".to_owned(),
+            "sms".to_owned()
+        ],
+        "#2301 the keys around the failed constructors still construct"
     );
+}
+
+/// The wecomCallback fixture's port value: the `__proto__` shape — a `__proto__`
+/// key on a config object reaches `config::merge`'s prototype arm (mirroring
+/// TS `mergeConfigSources`' `output[key] = value`, `config/mod.rs`), so the
+/// merged object's property lookup walks the installed prototype. `parse_json`
+/// keeps `__proto__` an own key, so the prototype is installed directly here
+/// to pin the post-merge shape the mount's guard must reject.
+fn install_proto_to_string_port(config: &mut JsValue) {
+    let mut port = JsObject::new();
+    port.set_prototype(parse_json(r#"{"toString": null}"#).expect("#2301 the proto shape parses"));
+    let JsValue::Object(root) = config else {
+        panic!("#2301 the fixture root is an object");
+    };
+    let mut adapters = match root.get("adapters") {
+        Some(JsValue::Object(adapters)) => adapters.clone(),
+        _ => panic!("#2301 the fixture adapters entry is an object"),
+    };
+    let mut wecom = match adapters.get("wecomCallback") {
+        Some(JsValue::Object(wecom)) => wecom.clone(),
+        _ => panic!("#2301 the fixture wecomCallback entry is an object"),
+    };
+    let mut extra = match wecom.get("extra") {
+        Some(JsValue::Object(extra)) => extra.clone(),
+        _ => panic!("#2301 the fixture extra entry is an object"),
+    };
+    extra.insert("port".into(), JsValue::Object(port));
+    wecom.insert("extra".into(), JsValue::Object(extra));
+    adapters.insert("wecomCallback".into(), JsValue::Object(wecom));
+    root.insert("adapters".into(), JsValue::Object(adapters));
 }
 
 // Review P1 #4 (assembly level): the same construction failure through the
@@ -1107,6 +1395,7 @@ fn loader_records_constructor_type_errors_and_continues() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn startup_skips_channels_whose_constructor_throws() {
     const WEBHOOK_PORT: u16 = 28644;
+    let _ports = lock_fixed_port_region(&[WEBHOOK_PORT]);
     let probe = tokio::net::TcpListener::bind(("127.0.0.1", WEBHOOK_PORT)).await;
     crate::negative_assert!(
         probe.is_ok(),
@@ -1156,6 +1445,15 @@ async fn startup_skips_channels_whose_constructor_throws() {
     );
     assert_health_platform(WEBHOOK_PORT, "webhook").await;
     alive.stop().await;
+    // The listener this run built is gone with the host (#2301 fix-r2 review
+    // P0: without the after-stop check a listener that outlives the assembly
+    // would keep answering `/health` from another run's channel).
+    crate::negative_assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", WEBHOOK_PORT))
+            .await
+            .is_err(),
+        "#2301 the skip-test webhook listener is gone after stop"
+    );
 }
 
 // Review P1 #3: the whole channel server shares one `TurnGateway`
@@ -1308,11 +1606,27 @@ impl SessionFactory for UnreachedSessionFactory {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loader_channels_submit_under_their_own_channel_identity() {
+    // #2301 fix-r2 (review P2-a #8): the api-server channel falls back to
+    // `API_SERVER_KEY` / `API_SERVER_HOST` from the environment
+    // (`api_server/mod.rs`'s `options.apiKey ?? process.env.API_SERVER_KEY`
+    // order): a host `API_SERVER_KEY` would 401 the chat completion (normalize
+    // never runs — the poll below fails misleadingly ten seconds later) and a
+    // host `API_SERVER_HOST` would move the bind off 127.0.0.1 (the readiness
+    // log line never matches). Both are named pre-checks, like the port probe.
+    for name in ["API_SERVER_KEY", "API_SERVER_HOST"] {
+        crate::negative_assert!(
+            std::env::var_os(name).is_none(),
+            "#2301 the identity test requires {name} unset — a host environment value \
+             would divert the channel's auth/bind behavior away from the assertions"
+        );
+    }
     // Fixed port with the pre-probe ownership convention (see
     // [`startup_builds_the_enabled_loader_channels`]): the log line prints the
     // configured port, not the bound one, so a port-0 listener cannot be
-    // discovered from it and the test owns its port explicitly instead.
+    // discovered from it and the test owns its port explicitly instead. The
+    // flock region serializes parallel runs of this suite (fix-r2 review P0).
     const API_SERVER_PORT: u16 = 28645;
+    let _ports = lock_fixed_port_region(&[API_SERVER_PORT]);
     let probe = tokio::net::TcpListener::bind(("127.0.0.1", API_SERVER_PORT)).await;
     crate::negative_assert!(
         probe.is_ok(),
@@ -1392,31 +1706,43 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
     );
     // The real entry: one OpenAI-style chat completion against the channel's
     // own HTTP server. The response itself is not the oracle here — the
-    // identity the submitter's `normalize` sees first is.
-    let mut stream = crate::test_negative_receipt::expect_ok(
-        tokio::net::TcpStream::connect(("127.0.0.1", API_SERVER_PORT)).await,
-        "#2301 the loader-built api-server listener accepts connections",
-    );
-    let body = r#"{"model":"x","messages":[{"role":"user","content":"hello"}]}"#;
-    crate::test_negative_receipt::expect_ok(
-        stream
-            .write_all(
-                format!(
-                    "POST /v1/chat/completions HTTP/1.1\r\nhost: 127.0.0.1\r\n\
-                     content-type: application/json\r\ncontent-length: {}\r\n\
-                     connection: close\r\n\r\n{}",
-                    body.len(),
-                    body
+    // identity the submitter's `normalize` sees first is. The whole connect →
+    // send → read stretch is bounded (#2301 fix-r2 review P1 #4, same shape
+    // as [`assert_health_platform`]): a listener that accepts but never
+    // replies must fail by name, not park `read_to_end` forever.
+    let response = tokio::time::timeout(Duration::from_secs(5), async {
+        let mut stream = crate::test_negative_receipt::expect_ok(
+            tokio::net::TcpStream::connect(("127.0.0.1", API_SERVER_PORT)).await,
+            "#2301 the loader-built api-server listener accepts connections",
+        );
+        let body = r#"{"model":"x","messages":[{"role":"user","content":"hello"}]}"#;
+        crate::test_negative_receipt::expect_ok(
+            stream
+                .write_all(
+                    format!(
+                        "POST /v1/chat/completions HTTP/1.1\r\nhost: 127.0.0.1\r\n\
+                         content-type: application/json\r\ncontent-length: {}\r\n\
+                         connection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .as_bytes(),
                 )
-                .as_bytes(),
-            )
-            .await,
-        "#2301 the chat completion request is sent",
-    );
-    let mut response = Vec::new();
-    crate::test_negative_receipt::expect_ok(
-        stream.read_to_end(&mut response).await,
-        "#2301 the chat completion response is read",
+                .await,
+            "#2301 the chat completion request is sent",
+        );
+        let mut response = Vec::new();
+        crate::test_negative_receipt::expect_ok(
+            stream.read_to_end(&mut response).await,
+            "#2301 the chat completion response is read",
+        );
+        response
+    })
+    .await;
+    let _response = crate::test_negative_receipt::expect_ok(
+        response,
+        "#2301 the chat completion was answered within 5s — a listener that \
+         accepts but never replies must fail by name, not hang the suite",
     );
     let seen = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -1446,5 +1772,14 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
     crate::test_negative_receipt::expect_ok(
         channels.close().await,
         "#2301 the identity test channels closed",
+    );
+    // The listener this run built is gone with the channels (#2301 fix-r2
+    // review P0: the after-stop ownership check, same shape as the startup
+    // test's).
+    crate::negative_assert!(
+        tokio::net::TcpStream::connect(("127.0.0.1", API_SERVER_PORT))
+            .await
+            .is_err(),
+        "#2301 the identity test's api-server listener is gone after close"
     );
 }
