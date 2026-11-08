@@ -11,11 +11,17 @@ use pilotdeck_protocol::{JsString, JsValue};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::{sync::Notify, time::timeout};
-/// #1891: exempt from the first-byte relaxation on purpose — these awaits
-/// face the scripted in-process `GatewayRequests` fixture and the local
-/// listener's own joins, never a real sidecar; the quiet-window capture below
-/// has its own liveness constant.
+/// #1891: the server's drain budget — the only clock granted to the scripted
+/// in-process `GatewayRequests` fixture, and the behavior several drain tests
+/// pin, so it keeps the 5 s form.
 const DEADLINE: Duration = Duration::from_secs(5);
+/// #1891 fix-r1: the client-side reads wait for response *bytes* from the
+/// local listener's serving task. That task shares this worker's scheduler
+/// with everything else in the suite, so the #978 starvation mechanism (a
+/// loaded host delaying a responder past a short deadline) applies here too —
+/// "no real sidecar" is not an exemption from scheduling. These are pure
+/// anti-hang bounds: no assertion or reply shape changes.
+const RESPONSE_LIVENESS: Duration = Duration::from_secs(60);
 const ORACLE: &str = include_str!("../../tests/fixtures/native-ws-entry/oracle.json");
 #[derive(Default)]
 struct Requests {
@@ -184,7 +190,9 @@ impl Client {
         let mut socket = TcpStream::connect(address).await.expect("#749 TCP connect");
         socket.write_all(format!("GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: {RFC6455_SAMPLE_NONCE}\r\n\r\n").as_bytes()).await.expect("#749 upgrade write");
         let mut header = vec![];
-        timeout(DEADLINE, async {
+        // #1891 fix-r1: first-response read from the listener's serving task
+        // (see RESPONSE_LIVENESS) — liveness bound, not a reply oracle.
+        timeout(RESPONSE_LIVENESS, async {
             while !header.ends_with(b"\r\n\r\n") {
                 header.push(socket.read_u8().await.expect("#749 upgrade response byte"));
             }
@@ -217,7 +225,9 @@ impl Client {
         self.frame(1, value.to_string().as_bytes()).await;
     }
     async fn read(&mut self) -> (u8, Vec<u8>) {
-        let result = timeout(DEADLINE, async {
+        // #1891 fix-r1: response bytes from the listener's serving task
+        // (see RESPONSE_LIVENESS) — liveness bound, not a reply oracle.
+        let result = timeout(RESPONSE_LIVENESS, async {
             loop {
                 if let Some(frame) = self
                     .decoder
@@ -291,7 +301,9 @@ async fn start(
 }
 async fn finish(stop: oneshot::Sender<()>, task: tokio::task::JoinHandle<Result<(), ProxyError>>) {
     stop.send(()).expect("#749 stop server");
-    timeout(DEADLINE, task)
+    // #1891 fix-r1: strictly looser than the drain budget granted above, so
+    // scheduling decides the join, not this watchdog.
+    timeout(RESPONSE_LIVENESS, task)
         .await
         .expect("#749 server finish deadline")
         .expect("#749 server task")
@@ -377,8 +389,9 @@ async fn invalid_upgrade() {
             .expect("#749 invalid upgrade connect");
         socket.write_all(format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n{key}\r\n").as_bytes()).await.expect("#749 invalid upgrade send");
         let mut bytes = vec![];
+        // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
         let reply = crate::test_negative_receipt::expect_ok(
-            timeout(DEADLINE, socket.read_to_end(&mut bytes)).await,
+            timeout(RESPONSE_LIVENESS, socket.read_to_end(&mut bytes)).await,
             "#749 invalid upgrade rejected",
         );
         crate::test_negative_receipt::expect_ok(reply, "#749 invalid upgrade rejected");
@@ -417,7 +430,8 @@ async fn upgrade_head_respects_span_budget() {
             .await
             .expect("#1292 budget upgrade send");
         let mut header = vec![];
-        timeout(DEADLINE, async {
+        // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+        timeout(RESPONSE_LIVENESS, async {
             while !header.ends_with(b"\r\n\r\n") {
                 header.push(
                     socket
@@ -446,7 +460,7 @@ async fn upgrade_head_respects_span_budget() {
             );
             let mut rest = vec![];
             let closed = crate::test_negative_receipt::expect_ok(
-                timeout(DEADLINE, socket.read_to_end(&mut rest)).await,
+                timeout(RESPONSE_LIVENESS, socket.read_to_end(&mut rest)).await,
                 "#1292 the over-budget upgrade head closes the connection like the non-upgrade lane",
             );
             crate::test_negative_receipt::expect_ok(
@@ -539,7 +553,7 @@ async fn budget_capture(socket: &mut TcpStream) -> (String, bool) {
             }
         }
     }
-    negative_assert!(
+    crate::negative_assert!(
         !out.is_empty() || closed,
         "#1351 every boundary cell produced bytes or closed"
     );
@@ -904,7 +918,8 @@ async fn upgrade_budget_cell(address: std::net::SocketAddr, n: usize, what: &str
         .await
         .unwrap_or_else(|error| panic!("#1351 {what} send: {error}"));
     let mut header = vec![];
-    timeout(DEADLINE, async {
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+    timeout(RESPONSE_LIVENESS, async {
         while !header.ends_with(b"\r\n\r\n") {
             header.push(
                 socket
@@ -927,9 +942,10 @@ async fn upgrade_budget_cell(address: std::net::SocketAddr, n: usize, what: &str
     );
     let close = format!("#1351 {what} closes the connection like the non-upgrade lane");
     let mut rest = vec![];
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
     crate::test_negative_receipt::expect_ok(
         crate::test_negative_receipt::expect_ok(
-            timeout(DEADLINE, socket.read_to_end(&mut rest)).await,
+            timeout(RESPONSE_LIVENESS, socket.read_to_end(&mut rest)).await,
             &close,
         ),
         &close,
@@ -1147,8 +1163,9 @@ async fn shutdown_cancels_handshake() {
     )
     .expect("#749 half handshake join");
     let mut tail = Vec::new();
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
     crate::test_negative_receipt::expect_ok(
-        timeout(DEADLINE, socket.read_to_end(&mut tail)).await,
+        timeout(RESPONSE_LIVENESS, socket.read_to_end(&mut tail)).await,
         "#749 half handshake reclaimed",
     )
     .expect("#749 half handshake EOF");
@@ -1609,7 +1626,8 @@ async fn close_tail_resumes_on_next_data() {
         // The entire batch fits in the duplex read buffer. Writer EOF is the
         // deterministic barrier proving its close frame has been processed.
         let mut replies = vec![];
-        timeout(DEADLINE, client.read_to_end(&mut replies))
+        // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+        timeout(RESPONSE_LIVENESS, client.read_to_end(&mut replies))
             .await
             .expect("#749 next-data close deadline")
             .expect("#749 next-data close read");
@@ -1687,7 +1705,8 @@ async fn closed_batch(wire: Vec<u8>) -> usize {
     // Each complete batch is queued atomically before the transport is polled.
     client.write_all(&wire).await.expect("#749 batch write");
     let mut replies = vec![];
-    timeout(DEADLINE, client.read_to_end(&mut replies))
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+    timeout(RESPONSE_LIVENESS, client.read_to_end(&mut replies))
         .await
         .expect("#749 batch close deadline")
         .expect("#749 batch close read");
@@ -1762,7 +1781,8 @@ async fn read_continues_under_writer_backpressure() {
     );
     client.shutdown().await.expect("#749 backpressure EOF");
     let mut output = vec![];
-    timeout(DEADLINE, client.read_to_end(&mut output))
+    // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+    timeout(RESPONSE_LIVENESS, client.read_to_end(&mut output))
         .await
         .expect("#749 drain output deadline")
         .expect("#749 drain output");
@@ -2245,7 +2265,8 @@ async fn completed_writes_and_requests_release_capacity() {
             ))
             .await
             .expect("#749 capacity successor send");
-        let received = timeout(DEADLINE, async {
+        // #1891 fix-r1: response bytes (see RESPONSE_LIVENESS).
+        let received = timeout(RESPONSE_LIVENESS, async {
             loop {
                 if let Some(frame) = decoder
                     .next_server()
