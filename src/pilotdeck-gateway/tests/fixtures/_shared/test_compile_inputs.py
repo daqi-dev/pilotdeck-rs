@@ -15,6 +15,7 @@ Run from `src/pilotdeck-gateway/tests/fixtures`:
 """
 from pathlib import Path
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -503,18 +504,29 @@ class Manifest(unittest.TestCase):
         # one of them (#1570 r11 sibling). `session-admission` and
         # `session-owner` carried the same private `copytree(src) +
         # copytree(specs)` inventory (#1570 r14 sibling). One list, every
-        # control. #996: session-owner/negative.py was deleted (its rows are
-        # the compile-time switches in schemata.py now), so the sweep keeps
-        # the surviving source_copy users.
+        # control. #996: the sweep is derived from the fixture tree -- the
+        # same filter as `test_no_control_brings_its_own_workspace_copy`
+        # below -- so a control that is migrated to compile-time switches
+        # and deleted (session-owner/negative.py) needs no list edit here;
+        # the stale name was this test's own CI red.
         fixtures = Path(__file__).resolve().parents[1]
         sibling = (fixtures / 'skills-tree-files' / 'negative.py').read_text(encoding='utf-8')
         self.assertIn('source_copy(root)', sibling)
         self.assertNotIn('git ls-files', sibling)
-        for suite in ('session-admission',):
-            with self.subTest(suite=suite):
-                text = (fixtures / suite / 'negative.py').read_text(encoding='utf-8')
-                self.assertIn('from negative_control import source_copy', text)
-                self.assertIn('source_copy(', text)
+        users = [
+            relative
+            for relative in (path.relative_to(fixtures).as_posix()
+                             for path in sorted(fixtures.rglob('*.py')))
+            if not relative.startswith('_shared/')
+            and 'source_copy(' in (fixtures / relative).read_text(
+                encoding='utf-8', errors='surrogateescape')
+        ]
+        for relative in users:
+            with self.subTest(control=relative):
+                text = (fixtures / relative).read_text(encoding='utf-8')
+                self.assertIsNotNone(
+                    re.search(r'^from negative_control import .*\bsource_copy\b',
+                              text, re.MULTILINE))
                 self.assertNotIn('copytree', text)
 
     def test_a_nested_group_does_not_end_a_path_attribute(self):
