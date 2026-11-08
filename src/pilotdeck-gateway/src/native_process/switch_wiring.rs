@@ -1,0 +1,248 @@
+//! #1353 A8.5-pr2 — the production switch faces over the real assembly.
+//!
+//! [`crate::switch`] owns the order and the failure semantics with injectable
+//! faces; this module is the production implementation of those faces:
+//!
+//! * S1 (`stop_automation`) stops the one `CronManager` through
+//!   [`crate::switch::CronStopHandle`] — the handle closes the A6 management
+//!   face and reports the abort rejections A7 records;
+//! * S2 (`stop_accepting`) seals admission at one point (A1) and drains both
+//!   entry surfaces — the native WS entries through `PhasedRun::drained()`
+//!   and the channel entries through the close join;
+//! * S3 (`flush`) flushes the durable channel state, re-asserting the A10
+//!   precondition (entries drained first);
+//! * S4 (`stop_owner`) is `PhasedRun::finish()` — the A5 close notice, the
+//!   bounded abort, and the host shutdown that runs the assembly teardown;
+//! * S5 (`recover`) is empty here: the new handshake belongs to the next
+//!   owner's process, and the gate opening after this face is the whole
+//!   observable recovery in this embedding.
+//!
+//! The embedding is a signal-triggered process exit, so a halted machine
+//! still has to terminate the process: [`ProductionFaces::finish_after_halt`]
+//! walks the remaining way out (a registered difference,
+//! specs/gateway-parity/diffs/).
+
+use crate::native_ws::PhasedRun;
+use crate::switch::{CronStopHandle, FaceFuture, StepFailure, SwitchFaces};
+use std::{
+    future::Future,
+    pin::Pin,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
+use tokio::sync::watch;
+
+use super::channels::NativeChannels;
+
+/// The handles `start_with_webhook` hands the embedding that drives the
+/// machine: the cron stop handle (absent when no `cron:` section was
+/// configured) and the channel assembly.
+pub(crate) struct AssemblySwitchHandles {
+    pub(crate) cron: Option<Arc<CronStopHandle>>,
+    pub(crate) channels: Arc<NativeChannels>,
+}
+
+/// The out-of-band slots that carry those handles out of `start_assembly`:
+/// the channel assembly is constructed before the host starts, the cron stop
+/// handle only on the gateway thread inside the builder, so both travel
+/// through `OnceLock`s the embedding reads once the builder has run.
+#[derive(Clone, Default)]
+pub(crate) struct AssemblySwitchSlots {
+    pub(crate) cron: Arc<std::sync::OnceLock<Arc<CronStopHandle>>>,
+    pub(crate) channels: Arc<std::sync::OnceLock<Arc<NativeChannels>>>,
+}
+
+/// A1's single admission flip: the channel server's close and the native WS
+/// listener stop linearize at one point. `ChannelServer::close` runs its
+/// synchronous prefix — the `closing` flip and the running-handle claim — at
+/// call time and returns the joining future, so constructing it and then
+/// firing the trigger leaves no await between the two flips: after `seal()`
+/// returns, no new entry is accepted through either surface.
+#[derive(Clone)]
+pub(crate) struct AdmissionGate {
+    channels: Arc<NativeChannels>,
+    trigger: watch::Sender<bool>,
+}
+
+impl AdmissionGate {
+    pub(crate) fn new(channels: Arc<NativeChannels>, trigger: watch::Sender<bool>) -> Self {
+        Self { channels, trigger }
+    }
+
+    pub(crate) fn channels(&self) -> &Arc<NativeChannels> {
+        &self.channels
+    }
+
+    /// The synchronous seal. The returned future joins the channel stops;
+    /// the admission effects have already happened when this returns.
+    pub(crate) fn seal(
+        &self,
+    ) -> crate::channel::protocol::BoxFuture<Result<(), crate::channel::protocol::ChannelError>>
+    {
+        let close = self.channels.server().close();
+        // `send_modify`, not `send`: a watch `send` drops the value when no
+        // receiver is subscribed yet — the trigger must persist regardless.
+        self.trigger.send_modify(|fired| *fired = true);
+        close
+    }
+}
+
+/// The production faces. Clone shares every handle — the machine runs one
+/// clone and the embedding keeps another for the post-halt walk.
+#[derive(Clone)]
+pub(crate) struct ProductionFaces {
+    cron: Option<Arc<CronStopHandle>>,
+    admission: AdmissionGate,
+    phased: Arc<PhasedRun>,
+    /// A10's precondition latch: set by the S2 face to the WS drain's own
+    /// verdict, checked by the flush face.
+    entries_drained: Arc<AtomicBool>,
+}
+
+impl ProductionFaces {
+    pub(crate) fn new(
+        cron: Option<Arc<CronStopHandle>>,
+        admission: AdmissionGate,
+        phased: Arc<PhasedRun>,
+    ) -> Self {
+        Self {
+            cron,
+            admission,
+            phased,
+            entries_drained: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    /// The death march after a halted machine. This embedding's switch is
+    /// the process's own shutdown — SIGTERM must still terminate the process
+    /// (the matrix A2/A3 halt semantics describe a surviving owner, which a
+    /// process exit cannot be) — so the remaining faces still run: seal the
+    /// admission, drain what can be drained, run the S4 half. The machine's
+    /// own error stays the one the exit status reports; this returns the
+    /// teardown's.
+    ///
+    /// The channel close join is bounded here: a hung channel stop must not
+    /// keep a halted process alive. Entries-scale, like the machine's own
+    /// S2 backstop — the drain budget plus its slack — so a close that
+    /// honors the budget is still joined to completion.
+    pub(crate) async fn finish_after_halt(&self) -> Result<(), crate::ProxyError> {
+        let close = self.admission.seal();
+        let drained = self.phased.drained().await;
+        let close_bound =
+            self.phased.drain_budget() + Duration::from_millis(crate::switch::BACKSTOP_SLACK_MS);
+        let close_result = tokio::time::timeout(close_bound, close).await;
+        let finish = self.phased.finish().await;
+        let mut failures = Vec::new();
+        match close_result {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => failures.push(format!("channel close: {}", error.message())),
+            Err(_) => failures.push("channel close: exceeded the halt close bound".to_owned()),
+        }
+        if let Err(error) = finish {
+            failures.push(error.to_string());
+        }
+        // `drained() == false` already surfaces through `finish()`'s own
+        // reporting; nothing else reads it here.
+        let _ = drained;
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(crate::ProxyError::from(failures.join("; ")))
+        }
+    }
+}
+
+impl SwitchFaces for ProductionFaces {
+    fn stop_automation(&self) -> FaceFuture {
+        match &self.cron {
+            // S1: close the management face (A6) before the stop, stop the
+            // manager exactly once, report the swallowed abort rejections
+            // (A7). Without a `cron:` section there is no automation to stop.
+            Some(handle) => handle.stop_face(),
+            None => Box::pin(async { Ok(()) }),
+        }
+    }
+
+    fn stop_accepting(&self) -> FaceFuture {
+        let admission = self.admission.clone();
+        let phased = self.phased.clone();
+        let entries_drained = self.entries_drained.clone();
+        Box::pin(async move {
+            // A1: the seal happens synchronously at the first poll of this
+            // face — both admission flips, no await between them.
+            let close = admission.seal();
+            // The channel stops (spawned inside the seal) and the WS entry
+            // drain proceed concurrently — both are S2's entry surfaces.
+            let drained = phased.drained().await;
+            entries_drained.store(drained, Ordering::SeqCst);
+            close.await.map_err(|error| {
+                StepFailure::step(format!("channel close failed: {}", error.message()))
+            })?;
+            // A4/A12: an expired WS drain budget is a drain failure, never
+            // a successful quiescence — the switch halts before flush.
+            if !drained {
+                return Err(StepFailure::step(
+                    "native WS drain deadline exceeded: entries still in flight",
+                ));
+            }
+            Ok(())
+        })
+    }
+
+    fn flush(&self) -> FaceFuture {
+        let channels = self.admission.channels().clone();
+        let entries_drained = self.entries_drained.clone();
+        Box::pin(async move {
+            // A10: flush is unreachable while entries are still in flight.
+            // The machine enforces the order; the face re-asserts it so a
+            // wiring bug cannot write half-drained state durably.
+            // `switch-flush-before-drain` (negative control): the
+            // precondition gate deleted, so the half-drained flush proceeds.
+            if !entries_drained.load(Ordering::SeqCst)
+                && !crate::mutants::on("switch-flush-before-drain")
+            {
+                return Err(StepFailure::step(
+                    "channel flush before the entry drain completed",
+                ));
+            }
+            channels.flush().await.map_err(StepFailure::step)
+        })
+    }
+
+    fn stop_owner(&self) -> FaceFuture {
+        let phased = self.phased.clone();
+        Box::pin(async move {
+            // S4's WS half: A5 close notice, bounded abort, host shutdown —
+            // the last one runs the assembly teardown (cron stop observes the
+            // machine's own, channels close idempotently, sessions and
+            // project dispose).
+            phased
+                .finish()
+                .await
+                .map_err(|error| StepFailure::step(error.to_string()))
+        })
+    }
+
+    fn recover(&self) -> FaceFuture {
+        // A9 in this embedding: the new handshake belongs to the next
+        // owner's process; the gate opening after this face is the whole
+        // observable recovery here.
+        Box::pin(async { Ok(()) })
+    }
+}
+
+/// The stop future the phased run waits on: the admission trigger the S2
+/// face (or the post-halt walk) fires. Kept as a function so `run()` and
+/// the tests build the identical pairing of sender and receiver.
+pub(crate) fn trigger_stop(
+    mut trigger: watch::Receiver<bool>,
+) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    Box::pin(async move {
+        // A dropped sender resolves `wait_for` with an error — a stop, not a
+        // hang: nothing is left to wait for.
+        let _ = trigger.wait_for(|fired| *fired).await;
+    })
+}

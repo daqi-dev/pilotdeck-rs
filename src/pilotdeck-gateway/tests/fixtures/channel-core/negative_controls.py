@@ -56,9 +56,12 @@ MUTATIONS = [
      'if let Some(previous) = previous {',
      'if let Some(previous) = previous.filter(|_| false) {',
      'lifecycle_matches_real_ts', '#1327 lifecycle oracle'),
+    # #1353 A10 sibling: the closing gate shares this condition's prefix —
+    # both sides carry it, so the control keeps flipping only the
+    # restoration branch.
     ('stop-restoration', source / 'server.rs',
-     'if !state.running.iter().any(|item| item.key == key) {',
-     'if false && !state.running.iter().any(|item| item.key == key) {',
+     'if !state.closing && !state.running.iter().any(|item| item.key == key) {',
+     'if !state.closing && false && !state.running.iter().any(|item| item.key == key) {',
      'lifecycle_matches_real_ts', '#1327 lifecycle oracle'),
     ('close-errors-dropped', source / 'server.rs',
      'let result = if errors.is_empty() {',

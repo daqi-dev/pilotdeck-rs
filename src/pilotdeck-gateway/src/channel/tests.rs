@@ -991,6 +991,92 @@ async fn late_start_stop_failure_matches_real_ts() {
     );
 }
 
+/// A channel whose `stop` always fails: the failure `finish_stop` must
+/// classify (not a panic, which would unwind past the restore branch).
+struct FailingStopHandle {
+    stops: std::sync::atomic::AtomicUsize,
+}
+impl ChannelHandle for FailingStopHandle {
+    fn stop(&self, _reason: &str) -> BoxFuture<Result<(), ChannelError>> {
+        self.stops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Box::pin(async { Err(ChannelError::error("injected stop failure")) })
+    }
+}
+struct FailingStopAdapter {
+    key: ChannelKey,
+    handle: Arc<FailingStopHandle>,
+}
+impl ChannelAdapter for FailingStopAdapter {
+    fn channel_key(&self) -> &ChannelKey {
+        &self.key
+    }
+    fn start(
+        &self,
+        _deps: ChannelStartDeps,
+    ) -> BoxFuture<Result<Arc<dyn ChannelHandle>, ChannelError>> {
+        let handle = self.handle.clone();
+        Box::pin(async move { Ok(handle as Arc<dyn ChannelHandle>) })
+    }
+}
+fn failing_stop() -> Arc<FailingStopAdapter> {
+    Arc::new(FailingStopAdapter {
+        key: ChannelKey::new("a"),
+        handle: Arc::new(FailingStopHandle {
+            stops: std::sync::atomic::AtomicUsize::new(0),
+        }),
+    })
+}
+
+/// #1353 A8.5-pr2 (A10): a stop that fails while the server is closing must
+/// not restore the handle to `running`. The closing gate has already
+/// rejected every later start, so a restored handle could never be stopped
+/// again — the flush that follows the drain must not observe a live entry.
+/// The same failure outside a close keeps the TS restore behavior.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_stop_during_close_restores_nothing() {
+    let server = ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(|| Box::pin(async { Ok(()) })),
+    );
+    let adapter = failing_stop();
+    bounded(server.hot_start_channel(adapter.clone()))
+        .await
+        .expect("#1353 failing-stop setup start");
+    let closed = bounded(server.close()).await;
+    let error = closed.expect_err("#1353 the failed stop surfaces from close");
+    assert_eq!(
+        error.message(),
+        "PilotDeck server shutdown failed",
+        "#1353 the stop failure is the close failure"
+    );
+    crate::negative_assert_eq!(
+        server.running_keys(),
+        Vec::<String>::new(),
+        "#1353 A10: a failed stop during close restores no running handle"
+    );
+    // Control: outside a close the same failure restores the handle, as in TS
+    // (`pilotdeckServer.ts` stop error path re-fills `runningHandles`).
+    let standalone = ChannelServer::new(
+        ChannelStartDeps::default(),
+        Arc::new(|| Box::pin(async { Ok(()) })),
+    );
+    let other = failing_stop();
+    bounded(standalone.hot_start_channel(other.clone()))
+        .await
+        .expect("#1353 standalone restore setup start");
+    bounded(standalone.reconcile_channels(ReconcileInput {
+        channels: vec![],
+        managed_channel_keys: vec![ChannelKey::new("a")],
+    }))
+    .await
+    .expect_err("#1353 the standalone stop failure surfaces");
+    crate::negative_assert_eq!(
+        standalone.running_keys(),
+        vec!["a".to_owned()],
+        "#1353 A10: a failed stop outside close keeps the TS restore"
+    );
+}
+
 struct PrefixHandle {
     open: std::sync::atomic::AtomicBool,
     reenter: Mutex<Option<ChannelServer>>,

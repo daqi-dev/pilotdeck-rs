@@ -45,13 +45,15 @@ ANCHOR = (
     '    let inherited = capture_environment(std::env::vars_os());\n'
     '    validate_environment(&inherited)?;\n'
     '    let env = options.environment(inherited);\n'
-    '    let (host, feishu_webhook) = assembly::start_with_webhook(options.clone(), env).await?;\n'
+    '    let (host, feishu_webhook, switch_handles) =\n'
+    '        assembly::start_with_webhook(options.clone(), env).await?;\n'
 )
 mutations = [
     ('run-entry-validate-omitted', ENTRY, ANCHOR,
      '    let inherited = capture_environment(std::env::vars_os());\n'
      '    let env = options.environment(inherited);\n'
-     '    let (host, feishu_webhook) = assembly::start_with_webhook(options.clone(), env).await?;\n',
+     '    let (host, feishu_webhook, switch_handles) =\n'
+     '        assembly::start_with_webhook(options.clone(), env).await?;\n',
      TEST, MARKERS),
     # The realistic reorder threat: validate only after assembly already
     # consumed the inherited authorities. The rejection message is still
@@ -59,14 +61,16 @@ mutations = [
     ('run-entry-validate-reordered', ENTRY, ANCHOR,
      '    let inherited = capture_environment(std::env::vars_os());\n'
      '    let env = options.environment(inherited.clone());\n'
-     '    let (host, feishu_webhook) = assembly::start_with_webhook(options.clone(), env).await?;\n'
+     '    let (host, feishu_webhook, switch_handles) =\n'
+     '        assembly::start_with_webhook(options.clone(), env).await?;\n'
      '    validate_environment(&inherited)?;\n',
      TEST, MARKERS),
     ('run-entry-environment-unscoured', ENTRY, ANCHOR,
      '    let inherited = capture_environment(std::env::vars_os());\n'
      '    validate_environment(&inherited)?;\n'
      '    let env = inherited;\n'
-     '    let host = assembly::start(options.clone(), env).await?;\n',
+     '    let (host, feishu_webhook, switch_handles) =\n'
+     '        assembly::start_with_webhook(options.clone(), env).await?;\n',
      SCRUB_TEST, SCRUB_MARKER),
 ]
 

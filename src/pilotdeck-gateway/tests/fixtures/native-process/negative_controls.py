@@ -260,9 +260,13 @@ impl Clone for ReplacementCoordinator {
      r'(?:^|\n)native listening (\S+:\d+)\r?\n',
      r'(?:^|\n)native listening (\S+):\d+\r?\n',
      'executable_native_and_a4', '#1071 executable readiness address carries a port'),
+    # #1353 A8.5-pr2: the signal now drives the switch machine, and the
+    # completed machine is the clean exit — the anchor is the Ok arm of the
+    # machine's match (a clean signal exit that reports failure is exactly
+    # the #1071 regression this control kills).
     ('signal-exit-status', SOURCE,
-     'server.run(stop, options.drain_budget).await',
-     '{ server.run(stop, options.drain_budget).await?; Err("#1071 incorrect clean signal status".into()) }',
+     '        Ok(()) => Ok(()),',
+     '        Ok(()) => Err("#1071 incorrect clean signal status".into()),',
      'executable_native_and_a4', '#1071 executable clean signal exit'),
     ('non-utf8-environment', SOURCE,
      'value.to_string_lossy().into_owned()',
