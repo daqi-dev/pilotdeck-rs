@@ -56,6 +56,17 @@ type TurnHostFactory = dyn Fn(
     + Send
     + Sync;
 
+/// #996 live-recording payload rows: null one field of a recorded event,
+/// keeping every other field as recorded (live-recording/schemata.py).
+fn null_payload_field(event: JsValue, field: &'static str) -> JsValue {
+    let mut fields = event
+        .as_object()
+        .expect("#743 payload mutant object")
+        .clone();
+    fields.insert(field.into(), JsValue::Null);
+    JsValue::Object(fields)
+}
+
 /// Host-acquired authority for one turn. Acquire the project lease with
 /// ProjectRuntimeRegistry::acquire when this factory is invoked, not when the
 /// LiveSessionAdapter is created. The sidecar cannot supply any of these ports.
@@ -324,13 +335,19 @@ impl LiveSession for LiveSessionAdapter {
         let signal = crate::runtime::hooks::Cancellation::new();
         {
             let mut state = self.state.lock().unwrap();
-            if state.disposed {
+            // #996: disposed-admission / active-admission drop the admission
+            // refusals (live-recording/schemata.py). Off — the original guards.
+            if state.disposed && !crate::mutants::on("disposed-admission") {
                 return Err(RuntimeError::new("Agent session disposed."));
             }
             if state.active.is_some() {
-                return Err(RuntimeError::new(
-                    "Agent session already has an active turn.",
-                ));
+                // #996: active-admission drops the refusal
+                // (live-recording/schemata.py). Off — the original refusal.
+                if !crate::mutants::on("active-admission") {
+                    return Err(RuntimeError::new(
+                        "Agent session already has an active turn.",
+                    ));
+                }
             }
             state.active = Some(cancellation.clone());
             state.signal = signal.clone();
@@ -432,7 +449,16 @@ impl LiveSession for LiveSessionAdapter {
                 {
                     pending.handoff();
                 }
-                let _ = recording_sender.send(Recording::new(runner, owner));
+                // #996: real-slot drops the active-slot owner before the
+                // recording takes it (live-recording/schemata.py). Off — the
+                // real owner.
+                let slot: Arc<dyn Send + Sync> = if crate::mutants::on("real-slot") {
+                    drop(owner);
+                    Arc::new(())
+                } else {
+                    owner
+                };
+                let _ = recording_sender.send(Recording::new(runner, slot));
                 if let Some(manifest) = manifest {
                     for (key, value) in manifest.entries() {
                         request.payload.insert(key.clone(), value.clone());
@@ -553,7 +579,11 @@ impl LiveSession for LiveSessionAdapter {
         }
         if state.status == super::live_session::SessionStatus::Running {
             state.status = super::live_session::SessionStatus::Aborted;
-            state.signal.abort();
+            // #996: dispose-loses-abort-signal skips the session abort signal
+            // (live-session/schemata.py). Off — the original abort.
+            if !crate::mutants::on("dispose-loses-abort-signal") {
+                state.signal.abort();
+            }
             if let Some(cancellation) = &state.active {
                 cancellation.cancel(Some("session_closed".into()));
             }
@@ -693,13 +723,24 @@ impl LiveTurn for LiveTurnStream {
                         3
                     };
                     if self.preflight < preflight_bound {
+                        // #996: start-dispatch / accept-dispatch swap the
+                        // preflight actions (live-recording/schemata.py). Off —
+                        // the original dispatch pairs.
                         let (kind, action) = if self.preflight == 0 {
-                            ("turn_started", RecordingAction::Start)
+                            if crate::mutants::on("start-dispatch") {
+                                ("turn_started", RecordingAction::Accept(self.input.clone()))
+                            } else {
+                                ("turn_started", RecordingAction::Start)
+                            }
                         } else if self.preflight == 1 {
-                            (
-                                "input_accepted",
-                                RecordingAction::Accept(self.input.clone()),
-                            )
+                            if crate::mutants::on("accept-dispatch") {
+                                ("input_accepted", RecordingAction::Start)
+                            } else {
+                                (
+                                    "input_accepted",
+                                    RecordingAction::Accept(self.input.clone()),
+                                )
+                            }
                         } else {
                             (
                                 "user_prompt_submitted",
@@ -836,7 +877,11 @@ impl LiveTurnStream {
         while self.events.try_recv().is_ok() {}
         self.recording_ready.close();
         let _ = self.recording_ready.try_recv();
-        self.recording.take();
+        // #996: terminal-releases-runner retains the recording past the
+        // terminal (live-recording/schemata.py). Off — the release.
+        if !crate::mutants::on("terminal-releases-runner") {
+            self.recording.take();
+        }
         self.active.take();
     }
 
@@ -930,6 +975,18 @@ impl LiveTurnStream {
                 Some(RecordingAction::Status(event.clone()))
             }
             // Pre-cancel without a runner retains the existing abort contract.
+            // #996: complete-dispatch completes the unaccepted stream instead
+            // of the accepted one (live-recording/schemata.py). Off — the arm
+            // never fires.
+            _ if terminal && crate::mutants::on("complete-dispatch") => {
+                if self.accepted {
+                    None
+                } else {
+                    Some(RecordingAction::Complete(
+                        event.get("result").cloned().unwrap_or(JsValue::Undefined),
+                    ))
+                }
+            }
             _ if terminal && self.accepted => Some(RecordingAction::Complete(
                 event.get("result").cloned().unwrap_or(JsValue::Undefined),
             )),
@@ -963,6 +1020,20 @@ impl LiveTurnStream {
             self.release();
             return Err(RuntimeError::new(error.to_string()));
         }
+        // #996: pending-payload nulls the terminal event's sessionId and the
+        // payload-fields-complete rows null a turn_completed event's messages
+        // before the pending slot stores it (live-recording/schemata.py). Off —
+        // the original event.
+        let event = if terminal && crate::mutants::on("pending-payload") {
+            null_payload_field(event, "sessionId")
+        } else if event.get("type") == Some(&"turn_completed".into())
+            && (crate::mutants::on("payload-fields-complete-cancel")
+                || crate::mutants::on("payload-fields-complete-resubmit"))
+        {
+            null_payload_field(event, "messages")
+        } else {
+            event
+        };
         self.pending_event = Some((event, terminal, receipt));
         self.settle_recording().await
     }
@@ -1028,8 +1099,25 @@ impl LiveTurnStream {
     }
 
     fn deliver_recorded(&mut self, event: JsValue) -> Result<Option<JsValue>, RuntimeError> {
+        // #996: payload-fields-start/-accept rows null the delivered preflight
+        // payload (live-recording/schemata.py). Off — the original event.
+        let event = if event.get("type") == Some(&"turn_started".into())
+            && (crate::mutants::on("payload-fields-start-cancel")
+                || crate::mutants::on("payload-fields-start-resubmit"))
+        {
+            null_payload_field(event, "sessionId")
+        } else if event.get("type") == Some(&"input_accepted".into())
+            && (crate::mutants::on("payload-fields-accept-cancel")
+                || crate::mutants::on("payload-fields-accept-resubmit"))
+        {
+            null_payload_field(event, "messages")
+        } else {
+            event
+        };
         if event.get("type") == Some(&"input_accepted".into()) {
-            self.accepted = true;
+            // #996: accepted-marker keeps the stream unaccepted
+            // (live-recording/schemata.py). Off — the accepted gate.
+            self.accepted = !crate::mutants::on("accepted-marker");
         }
         if event.get("type") == Some(&"turn_completed".into()) {
             if crate::mutants::on("gates-duplicate-host-terminal") {
@@ -2615,11 +2703,29 @@ mod tail_tests;
 impl SessionState {
     pub(super) fn complete(&mut self, result: &JsValue) -> &'static str {
         self.status = match result.get("type").and_then(JsValue::as_string) {
-            Some(kind) if kind.equals_str("aborted") => super::live_session::SessionStatus::Aborted,
-            Some(kind) if kind.equals_str("error") => super::live_session::SessionStatus::Failed,
+            // #996: aborted-result-status / error-result-status map the terminal
+            // to Idle (live-session/schemata.py). Off — the original statuses.
+            Some(kind) if kind.equals_str("aborted") => {
+                if crate::mutants::on("aborted-result-status") {
+                    super::live_session::SessionStatus::Idle
+                } else {
+                    super::live_session::SessionStatus::Aborted
+                }
+            }
+            Some(kind) if kind.equals_str("error") => {
+                if crate::mutants::on("error-result-status") {
+                    super::live_session::SessionStatus::Idle
+                } else {
+                    super::live_session::SessionStatus::Failed
+                }
+            }
             _ => super::live_session::SessionStatus::Idle,
         };
-        self.current_turn_id = None;
+        // #996: drop-current-turn-clear retains the current turn
+        // (live-session/schemata.py). Off — the clear.
+        if !crate::mutants::on("drop-current-turn-clear") {
+            self.current_turn_id = None;
+        }
         if self.status == super::live_session::SessionStatus::Aborted {
             "other"
         } else {
