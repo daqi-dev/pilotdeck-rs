@@ -460,42 +460,6 @@ pub fn count_tokens(value: &JsString) -> Result<usize, pilotdeck_tokenizer::Toke
     pilotdeck_tokenizer::count_tokens(value)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{js_max, js_min};
-
-    const PLUS_ZERO: u64 = 0.0f64.to_bits();
-    const MINUS_ZERO: u64 = (-0.0f64).to_bits();
-
-    /// Node v22.22.0: `Math.max(+0,-0)` / `Math.max(-0,+0)` are `+0`;
-    /// `Math.min(+0,-0)` / `Math.min(-0,+0)` are `-0`.
-    #[test]
-    fn js_math_signed_zero_ties_match_ts() {
-        for (index, (left, right)) in [(0.0, -0.0), (-0.0, 0.0)].into_iter().enumerate() {
-            assert_eq!(
-                js_max(left, right).to_bits(),
-                PLUS_ZERO,
-                "#947 compaction js_max tie {index} ({left}, {right}) must be +0"
-            );
-            assert_eq!(
-                js_min(left, right).to_bits(),
-                MINUS_ZERO,
-                "#947 compaction js_min tie {index} ({left}, {right}) must be -0"
-            );
-        }
-        assert_eq!(
-            js_max(-0.0, -0.0).to_bits(),
-            MINUS_ZERO,
-            "#947 compaction js_max(-0,-0) must stay -0"
-        );
-        assert_eq!(
-            js_min(0.0, 0.0).to_bits(),
-            PLUS_ZERO,
-            "#947 compaction js_min(+0,+0) must stay +0"
-        );
-    }
-}
-
 pub mod projection;
 pub mod prompt;
 pub mod recovery;
@@ -534,5 +498,45 @@ mod signed_zero_tests {
             PLUS_ZERO,
             "#947 compaction js_min(+0,+0) must stay +0"
         );
+    }
+}
+
+#[cfg(test)]
+mod whitespace_boundary_tests {
+    #[test]
+    fn utf16_whitespace_set_matches_ecmascript_for_every_unit() {
+        for unit in 0u16..=u16::MAX {
+            let expected = matches!(unit, 0x0009..=0x000d | 0x0020 | 0x00a0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff);
+            assert_eq!(super::is_js_whitespace(unit), expected, "U+{unit:04X}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod truthiness_boundary_tests {
+    use super::*;
+    #[test]
+    fn wire_truthiness_keeps_ecmascript_boundary() {
+        for value in [
+            JsValue::Undefined,
+            JsValue::Null,
+            JsValue::Bool(false),
+            JsValue::Number(0.0),
+            JsValue::Number(-0.0),
+            JsValue::Number(f64::NAN),
+            JsValue::String("".into()),
+        ] {
+            assert!(!js_truthy(&value), "{value:?}");
+        }
+        for value in [
+            JsValue::Bool(true),
+            JsValue::Number(1.0),
+            JsValue::Number(f64::INFINITY),
+            JsValue::String("0".into()),
+            JsValue::Array(vec![]),
+            JsValue::Object(JsObject::new()),
+        ] {
+            assert!(js_truthy(&value), "{value:?}");
+        }
     }
 }

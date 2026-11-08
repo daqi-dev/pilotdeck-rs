@@ -26,8 +26,6 @@ fn units(value: &JsValue) -> Vec<u16> {
 /// anywhere else both forms are a syntax error, as in `JSON.parse`. Shared by
 /// the Anthropic and OpenAI tool-argument parsers (pr5).
 pub(crate) use pilotdeck_model_anthropic::parse_tool_arguments;
-#[cfg(test)]
-use pilotdeck_model_anthropic::json_text;
 
 fn message(parts: &[(&str, Option<&JsValue>)]) -> JsString {
     let mut out = Vec::new();

@@ -24,6 +24,9 @@ or the clamped expression itself).  A mutant must first compile
 (`cargo test --no-run`), then the named test must fail on a `#947` assertion,
 then restoring the bytes must make the same test pass again.
 
+Run this mutation with exclusive ownership of this source tree: a separate
+target directory does not isolate source edits from ordinary Cargo builds.
+
 The control does not stop at the first survivor: it records KILLED / SURVIVED
 / INVALID for every selected case, writes `summary.json`, and exits non-zero
 unless every case is KILLED.  A stale anchor is a harness defect, so it exits
@@ -41,7 +44,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_selection import (claim_dir, missing_target, refuse,
                                refuse_unusable_target, select)
 
@@ -423,7 +426,7 @@ with mutating_sources(root, paths) as originals:
             changed = original.replace(before, after, 1)
             if changed == original:
                 raise RuntimeError('anchor replacement did not change the source')
-            path.write_text(changed)
+            write_source_atomic(root, path, changed.encode())
 
             # Requirement: every mutant must compile before its test verdict.
             compiled, compile_log = run(name + '-compile', [*extra, '--no-run'])
@@ -446,7 +449,7 @@ with mutating_sources(root, paths) as originals:
         except Exception as error:  # noqa: BLE001
             status, reason = 'INVALID', f'{type(error).__name__}: {error}'
         finally:
-            path.write_bytes(originals[path])
+            write_source_atomic(root, path, originals[path])
             if path.read_bytes() != originals[path]:
                 raise RuntimeError(f'restoration failed: {path}')
 
