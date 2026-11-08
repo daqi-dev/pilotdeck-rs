@@ -1884,13 +1884,21 @@ pub(super) fn explicit_builtin_skills_root(options: &Options, env: &Env) -> Opti
     builtin_skills_root_at(&options.project, env, exe_dir.as_deref())
 }
 
-pub(super) fn builtin_skills_root_at(project: &Path, env: &Env, exe_dir: Option<&Path>) -> Option<PathBuf> {
-    if let Some(configured) = env.get("PILOTDECK_BUNDLED_SKILLS_DIR").filter(|value| !value.is_empty()) {
+pub(super) fn builtin_skills_root_at(
+    project: &Path,
+    env: &Env,
+    exe_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if let Some(configured) = env
+        .get("PILOTDECK_BUNDLED_SKILLS_DIR")
+        .filter(|value| !value.is_empty())
+    {
         return crate::metadata::resolve_process_path(project, Path::new(configured)).ok();
     }
     if let Some(exe_dir) = exe_dir {
         for relative in ["../skills", "../../skills"] {
-            if let Ok(candidate) = crate::metadata::resolve_process_path(project, &exe_dir.join(relative))
+            if let Ok(candidate) =
+                crate::metadata::resolve_process_path(project, &exe_dir.join(relative))
                 && candidate.exists()
             {
                 return Some(candidate);

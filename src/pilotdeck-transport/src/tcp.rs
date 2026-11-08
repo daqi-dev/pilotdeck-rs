@@ -99,8 +99,12 @@ impl TcpExecutionServer {
     pub fn serve(self, stop: Arc<AtomicBool>, grace: Duration) -> io::Result<()> {
         self.serve_accept(stop, grace, TcpListener::accept)
     }
-    fn serve_accept(self, stop: Arc<AtomicBool>, grace: Duration,
-        mut accept: impl FnMut(&TcpListener) -> io::Result<(TcpStream, SocketAddr)>) -> io::Result<()> {
+    fn serve_accept(
+        self,
+        stop: Arc<AtomicBool>,
+        grace: Duration,
+        mut accept: impl FnMut(&TcpListener) -> io::Result<(TcpStream, SocketAddr)>,
+    ) -> io::Result<()> {
         let mut tasks: Vec<ConnectionTask> = Vec::new();
         let mut failure = None;
         while !stop.load(Ordering::SeqCst) {
@@ -139,7 +143,14 @@ impl TcpExecutionServer {
                     thread::sleep(Duration::from_millis(5));
                 }
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) if matches!(error.kind(), io::ErrorKind::InvalidInput | io::ErrorKind::NotConnected | io::ErrorKind::Unsupported) => {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::InvalidInput
+                            | io::ErrorKind::NotConnected
+                            | io::ErrorKind::Unsupported
+                    ) =>
+                {
                     failure = Some(error);
                     break;
                 }
@@ -241,15 +252,38 @@ mod tests {
         use std::io::{BufRead, Write};
         struct Fixture;
         impl ExecutionClock for Fixture {
-            fn now_epoch_ms(&self) -> f64 { 1000.0 }
-            fn now_iso(&self) -> JsString { "1970-01-01T00:00:01.000Z".into() }
-            fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> { Ok(None) }
+            fn now_epoch_ms(&self) -> f64 {
+                1000.0
+            }
+            fn now_iso(&self) -> JsString {
+                "1970-01-01T00:00:01.000Z".into()
+            }
+            fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> {
+                Ok(None)
+            }
         }
         impl ExecutionFactory for Fixture {
-            fn execute(&self, _: &ExecuteRequest, _: &mut ExecutionContext) -> pilotdeck_agent::ports::PortResult<ExecutionTerminal> { unreachable!("hello cannot execute a model") }
+            fn execute(
+                &self,
+                _: &ExecuteRequest,
+                _: &mut ExecutionContext,
+            ) -> pilotdeck_agent::ports::PortResult<ExecutionTerminal> {
+                unreachable!("hello cannot execute a model")
+            }
         }
-        let binding = SidecarBinding { module_id: "test".into(), module_instance_id: "instance".into(), connection_generation: "base".into(), capabilities_version: "1".into() };
-        let listener = TcpExecutionServer::bind(("127.0.0.1", 0), binding, Arc::new(Fixture), Arc::new(Fixture)).unwrap();
+        let binding = SidecarBinding {
+            module_id: "test".into(),
+            module_instance_id: "instance".into(),
+            connection_generation: "base".into(),
+            capabilities_version: "1".into(),
+        };
+        let listener = TcpExecutionServer::bind(
+            ("127.0.0.1", 0),
+            binding,
+            Arc::new(Fixture),
+            Arc::new(Fixture),
+        )
+        .unwrap();
         let address = listener.local_addr().unwrap();
         let stop = Arc::new(AtomicBool::new(false));
         let signal = stop.clone();
@@ -268,7 +302,10 @@ mod tests {
             let mut socket = TcpStream::connect(address)?;
             socket.set_read_timeout(Some(Duration::from_secs(2)))?;
             socket.set_write_timeout(Some(Duration::from_secs(2)))?;
-            writeln!(socket, "{{\"kind\":\"request\",\"messageId\":\"after-errors\",\"method\":\"hello\",\"payload\":{{}}}}")?;
+            writeln!(
+                socket,
+                "{{\"kind\":\"request\",\"messageId\":\"after-errors\",\"method\":\"hello\",\"payload\":{{}}}}"
+            )?;
             let mut text = String::new();
             BufReader::new(&socket).read_line(&mut text)?;
             pilotdeck_protocol::parse_json(&text).map_err(|e| io::Error::other(e.to_string()))

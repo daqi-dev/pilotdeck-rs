@@ -71,7 +71,10 @@ fn spawn_deadline_timer(
 fn reserve_bytes(counter: &AtomicUsize, bytes: usize, limit: usize) -> Result<(), ()> {
     let mut current = counter.load(Ordering::SeqCst);
     loop {
-        let next = current.checked_add(bytes).filter(|next| *next <= limit).ok_or(())?;
+        let next = current
+            .checked_add(bytes)
+            .filter(|next| *next <= limit)
+            .ok_or(())?;
         match counter.compare_exchange_weak(current, next, Ordering::SeqCst, Ordering::SeqCst) {
             Ok(_) => return Ok(()),
             Err(observed) => current = observed,
@@ -1125,8 +1128,10 @@ impl ExecutionServer {
                 // A stalled partial frame spends only its own connection's
                 // allowance. Decode/dispatch one bounded frame at a time so
                 // 32 simultaneous raw buffers cannot multiply JSON expansion.
-                let _decode = reader_server.decoding.as_ref().map(|gate|
-                    gate.lock().unwrap_or_else(|poison| poison.into_inner()));
+                let _decode = reader_server
+                    .decoding
+                    .as_ref()
+                    .map(|gate| gate.lock().unwrap_or_else(|poison| poison.into_inner()));
                 let result = match parse_json(&line) {
                     Ok(value) => reader_server.receive(&value),
                     Err(_) => reader_server

@@ -452,26 +452,44 @@ mod filesystem {
         let root = scratch.0.join("with-skills");
         let old = builder.old.clone();
         let installation = bootstrap_with_external_skills(
-            &root, first.policy.clone(), &original, &old, &mut builder, Some(&external)
-        ).unwrap();
+            &root,
+            first.policy.clone(),
+            &original,
+            &old,
+            &mut builder,
+            Some(&external),
+        )
+        .unwrap();
         let link = root.join("generations/skills");
-        assert_eq!(fs::read_link(&link).unwrap(), external.canonicalize().unwrap());
-        assert_eq!(fs::read(link.join("example/SKILL.md")).unwrap(), b"self-written fixture");
+        assert_eq!(
+            fs::read_link(&link).unwrap(),
+            external.canonicalize().unwrap()
+        );
+        assert_eq!(
+            fs::read(link.join("example/SKILL.md")).unwrap(),
+            b"self-written fixture"
+        );
         let mut engine = Engine::new(installation, builder);
         let target = engine.check().unwrap().latest.unwrap();
         engine.apply(&target, &mut |_| {}).unwrap();
         let generation = engine.target_generation().unwrap();
         let actual = Installation::open(&root, generation).unwrap();
         let bin = actual.root.join("generations").join(generation).join("bin");
-        assert_eq!(fs::canonicalize(bin.join("../../skills")).unwrap(), external.canonicalize().unwrap());
+        assert_eq!(
+            fs::canonicalize(bin.join("../../skills")).unwrap(),
+            external.canonicalize().unwrap()
+        );
         assert_eq!(fs::read(&skill).unwrap(), b"self-written fixture");
         let bad_root = scratch.0.join("invalid-install");
         let result = bootstrap_with_external_skills(
-            &bad_root, first.policy, &original, &old, &mut engine.builder,
+            &bad_root,
+            first.policy,
+            &original,
+            &old,
+            &mut engine.builder,
             Some(&scratch.0.join("does-not-exist")),
         );
         assert!(result.is_err());
         assert!(!bad_root.exists());
     }
-
 }

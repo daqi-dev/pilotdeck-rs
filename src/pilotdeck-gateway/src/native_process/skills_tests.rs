@@ -310,9 +310,8 @@ async fn native_skill_source_budget_refuses_growth_before_catalog_publication() 
 #[tokio::test]
 async fn native_builtin_root_discovery_populates_real_skill_catalog() {
     use crate::runtime::plugins::{PluginRuntime, PluginRuntimeOptions};
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "pdrs-builtin-root-{}", uuid::Uuid::new_v4()
-    )));
+    let scratch =
+        Scratch(std::env::temp_dir().join(format!("pdrs-builtin-root-{}", uuid::Uuid::new_v4())));
     let project = scratch.0.join("project");
     let home = scratch.0.join("home");
     let bin = scratch.0.join("install/bin");
@@ -327,16 +326,27 @@ async fn native_builtin_root_discovery_populates_real_skill_catalog() {
     };
     assert_eq!(resolve(&empty, Some(&bin)), Some(bundled.clone()));
     let runtime = PluginRuntime::new_native_style_only(PluginRuntimeOptions {
-        project_root: project.clone(), pilot_home: home,
+        project_root: project.clone(),
+        pilot_home: home,
         builtin_skills_root: resolve(&empty, Some(&bin)),
-        builtin_plugins: vec![], builtin_plugins_enabled: Default::default(),
+        builtin_plugins: vec![],
+        builtin_plugins_enabled: Default::default(),
     });
     runtime.refresh().await.unwrap();
     let lease = runtime.acquire_session_contributions(vec![]).await.unwrap();
-    assert!(lease.contributions.skills.iter().any(|skill| skill.name == "packaged-skill"));
+    assert!(
+        lease
+            .contributions
+            .skills
+            .iter()
+            .any(|skill| skill.name == "packaged-skill")
+    );
     let mut override_env = crate::config::Env::new();
     override_env.insert("PILOTDECK_BUNDLED_SKILLS_DIR".into(), "chosen".into());
-    assert_eq!(resolve(&override_env, Some(&bin)), Some(project.join("chosen")));
+    assert_eq!(
+        resolve(&override_env, Some(&bin)),
+        Some(project.join("chosen"))
+    );
     override_env.insert("PILOTDECK_BUNDLED_SKILLS_DIR".into(), "".into());
     assert_eq!(resolve(&override_env, Some(&bin)), Some(bundled.clone()));
     std::fs::remove_dir_all(&bundled).unwrap();

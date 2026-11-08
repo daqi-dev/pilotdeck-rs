@@ -145,11 +145,17 @@ async fn production_listener(
     api_web: crate::api_web::Config,
     loopback: Option<bool>,
 ) -> Result<crate::native_ws::NativeWsServer, ProxyError> {
-    crate::native_ws::NativeWsServer::bind_with_policy(listen, host, token, env!("CARGO_PKG_VERSION").into(), loopback)
-        .await
-        // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
-        // registers it on the HTTP server, after `/auth/local-token`).
-        .map(|server| server.with_webhook(feishu_webhook).with_api_web(api_web))
+    crate::native_ws::NativeWsServer::bind_with_policy(
+        listen,
+        host,
+        token,
+        env!("CARGO_PKG_VERSION").into(),
+        loopback,
+    )
+    .await
+    // #1329: `ANY /feishu/webhook` on the same listener (GatewayServer.ts
+    // registers it on the HTTP server, after `/auth/local-token`).
+    .map(|server| server.with_webhook(feishu_webhook).with_api_web(api_web))
 }
 
 /// All authorities are explicit; native mode has no default home, project,
@@ -304,8 +310,10 @@ impl Options {
         );
         inherited.remove("PILOTDECK_PROXY_UPSTREAM");
         inherited.remove("PILOTDECK_CONFIG_PATH");
-        if !inherited.get("PILOTDECK_AGENT_LOOP_TRANSPORT")
-            .is_some_and(|value| crate::metadata::js_trim(value).eq_ignore_ascii_case("tcp")) {
+        if !inherited
+            .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
+            .is_some_and(|value| crate::metadata::js_trim(value).eq_ignore_ascii_case("tcp"))
+        {
             inherited.remove("PILOTDECK_AGENT_LOOP_TCP_HOST");
             inherited.remove("PILOTDECK_AGENT_LOOP_TCP_PORT");
         }

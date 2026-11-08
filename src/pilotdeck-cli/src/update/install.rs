@@ -735,13 +735,22 @@ pub fn bootstrap_with_external_skills<B: Builder>(
     builder: &mut B,
     skills: Option<&Path>,
 ) -> Result<Installation, Error> {
-    bootstrap_with_confirmation_and_skills(root, policy, source, sha, builder, skills, |root, generation| {
-        sync_dir(
-            root.parent()
-                .ok_or_else(|| Error::new("applyFailed", "Installation root needs a parent."))?,
-        )?;
-        Installation::open(root, generation)
-    })
+    bootstrap_with_confirmation_and_skills(
+        root,
+        policy,
+        source,
+        sha,
+        builder,
+        skills,
+        |root, generation| {
+            sync_dir(
+                root.parent().ok_or_else(|| {
+                    Error::new("applyFailed", "Installation root needs a parent.")
+                })?,
+            )?;
+            Installation::open(root, generation)
+        },
+    )
 }
 #[cfg(test)]
 pub(super) fn bootstrap_with_confirmation<
@@ -769,13 +778,19 @@ fn bootstrap_with_confirmation_and_skills<
     skills: Option<&Path>,
     confirm: F,
 ) -> Result<Installation, Error> {
-    let skills = skills.map(|path| {
-        let path = fs::canonicalize(path).map_err(|e| Error::new("invalidSkillsRoot", e.to_string()))?;
-        if !path.is_dir() || path.to_str().is_none() {
-            return Err(Error::new("invalidSkillsRoot", "Bundled skills root must be an existing UTF-8 directory."));
-        }
-        Ok(path)
-    }).transpose()?;
+    let skills = skills
+        .map(|path| {
+            let path = fs::canonicalize(path)
+                .map_err(|e| Error::new("invalidSkillsRoot", e.to_string()))?;
+            if !path.is_dir() || path.to_str().is_none() {
+                return Err(Error::new(
+                    "invalidSkillsRoot",
+                    "Bundled skills root must be an existing UTF-8 directory.",
+                ));
+            }
+            Ok(path)
+        })
+        .transpose()?;
     if !valid_sha(sha)
         || policy.schema_version != 1
         || !valid_id(&policy.install_id)

@@ -10,7 +10,15 @@ pub(super) fn run(
     let mut values = HashMap::new();
     while let Some(key) = args.next() {
         let key = key.into_string().map_err(|_| invalid())?;
-        if !["--root", "--source", "--remote", "--ref", "--bundled-skills-root"].contains(&key.as_str()) {
+        if ![
+            "--root",
+            "--source",
+            "--remote",
+            "--ref",
+            "--bundled-skills-root",
+        ]
+        .contains(&key.as_str())
+        {
             return Err(invalid());
         }
         let value = args
@@ -40,7 +48,12 @@ pub(super) fn run(
     };
     let skills = values.remove("--bundled-skills-root").map(PathBuf::from);
     let installation = update::bootstrap_with_external_skills(
-        &root, policy, &source, &sha, &mut builder, skills.as_deref()
+        &root,
+        policy,
+        &source,
+        &sha,
+        &mut builder,
+        skills.as_deref(),
     )?;
     Ok(
         serde_json::json!({"version":"pilotdeck-control/1","ok":true,"root":installation.root,"installId":installation.policy.install_id,"generation":installation.current.generation,"sourceSha":installation.current.source_sha,"binaries":update::BINARIES}),

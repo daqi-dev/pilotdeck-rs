@@ -120,7 +120,10 @@ mod tests {
             ("PILOTDECK_AGENT_LOOP_TCP_PORT", "4321"),
         ]);
         let captured = options.environment(inherited);
-        assert!(matches!(resolve(&options, &captured).unwrap(), Deployment::Tcp { port: 4321, .. }));
+        assert!(matches!(
+            resolve(&options, &captured).unwrap(),
+            Deployment::Tcp { port: 4321, .. }
+        ));
     }
     fn env(entries: &[(&str, &str)]) -> Env {
         entries

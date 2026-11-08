@@ -76,12 +76,12 @@ fn concat(parts: &[&JsString]) -> JsString {
 
 #[path = "agent_background.rs"]
 mod background;
+#[path = "agent_continuation.rs"]
+mod continuation;
 #[path = "agent_observer.rs"]
 mod observer;
 #[path = "agent_observer_host.rs"]
 mod observer_host;
-#[path = "agent_continuation.rs"]
-mod continuation;
 pub(super) use background::NativeForkOwner;
 
 pub(super) struct NativeForkRegistry {
@@ -955,7 +955,7 @@ impl ForkApi {
         });
         let mut config = self.turn.config.clone();
         if spec.get("nativeObserver") == Some(&JsValue::Bool(true)) {
-            config.insert("nativeObserver".into(), true.into());
+            config.insert("nativeObserver".into(), JsValue::Bool(true));
         }
         config.insert("permissionMode".into(), JsValue::String(child_mode.clone()));
         config.insert("isSubagent".into(), JsValue::Bool(true));
@@ -1080,183 +1080,204 @@ impl ForkApi {
         fixed_id: Option<JsString>,
     ) -> ToolFuture<ToolOutput> {
         Box::pin(async move {
-        let observer_definition = self.observer_definition(&spec, &definition)?;
-        let activity = observer_definition.as_ref().map(|_| Arc::new(Mutex::new(observer::ObserverActivity::default())));
-        let started = Instant::now();
-        let subagent: JsString =
-            fixed_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
-        let cwd = string(&self.turn.config, "cwd")
-            .ok_or_else(|| error("Subagent project root is missing."))?;
-        let session = concat(&[&cwd, &"::sub::".into(), &subagent]);
-        let turn = concat(&[&subagent, &"-t0".into()]);
-        let (scope, child_context, relative) = self.compose_child(
-            &definition,
-            &spec,
-            &parent_mode,
-            parent_ask,
-            depth,
-            max,
-            &session,
-            &subagent,
-            None,
-            true,
-        )?;
-        lock(&self.turn.registry.scopes).insert(session.clone(), scope);
-        let _scope = ScopeGuard {
-            registry: self.turn.registry.clone(),
-            key: session.clone(),
-        };
-        let (prompt_preview, truncated) = preview(&directive, 1024);
-        self.write_parent(object([
-            ("type", "subagent_started".into()),
-            ("subagentId", JsValue::String(subagent.clone())),
-            ("subagentType", JsValue::String(definition.as_str().into())),
-            ("promptPreview", JsValue::String(prompt_preview)),
-            ("promptTruncated", JsValue::Bool(truncated)),
-            (
-                "transcriptRelativePath",
-                JsValue::String(relative.as_str().into()),
-            ),
-            ("subagentSessionId", JsValue::String(session.clone())),
-        ]))
-        .await?;
-        let start_hook = self
-            .turn
-            .dispatch_subagent_hook("SubagentStart", &subagent, &definition, None)
-            .await;
-        let lifecycle_started = start_hook.is_ok();
-        let start_delivery = if lifecycle_started {
-            self.turn
-                .emit(
-                    object([
-                        ("type", "subagent_started".into()),
-                        ("subagentId", JsValue::String(subagent.clone())),
-                        ("subagentType", JsValue::String(definition.as_str().into())),
-                        (
-                            "toolCallId",
-                            context
-                                .fields
-                                .get("currentToolCallId")
-                                .cloned()
-                                .unwrap_or(JsValue::Undefined),
-                        ),
-                    ])
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                )
-                .await
-        } else {
-            Ok(())
-        };
-        let mut result = match start_hook.and(start_delivery) {
-            Ok(()) => {
-                self.execute_child(
-                    factory.clone(),
-                    child_context,
-                    &turn,
-                    &subagent,
-                    &definition,
-                    &directive,
-                    &context,
-                    cancel,
-                    deadline,
-                    activity.as_ref(),
-                )
-                .await
-            }
-            Err(failure) => Err(failure),
-        };
-        let elapsed = started.elapsed().as_millis() as f64;
-        let (summary, usage, turns, errored) = match &result {
-            Ok(report) => (
-                report.text.clone(),
-                report.usage.clone(),
-                report.turns.clone(),
-                false,
-            ),
-            Err(error) => (
-                error.message.clone(),
-                JsValue::Undefined,
-                JsValue::Number(0.0),
+            let observer_definition = self.observer_definition(&spec, &definition)?;
+            let activity = observer_definition
+                .as_ref()
+                .map(|_| Arc::new(Mutex::new(observer::ObserverActivity::default())));
+            let started = Instant::now();
+            let subagent: JsString =
+                fixed_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
+            let cwd = string(&self.turn.config, "cwd")
+                .ok_or_else(|| error("Subagent project root is missing."))?;
+            let session = concat(&[&cwd, &"::sub::".into(), &subagent]);
+            let turn = concat(&[&subagent, &"-t0".into()]);
+            let (scope, child_context, relative) = self.compose_child(
+                &definition,
+                &spec,
+                &parent_mode,
+                parent_ask,
+                depth,
+                max,
+                &session,
+                &subagent,
+                None,
                 true,
-            ),
-        };
-        let (summary, truncated) = preview(&summary, 4096);
-        let completion = self
-            .write_parent(object([
-                ("type", "subagent_completed".into()),
+            )?;
+            lock(&self.turn.registry.scopes).insert(session.clone(), scope);
+            let _scope = ScopeGuard {
+                registry: self.turn.registry.clone(),
+                key: session.clone(),
+            };
+            let (prompt_preview, truncated) = preview(&directive, 1024);
+            self.write_parent(object([
+                ("type", "subagent_started".into()),
                 ("subagentId", JsValue::String(subagent.clone())),
                 ("subagentType", JsValue::String(definition.as_str().into())),
-                ("summaryPreview", JsValue::String(summary)),
-                ("summaryTruncated", JsValue::Bool(truncated)),
-                ("usage", usage),
-                ("turns", turns),
+                ("promptPreview", JsValue::String(prompt_preview)),
+                ("promptTruncated", JsValue::Bool(truncated)),
                 (
-                    "durationMs",
-                    JsValue::Number(if errored { 0.0 } else { elapsed }),
+                    "transcriptRelativePath",
+                    JsValue::String(relative.as_str().into()),
                 ),
-                ("errored", JsValue::Bool(errored)),
+                ("subagentSessionId", JsValue::String(session.clone())),
             ]))
-            .await;
-        if let Err(failure) = completion {
-            append_subagent_failure(&mut result, failure);
-        }
-        if lifecycle_started {
-            if let Err(failure) = self
+            .await?;
+            let start_hook = self
                 .turn
-                .stop_subagent_hooks(&subagent, &definition, result.is_ok())
-                .await
-            {
-                append_subagent_failure(&mut result, failure);
-            }
-            let delivery = self
-                .turn
-                .emit(
-                    object([
-                        ("type", "subagent_completed".into()),
-                        ("subagentId", JsValue::String(subagent.clone())),
-                        ("subagentType", JsValue::String(definition.as_str().into())),
-                        ("success", JsValue::Bool(result.is_ok())),
-                        (
-                            "durationMs",
-                            JsValue::Number(if result.is_ok() { elapsed } else { 0.0 }),
-                        ),
-                    ])
-                    .as_object()
-                    .unwrap()
-                    .clone(),
-                )
+                .dispatch_subagent_hook("SubagentStart", &subagent, &definition, None)
                 .await;
-            if let Err(failure) = delivery {
+            let lifecycle_started = start_hook.is_ok();
+            let start_delivery = if lifecycle_started {
+                self.turn
+                    .emit(
+                        object([
+                            ("type", "subagent_started".into()),
+                            ("subagentId", JsValue::String(subagent.clone())),
+                            ("subagentType", JsValue::String(definition.as_str().into())),
+                            (
+                                "toolCallId",
+                                context
+                                    .fields
+                                    .get("currentToolCallId")
+                                    .cloned()
+                                    .unwrap_or(JsValue::Undefined),
+                            ),
+                        ])
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    )
+                    .await
+            } else {
+                Ok(())
+            };
+            let mut result = match start_hook.and(start_delivery) {
+                Ok(()) => {
+                    self.execute_child(
+                        factory.clone(),
+                        child_context,
+                        &turn,
+                        &subagent,
+                        &definition,
+                        &directive,
+                        &context,
+                        cancel,
+                        deadline,
+                        activity.as_ref(),
+                    )
+                    .await
+                }
+                Err(failure) => Err(failure),
+            };
+            let elapsed = started.elapsed().as_millis() as f64;
+            let (summary, usage, turns, errored) = match &result {
+                Ok(report) => (
+                    report.text.clone(),
+                    report.usage.clone(),
+                    report.turns.clone(),
+                    false,
+                ),
+                Err(error) => (
+                    error.message.clone(),
+                    JsValue::Undefined,
+                    JsValue::Number(0.0),
+                    true,
+                ),
+            };
+            let (summary, truncated) = preview(&summary, 4096);
+            let completion = self
+                .write_parent(object([
+                    ("type", "subagent_completed".into()),
+                    ("subagentId", JsValue::String(subagent.clone())),
+                    ("subagentType", JsValue::String(definition.as_str().into())),
+                    ("summaryPreview", JsValue::String(summary)),
+                    ("summaryTruncated", JsValue::Bool(truncated)),
+                    ("usage", usage),
+                    ("turns", turns),
+                    (
+                        "durationMs",
+                        JsValue::Number(if errored { 0.0 } else { elapsed }),
+                    ),
+                    ("errored", JsValue::Bool(errored)),
+                ]))
+                .await;
+            if let Err(failure) = completion {
                 append_subagent_failure(&mut result, failure);
             }
-        }
-        if let Some(observer) = observer_definition {
-            let outcome = match &result {
-                Ok(report) => self::observer::ObserverOutcome { success: true, markdown: Some(report.text.clone()), error: None },
-                Err(failure) => self::observer::ObserverOutcome { success: false, markdown: None, error: Some(failure.message.clone()) },
-            };
-            let activity = activity.as_ref().map(|activity| lock(activity).take()).unwrap_or_default();
-            let launch = observer_host::ObserverLaunch {
-                factory, definition: definition.clone(), subagent: subagent.clone(), observer,
-                directive, observer_message: string(&spec, "observerMessage"), activity, outcome,
-                depth, max, context,
-            };
-            if let Err(failure) = self.launch_observer(launch) {
-                append_subagent_failure(&mut result, failure);
+            if lifecycle_started {
+                if let Err(failure) = self
+                    .turn
+                    .stop_subagent_hooks(&subagent, &definition, result.is_ok())
+                    .await
+                {
+                    append_subagent_failure(&mut result, failure);
+                }
+                let delivery = self
+                    .turn
+                    .emit(
+                        object([
+                            ("type", "subagent_completed".into()),
+                            ("subagentId", JsValue::String(subagent.clone())),
+                            ("subagentType", JsValue::String(definition.as_str().into())),
+                            ("success", JsValue::Bool(result.is_ok())),
+                            (
+                                "durationMs",
+                                JsValue::Number(if result.is_ok() { elapsed } else { 0.0 }),
+                            ),
+                        ])
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                    )
+                    .await;
+                if let Err(failure) = delivery {
+                    append_subagent_failure(&mut result, failure);
+                }
             }
-        }
-        let report = result?;
-        Ok(agent_output(
-            &definition,
-            &description,
-            &subagent,
-            &session,
-            &relative,
-            report,
-            elapsed,
-        ))
+            if let Some(observer) = observer_definition {
+                let outcome = match &result {
+                    Ok(report) => self::observer::ObserverOutcome {
+                        success: true,
+                        markdown: Some(report.text.clone()),
+                        error: None,
+                    },
+                    Err(failure) => self::observer::ObserverOutcome {
+                        success: false,
+                        markdown: None,
+                        error: Some(failure.message.clone()),
+                    },
+                };
+                let activity = activity
+                    .as_ref()
+                    .map(|activity| lock(activity).take())
+                    .unwrap_or_default();
+                let launch = observer_host::ObserverLaunch {
+                    factory,
+                    definition: definition.clone(),
+                    subagent: subagent.clone(),
+                    observer,
+                    directive,
+                    observer_message: string(&spec, "observerMessage"),
+                    activity,
+                    outcome,
+                    depth,
+                    max,
+                    context,
+                };
+                if let Err(failure) = self.launch_observer(launch) {
+                    append_subagent_failure(&mut result, failure);
+                }
+            }
+            let report = result?;
+            Ok(agent_output(
+                &definition,
+                &description,
+                &subagent,
+                &session,
+                &relative,
+                report,
+                elapsed,
+            ))
         })
     }
     async fn write_parent(&self, value: JsValue) -> Result<(), ToolError> {
@@ -1370,7 +1391,8 @@ impl ForkApi {
                         Ok(None) => break,
                         Ok(Some(event)) => {
                             if let Some(activity) = activity
-                                && let Some(event) = event.as_object() {
+                                && let Some(event) = event.as_object()
+                            {
                                 lock(activity).record(event);
                             }
                             let kind = event.get("type").and_then(JsValue::as_string);

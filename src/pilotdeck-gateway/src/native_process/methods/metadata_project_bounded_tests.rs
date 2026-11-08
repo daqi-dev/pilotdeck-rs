@@ -91,8 +91,13 @@ async fn native_project_reader_child() {
             _ => unreachable!(),
         };
         let params = if case == "file_read" {
-            object([("projectKey", project.to_string_lossy().as_ref().into()), ("path", "fixture".into())])
-        } else { params };
+            object([
+                ("projectKey", project.to_string_lossy().as_ref().into()),
+                ("path", "fixture".into()),
+            ])
+        } else {
+            params
+        };
         tokio::time::timeout(
             Duration::from_secs(3),
             project_metadata(home, crate::config::Env::new(), method.into(), params),
@@ -140,11 +145,16 @@ async fn large_summary_and_many_projects_remain_readable() {
     for n in 0..128 {
         let project = root.join(format!("p{n:03}"));
         std::fs::create_dir_all(&project).unwrap();
-        let stored = home.join("projects").join(crate::metadata::project_id(&project));
+        let stored = home
+            .join("projects")
+            .join(crate::metadata::project_id(&project));
         std::fs::create_dir_all(stored.join("chats")).unwrap();
         std::fs::write(stored.join(".cwd"), project.to_string_lossy().as_bytes()).unwrap();
     }
-    let chat = home.join("projects").join(crate::metadata::project_id(&project)).join("chats");
+    let chat = home
+        .join("projects")
+        .join(crate::metadata::project_id(&project))
+        .join("chats");
     // A sparse regular file supplies a real 17 MiB transcript without a large fixture.
     // Title in the middle forces the existing fallback scanner; another case
     // keeps it in the head to exercise the quick path.
@@ -153,23 +163,43 @@ async fn large_summary_and_many_projects_remain_readable() {
         let mut file = std::fs::File::create(&path).unwrap();
         file.set_len(17 * 1024 * 1024).unwrap();
         file.seek(SeekFrom::Start(position)).unwrap();
-        file.write_all(b"\n{\"type\":\"session_metadata\",\"title\":\"fixture title\"}\n").unwrap();
+        file.write_all(b"\n{\"type\":\"session_metadata\",\"title\":\"fixture title\"}\n")
+            .unwrap();
         drop(file);
         let expected = NativeFiles.session_summary(&path, 17 * 1024 * 1024);
         let files = BoundedMetadataFiles::new();
-        assert_eq!(files.session_summary(&path, 17 * 1024 * 1024), expected, "{name}");
+        assert_eq!(
+            files.session_summary(&path, 17 * 1024 * 1024),
+            expected,
+            "{name}"
+        );
         assert_eq!(expected, Ok(true), "{name}");
         assert!(!files.was_refused(), "{name}");
         let result = project_metadata(
-            home.clone(), crate::config::Env::new(), "list_projects".into(), object([])
-        ).await.expect("large legal transcript must not reject list_projects");
-        let Some(JsValue::Array(projects)) = result.get("projects") else { panic!("missing projects") };
+            home.clone(),
+            crate::config::Env::new(),
+            "list_projects".into(),
+            object([]),
+        )
+        .await
+        .expect("large legal transcript must not reject list_projects");
+        let Some(JsValue::Array(projects)) = result.get("projects") else {
+            panic!("missing projects")
+        };
         assert_eq!(projects.len(), 128);
         std::fs::remove_file(path).unwrap();
     }
-    let result = project_metadata(home.clone(), crate::config::Env::new(), "list_projects".into(), object([]))
-        .await.expect("128 real project directories remain readable");
-    let Some(JsValue::Array(projects)) = result.get("projects") else { panic!("missing projects") };
+    let result = project_metadata(
+        home.clone(),
+        crate::config::Env::new(),
+        "list_projects".into(),
+        object([]),
+    )
+    .await
+    .expect("128 real project directories remain readable");
+    let Some(JsValue::Array(projects)) = result.get("projects") else {
+        panic!("missing projects")
+    };
     assert_eq!(projects.len(), 128);
     std::fs::write(project.join("fixture.txt"), b"hello").unwrap();
     for method in ["project_files_list", "project_file_read"] {
@@ -177,8 +207,14 @@ async fn large_summary_and_many_projects_remain_readable() {
             ("projectKey", project.to_string_lossy().as_ref().into()),
             ("path", "fixture.txt".into()),
         ]);
-        let result = project_metadata(home.clone(), crate::config::Env::new(), method.into(), params)
-            .await.expect("registered project file RPC works");
+        let result = project_metadata(
+            home.clone(),
+            crate::config::Env::new(),
+            method.into(),
+            params,
+        )
+        .await
+        .expect("registered project file RPC works");
         assert!(!result.is_undefined(), "{method}");
     }
     std::fs::remove_dir_all(root).unwrap();

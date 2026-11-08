@@ -411,13 +411,38 @@ impl ForkApi {
         context: ToolRunContext,
     ) -> Result<ToolOutput, ToolError> {
         self.launch_detached(DetachedFork {
-            factory, permit: Some(permit), definition, spec, description, directive,
-            parent_mode, parent_ask, depth, max, context, observer: None,
+            factory,
+            permit: Some(permit),
+            definition,
+            spec,
+            description,
+            directive,
+            parent_mode,
+            parent_ask,
+            depth,
+            max,
+            context,
+            observer: None,
         })
     }
-    pub(super) fn launch_detached(self: &Arc<Self>, input: DetachedFork) -> Result<ToolOutput, ToolError> {
-        let DetachedFork { factory, permit, definition, spec, description, directive,
-            parent_mode, parent_ask, depth, max, context, observer } = input;
+    pub(super) fn launch_detached(
+        self: &Arc<Self>,
+        input: DetachedFork,
+    ) -> Result<ToolOutput, ToolError> {
+        let DetachedFork {
+            factory,
+            permit,
+            definition,
+            spec,
+            description,
+            directive,
+            parent_mode,
+            parent_ask,
+            depth,
+            max,
+            context,
+            observer,
+        } = input;
         let is_observer = observer.is_some();
         use crate::runtime::{
             background::{BackgroundExecutionWorld, StartBackgroundSubagentInput},
@@ -451,7 +476,9 @@ impl ForkApi {
             .resources
             .subagents
             .clone();
-        let id: JsString = observer.as_ref().map(|input| input.observer_subagent_id.clone())
+        let id: JsString = observer
+            .as_ref()
+            .map(|input| input.observer_subagent_id.clone())
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string().into());
         let output_id = id.clone();
         let output_definition = definition.clone();
@@ -474,9 +501,11 @@ impl ForkApi {
         if is_observer {
             detached_config.insert("permissionMode".into(), "plan".into());
             detached_config.insert("runMode".into(), "ask".into());
-            detached_config.insert("nativeMemoryDisabled".into(), true.into());
-            detached_config.insert("nativeObserver".into(), true.into());
-            if let Some(authority) = &mut authority { authority.permission_mode = Some("plan".into()); }
+            detached_config.insert("nativeMemoryDisabled".into(), JsValue::Bool(true));
+            detached_config.insert("nativeObserver".into(), JsValue::Bool(true));
+            if let Some(authority) = &mut authority {
+                authority.permission_mode = Some("plan".into());
+            }
         }
         let mut detached = ForkTurn::new(
             self.turn.registry.clone(),
@@ -523,67 +552,124 @@ impl ForkApi {
         let observer_owner = owner.clone();
         let record = BackgroundRecordReservation::reserve(self.turn.registry.clone())?;
         let slots = self.turn.registry.slots.clone();
-        let fork: super::observer::ObserverFork = Box::new(move |request, signal: ToolCancellation| {
-            Box::pin(async move {
-                let mut guard = BackgroundRunGuard { owner: observer_owner.clone(), finished: false };
-                let deadline = if request.native_observer {
-                    tokio::time::Instant::now() + crate::runtime::tools::builtin::bash::runner::timer_delay(request.timeout_ms.unwrap_or(timeout))
-                } else { deadline };
-                let mut held_permit = None;
-                let result: Result<ToolOutput, ToolError> = async {
-                    // An observer is admitted after its observed child settles,
-                    // while the outer agent tool may still hold its slot. Wait
-                    // inside the existing cancellable task, never fail merely
-                    // because maxConcurrent=1 has not released that slot yet.
-                    held_permit = Some(match permit {
-                        Some(permit) => permit,
-                        None => observer_slot(slots, &signal, deadline).await?,
-                    });
-                    let context = detached_context(fields, read, write, signal.clone());
-                    let mut spec = request.definition;
-                    if request.suppress_auto_observer {
-                        spec.insert("observer".into(), JsValue::Undefined);
-                        spec.insert("observerMessage".into(), JsValue::Undefined);
+        let fork: super::observer::ObserverFork =
+            Box::new(move |request, signal: ToolCancellation| {
+                Box::pin(async move {
+                    let mut guard = BackgroundRunGuard {
+                        owner: observer_owner.clone(),
+                        finished: false,
+                    };
+                    let deadline = if request.native_observer {
+                        tokio::time::Instant::now()
+                            + crate::runtime::tools::builtin::bash::runner::timer_delay(
+                                request.timeout_ms.unwrap_or(timeout),
+                            )
+                    } else {
+                        deadline
+                    };
+                    let mut held_permit = None;
+                    let result: Result<ToolOutput, ToolError> = async {
+                        // An observer is admitted after its observed child settles,
+                        // while the outer agent tool may still hold its slot. Wait
+                        // inside the existing cancellable task, never fail merely
+                        // because maxConcurrent=1 has not released that slot yet.
+                        held_permit = Some(match permit {
+                            Some(permit) => permit,
+                            None => observer_slot(slots, &signal, deadline).await?,
+                        });
+                        let context = detached_context(fields, read, write, signal.clone());
+                        let mut spec = request.definition;
+                        if request.suppress_auto_observer {
+                            spec.insert("observer".into(), JsValue::Undefined);
+                            spec.insert("observerMessage".into(), JsValue::Undefined);
+                        }
+                        if request.native_observer {
+                            spec.insert("nativeObserver".into(), JsValue::Bool(true));
+                        }
+                        api.run(
+                            factory,
+                            String::from_utf16_lossy(request.definition_id.units()),
+                            spec,
+                            description,
+                            request.directive,
+                            if request.native_observer {
+                                "plan".into()
+                            } else {
+                                parent_mode
+                            },
+                            parent_ask || request.native_observer,
+                            depth,
+                            max,
+                            context,
+                            Cancellation::new(),
+                            deadline,
+                            Some(request.subagent_id),
+                        )
+                        .await
                     }
-                    if request.native_observer { spec.insert("nativeObserver".into(), true.into()); }
-                    api.run(factory, String::from_utf16_lossy(request.definition_id.units()), spec,
-                        description, request.directive,
-                        if request.native_observer { "plan".into() } else { parent_mode },
-                        parent_ask || request.native_observer, depth, max, context,
-                        Cancellation::new(), deadline, Some(request.subagent_id)).await
-                }.await;
-                if let Err(error) = detached.clone().close().await {
-                    lock(&observer_owner.cleanup_errors).push(error.to_string());
-                }
-                lock(&observer_owner.cleanup_errors).extend(lock(&detached.cleanup_errors).iter().cloned());
-                guard.finished = true;
-                drop(held_permit);
-                result.map_err(|failure|failure.message).and_then(|output| {
-                    if !is_observer { return Ok(JsString::default()); }
-                    output.data.as_ref().and_then(|data|data.get("text")).and_then(JsValue::as_string).cloned()
-                        .ok_or_else(||JsString::from("Native observer fork returned no markdown report."))
+                    .await;
+                    if let Err(error) = detached.clone().close().await {
+                        lock(&observer_owner.cleanup_errors).push(error.to_string());
+                    }
+                    lock(&observer_owner.cleanup_errors)
+                        .extend(lock(&detached.cleanup_errors).iter().cloned());
+                    guard.finished = true;
+                    drop(held_permit);
+                    result
+                        .map_err(|failure| failure.message)
+                        .and_then(|output| {
+                            if !is_observer {
+                                return Ok(JsString::default());
+                            }
+                            output
+                                .data
+                                .as_ref()
+                                .and_then(|data| data.get("text"))
+                                .and_then(JsValue::as_string)
+                                .cloned()
+                                .ok_or_else(|| {
+                                    JsString::from(
+                                        "Native observer fork returned no markdown report.",
+                                    )
+                                })
+                        })
                 })
-            })
-        });
+            });
         let task_input = if let Some(observer) = observer {
             let event_owner = owner.clone();
-            let emit: super::observer::ObserverEmitter = Arc::new(move |event| event_owner.push_raw(event, None).map_err(|error|error.message));
-            let now: super::observer::ObserverClock = Arc::new(|| {
-                match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-                    Ok(value)=>value.as_millis() as f64,
-                    Err(value)=>-(value.duration().as_millis() as f64),
-                }
+            let emit: super::observer::ObserverEmitter = Arc::new(move |event| {
+                event_owner
+                    .push_raw(event, None)
+                    .map_err(|error| error.message)
             });
+            let now: super::observer::ObserverClock =
+                Arc::new(|| {
+                    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                        Ok(value) => value.as_millis() as f64,
+                        Err(value) => -(value.duration().as_millis() as f64),
+                    }
+                });
             super::observer::prepare_task(observer, fork, Some(emit), now).map_err(error)?
         } else {
             let request = super::observer::ObserverForkRequest {
-                definition_id:definition.as_str().into(),definition:spec,directive,
-                subagent_id:id.clone(),timeout_ms:Some(timeout),suppress_auto_observer:false,native_observer:false,
+                definition_id: definition.as_str().into(),
+                definition: spec,
+                directive,
+                subagent_id: id.clone(),
+                timeout_ms: Some(timeout),
+                suppress_auto_observer: false,
+                native_observer: false,
             };
             StartBackgroundSubagentInput {
-                kind:None,session_id:self.turn.parent.session_id.clone(),parent_turn_id:self.turn.parent.turn_id.clone(),
-                subagent_id:id.clone(),subagent_type:definition.as_str().into(),observed_subagent_id:None,
-                run:Box::new(move |signal| Box::pin(async move { fork(request,signal).await.map(|_|()) })),
+                kind: None,
+                session_id: self.turn.parent.session_id.clone(),
+                parent_turn_id: self.turn.parent.turn_id.clone(),
+                subagent_id: id.clone(),
+                subagent_type: definition.as_str().into(),
+                observed_subagent_id: None,
+                run: Box::new(move |signal| {
+                    Box::pin(async move { fork(request, signal).await.map(|_| ()) })
+                }),
             }
         };
         let task = owner.start(runtime, task_input)?;
@@ -901,36 +987,67 @@ mod owned_inbox_job_tests {
 mod observer_slot_tests {
     use super::*;
     use crate::runtime::tools::ToolCancellation;
-    use std::{future::Future,task::Poll,time::Duration};
+    use std::{future::Future, task::Poll, time::Duration};
     #[tokio::test]
     async fn one_slot_observer_waits_until_observed_fork_releases_its_permit() {
-        let slots=Arc::new(Semaphore::new(1));
-        let observed=slots.clone().acquire_owned().await.unwrap();
-        let signal=ToolCancellation::default();
-        let mut observer=Box::pin(observer_slot(slots.clone(),&signal,tokio::time::Instant::now()+Duration::from_secs(2)));
-        assert!(std::future::poll_fn(|cx|Poll::Ready(observer.as_mut().poll(cx).is_pending())).await);
-        assert_eq!(slots.available_permits(),0);
+        let slots = Arc::new(Semaphore::new(1));
+        let observed = slots.clone().acquire_owned().await.unwrap();
+        let signal = ToolCancellation::default();
+        let mut observer = Box::pin(observer_slot(
+            slots.clone(),
+            &signal,
+            tokio::time::Instant::now() + Duration::from_secs(2),
+        ));
+        assert!(
+            std::future::poll_fn(|cx| Poll::Ready(observer.as_mut().poll(cx).is_pending())).await
+        );
+        assert_eq!(slots.available_permits(), 0);
         drop(observed);
-        let permit=tokio::time::timeout(Duration::from_secs(1),observer).await.unwrap().unwrap();
-        assert_eq!(slots.available_permits(),0);
+        let permit = tokio::time::timeout(Duration::from_secs(1), observer)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(slots.available_permits(), 0);
         drop(permit);
-        assert_eq!(slots.available_permits(),1);
+        assert_eq!(slots.available_permits(), 1);
     }
     #[tokio::test]
     async fn blocked_one_slot_observer_cancellation_and_deadline_do_not_take_the_permit() {
-        let slots=Arc::new(Semaphore::new(1));
-        let observed=slots.clone().acquire_owned().await.unwrap();
-        let signal=ToolCancellation::default();
-        let mut observer=Box::pin(observer_slot(slots.clone(),&signal,tokio::time::Instant::now()+Duration::from_secs(2)));
-        assert!(std::future::poll_fn(|cx|Poll::Ready(observer.as_mut().poll(cx).is_pending())).await);
+        let slots = Arc::new(Semaphore::new(1));
+        let observed = slots.clone().acquire_owned().await.unwrap();
+        let signal = ToolCancellation::default();
+        let mut observer = Box::pin(observer_slot(
+            slots.clone(),
+            &signal,
+            tokio::time::Instant::now() + Duration::from_secs(2),
+        ));
+        assert!(
+            std::future::poll_fn(|cx| Poll::Ready(observer.as_mut().poll(cx).is_pending())).await
+        );
         signal.abort();
-        let failure=tokio::time::timeout(Duration::from_secs(1),observer).await.unwrap().unwrap_err();
-        assert_eq!(failure.code,ToolError::aborted().code);
-        let signal=ToolCancellation::default();
-        let failure=tokio::time::timeout(Duration::from_secs(1),observer_slot(slots.clone(),&signal,tokio::time::Instant::now()+Duration::from_millis(10))).await.unwrap().unwrap_err();
-        assert_eq!(failure.message,"Subagent timed out before starting.".into());
-        assert_eq!(slots.available_permits(),0);
+        let failure = tokio::time::timeout(Duration::from_secs(1), observer)
+            .await
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(failure.code, ToolError::aborted().code);
+        let signal = ToolCancellation::default();
+        let failure = tokio::time::timeout(
+            Duration::from_secs(1),
+            observer_slot(
+                slots.clone(),
+                &signal,
+                tokio::time::Instant::now() + Duration::from_millis(10),
+            ),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        assert_eq!(
+            failure.message,
+            "Subagent timed out before starting.".into()
+        );
+        assert_eq!(slots.available_permits(), 0);
         drop(observed);
-        assert_eq!(slots.available_permits(),1);
+        assert_eq!(slots.available_permits(), 1);
     }
 }
