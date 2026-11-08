@@ -99,9 +99,11 @@ def literal_table_lines(lines):
     # a whole guarded block at its `for option in [` header. A table opens
     # at a line that ends with '[' (after stripping a trailing // comment)
     # and declares a const/static binding, or at a wrapped `&[`/`[`
-    # continuation whose previous non-empty line declares one (rustfmt
-    # wraps long openers — fix-r1 dropped that form, a coverage regression
-    # #2286 fix-r2 DS boundary P0); blank and //-comment lines inside are
+    # continuation whose previous non-empty, non-comment line ends the
+    # binding (`=`/`,`) and declares one (rustfmt wraps long openers —
+    # fix-r1 dropped that form, a coverage regression #2286 fix-r2 DS
+    # boundary P0; the comment-transparent lookback and the `=`/`,` tail
+    # are fix-r3, DS boundary P1/P2); blank and //-comment lines inside are
     # transparent (a comment added mid-table must not silently drop the
     # whole table back to range-only — #2286 review P0); any other code
     # line (block comments, attributes, escaped literals) aborts the
@@ -119,10 +121,21 @@ def literal_table_lines(lines):
         if not _declares_binding(code):
             qualifies = code.strip() in ('&[', '[')
             look = index - 1
-            while qualifies and look >= 0 and not lines[look].strip():
-                look -= 1
-            if not (qualifies and look >= 0
-                    and _declares_binding(_code_line(lines[look]))):
+            while qualifies and look >= 0:
+                stripped = lines[look].strip()
+                if not stripped or stripped.startswith("//"):
+                    look -= 1
+                    continue
+                break
+            # The previous non-empty, non-comment code line must be the tail
+            # of the binding itself (`=`, or `,` inside one): a closure body
+            # mentioning static (`LazyLock::new(|| {`) is not a key table
+            # (#2286 fix-r3, DS boundary P2#2). A // comment between the
+            # declaration and the wrapped &[ is transparent, same as inside
+            # the table (DS boundary P1 / sibling P2#2).
+            previous = _code_line(lines[look]) if look >= 0 else ""
+            if not (qualifies and previous.endswith(("=", ","))
+                    and _declares_binding(previous)):
                 index += 1
                 continue
         members = []
