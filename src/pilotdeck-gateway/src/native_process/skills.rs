@@ -257,6 +257,10 @@ fn render_skill_content(content: &JsString, path: &JsString) -> JsString {
 mod tests;
 
 #[cfg(test)]
+#[path = "skills_packaged_tests.rs"]
+mod packaged_tests;
+
+#[cfg(test)]
 mod disabled_tests {
     use super::*;
     #[test]

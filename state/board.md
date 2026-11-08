@@ -5083,3 +5083,8 @@ r82完整CLI实际542通过、0失败、140忽略，四bin/strict通过；新增
 ### 2026-11-09 01:56 · CLI 范围复核后继续补实质缺口
 
 d2c4已整合插件诊断/空hooks测试及token回退四格、TCP清理候选，仍未编译不记通过；r84全Gateway和17优先实际负控继续，已有4项KILLED，当前进程FD约30。最新独审另报TCP清理提前close引发ValueError假FAIL，mbp2 barrier已重现，Terra修shutdown/join顺序并复验，未宣称终审通过。完整范围审计确认同宿主多项目、plugin-owned commands/skills/MCP声明尚有实际差额，不能以单项目/受限JS文案当人已豁免；Sol转多项目租约，audit转有界贡献加载，root负责实际消费和串行集成，保留正在运行两验证副本。32项旧默认技能没有被外部root选项等价替代，已向用户询问合法资产来源选择，其余产品工作继续。依据主仓 `_tmp/20261108-cli-completion/scope-audit-terra-20261109/assessment.md`，原交付草稿非完成结论；只本机提交、所有Rust仅mbp2、无GitHub写，02:41交接后继续。
+
+
+### 2026-11-09 02:12 · 默认技能交付与插件命令接入
+
+用户明确授权仅复用固定旧32技能，0fa3ec7fc按原Git blob和模式导入109文件/793106 bytes，原许可与逐文件SHA清单随源码交付；安装器同代skills切换、外部root优先及旧代保留已源码实现，待mbp2测试。711b814fd接入session冻结命令展开，16格真TS oracle可复采字节相同，尚未编译；root新增真实32技能catalog/read_skill回归。多项目Sol、声明loader audit及MCP UTF16端到端上下文Terra仍实施；不是仅待验收。r84旧固定源全Gateway已有4584实际PASS/0FAILED但未结束；优先负控6KILLED、manager一INVALID待36e7精确子断言复跑，其余继续。三类check_frozen对d9dd9a093全0；双谱系当前增量审中。仅本机提交、Rust全在mbp2，无GitHub写，02:41交接继续。
