@@ -702,6 +702,13 @@ def main():
         selected_rows = [case for case in selected_rows if case.mutation not in LINUX_ONLY]
 
     def run(label, args, child_case=None):
+        if child_case is not None and '--no-run' not in args:
+            # Positive and restored trees also need compilation. Keep the
+            # short bound on the assertion-owning child, after each exact
+            # source state has compiled under the normal build budget.
+            compiled = run(label + '-compile', args[:args.index('--')] + ['--no-run'], child_case)
+            if compiled.returncode:
+                return compiled
         slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
         run_env = dict(env)

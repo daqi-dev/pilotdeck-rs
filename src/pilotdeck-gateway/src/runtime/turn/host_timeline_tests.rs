@@ -254,6 +254,8 @@ async fn replay_case(case: &JsValue, name: &str) {
         events: mpsc::channel(1).1,
         identity: replay_identity(),
         input,
+        prompt_input: None,
+        should_call_model: true,
         integrity,
         delivered: StreamIntegrity::new(),
         active: None,

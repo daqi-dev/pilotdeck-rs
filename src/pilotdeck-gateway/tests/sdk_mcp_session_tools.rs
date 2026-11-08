@@ -214,6 +214,7 @@ async fn compose(
 ) -> (SessionMcpTools, SessionMcpRelease) {
     session_mcp_tools(SessionMcpToolsOptions {
         mcp_config: config,
+        plugin_servers: None,
         provider,
         per_session_runtimes,
         session_key: &session_key.into(),
