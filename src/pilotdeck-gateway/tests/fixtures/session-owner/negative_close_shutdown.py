@@ -120,14 +120,24 @@ MUTATIONS = {
     # fulfilling before the drain registers.
     "close-during-shutdown-aggregate": (
         owner,
-        """        if let Some(closing) = unsettled_closing(&mut state, key) {
+        """        if after.is_none()
+            && let Some(closing) = unsettled_closing(&mut state, key)
+        {
             return Box::pin(wait_result(closing));
         }
         if state.shutdown.is_some() {
-            return Box::pin(async { Ok(()) });
+            return if after.is_some() {
+                Box::pin(async { Err(RuntimeError::new("Session router is shut down.")) })
+            } else {
+                Box::pin(async { Ok(()) })
+            };
         }""",
-        """        if let Some(shutdown) = state.shutdown.clone() {
-            return Box::pin(wait_result(shutdown));
+        """        if after.is_none() {
+            if let Some(shutdown) = state.shutdown.clone() {
+                return Box::pin(wait_result(shutdown));
+            }
+        } else if state.shutdown.is_some() {
+            return Box::pin(async { Err(RuntimeError::new("Session router is shut down.")) });
         }""",
         [DURING_SHUTDOWN, SHUTDOWN_THEN_CLOSE],
         [
@@ -143,10 +153,12 @@ MUTATIONS = {
     # the per-key rejection is even reached.
     "close-else-awaits-nothing": (
         owner,
-        """        if let Some(closing) = unsettled_closing(&mut state, key) {
+        """        if after.is_none()
+            && let Some(closing) = unsettled_closing(&mut state, key)
+        {
             return Box::pin(wait_result(closing));
         }""",
-        """        if unsettled_closing(&mut state, key).is_some() {
+        """        if after.is_none() && unsettled_closing(&mut state, key).is_some() {
             return Box::pin(async { Ok(()) });
         }""",
         [DURING_SHUTDOWN],

@@ -5183,3 +5183,8 @@ r123唯一首编错误为非Result的turn装配误用?；已逐SHA接窄修，�
 ### 2026-11-09 07:32 · 并发删除与完整 CLI 回归
 
 r124固定ba84df完整CLI546过/140条件忽略/0失败，AO112、SOP13、builtin136过；native538过2cleanup观察/TS额外阶段断言失败，已修temp fallback finished/observer与金样投影，strict仅2collapsible-if已机械修，待r125。已整合SDK owner.close_then持同key票据覆盖临时删除与SDK清理（真实barrier待编）；workspace真实fd+NOREPLACE隔离/独立branch CAS三源待编，OS实证保留。两家SDK四角色无P0/P1，P2集中处置：共享mode、线性去重、真实EditFile两格TS及消费者、并发删除；forward/close/notebook等待依据逐条列账。AO原boundary P1及4P2已第三谱系按真实损坏索引/双Git算法证据撤销；新P3不扩。SOP真实固定bin启动拒绝合法normalized snapshot，已整合原schema生成回归与guard修复待编，不能以13单测冒实际成功。仅本机提交，Rust仅mbp2，完整CLI未完。
+
+
+### 2026-11-09 07:48 · 真实 SDK 与知识链路收敛
+
+r125固定4722244全目标check/strict/四bin通过，native544/AO116/SOP13/SDK24/model30/builtin136/external21/owner66过；CLI完整546过复用r124未变源。r125真实SDK29项、33次loopback请求全过含临时child侧链与清理；SOP四格增强真实knowledge/authority/receipt均过，cancel终态继续核TS。只补default_mode源码指纹的精确native新增helper过滤、close_then后两条非冻结负控定位，不改旧expectedSHA/13条负控判分；实际负控待跑。SDK读源资源差异新增记录未批准非豁免。独立SOP审发现项目proxy未传给controller/control，正在修；全Gateway剩余分组与FD诊断、两代源码安装继续。仅本机提交、Rust只mbp2，CLI尚未完结。
