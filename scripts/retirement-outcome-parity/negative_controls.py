@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N18 + 正控 PC1–PC2）。
+"""Retirement outcome-parity 负控执行器（issue #1477 §6.2，N1–N17）。
 
 只做数据变异：从 TS 参考数据加载轮次，内存里改 methods / frames，写到输出目录下
 的临时轮次目录，再以子进程跑 ``check_outcome_parity.py check``。**不改任何源码
@@ -569,8 +569,7 @@ def _descend(dir_fd, part):
 
     一次只走**一个**路径部件：带分隔符或 ``.`` / ``..`` 的部件直接拒绝——``dir_fd``
     只对单个名字生效，带分隔符的部件会按路径重新解析、中间链接照样被跟随（Codex r14
-    实测 ``'N1/child'`` 写穿到链接目标）。当前控制 ID 是代码内固定的 ``N1``–``N18``
-    与正控 ``PC1``–``PC2``，
+    实测 ``'N1/child'`` 写穿到链接目标）。当前控制 ID 是代码内固定的 ``N1``–``N17``，
     没有外部输入能走到这里；这道守卫是给未来接口留的 fail-closed。
     """
     separators = {sep for sep in ('/', os.sep, os.altsep) if sep}
@@ -782,39 +781,20 @@ class Control:
         self.extra = extra or {}    # 归因加严项：N7 双方码、N11 漂移轮次
 
 
-class Positive:
-    """正控：断言「应当 PASS 的性质」仍成立。
-
-    负控只证明装置**能抓住**注入的错误，证明不了它**没有错判**。延期这一格如果被
-    写窄（``deferred_match`` 漏容忍），18 条负控照样全 KILLED，所以必须有一条数据
-    变异要求 checker **rc=0 且报告如实说出延期**（#2143 两家评审同一条）。
-    """
-
-    def __init__(self, pid, title, probe, build, verify):
-        self.id = pid
-        self.title = title
-        self.probe = probe
-        self.build = build          # () -> (rows, frames)
-        self.verify = verify        # report -> (bool, reason)
-
-
 def build_controls(base_rows, base_frames, round2_rows, round2_frames):
-    # #2143：凡靠「答 unavailable 必须被点名」归因的控件，探针都不能落在 P5 会做减法
-    # 的那两个集合里——gated 集（REGISTERED）与延期集都会被 P5 扣掉，P3/P4 对延期方法
-    # 也会按 `deferred_match` 跳过，探针落在任一侧，注入就被吞掉、控件从 KILLED 退化成
-    # SURVIVED（假 FAIL）。例外是**故意**落在集合里的控件：N4（gated，靠 P5 的另一侧
-    # 点名）与 N18（延期，要求 P3+P4 双双点名），它们不由本过滤器选探针。
-    swallowed = CHECK.REGISTERED_UNAVAILABLE_METHODS | CHECK.DEFERRED_UNAVAILABLE_METHODS
-    deferred_probes = [row['method'] for row in base_rows
-                       if row['method'] in CHECK.DEFERRED_UNAVAILABLE_METHODS
-                       and row['outcome'] == 'ok' and row['shape'] == 'request']
-    assert deferred_probes, ('baseline has no deferred ok/request method; '
-                             'N18 needs one')
+    # 凡靠「答 unavailable 必须被点名」归因的控件，探针都不能落在 P5 会做集合减法的
+    # gated 集里（`REGISTERED_UNAVAILABLE_METHODS`）——P5 只对集合外答 unavailable
+    # 点名，探针落在集合内，注入就被吞掉、控件从 KILLED 退化成 SURVIVED（假 FAIL）。
+    # 例外是**故意**落在集合内的控件：N4（gated，靠 P5 的另一侧点名），它不由本
+    # 过滤器选探针。原 #2143 r2/r3 实测：gated 方法顶到首行的参考数据下，改前
+    # N3/N10 SURVIVED、rc=1。A8.6-...-001-R2 撤回复期时保留这一普适加固
+    # （去掉延期集那一半，见 diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001-R2.md）。
+    swallowed = CHECK.REGISTERED_UNAVAILABLE_METHODS
     ok_request = next(row['method'] for row in base_rows
                       if row['outcome'] == 'ok' and row['shape'] == 'request'
                       and row['method'] not in swallowed)
     assert ok_request not in swallowed, (
-        f'probe {ok_request} sits in the gated/deferred set; N1/N3/N9 attribution '
+        f'probe {ok_request} sits in the gated set; N1/N3/N9 attribution '
         'would be swallowed by the P5 set subtraction')
     error_probe = next(row['method'] for row in base_rows
                        if row['outcome'] == 'error'
@@ -833,19 +813,17 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
     assert len(keep_ok) == 2, f'need exactly two kept ok rows, got {keep_ok}'
     shape_probe = request_ok[2]
     # N10 的注入是「把 keep_ok 之外的行全改成 CAPABILITY_UNAVAILABLE」，归因靠 P5 点名
-    # 探针；探针必须同样避开 `swallowed`（见函数开头）。
+    # 探针；探针必须同样避开 `swallowed`（见函数开头），否则注入对它是空操作。
     n10_probe = next(row['method'] for row in base_rows
                      if row['method'] not in keep_ok
                      and row['method'] not in swallowed)
-    assert n10_probe not in swallowed, (
-        f'probe {n10_probe} sits in the gated/deferred set; N10 attribution would be '
-        'swallowed by the P5 set subtraction')
     first_row = base_rows[0]['method']
     outcome_probe = ok_rows[2]
     gated = 'memory_list'
     assert gated in CHECK.REGISTERED_UNAVAILABLE_METHODS
     assert find_row(base_rows, gated)['errorCode'] == CAPABILITY_UNAVAILABLE
     assert ALT_CODE != CHECK.CAPABILITY_UNAVAILABLE
+
     def clone(*samples):
         return [([dict(row) for row in rows], [json.loads(json.dumps(frame)) for frame in frames])
                 for rows, frames in samples]
@@ -1119,72 +1097,6 @@ def build_controls(base_rows, base_frames, round2_rows, round2_frames):
         Control('N17', f'{shape_probe} 的 send 帧复制一条（一个方法两条 send）',
                 ['P6-WIRE-CODE'], shape_probe, n17,
                 landed_count('send', 'request', shape_probe)(2)),
-        # #2143：延期的边界。同一延期方法换成别的错误码，P3 + P4 必须双双点名它；
-        # 只报一条或一条都不报，就说明延期被写成了对该方法的整体豁免。
-        Control('N18', f'已登记延期方法 {deferred_probes[0]} 的码改 {ALT_CODE}（线缆同步）',
-                ['P3-OUTCOME', 'P4-ERRORCODE'], deferred_probes[0],
-                one(lambda rows, frames: set_error(rows, frames, deferred_probes[0], ALT_CODE)),
-                landed_row('errorCode', ALT_CODE, deferred_probes[0])),
-    ]
-
-
-def build_positives(base_rows, base_frames):
-    """正控（#2143）：延期这一格必须**真被容忍**，而且**真被报告**。
-
-    - PC1：三个延期方法都改成 `error / CAPABILITY_UNAVAILABLE` → checker 必须 rc=0、
-      逐轮 `deferred == 3` 且 `deferredMethods` 点名三条、顶层 `deferred.methods` 是
-      登记集。写窄了（漏容忍）→ BROKEN；报告丢字段（静默放行）→ BROKEN。
-    - PC2：未变异参考轮 → `deferred == 0` 且零违规，钉住「不是整体豁免」。
-    """
-    deferred = CHECK.DEFERRED_UNAVAILABLE_METHODS
-    probes = [row['method'] for row in base_rows if row['method'] in deferred]
-    assert sorted(probes) == sorted(deferred), (
-        f'baseline deferred rows {sorted(probes)} != registered set {sorted(deferred)}')
-    assert all(find_row(base_rows, method)['outcome'] == 'ok' for method in probes), (
-        'baseline deferred rows must be golden-ok; PC1 needs the tolerated cell')
-
-    def clone():
-        return ([dict(row) for row in base_rows],
-                [json.loads(json.dumps(frame)) for frame in base_frames])
-
-    def tolerated():
-        rows, frames = clone()
-        for method in probes:
-            set_error(rows, frames, method, CAPABILITY_UNAVAILABLE)
-        return rows, frames
-
-    def untouched():
-        return clone()
-
-    def verify_tolerated(report):
-        rounds = report.get('rounds') or []
-        if len(rounds) != 1:
-            return False, f'expected 1 round, got {len(rounds)}'
-        stats = rounds[0]
-        if stats.get('deferred') != len(probes):
-            return False, f"deferred {stats.get('deferred')} != {len(probes)}"
-        if sorted(stats.get('deferredMethods') or []) != sorted(probes):
-            return False, f"deferredMethods {stats.get('deferredMethods')}"
-        registered = (report.get('deferred') or {}).get('methods')
-        if sorted(registered or []) != sorted(probes):
-            return False, f'top-level deferred.methods {registered}'
-        if report.get('violations'):
-            return False, f"violations {report['violations'][:3]}"
-        return True, 'tolerated cell passes and is reported'
-
-    def verify_untouched(report):
-        counts = [stats.get('deferred') for stats in report.get('rounds') or []]
-        if counts != [0]:
-            return False, f'baseline deferred counts {counts} != [0]'
-        if report.get('violations'):
-            return False, f"baseline violations {report['violations'][:3]}"
-        return True, 'baseline reports deferred=0 (not a blanket exemption)'
-
-    return [
-        Positive('PC1', f'延期三方法 {", ".join(sorted(probes))} 改 CAPABILITY_UNAVAILABLE',
-                 probes[0], tolerated, verify_tolerated),
-        Positive('PC2', '未变异参考轮', base_rows[0]['method'], untouched,
-                 verify_untouched),
     ]
 
 
@@ -1388,9 +1300,6 @@ def run_positive(positive, out_root, oracle):
     except Exception as error:  # noqa: BLE001
         record.update(verdict='INVALID', reason=f'verify failed: {error!r}')
         return record
-    record.update(verdict='HELD' if ok else 'BROKEN', reason=reason)
-    return record
-
 
 def build_parser():
     """正式解析器：选项表与 ``build_classifier`` **同源**（``PARSER_OPTIONS``）。
@@ -1402,9 +1311,8 @@ def build_parser():
     """
     parser = argparse.ArgumentParser(
         allow_abbrev=False,
-        description='Negative controls N1-N18 + positive controls PC1-PC2 for the '
-                    'retirement outcome-parity checker (#1477). Data-only mutations; '
-                    'no source text is touched.')
+        description='Negative controls N1-N17 for the retirement outcome-parity '
+                    'checker (#1477). Data-only mutations; no source text is touched.')
     defaults = {'data': str(DEFAULT_DATA), 'oracle': str(DEFAULT_ORACLE)}
     for key, flags, help_text in PARSER_OPTIONS:
         kwargs = {'help': help_text}
@@ -1462,7 +1370,10 @@ def run_locked(args, out_root):
                   '先修数据或金样', file=sys.stderr)
             return 2
         controls = build_controls(base_rows, base_frames, round2_rows, round2_frames)
-        positives = build_positives(base_rows, base_frames)
+        # A8.6-R1 的延期正控 PC1–PC2 已随 #2294 按反转条款撤回（A8.6-…-R2），
+        # 正控注册数归 0（EXPECTED_POSITIVES = 0）。条数守卫机制保留：将来再登记
+        # 正控时在 controls 旁重建装配并核数，这里不得再空真放行。
+        positives = []
     except CHECK.InputError as error:
         print(f'negative_controls: 输入不可用：{error}', file=sys.stderr)
         return 2
