@@ -107,7 +107,10 @@ mod native_style_tests {
         );
         fs::create_dir(plugin.join("commands")).unwrap();
         fs::write(plugin.join("commands/do.md"), "danger").unwrap();
-        assert!(runtime.refresh().await.is_err());
+        assert_eq!(
+            runtime.refresh().await.unwrap_err().message,
+            "Native profile requires supported plugin contributions."
+        );
         assert_eq!(runtime.generation().await, 1);
         assert!(runtime.all_commands().await.is_empty());
         fs::remove_dir_all(plugin.join("commands")).unwrap();
@@ -136,7 +139,10 @@ mod native_style_tests {
             matches!(matchers[0].hooks.as_slice(), [crate::hooks::protocol::HookCommand::Command { command, .. }] if command.equals_str("echo fixture-hook"))
         );
         fs::write(&manifest, r#"{"name":"p","mcpServers":{}}"#).unwrap();
-        assert!(runtime.refresh().await.is_err());
+        assert_eq!(
+            runtime.refresh().await.unwrap_err().message,
+            "Native profile requires supported plugin contributions."
+        );
         assert_eq!(runtime.generation().await, 2);
         fs::write(&manifest, r#"{"name":"p","outputStyles":"custom"}"#).unwrap();
         fs::rename(plugin.join("output-styles"), plugin.join("custom")).unwrap();
@@ -146,6 +152,55 @@ mod native_style_tests {
             runtime.create_view(vec![]).await.list_output_styles().len(),
             1
         );
+        runtime.dispose().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn native_generation_accepts_empty_hook_objects_and_matchers() {
+        let root =
+            Scratch(std::env::temp_dir().join(format!("pdrs-empty-hooks-{}", uuid::Uuid::new_v4())));
+        let project = root.0.join("project");
+        let home = root.0.join("home");
+        let plugin = project.join(".pilotdeck/plugins/p");
+        fs::create_dir_all(&plugin).unwrap();
+        fs::create_dir_all(&home).unwrap();
+        let manifest = plugin.join("plugin.json");
+        let runtime = PluginRuntime::new_native_style_only(PluginRuntimeOptions {
+            project_root: project,
+            pilot_home: home,
+            builtin_skills_root: None,
+            builtin_plugins: vec![],
+            builtin_plugins_enabled: HashMap::new(),
+        });
+        for (generation, raw) in [
+            (1_u64, r#"{"name":"p","hooks":{}}"#),
+            (2_u64, r#"{"name":"p","hooks":{"PreToolUse":[]}}"#),
+        ] {
+            fs::write(&manifest, raw).unwrap();
+            assert!(!plugin.join("output-styles").exists());
+            runtime.refresh().await.unwrap();
+            assert_eq!(runtime.generation().await, generation);
+            let loaded = runtime.snapshot().await;
+            assert_eq!(loaded.len(), 1);
+            assert_eq!(loaded[0].name, "p");
+            assert!(
+                loaded[0]
+                    .hooks_config
+                    .as_ref()
+                    .is_some_and(|hooks| hooks.is_empty())
+            );
+            let view = runtime.create_view(vec![]).await;
+            assert!(view.list_output_styles().is_empty());
+            assert!(view.snapshot_contributions().hooks.is_empty());
+
+            fs::write(&manifest, r#"{"name":"p","mcpServers":{}}"#).unwrap();
+            assert_eq!(
+                runtime.refresh().await.unwrap_err().message,
+                "Native profile requires supported plugin contributions."
+            );
+            assert_eq!(runtime.generation().await, generation);
+            assert_eq!(runtime.snapshot().await.len(), 1);
+        }
         runtime.dispose().await.unwrap();
     }
 }

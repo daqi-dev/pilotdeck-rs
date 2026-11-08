@@ -519,7 +519,8 @@ impl Families {
         self
     }
 
-    /// Native CLI generation restricted to inert output-style contributions.
+    /// Native CLI generation with restricted output styles, standalone skills,
+    /// and configured hooks.
     pub fn with_native_style_plugins(mut self, options: PluginRuntimeOptions) -> Self {
         self.plugins = Arc::new(super::plugins::NativeStylePluginFamilySource { options });
         self.router_custom_routers =

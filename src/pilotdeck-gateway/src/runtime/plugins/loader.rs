@@ -396,8 +396,8 @@ pub(crate) fn discover_style_paths(
     }
     Ok(output)
 }
-/// Native CLI profile: only inert output-style plugins are admitted. This
-/// check is repeated by generation loading; no non-style family is parsed.
+/// Validate the native restricted plugin contributions. Generation loading
+/// repeats this check before loading output styles and configured hooks.
 pub(crate) fn validate_native_style_paths(
     directories: &[(PathBuf, PluginSource)],
     budget: &mut StyleBudget,
@@ -417,7 +417,7 @@ pub(crate) fn validate_native_style_paths(
                 .map_err(|e| PluginRuntimeError::new(e.to_string()))?;
             if !meta.is_dir() {
                 return Err(PluginRuntimeError::new(
-                    "Native profile requires pure output-style plugins.",
+                    "Native profile requires supported plugin contributions.",
                 ));
             }
             paths.push(entry.path());
@@ -434,7 +434,7 @@ pub(crate) fn validate_native_style_paths(
                     .any(|allowed| key.equals_str(allowed))
                 {
                     return Err(PluginRuntimeError::new(
-                        "Native profile requires pure output-style plugins.",
+                        "Native profile requires supported plugin contributions.",
                     ));
                 }
             }
@@ -481,7 +481,7 @@ pub(crate) fn validate_native_style_paths(
                 .contains(&first.as_str())
                 {
                     return Err(PluginRuntimeError::new(
-                        "Native profile requires pure output-style plugins.",
+                        "Native profile requires supported plugin contributions.",
                     ));
                 }
                 roots.insert(first);
@@ -645,8 +645,8 @@ fn load_native_plugin_hooks(
     }
 }
 
-/// Build a generation containing only inert style contributions. This never
-/// loads the full plugin manifest, hooks, tools, skills, routers or MCP.
+/// Build a native restricted generation with output styles, configured hooks,
+/// and standalone skills; unsupported plugin contribution families stay rejected.
 pub(crate) fn stage_native_style_plugins(
     options: &PluginRuntimeOptions,
 ) -> Result<LoadFromDiskResult, PluginRuntimeError> {

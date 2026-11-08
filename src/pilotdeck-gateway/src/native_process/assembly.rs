@@ -1784,8 +1784,8 @@ async fn validate_profile_inner(
     env: &Env,
     _management: bool,
 ) -> Result<(), ProxyError> {
-    // The native plugin generation independently rechecks this restricted
-    // profile and never loads non-style families, closing the check/load race.
+    // The native generation independently rechecks this restricted profile
+    // before loading output styles, standalone skills, and configured hooks.
     let home = options.home.clone();
     let project = options.project.clone();
     let permit = crate::runtime::plugins::style_slots()
