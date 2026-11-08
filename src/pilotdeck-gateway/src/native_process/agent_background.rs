@@ -549,6 +549,11 @@ impl ForkApi {
         if let Some(emit) = self.turn.session_emit.get() {
             detached.bind_session_emitter(emit.clone());
         }
+        // SubAgentSession inherits the original session lifecycle registration.
+        // A descendant's own session has no external Gateway admission entry.
+        Arc::get_mut(&mut detached)
+            .expect("new detached fork is unique")
+            .inherited_sdk_async = self.turn.parent_async_registration();
         Arc::get_mut(&mut detached)
             .expect("new detached turn has one owner")
             .detached = true;

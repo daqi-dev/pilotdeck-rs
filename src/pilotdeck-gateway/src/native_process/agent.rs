@@ -136,6 +136,8 @@ impl NativeForkRegistry {
             .cloned()
     }
 }
+pub(super) type ParentAsyncRegistration =
+    Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>;
 #[derive(Clone)]
 pub(super) struct ForkScope {
     seed_enabled: bool,
@@ -148,6 +150,7 @@ pub(super) struct ForkScope {
     pub key: TranscriptKey,
     pub skills: super::skills::NativeSkills,
     pub generation: Weak<crate::runtime::project::RuntimeLease>,
+    pub sdk_async_registration: Option<ParentAsyncRegistration>,
     channel: JsString,
 }
 impl ForkScope {
@@ -207,10 +210,19 @@ pub(super) struct ForkTurn {
     cleanup_errors: Mutex<Vec<String>>,
     close_done: watch::Sender<Option<Result<(), HostError>>>,
     lifecycle: OnceLock<Arc<dyn crate::host::modules::lifecycle::LifecyclePort>>,
+    inherited_sdk_async: Option<ParentAsyncRegistration>,
     detached_hook_source: OnceLock<Arc<lifecycle::DetachedHookSource>>,
     owned_hooks: OnceLock<lifecycle::DetachedHooks>,
 }
 impl ForkTurn {
+    fn parent_async_registration(&self) -> Option<ParentAsyncRegistration> {
+        self.inherited_sdk_async.clone().or_else(|| {
+            self.detached_hook_source
+                .get()
+                .and_then(|source| source.async_registration())
+        })
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         registry: Arc<NativeForkRegistry>,
@@ -252,6 +264,7 @@ impl ForkTurn {
             cleanup_errors: Mutex::default(),
             close_done,
             lifecycle: OnceLock::new(),
+            inherited_sdk_async: scope.and_then(|scope| scope.sdk_async_registration.clone()),
             detached_hook_source: OnceLock::new(),
             owned_hooks: OnceLock::new(),
         })
@@ -1071,6 +1084,7 @@ impl ForkApi {
             store,
             key,
             skills,
+            sdk_async_registration: self.turn.parent_async_registration(),
             generation: self
                 .turn
                 .generation

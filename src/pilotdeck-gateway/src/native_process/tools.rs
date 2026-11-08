@@ -652,6 +652,16 @@ impl SessionTools {
                 budget: projection_budget.clone(),
             })),
             on_async_registered: sdk_state.as_ref().filter(|sdk| sdk.active).map(|sdk| {
+                if let Some(parent) = self
+                    .fork_scope
+                    .as_ref()
+                    .and_then(|scope| scope.sdk_async_registration.clone())
+                {
+                    // TS children share the parent's session lifecycle. The
+                    // actual child HookRuntime owns this dispatch/cancellation;
+                    // do not borrow the creating parent's expired turn guard.
+                    return parent;
+                }
                 Arc::new(super::assembly::sdk_hooks::NativeAsyncRegistration {
                     session: identity.session_id.clone(),
                     include_events: sdk.include_events,

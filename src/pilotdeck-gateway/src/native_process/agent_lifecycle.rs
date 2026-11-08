@@ -109,6 +109,19 @@ impl ForkTurn {
     }
 }
 impl DetachedHookSource {
+    pub(super) fn async_registration(&self) -> Option<ParentAsyncRegistration> {
+        self.sdk.as_ref().map(|(include, slot)| {
+            Arc::new(DynamicRegistration {
+                registry: self.registry.clone(),
+                owner: self.owner.clone(),
+                session: self.session.clone(),
+                include_events: *include,
+                async_registry: slot.clone(),
+                steer: self.steer.clone(),
+            }) as ParentAsyncRegistration
+        })
+    }
+
     pub(super) fn create(&self, generation: &RuntimeLease) -> Result<DetachedHooks, ToolError> {
         let lease = generation
             .fork()
@@ -124,16 +137,7 @@ impl DetachedHookSource {
             signal: cancel.clone(),
             budget: Arc::new(HookProjectionBudget::default()),
         }));
-        options.on_async_registered = self.sdk.as_ref().map(|(include, slot)| {
-            Arc::new(DynamicRegistration {
-                registry: self.registry.clone(),
-                owner: self.owner.clone(),
-                session: self.session.clone(),
-                include_events: *include,
-                async_registry: slot.clone(),
-                steer: self.steer.clone(),
-            }) as Arc<dyn AsyncHookRegistrationHandler>
-        });
+        options.on_async_registered = self.async_registration();
         Ok(DetachedHooks(Arc::new(Owned {
             runtime: LifecycleRuntime::new(HookRuntime::with_options(
                 self.settings.clone(),
@@ -305,6 +309,57 @@ mod tests {
             env: None,
             signal: None,
         }
+    }
+
+    #[tokio::test]
+    async fn inherited_child_registration_uses_parent_lookup_and_is_revoked_by_parent_owner() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let project = ProjectRuntimeRegistry::new(
+            "/fixture-sdk-child-registration",
+            Arc::new(|_: &std::path::Path, _: &mut ResourceBundle| Ok(())),
+        );
+        let owner = NativeForkOwner::new(project.acquire(None).unwrap());
+        let registry = NativeForkRegistry::new();
+        let looked_up = Arc::new(AtomicUsize::new(0));
+        let calls = looked_up.clone();
+        registry.install_async_turn_lookup(Arc::new(move |session, _| {
+            assert_eq!(session, &JsString::from("parent-original"));
+            calls.fetch_add(1, Ordering::SeqCst);
+            None
+        }));
+        let source = DetachedHookSource {
+            settings: vec![],
+            options: HookRuntimeOptions::default(),
+            registry: Arc::downgrade(&registry),
+            owner: Arc::downgrade(&owner),
+            session: "parent-original".into(),
+            emit: Arc::new(|_| false),
+            steer: None,
+            sdk: Some((true, Arc::new(OnceLock::new()))),
+        };
+        let inherited = source.async_registration().unwrap();
+        drop(source);
+        let registration = || AsyncHookRegistration {
+            hook_name: "child-read".into(),
+            hook_event: "PreToolUse".into(),
+            invocation_id: "fixture".into(),
+            timeout_ms: Some(1000.0),
+        };
+        inherited.handle(registration()).unwrap();
+        assert_eq!(
+            looked_up.load(Ordering::SeqCst),
+            1,
+            "idle parent lookup is a deliberate no-op"
+        );
+        owner.close_admission();
+        assert!(inherited.handle(registration()).is_err());
+        assert_eq!(
+            looked_up.load(Ordering::SeqCst),
+            1,
+            "closed parent cannot register for a surviving child"
+        );
+        owner.release_generation().await.unwrap();
+        project.dispose().await.unwrap();
     }
     #[tokio::test]
     async fn detached_hook_runtime_survives_creator_scope_and_owner_drains_generation() {
