@@ -1,0 +1,11 @@
+[package]
+name = "module2-host-external-consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+pilotdeck-module2-host = { path = "../.." }
+serde_json = "=1.0.151"
