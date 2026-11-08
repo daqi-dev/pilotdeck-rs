@@ -867,15 +867,18 @@ fn thread_group_is_dead(pid: &str) -> bool {
     seen != 0
 }
 
-/// #2138 (#2142 fix-r1, boundary r1 #4): the one definition of "this state
-/// means the source is terminal" — `Z`/`X` alone proves nothing (a zombie
-/// leader with a live thread group still shares its fd table, see
-/// [`thread_group_is_dead`]), only a dead thread group behind the state does.
-/// [`blind_source`] and [`settles_into_a_terminal_source`] both end here, so
-/// the first check and the settle re-check cannot disagree on the same pid —
-/// the criterion used to be written out twice at those two call sites. The
-/// publication tests keep their own copy
-/// (`tests/scratch_publication.rs`, same name): change the two together.
+/// #2138 (#2142 fix-r1, boundary r1 #4; fix-r2, sibling r2 #2): the one
+/// definition of "this state means the source is terminal" — `Z`/`X` alone
+/// proves nothing (a zombie leader with a live thread group still shares its
+/// fd table, see [`thread_group_is_dead`]), only a dead thread group behind
+/// the state does. [`blind_source`] and [`settles_into_a_terminal_source`]
+/// both end here, so the first check and the settle re-check cannot disagree
+/// on the same pid — the criterion used to be written out twice at those two
+/// call sites. The publication tests keep their own copy
+/// (`tests/scratch_publication.rs`, same name): change the two together —
+/// and since fix-r2 "together" is machine-checked on both sides (each copy's
+/// body is a negative-control anchor, and each crate's unit test pins the
+/// Terminal verdict of both entries).
 #[cfg(target_os = "linux")]
 fn terminal_state(pid: &str, state: char) -> bool {
     matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
@@ -1686,7 +1689,19 @@ fn the_stat_fields_are_read_after_the_last_parenthesis() {
 /// #2138: the classification that decides whether a failed `/proc` read may be
 /// passed over. This process is always related (its own children are what the
 /// audit reads first), init cannot descend from a test process, and a reaped
-/// child is gone.
+/// child is gone. #2142 fix-r2 (sibling r2 #2 / boundary r2 #2 / simplify r2
+/// #1, five reviewers): this test also walks the settle entry —
+/// `blind_source` of this very process passes the enumeration's first check
+/// as non-terminal and descends into [`settles_into_a_terminal_source`] —
+/// so it is where the Terminal side of this crate's [`terminal_state`]
+/// criterion is pinned, through both entries on one dead pid, mirroring the
+/// publication tests' tuple assert: a killed, un-reaped group with no live
+/// task must read `Terminal` from the enumeration's first check and from
+/// the settle re-check alike. One assert holds both verdicts, so a criterion
+/// that drifts — or is hardcoded away — shows both halves flipping in the
+/// failure payload; the publication copy of the criterion has its own
+/// mutant, and this one is the negative control bound here
+/// (`terminal-state-production-hardcoded-false`).
 #[cfg(target_os = "linux")]
 #[test]
 fn a_blind_source_is_skipped_only_when_it_cannot_be_a_child() {
@@ -1719,6 +1734,41 @@ fn a_blind_source_is_skipped_only_when_it_cannot_be_a_child() {
         BlindSource::Vanished,
         "#2138 a reaped process is gone and cannot be a child"
     );
+    // #2142: the Terminal verdict of this crate's criterion, through both
+    // entries, on one pid — the production twin of the publication tests'
+    // dead-group probe. The probe is killed but not reaped, so it is still
+    // in `/proc` as an all-`Z` group: terminal for the enumeration's first
+    // check (inside `blind_source`) and for the settle re-check (called
+    // directly, the entry a related-but-alive source reaches when the first
+    // check does not fire). Both calls are one expression, so a criterion
+    // that is hardcoded away fails with both verdicts in its payload.
+    let mut dead = Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("#2142 spawn the dead-group probe");
+    let dead_pid = dead.id().to_string();
+    dead.kill().expect("#2142 kill the dead-group probe");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let stat = std::fs::read_to_string(format!("/proc/{dead_pid}/stat")).unwrap_or_default();
+        if matches!(stat_fields(&stat), Some(('Z', _))) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "#2142 the dead-group probe must become a zombie, not stay {stat:?}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        (
+            blind_source(&dead_pid),
+            settles_into_a_terminal_source(&dead_pid)
+        ),
+        (BlindSource::Terminal, BlindSource::Terminal),
+        "#2142 a dead thread group must be terminal through both the enumeration and the settle"
+    );
+    let _ = dead.wait().expect("#2142 reap the dead-group probe");
 }
 
 /// #2138: the child audit's own eyes — on a Linux host it must see the stat of

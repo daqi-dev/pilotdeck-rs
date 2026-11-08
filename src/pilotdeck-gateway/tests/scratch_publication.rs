@@ -1547,10 +1547,17 @@ static SCAN_WINDOW: Mutex<()> = Mutex::new(());
 /// is asynchronous, and a panicking thread must not sit waiting for a group
 /// to die (#2142 fix-r1, concurrency r1 #4, correcting this comment's
 /// earlier "never meets" claim). The passing path closes the gap the unwind
-/// cannot: both probes explicitly wait for the group's death before they
-/// drop the window, so what a concurrent scan may meet there is only a
-/// group still dying inside its own settle window — the same residue the
-/// scan's fail-closed verdicts already absorb. The healthy path
+/// cannot, and the two probes close it differently (#2142 fix-r2, sibling r2
+/// #2, correcting fix-r1's "both probes wait for the group's death"): the
+/// EOF probe waits for the whole group's death before it drops the window,
+/// so what a concurrent scan may meet there is only a group still dying
+/// inside its own settle window; the leader probe waits only for the *hero's*
+/// thread group — the poison state — and then drops this guard while the
+/// probe leader (the python parent, single-threaded, parked in its own
+/// `os.waitpid`) is still alive, so the kill lands on a running process, not
+/// a corpse: what a concurrent scan may meet there is a process still
+/// exiting, never the poison state — the same residue the scan's fail-closed
+/// verdicts already absorb. The healthy path
 /// keeps killing the probe's child by its own pid first (`KillOnDrop` in the
 /// leader test); this guard is the backstop, not the primary kill.
 #[cfg(target_os = "linux")]
@@ -1989,7 +1996,11 @@ fn thread_group_is_dead(pid: &str) -> bool {
 /// (boundary r1 #4): the production sweep (`src/test_process.rs`, #2138) has
 /// its own `terminal_state` — same shape, separate crate boundary — so this is
 /// the one definition *here*, and the two copies change together or not at
-/// all.
+/// all. #2142 fix-r2 (sibling r2 #2): "together" is machine-checked on both
+/// sides now — each copy's body is a negative-control anchor
+/// (`terminal-state-hardcoded-false` here,
+/// `terminal-state-production-hardcoded-false` there), and each crate's unit
+/// test pins the Terminal verdict of both entries on one dead pid.
 #[cfg(target_os = "linux")]
 fn terminal_state(pid: &str, state: char) -> bool {
     matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
@@ -2365,6 +2376,125 @@ fn a_zombie_leader_alone_does_not_close_its_groups_descriptors() {
     let _ = child.wait();
 }
 
+/// #2142 fix-r2 (boundary r2 #1 / MM boundary r2 #1 / simplify r2 #2): the
+/// survivor's hold cap — the one number every probe budget below is derived
+/// against, injected into both probe scripts so the two cannot drift apart.
+/// The margin itself is a compile-time fact, not prose: the pid line's own
+/// budget plus the receipt, zombie and kill-window budgets must all fit
+/// inside the hold cap, or the kill-removed mutant can be outwaited by the
+/// front path's own clocks on a slow host — the failure fix-r1 structured
+/// away, whose last unbounded wait (the pid-line read itself) this round
+/// closes with `PROBE_LINE_BUDGET`.
+#[cfg(target_os = "linux")]
+const PROBE_HOLD_SECS: u64 = 30;
+
+/// #2142 fix-r2: the front-path budgets of the two probe tests — every wait
+/// fails red inside its own budget before it can silently overrun. The
+/// leader test's chain is the shorter one (no receipt wait), so the margin
+/// assert below covers both.
+#[cfg(target_os = "linux")]
+const PROBE_LINE_BUDGET: Duration = Duration::from_secs(4);
+
+#[cfg(target_os = "linux")]
+const PROBE_RECEIPT_BUDGET: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "linux")]
+const PROBE_ZOMBIE_BUDGET: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "linux")]
+const PROBE_KILL_WINDOW: Duration = Duration::from_secs(5);
+
+/// How long a timeout branch waits for its own explicit kill to land before
+/// it panics — the kill's confirmation, so the window is released only behind
+/// a group that is provably dying, the same order the healthy path keeps.
+#[cfg(target_os = "linux")]
+const PROBE_DEATH_CONFIRM: Duration = Duration::from_secs(1);
+
+/// The kill margin as a machine-checked fact (#2142 fix-r2, boundary r2 #1 /
+/// MM boundary r2 #1): the EOF test's whole front path — pid line + receipt +
+/// zombie + kill window — must fit inside the survivor's hold cap, or the
+/// kill-removed mutant stops being provably killable on a slow host. `Duration`
+/// addition is not const, so the budgets are compared as seconds.
+#[cfg(target_os = "linux")]
+const _: () = assert!(
+    PROBE_LINE_BUDGET.as_secs()
+        + PROBE_RECEIPT_BUDGET.as_secs()
+        + PROBE_ZOMBIE_BUDGET.as_secs()
+        + PROBE_KILL_WINDOW.as_secs()
+        < PROBE_HOLD_SECS
+);
+
+/// #2142 fix-r2 (boundary r2 #1 / MM boundary r2 #1): one line from a probe's
+/// piped stdout, read on a worker thread with its own budget — `read_line`
+/// has no deadline of its own, and leaving it unbounded in front of the
+/// receipt/zombie/kill budgets would let a slow host eat the kill margin from
+/// ahead (the hold thread's 30s clock starts at the fork, the budget sums
+/// only at the read). The reader is detached on purpose: a budget overrun
+/// panics while the read is still parked, and the pipe's write end is the
+/// probe's own lifetime (parent exit plus the child's first-act close), so
+/// the thread cannot outlive the probe it serves.
+#[cfg(target_os = "linux")]
+fn read_probe_line(stdout: process::ChildStdout, budget: Duration) -> (usize, String) {
+    use std::io::BufRead;
+    let (line_tx, line_rx) = mpsc::channel();
+    thread::Builder::new()
+        .name("#2142 probe pid line".into())
+        .spawn(move || {
+            let mut stdout = io::BufReader::new(stdout);
+            let mut line = String::new();
+            let _ = line_tx.send(stdout.read_line(&mut line).map(|read| (read, line)));
+        })
+        .expect("#2142 spawn the probe pid-line reader");
+    match line_rx.recv_timeout(budget) {
+        Ok(Ok(line)) => line,
+        Ok(Err(error)) => panic!("#2142 reading the probe's pid line failed: {error}"),
+        Err(_) => panic!(
+            "#2142 the probe's pid line must arrive within its own {}s budget",
+            budget.as_secs()
+        ),
+    }
+}
+
+/// #2142 fix-r2 (simplify r2 #3 / MM simplify r2 #4): the one wait both probe
+/// tests share — the group behind `pid` is gone from `/proc` (already reaped)
+/// or entirely `Z`/`X`, within `budget`, at a 5 ms cadence. Returns whether
+/// it settled in time; the caller owns the failure action, so the
+/// mutant-bound killpg lines stay at their own call sites.
+#[cfg(target_os = "linux")]
+fn group_is_gone_within(pid: &str, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    while fs::metadata(format!("/proc/{pid}")).is_ok() && !thread_group_is_dead(pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    true
+}
+
+/// #2142 fix-r2 (concurrency r2 #1 / boundary r2 #3): collect the probe's
+/// orphaned hero when a concurrent stranger guard's child-subreaper lease has
+/// parked it on this process — in the bounded shape of the file's other
+/// waits (`EXITED | NOHANG` with its own deadline, never a blocking waitid:
+/// a recycled pid must not make this test wait on, or consume the exit state
+/// of, somebody else's child). ECHILD means init owns the hero and has
+/// already collected it. Either way this is reaping, not asserting, so no
+/// outcome fails the test.
+#[cfg(target_os = "linux")]
+fn reap_probe_orphan(hero: i32) {
+    let pid = Pid::from_raw(hero).expect("#2142 the probe hero's pid must be valid");
+    let deadline = Instant::now() + PROBE_DEATH_CONFIRM;
+    while Instant::now() < deadline {
+        match rustix::process::waitid(
+            rustix::process::WaitId::Pid(pid),
+            rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG,
+        ) {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+
 /// #1409 r2 review (concurrency): a zombie thread-group leader whose group
 /// still has a live thread has *not* released the group's descriptors. The
 /// kernel reports `Z` for the leader, answers EACCES on the group's fd
@@ -2396,7 +2526,11 @@ fn a_live_group_behind_a_zombie_leader_is_not_terminal() {
     let _scan_window = SCAN_WINDOW
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    const PROBE: &str = r#"
+    // #2142 fix-r2 (simplify r2 #2): the survivor's hold cap is one constant
+    // shared with the EOF probe below, injected here — two handwritten `30`s
+    // could drift until one of them ate the kill margin the budgets protect.
+    let probe_script = format!(
+        r#"
 import ctypes, os, threading, time
 read_end, write_end = os.pipe()
 pid = os.fork()
@@ -2404,7 +2538,7 @@ if pid == 0:
     os.close(1)
     def hold():
         os.write(write_end, b"x")
-        time.sleep(30)
+        time.sleep({hold})
     threading.Thread(target=hold, daemon=False).start()
     time.sleep(0.2)
     ctypes.CDLL("libc.so.6", use_errno=True).pthread_exit(None)
@@ -2412,7 +2546,9 @@ if pid == 0:
 os.close(write_end)
 print(pid, flush=True)
 os.waitpid(pid, 0)
-"#;
+"#,
+        hold = PROBE_HOLD_SECS
+    );
     // Kill the probe's child on the way out, so neither the panic path nor a
     // passing run leaves a stray sleeper behind.
     struct KillOnDrop(Pid);
@@ -2425,7 +2561,7 @@ os.waitpid(pid, 0)
     let mut probe = process::Command::new("python3")
         .arg("-I")
         .arg("-c")
-        .arg(PROBE)
+        .arg(&probe_script)
         .stdout(process::Stdio::piped())
         .process_group(0)
         .spawn()
@@ -2435,31 +2571,25 @@ os.waitpid(pid, 0)
     // OOM-killed probe strands the poison state, and a panic on the empty pid
     // line unwinds through this drop (the group kill) before it releases the
     // scan window above.
-    let _probe_group = KillProbeGroupOnDrop(
-        Pid::from_raw(probe.id() as i32)
-            .expect("#1409 the zombie-leader probe's pid must be valid"),
+    let group = Pid::from_raw(probe.id() as i32)
+        .expect("#1409 the zombie-leader probe's pid must be valid");
+    let _probe_group = KillProbeGroupOnDrop(group);
+    let (_read, pid_line) = read_probe_line(
+        probe
+            .stdout
+            .take()
+            .expect("#1409 take the zombie-leader probe's stdout"),
+        PROBE_LINE_BUDGET,
     );
-    let mut pid_line = String::new();
-    {
-        use std::io::BufRead;
-        let mut stdout = io::BufReader::new(
-            probe
-                .stdout
-                .take()
-                .expect("#1409 take the zombie-leader probe's stdout"),
-        );
-        stdout
-            .read_line(&mut pid_line)
-            .expect("#1409 read the zombie-leader probe's child pid");
-    }
-    let hero = pid_line.trim().to_owned();
-    let hero_raw: i32 = hero
+    let hero_raw: i32 = pid_line
+        .trim()
         .parse()
         .expect("#1409 the zombie-leader probe must print a numeric child pid");
+    let hero = hero_raw.to_string();
     let kill_on_drop = KillOnDrop(
         Pid::from_raw(hero_raw).expect("#1409 the probe's child pid must be a valid pid"),
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + PROBE_ZOMBIE_BUDGET;
     loop {
         let stat = fs::read_to_string(format!("/proc/{hero}/stat")).unwrap_or_default();
         if matches!(stat_fields(&stat), Some(('Z', _))) {
@@ -2482,23 +2612,30 @@ os.waitpid(pid, 0)
     // that settles into `Terminal` only after its own deadline. The wait also
     // proves the guard's kill landed. The probe's own `waitpid` reaps the
     // child as soon as it dies, so "gone from /proc" is the usual exit — a
-    // vanished entry cannot be a source at all.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fs::metadata(format!("/proc/{hero}")).is_ok() && !thread_group_is_dead(&hero) {
-        assert!(
-            Instant::now() < deadline,
-            "#1409 the probe's thread group must die by the guard's kill"
-        );
-        thread::sleep(Duration::from_millis(5));
+    // vanished entry cannot be a source at all. The timeout branch kills the
+    // group explicitly and confirms the kill before it panics (#2142 fix-r2,
+    // sibling r2 #3 / concurrency r2 #2 — the same shape the EOF test's
+    // window has kept since fix-r1), so no exit releases the window over a
+    // live group.
+    if !group_is_gone_within(&hero, PROBE_KILL_WINDOW) {
+        rustix::process::kill_process_group(group, Signal::KILL).ok();
+        let _ = group_is_gone_within(&hero, PROBE_DEATH_CONFIRM);
+        panic!("#1409 the probe's thread group must die by the guard's kill");
     }
-    // #2142 fix-r1 (concurrency r1 #2): drop the group guard while the probe
-    // leader is still an unreaped zombie — a pgid cannot be recycled while any
-    // member lives, and the leader is one until the `wait` below collects it
-    // — so the guard's kill can never land on an unrelated group that reused
-    // the id. Group first, window last, the same order the unwind takes.
+    // #2142 fix-r1 (concurrency r1 #2; comment corrected in fix-r2, sibling r2
+    // #3 / concurrency r2 #2): drop the group guard while the probe leader —
+    // the python parent, whose own pid is the pgid — is still alive (blocked
+    // in its `os.waitpid`, or just woken from it): a pgid cannot be recycled
+    // while its leader lives, so the kill can never land on an unrelated
+    // group that reused the id. The parent's `os.waitpid` is also what
+    // usually reaps the hero, whichever exit the wait above took; when the
+    // kill reaches it first, the hero is reparented and the bounded
+    // `reap_probe_orphan` below collects it whenever it lands on this
+    // process. Group first, window last, the same order the unwind takes.
     drop(_probe_group);
     drop(_scan_window);
     let _ = probe.wait().expect("#1409 reap the zombie-leader probe");
+    reap_probe_orphan(hero_raw);
 }
 
 /// #2154 (probe OOM window): the zombie-leader probe killed between its
@@ -2512,16 +2649,21 @@ os.waitpid(pid, 0)
 /// (otherwise EOF waits on the child's inherited copy) and parks itself in
 /// the poison state, publishing its pid to a receipt instead of the pipe —
 /// and asserts the guard's kill takes the whole group with it: poison may not
-/// outlive the probe. The surviving thread sleeps 30s — the same cap the real
-/// leader probe's survivor sleeps — and that is what makes the kill-detection
-/// margin structural (#2142 fix-r1, concurrency r1 #1 / boundary r1 #2):
-/// every stretch of path ahead of the kill window is bounded by its own
-/// assert (10s for the receipt, 10s for the zombie, 5s for the window =
-/// 25s), each budget failing red before it can silently overrun, so the
-/// kill-removed mutant cannot be outwaited by the front loops' own clocks —
-/// where a 10s hold left the verdict to host speed. The timeout branch
-/// additionally kills the group explicitly, so even the mutant leaves no
-/// residue past its failure.
+/// outlive the probe. The surviving thread sleeps for `PROBE_HOLD_SECS` —
+/// the same cap the real leader probe's survivor sleeps — and that is what
+/// makes the kill-detection margin structural (#2142 fix-r1, concurrency r1
+/// #1 / boundary r1 #2; fix-r2 closed the last gap, boundary r2 #1 / MM
+/// boundary r2 #1): every stretch of path ahead of the kill window is
+/// bounded by its own assert (4s for the pid line — read on a worker
+/// thread, the one wait `read_line` gives no deadline of its own — 10s for
+/// the receipt, 10s for the zombie, 5s for the window = 29s), each budget
+/// failing red before it can silently overrun, and the sum is a
+/// compile-time fact (`PROBE_HOLD_SECS` and the margin assert beside it),
+/// so the kill-removed mutant cannot be outwaited by the front loops' own
+/// clocks — where a 10s hold left the verdict to host speed. The timeout
+/// branch additionally kills the group explicitly and confirms the kill
+/// before it panics, so even the mutant leaves no residue past its failure
+/// and never releases the window over a live group.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_probe_that_dies_before_the_pid_line_takes_its_group_with_it() {
@@ -2530,26 +2672,36 @@ fn a_probe_that_dies_before_the_pid_line_takes_its_group_with_it() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let scratch = Scratch::new("zombie-leader-eof");
     let receipt = scratch.path().join("child.pid");
-    const PROBE: &str = r#"
+    // #2142 fix-r2: the hold cap is the shared `PROBE_HOLD_SECS` (no second
+    // handwritten 30 to drift), and the child publishes its pid through a
+    // staging name and one rename (MM concurrency r2 #4) — the test polls the
+    // receipt "exists means readable", and a created-but-empty receipt could
+    // parse a half-written pid and watch the wrong group.
+    let probe_script = format!(
+        r#"
 import ctypes, os, sys, threading, time
 receipt = sys.argv[1]
 pid = os.fork()
 if pid == 0:
     os.close(1)
     def hold():
-        time.sleep(30)
+        time.sleep({hold})
     threading.Thread(target=hold, daemon=False).start()
     time.sleep(0.2)
-    with open(receipt, "w") as out:
+    staged = receipt + ".staging"
+    with open(staged, "w") as out:
         out.write(str(os.getpid()))
+    os.rename(staged, receipt)
     ctypes.CDLL("libc.so.6", use_errno=True).pthread_exit(None)
     os._exit(9)
 os._exit(9)
-"#;
+"#,
+        hold = PROBE_HOLD_SECS
+    );
     let mut probe = process::Command::new("python3")
         .arg("-I")
         .arg("-c")
-        .arg(PROBE)
+        .arg(&probe_script)
         .arg(&receipt)
         .stdout(process::Stdio::piped())
         .process_group(0)
@@ -2557,19 +2709,17 @@ os._exit(9)
         .expect("#2154 spawn the EOF probe");
     let group = Pid::from_raw(probe.id() as i32).expect("#2154 the EOF probe's pid must be valid");
     let _probe_group = KillProbeGroupOnDrop(group);
-    let mut pid_line = String::new();
-    let read = {
-        use std::io::BufRead;
-        let mut stdout = io::BufReader::new(
-            probe
-                .stdout
-                .take()
-                .expect("#2154 take the EOF probe's stdout"),
-        );
-        stdout
-            .read_line(&mut pid_line)
-            .expect("#2154 read the EOF probe's pid line")
-    };
+    // #2142 fix-r2 (boundary r2 #1 / MM boundary r2 #1): the pid line is read
+    // on a worker thread with its own budget — this read used to be the one
+    // unbounded wait ahead of the 10/10/5 budgets, leaving the kill margin
+    // at the hold cap's mercy.
+    let (read, pid_line) = read_probe_line(
+        probe
+            .stdout
+            .take()
+            .expect("#2154 take the EOF probe's stdout"),
+        PROBE_LINE_BUDGET,
+    );
     assert_eq!(
         read, 0,
         "#2154 the probe died before the pid line, so the read is an EOF, not {pid_line:?}"
@@ -2578,13 +2728,13 @@ os._exit(9)
     // to write. The receipt replaces nothing about the pipe: the panic path
     // under repair had no pid at all, and this is only how the test learns
     // which pid was stranded.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let (hero, hero_raw) = loop {
+    let deadline = Instant::now() + PROBE_RECEIPT_BUDGET;
+    let hero_raw = loop {
         if let Some(pid) = fs::read_to_string(&receipt)
             .ok()
             .and_then(|text| text.trim().parse::<i32>().ok())
         {
-            break (pid.to_string(), pid);
+            break pid;
         }
         assert!(
             Instant::now() < deadline,
@@ -2592,7 +2742,8 @@ os._exit(9)
         );
         thread::sleep(Duration::from_millis(5));
     };
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let hero = hero_raw.to_string();
+    let deadline = Instant::now() + PROBE_ZOMBIE_BUDGET;
     loop {
         let stat = fs::read_to_string(format!("/proc/{hero}/stat")).unwrap_or_default();
         if matches!(stat_fields(&stat), Some(('Z', _))) {
@@ -2606,34 +2757,32 @@ os._exit(9)
     }
     // The guard's kill is what ends the poison state; without it the group
     // lives for the hold thread's full 30s. The drop order here mirrors the
-    // unwind's: group first, window last.
+    // unwind's: group first, window last — and the window is released only
+    // behind a group that is provably dying: the timeout branch kills
+    // explicitly, confirms the kill inside its own bound, and only then
+    // panics (#2142 fix-r2, concurrency r2 #2 — the panic's unwind releases
+    // the window, so it must not overtake the kill it just issued).
     drop(_probe_group);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fs::metadata(format!("/proc/{hero}")).is_ok() && !thread_group_is_dead(&hero) {
-        if Instant::now() >= deadline {
-            // #2142 fix-r1 (concurrency r1 #1 / boundary r1 #2): a kill
-            // written differently from the guard's Drop line this test's
-            // mutant removes, so the mutant's residue is bounded here too —
-            // the failure alone would leave the poison group alive for the
-            // hold thread's full 30s.
-            rustix::process::kill_process_group(group, Signal::KILL).ok();
-            panic!("#2154 the poison group must not outlive the guard's kill");
-        }
-        thread::sleep(Duration::from_millis(5));
+    if !group_is_gone_within(&hero, PROBE_KILL_WINDOW) {
+        // #2142 fix-r1 (concurrency r1 #1 / boundary r1 #2): the mutant's
+        // on-disk residue is bounded right here — the failure alone would
+        // leave the poison group alive for the hold thread's full 30s — and
+        // the kill is written differently from the guard's Drop line the
+        // mutant removes, so the negative-control anchor stays unique.
+        rustix::process::kill_process_group(group, Signal::KILL).ok();
+        let _ = group_is_gone_within(&hero, PROBE_DEATH_CONFIRM);
+        panic!("#2154 the poison group must not outlive the guard's kill");
     }
     drop(_scan_window);
     let _ = probe.wait().expect("#2154 reap the EOF probe");
-    // #2142 fix-r1 (concurrency r1 #3): the probe parent never waits for its
-    // child, so the hero lands on whoever holds the child-subreaper flag — a
-    // concurrent stranger guard's lease parks it on this process, and the
-    // file's rule is that every guard reaps its own. Collect it when it is
-    // ours; ECHILD means init owns it and has already collected it.
-    let _ = rustix::process::waitid(
-        rustix::process::WaitId::Pid(
-            Pid::from_raw(hero_raw).expect("#2154 the stranded child's pid must be valid"),
-        ),
-        rustix::process::WaitIdOptions::EXITED,
-    );
+    // #2142 fix-r1 (concurrency r1 #3; fix-r2 bounded it, MM concurrency r2
+    // #1 / boundary r2 #3): the probe parent never waits for its child, so
+    // the hero lands on whoever holds the child-subreaper flag — a concurrent
+    // stranger guard's lease parks it on this process, and the file's rule is
+    // that every guard reaps its own. Collect it when it is ours, in the
+    // bounded `NOHANG` shape every other wait here keeps; ECHILD means init
+    // owns it and has already collected it.
+    reap_probe_orphan(hero_raw);
 }
 
 /// #1409: the one rule the three `read_link` sites share, pinned on its own —
