@@ -5115,3 +5115,7 @@ Refs #2540 / #2549；#2550 继续跟进四fixture既有截断写与SIGKILL/并�
 保留c831审查ref与旧CI/43a证据，受控重基到固定 `b9fa7b69b676b93f1a396a47340ad9a59da05e57`，不追后续主线。唯一源码冲突为gateway js_value的公共实现归属：将新main null-prototype验证及number_conversion_error迁入Protocol唯一实现（getter公开、gateway reexport），保新main完整原测试以及既有NEL/泛型HostError/checkpoint单源修复。旧validate语义负控实际None≠TypeError失败；修后js_value6、config32、channel39通过，locked三库+Protocol58通过/1忽略，独立consumer通过，五包含gateway all-targets strict通过；anchors checked243/5852/errors0，未改fixture/oracle。新双家增量审查与新完整CI仍待，不把历史CI冒充当前。未push。
 
 Refs #2540 / #2549；#2550四fixture旧截断写/SIGKILL并发与#2560独立consumer持续CI前置维持原范围。现场指针：`_tmp/20261109-capability-rebase-b9/`；旧 `_tmp/20261109-capability-rebase-43a/` 保留。
+
+### 2026-11-09 Module2-host 固定新基线（Codex，Refs #2570）
+
+Module2独立切片保留原539审查引用，重基固定b9fa7b69；src/.github完整补丁逐字保持，路由/关联修复与已登记P2范围不变。board保留新main原文，本轮仅追加此段；补验Module2/Protocol与独立locked consumer，随后交单家非作者小增量复审。未push，正式PR #2576由协调者更新。
