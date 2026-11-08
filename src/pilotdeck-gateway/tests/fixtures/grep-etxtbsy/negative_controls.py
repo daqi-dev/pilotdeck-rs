@@ -803,10 +803,15 @@ cases = [
     # anchor is its body — the mutation fail-opens BOTH entries (the
     # enumeration's first check and the settle re-check), where before it
     # could only reach the enumeration's copy.
+    # #2142 fix-r1 (boundary r1 #3): the replacement keeps `pid` referenced —
+    # `(pid.is_empty() || true)` is a tautology, still "state alone decides" —
+    # because the runner inherits the caller's RUSTFLAGS, and a `-D warnings`
+    # host would otherwise fail the mutant's compile on an unused variable and
+    # read the row INVALID.
     ('zombie-leader-is-terminal', publication,
      '''    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
 ''',
-     '''    matches!(state, 'Z' | 'X')
+     '''    matches!(state, 'Z' | 'X') && (pid.is_empty() || true)
 ''',
      publication_target, leader_unit,
      '#1409 a zombie leader with a live group has not released its descriptors'),
@@ -858,8 +863,13 @@ cases = [
     # the only thing that ends the poison state when the probe dies before
     # the pid line — a test that panics there unwinds through exactly this
     # drop, so removing it strands a zombie leader with a live thread group
-    # past the scan window's release. Bound to the EOF-path test, whose
-    # 5s deadline the hold thread's 10s cap outwaits.
+    # past the scan window's release. Bound to the EOF-path test, whose whole
+    # front path is assert-bounded at 10s (receipt) + 10s (zombie) + 5s (kill
+    # window) = 25s, inside the hold thread's 30s cap — the mutant cannot be
+    # outwaited by the front loops' own clocks on a slow host (#2142 fix-r1,
+    # concurrency r1 #1 / boundary r1 #2), and the timeout branch's own
+    # explicit killpg — a different line from this anchor — bounds the
+    # mutant's on-disk residue.
     ('probe-group-kill-removed', publication,
      '''        let _ = rustix::process::kill_process_group(self.0, Signal::KILL);
 ''',
