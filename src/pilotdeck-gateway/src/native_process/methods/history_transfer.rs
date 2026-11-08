@@ -532,13 +532,9 @@ impl Requests {
         let mut path =
             super::super::assembly::transcript_path(&self.options, session).into_os_string();
         path.push(".backend.json");
-        let saved = match std::fs::read(std::path::PathBuf::from(path)) {
-            Ok(bytes) => {
-                Some(serde_json::from_slice::<Value>(&bytes).map_err(|e| err(e.to_string()))?)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(err(e.to_string())),
-        };
+        let saved =
+            crate::runtime::session::kernel::persisted_owner(&std::path::PathBuf::from(path))
+                .map_err(RequestError::from_runtime)?;
         if saved.is_some_and(|s| s["backend"] == "kernel") {
             return self
                 .owner

@@ -23,8 +23,44 @@ use tokio::{
     net::UnixStream,
 };
 
+#[path = "kernel_creation.rs"]
+mod creation;
+
+/// A retained creation intent also pins the backend when owner publication was
+/// interrupted. Existing schema1 owner reads preserve their original behavior.
+pub(crate) fn persisted_owner(path: &std::path::Path) -> Result<Option<Value>, RuntimeError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).map_err(error)?)),
+        Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {
+            creation::owner_or_intent(path).map_err(error)
+        }
+        Err(cause) => Err(error(cause)),
+    }
+}
 fn error(e: impl std::fmt::Display) -> RuntimeError {
     RuntimeError::new(e.to_string())
+}
+fn creation_unknown(key: &str, cause: RuntimeError) -> RuntimeError {
+    let message = format!(
+        "Kernel creation outcome is unknown for original key {key}; query that key without recreating: {cause}"
+    );
+    let mut failure = error(&message).with_js_error(crate::runtime::project::RuntimeJsError {
+        name: "KernelCreationError".into(),
+        code: Some("KERNEL_OUTCOME_UNKNOWN".into()),
+        message: message.into(),
+        requires_host: false,
+    });
+    fn original(error: &RuntimeError) -> Option<&Value> {
+        error
+            .kernel_failure
+            .as_deref()
+            .or_else(|| error.causes.iter().find_map(original))
+    }
+    failure.kernel_failure = Some(Box::new(
+        json!({"source":"product_creation","data":{"domain":"product_creation","reason":"OUTCOME_UNKNOWN","diagnostic":{"code":"OUTCOME_UNKNOWN","params":{"creation_key":key,"original_error":original(&cause),"detail":cause.message}}}}),
+    ));
+    failure.causes.push(cause);
+    failure
 }
 fn transport_error(e: impl std::fmt::Display) -> RuntimeError {
     let message = e.to_string();
@@ -56,6 +92,8 @@ pub struct KernelBackendFactory {
     preflight: Option<BoxFuture<crate::runtime::project::RuntimeResult>>,
     pub socket: PathBuf,
     pub loop_version: String,
+    durable_create: bool,
+    creation_query_only: bool,
     pub owner_path: PathBuf,
     pub project: PathBuf,
     pub session: JsString,
@@ -101,13 +139,9 @@ impl KernelBackendFactory {
         owner_path.push(".backend.json");
         let owner_path = PathBuf::from(owner_path);
         let session = binding.context.session_key.clone();
-        let saved = match std::fs::read(&owner_path) {
-            Ok(bytes) => Some(serde_json::from_slice::<Value>(&bytes).map_err(error)?),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(error(e)),
-        };
+        let saved = persisted_owner(&owner_path)?;
         if let Some(saved) = saved {
-            if saved["schema"] != 1
+            if !matches!(saved["schema"].as_u64(), Some(1 | 2))
                 || saved["project"] != project.to_string_lossy().as_ref()
                 || saved["session"] != text(&session)?
             {
@@ -117,6 +151,10 @@ impl KernelBackendFactory {
                 Some("legacy") => Ok(BackendOwner::Legacy),
                 Some("kernel") => Ok(BackendOwner::Kernel(Self {
                     preflight: None,
+                    durable_create: saved["schema"] == 2,
+                    creation_query_only: ["gateway", "history", "configuration"]
+                        .iter()
+                        .any(|channel| binding.context.channel_key.equals_str(channel)),
                     socket: PathBuf::from(
                         saved["socket"]
                             .as_str()
@@ -163,10 +201,27 @@ impl KernelBackendFactory {
             .get("PILOTDECK_KERNEL_LOOP_VERSION")
             .cloned()
             .unwrap_or_default();
+        let durable_create = match env
+            .get("PILOTDECK_KERNEL_DURABLE_CREATE")
+            .map(String::as_str)
+        {
+            None | Some("0") => false,
+            Some("1") => true,
+            _ => return Err(error("PILOTDECK_KERNEL_DURABLE_CREATE must be 0 or 1.")),
+        };
+        if durable_create && (loop_version.trim().is_empty() || loop_version.contains('*')) {
+            return Err(error(
+                "Durable creation requires an explicit immutable PILOTDECK_KERNEL_LOOP_VERSION.",
+            ));
+        }
         Ok(BackendOwner::Kernel(Self {
             preflight: None,
             socket,
             loop_version,
+            durable_create,
+            creation_query_only: ["gateway", "history", "configuration"]
+                .iter()
+                .any(|channel| binding.context.channel_key.equals_str(channel)),
             owner_path,
             project,
             session,
@@ -376,6 +431,7 @@ impl Rpc {
                 if matches!(
                     method,
                     "session.create"
+                        | "session.creation_get"
                         | "session.get"
                         | "session.lease_acquire"
                         | "session.lease_renew"
@@ -804,14 +860,150 @@ impl SessionBackendFactory for KernelBackendFactory {
                 node: format!("pilotdeck-{}", uuid::Uuid::new_v4()),
                 lease: None,
             };
-            let saved = std::fs::read(&self.owner_path)
-                .ok()
-                .map(|bytes| serde_json::from_slice::<Value>(&bytes).map_err(error))
-                .transpose()?;
+            let creation_pin = json!({"backend":"kernel","creation_protocol":1,"project":self.project,"product_session":text(&self.session)?,"loop_revision":self.loop_version,"context_ref":"default"});
+            let create_params = json!({"creation_pin":creation_pin});
+            let mut creation_claim = if self.durable_create {
+                if self.loop_version.trim().is_empty() || self.loop_version.contains('*') {
+                    return Err(error(
+                        "Durable creation owner requires its original immutable loop revision.",
+                    ));
+                }
+                Some(creation::Claim::acquire(&self.owner_path, || json!({"schema":2,"backend":"kernel","creation_protocol":1,"creation_state":"pending","creation_key":format!("pilotdeck-create-{}",uuid::Uuid::new_v4()),"project":self.project,"session":text(&self.session).unwrap_or_default(),"socket":self.socket,"loop_version":self.loop_version,"context_ref":"default","node_id":rpc.node,"create_params":create_params})).map_err(error)?)
+            } else {
+                None
+            };
+            let saved = if let Some(claim) = &creation_claim {
+                let saved = &claim.document;
+                if saved["schema"] != 2
+                    || saved["creation_protocol"] != 1
+                    || saved["backend"] != "kernel"
+                    || saved["project"] != self.project.to_string_lossy().as_ref()
+                    || saved["session"] != text(&self.session)?
+                    || saved["socket"] != json!(self.socket)
+                    || saved["loop_version"] != self.loop_version
+                    || saved["context_ref"] != "default"
+                    || saved["create_params"] != create_params
+                    || saved["creation_key"].as_str().is_none_or(str::is_empty)
+                    || !matches!(
+                        saved["creation_state"].as_str(),
+                        Some("pending" | "confirmed")
+                    )
+                {
+                    return Err(error(
+                        "Durable creation owner identity/profile mismatch; original intent retained.",
+                    ));
+                }
+                Some(saved.clone())
+            } else {
+                match std::fs::read(&self.owner_path) {
+                    Ok(bytes) => Some(serde_json::from_slice::<Value>(&bytes).map_err(error)?),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(cause) => return Err(error(cause)),
+                }
+            };
             if let Some(node) = saved.as_ref().and_then(|v| v["node_id"].as_str()) {
                 rpc.node = node.into();
             }
-            let kernel_id = if let Some(saved) = &saved {
+            let creation_receipt = if let Some(claim) = &creation_claim {
+                let key = claim.document["creation_key"].as_str().unwrap();
+                // No session or lease is needed to discover this optional host
+                // feature. Unsupported hosts must never receive keyed create.
+                rpc.stream = Some(BufReader::new(
+                    UnixStream::connect(&rpc.socket).await.map_err(error)?,
+                ));
+                let initialized = rpc.exchange("initialize",json!({"abi_version":2,"api_version":"0.1.0","features":["model-session/1.0","model-response-metadata/1.0"],"node_id":rpc.node})).await?;
+                let feature = &initialized["server_capabilities"]["session_creation"];
+                if feature["version"] != 1
+                    || feature["query_method"] != "session.creation_get"
+                    || feature["request_key"] != "idempotency_key"
+                {
+                    return Err(super::kernel_config::unavailable(
+                        "session creation receipt protocol v1",
+                    ));
+                }
+                let dispatched = claim
+                    .was_dispatched()
+                    .map_err(|cause| creation_unknown(key, error(cause)))?;
+                let query_only = dispatched || self.creation_query_only;
+                let method = if query_only {
+                    "session.creation_get"
+                } else {
+                    "session.create"
+                };
+                if !query_only {
+                    claim
+                        .mark_dispatched()
+                        .map_err(|cause| creation_unknown(key, error(cause)))?;
+                }
+                let mut params = if query_only {
+                    json!({})
+                } else {
+                    create_params.clone()
+                };
+                params["idempotency_key"] = json!(key);
+                let reply = rpc
+                    .call(method, params)
+                    .await
+                    .map_err(|cause| creation_unknown(key, cause))?;
+                let receipt = reply["data"].clone();
+                use sha2::{Digest, Sha256};
+                let digest = format!(
+                    "{:x}",
+                    Sha256::digest(serde_json::to_vec(&receipt["request"]).map_err(error)?)
+                );
+                if reply["status"] != "done"
+                    || reply["effect"] != if query_only { "read-only" } else { "advance" }
+                    || receipt["request"]["version"] != 1
+                    || receipt["request"]["creation_pin"] != creation_pin
+                    || receipt["request"]["session_spec"]
+                        .as_str()
+                        .is_none_or(str::is_empty)
+                    || receipt["request_digest"] != digest
+                    || receipt["status"] != "confirmed"
+                    || receipt["version"] != 1
+                    || receipt["creation_key"] != key
+                    || receipt["session_id"].as_str().is_none_or(str::is_empty)
+                    || receipt["scope"]["principal"]
+                        .as_str()
+                        .is_none_or(str::is_empty)
+                    || receipt["generation"].as_u64().is_none_or(|generation| {
+                        generation == 0 || generation > u64::from(u32::MAX)
+                    })
+                    || receipt["initialization"].as_array().is_none_or(|records| {
+                        records.is_empty()
+                            || records.iter().any(|record| {
+                                record["kind"].as_str().is_none_or(str::is_empty)
+                                    || record["payload"].as_array().is_none_or(|bytes| {
+                                        bytes.iter().any(|byte| {
+                                            byte.as_u64().is_none_or(|value| value > 255)
+                                        })
+                                    })
+                            })
+                    })
+                    || receipt["request_digest"].as_str().is_none_or(str::is_empty)
+                {
+                    return Err(creation_unknown(
+                        key,
+                        error(format!("Original creation is unconfirmed: {receipt}")),
+                    ));
+                }
+                if let Some(saved) = &saved
+                    && saved["creation_state"] == "confirmed"
+                    && (saved["creation_receipt"] != receipt
+                        || saved["kernel_session_id"] != receipt["session_id"])
+                {
+                    return Err(creation_unknown(
+                        key,
+                        error("Original creation receipt identity changed."),
+                    ));
+                }
+                Some(receipt)
+            } else {
+                None
+            };
+            let kernel_id = if let Some(receipt) = &creation_receipt {
+                receipt["session_id"].as_str().unwrap().to_string()
+            } else if let Some(saved) = &saved {
                 saved["kernel_session_id"]
                     .as_str()
                     .ok_or_else(|| error("Missing persisted Kernel session identity."))?
@@ -844,7 +1036,9 @@ impl SessionBackendFactory for KernelBackendFactory {
                 ));
             }
             if let Some(saved) = &saved {
-                if saved["binding"] != binding || saved["context_ref"] != context_ref {
+                if (saved["schema"] != 2 || saved["creation_state"] == "confirmed")
+                    && (saved["binding"] != binding || saved["context_ref"] != context_ref)
+                {
                     return Err(error("Kernel binding/context owner mismatch."));
                 }
             }
@@ -864,6 +1058,21 @@ impl SessionBackendFactory for KernelBackendFactory {
                     &self.owner_path,
                     &json!({"schema":1,"backend":"kernel","project":self.project,"session":text(&self.session)?,"socket":self.socket,"loop_version":opened["loop_revision"],"kernel_session_id":kernel_id,"binding":binding,"context_ref":context_ref,"node_id":rpc.node}),
                 )?;
+            }
+            if let Some(claim) = &mut creation_claim {
+                let mut confirmed = claim.document.clone();
+                confirmed["creation_state"] = json!("confirmed");
+                confirmed["kernel_session_id"] = json!(kernel_id);
+                confirmed["binding"] = json!(binding);
+                confirmed["creation_receipt"] = creation_receipt.clone().unwrap();
+                if confirmed != claim.document {
+                    claim.confirm(confirmed).map_err(|cause| {
+                        creation_unknown(
+                            claim.document["creation_key"].as_str().unwrap(),
+                            error(cause),
+                        )
+                    })?;
+                }
             }
             rpc.owner = Some(RpcOwner {
                 session: kernel_id.clone(),
@@ -3494,3 +3703,7 @@ mod resident_restart_tests {
         std::fs::remove_file(socket).unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "kernel_creation_wire_tests.rs"]
+mod creation_wire_tests;

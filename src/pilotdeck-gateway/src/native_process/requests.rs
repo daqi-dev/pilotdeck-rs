@@ -163,21 +163,16 @@ impl Requests {
         let transcript = super::assembly::transcript_path(&self.options, session);
         let mut path = transcript.as_os_str().to_os_string();
         path.push(".backend.json");
-        match std::fs::read(std::path::PathBuf::from(path)) {
-            Ok(bytes) => {
-                let owner: serde_json::Value =
-                    serde_json::from_slice(&bytes).map_err(|e| RequestError::new(e.to_string()))?;
-                Ok(owner["backend"] == "kernel")
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok(!std::fs::metadata(transcript).is_ok_and(|m| m.len() > 0)
-                    && self
-                        .env
-                        .get("PILOTDECK_SESSION_BACKEND")
-                        .map(String::as_str)
-                        == Some("kernel"))
-            }
-            Err(e) => Err(RequestError::new(e.to_string())),
+        match crate::runtime::session::kernel::persisted_owner(&std::path::PathBuf::from(path))
+            .map_err(RequestError::from_runtime)?
+        {
+            Some(owner) => Ok(owner["backend"] == "kernel"),
+            None => Ok(!std::fs::metadata(transcript).is_ok_and(|m| m.len() > 0)
+                && self
+                    .env
+                    .get("PILOTDECK_SESSION_BACKEND")
+                    .map(String::as_str)
+                    == Some("kernel")),
         }
     }
 }
@@ -315,10 +310,11 @@ impl GatewayRequests for Requests {
                     let mut path =
                         super::assembly::transcript_path(&self.options, session).into_os_string();
                     path.push(".backend.json");
-                    let kernel_owned = std::fs::read(std::path::PathBuf::from(path))
-                        .ok()
-                        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-                        .is_some_and(|owner| owner["backend"] == "kernel");
+                    let kernel_owned = crate::runtime::session::kernel::persisted_owner(
+                        &std::path::PathBuf::from(path),
+                    )
+                    .map_err(RequestError::from_runtime)?
+                    .is_some_and(|owner| owner["backend"] == "kernel");
                     if kernel_owned {
                         Some(
                             self.owner

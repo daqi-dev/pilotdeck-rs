@@ -42,18 +42,15 @@ impl Services {
             let transcript = super::assembly::transcript_path(&self.options, session);
             let mut owner = transcript.as_os_str().to_os_string();
             owner.push(".backend.json");
-            match std::fs::read(PathBuf::from(owner)) {
-                Ok(bytes) => {
-                    let owner: serde_json::Value =
-                        serde_json::from_slice(&bytes).map_err(|e| failure(e.to_string()))?;
-                    return Ok(owner["backend"] == "kernel");
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            match crate::runtime::session::kernel::persisted_owner(&PathBuf::from(owner))
+                .map_err(|e| failure(e.message))?
+            {
+                Some(owner) => return Ok(owner["backend"] == "kernel"),
+                None => {
                     if std::fs::metadata(transcript).is_ok_and(|m| m.len() > 0) {
                         return Ok(false);
                     }
                 }
-                Err(e) => return Err(failure(e.to_string())),
             }
         }
         Ok(self

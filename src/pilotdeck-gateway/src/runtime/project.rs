@@ -50,7 +50,7 @@ pub struct RuntimeError {
     /// Boxed so `RuntimeError` stays small enough for the many existing
     /// `Result<_, RuntimeError>` signatures (clippy `result_large_err`).
     pub js_error: Option<Box<RuntimeJsError>>,
-    /// Original Scheduler failure envelope, retained across display wrappers.
+    /// Original host failure or product creation reconciliation context, retained across display wrappers.
     pub kernel_failure: Option<Box<serde_json::Value>>,
 }
 impl RuntimeError {
@@ -70,15 +70,17 @@ impl RuntimeError {
     pub fn js_error(&self) -> Option<&RuntimeJsError> {
         self.js_error.as_deref()
     }
-    /// A Scheduler explicitly reported that persistence may already have happened.
+    /// Explicit host uncertainty or product creation requiring reconciliation.
     pub fn uncertain_kernel_failure(&self) -> Option<&serde_json::Value> {
         self.kernel_failure
             .as_deref()
             .filter(|failure| {
-                failure["data"]["domain"] == "scheduler"
-                    && (failure["data"]["reason"] == "OUTCOME_UNKNOWN"
-                        || failure["data"]["diagnostic"]["code"] == "OUTCOME_UNKNOWN"
-                        || failure["data"]["diagnostic"]["params"]["persistence_uncertain"] == true)
+                matches!(
+                    failure["data"]["domain"].as_str(),
+                    Some("scheduler" | "session_creation" | "product_creation")
+                ) && (failure["data"]["reason"] == "OUTCOME_UNKNOWN"
+                    || failure["data"]["diagnostic"]["code"] == "OUTCOME_UNKNOWN"
+                    || failure["data"]["diagnostic"]["params"]["persistence_uncertain"] == true)
             })
             .or_else(|| self.causes.iter().find_map(Self::uncertain_kernel_failure))
     }
