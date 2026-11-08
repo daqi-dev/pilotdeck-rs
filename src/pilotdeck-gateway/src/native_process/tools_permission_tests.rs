@@ -668,3 +668,45 @@ async fn sdk_tool_catalog_policy_blocks_real_execution_even_in_bypass_mode() {
         ports.tool_execution.dispose().await.unwrap();ports.tool_execution.wait_closed().await.unwrap();permission.close();
     }
 }
+
+#[tokio::test]
+async fn sdk_policy_ask_grant_deny_cancel_reaches_real_native_file_execution() {
+    for decision in ["allow", "deny", "cancel"] {
+        let coordinator=Arc::new(GatewayInteractionCoordinator::default());let answerer=coordinator.clone();
+        let config=crate::metadata::object([("managedPermissions",crate::metadata::object([("deny",JsValue::Array(vec!["Write".into()])),("ask",JsValue::Array(vec!["Read".into()]))]))]).as_object().unwrap().clone();
+        let base=RuleSetHandle::empty();base.update_member("allow",|r|r.push(PermissionRule::new("session","allow","write_file").into()));let policy=super::super::sdk_permission::rules(&config,&base);
+        let(scratch,tools,recorder,identity)=make_tools(config,coordinator,policy);
+        let tools=tools.with_permission_mode_source(Arc::new(||Some("bypassPermissions".into())));
+        let ports=tools.turn_with_authority(&identity,recorder,Cancellation::new(),Some(TurnInteractionAuthority {permission_mode:None,base_permission_mode:None,sdk_hooks:None,sdk_permission_mode:None,sdk_models:None,can_prompt:Some(true),policy_can_prompt:None,emit:Arc::new(move|event|answerer.decide_permission(&"session".into(),crate::runtime::interaction::PermissionDecision {request_id:event.get("requestId").unwrap().as_string().unwrap().clone(),decision:decision.into(),remember:None,reason:None},None))}));
+        let resource=InteractionPermission::default();let mut router=crate::host::modules::ModuleRouter::default();let permission=resource.bind_turn(identity.session_id,identity.run_id,ports.interaction.permission,ports.tool_execution.clone(),&mut router).unwrap();ports.tool_execution.bind_turn_permission(permission.clone()).unwrap();
+        let input=crate::metadata::object([("file_path","probe.txt".into())]);
+        let result=router.permission.call(crate::metadata::object([("payload",crate::metadata::object([("operation","decide".into()),("tool",crate::metadata::object([("name","read_file".into())])),("input",input.clone()),("toolCallId","sdk-read".into())]))])).await.unwrap();assert_eq!(result.get("decision").and_then(|v|v.get("type")),Some(&"ask".into()));
+        let answer=permission.request("read_file".into(),"sdk-read".into(),input.clone(),vec![],Cancellation::new()).await.unwrap();assert_eq!(answer.get("behavior"),Some(&if decision=="allow"{"allow".into()}else{"deny".into()}));
+        let invocation=ports.tool_context.prepare(JsValue::Undefined).await.unwrap();let results=ports.tool_execution.execute_all(vec![ToolCall{id:"sdk-read".into(),name:"read_file".into(),input},ToolCall{id:"sdk-write".into(),name:"write_file".into(),input:crate::metadata::object([("file_path","denied.txt".into()),("content","DENIED".into())])}],invocation).await.unwrap();
+        assert_eq!(results[0].get("type")==Some(&"success".into()),decision=="allow","{results:?}");assert_ne!(results[1].get("type"),Some(&"success".into()));assert!(!scratch.0.join("project/denied.txt").exists());
+        permission.close();ports.tool_execution.dispose().await.unwrap();ports.tool_execution.wait_closed().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn sdk_additional_root_allows_only_the_declared_real_file() {
+    let external=Scratch(std::env::temp_dir().join(format!("pdrs-sdk-roots-{}",uuid::Uuid::new_v4())));
+    let extra=external.0.join("extra");let foreign=external.0.join("foreign");std::fs::create_dir_all(&extra).unwrap();std::fs::create_dir(&foreign).unwrap();std::fs::write(extra.join("ok.txt"),"EXTRA-ROOT").unwrap();std::fs::write(foreign.join("no.txt"),"FOREIGN-ROOT").unwrap();
+    let config=crate::metadata::object([("additionalWorkingDirectories",JsValue::Array(vec![JsValue::String(extra.to_string_lossy().into_owned().into())]))]).as_object().unwrap().clone();
+    let(_scratch,tools,recorder,identity)=make_tools(config,Arc::default(),RuleSetHandle::empty());
+    let ports=tools.turn_with_authority(&identity,recorder,Cancellation::new(),Some(TurnInteractionAuthority{permission_mode:None,base_permission_mode:None,sdk_hooks:None,sdk_permission_mode:None,sdk_models:None,can_prompt:Some(false),policy_can_prompt:None,emit:Arc::new(|_|false)}));
+    let resource=InteractionPermission::default();let mut router=crate::host::modules::ModuleRouter::default();let permission=resource.bind_turn(identity.session_id,identity.run_id,ports.interaction.permission,ports.tool_execution.clone(),&mut router).unwrap();ports.tool_execution.bind_turn_permission(permission.clone()).unwrap();
+    let invocation=ports.tool_context.prepare(JsValue::Undefined).await.unwrap();let results=ports.tool_execution.execute_all(vec![ToolCall{id:"extra".into(),name:"read_file".into(),input:crate::metadata::object([("file_path",JsValue::String(extra.join("ok.txt").to_string_lossy().into_owned().into()))])},ToolCall{id:"foreign".into(),name:"read_file".into(),input:crate::metadata::object([("file_path",JsValue::String(foreign.join("no.txt").to_string_lossy().into_owned().into()))])}],invocation).await.unwrap();
+    assert_eq!(results[0].get("type"),Some(&"success".into()),"{results:?}");assert_ne!(results[1].get("type"),Some(&"success".into()),"{results:?}");
+    permission.close();ports.tool_execution.dispose().await.unwrap();ports.tool_execution.wait_closed().await.unwrap();
+}
+
+#[test]
+fn sdk_dontask_uses_default_instead_of_retained_bypass_but_keeps_explicit_turn_mode() {
+    let config=crate::metadata::object([("nativeSdkPermissionMode","dontAsk".into())]).as_object().unwrap().clone();
+    let(_scratch,tools,recorder,identity)=make_tools(config,Arc::default(),RuleSetHandle::empty());let tools=tools.with_permission_mode_source(Arc::new(||Some("bypassPermissions".into())));
+    for (explicit,expected) in [(None,"default"),(Some("plan"),"plan")] {
+        let ports=tools.turn_with_authority(&identity,recorder.clone(),Cancellation::new(),Some(TurnInteractionAuthority {permission_mode:explicit.map(Into::into),base_permission_mode:None,sdk_hooks:None,sdk_permission_mode:Some("dontAsk".into()),sdk_models:None,can_prompt:Some(true),policy_can_prompt:None,emit:Arc::new(|_|true)}));
+        assert!(ports.interaction.permission.context.mode.as_js_string().equals_str(expected));assert!(!ports.interaction.permission.context.can_prompt);assert_eq!(ports.context_config.get("permissionMode"),Some(&expected.into()));
+    }
+}

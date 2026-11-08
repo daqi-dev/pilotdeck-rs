@@ -117,6 +117,7 @@ impl SessionTools {
                     .and_then(JsValue::as_string)
                     .cloned()
                     .unwrap_or_else(|| options.project.to_string_lossy().into_owned().into()),
+                additional_working_directories: Some(super::sdk_permission::directories(&config)),
                 can_prompt: Some(false),
                 bypass_available: Some(
                     config.get("bypassAvailable") != Some(&JsValue::Bool(false)),
@@ -331,6 +332,8 @@ impl SessionTools {
         let (mut turn_context, permission_mode) = {
             let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {
+                self.config.get("nativeSdkPermissionMode").and_then(JsValue::as_string).filter(|mode|mode.equals_str("dontAsk")).map(|_|"default".into())
+            }).or_else(|| {
                 self.permission_mode_source
                     .as_ref()
                     .and_then(|source| source())

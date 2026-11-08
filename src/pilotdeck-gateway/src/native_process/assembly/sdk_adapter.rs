@@ -229,6 +229,7 @@ impl SubmitSdkSessionConfig for NativeSdkPort {
 }
 
 pub(super) fn apply_prompt_config(target: &mut pilotdeck_protocol::JsObject, sdk: &JsValue) {
+    super::super::sdk_permission::project(target, sdk);
     for key in ["toolAliases", "deferredTools", "outputFormat"] {
         if let Some(value) = sdk.get(key).filter(|v| !v.is_undefined()) {
             target.insert(key.into(), value.clone());
@@ -271,6 +272,7 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
             "sdkSessionConfig must be an object.",
         )
     })?;
+    super::super::sdk_permission::validate(config)?;
     super::super::sdk_tool_policy::validate_sandbox(config)?;
     super::sdk_hooks::validate(config)?;
     if let Some(plugins) = object.get("plugins").filter(|v| !v.is_undefined()) {
@@ -356,6 +358,8 @@ fn validate_supported_config(config: &JsValue) -> Result<(), SubmitError> {
             "forwardSubagentText",
             "plugins",
             "permissionMode",
+            "managedPermissions",
+            "additionalWorkingDirectories",
             "managedTools",
             "sandbox",
             "taskBudget",

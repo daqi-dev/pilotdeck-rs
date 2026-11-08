@@ -68,6 +68,7 @@ mod switch_wiring;
 mod switch_wiring_tests;
 pub use session_overrides::SessionOverrides;
 mod sdk_tool_policy;
+mod sdk_permission;
 mod tools;
 mod web;
 // #1433: the session MCP tool composition (SessionMcpRuntimeBundle) behind

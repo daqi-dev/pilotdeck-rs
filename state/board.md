@@ -5138,3 +5138,8 @@ r117固定d8296784e在mbp2全目标编译通过，native517、tools141、plugins
 ### 2026-11-09 06:41 · CLI 两小时接续（继续开发）
 
 r118固定6a802全目标check和native519通过，其余套件在跑；已合SDK MCP deferred真消费、AO缺省error保显式空串且report按TS用report_degraded，待下一编译。settings/权限/ephemeral与SOP三尾部协议仍实施，完整CLI未完成。两家AO增量审固定6a802已起，不覆盖之后错误码片；最终端到端/安装/全量与终审继续。现场见主仓 `_tmp/20261108-cli-completion/handoff-0641.md`；本机任务可归属约1.91GiB，无Rust产物，可用约19.9GiB。仅本机提交、全部Rust mbp2、无GitHub写，下一08:41交接后继续。
+
+
+### 2026-11-09 06:45 · SDK 权限实际执行接入
+
+已逐SHA整合 managedPermissions/additionalWorkingDirectories 11文件候选：immutable ask/deny与会话grant/MCP共享数组并存，真实目录授权与dontAsk上下文进入native工具消费者，新增固定TS 12格原件及实际read/deny/cancel测试，尚未Rust验证。AO发现/执行/报告缺码与空码6格真TS原件已入回归；report默认码按实源为report_degraded。r118全部选择器通过（native519、tools141、plugins86、SOP8、admission11、SDK24），r119固定5a409编译通过并继续strict/bins；完整CLI仍未完成，所有Rust仅mbp2、仅本机提交。

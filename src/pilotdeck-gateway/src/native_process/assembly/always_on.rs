@@ -304,6 +304,47 @@ mod phase_event_code_tests {
             );
         }
     }
+    #[test]
+    fn fixed_ts_discovery_execution_and_report_error_codes() {
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../../tests/fixtures/native-ao-error-code/phases.json"
+        ))
+        .unwrap();
+        let Some(JsValue::Array(records)) = oracle.get("records") else {
+            panic!("records")
+        };
+        assert_eq!(records.len(), 6);
+        for record in records {
+            let phase = record.get("phase").and_then(JsValue::as_string).unwrap();
+            let channel = if phase.equals_str("execution") {
+                "always-on/execute"
+            } else if phase.equals_str("discovery") {
+                "always-on/discovery"
+            } else {
+                "always-on/report"
+            };
+            let mut event = pilotdeck_protocol::JsObject::new();
+            if record.get("code") != Some(&"<undefined>".into()) {
+                event.insert("code".into(), record.get("code").cloned().unwrap());
+            }
+            event.insert("message".into(), "fixture failure".into());
+            let actual = phase_event_error(&JsValue::Object(event), &channel.into());
+            let expected = record
+                .get("result")
+                .unwrap()
+                .get("error")
+                .unwrap()
+                .get("code")
+                .and_then(JsValue::as_string)
+                .unwrap();
+            assert_eq!(
+                actual.code,
+                expected.to_utf8().unwrap(),
+                "phase {:?}",
+                phase
+            );
+        }
+    }
 }
 
 const MAX_PHASE_EVENTS: usize = 16_384;

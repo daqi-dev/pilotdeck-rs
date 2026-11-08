@@ -10,6 +10,7 @@
 //! ownership belongs here; connection::BindingOwners is a connection-only subset.
 mod bus;
 mod coordinator;
+pub(crate) use coordinator::policy_rule;
 mod reconnect;
 mod value;
 

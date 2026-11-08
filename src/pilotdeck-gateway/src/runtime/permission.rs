@@ -57,6 +57,7 @@ pub fn managed_default_mode(config: &JsObject) -> Option<JsString> {
 /// #1864 compose priority: the managed default, else the stored session
 /// selection, else "default" (`SessionAgentConfigBundle.compose`).
 pub fn effective_permission_mode(config: &JsObject, stored: Option<JsString>) -> JsString {
+    let stored = if config.get("nativeSdkPermissionMode").and_then(JsValue::as_string).is_some_and(|mode|mode.equals_str("dontAsk")) {Some("default".into())} else {stored};
     managed_default_mode(config)
         .or(stored)
         .unwrap_or_else(|| JsString::from(DEFAULT_PERMISSION_MODE))

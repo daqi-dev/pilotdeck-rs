@@ -295,6 +295,7 @@ impl AllowRulesHandle {
 pub struct RuleSetHandle {
     value: SessionValue,
     policy_deny: Arc<[PermissionRule]>,
+    policy_ask: Arc<[PermissionRule]>,
 }
 
 impl Default for RuleSetHandle {
@@ -315,18 +316,24 @@ impl RuleSetHandle {
         for name in ["allow", "deny", "ask"] {
             value.set(name, configured.member(name).unwrap_or_else(new_array));
         }
-        Self { value, policy_deny: Arc::from([]) }
+        Self { value, policy_deny: Arc::from([]), policy_ask: Arc::from([]) }
     }
     /// An unattended phase adds immutable policy without changing the shared
     /// session arrays. Grants and MCP ask updates remain live on this handle.
     pub(crate) fn with_policy_deny(&self, rules: &[PermissionRule]) -> Self {
+        self.with_policy_rules(rules, &[])
+    }
+    /// SDK policy is immutable while session/MCP arrays remain live.
+    pub(crate) fn with_policy_rules(&self, rules: &[PermissionRule], asks: &[PermissionRule]) -> Self {
+        let mut ask = self.policy_ask.to_vec();
+        ask.extend(asks.iter().cloned().map(|mut rule| {rule.source="policy".into();rule.behavior="ask".into();rule}));
         let mut deny = self.policy_deny.to_vec();
         deny.extend(rules.iter().cloned().map(|mut rule| {
             rule.source = "policy".into();
             rule.behavior = "deny".into();
             rule
         }));
-        Self { value: self.value.clone(), policy_deny: deny.into() }
+        Self { value: self.value.clone(), policy_deny: deny.into(), policy_ask: ask.into() }
     }
     pub fn value(&self) -> SessionValue {
         self.value.clone()
@@ -351,11 +358,11 @@ impl RuleSetHandle {
             allow: snapshot_array(&self.member("allow")),
             deny: self.policy_deny.iter().cloned()
                 .chain(snapshot_array(&self.member("deny"))).collect(),
-            ask: snapshot_array(&self.member("ask")),
+            ask: self.policy_ask.iter().cloned().chain(snapshot_array(&self.member("ask"))).collect(),
         }
     }
     pub fn to_value(&self) -> JsValue {
-        if self.policy_deny.is_empty() {
+        if self.policy_deny.is_empty() && self.policy_ask.is_empty() {
             self.value.to_value()
         } else {
             self.snapshot().to_value()

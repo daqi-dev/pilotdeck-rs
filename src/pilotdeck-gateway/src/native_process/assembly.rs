@@ -912,7 +912,7 @@ async fn start_assembly(
                 let native_permission_rules = fork_scope
                     .as_ref()
                     .map(|scope| scope.permission_rules.clone())
-                    .unwrap_or_else(|| permission_lease.rules());
+                    .unwrap_or_else(|| super::sdk_permission::rules(&config, &permission_lease.rules()));
                 let native_permission_rules = match &automation {
                     Some(automation) => native_permission_rules.with_policy_deny(&automation.permission_deny),
                     None => native_permission_rules,
