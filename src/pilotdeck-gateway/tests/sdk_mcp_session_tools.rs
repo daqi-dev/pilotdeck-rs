@@ -217,11 +217,22 @@ async fn compose(
         provider,
         per_session_runtimes,
         session_key: &session_key.into(),
-        max_per_session_instances: 5,
+        max_per_session_instances: 5.0,
         on_diagnostic: None,
     })
     .await
     .expect("#1433 session composition")
+}
+
+/// The sibling tests' node guard (mcp_client.rs:368-371, mcp_runtime.rs and
+/// mcp_proxy.rs the same): the mock server is plain Node ESM, so fail loudly
+/// instead of surfacing spawn errors as behaviour diffs.
+fn require_node() {
+    let node = std::process::Command::new("node").arg("--version").output();
+    assert!(
+        node.is_ok_and(|output| output.status.success()),
+        "the session MCP tool tests need `node` (>= 18) on PATH to run mock_server.mjs"
+    );
 }
 
 fn wire_names(tools: &[Arc<McpBridgeTool>]) -> Vec<String> {
@@ -292,6 +303,7 @@ async fn invoke(tool: &McpBridgeTool, input: &str) -> String {
 /// `mcp__<server>__<tool>` wire names, and the turn registry sees them.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn discovery_composes_shared_and_per_session_tools() {
+    require_node();
     let scratch = Scratch::new("sdk-mcp-session-tools-discovery");
     let shared_dir = mock_dir(&scratch, "shared-mock");
     let isola_dir = mock_dir(&scratch, "isola");
@@ -336,6 +348,7 @@ async fn discovery_composes_shared_and_per_session_tools() {
 /// for the shared lease and for the session-owned runtime alike.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn invocation_routes_tool_calls_through_the_children() {
+    require_node();
     let scratch = Scratch::new("sdk-mcp-session-tools-invoke");
     let shared_dir = mock_dir(&scratch, "shared-mock");
     let isola_dir = mock_dir(&scratch, "isola");
@@ -369,6 +382,7 @@ async fn invocation_routes_tool_calls_through_the_children() {
 /// the next composition (and spawns nothing for it).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn disable_removes_the_server_from_the_next_composition() {
+    require_node();
     let scratch = Scratch::new("sdk-mcp-session-tools-disable");
     let mock = mock_dir(&scratch, "mock");
     let (config, provider, registry) = harness(&scratch);
@@ -414,6 +428,7 @@ async fn disable_removes_the_server_from_the_next_composition() {
 /// b's session-owned runtime serving.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn isolation_composes_each_session_from_its_own_table() {
+    require_node();
     let scratch = Scratch::new("sdk-mcp-session-tools-isolation");
     let a_dir = mock_dir(&scratch, "a-isola");
     let shared_dir = mock_dir(&scratch, "shared-mock");

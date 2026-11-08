@@ -643,8 +643,13 @@ pub struct SessionMcpToolsOptions<'a> {
     /// it (`ProjectSessionFactory.mcp`).
     pub per_session_runtimes: &'a SessionMcpRuntimeRegistry,
     pub session_key: &'a JsString,
-    /// `runtime.snapshot.config.gateway.maxPerSessionMcpInstances ?? 5`.
-    pub max_per_session_instances: usize,
+    /// `runtime.snapshot.config.gateway.maxPerSessionMcpInstances ?? 5` —
+    /// the snapshot's already-normalized f64 (finite, floored at 1 by
+    /// `config/snapshot.rs`), compared against the registry size without
+    /// truncation: the TS check is `size >= maxPerSessionInstances`
+    /// (SessionMcpRuntimeBundle.ts:70), where a cap of 2.5 still admits the
+    /// third registration (`2 >= 2.5` is false).
+    pub max_per_session_instances: f64,
     /// `onDiagnostic`; production writes to stderr.
     pub on_diagnostic: Option<McpDiagnosticSink>,
 }
@@ -680,7 +685,7 @@ pub async fn session_mcp_tools(
     let Some(specs) = options.provider.per_session_server_specs(&servers, false)? else {
         return Ok((tools, release));
     };
-    if options.per_session_runtimes.size() >= options.max_per_session_instances {
+    if options.per_session_runtimes.size() as f64 >= options.max_per_session_instances {
         diagnostic(
             format!(
                 "Per-session MCP limit reached ({}). Session {session_key} will not start: {}.",
@@ -913,6 +918,72 @@ mod tests {
         }
     }
 
+    /// #1433 fix-r1 (review P1-2) probe runtime: `stop()` parks on a
+    /// one-shot gate, standing in for a slow child shutdown. The label is
+    /// pushed before the gate is awaited, so a test can wait for the stop to
+    /// have parked.
+    struct GatedRuntime {
+        label: &'static str,
+        gate: Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+        events: Arc<Mutex<Vec<String>>>,
+    }
+    impl GatedRuntime {
+        fn new(
+            label: &'static str,
+            gate: tokio::sync::oneshot::Receiver<()>,
+            events: Arc<Mutex<Vec<String>>>,
+        ) -> Self {
+            Self {
+                label,
+                gate: Mutex::new(Some(gate)),
+                events,
+            }
+        }
+    }
+    impl crate::runtime::mcp::runtime::SessionMcpRuntime for GatedRuntime {
+        fn stop(&self) -> McpFuture<'_, Result<(), RuntimeError>> {
+            let gate = self.gate.lock().expect("#1433 gate lock").take();
+            let events = self.events.clone();
+            let label = self.label;
+            Box::pin(async move {
+                events
+                    .lock()
+                    .expect("#1433 events lock")
+                    .push(format!("stop:{label}"));
+                if let Some(receiver) = gate {
+                    let _ = receiver.await;
+                }
+                Ok(())
+            })
+        }
+    }
+    impl McpRuntimePort for GatedRuntime {
+        fn start(&self) -> McpFuture<'_, Result<Vec<McpClientStatusEntry>, RuntimeError>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+        fn list_all_tools(&self) -> McpFuture<'_, Result<Vec<McpToolSpec>, RuntimeError>> {
+            Box::pin(async { Ok(Vec::new()) })
+        }
+        fn server_info(&self, _: &str) -> Option<McpRuntimeServerInfo> {
+            None
+        }
+        fn call_tool<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a JsString,
+            _: &'a JsValue,
+            _: McpCallOptions,
+        ) -> McpFuture<'a, Result<McpToolCallResult, McpClientError>> {
+            Box::pin(async {
+                Err(McpClientError::new(
+                    "gated",
+                    None,
+                    "the gated runtime does not call tools",
+                ))
+            })
+        }
+    }
+
     fn fake_provider(
         events: Arc<Mutex<Vec<String>>>,
         start_fails: bool,
@@ -965,7 +1036,7 @@ mod tests {
         provider: &Arc<ProjectMcpRuntimeProvider>,
         runtimes: &SessionMcpRuntimeRegistry,
         session_key: &str,
-        max_per_session_instances: usize,
+        max_per_session_instances: f64,
         on_diagnostic: Option<crate::runtime::mcp::registry::McpDiagnosticSink>,
     ) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
         session_mcp_tools(SessionMcpToolsOptions {
@@ -1019,7 +1090,7 @@ mod tests {
         let provider = fake_provider(Arc::new(Mutex::new(Vec::new())), false);
         let runtimes = SessionMcpRuntimeRegistry::new();
         let (tools, release) = crate::test_negative_receipt::expect_ok(
-            compose(&config, &provider, &runtimes, "s", 5, None).await,
+            compose(&config, &provider, &runtimes, "s", 5.0, None).await,
             "#1433 composition succeeds",
         );
         crate::negative_assert!(
@@ -1065,7 +1136,7 @@ mod tests {
                 &provider,
                 &SessionMcpRuntimeRegistry::new(),
                 "s",
-                5,
+                5.0,
                 None,
             )
             .await,
@@ -1076,6 +1147,176 @@ mod tests {
             events.lock().expect("#1433 events lock").clone(),
             vec!["stop:per-session".to_owned(), "stop:shared".to_owned()],
             "#1433 release order: per-session MCP before shared MCP"
+        );
+    }
+
+    /// #1433 fix-r1 (review P1-2): a slow per-session stop (waiting on its
+    /// child) must not hold any lock the concurrent registry and provider
+    /// disposal needs. The `released: Mutex<bool>` guards, the registry's
+    /// inner lock and the provider's state lock are all released before their
+    /// awaited stops, so a concurrent `dispose()` reaches its own settle wait
+    /// instead of parking on a mutex held across the release's await.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn session_mcp_release_stays_concurrent_with_registry_and_provider_dispose() {
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        let (open_per_session, per_session_gate) = tokio::sync::oneshot::channel::<()>();
+        let registration = runtimes
+            .register(
+                "s",
+                Arc::new(GatedRuntime::new(
+                    "per-session",
+                    per_session_gate,
+                    events.clone(),
+                )),
+            )
+            .expect("#1433 gated per-session registration");
+        runtimes
+            .register(
+                "t",
+                Arc::new(FakeMcpRuntime {
+                    label: "draining",
+                    tools: Vec::new(),
+                    start_fails: false,
+                    events: events.clone(),
+                }),
+            )
+            .expect("#1433 concurrent per-session registration");
+        let (open_shared, shared_gate) = tokio::sync::oneshot::channel::<()>();
+        // The factory must stay `Fn`: the one-shot receiver leaves through an
+        // interior-mutability slot, not by moving out of the capture.
+        let shared_gate_slot = Arc::new(Mutex::new(Some(shared_gate)));
+        let gated_shared = {
+            let slot = shared_gate_slot.clone();
+            let events = events.clone();
+            move |_specs: Vec<McpServerSpec>| {
+                Arc::new(GatedRuntime::new(
+                    "shared",
+                    slot.lock()
+                        .expect("#1433 gate slot lock")
+                        .take()
+                        .expect("#1433 exactly one shared generation"),
+                    events.clone(),
+                )) as Arc<dyn McpRuntimePort>
+            }
+        };
+        let provider = Arc::new(ProjectMcpRuntimeProvider::new(
+            ProjectMcpRuntimeProviderOptions {
+                project_root: "/pdrs-fixture/project".into(),
+                pilot_home: "/pdrs-fixture/home".into(),
+                create_runtime: Some(Arc::new(gated_shared)),
+                proxy: None,
+                on_diagnostic: None,
+                environment: Arc::new(SystemEnvironment),
+                builtin_paths: BuiltinMcpPaths::default(),
+            },
+        ));
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input("s", &[("shared-echo", false)]))
+            .await
+            .expect("#1433 fixture servers commit");
+        let servers = enabled_session_mcp_servers(&config, &"s".into());
+        let lease = crate::test_negative_receipt::expect_ok(
+            provider.acquire_shared_runtime(&servers).await,
+            "#1433 gated shared lease",
+        );
+        let release = SessionMcpRelease {
+            per_session: Some(registration),
+            shared: Some(lease),
+        };
+        let release_task = tokio::spawn(async move { release.release().await });
+        // Wait until the release is parked on the gated per-session stop: the
+        // spawned stop pushes its label before awaiting the gate.
+        let mut parked = false;
+        for _ in 0..400 {
+            if events
+                .lock()
+                .expect("#1433 events lock")
+                .iter()
+                .any(|event| event == "stop:per-session")
+            {
+                parked = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        crate::negative_assert!(
+            parked,
+            "#1433 the release parks on the gated per-session stop"
+        );
+        // While the release is parked, the locks a concurrent dispose needs
+        // stay available (the probes run as their own tasks, so a held lock
+        // would surface as a timeout, not a blocked worker).
+        let probe = {
+            let runtimes = runtimes.clone();
+            let provider = provider.clone();
+            tokio::spawn(async move { (runtimes.size(), provider.shared_generation_count()) })
+        };
+        let (size, generations) = tokio::time::timeout(std::time::Duration::from_secs(2), probe)
+            .await
+            .expect("#1433 the registry and provider stay lockable during release")
+            .expect("#1433 the lockability probe joins");
+        crate::negative_assert_eq!(
+            size,
+            1,
+            "#1433 the parked release has unlinked its own entry already"
+        );
+        crate::negative_assert_eq!(
+            generations,
+            1,
+            "#1433 the parked release keeps the shared entry for its lease"
+        );
+        let registry_dispose = {
+            let runtimes = runtimes.clone();
+            tokio::spawn(async move { runtimes.dispose().await })
+        };
+        let provider_dispose = {
+            let provider = provider.clone();
+            tokio::spawn(async move { provider.dispose().await })
+        };
+        open_per_session
+            .send(())
+            .expect("#1433 open the per-session stop gate");
+        open_shared
+            .send(())
+            .expect("#1433 open the shared stop gate");
+        let released = tokio::time::timeout(std::time::Duration::from_secs(2), release_task)
+            .await
+            .expect("#1433 the release finishes once the gates open")
+            .expect("#1433 the release task joins");
+        crate::test_negative_receipt::expect_ok(released, "#1433 gated release returns");
+        let registry_result =
+            tokio::time::timeout(std::time::Duration::from_secs(2), registry_dispose)
+                .await
+                .expect("#1433 registry dispose is not blocked by the parked release")
+                .expect("#1433 the registry dispose task joins");
+        crate::test_negative_receipt::expect_ok(registry_result, "#1433 registry dispose returns");
+        let provider_result =
+            tokio::time::timeout(std::time::Duration::from_secs(2), provider_dispose)
+                .await
+                .expect("#1433 provider dispose is not blocked by the parked release")
+                .expect("#1433 the provider dispose task joins");
+        crate::test_negative_receipt::expect_ok(provider_result, "#1433 provider dispose returns");
+        crate::negative_assert_eq!(
+            events
+                .lock()
+                .expect("#1433 events lock")
+                .iter()
+                .filter(|event| event.as_str() == "stop:per-session")
+                .count(),
+            1,
+            "#1433 the per-session stop ran exactly once"
+        );
+        crate::negative_assert_eq!(
+            events
+                .lock()
+                .expect("#1433 events lock")
+                .iter()
+                .filter(|event| event.as_str() == "stop:shared")
+                .count(),
+            1,
+            "#1433 the shared stop ran exactly once"
         );
     }
 
@@ -1098,7 +1339,7 @@ mod tests {
                 &provider,
                 &SessionMcpRuntimeRegistry::new(),
                 "s",
-                5,
+                5.0,
                 None,
             )
             .await,
@@ -1144,7 +1385,7 @@ mod tests {
                 &provider,
                 &runtimes,
                 "s",
-                1,
+                1.0,
                 Some(Arc::new(move |message: String, _: Option<RuntimeError>| {
                     sink.lock().expect("#1433 diagnostics lock").push(message);
                 })),
@@ -1181,6 +1422,96 @@ mod tests {
         release.release().await.expect("#1433 composition release");
     }
 
+    /// `compose` (#1433 fix-r1 review P2#4): the limit is the snapshot's f64,
+    /// compared without truncation. The TS check is
+    /// `perSessionRuntimes.size >= maxPerSessionInstances`
+    /// (SessionMcpRuntimeBundle.ts:70), where a cap of 2.5 still admits the
+    /// third registration (`2 >= 2.5` is false in Node v22.22.0; the
+    /// `as usize` cast used to floor 2.5 to 2 and refuse it).
+    #[tokio::test]
+    async fn session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input(
+                "s",
+                &[("shared-echo", false), ("private-echo", true)],
+            ))
+            .await
+            .expect("#1433 fixture servers commit");
+        let provider = fake_provider(Arc::new(Mutex::new(Vec::new())), false);
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        for key in ["other-a", "other-b"] {
+            runtimes
+                .register(
+                    key,
+                    Arc::new(FakeMcpRuntime {
+                        label: "per-session",
+                        tools: Vec::new(),
+                        start_fails: false,
+                        events: Arc::new(Mutex::new(Vec::new())),
+                    }),
+                )
+                .expect("#1433 pre-existing per-session runtime");
+        }
+        let (tools, release) = crate::test_negative_receipt::expect_ok(
+            compose(&config, &provider, &runtimes, "s", 2.5, None).await,
+            "#1433 composition succeeds under a fractional cap",
+        );
+        crate::negative_assert!(
+            tools
+                .per_session()
+                .iter()
+                .any(|tool| wire_name(tool) == "mcp__private-echo__echo"),
+            "#1433 a 2.5 cap still admits the third per-session runtime"
+        );
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            3,
+            "#1433 the fractional cap registers the third runtime"
+        );
+        // At size 3 the cap binds again (`3 >= 2.5`), reported with the f64.
+        let diagnostics: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = diagnostics.clone();
+        let (tools, limited_release) = crate::test_negative_receipt::expect_ok(
+            compose(
+                &config,
+                &provider,
+                &runtimes,
+                "s",
+                2.5,
+                Some(Arc::new(move |message: String, _: Option<RuntimeError>| {
+                    sink.lock().expect("#1433 diagnostics lock").push(message);
+                })),
+            )
+            .await,
+            "#1433 composition succeeds at the fractional cap",
+        );
+        crate::negative_assert!(
+            tools.per_session().is_empty(),
+            "#1433 the fractional cap skips the per-session server at size 3"
+        );
+        crate::negative_assert!(
+            diagnostics
+                .lock()
+                .expect("#1433 diagnostics lock")
+                .iter()
+                .any(|message| message.starts_with(
+                    "Per-session MCP limit reached (2.5). Session s will not start: private-echo."
+                )),
+            "#1433 the fractional cap reports the TS diagnostic with the f64 limit"
+        );
+        release.release().await.expect("#1433 composition release");
+        limited_release
+            .release()
+            .await
+            .expect("#1433 composition release");
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            2,
+            "#1433 both releases dispose their own obligations"
+        );
+    }
+
     /// `compose` (#1433): a per-session start failure degrades to a
     /// diagnostic; the registration is still released at close, never leaked.
     #[tokio::test]
@@ -1200,7 +1531,7 @@ mod tests {
                 &provider,
                 &runtimes,
                 "s",
-                5,
+                5.0,
                 Some(Arc::new(move |message: String, _: Option<RuntimeError>| {
                     sink.lock().expect("#1433 diagnostics lock").push(message);
                 })),
@@ -1250,7 +1581,7 @@ mod tests {
                 &provider,
                 &SessionMcpRuntimeRegistry::new(),
                 "s",
-                5,
+                5.0,
                 None,
             )
             .await,

@@ -20,6 +20,8 @@ TOOLS = ROOT / 'src/pilotdeck-gateway/src/native_process/tools.rs'
 PROCESS_TEST = ROOT / 'src/pilotdeck-gateway/tests/sdk_mcp_session_tools.rs'
 sys.path.insert(0, str(FIXTURES))
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -92,12 +94,21 @@ mutations = [
         }''',
      'native_process::tools::tests::session_mcp_release_stops_per_session_before_shared',
      '#1433 release order: per-session MCP before shared MCP'),
-    # `>=` is the TS limit check; `>` lets one runtime past the cap.
+    # `>=` is the TS limit check; `>` lets one runtime past an integer cap.
     ('per-session-limit-off', TOOLS,
-     'if options.per_session_runtimes.size() >= options.max_per_session_instances {',
-     'if options.per_session_runtimes.size() > options.max_per_session_instances {',
+     'if options.per_session_runtimes.size() as f64 >= options.max_per_session_instances {',
+     'if options.per_session_runtimes.size() as f64 > options.max_per_session_instances {',
      'native_process::tools::tests::session_mcp_tools_respects_the_per_session_limit',
      '#1433 the limit skips the per-session server'),
+    # #1433 fix-r1 (review P2#4): the limit must compare the snapshot's f64
+    # cap without truncation — casting back to usize floors 2.5 to 2, so the
+    # third registration under a 2.5 cap is refused (TS `2 >= 2.5` is false,
+    # SessionMcpRuntimeBundle.ts:70, Node v22.22.0).
+    ('per-session-limit-truncated', TOOLS,
+     'as f64 >= options.max_per_session_instances {',
+     'as usize >= options.max_per_session_instances as usize {',
+     'native_process::tools::tests::session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit',
+     '#1433 a 2.5 cap still admits the third per-session runtime'),
     # A per-session start failure degrades to a diagnostic; propagating it
     # takes the whole session down instead.
     ('start-failure-propagated', TOOLS,
@@ -129,6 +140,23 @@ mutations = [
      'discovery_composes_shared_and_per_session_tools',
      '#1433 the shared lease tool is discovered'),
 ]
+
+# #1433 fix-r1 (review P1-1): the denominator is this literal, never
+# `len(mutations)`. `registered()` compares the two in order and refuses on
+# any drift, so a dropped, renamed, duplicated or reordered row is a startup
+# refusal (rc 2) instead of a silently shorter run that still reports
+# "N/N killed" (`specs/negative-controls/README.md` invariant 1).
+EXPECTED_NAMES = (
+    'enabled-filter-dropped',
+    'shared-conflict-replaced',
+    'per-session-replace-lost',
+    'release-order-swapped',
+    'per-session-limit-off',
+    'per-session-limit-truncated',
+    'start-failure-propagated',
+    'turn-registry-drops-mcp',
+    'composition-reads-no-servers',
+)
 
 EXTERNAL = {'discovery_composes_shared_and_per_session_tools'}
 LIB = {test for _, _, _, _, test, _ in mutations} - EXTERNAL
@@ -170,6 +198,14 @@ def main():
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
     check_binding_scope()
+    # #1433 fix-r1 (review P1-1): every refusal below happens before any
+    # mutation, so it is rc 2 ("this run never started", printed by
+    # `negative_selection.refuse`) and not rc 1 ("ran, not green") — the
+    # four-way table in `specs/negative-controls/README.md`.
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(f'mutation roster drifted: {error}')
     stale = []
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
@@ -178,17 +214,28 @@ def main():
                 not body or f'"{assertion}"' not in body):
             stale.append(name)
     if stale:
-        raise SystemExit('#1433 stale anchor/test/assertion bindings: ' + ', '.join(stale))
+        refuse('#1433 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:
-        print(f'#1433 {len(mutations)} unique anchors and assertion bindings: OK')
+        print(f'#1433 {len(EXPECTED_NAMES)} unique anchors and assertion bindings: OK')
         return 0
     selected = [row for row in mutations if not args.selected or row[0] in args.selected]
-    if not selected or (args.selected and len(selected) != len(args.selected)):
-        raise SystemExit('#1433 unknown or repeated mutation')
-    if not args.output or not os.environ.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#1433 output and caller CARGO_TARGET_DIR required')
-    output = Path(args.output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
+    unknown = sorted(set(args.selected) - {row[0] for row in mutations})
+    if unknown:
+        refuse(f'#1433 unknown mutation names: {unknown}')
+    if args.selected and len(selected) != len(args.selected):
+        repeated = sorted({name for name in args.selected
+                           if args.selected.count(name) > 1})
+        refuse(f'#1433 repeated mutation names: {repeated}')
+    if not args.output:
+        refuse('#1433 an output directory is required')
+    # The target is admitted by the one shared rule (absent, empty, blank,
+    # dot, root, repo root, inside `src`) *before* the evidence directory
+    # exists, so a rejected target cannot leave a directory that reads like a
+    # finished run.
+    if missing_target():
+        refuse('#1433 set CARGO_TARGET_DIR to the caller-owned build tree')
+    refuse_unusable_target()
+    output = claim_dir(args.output)
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
         env.pop(key, None)
@@ -268,13 +315,33 @@ def main():
                                status='INVALID', reason=reason, compiled=False))
     counts = {state: sum(row['status'] == state for row in results)
               for state in ['KILLED', 'SURVIVED', 'INVALID', 'COMPILED']}
+    # #1433 fix-r1 (review P1-1): exactly one verdict per selected name. The
+    # roster literal alone only proves the source table is intact; a row whose
+    # flow is skipped entirely would leave every remaining verdict KILLED and
+    # `verdict_exit` green, so the recorded names are compared against the
+    # static roster before anything that reads as success is published. A
+    # mismatch publishes no summary.json — only a file whose name says what
+    # happened (the memory-gateway r5/r6 shape).
+    expected = [name for name in EXPECTED_NAMES
+                if not args.selected or name in args.selected]
+    recorded = [row['name'] for row in results]
+    if recorded != expected:
+        message = f'verdict roster mismatch: recorded={recorded} expected={expected}'
+        print(message, file=sys.stderr)
+        (output / 'roster-mismatch.json').write_text(json.dumps(
+            {'verdict': 'ROSTER_MISMATCH', 'expected': expected,
+             'recorded': recorded, 'rows': results,
+             'counts': counts, 'guardedSha256': guarded_sha256}, indent=2) + '\n')
+        return 1
     temporary = output / 'summary.json.tmp'
     temporary.write_text(json.dumps(
         {'controls': results, 'counts': counts, 'guardedSha256': guarded_sha256}, indent=2) + '\n')
     temporary.replace(output / 'summary.json')
     print(json.dumps({'controls': results, 'counts': counts}), flush=True)
-    success = 'COMPILED' if args.compile_only else 'KILLED'
-    return int(any(row['status'] != success for row in results))
+    # The shared exit contract: zero rows is never 0 (`0/0 killed` is not a
+    # pass), and every row must be KILLED — COMPILED under --compile-only.
+    return verdict_exit(results, key='status',
+                        killed='COMPILED' if args.compile_only else 'KILLED')
 
 
 if __name__ == '__main__':

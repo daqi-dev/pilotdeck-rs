@@ -627,15 +627,20 @@ async fn start_assembly(
                             })?
                             .provider()
                             .clone();
+                        // #1433 fix-r1 (review P2#4): read the snapshot's
+                        // already-normalized key — `config/snapshot.rs`
+                        // normalizes it to a finite number with a floor of 1
+                        // (the TS `numberField(..., 5)` + `Math.max(1, …)`),
+                        // so re-clamping here would be a second
+                        // normalization, and the old `as usize` cast
+                        // truncated a fractional cap (TS `size >= 2.5` still
+                        // admits the third registration).
                         let max_per_session_instances = snapshot
                             .get("config")
                             .and_then(|config| config.get("gateway"))
                             .and_then(|gateway| gateway.get("maxPerSessionMcpInstances"))
                             .and_then(JsValue::as_number)
-                            .filter(|value| value.is_finite() && *value >= 1.0)
-                            .unwrap_or(5.0)
-                            .max(1.0)
-                            as usize;
+                            .unwrap_or(5.0);
                         super::tools::session_mcp_tools(super::tools::SessionMcpToolsOptions {
                             mcp_config,
                             provider: &provider,
