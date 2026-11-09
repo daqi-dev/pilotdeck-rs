@@ -3,12 +3,13 @@
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one sms-channel behavior and is killed by the oracle replay
-cell or dedicated test that pins that behavior's TS bytes (26 → 74; `#1984`
+cell or dedicated test that pins that behavior's TS bytes (26 → 76; `#1984`
 added `sms-oracle-boundary-unregistered`, `#1957` added
 `sms-oracle-signed-signature-header`, `#1913` added
 `sms-oracle-recorded-version`, `#2152` added
-`sms-oracle-recorded-omit-host` — the `switches` table is the truth
-source). `#1879` only rewrites existing reads (`recorded_present`
+`sms-oracle-recorded-omit-host`, `#2691` added the two port-guard
+switches — the `switches` table is the truth source). `#1879` only
+rewrites existing reads (`recorded_present`
 covers `env` / `sendFailAt` / `turn.*` / `truncate` / `halfClose` / `headers` /
 `reason` / `extra` now), so it adds no switch. Run one sample in the authoring
 session; the coordinator runs the complete list after the patch is committed.
@@ -341,6 +342,18 @@ switches = [
     ('sms-oracle-recorded-omit-host', SMS / 'tests.rs',
      'recorded_omit_host_rejects_wrong_type',
      '#2152 rejects omitHost type drift'),
+    # #2691: the preflight's v6 half runs for every host again (the pre-fix
+    # over-strict shape) — a v6-only occupier of `[::]:port` that cannot
+    # collide with the product's 127.0.0.1 bind fails the pin as a false red.
+    ('sms-port-preflight-v6-any-host', SMS / 'tests.rs',
+     'v6_only_occupier_does_not_block_the_fixed_127_0_0_1_host',
+     '#2691 the v6 half probed the fixed 127.0.0.1 host'),
+    # #2691: the post-start bind guard is disarmed — a start that lost the
+    # bind race degrades to the no-op handle again and the pin silently
+    # measures the occupier's listener (the pre-fix TOCTOU shape).
+    ('sms-pin-bind-race-unchecked', SMS / 'tests.rs',
+     'a_pin_start_that_loses_the_bind_race_is_caught_after_start',
+     '#2691 the post-start bind guard did not fire'),
 ]
 GUARDED = [SMS / name for name in (
     'mod.rs', 'gateway.rs', 'mapper.rs', 'render.rs', 'elicitation.rs',
