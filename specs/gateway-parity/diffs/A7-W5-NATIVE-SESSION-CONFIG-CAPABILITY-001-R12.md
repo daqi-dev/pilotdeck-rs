@@ -46,7 +46,13 @@ busy 门内空键卫对空键恒不可达、其负控行退化为等价变异（
 （cb8 r5 实跑 INVALID 与评审静态推导同判）——锚随 bound 测试 `expect_err`
 的消息改。两行负控随形状换锚；P2（thinking/style/seed 空键无正/负控）开
 跟进单前置登记；另一 P2（「不再能为空键先答 busy」绝对句被他请求持有的
-owner 预约证伪）随本件措辞限定并登记跨请求残余窗口 #2710。
+owner 预约证伪）随本件措辞限定并登记跨请求交错格 #2710。
+
+修复轮六（DS-fix5 增量复核 boundary P1 与 sibling P2 两角色独立撞上 +
+codex 三谱系同撞窗口口径 P3，仅文档）：跨请求交错格的登记从空键实例扩为
+通用族（非空别名在飞实例 + 两处绝对句限定 + 窗口口径自「append 全程」
+对齐为「入口取得预约至 append+close 双释放」，与 `:99-101` 的
+check→append→close 口径一致）；三名统一为「跨请求交错格」。
 
 - 差异 ①（别名键 busy 格）：`session_model_set` / `session_model_clear` 以别名
   拼写请求（`a-b`，owner 注册为 `a/b`——`sanitize_session_id` 把 `/` 与 `\` 折成
@@ -104,16 +110,16 @@ transcript-write 预约表（check→append→close 窗口不纳新回合，`:20
 `set_permission_mode` 同形）；仅 owner 侧共轭项以 `trimmed_string_is_non_empty
 (key)` 限定，空请求键（`""` 经 `sanitize_session_id` 折到 `session` 转录的
 owner）不再让 owner 先答 busy，落回 port write 的 sessionKey 门答
-`INVALID_SESSION_KEY`（probe E/G）。修复轮三把该排除扩到预约，修复轮四改形
+`INVALID_SESSION_KEY`（probe E/G；无他请求持同拼写预约时——否则先答
+busy，见下跨请求交错格）。修复轮三把该排除扩到预约，修复轮四改形
 （DS 增量评审 P1：整体跳过使 owner 解析对空键恒 None、busy 门内该共轭项成
 死代码、其负控行退化为等价变异）：owner 照旧解析下传——busy 门内的空键卫
 保持可达、其负控行不退役——仅 `owner_reserved` 以空键合取跳过 owner 侧预约
 （`config.rs:205-218` / `:322-333`），**本请求自身**的折叠 owner 并发
 转写预约不再能为空键先答 busy（TS 只预约请求拼写，`InProcessGateway.ts:2193`
 / `:2203`）；请求键自身的预约照旧（与 TS 同形）。跨请求交错格——他请求
-A（非空请求键、owner 折叠为空串拼写）持有的 owner 侧预约会让空键请求 B 在
-入口的**请求键**预约处先答 `SESSION_BUSY`（TS 侧 B 无占用者、答
-`INVALID_SESSION_KEY`）——为差异 ① 的连带残余窗口，见下残余窗口段 #2710。反向镜像格——请求键为折叠
+持有的预约（含 owner 侧）撞上本请求的入口请求键预约时先答 `SESSION_BUSY`，
+为差异 ① 的连带残余窗口，详见下残余窗口段（#2710）。反向镜像格——请求键为折叠
 拼写（如 `session`）、owner 为空串拼写——owner 有回合仍答 busy，属差异 ①
 已登记格。clear 侧 `require_session_key` 先于 busy
 门，与 TS `sessionModelClear` 的 requireSessionKey→hasActiveTurn 顺序同形
@@ -125,18 +131,27 @@ A（非空请求键、owner 折叠为空串拼写）持有的 owner 侧预约会
 （`close_model_selection_owner`，`:399-423`，#1457 fix-r3 的关闭目标在 #1872 的
 别名门下由正控钉住；其回退支路——owner 为 append 期间才发布——修复轮起有用例
 与负控，见机器判据）。非别名路径（请求键 = owner 键）行为与修前及 TS 完全
-一致。**登记的残余窗口**（修法开单，不在本件）：直关分支
+一致——无并发他请求持同拼写预约时；否则同受下述跨请求交错格影响。
+**登记的残余窗口**（修法开单，不在本件）：直关分支
 （`target == session_key || reserved_owner == Some(target)`）不复查
 `has_active_turn`——已过 preflight、尚未 `begin_turn` 的回合仍会被 close 中止
 （#2687）；回退支路的 `has_active_turn` 复查与 close 非原子，复查通过后才
 入驻的回合同样会被 close 中止（同型窗口，并入 #2687 评论登记）；回退支路报
 busy 时条目已落盘，重试会追加第二条 model-selection 条目
-（代码注释与本件双登记，#2687 同单跟进）；跨请求预约冲突格——差异 ① 的
+（代码注释与本件双登记，#2687 同单跟进）；跨请求交错格——差异 ① 的
 Rust-only owner 侧预约（请求键预约与 TS 同形不能去、去 owner 侧则回修前
-abort 窗口）：请求 A（非空键、owner 折叠为空串拼写）持 owner 预约期间，
-空键请求 B 在入口请求键预约处先答 `SESSION_BUSY` 而 TS 答
-`INVALID_SESSION_KEY`，窗口 = A 的 append 全程、set/clear 两侧同形
-（#2710，前置于 #1457 收尾）。
+abort 窗口）的连带族：预约表为精确键匹配（`runtime/replacement.rs:154-167`），
+他请求 A 持有的任一条目（请求拼写或 owner 折叠拼写，`config.rs:205-238` /
+`:322-353`）撞上本请求 B 的入口请求键预约时，Rust 先答 `SESSION_BUSY`，而
+TS 只预约请求拼写（`InProcessGateway.ts:2193` / `:2203`）。已证实例：
+①B 为空键、A 的 owner 折叠为空串拼写（该 owner 拼写仅由 submit 缺省/null
+`sessionKey` 折叠产生，#2692）——TS 侧 B 的 `""` 预约无占用者、答
+`INVALID_SESSION_KEY`；②B 为非空精确键、A 以别名拼写在飞（A=`a-b` 持
+`a/b`、B=`a/b`）——TS 侧无冲突、B 走正常路径成功（源码读法，并发交错
+实测随 #2710 判据）。实例②为常规双拼写写法的并发格，非边角。窗口 = A 自
+入口取得预约起至 append+close 双释放（`config.rs:219-238` / `:334-353`，
+含 selection 校验与 close，≥ append 全程），set/clear 两侧同形。现有空键
+用例钉的是 owner 侧跳过、非本格（#2710，前置于 #1457 收尾）。
 
 差异 ②（#1873；#1874 收拢）：
 `session_record_status`（`session_dir.rs:448-517`，squash 时 sha256
