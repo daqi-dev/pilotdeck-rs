@@ -121,15 +121,31 @@ pub fn delay_to_milliseconds(amount: f64, unit: DelayUnit) -> Option<f64> {
 /// is case-insensitive, so the cache key is the lowercased zone — ASCII
 /// case variants of one zone share the memoized parse instead of each
 /// becoming its own permanent map entry (an unbounded, attacker-shaped key
-/// space otherwise).
+/// space otherwise). #2314: the `get_current_time` tool lane shares this
+/// cache type through its own process-lifetime instance and has **no**
+/// validity gate in front of it — there the boundedness argument is the
+/// resolver itself: only a successful parse is inserted, and a successful
+/// parse requires a sanitized, canonicalized-under-the-root zoneinfo file,
+/// so the key space stays bounded by the host tree.
 ///
-/// The whole [`Self::resolver`] runs under one lock, parse included: the
-/// callers run in `spawn_blocking` (#1509), so only a blocking thread can
-/// wait, and holding the lock across the parse keeps a concurrent
-/// same-zone first call from racing a second parse.
+/// The miss path parses *outside* the lock (#2314 double-check: drop lock →
+/// parse → re-acquire → insert): the callers run in `spawn_blocking`
+/// (#1509), so waiting there is cheap, and one slow first parse of an
+/// uncached zone must not stop every already-cached zone's hit behind the
+/// same lock. The price is that concurrent same-zone first calls may each
+/// parse once before one of them wins the insert (`or_insert` keeps the
+/// first entry; the resolvers are equivalent parses of one zone) — a
+/// bounded, one-off cost, after which the memoized entry serves everyone.
+/// The hit path still clones the resolver under the (now brief) lock; it
+/// never queues behind a parse.
 #[derive(Default)]
 pub struct CronZoneResolverCache {
     state: Mutex<CacheState>,
+    /// #2314 test seam: invoked right before a zone is parsed (outside the
+    /// cache lock), so the interleaving tests can park one parse and prove
+    /// other zones' hits still return.
+    #[cfg(test)]
+    parse_hook: Mutex<Option<std::sync::Arc<dyn Fn() + Send + Sync>>>,
 }
 
 #[derive(Default)]
@@ -143,34 +159,59 @@ impl CronZoneResolverCache {
         Self::default()
     }
 
-    /// One zone's resolver, parsed at most once per cache *on success*: a
-    /// hit returns a clone of the memoized resolver. A failed parse is
-    /// returned without memoizing it — the next call re-probes the zoneinfo
-    /// tree (see the module doc: the environment must be allowed to
-    /// recover, like the per-call reads this cache replaced).
-    pub(super) fn resolver(&self, timezone: &str) -> Result<ZonedPartsResolver, JsString> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+    /// One zone's resolver, parsed at most once per cache *on success*
+    /// (per concurrent first-caller: see the module doc's double-check
+    /// caveat): a hit returns a clone of the memoized resolver. A failed
+    /// parse is returned without memoizing it — the next call re-probes the
+    /// zoneinfo tree (see the module doc: the environment must be allowed
+    /// to recover, like the per-call reads this cache replaced).
+    pub(crate) fn resolver(&self, timezone: &str) -> Result<ZonedPartsResolver, JsString> {
         // The zoneinfo parse is case-insensitive (like ICU), so the cache key
         // is the folded zone: case variants of one zone must share one entry
         // instead of each holding its own permanent copy of the TZif data.
         let cache_key = timezone.to_lowercase();
-        if let Some(cached) = state.zones.get(&cache_key) {
-            return cached.clone();
+        {
+            let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(cached) = state.zones.get(&cache_key) {
+                return cached.clone();
+            }
         }
-        state.parses += 1;
+        // #2314: the blocking zoneinfo read/parse runs outside the lock
+        // (double-check), so a slow miss cannot serialize other zones'
+        // hits. The seam is the parking point for the interleaving tests.
+        #[cfg(test)]
+        if let Some(hook) = self
+            .parse_hook
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+        {
+            hook();
+        }
         let resolver = ZonedPartsResolver::new(timezone);
-        // Only a successful parse is memoized; a failure stays a miss.
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        // Both the parse counter and the insert share this window; only a
+        // successful parse is memoized, and a concurrent same-zone winner
+        // keeps its entry (equivalent parses of one zone).
+        state.parses += 1;
         if let Ok(parsed) = resolver.clone() {
-            state.zones.insert(cache_key, Ok(parsed));
+            state.zones.entry(cache_key).or_insert(Ok(parsed));
         }
         resolver
     }
 
     /// How many zones reached `ZonedPartsResolver::new` — the observation
-    /// surface for the #2181 reuse and failure-memoization tests.
+    /// surface for the #2181/#2314 reuse and failure-memoization tests.
     #[cfg(test)]
-    pub(super) fn parse_count(&self) -> usize {
+    pub(crate) fn parse_count(&self) -> usize {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).parses
+    }
+
+    /// #2314: park point for the interleaving tests (see `parse_hook`).
+    /// Must be set before the parsing thread starts.
+    #[cfg(test)]
+    pub(crate) fn set_parse_hook(&self, hook: Option<std::sync::Arc<dyn Fn() + Send + Sync>>) {
+        *self.parse_hook.lock().unwrap_or_else(|e| e.into_inner()) = hook;
     }
 }
 
