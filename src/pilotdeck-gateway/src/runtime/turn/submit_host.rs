@@ -474,6 +474,45 @@ pub fn validate_sdk_session_config(config: &JsValue) -> Result<(), SubmitError> 
     Ok(())
 }
 
+
+// ───────────────────────── B dc123d18 NativeSubmitProviders ──────────────
+
+/// Native providers the host composes. `None` means genuinely unconfigured,
+/// which is exactly when TS reports CAPABILITY_UNAVAILABLE.
+pub type RecoverHistory =
+    Arc<dyn Fn(&JsValue) -> Result<(), SubmitError> + Send + Sync>;
+
+/// B dc123d18 `NativeSubmitProviders`, minus the cron-owned session policy and
+/// activity handles: those two live in B's `cron` module, which daqi does not
+/// carry. Everything here is a real port the submit path actually uses.
+pub struct NativeSubmitProviders {
+    pub manager_browsers: Option<crate::runtime::manager::BrowserManager>,
+    pub recover_history: Option<RecoverHistory>,
+    pub replacement: Arc<crate::runtime::replacement::ReplacementCoordinator>,
+    pub snapshots: Option<Arc<crate::storage::ContentAddressedWorkspaceSnapshotRecorder>>,
+    pub workspace_id: Option<JsString>,
+    pub sdk: Option<Arc<tokio::sync::Mutex<crate::runtime::sdk_session::SdkSessionRegistry>>>,
+    pub task_budget: Option<Arc<std::sync::Mutex<crate::storage::TaskBudgetStore>>>,
+    pub memory: Option<Arc<dyn crate::runtime::context::memory::MemoryResolver>>,
+    pub memory_maintenance: Option<Arc<dyn crate::runtime::refresh::MemoryMaintenance>>,
+    pub builtin_plugins: Vec<Arc<crate::runtime::plugins::LoadedPlugin>>,
+    pub builtin_skills_root: Option<std::path::PathBuf>,
+    pub pilot_home: std::path::PathBuf,
+    pub transcripts: Arc<crate::storage::AsyncTranscriptAdapter>,
+    pub(super) uploads: Arc<
+        std::sync::Mutex<
+            std::collections::HashMap<JsString, super::submit_uploads::UploadedTurn>,
+        >,
+    >,
+}
+
+/// B dc123d18 `sharedTaskBudgetPort`: the submit host and the SDK session
+/// registry spend against one ledger instead of two.
+pub(crate) fn shared_task_budget_port(
+    store: Arc<std::sync::Mutex<crate::storage::TaskBudgetStore>>,
+) -> Arc<dyn crate::runtime::sdk_session::SdkTaskBudget> {
+    Arc::new(crate::runtime::sdk_session::TaskBudgetStorePort::with_shared(store))
+}
 pub(crate) fn accepted_input_metadata(input: &JsValue) -> Option<JsObject> {
     let mut metadata = JsObject::new();
     for key in [

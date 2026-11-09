@@ -206,22 +206,27 @@ pub(crate) fn upload_store(metadata: Arc<Metadata>) -> Arc<UploadStore> {
     }
     let registry = metadata.clone();
     let store = Arc::new(UploadStore::new(UploadStoreOptions::new(
-        move |key| {
-            let root = metadata::resolve(&registry.cwd, key);
-            if root != registry.home
-                && !registry
-                    .has_registered_project(&root)
-                    .unwrap_or(false)
-            {
-                return Err(UploadError::dialog(
-                    "PROJECT_NOT_FOUND",
-                    format!("Unknown projectKey: {key}"),
-                ));
-            }
-            Ok(root)
+        move |key: &JsString| {
+            // daqi keeps the project key as raw UTF-16 all the way down;
+            // resolve_dialog_project does the same resolve + registry check
+            // and returns None when the key names no registered project.
+            let root = registry
+                .resolve_dialog_project(key)
+                .ok_or_else(|| {
+                    UploadError::dialog(
+                        "PROJECT_NOT_FOUND",
+                        format!(
+                            "Unknown projectKey: {}",
+                            String::from_utf16_lossy(key.units())
+                        ),
+                    )
+                })?;
+            Ok(PathBuf::from(root))
         },
         move || {
-            let projects = metadata.list_projects();
+            let projects = metadata
+                .list_projects()
+                .map_err(|error| UploadError::dialog("PROJECT_NOT_FOUND", error.to_string()))?;
             let Some(JsValue::Array(projects)) = projects.get("projects") else {
                 return Err(UploadError::dialog(
                     "PROJECT_NOT_FOUND",
