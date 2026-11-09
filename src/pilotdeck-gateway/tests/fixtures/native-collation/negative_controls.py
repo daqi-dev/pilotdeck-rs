@@ -11,7 +11,8 @@ import sys
 
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               write_source_atomic)
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 root = Path(__file__).resolve().parents[5]
@@ -265,7 +266,10 @@ def main():
                         raise ValueError('expired or invalid anchor')
                     if not compile_only and not passed(run(name + '-positive', arguments, test), test):
                         raise RuntimeError('positive control did not pass')
-                    path.write_text(original.replace(old, new, 1))
+                    # #1903: a truncating write here would leave a half-file
+                    # on SIGKILL; the rename publish never does.
+                    write_source_atomic(root, path,
+                                        original.replace(old, new, 1).encode())
                     if run(name + '-compile', ['--no-run'], test).returncode != 0:
                         raise RuntimeError('mutant did not compile; never a kill')
                     row['compiled'] = True
@@ -278,7 +282,7 @@ def main():
                 except Exception as error:
                     row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(root, path, originals[path])
                 try:
                     restored = run(name + '-restored', ['--no-run'] if compile_only else arguments, test)
                     if restored.returncode or (not compile_only and not passed(restored, test)):
