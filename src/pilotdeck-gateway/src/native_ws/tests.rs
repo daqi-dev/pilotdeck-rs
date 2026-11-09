@@ -2693,3 +2693,168 @@ async fn ws_stderr_probe_child(token: &str) {
         .expect("#2434 server task")
         .expect("#2434 successful drain");
 }
+
+// #2351: exercise the real runner with stop futures that complete, panic, or
+// never complete. No production panic hook or process-global mutation is needed.
+async fn phased_drain_fixture(stop: impl Future<Output = ()> + Send + 'static) -> PhasedRun {
+    let host = native_ws_fixture(Arc::new(Requests::default()));
+    NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#2351 fixture listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#2351 fixture bind")
+    .run_phased(stop, Duration::from_millis(100))
+}
+
+async fn phased_runner_exited(phased: &PhasedRun) {
+    timeout(DEADLINE, async {
+        while !phased.runner.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("#2351 runner exit is bounded");
+}
+
+#[tokio::test]
+async fn phased_drain_waiter_cancellation_preserves_success() {
+    let (stop, stopped) = oneshot::channel();
+    let phased = phased_drain_fixture(async {
+        stopped.await.expect("#2351 normal stop is delivered");
+    })
+    .await;
+    let mut predecessor = Box::pin(phased.drained());
+    negative_assert!(
+        poll_request(predecessor.as_mut()).is_pending(),
+        "#2351 predecessor waits for stop"
+    );
+    drop(predecessor);
+    let mut first = Box::pin(phased.drained());
+    let mut second = Box::pin(phased.drained());
+    negative_assert!(
+        poll_request(first.as_mut()).is_pending() && poll_request(second.as_mut()).is_pending(),
+        "#2351 successors wait independently before stop"
+    );
+    stop.send(()).expect("#2351 normal runner still owns stop");
+    let verdicts = timeout(DEADLINE, async { tokio::join!(first, second) })
+        .await
+        .expect("#2351 normal waiters finish within deadline");
+    negative_assert_eq!(
+        verdicts,
+        (true, true),
+        "#2351 normal waiters agree on success"
+    );
+    negative_assert!(
+        timeout(DEADLINE, phased.drained())
+            .await
+            .expect("#2351 repeated successful drain is bounded"),
+        "#2351 late waiter preserves success after runner exits"
+    );
+    timeout(DEADLINE, phased.finish())
+        .await
+        .expect("#2351 successful finish is bounded")
+        .expect("#2351 successful drain finishes cleanly");
+}
+
+#[tokio::test]
+async fn phased_drain_runner_panic_wakes_all_waiters() {
+    let (stop, stopped) = oneshot::channel();
+    let phased = phased_drain_fixture(async {
+        stopped.await.expect("#2351 panic trigger is delivered");
+        panic!("#2351 injected runner panic");
+    })
+    .await;
+    let mut first = Box::pin(phased.drained());
+    let mut second = Box::pin(phased.drained());
+    negative_assert!(
+        poll_request(first.as_mut()).is_pending() && poll_request(second.as_mut()).is_pending(),
+        "#2351 both waiters are pending before runner panic"
+    );
+    stop.send(())
+        .expect("#2351 runner still owns panic trigger");
+    phased_runner_exited(&phased).await;
+    // A failed runner must not require this lock to publish its failure. A
+    // different caller may hold it through a slow finish after the panic.
+    let held = timeout(DEADLINE, phased.inner.lock())
+        .await
+        .expect("#2351 panic releases the inner mutex");
+    let verdicts = crate::test_negative_receipt::expect_ok(
+        timeout(DEADLINE, async { tokio::join!(first, second) }).await,
+        "#2351 panic wakes every drained waiter within deadline",
+    );
+    negative_assert_eq!(
+        verdicts,
+        (false, false),
+        "#2351 panic is a failed drain for every waiter"
+    );
+    negative_assert!(
+        !timeout(DEADLINE, phased.drained())
+            .await
+            .expect("#2351 late panic waiter is bounded without the inner lock"),
+        "#2351 late panic waiter observes the same failure"
+    );
+    drop(held);
+    negative_assert!(
+        timeout(DEADLINE, phased.finish())
+            .await
+            .expect("#2351 finish after panic is bounded")
+            .is_err(),
+        "#2351 finish after panic reports failure"
+    );
+}
+
+#[tokio::test]
+async fn phased_drain_runner_abort_is_observable() {
+    for started in [false, true] {
+        let (entered, entry) = oneshot::channel();
+        let phased = phased_drain_fixture(async move {
+            entered.send(()).expect("#2351 runner entry is observed");
+            std::future::pending::<()>().await;
+        })
+        .await;
+        if started {
+            timeout(DEADLINE, entry)
+                .await
+                .expect("#2351 runner starts within deadline")
+                .expect("#2351 runner entered its never-completing stop");
+        }
+        phased.runner.abort();
+        phased_runner_exited(&phased).await;
+        for _ in 0..2 {
+            negative_assert!(
+                !timeout(DEADLINE, phased.drained())
+                    .await
+                    .expect("#2351 aborted runner cannot strand a drain waiter"),
+                "#2351 abort is consistently a failed drain"
+            );
+        }
+        negative_assert!(
+            timeout(DEADLINE, phased.finish())
+                .await
+                .expect("#2351 finish after abort is bounded")
+                .is_err(),
+            "#2351 finish after abort reports failure"
+        );
+    }
+}
+
+#[tokio::test]
+async fn phased_drain_drop_aborts_runner() {
+    let (held, released) = oneshot::channel::<()>();
+    let phased = phased_drain_fixture(async move {
+        let _held = held;
+        std::future::pending::<()>().await;
+    })
+    .await;
+    drop(phased);
+    negative_assert!(
+        timeout(DEADLINE, released)
+            .await
+            .expect("#2351 dropping PhasedRun releases its runner stop future")
+            .is_err(),
+        "#2351 runner stop future is dropped without completing"
+    );
+}
