@@ -4846,17 +4846,58 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
     );
     // §差异 6 claim 门（r3 boundary#1，A7.2-STEER-INPUT-001）：durable 消费
     // 时 Rust 的 claim 门读 `metadata.queueItemId` 并以非空文本放行——
-    // 缺席/null 格在入参边界已折成 `"undefined"`/`"null"` 文本，所以一律
-    // 走 claim，注入的 recorder 落 `{"mutation":"claim","itemId":<强转
-    // 文本>}`。TS `TurnRunner.onDurableMessage` 以真值门过滤原始
-    // `queueItemId`（TurnRunner.ts `if (itemId)`），缺席/null/0/false/""/
-    // 缺键全部跳过 claim（probe `20261109-review-2382-r2-ds/ts-probe/
-    // output6.txt`，Node v22.22.1）。经 `start_turn` 装进 router 的 drain
-    // 端口（TurnSteer 路径，填充 unacknowledged）后再 `persist_and_apply`，
-    // 钉住「缺席/null 也走 claim，键为文本」。
-    for (session, run, turn, item_id, expected) in [
-        ("ig", "igr", "igt", None::<JsValue>, "undefined"),
-        ("ih", "ihr", "iht", Some(JsValue::Null), "null"),
+    // 真值行为假的非字符串 id（缺席/null/0/false）在入参边界已折成非空
+    // 文本（`"undefined"`/`"null"`/`"0"`/`"false"`），一律走 claim，注入的
+    // recorder 落 `{"mutation":"claim","itemId":<强转文本>}`；空数组 `[]` 折成
+    // 空文本 `""`，被非空文本门跳过。TS `TurnRunner.onDurableMessage` 以
+    // 真值门过滤原始 `queueItemId`（TurnRunner.ts `if (itemId)`）：缺席/
+    // null/0/false/""/缺键跳过 claim，而 `[]` 在 JS 为真值、走 claim
+    // （probe `20261109-review-2382-r5-ds/ts-probe/output6.txt`，Node
+    // v22.22.0——`""` 双方都跳过，对齐）。经 `start_turn` 装进 router 的
+    // drain 端口（TurnSteer 路径，填充 unacknowledged）后再
+    // `persist_and_apply`，钉住两侧方向相反的 claim 分歧。
+    for (session, run, turn, item_id, mailbox_id, claim) in [
+        (
+            "ig",
+            "igr",
+            "igt",
+            None::<JsValue>,
+            "undefined",
+            Some("undefined"),
+        ),
+        (
+            "ih",
+            "ihr",
+            "iht",
+            Some(JsValue::Null),
+            "null",
+            Some("null"),
+        ),
+        (
+            "ii",
+            "iir",
+            "iit",
+            Some(JsValue::Number(0.0)),
+            "0",
+            Some("0"),
+        ),
+        (
+            "ij",
+            "ijr",
+            "ijt",
+            Some(JsValue::Bool(false)),
+            "false",
+            Some("false"),
+        ),
+        ("ik", "ikr", "ikt", Some(JsValue::Array(vec![])), "", None),
+        (
+            "il",
+            "ilr",
+            "ilt",
+            Some(JsValue::String(pilotdeck_protocol::JsString::from(""))),
+            "",
+            None,
+        ),
     ] {
         let _reservation = requests
             .owner
@@ -4905,8 +4946,15 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
             1,
             "#1604 the claim-gate drain offered the steer"
         );
+        negative_assert_eq!(
+            drained[0].get("itemId"),
+            Some(&JsValue::String(pilotdeck_protocol::JsString::from(
+                mailbox_id
+            ))),
+            "#1604 the claim-gate mailbox identity is the coerced text"
+        );
         turn.persist_and_apply(
-            pilotdeck_protocol::JsString::from(expected),
+            pilotdeck_protocol::JsString::from(mailbox_id),
             drained[0]
                 .get("message")
                 .expect("#1604 claim-gate canonical message")
@@ -4916,17 +4964,93 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         .await
         .expect("#1604 the durable apply of the coerced id succeeds");
         let claims = recorded.0.lock().unwrap().clone();
-        negative_assert_eq!(
-            claims.len(),
-            1,
-            "#1604 the coerced id claims the mailbox entry while TS's truthiness gate records no claim (A7.2-STEER-INPUT-001 差异 6)"
-        );
-        negative_assert_eq!(
-            claims[0],
-            pilotdeck_protocol::JsString::from(expected),
-            "#1604 the claim mutation keys by the coerced text"
-        );
+        if let Some(claim) = claim {
+            negative_assert_eq!(
+                claims.len(),
+                1,
+                "#1604 the coerced id claims the mailbox entry while TS's truthiness gate records no claim (A7.2-STEER-INPUT-001 差异 6)"
+            );
+            negative_assert_eq!(
+                claims[0],
+                pilotdeck_protocol::JsString::from(claim),
+                "#1604 the claim mutation keys by the coerced text"
+            );
+        } else {
+            negative_assert!(
+                claims.is_empty(),
+                "#1604 the empty coerced text skips the claim gate like the TS empty string (A7.2-STEER-INPUT-001 差异 6)"
+            );
+        }
     }
+    // §差异 7 空文本交错格：`[]` 与 `""` 都折成空文本 `""`，互为别名——
+    // 第二条被 seen 去重静默丢弃，cancel `""` 移除 `[]` 条。TS 的 `[]` 值
+    // 与 `""` 值不碰撞：两条都入队，cancel `""` 只取消字符串条，drain 回
+    // `[[]]`（probe `20261109-review-2382-r5-ds/ts-probe/output7.txt`，
+    // Node v22.22.0）。
+    let _reservation_m = requests
+        .owner
+        .begin_turn(&"im".into(), &"imr".into())
+        .expect("#1604 empty-text interleave admission slot");
+    let _turn_m = start_steer_run(&steer, "im", "tmt", "imr");
+    let empty_array = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "im".into()),
+                ("runId", "imr".into()),
+                ("itemId", JsValue::Array(vec![])),
+                ("message", "m".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the empty-array steer stays Ok");
+    negative_assert_eq!(
+        empty_array.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the empty-array steer is accepted like TS"
+    );
+    let empty_string = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "im".into()),
+                ("runId", "imr".into()),
+                ("itemId", "".into()),
+                ("message", "second".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the empty-string steer stays Ok");
+    negative_assert_eq!(
+        empty_string.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the empty-string steer answers accepted while Rust dedupes it against the empty-array id"
+    );
+    let cancelled = requests
+        .request(
+            "cancel_steer".into(),
+            crate::metadata::object([
+                ("sessionKey", "im".into()),
+                ("runId", "imr".into()),
+                ("itemId", "".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the empty-text cancel stays Ok");
+    negative_assert_eq!(
+        cancelled.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the empty-text cancel removes the empty-array entry (Rust divergence)"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&"im".into())
+            .expect("#1604 empty-text mailbox")
+            .drain(&"tmt".into())
+            .len(),
+        0,
+        "#1604 the empty-array message is silently lost (TS drains [[]])"
+    );
     requests
         .owner
         .shutdown()
