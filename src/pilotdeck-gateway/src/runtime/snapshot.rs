@@ -1273,7 +1273,9 @@ mod tests {
     #[test]
     fn snapshot_methods_stay_outside_default_dispatch() {
         // #2308 fix-r2: iterate the shared pinned list instead of a fourth
-        // local copy of the method names.
+        // local copy of the method names. fix-r3: pin the executed set too —
+        // take/filter/continue on this loop must fail like the others.
+        let mut checked: Vec<&str> = Vec::new();
         for method in SNAPSHOT_WS_METHODS {
             let request = params(&[
                 ("type", "request".into()),
@@ -1284,7 +1286,12 @@ mod tests {
                 !crate::dispatch::is_local(&request),
                 "#888 {method} must not join LOCAL_METHODS in this package"
             );
+            checked.push(method);
         }
+        assert_eq!(
+            checked, SNAPSHOT_WS_METHODS,
+            "#888 all three snapshot methods must stay outside LOCAL_METHODS"
+        );
     }
 
     /// `dispatch` used to forward the whole request when the projection hit the
