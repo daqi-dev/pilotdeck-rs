@@ -7774,3 +7774,54 @@ async fn session_cwd_preflight_worker() {
     harness.finish("#897 preflight").await;
     crate::test_process::receipt(&name);
 }
+
+/// #1873: `try_writer_lease` must separate the two failure families. Lock
+/// contention — the ledger flock held by another open file description — is
+/// the retryable `Ok(None)` a hydrating or closing session produces. A lock
+/// file that cannot be opened is a storage error; the pre-fix shape folded
+/// it into `None`, so a broken chat directory masqueraded as a busy session.
+#[test]
+fn try_writer_lease_separates_contention_from_storage_failure() {
+    let dir = std::env::temp_dir().join(format!("pdrs-1873-lease-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("#1873 the scratch directory opens");
+    let transcript = dir.join("healthy.jsonl");
+    std::fs::write(&transcript, b"").expect("#1873 the transcript file opens");
+    let lease = match try_writer_lease(&transcript) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => panic!("#1873 an uncontended lease is Some"),
+        Err(error) => panic!("#1873 a healthy transcript is not an error: {error}"),
+    };
+    drop(lease);
+    // flock is held per open file description, so the test's own LedgerLock
+    // makes the lease's internal acquire WouldBlock without touching the
+    // process mutex: the answer must stay the retryable Ok(None).
+    let (_canonical, held) =
+        crate::storage::LedgerLock::acquire(&transcript).expect("#1873 the ledger lock is healthy");
+    match try_writer_lease(&transcript) {
+        Ok(None) => {}
+        Ok(Some(_)) => panic!("#1873 a held ledger lock reads as the retryable busy answer"),
+        Err(error) => panic!("#1873 contention is not an error either: {error}"),
+    }
+    drop(held);
+    let broken = dir.join("broken.jsonl");
+    std::fs::write(&broken, b"").expect("#1873 the second transcript file opens");
+    let mut lock_path = broken.as_os_str().to_os_string();
+    lock_path.push(".lock");
+    std::fs::create_dir(std::path::PathBuf::from(&lock_path))
+        .expect("#1873 the broken ledger lock is in place");
+    let error = match try_writer_lease(&broken) {
+        Err(error) => error,
+        Ok(None) => panic!("#1873 a lock file that cannot open must not read as busy"),
+        Ok(Some(_)) => panic!("#1873 a lock file that cannot open must not yield a lease"),
+    };
+    crate::negative_assert!(
+        !error.message.contains("SESSION_WRITER_BUSY"),
+        "#1873 the storage failure is never the retryable busy code"
+    );
+    crate::negative_assert!(
+        error.message.contains("Could not open session ledger lock"),
+        "#1873 the error names the ledger lock, got {}",
+        error.message
+    );
+    std::fs::remove_dir_all(&dir).expect("#1873 the scratch directory cleans up");
+}
