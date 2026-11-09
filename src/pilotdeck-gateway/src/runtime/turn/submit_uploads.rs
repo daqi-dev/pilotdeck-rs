@@ -277,3 +277,7 @@ fn upload_error(error: UploadError) -> SubmitError {
     )
 }
 
+#[cfg(test)]
+#[path = "submit_uploads_tests.rs"]
+mod tests;
+
