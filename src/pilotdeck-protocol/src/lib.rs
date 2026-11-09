@@ -7,6 +7,8 @@ pub mod admission;
 mod codec;
 pub mod compaction;
 mod consumer;
+pub mod frame;
+pub mod js_value;
 pub mod js_math;
 pub mod json_syntax;
 pub mod model;

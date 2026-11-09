@@ -646,6 +646,236 @@ async fn steer_turn_cannot_cross_runs_after_a_same_text_turn_restart() {
         .expect("#1307 registry fixture project shutdown");
 }
 
+fn cancel_steer_params(session: &str, run: &str, item: &str) -> JsValue {
+    crate::metadata::object([
+        ("sessionKey", session.into()),
+        ("runId", run.into()),
+        ("itemId", item.into()),
+    ])
+}
+
+#[tokio::test]
+async fn cancel_steer_reports_admission_gates_before_mailbox() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let no_turn = requests
+        .request("cancel_steer".into(), cancel_steer_params("s", "r", "i"))
+        .await
+        .expect("#1307 cancel without admission stays Ok");
+    negative_assert_eq!(
+        no_turn.get("cancelled"),
+        Some(&JsValue::Bool(false)),
+        "#1307 cancel without active turn"
+    );
+    negative_assert_eq!(
+        no_turn.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("no_active_turn")),
+        "#1307 cancel reason is no_active_turn"
+    );
+
+    let session = "gate";
+    let _reservation = requests
+        .owner
+        .begin_turn(&session.into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, session, "t", "r");
+    let mismatch = requests
+        .request(
+            "cancel_steer".into(),
+            cancel_steer_params(session, "other", "i"),
+        )
+        .await
+        .expect("#1307 cancel with wrong runId stays Ok");
+    negative_assert_eq!(
+        mismatch.get("cancelled"),
+        Some(&JsValue::Bool(false)),
+        "#1307 cancel with wrong runId"
+    );
+    negative_assert_eq!(
+        mismatch.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("turn_mismatch")),
+        "#1307 cancel reason is turn_mismatch"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn cancel_steer_cancels_pending_item_and_blocks_reenqueue() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let session = "cancel-pending";
+    let _reservation = requests
+        .owner
+        .begin_turn(&session.into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, session, "t", "r");
+    let enqueued = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", session.into()),
+                ("runId", "r".into()),
+                ("itemId", "a".into()),
+                ("message", "hello".into()),
+            ]),
+        )
+        .await
+        .expect("#1307 steer enqueues");
+    negative_assert_eq!(
+        enqueued.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1307 steer accepted"
+    );
+    let cancelled = requests
+        .request(
+            "cancel_steer".into(),
+            cancel_steer_params(session, "r", "a"),
+        )
+        .await
+        .expect("#1307 cancel stays Ok");
+    negative_assert_eq!(
+        cancelled.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1307 pending item cancelled"
+    );
+    let again = requests
+        .request(
+            "cancel_steer".into(),
+            cancel_steer_params(session, "r", "a"),
+        )
+        .await
+        .expect("#1307 idempotent cancel stays Ok");
+    negative_assert_eq!(
+        again.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1307 cancel tombstone is idempotent"
+    );
+    let rejected = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", session.into()),
+                ("runId", "r".into()),
+                ("itemId", "a".into()),
+                ("message", "retry".into()),
+            ]),
+        )
+        .await
+        .expect("#1307 steer after cancel stays Ok");
+    negative_assert_eq!(
+        rejected.get("accepted"),
+        Some(&JsValue::Bool(false)),
+        "#1307 cancelled item cannot be re-steered"
+    );
+    negative_assert_eq!(
+        rejected.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("cancelled")),
+        "#1307 steer after cancel reports cancelled"
+    );
+    let drained = steer
+        .mailbox_for_test(&session.into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        drained.len(),
+        0,
+        "#1307 cancelled pending item never drains"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
+#[tokio::test]
+async fn cancel_steer_reports_too_late_after_drain_offers_item() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1307 registry fixture setup");
+    let session = "cancel-late";
+    let _reservation = requests
+        .owner
+        .begin_turn(&session.into(), &"r".into())
+        .expect("#1307 admission slot");
+    let steer = steer_resource(&requests);
+    let _turn = start_steer_run(&steer, session, "t", "r");
+    let enqueued = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", session.into()),
+                ("runId", "r".into()),
+                ("itemId", "a".into()),
+                ("message", "hello".into()),
+            ]),
+        )
+        .await
+        .expect("#1307 steer enqueues");
+    negative_assert_eq!(
+        enqueued.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1307 steer accepted before late cancel"
+    );
+    let offered = steer
+        .mailbox_for_test(&session.into())
+        .expect("#1307 session mailbox")
+        .drain(&"t".into());
+    negative_assert_eq!(
+        offered.len(),
+        1,
+        "#1307 drain offers the queued item"
+    );
+    let late = requests
+        .request(
+            "cancel_steer".into(),
+            cancel_steer_params(session, "r", "a"),
+        )
+        .await
+        .expect("#1307 late cancel stays Ok");
+    negative_assert_eq!(
+        late.get("cancelled"),
+        Some(&JsValue::Bool(false)),
+        "#1307 offered item cannot be cancelled"
+    );
+    negative_assert_eq!(
+        late.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("too_late")),
+        "#1307 late cancel reason"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1307 registry fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1307 registry fixture project shutdown");
+}
+
 #[tokio::test]
 async fn hook_async_result_blank_id_error_shape_is_pinned_across_registry_states() {
     // TS submitAsyncHookResult throws DialogGatewayError(

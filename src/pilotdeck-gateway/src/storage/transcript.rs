@@ -122,13 +122,19 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
         }
         Err(error) => return Err(error.into()),
     };
+    let mut read = parse_transcript_lines(&bytes, 0);
+    sort_transcript_entries(&mut read)?;
+    Ok((bytes, read))
+}
+
+pub(super) fn parse_transcript_lines(bytes: &[u8], line_offset: usize) -> TranscriptRead {
     let mut read = TranscriptRead {
         entries: vec![],
         diagnostics: vec![],
     };
     // Match Node readFile(path, "utf8"): replacement characters are observable
     // in parsed values, while original bytes stay intact for the next append.
-    for (index, line) in String::from_utf8_lossy(&bytes).split('\n').enumerate() {
+    for (index, line) in String::from_utf8_lossy(bytes).split('\n').enumerate() {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if js_trim(line).is_empty() {
             continue;
@@ -146,18 +152,22 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
             Ok(_) => read.diagnostics.push(Diagnostic {
                 code: "transcript_entry_invalid",
                 severity: "error",
-                line: Some(index + 1),
+                line: Some(line_offset + index + 1),
                 message: "Transcript entry has an invalid shape.".into(),
             }),
             Err(error) => read.diagnostics.push(Diagnostic {
                 code: "transcript_line_invalid",
                 severity: "error",
-                line: Some(index + 1),
+                line: Some(line_offset + index + 1),
                 message: pilotdeck_protocol::json_syntax::parse_error(line)
                     .unwrap_or_else(|| error.to_string()),
             }),
         }
     }
+    read
+}
+
+pub(super) fn sort_transcript_entries(read: &mut TranscriptRead) -> Result<()> {
     // Reuse the gateway's pinned Node/ICU collation for equal sequence values.
     let mut seen = HashSet::new();
     let mut ties = HashSet::new();
@@ -199,7 +209,7 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
             )
         }
     });
-    Ok((bytes, read))
+    Ok(())
 }
 
 /// A single-owner JSONL adapter, using `<canonical path>.lock` advisory locking.

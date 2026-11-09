@@ -14,14 +14,15 @@ use super::{
     recorder::{RecorderClock, RecorderError, RecorderResult, RecorderUuid},
     session_domain::DomainState,
     transcript::{
-        LedgerLock, create_temporary, private_dirs, private_open, read_transcript_limited_at, uuid,
+        LedgerLock, MAX_BYTES, create_temporary, parse_transcript_lines, private_dirs,
+        private_open, read_transcript_limited_at, sort_transcript_entries, uuid,
     },
 };
 use crate::{js_value, runtime::memory::js_trim_units};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
-    collections::HashSet,
-    fmt, fs,
+    collections::{HashMap, HashSet},
+    fmt, fs::{self, File},
     io::{self, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
     sync::{
@@ -171,6 +172,9 @@ pub struct JsonlTranscriptStore {
     /// A project-owned store serves one canonical transcript; diagnostics keep
     /// the original spelling supplied when that writer acquired its fence.
     diagnostic_path: Option<PathBuf>,
+    /// Session-level read cache. Entries are invalidated when the on-disk
+    /// bytes change; this avoids reparsing the same transcript on every turn.
+    cache: Mutex<HashMap<PathBuf, (u64, std::time::SystemTime, Vec<u8>, TranscriptRead)>>,
 }
 impl JsonlTranscriptStore {
     pub fn new() -> Self {
@@ -264,13 +268,94 @@ impl TranscriptStore for JsonlTranscriptStore {
         Ok(())
     }
     fn read(&self, key: &TranscriptKey, max_bytes: Option<u64>) -> StoreResult<TranscriptRead> {
-        read_transcript_limited_at(
-            &key.transcript_path,
-            self.diagnostic_path
-                .as_deref()
-                .unwrap_or(&key.transcript_path),
-            max_bytes,
-        )
+        let limit = max_bytes.unwrap_or(MAX_BYTES);
+        let path = &key.transcript_path;
+        let diagnostic = self
+            .diagnostic_path
+            .as_deref()
+            .unwrap_or(path);
+        let meta = match fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                return read_transcript_limited_at(path, diagnostic, max_bytes);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if meta.len() > limit {
+            return read_transcript_limited_at(path, diagnostic, max_bytes);
+        }
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+        if let Some((cached_len, cached_mtime, _, cached_read)) = cache.get(path) {
+            if *cached_len == meta.len() && *cached_mtime == modified {
+                return Ok(TranscriptRead {
+                    entries: cached_read.entries.clone(),
+                    diagnostics: cached_read.diagnostics.clone(),
+                });
+            }
+        }
+        let mut file = File::open(path)?;
+        let mut bytes = Vec::new();
+        if let Some((cached_len, _, cached_bytes, _)) = cache.get(path) {
+            if meta.len() >= *cached_len {
+                // Verify the prefix: external replace/in-place edits can grow a file too.
+                Read::by_ref(&mut file)
+                    .take(cached_bytes.len() as u64)
+                    .read_to_end(&mut bytes)?;
+            }
+        }
+        // This suffix is the input to the incremental parser below.
+        file.read_to_end(&mut bytes)?;
+        let read = if let Some((cached_len, cached_mtime, cached_bytes, cached_read)) =
+            cache.get(path)
+        {
+            if *cached_len == bytes.len() as u64
+                && *cached_mtime == modified
+                && cached_bytes == &bytes
+            {
+                return Ok(TranscriptRead {
+                    entries: cached_read.entries.clone(),
+                    diagnostics: cached_read.diagnostics.clone(),
+                });
+            }
+            // Prefix equality also detects in-place rewrites that grow the file.
+            // An unterminated last line must be reparsed together with the suffix.
+            if bytes.starts_with(cached_bytes)
+                && (cached_bytes.is_empty() || cached_bytes.last() == Some(&b'\n'))
+            {
+                let line_offset = cached_bytes.iter().filter(|byte| **byte == b'\n').count();
+                let mut read = parse_transcript_lines(&bytes[cached_bytes.len()..], line_offset);
+                let mut entries = cached_read.entries.clone();
+                entries.append(&mut read.entries);
+                read.entries = entries;
+                let mut diagnostics = cached_read.diagnostics.clone();
+                diagnostics.append(&mut read.diagnostics);
+                read.diagnostics = diagnostics;
+                sort_transcript_entries(&mut read)?;
+                read
+            } else {
+                let mut read = parse_transcript_lines(&bytes, 0);
+                sort_transcript_entries(&mut read)?;
+                read
+            }
+        } else {
+            let mut read = parse_transcript_lines(&bytes, 0);
+            sort_transcript_entries(&mut read)?;
+            read
+        };
+        cache.insert(
+            path.clone(),
+            (
+                bytes.len() as u64,
+                modified,
+                bytes,
+                TranscriptRead {
+                    entries: read.entries.clone(),
+                    diagnostics: read.diagnostics.clone(),
+                },
+            ),
+        );
+        Ok(read)
     }
     fn has(&self, key: &TranscriptKey) -> Option<StoreResult<bool>> {
         Some(Ok(fs::metadata(&key.transcript_path).is_ok()))

@@ -9,6 +9,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
+name = "aes"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0"
+dependencies = [
+ "cfg-if",
+ "cipher",
+ "cpufeatures",
+]
+
+[[package]]
 name = "aho-corasick"
 version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -176,6 +187,16 @@ dependencies = [
  "iana-time-zone",
  "num-traits",
  "windows-link",
+]
+
+[[package]]
+name = "cipher"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
+dependencies = [
+ "crypto-common",
+ "inout",
 ]
 
 [[package]]
@@ -737,6 +758,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inout"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "879f10e63c20629ecabbb64a8010319738c66a5cd0c29b02d63d272b03751d01"
+dependencies = [
+ "generic-array",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -812,6 +842,16 @@ dependencies = [
  "log",
  "tendril",
  "web_atoms",
+]
+
+[[package]]
+name = "md-5"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
+dependencies = [
+ "cfg-if",
+ "digest",
 ]
 
 [[package]]
@@ -974,6 +1014,7 @@ dependencies = [
 name = "pilotdeck-gateway"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "async-compression",
  "base64",
  "bytes",
@@ -989,6 +1030,8 @@ dependencies = [
  "icu_locale_core",
  "icu_normalizer",
  "libc",
+ "md-5",
+ "pilotdeck-agent",
  "pilotdeck-child-signals",
  "pilotdeck-protocol",
  "pilotdeck-tokenizer",
@@ -1006,6 +1049,7 @@ dependencies = [
  "tokio-rustls",
  "tokio-tungstenite",
  "tower-service",
+ "tz-rs",
  "url",
  "uuid",
  "webpki-roots 1.0.9",
@@ -1015,6 +1059,7 @@ dependencies = [
 name = "pilotdeck-protocol"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "ryu-js",
  "serde_json",
 ]

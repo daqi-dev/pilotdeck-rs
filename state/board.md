@@ -3143,3 +3143,54 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 7. #1470/#1472 queue 状态核（MERGED 后核邮箱、回收 wt-ds-official-cleanup）。
 
 资源：本机磁盘 191.9/200 GiB（WARN，wt-1310+wt-1321 合入后回收约 76 GiB）；worktree 23/40；在审 15/16（拟 20）；三台全回。谱系提醒：协调者/GLM 作者线评审 = DS + MiniMax/codex（若独立）/Opus（兜底）；DS 大 diff 复读循环前科，大 diff 用 MiniMax。
+
+### 2026-11-07 pdrs-daqi-base-B-steer（Cursor）
+
+- 对比 daqi @ 9e4eff5 与 wt-runtime @ 7d1a468 的 steer/cancel：核心 `SteerMailbox` 与 main 等价；daqi 侧 `interaction_steer` + native `steer_turn`/`cancel_steer` 为超集，main 无对应行为需反向并入。
+- 证据：`/Users/mac/src/pdrs-ext/证据/daqi-migrate-b/steer-cancel-diff.md`。
+- 代码：补 `native_process/methods/tests.rs` 三条 `cancel_steer` 行为测（闸门 / pending 取消 / too_late）；**未提交**（等人指示）。
+- 测试：`CARGO_TARGET_DIR=target-b cargo test -p pilotdeck-gateway cancel_steer` 绿（lib+integration 含 filter 命中项）。
+- 下一步（本轨）：memory / SOP / 多渠道 / 性能 **不在本轮**。
+
+### 2026-11-07 pdrs-daqi-base-B-memory（Cursor）
+
+- 只读对比 daqi vs wt-runtime @ 7d1a468：**memory 最小迁入差集为空**（main 仍含 `NativeProviderNotPorted`；daqi 为 EdgeClaw 全栈 + gateway/maintenance/native）。
+- 证据：`/Users/mac/src/pdrs-ext/证据/daqi-migrate-b/memory-diff.md`。
+- **未改产品代码、未写测、未跑 cargo**（人令 + 磁盘闸）。
+- 未提交；steer 轮工作区改动仍保留。
+
+### 2026-11-07 pdrs-daqi-base-B-sop（Cursor）
+
+- 只读对比：main 无 `sop_status`/`sop_resume` Rust 实现；daqi 已有 `native_process/methods/sop.rs`（`sop_request` + capability stub + 8 项内联测）。**最小迁入差集为空**。
+- 证据：`/Users/mac/src/pdrs-ext/证据/daqi-migrate-b/sop-diff.md`。
+- 未改产品/测试代码；未跑 cargo。未来真 SOP 只扩 `sop.rs`，不另起 `runtime/sop/`。
+
+### 2026-11-07 pdrs-daqi-base-B-routes（Cursor）
+
+- 只读：无 `config/routes`、`channel_runtime.rs`、`web_cli.rs`；配置渠道键两侧有，runtime 接线 main 无增量。`pilotdeck-process` main 为 9 文件 crate，daqi 已内联 `process_group`/`process_spawn`/`test_process`/`node_io`。**最小差集空**。
+- 证据：`/Users/mac/src/pdrs-ext/证据/daqi-migrate-b/routes-diff.md`。
+- 未改产品代码；未跑测试。
+
+### 2026-11-07 pdrs-daqi-base-B-perf（Cursor）
+
+- 只读对照 `dc123d1` / `b07fe94`（行为在 `fd61b47`）/ `3a1277c`：daqi **无** transcript 增量 cache、`parse_transcript_lines`；**无** bash `reaped_status` 快路径；**无** `perf/tools/selfstack`。**差集非空，本轮 HELD，未改代码**。
+- 证据：`/Users/mac/src/pdrs-ext/证据/daqi-migrate-b/perf-diff.md`。
+
+### 2026-11-07 pdrs-daqi-base-B-port（Cursor）
+
+- **迁入**（只读 wt-runtime，未提交）：`dc123d1` transcript 增量解析 + `JsonlTranscriptStore` session cache（保留 owner/diagnostic_path/open_locked/take_fence）；`fd61b47` bash `reaped_status`/`child.wait` 自然退出快路径 + 3 条 closed-pipe 行为测；`3a1277c` `perf/tools/selfstack/{README.md,selfstack-safe.c}`。
+- **测试未跑**：A 占编测窗口，本轮禁止 cargo。
+- 保留：`cancel_steer` 测 + 早前 board 段；HEAD 仍 9e4eff5 之上工作区脏。
+
+### 2026-11-09 pdrs-daqi-base-B-resume（Cursor 970657df）
+
+- 接续：现场指纹入 `证据/daqi-migrate-b/resume-20261109-104117/`；SOP 复核——stub≠StaffDeck 完成，main 无 `runtime/sop` 可迁。
+- **编测等待**：`perf3/.../measurement-window-released.json` 尚未出现；A Codex resume 占用窗口，B **未启 cargo**。
+- 下一：窗口释放后定向回归 `cancel_steer`（重跑落日志）+ `transcript_incremental` + bash 三测 → `implementation-result.md`。
+
+### 2026-11-09 pdrs-daqi-base-B-debug（Cursor 970657df）
+
+- 窗口 `released`（11:02）；`CARGO_TARGET_DIR=target-b-resume-20261109`。
+- 回归：**cancel_steer 3**、**transcript_incremental 6**、**sop stub 8**、**bash_tool 15** — 全 PASS；日志 `证据/daqi-migrate-b/resume-20261109-104117/logs/`。
+- SOP：**stub 门序通过 ≠ StaffDeck 完成**；`opt-r2-migration-coverage.md` 记真实差集。
+- **未提交**；待非实施者验收 `implementation-result.md`。

@@ -39,6 +39,7 @@ mod handlers;
 mod policy;
 mod projects;
 mod registry;
+pub(crate) mod routes;
 mod settings;
 
 pub use handlers::*;

@@ -1,6 +1,8 @@
 //! Global/project PilotConfig loading for the native read-only gateway. Every section
 //! participates in validation, even when catalog projection does not use it.
 mod binding;
+pub mod channel_commands;
+pub mod routes;
 pub mod changes;
 mod graph;
 mod host;
@@ -77,6 +79,14 @@ impl Diagnostics {
         }
     }
 }
+
+pub(crate) fn web_sections_valid(raw: &JsValue) -> bool {
+    let mut diagnostics = Diagnostics(vec![]);
+    sections::gateway(field(raw, "gateway"), &mut diagnostics);
+    sections::tools(field(raw, "tools"), &mut diagnostics);
+    diagnostics.check().is_ok()
+}
+
 fn merge(left: &mut JsValue, right: JsValue) {
     let mut output = JsObject::new();
     if let JsValue::Object(base) = left {

@@ -1,5 +1,6 @@
 //! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
 mod acceptor;
+pub mod channel_runtime;
 pub mod config;
 mod dispatch;
 mod fetch_redirect;

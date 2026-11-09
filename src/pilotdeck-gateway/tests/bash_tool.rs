@@ -28,9 +28,9 @@ use pilotdeck_gateway::{
             ExecutableTool, SchedulerMode, ToolCancellation, ToolError, ToolFuture, ToolOutput,
             ToolRunContext, ToolRuntime,
             builtin::bash::{
-                BashTool, BashToolOptions, CommandOptions, CommandResult, CommandRunner,
-                NodeShellCommandRunner, check_bash_permissions, classify_bash_permission,
-                is_read_only_shell_command,
+                AbortSignal, BashTool, BashToolOptions, CommandOptions, CommandResult,
+                CommandRunner, NodeShellCommandRunner, check_bash_permissions,
+                classify_bash_permission, is_read_only_shell_command,
             },
             registry::ToolRegistry,
         },
@@ -935,4 +935,149 @@ fn stream_cap_defaults_to_v8_max_string_length() {
         .filter(|chunk| !chunk.bytes().all(|byte| byte == 0))
         .collect();
     assert_eq!(tail, vec!["xyz", "Q"]);
+}
+
+fn retained_runner_root(label: &str) -> PathBuf {
+    let root = std::env::var_os("PDRS_BASH_TEST_EVIDENCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join(format!("bash-{label}-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("create retained runner evidence");
+    root
+}
+
+fn eof_runner_options(
+    root: &Path,
+    signal: Option<ToolCancellation>,
+    timeout_ms: f64,
+) -> CommandOptions {
+    CommandOptions {
+        cwd: JsString::from(root.to_string_lossy().as_ref()),
+        env: Some(vec![(
+            JsString::from("PATH"),
+            JsString::from("/usr/bin:/bin"),
+        )]),
+        timeout_ms,
+        signal: AbortSignal::from_context(&host_context(JsObject::new(), signal, None)),
+        on_stdout: None,
+        on_stderr: None,
+        max_output_units: None,
+    }
+}
+
+async fn closed_pipe_leader(root: &Path) -> u32 {
+    loop {
+        if let Ok(value) = fs::read_to_string(root.join("closed"))
+            && let Ok(pid) = value.trim().parse()
+        {
+            return pid;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+const CLOSED_PIPE_COMMAND: &str =
+    "exec 1>&- 2>&-; echo $$ > closed; while [ ! -e release ]; do sleep 0.05; done; exit 37";
+
+#[test]
+fn runner_preserves_output_exit_code_and_signal() {
+    let root = retained_runner_root("exit-status");
+    block_on(async {
+        for (command, code, stdout, stderr) in [
+            (
+                "printf out; printf err >&2; exit 23",
+                Some(23),
+                "out",
+                "err",
+            ),
+            ("kill -TERM $$", None, "", ""),
+        ] {
+            let result = tokio::time::timeout(
+                Duration::from_secs(10),
+                NodeShellCommandRunner.run(
+                    JsString::from(command),
+                    eof_runner_options(&root, None, 30_000.0),
+                ),
+            )
+            .await
+            .expect("runner must settle")
+            .expect("runner result");
+            assert_eq!(result.exit_code, code);
+            assert_eq!(result.stdout, stdout);
+            assert_eq!(result.stderr, stderr);
+            assert!(!result.timed_out);
+            assert_group_gone(result.pid.expect("leader pid"), "natural exit").await;
+        }
+    });
+}
+
+#[test]
+fn closed_output_pipes_do_not_complete_a_live_leader() {
+    let root = retained_runner_root("closed-pipes-exit");
+    block_on(async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            let mut run = NodeShellCommandRunner.run(
+                JsString::from(CLOSED_PIPE_COMMAND),
+                eof_runner_options(&root, None, 30_000.0),
+            );
+            let pid = tokio::select! {
+                result = &mut run => panic!("leader completed before release: {result:?}"),
+                pid = closed_pipe_leader(&root) => pid,
+            };
+            assert!(
+                group_alive(pid),
+                "closed pipes must leave the blocked leader alive"
+            );
+            fs::write(root.join("release"), "release").expect("release leader");
+            let result = run.await.expect("released leader result");
+            assert_eq!(result.pid, Some(pid));
+            assert_eq!(result.exit_code, Some(37));
+            assert!(!result.timed_out);
+            assert_eq!(result.stdout, "");
+            assert_eq!(result.stderr, "");
+            assert_group_gone(pid, "released closed-pipe leader").await;
+        })
+        .await
+        .expect("closed-pipe exit must settle");
+    });
+}
+
+#[test]
+fn closed_output_pipes_preserve_abort_timeout_and_drop_cleanup() {
+    block_on(async {
+        for action in ["abort", "timeout", "drop"] {
+            let root = retained_runner_root(action);
+            tokio::time::timeout(Duration::from_secs(15), async {
+                let signal = ToolCancellation::default();
+                let mut run = NodeShellCommandRunner.run(
+                    JsString::from(CLOSED_PIPE_COMMAND),
+                    eof_runner_options(
+                        &root,
+                        Some(signal.clone()),
+                        if action == "timeout" { 2_000.0 } else { 30_000.0 },
+                    ),
+                );
+                let pid = tokio::select! {
+                    result = &mut run => panic!("{action}: leader completed before handshake: {result:?}"),
+                    pid = closed_pipe_leader(&root) => pid,
+                };
+                if action == "drop" {
+                    drop(run);
+                } else {
+                    if action == "abort" {
+                        signal.cancel();
+                    }
+                    let result = run.await.expect("terminated runner result");
+                    assert_eq!(result.pid, Some(pid));
+                    assert_eq!(result.exit_code, None);
+                    assert_eq!(result.timed_out, action == "timeout");
+                    assert_eq!(result.stdout, "");
+                    assert_eq!(result.stderr, "");
+                }
+                assert_group_gone(pid, action).await;
+            })
+            .await
+            .expect("closed-pipe cleanup must settle");
+        }
+    });
 }

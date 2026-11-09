@@ -5,6 +5,7 @@ pub mod async_hooks;
 pub mod background;
 pub mod background_snapshot;
 mod cleanup_task;
+pub mod composition;
 pub mod connection;
 pub mod context;
 pub mod cron;

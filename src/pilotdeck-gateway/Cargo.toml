@@ -15,11 +15,16 @@ workspace = true
 
 [dependencies]
 pilotdeck-child-signals = { path = "../pilotdeck-child-signals" }
+pilotdeck-agent = { path = "../pilotdeck-agent" }
 base64 = "=0.22.1"
 libc = "=0.2.190"
 sha2.workspace = true
 # FileMemoryStore hashText uses Node crypto SHA-1 (10 hex digits).
 sha1 = "=0.10.7"
+# WeCom callback protocol uses AES-256-CBC (pure Rust, no prebuilt binary).
+aes = "=0.8.4"
+# WeCom websocket media upload requires an MD5 content digest.
+md-5 = "=0.10.6"
 icu_collator = "=2.1.1"
 icu_casemap = "=2.1.1"
 # #345 B6: full NFKC via the normalizer already locked by url/idna.
@@ -27,6 +32,7 @@ icu_normalizer = "=2.1.1"
 icu_locale_core = "=2.3.0"
 rustix = { version = "=1.1.5", features = ["fs", "process"] }
 serde_json.workspace = true
+tz-rs.workspace = true
 pilotdeck-protocol.workspace = true
 pilotdeck-tokenizer = { path = "../pilotdeck-tokenizer" }
 pilotdeck-transport = { path = "../pilotdeck-transport" }
