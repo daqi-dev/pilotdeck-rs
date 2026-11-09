@@ -1417,3 +1417,27 @@ MemoryError (pinned statically in test_safety).  Six revert mutants
 the shapes pin's expectation reverted, the writes pin's direction
 reverted, the bare `in` swapped for the helper, and the controls
 RecursionError dropped) are killed by the named pins.
+
+fix-r17 (DS boundary#1 + sibling#1 r16 P0/P1, two roles, probe-verified
+— `fix-r17-audit/probe-r17-p0.out` S1/S2/S3): the r16 sentinel only
+covered bare `ast.Constant` interpolation values, so a foldable constant
+expression inside an f-string was still the fail-open None —
+`f'{"sta" + "tus"}'` is `'status'` at runtime, its `:.6`-spec form moves
+the r16 truncation point one level down, and an outer f-string dropped
+the inner `%` sentinel exactly the way the outer `%` did before r16; a
+fourth shape was self-found while probing (`f'{"status"!r}'` folded the
+untransformed value while the runtime is `"'status'"`).  The
+`FormattedValue` branch now folds the interpolated expression
+recursively (str joins, sentinel propagates, None stays genuinely
+runtime) and stops the fold as the sentinel under any format spec or
+repr/ascii conversion.  Pins: the positive fold pin
+(`_fsr3_fold` must reach `'status'`), the three-shape sentinel pin, and
+the three-rogue end-to-end enumeration pin.  The expectation/native
+`run_control.py` runners' catch sets regained `MemoryError` +
+`RecursionError` (they had drifted from the controls entry twice) and a
+new test_safety static pin (`test_fixture_runner_catch_sets_match_controls`)
+keeps all three files in lockstep.  Seven revert mutants (the recursion
+reverted, the conversion guard dropped, the fold pin's expectation
+reverted, the writes pin's direction reverted, the sentinel propagation
+swallowed, and both shims' RecursionError dropped) are killed by the
+named pins.
