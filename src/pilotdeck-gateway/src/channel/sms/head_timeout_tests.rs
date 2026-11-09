@@ -55,9 +55,13 @@ use super::super::protocol::{ChannelLog, ChannelStartDeps};
 use super::*;
 
 /// Ports sit in the free gap above the wecom-callback golden replay segment
-/// (18900–18921; 18922–18923 are the sms 404/200 pins) and below the feishu
-/// segment (18960–18999: the feishu oracle replay binds 18960–18972, its
-/// pins bind 18973/18980/18990–18993). fix-r5 moved 18971/18972 here —
+/// (18900–18921) and below the feishu segment (18960–18999: the feishu
+/// oracle replay binds 18960–18972, its pins bind 18973/18980/18990–18993).
+/// Within the gap the sms lane owns 18922–18923 (the http10 pins), 18926
+/// (the json-null cell) and 18927–18928 (the #2152 parser-admission pins) —
+/// keep this ledger in sync when an sms pin moves: #2257 fix-r4, fix-r5 and
+/// #2152 fix-r1 each caught a port collision in this gap. fix-r5 moved
+/// 18971/18972 here —
 /// they previously sat on feishu replay cases (same class as the 18904
 /// wecom overlap fixed in fix-r4). 18973–18979 remain inside the feishu
 /// registered range; only 18973 has an actual cross-lane bind (the feishu

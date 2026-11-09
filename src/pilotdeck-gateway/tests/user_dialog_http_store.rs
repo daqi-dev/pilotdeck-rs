@@ -1105,20 +1105,33 @@ async fn socket_requests_match_typescript_framing() {
         };
         let (status, content_type, wire_body) = if set_host {
             let request = builder.body(Full::new(Bytes::from(body))).expect("request");
-            let response = client
-                .request(request)
+            // #2152 fix-r2 (review r2): the hyper exchange is bounded like
+            // the raw-socket branch in `raw_hostless_exchange` — the server's
+            // handler phase has no deadline of its own, so a regression
+            // that stalls the response must fail here, not hang the whole
+            // test binary on a request that never answers.
+            let (status, content_type, wire_body) =
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    let response = client
+                        .request(request)
+                        .await
+                        .unwrap_or_else(|error| panic!("{name}: {error}"));
+                    let status = response.status().as_u16();
+                    let content_type = response
+                        .headers()
+                        .get(hyper::header::CONTENT_TYPE)
+                        .map(|value| value.to_str().unwrap().to_string());
+                    let wire_body = http_body_util::BodyExt::collect(response.into_body())
+                        .await
+                        .unwrap()
+                        .to_bytes();
+                    (status, content_type, wire_body.to_vec())
+                })
                 .await
-                .unwrap_or_else(|error| panic!("{name}: {error}"));
-            let status = response.status().as_u16();
-            let content_type = response
-                .headers()
-                .get(hyper::header::CONTENT_TYPE)
-                .map(|value| value.to_str().unwrap().to_string());
-            let wire_body = http_body_util::BodyExt::collect(response.into_body())
-                .await
-                .unwrap()
-                .to_bytes();
-            (status, content_type, wire_body.to_vec())
+                .unwrap_or_else(|_| {
+                    panic!("{name}: #2152 the hyper replay must finish within 5 s")
+                });
+            (status, content_type, wire_body)
         } else {
             // The recorded method and path on a hand-built request line: the
             // hyper client would add its own `Host`, which is exactly the
@@ -1205,7 +1218,12 @@ fn recorded_set_host(request: &Value, name: &str) -> bool {
 #[test]
 #[should_panic(expected = "#2152 request `setHost` must be a boolean, found String(\"no\"")]
 fn socket_request_set_host_refuses_a_non_boolean() {
-    let request = parse_json(r#"{"path": "/x", "setHost": "no"}"#);
+    // fix-r2 (review r2): `parse_json` returns `pilotdeck_protocol::JsValue`,
+    // while `recorded_set_host` reads a `serde_json::Value` — round-trip
+    // through the file's own `js`/`json` helpers, like every other reader
+    // here, so the pin both compiles and keeps the serde Debug shape the
+    // `should_panic` message asserts.
+    let request = json(&js(r#"{"path": "/x", "setHost": "no"}"#));
     recorded_set_host(&request, "negative");
 }
 
