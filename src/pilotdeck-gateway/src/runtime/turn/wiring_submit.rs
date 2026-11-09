@@ -70,10 +70,73 @@ fn policy_strings(value: Option<&JsValue>, key: &str) -> Vec<String> {
 }
 
 fn apply_permission_policies(
-    _agent: &mut JsObject,
-    _organization: Option<&crate::runtime::sdk_session::OrganizationPolicy>,
-    _sdk: Option<&JsValue>,
+    agent: &mut JsObject,
+    organization: Option<&crate::runtime::sdk_session::OrganizationPolicy>,
+    sdk: Option<&JsValue>,
 ) {
+    let organization_permissions = organization.and_then(|policy| policy.permissions.as_ref());
+    let sdk_permissions = sdk.and_then(|sdk| sdk.get("managedPermissions"));
+    let force_plan = organization_permissions.is_some_and(|policy| policy.default_plan)
+        || sdk_permissions
+            .and_then(|policy| policy.get("defaultMode"))
+            .and_then(JsValue::as_string)
+            .is_some_and(|mode| mode.equals_str("plan"));
+    let disable_prompt = organization_permissions.and_then(|policy| policy.can_prompt) == Some(false)
+        || sdk_permissions
+            .and_then(|policy| policy.get("canPrompt"))
+            .and_then(JsValue::as_bool)
+            == Some(false);
+    let organization_deny = organization_permissions
+        .map(|policy| policy.deny.clone())
+        .unwrap_or_default();
+    let organization_ask = organization_permissions
+        .map(|policy| policy.ask.clone())
+        .unwrap_or_default();
+    let sdk_deny = policy_strings(sdk_permissions, "deny");
+    let sdk_ask = policy_strings(sdk_permissions, "ask");
+    if !force_plan
+        && !disable_prompt
+        && organization_deny.is_empty()
+        && organization_ask.is_empty()
+        && sdk_deny.is_empty()
+        && sdk_ask.is_empty()
+    {
+        return;
+    }
+    let mut context = agent
+        .get("permissionContext")
+        .and_then(JsValue::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if force_plan {
+        agent.insert("permissionMode".into(), "plan".into());
+        context.insert("mode".into(), "plan".into());
+    }
+    if disable_prompt {
+        context.insert("canPrompt".into(), JsValue::Bool(false));
+        context.insert("policyCanPrompt".into(), JsValue::Bool(false));
+    }
+    let mut rules = context
+        .get("rules")
+        .and_then(JsValue::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (key, organization_entries, sdk_entries) in [
+        ("deny", organization_deny, sdk_deny),
+        ("ask", organization_ask, sdk_ask),
+    ] {
+        let mut entries: Vec<JsValue> = organization_entries
+            .iter()
+            .chain(&sdk_entries)
+            .map(|entry| permission_rule(entry, key))
+            .collect();
+        if let Some(JsValue::Array(existing)) = rules.get(key) {
+            entries.extend(existing.clone());
+        }
+        rules.insert(key.into(), JsValue::Array(entries));
+    }
+    context.insert("rules".into(), JsValue::Object(rules));
+    agent.insert("permissionContext".into(), JsValue::Object(context));
 }
 
 pub(crate) fn parse_positive_int_prefix(raw: &str) -> Option<f64> {
@@ -411,7 +474,7 @@ impl CompositionSubmitServices {
                         .and_then(|policy| policy.max_turns),
                     max_budget_usd: organization_policy
                         .as_ref()
-                        .and_then(|policy| policy.max_task_budget_usd),
+                        .and_then(|policy| policy.max_budget_usd),
                     ..Default::default()
                 },
             )
@@ -611,6 +674,9 @@ impl CompositionSubmitServices {
                     fields.insert("thinking".into(), thinking);
                 }
 
+                if let Some(policy) = organization_policy.as_ref() {
+                    policy.apply_agent_runtime_caps(fields);
+                }
                 apply_permission_policies(
                     fields,
                     organization_policy.as_ref(),
@@ -652,6 +718,11 @@ impl CompositionSubmitServices {
                     if !key.equals_str("messages") {
                         fields.insert(key.clone(), value.clone());
                     }
+                }
+                if let Some(policy) = organization_policy.as_ref()
+                    && let Some(tool_policy) = policy.tool_policy_value()
+                {
+                    fields.insert("organizationToolPolicy".into(), tool_policy);
                 }
                 if let Some(managed_tools) = sdk_session_config
                     .as_ref()
@@ -1207,4 +1278,71 @@ fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
         static UNDEFINED: JsValue = JsValue::Undefined;
         &UNDEFINED
     })
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::apply_permission_policies;
+    use crate::metadata::object;
+    use pilotdeck_protocol::{JsObject, JsValue, parse_json};
+
+    #[test]
+    fn organization_and_sdk_permission_policies_merge_into_agent() {
+        let mut organization = crate::runtime::sdk_session::OrganizationPolicy::default();
+        organization
+            .apply_execution_limits_json(&serde_json::json!({
+                "permissions": {
+                    "deny": ["Bash(rm *)"],
+                    "ask": ["Write"],
+                    "defaultMode": "plan",
+                    "canPrompt": false
+                }
+            }))
+            .unwrap();
+        let sdk = parse_json(
+            r#"{"managedPermissions":{"deny":["WebFetch"],"ask":["Bash(git *)"],"defaultMode":"plan","canPrompt":false}}"#,
+        )
+        .unwrap();
+        let mut agent = parse_json(
+            r#"{"permissionMode":"default","permissionContext":{"mode":"default","canPrompt":true,"rules":{"deny":[{"source":"session","behavior":"deny","toolName":"legacy"}],"ask":[]}}}"#,
+        )
+        .unwrap()
+        .as_object()
+        .unwrap()
+        .clone();
+        apply_permission_policies(&mut agent, Some(&organization), Some(&sdk));
+        assert_eq!(agent.get("permissionMode"), Some(&"plan".into()));
+        let context = agent.get("permissionContext").unwrap();
+        assert_eq!(context.get("mode"), Some(&"plan".into()));
+        assert_eq!(context.get("canPrompt"), Some(&JsValue::Bool(false)));
+        let deny = match context.get("rules").unwrap().get("deny").unwrap() {
+            JsValue::Array(value) => value,
+            other => panic!("unexpected deny rules: {other:?}"),
+        };
+        assert_eq!(deny.len(), 3);
+        assert_eq!(deny[2].get("source"), Some(&"session".into()));
+    }
+
+    #[test]
+    fn tool_policy_and_runtime_caps_apply_on_prepared_agent_fields() {
+        let mut organization = crate::runtime::sdk_session::OrganizationPolicy::default();
+        organization
+            .apply_execution_limits_json(&serde_json::json!({
+                "tools": {"deny": ["bash"]},
+                "limits": {"maxBudgetUsd": 2.5, "maxTurns": 3}
+            }))
+            .unwrap();
+        let mut fields = JsObject::new();
+        fields.insert("maxOutputTokens".into(), JsValue::Number(8000.0));
+        organization.apply_agent_runtime_caps(&mut fields);
+        assert_eq!(fields.get("maxOutputTokens"), Some(&JsValue::Number(8000.0)));
+        assert!(organization.tool_policy_value().is_some());
+        let policy = super::super::submit_input::InputPolicy {
+            max_turns: organization.max_turns,
+            max_budget_usd: organization.max_budget_usd,
+            ..Default::default()
+        };
+        assert_eq!(policy.max_budget_usd, Some(2.5));
+        assert_eq!(policy.max_turns, Some(3.0));
+    }
 }
