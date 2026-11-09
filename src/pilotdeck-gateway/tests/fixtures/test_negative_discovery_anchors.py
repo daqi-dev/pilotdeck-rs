@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 273 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 196 blind only, 3 with unresolvable shapes only, 74 in both; 1441 keys: 402 bare-filename joins and 1039 shared-helper import keys.
+# 273 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 195 blind only, 3 with unresolvable shapes only, 75 in both; 1441 keys: 402 bare-filename joins and 1039 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -300,7 +300,7 @@ KNOWN_BLIND = {
     'negative-adaptive/isolation_negative.py': '2 keys',
     'negative-adaptive/negative_controls.py': '2 keys + 1 unresolvable',
     'negative-output-directory/negative.py': '7 keys',
-    'negative-output-directory/process_probe.py': '1 key',
+    'negative-output-directory/process_probe.py': '1 key + 1 unresolvable',
     'negative_oracle_guard.py': '1 key + 3 unresolvable',
     'negative_scope.py': '1 unresolvable',
     'network-timing/negative_controls.py': '7 keys',
@@ -1910,6 +1910,35 @@ def _container_holds_a_path_literal(node, constants, seen=()):
         for element in elements)
 
 
+def _container_holds_a_bare_component(node, constants, seen=()):
+    """Whether a container constant holds a bare component, at any depth.
+
+    ``D = {'one': 'src'}`` then ``Path(D[name]) / 'x.rs'`` — with ``name``
+    runtime — may well start at the ``src`` directory, exactly as the literal
+    subscript does; the value is only hidden behind the index, not absent
+    (r28, review P0). Mirrors ``_container_holds_a_path_literal`` with the
+    single-component test in place of the separator one.
+    """
+    if isinstance(node, ast.Name):
+        if node.id in seen or node.id not in constants:
+            return False
+        return _container_holds_a_bare_component(constants[node.id], constants,
+                                                 seen + (node.id,))
+    if isinstance(node, ast.Subscript):
+        return _container_holds_a_bare_component(node.value, constants, seen)
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        elements = node.elts
+    elif isinstance(node, ast.Dict):
+        elements = node.values
+    else:
+        return False
+    return any(
+        (isinstance(element, ast.Constant) and isinstance(element.value, str)
+         and _is_bare_component(element.value))
+        or _container_holds_a_bare_component(element, constants, seen)
+        for element in elements)
+
+
 def _indexes_a_path_container(node, constants):
     """Whether ``node`` reads a directory out of a container constant.
 
@@ -1936,6 +1965,32 @@ def _indexes_a_path_container(node, constants):
     return False
 
 
+def _leading_path_piece(node):
+    """The piece a path chain builds from, without its ``/``-joined tail.
+
+    ``Path(D[name]) / 'a' / 'lib.rs'``, ``os.path.join(D[name], 'a', 'x.rs')``
+    and ``Path(D[name], 'a', 'x.rs')`` all build from ``D[name]``: unwrapping
+    the joins and calls leaves the leading piece, which is what decides
+    whether the chain starts at a directory a container might name.
+    """
+    while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        node = node.left
+    while True:
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in ('str', 'Path') and len(node.args) == 1
+                and not node.keywords):
+            node = node.args[0]
+        elif isinstance(node, ast.Call) and node.args:
+            node = node.args[0]
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            # ``Path(D[name]).resolve()``: the wrapper call carries the piece.
+            node = node.func.value
+        elif isinstance(node, ast.Attribute):
+            node = node.value
+        else:
+            return node
+
+
 def _single_component_directory(node, constants):
     """Whether ``node`` reads a one-component directory out of a container.
 
@@ -1954,6 +2009,15 @@ def _single_component_directory(node, constants):
         node = node.args[0]
     if isinstance(node, ast.Subscript):
         element = _container_element(node.value, node.slice, constants)
+        if element is None:
+            # A dynamic index, a mutated container or a key this scanner
+            # cannot pair hides the value rather than proving it absent: the
+            # container still spelling bare components means the runtime may
+            # read one of them as the directory, so the lookup stays a
+            # directory read instead of silently reading "not one" (r28,
+            # review P0). ``D = {'one': 'src'}`` with ``D[name]`` is the same
+            # hole ``D['one']`` already keyed.
+            return _container_holds_a_bare_component(node.value, constants)
         return (isinstance(element, ast.Constant)
                 and isinstance(element.value, str)
                 and _is_bare_component(element.value))
@@ -2059,6 +2123,14 @@ def _runtime_parents_index(node, pairs, position, seen=()):
         if not isinstance(index, ast.Constant) or not isinstance(index.value, int):
             return True
         return _runtime_parents_index(node.value.value, pairs, position, seen)
+    if isinstance(node, ast.Attribute):
+        # ``parents[int(0)].parent``: the runtime index sits one attribute below
+        # the spelling this walker used to stop at, and stopping there read the
+        # unverifiable chain back as the repository root (r28, review P0). The
+        # flag travels up with the chain it belongs to — ``_levels_above_file``
+        # already answers None for it, so nothing else changes for a chain that
+        # really is statically readable (``parents[5].parent`` stays silent).
+        return _runtime_parents_index(node.value, pairs, position, seen)
     return False
 
 
@@ -2210,14 +2282,19 @@ ENUMERATION_NAMES = frozenset({'walk', 'listdir', 'scandir'})
 FS_MODULES = frozenset({'os', 'os.path', 'glob', 'shutil', 'pathlib'})
 
 
-def _module_aliases(tree):
-    """Map every name an import statement binds to the module path it names."""
-    aliases = {}
+def _alias_bindings(tree):
+    """``{name: {module spellings}}`` for every name an import statement binds.
+
+    A name can be bound more than once — at the top level and inside a
+    function, or by two functions — and each binding is collected: scopes
+    decide which module a use site sees, not a merge order.
+    """
+    bindings = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.asname:
-                    aliases[alias.asname] = alias.name
+                    bindings.setdefault(alias.asname, set()).add(alias.name)
                 else:
                     # ``import os.path`` binds the name ``os`` to the *package*,
                     # not to the submodule: ``os.chdir`` still exists and
@@ -2226,12 +2303,53 @@ def _module_aliases(tree):
                     # ``os.path.path.join`` and hid every join call in a table
                     # that spells the import that way.
                     top = alias.name.split('.')[0]
-                    aliases[top] = top
+                    bindings.setdefault(top, set()).add(top)
         elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
             for alias in node.names:
                 if alias.name != '*':
-                    aliases[alias.asname or alias.name] = f'{node.module}.{alias.name}'
-    return aliases
+                    bound = alias.asname or alias.name
+                    bindings.setdefault(bound, set()).add(
+                        f'{node.module}.{alias.name}')
+    return bindings
+
+
+def _module_aliases(tree):
+    """Map every name an import statement binds to the module path it names.
+
+    A name whose bindings disagree — ``import os`` at the top level and
+    ``import random as os`` inside a function — means a different module at
+    different use sites, and one merged map silently picked the last binding
+    it met: the function-local ``os`` overwrote the module-level one and a
+    genuine ``os.path.join`` read as ``random.path.join``, dropping the join
+    out of every net (r28, review P0; a regression r25 introduced by
+    merging scopes). Such names are left out of the map — a use then falls
+    back to its literal spelling, the module-level reading — and
+    ``_alias_binding_conflicts`` reports them at their use sites.
+    """
+    return {name: next(iter(targets))
+            for name, targets in _alias_bindings(tree).items()
+            if len(targets) == 1}
+
+
+def _alias_binding_conflicts(tree):
+    """Names whose import bindings do not agree on a single module."""
+    return {name for name, targets in _alias_bindings(tree).items()
+            if len(targets) > 1}
+
+
+def _used_module_heads(tree):
+    """Names the file uses as the head of a dotted spelling or a bare call."""
+    heads = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute):
+            root = node
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name):
+                heads.add(root.id)
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            heads.add(node.func.id)
+    return heads
 
 
 def _spells_a_repository_path(node, constants, seen=()):
@@ -3077,6 +3195,13 @@ def bare_concat_keys(tree, table, root=FIXTURES):
     tainted = _repository_parameters(tree, constants, repository_returns)
     keys = {}
     problems = list(_root_definition_problems(tree, self_path, root))
+    for name in sorted(_alias_binding_conflicts(tree) & _used_module_heads(tree)):
+        # ``import os`` at the top level and ``import random as os`` inside a
+        # function: the scanner cannot tell which module a use site sees, so
+        # the join nets have to read such a name by its literal spelling and
+        # the disagreement itself has to be on the record (r28, review P0).
+        problems.append('conflicting import bindings for a module name (this '
+                        f'scanner cannot tell which module a use sees): {name}')
 
     def bare_literal_directory(node):
         # A filesystem join whose head is a single bare literal component
@@ -3239,7 +3364,14 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             ambiguous = ambiguous_names(node)
             if ambiguous:
                 report_ambiguous(ambiguous[0], expression)
-            elif repo_rooted(node) or opaque_join_segment(node):
+            elif (repo_rooted(node) or opaque_join_segment(node)
+                  or _single_component_directory(_leading_path_piece(node),
+                                                 constants)):
+                # ``Path(D[name]) / 'a' / 'lib.rs'`` with ``D = {'one': 'src'}``:
+                # no segment resolves, no argument is opaque on its own, yet
+                # the chain starts at a directory the container may name — the
+                # same unresolvable build the literal subscript keys (r28,
+                # review P0). The head decides, not the tail it joins to.
                 report_unresolvable(expression)
             return False
         if (getattr(constants, 'cwd_unknown', False)
@@ -3729,6 +3861,26 @@ def violations(text, table, anchors=None):
                         f'file sitting directly under fixtures/, so anchors cannot '
                         f'schedule it: {table}')
         return problems
+    if not fnmatch.fnmatch(table, '*/*negative*.py'):
+        # The key grep's pathspec ``"$FX/**/*negative*.py"`` is a git *default*
+        # pathspec: its ``*`` crosses ``/``, but the pattern's own ``/`` after
+        # ``**`` still demands the match's "negative" appear after at least one
+        # separator — measured with ``git ls-files``, ``x-negative/run.py``
+        # and ``negative-output-directory/process_probe.py`` are not matched
+        # while ``a/x-negative/run.py`` is, and ``fnmatch(rel,
+        # '*/*negative*.py')`` is the exact equivalent (fnmatch's ``*``
+        # crosses ``/`` too; both readings measured equal on the real tree,
+        # 274 files either way). A table whose every "negative" sits before
+        # its first ``/`` is therefore emitted only when the table file itself
+        # changes (``neg-for-diff.sh:27``), never by a key grep — the same
+        # family as a top-level table, and accepting anchors for it would
+        # turn a permanently blind table into a green tick.
+        problems.append('table the host key grep cannot reach: every '
+                        '"negative" in the path sits before its first "/", so '
+                        'the pathspec "$FX/**/*negative*.py" never matches it '
+                        'and anchors cannot schedule it (only a change to the '
+                        f'table file itself emits it): {table}')
+        return problems
     required, scan_problems = bare_concat_keys(tree, table)
     problems.extend(problem for problem in scan_problems
                     if not problem.startswith('no discovery key'))
@@ -3773,10 +3925,12 @@ def sweep(root=FIXTURES):
     for path in sorted(root.rglob('*.py')):
         rel = path.relative_to(root).as_posix()
         # The whole relative path is matched, not only the basename: the host
-        # pathspec (``"$FX/**/*negative*.py"``) is a git default pathspec whose
-        # ``*`` crosses ``/``, so ``x-negative/run.py`` is scheduled while
-        # ``'negative' in path.name`` never saw it (fnmatch has no
-        # FNM_PATHNAME, which is the same cross-separator semantics).
+        # emits any ``*negative*.py`` when the table file itself changes
+        # (``neg-for-diff.sh:27``, a shell ``case`` whose ``*`` crosses ``/``),
+        # and the sweep net mirrors that emission net so every file the host
+        # can emit is registered — fnmatch has no FNM_PATHNAME, the same
+        # cross-separator reading. The :29 *key* grep is narrower than this
+        # net, and the marker below records the difference.
         if not fnmatch.fnmatch(rel, '*negative*.py') or rel in TABLES:
             continue
         if path.name in HOST_FILTERED or path.name.startswith('test_'):
@@ -3814,6 +3968,18 @@ def sweep(root=FIXTURES):
             hard.append('top-level table: the discovery loop\'s grep never '
                         'reaches a file sitting directly under fixtures/, so '
                         'anchors cannot schedule it')
+        elif not fnmatch.fnmatch(rel, '*/*negative*.py'):
+            # The mirror of the ``violations`` refusal above, as a register
+            # row: a table below the root whose every "negative" sits before
+            # its first ``/`` (``negative-output-directory/process_probe.py``)
+            # is in the :27 emission net but never in the :29 key grep, so
+            # no anchor can schedule it — permanently blind, one directory
+            # deeper than the top-level family (r28, review P0).
+            hard.append('table the host key grep cannot reach: every '
+                        '"negative" in the path sits before its first "/", so '
+                        'the pathspec "$FX/**/*negative*.py" never matches it '
+                        'and anchors cannot schedule it (only a change to the '
+                        'table file itself emits it)')
         if hard:
             unresolvable[rel] = hard
     return blind, unresolvable
@@ -3837,19 +4003,37 @@ def _duplicate_test_names(source):
     A class body that defines the same test name twice keeps only the last
     definition, so the earlier one is dead code no run ever executes — that is
     how a control silently stops existing. The whole file is parsed here so the
-    check below can re-read this very module.
+    check below can re-read this very module. A definition inside a compound
+    statement of the class body (``if``/``try``/``with``/``for``) still lands
+    in the class namespace when the body runs, so those are collected in
+    source order too — a ``def`` under ``if True:`` overwrites the one above
+    it exactly as a top-level ``def`` does (r28, review P2).
     """
     duplicates = {}
     for node in ast.parse(source).body:
         if not isinstance(node, ast.ClassDef):
             continue
+
+        def test_defs(body):
+            for child in body:
+                if (isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and child.name.startswith('test_')):
+                    yield child.name
+                elif isinstance(child, (ast.If, ast.Try, ast.With, ast.For,
+                                        ast.While)):
+                    yield from test_defs(child.body)
+                    if isinstance(child, ast.Try):
+                        for handler in child.handlers:
+                            yield from test_defs(handler.body)
+                    blocks = (list(getattr(child, 'orelse', []))
+                              + list(getattr(child, 'finalbody', [])))
+                    yield from test_defs(blocks)
+
         seen, repeated = set(), []
-        for child in node.body:
-            if (isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and child.name.startswith('test_')):
-                if child.name in seen and child.name not in repeated:
-                    repeated.append(child.name)
-                seen.add(child.name)
+        for name in test_defs(node.body):
+            if name in seen and name not in repeated:
+                repeated.append(name)
+            seen.add(name)
         if repeated:
             duplicates[node.name] = repeated
     return duplicates
@@ -4128,6 +4312,20 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertTrue(flagged == {'T': ['test_a']},
                         '#25-P1 the duplicate-name scan did not flag the '
                         'constructed duplicate: ' + repr(flagged))
+        # A definition inside a compound statement of the class body lands in
+        # the namespace all the same, so a conditional ``def`` shadows the
+        # one above it exactly as a top-level ``def`` does — the scan used to
+        # stop at direct children and miss it (r28, review P2).
+        conditional = (
+            'class T(unittest.TestCase):\n'
+            '    def test_a(self):\n        pass\n'
+            '    if True:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        flagged = _duplicate_test_names(conditional)
+        self.assertTrue(flagged == {'T': ['test_a']},
+                        '#28-P2 the duplicate-name scan did not flag the '
+                        'conditional class-body duplicate: ' + repr(flagged))
 
     def test_the_readme_followup_numbers_match_the_scan(self):
         """The README's follow-up paragraph is a numeric copy of the register.
@@ -4788,6 +4986,71 @@ class DiscoveryAnchorTests(unittest.TestCase):
             '#24-P1-2 the single-component directory head no longer keys the '
             'literal tail: ' + repr(problems))
 
+    def test_a_dynamic_container_index_with_a_bare_component_fails_closed(self):
+        """``Path(D[name]) / '…/lib.rs'`` may well start at the spelled directory.
+
+        The literal subscript ``D['one']`` keys the join; hiding the same value
+        behind a runtime index — or behind a container a write later touches —
+        read as "not a directory lookup" and the join dropped out of every
+        net, the false-pass shape of the literal spelling with the value only
+        hidden, not absent (r28, review P0).
+        """
+        shapes = {
+            'division': (
+                "from pathlib import Path\n"
+                "D = {'one': 'src'}\n"
+                "def row(name):\n"
+                "    return Path(D[name]) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+            ),
+            'os.path.join': (
+                "import os\n"
+                "from pathlib import Path\n"
+                "D = {'one': 'src'}\n"
+                "def row(name):\n"
+                "    return os.path.join(D[name], 'pilotdeck-gateway', 'src', 'lib.rs')\n"
+            ),
+            'mutated container': (
+                "from pathlib import Path\n"
+                "D = {'one': 'src'}\n"
+                "D['two'] = 'sms'\n"
+                "def row(name):\n"
+                "    return Path(D[name]) / 'mod.rs'\n"
+            ),
+        }
+        for label, body in shapes.items():
+            with self.subTest(shape=label):
+                problems = violations(body, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('unresolvable repository path' in problem
+                        for problem in problems),
+                    '#28-P0 the dynamic container index with a bare component '
+                    'was dropped silently: ' + repr(problems))
+
+    def test_a_literal_container_index_with_a_bare_component_still_keys(self):
+        """The reverse control: ``D['one']`` keeps keying the join it spells."""
+        synthetic = (
+            "from pathlib import Path\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(D['one']) / 'pilotdeck-gateway' / 'src' / 'lib.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('missing anchor: src/lib.rs' in problem for problem in problems),
+            '#28-P0 the literal container index no longer keys its join: '
+            + repr(problems))
+
+    def test_a_dynamic_container_index_of_non_path_values_stays_silent(self):
+        """A container of numbers is not a directory lookup, dynamic or not."""
+        synthetic = (
+            "from pathlib import Path\n"
+            "D = {'one': 3}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(D[name]) / 'mod.rs'\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+
     def test_a_duplicate_container_key_takes_the_last_value(self):
         """``{'k': x, 'k': y}`` builds ``y`` at runtime, so the guard must too.
 
@@ -5091,6 +5354,51 @@ class DiscoveryAnchorTests(unittest.TestCase):
                     '#24-P1-2 a literal .parents index was misread as '
                     'runtime: ' + repr(problems))
 
+    def test_a_runtime_parents_index_below_a_parent_attribute_fails_closed(self):
+        """``parents[int(0)].parent`` carries the runtime index up with it.
+
+        The r24 net stopped one attribute short of the subscript, so an
+        unverifiable ``ROOT`` read as the repository root again — the same
+        family one ``.parent`` lower (r28, review P0).
+        """
+        shapes = {
+            'int() call': (
+                "ROOT = Path(__file__).resolve().parents[int('0')].parent\n"),
+            'name index': (
+                "IDX = 0\n"
+                "ROOT = Path(__file__).resolve().parents[IDX].parent\n"),
+        }
+        for label, rootline in shapes.items():
+            with self.subTest(shape=label):
+                synthetic = ("from pathlib import Path\n" + rootline
+                             + "DISCOVERY_ANCHORS = ()\n"
+                             + "rows = [ROOT / 'negative_scope.py']\n")
+                problems = violations(synthetic, 'example/negative_controls.py')
+                self.assertTrue(
+                    any('reaches .parents through a runtime index' in problem
+                        for problem in problems),
+                    '#28-P0 the runtime index below .parent kept the root '
+                    'assumption standing: ' + repr(problems))
+
+    def test_a_literal_parents_index_below_a_parent_attribute_keeps_its_verdict(self):
+        """The reverse control: ``parents[5].parent`` is statically readable.
+
+        Only the depth answer changes (it names a different directory), and
+        the depth check keeps delivering it — nothing may read this shape as
+        a runtime index.
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5].parent\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [ROOT / 'negative_scope.py']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            all('runtime index' not in problem for problem in problems),
+            '#28-P0 a literal index below .parent was misread as runtime: '
+            + repr(problems))
+
     def test_filesystem_joins_of_relative_literals_are_keyed(self):
         """``os.path.join('sms', 'mod.rs')`` hides the key the loop greps for.
 
@@ -5147,6 +5455,61 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 self.assertTrue(
                     any('missing anchor: sms/mod.rs' in problem for problem in problems),
                     '#25-P2a the aliased join was not keyed: ' + repr(problems))
+
+    def test_a_scope_shadowed_import_does_not_hide_the_plain_join(self):
+        """A function-local ``import random as os`` must not overwrite ``os``.
+
+        ``_module_aliases`` merged every same-name import in the file into one
+        last-wins map, so the function-local binding overwrote the module-level
+        one and a genuine ``os.path.join`` read as ``random.path.join`` — the
+        join dropped out of every net while the table stayed green (r28,
+        review P0; a regression r25 introduced by reading aliases across
+        scopes). The conflicted name now falls back to its literal spelling
+        and the disagreement itself is reported.
+        """
+        synthetic = (
+            "import os\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [os.path.join('src', 'pilotdeck-gateway', 'src', 'lib.rs')]\n"
+            "def unrelated():\n"
+            "    import random as os\n"
+            "    return os.random()\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('missing anchor: src/lib.rs' in problem for problem in problems),
+            '#28-P0 the scope-shadowed import hid the stdlib join: '
+            + repr(problems))
+        self.assertTrue(
+            any('conflicting import bindings' in problem for problem in problems),
+            '#28-P0 the conflicting bindings themselves went unreported: '
+            + repr(problems))
+
+    def test_imports_bound_to_the_same_module_in_many_scopes_are_not_a_conflict(self):
+        """The reverse control: one target everywhere is still one alias.
+
+        ``import os.path`` twice — at the top level and inside a function —
+        binds the same name to the same package at every use site, so both
+        joins key and nothing is reported as a conflict.
+        """
+        synthetic = (
+            "import os.path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [os.path.join('sms', 'mod.rs')]\n"
+            "def unrelated():\n"
+            "    import os.path\n"
+            "    return os.path.join('sms', 'x.rs')\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('missing anchor: sms/mod.rs' in problem for problem in problems),
+            '#28-P0 the same-target import in a second scope stopped keying: '
+            + repr(problems))
+        self.assertTrue(
+            all('conflicting import bindings' not in problem
+                for problem in problems),
+            '#28-P0 a same-target import was read as a conflict: '
+            + repr(problems))
 
     def test_a_non_path_call_through_a_module_alias_stays_silent(self):
         """The reverse control: ``o.getenv(...)`` is not a path build.
@@ -5459,6 +5822,78 @@ class DiscoveryAnchorTests(unittest.TestCase):
         )
         problems = violations(synthetic, 'top_level_negative.py')
         self.assertTrue(any('top-level table' in p for p in problems), problems)
+
+    def test_a_table_the_host_key_grep_cannot_reach_is_refused(self):
+        """``x-negative/run.py`` is invisible to the key grep even anchored.
+
+        The ``:29`` pathspec ``"$FX/**/*negative*.py"`` is a git default
+        pathspec — its ``*`` crosses ``/``, but the ``/`` after ``**`` still
+        demands the match's "negative" appear after at least one separator
+        (measured with ``git ls-files``: this shape and
+        ``negative-output-directory/process_probe.py`` return nothing,
+        ``a/x-negative/run.py`` matches, and ``fnmatch(rel,
+        '*/*negative*.py')`` is the exact equivalent, 274 files either way
+        on the real tree). A table whose every "negative" sits before its
+        first ``/`` is emitted only when the table file itself changes
+        (``neg-for-diff.sh:27``), so anchors cannot schedule it — the same
+        family as a top-level table, one directory deeper (r28, review P0;
+        the r24 README claim that this shape is schedulable was wrong).
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "SMS = ROOT / 'src/pilotdeck-gateway/src/channel/sms'\n"
+            "DISCOVERY_ANCHORS = ('sms/mod.rs',)\n"
+            "rows = [SMS / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'x-negative/run.py')
+        self.assertTrue(
+            any('the host key grep cannot reach' in problem for problem in problems),
+            '#28-P0 the unreachable-pathshape table passed with anchors: '
+            + repr(problems))
+
+    def test_a_negative_directory_deep_enough_stays_schedulable(self):
+        """The reverse control: ``a/x-negative/run.py`` is greppable.
+
+        "negative" after at least one separator puts the file inside the
+        pathspec, so it is measured normally — only the first-directory
+        shape is refused.
+        """
+        synthetic = (
+            "ROOT = Path(__file__).resolve().parents[6]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [ROOT / 'src/pilotdeck-gateway/src/channel/sms/mod.rs']\n"
+        )
+        self.assertEqual(
+            violations(synthetic, 'a/x-negative/run.py'), [])
+
+    def test_a_table_the_key_grep_misses_is_marked_by_the_sweep(self):
+        """The sweep registers the unreachable shape like a top-level table.
+
+        ``negative-output-directory/process_probe.py`` is in the ``:27``
+        emission net but never in the ``:29`` key grep, so the sweep marks
+        it unresolvable — permanently blind, registered as such (r28).
+        """
+        body = (
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "rows = [('a', ROOT / 'src/example/named.rs', 'x')]\n"
+        )
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            (root / 'x-negative').mkdir()
+            (root / 'x-negative' / 'run.py').write_text(body, encoding='utf-8')
+            blind, unresolvable = sweep(root)
+        self.assertEqual(blind, {})
+        self.assertEqual(sorted(unresolvable), ['x-negative/run.py'])
+        self.assertTrue(any('the host key grep cannot reach' in problem
+                            for problem in unresolvable['x-negative/run.py']))
+        with tempfile.TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            (root / 'deep' / 'x-negative').mkdir(parents=True)
+            (root / 'deep' / 'x-negative' / 'run2.py').write_text(
+                body.replace('parents[5]', 'parents[6]'), encoding='utf-8')
+            blind, unresolvable = sweep(root)
+        self.assertEqual(blind, {})
+        self.assertEqual(unresolvable, {})
 
     def test_runtime_directories_need_no_anchor(self):
         """Evidence-dir joins are not repository paths, so they carry no key."""
