@@ -5,15 +5,16 @@ compilation and nonce receipts.
 No source replacement: use the shared tree lock + working-tree SHA contract.
 Caller supplies CARGO_TARGET_DIR; all selected rows run before the summary exit.
 
-The twelve rows cover the machine's own contract on the matrix §四 failure
+The thirteen rows cover the machine's own contract on the matrix §四 failure
 semantics — the A2 halt branch, the A8 gate release point, the DC-1/A3 cap
 clause of the shared timeout predicate — the production wiring's A10 flush
-precondition, and the eight #2363 follow-ups: the halt walk's close-timeout
+precondition, and the nine #2363 follow-ups: the halt walk's close-timeout
 branch, the backstop spelling's own cap clause, the A6 management gate at
 the cron routing seam (the closed check, the dispatch's read half and the
-S1 face's drain), the halt walk's owner-finish timeout branch, and the S4
+S1 face's drain), the halt walk's owner-finish timeout branch, the S4
 half's once-only verdict (the error-path early escape and the cancelled
-run's re-run). Each row's anchor is the receipt-emitting assertion inside
+run's re-run), and the management gate registry's repeat-lookup reuse.
+Each row's anchor is the receipt-emitting assertion inside
 the named test, so only that assertion's panic can kill its mutant.
 """
 import argparse
@@ -92,6 +93,12 @@ switches = [
     ('switch-cron-dispatch-ungated', CRON,
      MACHINE_PREFIX + 'the_stop_face_drains_an_in_flight_management_dispatch',
      '#2363 the stop face waits for the in-flight dispatch'),
+    # #2363 item 6, registry: the lookup's find discarded — every lookup
+    # mints and registers a fresh gate, so the same live manager's second
+    # lookup answers a different gate (the reuse contract's red shape).
+    ('switch-cron-gate-registry-lookup', MACHINE,
+     MACHINE_PREFIX + 'the_management_gate_registry_forgets_dead_managers',
+     '#2363 the lookup reuses the registered gate'),
     # #2363 item 4: the halt walk's owner-finish timeout branch — the failure
     # report for a hung S4 half deleted, so the bound is exceeded silently
     # and the process exit is kept alive by the hang.

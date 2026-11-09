@@ -966,7 +966,7 @@ fn the_management_gate_registry_forgets_dead_managers() {
     // pointer-identity find — gone, every lookup would mint a fresh gate
     // and this fails.)
     let again = crate::switch::cron_management_gate(&second);
-    assert!(
+    negative_assert!(
         Arc::ptr_eq(&again, &second_gate),
         "#2363 the lookup reuses the registered gate"
     );
