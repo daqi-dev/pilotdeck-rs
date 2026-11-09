@@ -20,6 +20,7 @@ import json
 import signal
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -94,6 +95,16 @@ out = claim_dir(sys.argv[1])
 runner = apparatus / 'negative_controls.py'
 
 
+def summary_state(path):
+    """「内容 + 文件是否发布」的观测（返回序对齐 judge 签名：text 在前），真实
+    循环与合成自检共用一份（r5 boundary#1 / sibling#2）：只测 judge 分支而绕过
+    这里的取数接线，`is_file()` 被改回内容真值（0 字节已发布被当「未发布」）时
+    合成自检照绿。已发布的 0 字节文件返回 ('', True)——发布即证据，不看内容真值。
+    """
+    published = path.is_file()
+    return (path.read_text(encoding='utf-8') if published else None), published
+
+
 def judge(name, rc, log, summary_text, summary_published):
     """单条判杀：全部绑定到 #2378 守卫的专属可观测输出。"""
     if name == 'baseline':
@@ -152,21 +163,43 @@ for _sig_name in ('SIGTERM', 'SIGHUP', 'SIGQUIT'):
         print(f'self-check: terminate handler for {_sig_name} not installed',
               file=sys.stderr)
         raise SystemExit(2)
-# judge 合成自检（r4 boundary#2 + sibling#3）：「拒绝不得留下跑完的证据」分支
-# 不能只靠读码论证——既有 5 行变异全部走「不发布 summary」路径，删掉该分支
-# 仍 5/5 KILLED。合成输入钉红绿两侧：同一拒绝形状，未发布 → KILLED；已发布
-# （0 字节与 JSON 两形）→ SURVIVED。
+# judge 合成自检（r4 boundary#2 + sibling#3、r5 boundary#1/sibling#2）：「拒绝
+# 不得留下跑完的证据」分支不能只靠读码论证，且判据输入必须走真实取数接线
+# summary_state（在临时目录里摆出三形：不存在 / 0 字节 / JSON）——只测 judge
+# 分支而绕过接线，`is_file()` 被改回内容真值时这里照绿。三形钉红绿两侧：
+# 未发布 → KILLED；已发布（0 字节与 JSON 两形）→ SURVIVED。
 _refusal_log = ('negative_controls: assembled control ids [...] do not match '
                 'the registered roster [...] (#2378); refusing to summarize '
                 'an unexpected control set (N5)')
-if judge('roster-rename-n5', 2, _refusal_log, None, False)[0] != 'KILLED':
-    print('self-check: a clean refusal must judge KILLED', file=sys.stderr)
-    raise SystemExit(2)
-for _text in ('', '{"status": "PASS"}'):
-    if judge('roster-rename-n5', 2, _refusal_log, _text, True)[0] != 'SURVIVED':
-        print('self-check: a refusal that published a summary must judge '
-              'SURVIVED', file=sys.stderr)
+with tempfile.TemporaryDirectory(prefix='negctl-roster-selfcheck-') as _tmp:
+    _tmp = Path(_tmp)
+    _missing = summary_state(_tmp / 'absent-summary.json')
+    (_tmp / 'empty-summary.json').write_bytes(b'')
+    _empty = summary_state(_tmp / 'empty-summary.json')
+    (_tmp / 'json-summary.json').write_text('{"status": "PASS"}', encoding='utf-8')
+    _json = summary_state(_tmp / 'json-summary.json')
+    if _missing != (None, False) or _empty != ('', True) or _json[1] is not True:
+        print(f'self-check: summary_state wrong: missing={_missing!r} '
+              f'empty={_empty!r} json={_json!r}', file=sys.stderr)
         raise SystemExit(2)
+    if judge('roster-rename-n5', 2, _refusal_log, *_missing)[0] != 'KILLED':
+        print('self-check: a clean refusal must judge KILLED', file=sys.stderr)
+        raise SystemExit(2)
+    for _state in (_empty, _json):
+        if judge('roster-rename-n5', 2, _refusal_log, *_state)[0] != 'SURVIVED':
+            print('self-check: a refusal that published a summary must judge '
+                  'SURVIVED', file=sys.stderr)
+            raise SystemExit(2)
+# 词表同源 pin（r5 sibling#1）：单一登记点的两个消费者若改回字面量副本（即便
+# 暂同值）当时无红、要到最长 1800 s 的负控轮后才可能暴露——这里源码计数
+# `= CHECK.NEGATIVE_VERDICTS` 别名恰一处，改回字面量即计数归零直接红。
+for _pinned in (apparatus / 'negative_controls.py', apparatus / 'self_check.py'):
+    _src = _pinned.read_text(encoding='utf-8')
+    for _vocab in ('NEGATIVE_VERDICTS', 'POSITIVE_VERDICTS'):
+        if _src.count(f'{_vocab} = CHECK.{_vocab}') != 1:
+            print(f'self-check: {_pinned.name} lost the CHECK-sourced '
+                  f'{_vocab} alias (exactly one expected)', file=sys.stderr)
+            raise SystemExit(2)
 with mutating_sources(root, sorted({path for _name, path, _old, _new in run_rows
                                     if path is not None})) as snapshots:
     # 锚点过期必须报错退出，绝不记成 SURVIVED：变异前先核每个锚在当前源里恰一次。
@@ -189,11 +222,7 @@ with mutating_sources(root, sorted({path for _name, path, _old, _new in run_rows
                 capture_output=True, text=True, timeout=ROUND_TIMEOUT_SECONDS,
                 start_new_session=True)
             rc, log = result.returncode, result.stdout + result.stderr
-            summary_text = None
-            published = out_dir / 'summary.json'
-            summary_published = published.is_file()
-            if summary_published:
-                summary_text = published.read_text(encoding='utf-8')
+            summary_text, summary_published = summary_state(out_dir / 'summary.json')
             status, reason = judge(name, rc, log, summary_text, summary_published)
         except subprocess.TimeoutExpired:
             rc, log, status, reason = (None, '', 'INVALID',
