@@ -479,9 +479,10 @@ fn replay_receipt(
             return Err(state_error("SOP_RESUME_REQUEST_CONFLICT"));
         }
         // `input.expectedRevision !== duplicate.authorization.expectedRevision`.
+        let undefined = JsValue::Undefined;
         let stored_revision = authorization
             .get("expectedRevision")
-            .unwrap_or(&JsValue::Undefined);
+            .unwrap_or(&undefined);
         if !strict_equal(&input.expected_revision, stored_revision) {
             return Err(state_error("SOP_RESUME_REQUEST_CONFLICT"));
         }

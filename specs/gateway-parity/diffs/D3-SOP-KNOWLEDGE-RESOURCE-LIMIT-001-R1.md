@@ -21,7 +21,7 @@ original: D3-SOP-KNOWLEDGE-RESOURCE-LIMIT-001
 
 ## 机器判据
 
-通过源码定位 `HyperJsonTransport` 的实际构造与 `read_body` 上限，以及 SOP controller、admission 和 approver 消费者；选测 `module_host::approvals::native_http` 的有界响应测试。skills 旧上限修复的对应测试 `native_skills_proxy_limit_tests::skills_proxy_transport_accepts_more_than_native_knowledge_limit` 使用真实 loopback HTTP 读取 8 MiB+1；knowledge 超限反控为 `runtime::sop::authority::tests::native_transport_rejects_an_oversize_successful_manifest`。这些新组合检查待协调者在受控 mbp2 上运行；不得以源码审阅代报通过。r127 SOP 真代理正控与失败原件分别在 mbp2 `/private/tmp/pdrs-sop-r127-probes-20261109/proxy-sop-only` 和 `proxy`，仅证明普通响应路径，不证明超限 TS 行为。
+通过源码定位 `HyperJsonTransport` 的实际构造与 `read_body` 上限，以及 SOP controller、admission 和 approver 消费者；选测 `runtime::sop::client::tests::native_sop_http_real_eight_mib_boundary` 的真实合法 JSON 8 MiB / 8 MiB+1 边界测试（旧 `real_http_uses_shared_gzip_decoder_and_bounds_the_decoded_body` 仅证明注入的小限额）。skills 旧上限修复的对应测试 `native_skills_proxy_limit_tests::skills_proxy_transport_accepts_more_than_native_knowledge_limit` 使用真实 loopback HTTP 读取 8 MiB+1；knowledge 超限反控为 `runtime::sop::authority::tests::native_transport_rejects_an_oversize_successful_manifest`。这些新组合检查待协调者在受控 mbp2 上运行；不得以源码审阅代报通过。r127 SOP 真代理正控与失败原件分别在 mbp2 `/private/tmp/pdrs-sop-r127-probes-20261109/proxy-sop-only` 和 `proxy`，仅证明普通响应路径，不证明超限 TS 行为。
 
 ## 批准记录
 

@@ -402,3 +402,26 @@ fn sop_client_uses_optional_configured_timeout() {
     assert!(SopClient::new("http://127.0.0.1:1".into(),None,None,None,transport.clone()).timeout.is_none());
     assert_eq!(SopClient::new("http://127.0.0.1:1".into(),None,None,Some(123.0),transport).timeout,Some(Duration::from_millis(123)));
 }
+
+#[tokio::test]
+async fn native_sop_http_real_eight_mib_boundary() {
+    use crate::module_host::approvals::native_http::HyperJsonTransport;
+    const LIMIT: usize = 8 * 1024 * 1024;
+    for size in [LIMIT, LIMIT + 1] {
+        let mut body = b"{\"x\":\"".to_vec();
+        body.resize(size - 2, b'x');
+        body.extend_from_slice(b"\"}");
+        assert_eq!(body.len(), size);
+        let mut response = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n").into_bytes();
+        response.extend(body);
+        let (url, server) = raw_server(response, false).await;
+        let result = tokio::time::timeout(Duration::from_secs(20), HyperJsonTransport::default().request(get(url, Duration::from_secs(15)))).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(20), server).await.unwrap().unwrap();
+        if size == LIMIT {
+            let result = result.expect("exact 8 MiB valid response must be accepted");
+            assert_eq!(result.body.get("x").unwrap().as_string().unwrap().units().len(), LIMIT - 8);
+        } else {
+            assert!(matches!(result, Err(JsonFailure::Body(_))), "oversize must fail closed");
+        }
+    }
+}

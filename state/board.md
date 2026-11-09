@@ -5205,6 +5205,11 @@ r126 ad7a416 全目标check/strict/四bin、native545、default_mode原SHA单测
 r127全目标check/四bin、AO119/admission12通过；native两失败定位为MCP配置捕获owner第三强环及Edit回归缺实际读文件前提，均已修待r128。SDK重复delete保护与在飞close失败传导、普通close隔离cleanup错误、真实票据barrier候选逐SHA导入；CompactionAbort加入读取状态与首次poll之间的确定性反例。SOP无默认timeout测试的真实HTTP虚拟时钟死锁与读量lint已修，保留原失败记录。第二谱系SOP四角色P0/P1=0、四项P2集中收口，不改冻结标准。全Gateway5859名单已无漏无重，旧9失败与当前差异需分别收证。仅本机提交、Rust只mbp2，CLI尚未完成。
 
 
-### 2026-11-09 08:29 · SOP旧值兼容与模型代理补齐
+### 2026-11-09 08:20 · SOP旧值兼容与模型代理补齐
 
 r128 SOP17/AO119/确定性Notify回归通过；native550过2失败，其中SDK实为嵌套aggregate断言误用Display，已改精确cause及公共错误同源校验；关闭图submitter已归零，factory1定位为ConfigStore强订阅未dispose，新增宿主RAII解绑覆盖取消/初始化失败待r129。真实r127 SOP代理9项/取消7项/同节点修正6项过，但model.invalid揭示模型漏读项目代理，已按同snapshot构建transport。SOP44合法session格49步raw值/receipt事务及审批读取503区分片逐SHA接入；knowledge真实执行scope/credential测试、skills保原上限片待编。全Gateway原5859=5599过9败251忽略，5环境失败同bin短TMP复验过，原失败不回写。仅本机提交、Rust只mbp2，CLI未完。
+
+
+### 2026-11-09 08:21 · SOP首编修复与负控重定位
+
+r129首编发现raw revision引用临时Undefined寿命不足，已用局部值延长，不改比较语义；接r130。owner三条负控按当前产品结构重定位，13项/test/marker/等价表不变，静态13锚点过，实际执行分给第二镜像。SOP补真实8MiB精确边界，资源差异R1选测入口更正；生命周期审仍在跑，已知SDK旧断言失败已在8bb逐层修正待实测。
