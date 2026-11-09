@@ -1325,14 +1325,14 @@ mod tests {
             shared_parked,
             "#1433 the release parks on the gated shared stop"
         );
-        crate::negative_assert!(
-            !provider_dispose.is_finished(),
-            "#1433 the provider dispose waits for the gated shared stop"
-        );
         // The provider half of the invariant, observed inside the window
         // where the shared stop is parked on its gate: the state lock must
         // be free across that await (the probe runs as its own task, so a
-        // held lock surfaces as a timeout, not a blocked worker).
+        // held lock surfaces as a timeout, not a blocked worker). This
+        // bound assertion runs before the `!is_finished` probe below: an
+        // early state unlink would also let `provider.dispose()` settle,
+        // and dying there first would report a plain failure instead of
+        // this test's bound receipt.
         let provider_probe = {
             let provider = provider.clone();
             tokio::spawn(async move { provider.shared_generation_count() })
@@ -1346,6 +1346,10 @@ mod tests {
             generations_after_park,
             1,
             "#1433 the parked shared stop keeps its entry until it finishes"
+        );
+        crate::negative_assert!(
+            !provider_dispose.is_finished(),
+            "#1433 the provider dispose waits for the gated shared stop"
         );
         open_shared
             .send(())

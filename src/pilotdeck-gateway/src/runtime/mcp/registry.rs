@@ -496,6 +496,17 @@ impl SessionMcpRuntimeRegistration {
     }
 }
 
+/// Total per-session runtimes across all sessions; shared by `size` and the
+/// cap admission check so the two counts cannot drift apart (#2442 review
+/// P2: the sum used to exist twice and only one half was mutation-covered).
+fn total_entries(state: &RegistryState) -> usize {
+    state
+        .by_session
+        .iter()
+        .map(|(_, entries)| entries.len())
+        .sum()
+}
+
 impl SessionMcpRuntimeRegistry {
     pub fn new() -> Self {
         Self::default()
@@ -506,11 +517,7 @@ impl SessionMcpRuntimeRegistry {
     }
 
     pub fn size(&self) -> usize {
-        lock(&self.inner)
-            .by_session
-            .iter()
-            .map(|(_, entries)| entries.len())
-            .sum()
+        total_entries(&lock(&self.inner))
     }
 
     pub fn register(
@@ -539,11 +546,7 @@ impl SessionMcpRuntimeRegistry {
         cap: f64,
     ) -> Result<Option<SessionMcpRuntimeRegistration>, RuntimeError> {
         let mut state = lock(&self.inner);
-        let size: usize = state
-            .by_session
-            .iter()
-            .map(|(_, entries)| entries.len())
-            .sum();
+        let size: usize = total_entries(&state);
         if size as f64 >= cap {
             return Ok(None);
         }

@@ -113,6 +113,20 @@ mutations = [
      'as usize >= cap as usize {',
      'native_process::tools::tests::session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit',
      '#1433 a 2.5 cap still admits the third per-session runtime'),
+    # #2442 review P2 (sibling + concurrency both flagged): the concurrent
+    # positive control had no paired mutation. Reverting `register_below_cap`
+    # to a check-then-register — the size read in its own lock, the insert
+    # in another — reintroduces the cross-thread over-cap window the test's
+    # factory barrier parks on; only that test goes red.
+    ('per-session-cap-two-locks', REGISTRY,
+     '''        let mut state = lock(&self.inner);
+        let size: usize = total_entries(&state);
+        if size as f64 >= cap {''',
+     '''        let size: usize = self.size();
+        let mut state = lock(&self.inner);
+        if size as f64 >= cap {''',
+     'native_process::tools::tests::session_mcp_tools_holds_the_cap_across_concurrent_prepares',
+     '#2442 concurrent prepares register at most one runtime under the cap'),
     # A per-session start failure degrades to a diagnostic; propagating it
     # takes the whole session down instead.
     ('start-failure-propagated', TOOLS,
@@ -183,6 +197,7 @@ EXPECTED_NAMES = (
     'release-order-swapped',
     'per-session-limit-off',
     'per-session-limit-truncated',
+    'per-session-cap-two-locks',
     'start-failure-propagated',
     'turn-registry-drops-mcp',
     'composition-reads-no-servers',
