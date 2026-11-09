@@ -1015,3 +1015,11 @@ impl GatewayCommandCatalogBundle {
 #[cfg(test)]
 #[path = "plugins_tests.rs"]
 mod tests;
+
+// #2131: the utf16-residual-sort fixture replays the real TS gold through the
+// five reachable JsString sort sites. It hangs under this module so the
+// plugins-subtree seams (`contributions::collect_mcp_instructions`,
+// `loader::LoadedPlugin`) stay reachable without widening them.
+#[cfg(test)]
+#[path = "../../tests/fixtures/utf16-residual-sort/regression.rs"]
+mod utf16_residual_sort_tests;
