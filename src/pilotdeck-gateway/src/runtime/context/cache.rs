@@ -116,7 +116,11 @@ pub(crate) fn cache_plan_identity(
             })?;
             let right_name = to_string_units(&raw_right)
                 .map_err(|_| ModuleError::new(StackOverflow::MESSAGE))?;
-            let order = collator.compare_utf16(left_name.units(), &right_name);
+            // #2131: module-supplied tool names are arbitrary JsStrings;
+            // isolated surrogates keep ICU4C's implicit weights, matching the
+            // `left.name.localeCompare(right.name)` TS original.
+            let order =
+                collator.compare_utf16_preserving_surrogates(left_name.units(), &right_name);
             if order != Ordering::Equal {
                 return Ok(order);
             }

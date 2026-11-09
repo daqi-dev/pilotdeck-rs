@@ -1204,7 +1204,9 @@ fn locale_compare_js(left: &JsString, right: &JsString) -> Ordering {
         icu_collator::Collator::try_new(locale.into(), Default::default())
             .expect("bundled collation data")
     });
-    collator.compare_utf16(left.units(), right.units())
+    // #2131: provider/model/timestamp strings are records' JsStrings, which
+    // keep isolated surrogates from the journal and module observe calls.
+    collator.compare_utf16_preserving_surrogates(left.units(), right.units())
 }
 
 /// `resolvePilotHome()`: `PILOT_HOME ?? "~/.pilotdeck"`, then Node
