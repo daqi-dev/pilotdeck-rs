@@ -850,8 +850,25 @@ impl WeComCallbackChannel {
     /// throws on a failed toPrimitive and the loader's catch records the key
     /// and continues, so the mount surfaces the same TypeError at construction
     /// instead of letting `config_port` fold it into the default port.
+    /// #2432: the five `String(options.<field> ?? env ?? "").trim()` coercions
+    /// run before the port (WeComCallbackChannel.ts:100-104 field order), and
+    /// a value whose `String()` throws surfaces the same way — the guard walks
+    /// the same `validate_coercion` the port's `Number()` shares, so an own
+    /// `toString`, a prototype-carried one, a null-terminating chain and a
+    /// too-deep array join all report the TS error text.
     pub fn constructor(interaction: Arc<dyn InteractionPort>) -> ChannelAdapterConstructor {
         Arc::new(move |options: &JsObject| {
+            for field in ["corpId", "agentId", "secret", "token", "encodingAesKey"] {
+                if let Some(value) = options.get(field).filter(|value| !nullish(Some(value)))
+                    && let Err(error) = crate::js_value::string_coercible_checked(value)
+                {
+                    return Err(ChannelError::Plain(format!(
+                        "{}: {}",
+                        error.name(),
+                        error.message()
+                    )));
+                }
+            }
             if let Some(port) = options.get("port").filter(|value| !nullish(Some(value)))
                 && let Some(error) = crate::js_value::number_conversion_error(port)
             {

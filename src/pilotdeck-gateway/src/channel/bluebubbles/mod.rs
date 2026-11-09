@@ -857,10 +857,28 @@ impl ChannelHandle for BlueBubblesHandle {
 /// Loader mount: builds the adapter from the `bluebubbles` loader option
 /// object (`build_options` already resolved `extra.serverUrl` /
 /// `token ?? extra.password`).
+///
+/// #2433: the TS constructor's
+/// `normalizeBaseUrl(options.serverUrl ?? …)` calls `url.replace`, so a
+/// present non-nullish non-string throws `TypeError: url.replace is not a
+/// function` (Node v22.22.0 probes, `_tmp/20261026-issue-p2batch-f/s5-probe/`)
+/// — the loader catch records the key and continues, and the channel never
+/// enters the startup array. The Rust mount must not paper over that with
+/// `String()` coercion: it applies the same check at construction and
+/// surfaces the same TypeError through the same loader catch.
 pub fn register(mounts: &mut crate::channel::loader::ChannelLoaderMounts) {
     mounts.register(
         "bluebubbles",
         Arc::new(|options: &JsObject| {
+            if let Some(value) = options
+                .get("serverUrl")
+                .filter(|value| !sms::nullish(value))
+                && !matches!(value, JsValue::String(_))
+            {
+                return Err(ChannelError::Plain(
+                    "TypeError: url.replace is not a function".to_owned(),
+                ));
+            }
             Ok(Arc::new(BlueBubblesChannel::new(
                 BlueBubblesOptions {
                     env: Some(Arc::new(|name| {

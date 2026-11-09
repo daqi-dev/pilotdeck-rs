@@ -363,7 +363,14 @@ impl PhasedInner {
                                 serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed, close_notice)
                                 .await
                             {
-                                eprintln!("native WS connection: {error}");
+                                // #2434: a best-effort console line, like TS's
+                                // `console.error` — `eprintln!` panics when
+                                // the write fails (std behavior), taking the
+                                // whole accept-loop task down with it.
+                                crate::native_process::channels::console_log_line(
+                                    &mut std::io::stderr(),
+                                    &format!("native WS connection: {error}"),
+                                );
                             }
                             if crate::mutants::on("ws-caps-connection-leak") {
                                 std::mem::forget(_permit);
@@ -374,7 +381,13 @@ impl PhasedInner {
                     }
                     Err(error) if matches!(error.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported) => break Some(error),
                     Err(error) => {
-                        eprintln!("native WS accept: {error}");
+                        // #2434: same best-effort shape as the connection
+                        // line above — a failed stderr write must not panic
+                        // the accept loop.
+                        crate::native_process::channels::console_log_line(
+                            &mut std::io::stderr(),
+                            &format!("native WS accept: {error}"),
+                        );
                         tokio::select! {
                             _ = &mut stop => break None,
                             _ = tokio::time::sleep(Duration::from_millis(100)) => {}

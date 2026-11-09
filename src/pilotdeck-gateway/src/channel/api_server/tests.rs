@@ -363,8 +363,8 @@ fn every_replay_option_key_is_mapped_into_the_channel_options() {
     for key in REPLAY_OPTION_KEYS {
         match key {
             "apiKey" => assert_eq!(
-                parsed.api_key.as_deref(),
-                Some("key-from-fixture"),
+                parsed.api_key,
+                Some(JsValue::String(JsString::from("key-from-fixture"))),
                 "#1759: `apiKey` must reach the channel options"
             ),
             "modelName" => assert_eq!(
@@ -391,7 +391,11 @@ fn absent_containers_stay_legal() {
     // cell without those keys relies on.
     let options = options(&json!({}), None);
     assert_eq!(options.model_name.as_deref(), Some("parity-model"));
-    assert_eq!(options.api_key.as_deref(), Some(""));
+    assert_eq!(
+        options.api_key,
+        Some(JsValue::String(JsString::from(""))),
+        "#1333 absent apiKey replays as the empty string the reader maps"
+    );
     gateway_from(&json!({}), None, Arc::new(AtomicBool::new(false)));
 }
 
@@ -1325,7 +1329,9 @@ fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
     let options = &case["options"];
     ApiServerOptions {
         port: Some(JsValue::Number(0.0)),
-        api_key: Some(case_option(options, "apiKey", "")),
+        api_key: Some(JsValue::String(JsString::from(case_option(
+            options, "apiKey", "",
+        )))),
         host: Some("127.0.0.1".to_owned()),
         model_name: Some(case_option(options, "modelName", "parity-model")),
         cors_origins: case_origins(options),
@@ -2916,6 +2922,117 @@ fn port_numbers_follow_the_es_string_numeric_literal() {
 
 // ---------------------------------------------------------------- loader
 
+/// #2428: a buffered-turn request with an optional Bearer token.
+fn bearer_chat(token: Option<&str>) -> ReqSpec {
+    ReqSpec {
+        method: "POST".to_owned(),
+        path: "/v1/chat/completions".to_owned(),
+        headers: match token {
+            Some(token) => vec![
+                ("authorization".to_owned(), format!("Bearer {token}")),
+                ("x-hermes-session-id".to_owned(), "chat-2428".to_owned()),
+            ],
+            None => vec![("x-hermes-session-id".to_owned(), "chat-2428".to_owned())],
+        },
+        body: b"{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}".to_vec(),
+        keep_alive: false,
+        set_host: true,
+    }
+}
+
+/// #2428: `options.apiKey ?? process.env.API_SERVER_KEY ?? ""` keeps any
+/// non-nullish value; `checkAuth`'s `Buffer.from(this.apiKey)` then throws on
+/// a number/`true`/object, the catch answers 401 for every request. The Rust
+/// mount used to fold a non-string into `None` and fall through to the
+/// env/"" fallback — a configured number silently disabled auth (fail-open).
+/// Each classification is pinned: a number never matches any Bearer, `false`
+/// is `Off` like TS's `!this.apiKey` gate, and an array compares as its
+/// `Buffer.from` bytes (`[104, 105]` is `"hi"`).
+#[tokio::test]
+async fn non_string_api_keys_never_fold_to_unset() {
+    let turn_gateway = || {
+        Some(gateway_from(
+            &json!({"gateway": {"turns": [{"events": []}]}}),
+            None,
+            Arc::new(AtomicBool::new(false)),
+        ) as Arc<dyn TurnGateway>)
+    };
+    let number = start(
+        ApiServerOptions {
+            port: Some(JsValue::Number(0.0)),
+            api_key: Some(JsValue::Number(7.0)),
+            ..ApiServerOptions::default()
+        },
+        turn_gateway(),
+    )
+    .await;
+    crate::negative_assert_eq!(
+        exchange(number.addr, &bearer_chat(None)).await.status,
+        Some(401),
+        "#2428 a configured number apiKey still rejects a request without the Bearer key"
+    );
+    crate::negative_assert_eq!(
+        exchange(number.addr, &bearer_chat(Some("7"))).await.status,
+        Some(401),
+        "#2428 a configured number apiKey rejects even the string it never equals"
+    );
+    number
+        .handle
+        .stop("test")
+        .await
+        .expect("#2428 api_server stop");
+
+    // `false` is falsy, not nullish: TS keeps it and `!this.apiKey` opens the
+    // gate — it must not be folded into the env/"" fallback either.
+    let false_key = start(
+        ApiServerOptions {
+            port: Some(JsValue::Number(0.0)),
+            api_key: Some(JsValue::Bool(false)),
+            ..ApiServerOptions::default()
+        },
+        turn_gateway(),
+    )
+    .await;
+    crate::negative_assert_eq!(
+        exchange(false_key.addr, &bearer_chat(None)).await.status,
+        Some(200),
+        "#2428 a configured false apiKey answers 200 like TS's !this.apiKey gate"
+    );
+    false_key
+        .handle
+        .stop("test")
+        .await
+        .expect("#2428 api_server stop");
+
+    let array = start(
+        ApiServerOptions {
+            port: Some(JsValue::Number(0.0)),
+            api_key: Some(JsValue::Array(vec![
+                JsValue::Number(104.0),
+                JsValue::Number(105.0),
+            ])),
+            ..ApiServerOptions::default()
+        },
+        turn_gateway(),
+    )
+    .await;
+    crate::negative_assert_eq!(
+        exchange(array.addr, &bearer_chat(Some("hi"))).await.status,
+        Some(200),
+        "#2428 an array apiKey matches its Buffer.from bytes"
+    );
+    crate::negative_assert_eq!(
+        exchange(array.addr, &bearer_chat(Some("hi!"))).await.status,
+        Some(401),
+        "#2428 an array apiKey only matches its Buffer.from bytes"
+    );
+    array
+        .handle
+        .stop("test")
+        .await
+        .expect("#2428 api_server stop");
+}
+
 // #2301: the mount is the production construction seam — the startup
 // assembly registers it through `production_loader_mounts` and calls
 // `load_enabled_channels` (pilotdeckServer.ts:288-296, the loadEnabledChannels
@@ -2936,7 +3053,7 @@ async fn loader_mount_builds_api_server_channel() {
     drop(probe);
     let adapters = pilotdeck_protocol::parse_json(
         &json!({
-            "apiServer": {"enabled": true, "extra": {"port": port}},
+            "apiServer": {"enabled": true, "apiKey": "probe-key", "extra": {"port": port}},
             "telegram": {"enabled": false},
         })
         .to_string(),
@@ -2970,7 +3087,11 @@ async fn loader_mount_builds_api_server_channel() {
                     .expect("#2301 log sink")
                     .push((level.to_owned(), message.to_owned()));
             })),
-            turn_gateway: None,
+            turn_gateway: Some(gateway_from(
+                &json!({"gateway": {"turns": [{"events": []}]}}),
+                None,
+                Arc::new(AtomicBool::new(false)),
+            )),
         })
         .await
         .expect("#2301 loader-built api_server start");
@@ -2986,6 +3107,32 @@ async fn loader_mount_builds_api_server_channel() {
     TcpStream::connect(("127.0.0.1", port))
         .await
         .expect("#2301 the loader-built listener accepts connections");
+
+    // #2428: the mount forwards `cfg.apiKey` raw and `resolve` keeps the TS
+    // `??` order, so a configured key reaches checkAuth — a request without
+    // the Bearer token and one with a wrong token answer 401, and only the
+    // configured key reaches the gateway and answers 200.
+    let address: std::net::SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .expect("#2428 loopback address");
+    let missing = exchange(address, &bearer_chat(None)).await;
+    crate::negative_assert_eq!(
+        missing.status,
+        Some(401),
+        "#2428 a request without the Bearer key is rejected"
+    );
+    let wrong = exchange(address, &bearer_chat(Some("wrong-key"))).await;
+    crate::negative_assert_eq!(
+        wrong.status,
+        Some(401),
+        "#2428 a wrong Bearer token is rejected"
+    );
+    let correct = exchange(address, &bearer_chat(Some("probe-key"))).await;
+    crate::negative_assert_eq!(
+        correct.status,
+        Some(200),
+        "#2428 the configured Bearer key answers 200"
+    );
     handle.stop("test").await.expect("#2301 api_server stop");
     assert!(
         TcpStream::connect(("127.0.0.1", port)).await.is_err(),
