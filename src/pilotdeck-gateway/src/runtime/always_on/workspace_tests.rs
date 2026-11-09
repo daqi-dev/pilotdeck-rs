@@ -515,7 +515,10 @@ async fn failed_prepare_preserves_existing_branch_and_replaced_owned_directory()
     std::fs::write(original.join("sentinel"), "REPLACEMENT").unwrap();
     let rejected = provider.dispose(handle, false).await.unwrap_err();
     assert_eq!(rejected.code, "workspace_cleanup_failed");
-    assert_eq!(rejected.message, JsString::from("Created workspace was replaced before cleanup."));
+    assert_eq!(
+        rejected.message,
+        JsString::from("Created workspace was replaced before cleanup.")
+    );
     assert_eq!(
         std::fs::read(original.join("sentinel")).unwrap(),
         b"REPLACEMENT"
@@ -776,11 +779,30 @@ async fn dispose_retry_removes_unchanged_ref_after_its_owned_git_directory_was_r
     assert_eq!(first_close.message, first.message);
     // The missing-directory retry must preserve a failing CAS in close too.
     fixture.registry.invalidate(None);
-    let failed_retry = fixture.provider(Arc::new(FailFirstDisposeCas(std::sync::atomic::AtomicBool::new(false))));
-    let retried = failed_retry.dispose(handle.clone(), false).await.unwrap_err();
+    let failed_retry = fixture.provider(Arc::new(FailFirstDisposeCas(
+        std::sync::atomic::AtomicBool::new(false),
+    )));
+    let retried = failed_retry
+        .dispose(handle.clone(), false)
+        .await
+        .unwrap_err();
     assert_eq!(retried.code, "workspace_cleanup_failed");
     assert!(!cwd.exists());
-    assert_eq!(fixture.git(project, &["show-ref", "--verify", "--quiet", "refs/heads/always-on/partial-dispose"]).await.exit_code, Some(0));
+    assert_eq!(
+        fixture
+            .git(
+                project,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/heads/always-on/partial-dispose"
+                ]
+            )
+            .await
+            .exit_code,
+        Some(0)
+    );
     let retry_close = failed_retry.close().await.unwrap_err();
     assert_eq!(retry_close.code, retried.code);
     assert_eq!(retry_close.message, retried.message);
@@ -810,10 +832,15 @@ async fn dispose_retry_removes_unchanged_ref_after_its_owned_git_directory_was_r
     );
     retry.close().await.unwrap();
     fixture.registry.invalidate(None);
-    let reject_any_cas = Arc::new(FailFirstDisposeCas(std::sync::atomic::AtomicBool::new(false)));
+    let reject_any_cas = Arc::new(FailFirstDisposeCas(std::sync::atomic::AtomicBool::new(
+        false,
+    )));
     let repeated = fixture.provider(reject_any_cas.clone());
     repeated.dispose(handle, false).await.unwrap();
-    assert!(!reject_any_cas.0.load(std::sync::atomic::Ordering::SeqCst), "already absent ref must not reach update-ref");
+    assert!(
+        !reject_any_cas.0.load(std::sync::atomic::Ordering::SeqCst),
+        "already absent ref must not reach update-ref"
+    );
     assert!(!cwd.exists());
     repeated.close().await.unwrap();
     fixture.registry.dispose().await.unwrap();

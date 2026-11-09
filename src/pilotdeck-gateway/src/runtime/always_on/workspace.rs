@@ -907,130 +907,136 @@ impl NativeWorkspace {
         self.owned(move |owner| {
             Box::pin(async move {
                 let result: Result<(), WorkspaceError> = async {
-                let cwd = native_path(&handle.cwd)?;
-                let paths = owner.0.paths.clone();
-                let strategy = handle.strategy.clone();
-                let copy = cwd.clone();
-                let selected = handle.created_identity.clone();
-                let checked = owner
-                    .io(move || {
-                        let current = workspace_copy::owned_workspace(&paths, &strategy, &copy)?;
-                        if let Some(selected) = selected {
-                            checked_directory_identity(&selected, &current)?;
+                    let cwd = native_path(&handle.cwd)?;
+                    let paths = owner.0.paths.clone();
+                    let strategy = handle.strategy.clone();
+                    let copy = cwd.clone();
+                    let selected = handle.created_identity.clone();
+                    let checked = owner
+                        .io(move || {
+                            let current =
+                                workspace_copy::owned_workspace(&paths, &strategy, &copy)?;
+                            if let Some(selected) = selected {
+                                checked_directory_identity(&selected, &current)?;
+                            }
+                            Ok(current)
+                        })
+                        .await;
+                    let directory = match checked {
+                        Ok(directory) => directory,
+                        Err(error)
+                            if error.kind() == io::ErrorKind::NotFound
+                                && handle.strategy == "git-worktree" =>
+                        {
+                            return owner.dispose_removed_git(&handle, &cwd).await;
                         }
-                        Ok(current)
-                    })
-                    .await;
-                let directory = match checked {
-                    Ok(directory) => directory,
-                    Err(error)
-                        if error.kind() == io::ErrorKind::NotFound
-                            && handle.strategy == "git-worktree" =>
-                    {
-                        return owner.dispose_removed_git(&handle, &cwd).await;
-                    }
-                    Err(error) => return Err(error.into()),
-                };
-                if handle.strategy == "git-worktree" {
-                    owner.verify_git_project(&directory, &cwd, None).await?;
-                    let root = owner.0.project.clone();
-                    let repository = owner.io(move || workspace_copy::pin_project(&root)).await?;
-                    let branch = handle
-                        .metadata
-                        .get("branchName")
-                        .and_then(JsValue::as_string)
-                        .map(|v| {
-                            v.to_utf8().map_err(|_| {
-                                WorkspaceError::new(
-                                    "invalid_workspace",
-                                    "Workspace branch is not representable.",
+                        Err(error) => return Err(error.into()),
+                    };
+                    if handle.strategy == "git-worktree" {
+                        owner.verify_git_project(&directory, &cwd, None).await?;
+                        let root = owner.0.project.clone();
+                        let repository =
+                            owner.io(move || workspace_copy::pin_project(&root)).await?;
+                        let branch = handle
+                            .metadata
+                            .get("branchName")
+                            .and_then(JsValue::as_string)
+                            .map(|v| {
+                                v.to_utf8().map_err(|_| {
+                                    WorkspaceError::new(
+                                        "invalid_workspace",
+                                        "Workspace branch is not representable.",
+                                    )
+                                })
+                            })
+                            .transpose()?;
+                        let run = cwd.file_name().and_then(|name| name.to_str()).unwrap_or("");
+                        // A previous partial cleanup may already have removed the ref.
+                        // Removing the directory/registration must succeed before CAS.
+                        let owned_branch: Result<Option<(String, String)>, WorkspaceError> =
+                            async {
+                                let Some(branch) =
+                                    branch.filter(|b| b == &format!("always-on/{run}"))
+                                else {
+                                    return Ok(None);
+                                };
+                                let branch_ref = format!("refs/heads/{branch}");
+                                let exists = owner
+                                    .command(
+                                        &repository,
+                                        &owner.0.project,
+                                        &["git", "show-ref", "--verify", "--quiet", &branch_ref],
+                                        None,
+                                    )
+                                    .await?;
+                                if exists.exit_code == Some(1) {
+                                    return Ok(None);
+                                }
+                                expect_ok(&exists, "git show-ref owned workspace branch")?;
+                                let current = owner
+                                    .command(
+                                        &repository,
+                                        &owner.0.project,
+                                        &["git", "rev-parse", "--verify", &branch_ref],
+                                        None,
+                                    )
+                                    .await?;
+                                expect_ok(&current, "git rev-parse owned workspace branch")?;
+                                Ok(Some((
+                                    branch_ref,
+                                    crate::metadata::js_trim(&current.stdout).to_owned(),
+                                )))
+                            }
+                            .await;
+                        let directory = owner
+                            .remove_git_selected(&repository, &owner.0.project, cwd, directory)
+                            .await;
+                        directory?;
+                        match owned_branch {
+                            Ok(Some((branch_ref, expected))) => {
+                                owner
+                                    .require_unregistered_branch(
+                                        &repository,
+                                        &owner.0.project,
+                                        &branch_ref,
+                                    )
+                                    .await?;
+                                match owner
+                                    .command(
+                                        &repository,
+                                        &owner.0.project,
+                                        &["git", "update-ref", "-d", &branch_ref, &expected],
+                                        None,
+                                    )
+                                    .await
+                                {
+                                    Ok(result) => expect_ok(
+                                        &result,
+                                        "git update-ref dispose workspace branch",
+                                    ),
+                                    Err(error) => Err(error),
+                                }
+                            }
+                            Ok(None) => Ok(()),
+                            Err(error) => Err(error),
+                        }
+                    } else {
+                        let paths = owner.0.paths.clone();
+                        let captured = owner
+                            .io(move || {
+                                workspace_copy::capture_selected(
+                                    &paths,
+                                    "snapshot-copy",
+                                    &cwd,
+                                    &directory,
                                 )
                             })
-                        })
-                        .transpose()?;
-                    let run = cwd.file_name().and_then(|name| name.to_str()).unwrap_or("");
-                    // A previous partial cleanup may already have removed the ref.
-                    // Removing the directory/registration must succeed before CAS.
-                    let owned_branch: Result<Option<(String, String)>, WorkspaceError> = async {
-                        let Some(branch) = branch.filter(|b| b == &format!("always-on/{run}"))
-                        else {
-                            return Ok(None);
-                        };
-                        let branch_ref = format!("refs/heads/{branch}");
-                        let exists = owner
-                            .command(
-                                &repository,
-                                &owner.0.project,
-                                &["git", "show-ref", "--verify", "--quiet", &branch_ref],
-                                None,
-                            )
                             .await?;
-                        if exists.exit_code == Some(1) {
-                            return Ok(None);
-                        }
-                        expect_ok(&exists, "git show-ref owned workspace branch")?;
-                        let current = owner
-                            .command(
-                                &repository,
-                                &owner.0.project,
-                                &["git", "rev-parse", "--verify", &branch_ref],
-                                None,
-                            )
-                            .await?;
-                        expect_ok(&current, "git rev-parse owned workspace branch")?;
-                        Ok(Some((
-                            branch_ref,
-                            crate::metadata::js_trim(&current.stdout).to_owned(),
-                        )))
+                        owner.io(move || captured.remove()).await?;
+                        Ok(())
                     }
-                    .await;
-                    let directory = owner
-                        .remove_git_selected(&repository, &owner.0.project, cwd, directory)
-                        .await;
-                    directory?;
-                    match owned_branch {
-                        Ok(Some((branch_ref, expected))) => {
-                            owner
-                                .require_unregistered_branch(
-                                    &repository,
-                                    &owner.0.project,
-                                    &branch_ref,
-                                )
-                                .await?;
-                            match owner
-                                .command(
-                                    &repository,
-                                    &owner.0.project,
-                                    &["git", "update-ref", "-d", &branch_ref, &expected],
-                                    None,
-                                )
-                                .await
-                            {
-                                Ok(result) => {
-                                    expect_ok(&result, "git update-ref dispose workspace branch")
-                                }
-                                Err(error) => Err(error),
-                            }
-                        }
-                        Ok(None) => Ok(()),
-                        Err(error) => Err(error),
-                    }
-                } else {
-                    let paths = owner.0.paths.clone();
-                    let captured = owner
-                        .io(move || {
-                            workspace_copy::capture_selected(
-                                &paths,
-                                "snapshot-copy",
-                                &cwd,
-                                &directory,
-                            )
-                        })
-                        .await?;
-                    owner.io(move || captured.remove()).await?;
-                    Ok(())
                 }
-                }.await;
+                .await;
                 // Every owned dispose failure must survive the job drain,
                 // including Git command/CAS and IO errors. Preserve its
                 // original message and missing flag; prepare uses its own domain.

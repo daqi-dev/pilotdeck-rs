@@ -96,7 +96,10 @@ fn cleanup_ticket_still_owned(ticket: &watch::Receiver<bool>, started: &watch::R
     );
     // Supplemental signal snapshot; the real held publication ticket above
     // is the deterministic barrier, not an elapsed-time absence observation.
-    assert!(!*started.borrow(), "new same-key factory entered during delete");
+    assert!(
+        !*started.borrow(),
+        "new same-key factory entered during delete"
+    );
 }
 #[tokio::test]
 async fn close_then_retains_ticket_before_root_removal_with_absent_owner_and_cancelled_waiter() {

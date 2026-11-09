@@ -321,33 +321,75 @@ mod tests {
     async fn fixed_ts_model_selection_keys_reach_real_knowledge_consumer() {
         let golden = pilotdeck_protocol::parse_json(include_str!(
             "../../tests/fixtures/sop-knowledge-authority/model-id-oracle.json"
-        )).unwrap();
-        let JsValue::Array(cases) = golden.get("cases").unwrap() else { panic!("cases") };
+        ))
+        .unwrap();
+        let JsValue::Array(cases) = golden.get("cases").unwrap() else {
+            panic!("cases")
+        };
         assert_eq!(cases.len(), 5);
         let mut accepted = 0;
         let mut rejected = 0;
         for case in cases {
-            let id = case.get("id").unwrap().as_string().unwrap().to_utf8().unwrap();
+            let id = case
+                .get("id")
+                .unwrap()
+                .as_string()
+                .unwrap()
+                .to_utf8()
+                .unwrap();
             let credential = id.starts_with("credential-");
             let mut scope = config(credential).as_object().unwrap().clone();
-            for (key, value) in [("tenantId", "trusted-tenant"), ("actorUserId", "trusted-user"), ("agentId", "trusted-agent")] {
+            for (key, value) in [
+                ("tenantId", "trusted-tenant"),
+                ("actorUserId", "trusted-user"),
+                ("agentId", "trusted-agent"),
+            ] {
                 scope.insert(key.into(), value.into());
             }
             let scope = JsValue::Object(scope);
             let transport = Arc::new(Transport::default());
-            let consumer = KnowledgeTool::new(ExternalSkillBinding::from_value(&scope).unwrap(), scope, transport.clone(), Arc::new(Env));
-            let answer = consumer.execute(case.get("input").unwrap().clone(), context()).await;
+            let consumer = KnowledgeTool::new(
+                ExternalSkillBinding::from_value(&scope).unwrap(),
+                scope,
+                transport.clone(),
+                Arc::new(Env),
+            );
+            let answer = consumer
+                .execute(case.get("input").unwrap().clone(), context())
+                .await;
             let requests = transport.0.lock().unwrap();
             if credential {
-                assert_eq!(answer.unwrap_err().code, case.get("error").unwrap().get("code").unwrap().as_string().unwrap().to_utf8().unwrap(), "{id}");
+                assert_eq!(
+                    answer.unwrap_err().code,
+                    case.get("error")
+                        .unwrap()
+                        .get("code")
+                        .unwrap()
+                        .as_string()
+                        .unwrap()
+                        .to_utf8()
+                        .unwrap(),
+                    "{id}"
+                );
                 assert!(requests.is_empty(), "{id}");
                 rejected += 1;
             } else {
                 answer.unwrap();
                 assert_eq!(requests.len(), 1, "{id}");
-                let JsValue::Array(wire) = case.get("wire").unwrap() else { panic!("wire") };
-                let post = wire.iter().find(|row| row.get("method") == Some(&JsValue::from("POST"))).unwrap();
-                let expected = post.get("body").unwrap().get("payload").unwrap().get("input").unwrap();
+                let JsValue::Array(wire) = case.get("wire").unwrap() else {
+                    panic!("wire")
+                };
+                let post = wire
+                    .iter()
+                    .find(|row| row.get("method") == Some(&JsValue::from("POST")))
+                    .unwrap();
+                let expected = post
+                    .get("body")
+                    .unwrap()
+                    .get("payload")
+                    .unwrap()
+                    .get("input")
+                    .unwrap();
                 let actual = requests[0].get("payload").unwrap().get("input").unwrap();
                 assert_eq!(actual, expected, "{id}");
                 accepted += 1;
