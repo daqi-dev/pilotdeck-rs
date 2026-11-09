@@ -98,10 +98,12 @@ function watchSock(sock, events, label) {
 
 /** Connection 头值（裸层取「connection:」后的值串、node 层取头原值）→ 是否含
  * keep-alive token：小写、去 OWS、按逗号切分（容忍 `Connection:keep-alive`、
- * 行尾空白、多值列表；显式 close → false）。头缺失的语义不在本函数——由调用方
- * 结合「完整 HTTP/1.1 响应头」按 RFC 7230 §6.3 判隐式 keep-alive。#2662 fix-r2。 */
+ * 行尾空白、多值列表）。close 优先（RFC 7230 §6.1：close 出现即收尾不持久，
+ * 即使同列表还有 keep-alive）。头缺失的语义不在本函数——由调用方结合
+ * 「完整 HTTP/1.1 响应头」按 RFC 7230 §6.3 判隐式 keep-alive。#2662 fix-r3。 */
 function keepAliveToken(v) {
-  return v.toLowerCase().split(",").map((t) => t.trim()).includes("keep-alive");
+  const tokens = v.toLowerCase().split(",").map((t) => t.trim());
+  return !tokens.includes("close") && tokens.includes("keep-alive");
 }
 
 async function partA() {
@@ -163,7 +165,11 @@ async function partA() {
   });
   if (!pooledPremise) {
     log("A/SKIP-agent-reuse", {
-      reason: pooled1.ok !== true ? "pooled1 failed" : "响应 Connection 显式非 keep-alive（close 等），socket 未入池",
+      reason: pooled1.ok !== true
+        ? "pooled1 failed"
+        : pooledConnection === undefined
+          ? "响应缺 Connection 头且非 HTTP/1.1（隐式 keep-alive 不适用），socket 未入池"
+          : "响应 Connection 显式非 keep-alive（close 等），socket 未入池",
       pooled1,
     });
   }
@@ -180,9 +186,10 @@ async function partA() {
     await sleep(50);
   }
   await sleep(200);
-  // #2662 fix-r2 sibling#2：窗内是否真观测到 FIN/close 也是前提——未观测到时
-  // 「机制 A / FIN 时刻」结论不得引用，观察 2 只能按「未 FIN 连接上的写」记录。
-  const finObserved = rawEvents.some((e) => e.event === "end(FIN/EOF)" || e.event === "close");
+  // #2662 fix-r3 三角色同撞：干净 FIN 只认 end(FIN/EOF)——allowHalfOpen 下裸 close
+  // 事件只可能先经 error（RST 类异常拆链），把 close 算作「观测到 FIN」会让异常
+  // 拆链冒充机制 A 的前提。finObserved=false（含 error→close）时结论降级。
+  const finObserved = rawEvents.some((e) => e.event === "end(FIN/EOF)");
   log("A/server-close-idle-keepalive", {
     eventsSoFar: rawEvents.map((e) => ({ ...e, relMs: e.at - t0 })),
     rawPremise,
@@ -190,8 +197,8 @@ async function partA() {
     note: rawPremise && finObserved
       ? "机制 A：close() 主动关空闲 keep-alive（A14① 复核，裸层直接观测）"
       : rawPremise
-        ? "3s 窗内未观测到 FIN/close（finObserved=false）：FIN 时刻结论降级，不得据此引用 A14"
-        : "前提未成立（裸层响应 Connection 非 keep-alive、响应头不完整或非 HTTP/1.1，见 A/raw-keepalive-request1）：FIN 时刻不代表 server.close() 对空闲 keep-alive 的处置",
+        ? "未观测到干净 FIN（finObserved=false，含 error→close 异常拆链情形）：FIN 时刻结论降级，不得据此引用 A14"
+        : "前提未成立（见 A/raw-keepalive-request1 的 headComplete/http11/connHeader 原值）：FIN 时刻不代表 server.close() 对空闲 keep-alive 的处置",
   });
 
   // 观察 2：在同一条已 FIN 的 socket 上复用发请求 2（裸层复用态——A14 重建连推断的对照面）
@@ -215,8 +222,8 @@ async function partA() {
     note: rawPremise && finObserved
       ? "裸层复用（allowHalfOpen）：对已收 FIN 的 socket 写第二请求的观测（写本身是否报错、随后 RST/EOF/静默）"
       : rawPremise
-        ? "未观测到 FIN（finObserved=false）：本条按「未 FIN 连接上的写」记录，不作 close 后复用的证据"
-        : "前提未成立（裸层响应 Connection 非 keep-alive）：FIN 来自响应结束而非 server.close()，本条按「已 FIN 连接上的写」记录，不作 close 后复用的证据",
+        ? "未观测到干净 FIN（finObserved=false，含 error→close 异常拆链情形）：本条按「未 FIN 连接上的写」记录，不作 close 后复用的证据"
+        : "前提未成立（见 A/raw-keepalive-request1；成因以该记录 headComplete/http11/connHeader 为准，可能是响应头不完整/非 1.1/显式 close——不预设）：本条按现状记录，不作 close 后复用的证据",
   });
 
   // 观察 3：同 agent（close 前已池化）复用 + fetch 新连接 + 新 TCP
@@ -236,13 +243,21 @@ async function partA() {
       })
     : { skipped: true, reason: "复用直测前提未成立（见 A/SKIP-agent-reuse）" };
   agent.destroy();
+  // #2662 fix-r3：note 随实测状态推导，不再无条件断言 ECONNREFUSED/connect 相位
+  // 与裸层对照——agentReuse 非预期形状或裸层前提未成立时对应句不产出。
+  const reuseNote = agentReuse.skipped
+    ? "agent 复用直测跳过（前提未成立，见 A/SKIP-agent-reuse）；fetch 新连接与 newTcpRefused 与入池无关，照常记录"
+    : agentReuse.ok !== true && agentReuse.code === "ECONNREFUSED"
+      ? "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错"
+        + (rawPremise && finObserved
+          ? "；裸层复用对照为静默悬挂（写成功、无回包、无 RST，见 A/raw-reuse-after-fin）"
+          : "；裸层对照前提未成立或未观测到干净 FIN（见 A/raw-reuse-after-fin），不引用其结论")
+      : "agent 复用直测结果非预期形状（见 agentReuse 原值），不套用 ECONNREFUSED connect 相位解释";
   log("A/agent-reuse-after-close", {
     agentReuse,
     fetchNew: await fetchProbe(PORT_A, "/health"),
     newTcpRefused: await tcpRefused(PORT_A),
-    note: pooledPremise
-      ? "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错；裸层复用对照为静默悬挂（写成功、无回包、无 RST，见 A/raw-reuse-after-fin）"
-      : "agent 复用直测跳过（前提未成立，见 A/SKIP-agent-reuse）；fetch 新连接与 newTcpRefused 与入池无关，照常记录",
+    note: reuseNote,
   });
 
   log("A/close-settled", await Promise.race([closePromise, sleep(4000).then(() => ({ settled: false, note: "4s 窗未 settle（有活连接时预期）" }))]));
