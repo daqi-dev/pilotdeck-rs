@@ -1872,6 +1872,340 @@ class EnvironmentControls(unittest.TestCase):
                '#1632 the run leaves its evidence behind')
         self.check_ci_mutations(cases, 'test_negative_controls_job_runs_the_gateway_fixture', '#1632')
 
+    # #2780 fix-r2（MM 三条 P1 的登记半边 + P2-a）：runner 镜像漂移守卫是 ci.yml
+    # 里两份 inline 脚本（rust / negative-controls 各一份），此前删除它、只改一份、
+    # 把钉值改漂、把扫描面从两份 workflow 收窄回 ci.yml，都没有任何闸门会红。
+    # 这里从 ci.yml 之外钉住：存在性、双副本逐字全等、四个钉值的单一来源，以及
+    # ci.yml 与 pr-gate.yml 全部非注释 runs-on 值必须等于守卫钉定的标签。
+    runner_image_guard_step_name = 'runner 镜像漂移守卫（#2762）'
+    runner_image_guard_anchor = '      - name: runner 镜像漂移守卫（#2762）\n'
+    runner_image_guard_scan_line = (
+        'for guard_target in .github/workflows/ci.yml .github/workflows/pr-gate.yml; do')
+    runner_image_guard_os_release_override = (
+        'os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"')
+    runner_image_guard_workflow_paths = ('.github/workflows/ci.yml',
+                                         '.github/workflows/pr-gate.yml')
+
+    def runner_image_guard_scripts(self, issue='#2780'):
+        """两个守卫 step 的 run 块原文（含 YAML 缩进）与剥缩进后的可执行脚本。
+
+        按 step 锚点行到下一个 step / job 头切片，不经 ci_steps 的规范化——规范化
+        会剥缩进、丢空行，「逐字全等」要的是原文比对（sibling#3 / concurrency#3）。
+        """
+        text = (Path(__file__).resolve().parents[3]
+                / '.github/workflows/ci.yml').read_text()
+        lines = text.split('\n')
+        indexes = [i for i, line in enumerate(lines)
+                   if line == '      - name: ' + self.runner_image_guard_step_name]
+        self.assertEqual(len(indexes), 2,
+                         f'{issue} exactly two runner image guard steps exist; deleting '
+                         'one (or both) must turn this red, not pass silently')
+        found = {}
+        for i in indexes:
+            owner = None
+            for k in range(i, -1, -1):
+                header = re.fullmatch(r'  ([\w-]+):', lines[k])
+                if header:
+                    owner = header[1]
+                    break
+            self.assertIsNotNone(owner, f'{issue} the guard step lives inside a job')
+            self.assertNotIn(owner, found,
+                             f'{issue} one guard step per job, not more')
+            end = len(lines)
+            for j in range(i + 1, len(lines)):
+                line = lines[j]
+                # step 直属键 8 空格、run 块 ≥10 空格；任何非空且 <8 缩进的行
+                # （下一 step 的 `- ` 项或其 6 空格注释、job 级键、job 头）即边界。
+                if line.strip() and (not line.startswith(' ')
+                                     or len(line) - len(line.lstrip(' ')) < 8):
+                    end = j
+                    break
+            region = lines[i:end]
+            try:
+                run_at = region.index('        run: |')
+            except ValueError:
+                self.fail(f'{issue} the {owner} guard step carries a literal run block')
+            block = region[run_at + 1:]
+            while block and not block[-1].strip():
+                block.pop()
+            self.assertTrue(block, f'{issue} the {owner} guard run block is not empty')
+            conditional = [line for line in region
+                           if re.fullmatch(r"""        ['\"]?(if|continue-on-error)['\"]?:.*""", line)]
+            self.assertFalse(conditional,
+                             f'{issue} the guard steps stay unconditional; a skipped or '
+                             'failure-ignored guard is a silently missing guard')
+            raw = '\n'.join(block) + '\n'
+            script = ''.join(line[10:] + '\n' if line.startswith(' ' * 10)
+                            else line + '\n' for line in block)
+            found[owner] = (raw, script)
+        self.assertEqual(set(found), {'rust', 'negative-controls'},
+                         f'{issue} the guard steps live exactly in the two cargo jobs '
+                         'whose KILLED/SURVIVED comparability the guard protects')
+        return found
+
+    def runner_image_guard_pins(self, script, issue='#2780'):
+        """从守卫脚本文本反向派生四个钉值（expected* 变量）——机检侧不另抄一份，
+        钉值的单一来源就是守卫脚本本身（boundary#1 / boundary#2）。"""
+        matches = re.findall(r'^(expected[a-z_]*)="([^"]*)"$', script, re.M)
+        self.assertEqual(len(matches), 4,
+                         f'{issue} the guard defines exactly the four pin variables')
+        pins = {}
+        for name, value in matches:
+            self.assertNotIn(name, pins,
+                             f'{issue} each pin is defined exactly once: {name}')
+            pins[name] = value
+        self.assertEqual(set(pins), {'expected', 'expected_label', 'expected_image_os',
+                                     'expected_image_version'},
+                         f'{issue} the guard pins are exactly the registered four')
+        # 三值互相锁定：标签 / 镜像族从 OS 版本派生，任何一处单独改钉先红在这里。
+        self.assertEqual(pins['expected_label'], 'ubuntu-' + pins['expected'],
+                         f'{issue} the pinned label derives from the pinned OS version')
+        self.assertEqual(pins['expected_image_os'], 'ubuntu' + pins['expected'].split('.')[0],
+                         f'{issue} the pinned image family derives from the pinned OS '
+                         'version major ($ImageOS keeps the major only, '
+                         'e.g. ubuntu-24.04 -> ubuntu24)')
+        return pins
+
+    def workflow_runs_on_values(self, text, issue='#2780'):
+        """镜像守卫白名单判定的 Python 侧：全部非注释 runs-on 值（键形态连引号键
+        一起认，值剥行尾注释 / 引号 / 空白，与守卫脚本同一口径）。"""
+        values = []
+        for line in text.split('\n'):
+            stripped = line.lstrip()
+            if not stripped or stripped.startswith('#'):
+                continue
+            matched = re.fullmatch(r"""['\"]?runs-on['\"]?[ \t]*:(.*)""", stripped)
+            if not matched:
+                continue
+            value = matched[1].split('#', 1)[0].replace('"', '').replace("'", '')
+            values.append(re.sub(r'[ \t\r]', '', value))
+        return values
+
+    def test_runner_image_guard_steps_are_registered_and_identical(self):
+        guards = self.runner_image_guard_scripts('#2780')
+        # 单副本分叉（只改一份的钉值 / 逻辑）在这里红：两个 job 的判据不允许各守各的。
+        self.assertEqual(guards['rust'][0], guards['negative-controls'][0],
+                         '#2780 the two guard run blocks stay verbatim-identical; '
+                         'editing only one copy forks what the two jobs check')
+        script = guards['rust'][1]
+        # 扫描面：#2763 的钉版口径是「全部 runs-on」，pr-gate.yml 的合并闸门 job
+        # 不许掉出白名单（sibling#2 / concurrency#2 / boundary#4）。
+        self.assertIn(self.runner_image_guard_scan_line + '\n', script,
+                      '#2780 the guard scans both workflows, not only ci.yml')
+        # 注入口被删会让下方逻辑自测退化成依赖宿主 os-release（不确定性）。
+        self.assertEqual(script.count(self.runner_image_guard_os_release_override), 1,
+                         '#2780 the guard keeps the self-test os-release override')
+        pins = self.runner_image_guard_pins(script, '#2780')
+        jobs = self.ci_jobs('#2780')
+        for job in ('rust', 'negative-controls'):
+            steps = self.ci_steps(job, jobs[job], '#2780')
+            guards_in_job = [step for step in steps
+                             if self.ci_step_fields(step, '#2780').get('name')
+                             == (self.runner_image_guard_step_name, [])]
+            self.assertEqual(len(guards_in_job), 1,
+                             '#2780 exactly one runner image guard step per cargo job')
+            self.assertEqual(steps.index(guards_in_job[0]), 1,
+                             '#2780 the guard sits immediately after checkout '
+                             '(fail-fast before any heavy step)')
+            fields = self.ci_step_fields(guards_in_job[0], '#2780')
+            self.assertEqual(fields.get('working-directory'), ('.', []),
+                             '#2780 the guard reads the workflow files from the repository root')
+            self.assertEqual(fields.get('shell'), ('bash', []),
+                             '#2780 the guard pins the fail-fast shell')
+            for key in ('if', 'continue-on-error'):
+                self.assertNotIn(key, fields,
+                                 '#2780 the guard steps stay unconditional')
+        # 白名单值等的机检侧：钉定标签从守卫脚本派生（单一来源），两个 workflow 的
+        # 全部非注释 runs-on 值必须等于它——arm / 26.04 / 22.04 / ubuntu-latest /
+        # matrix 拼装 / 引号键写法全都过不去（sibling#1 / boundary#1）。
+        root = Path(__file__).resolve().parents[3]
+        for relative in self.runner_image_guard_workflow_paths:
+            values = self.workflow_runs_on_values((root / relative).read_text(), '#2780')
+            self.assertTrue(values,
+                            f'#2780 must carry runs-on lines the guard can see: '
+                            f'{relative}; zero parsed hits would silently pass the whitelist')
+            self.assertEqual(set(values), {pins['expected_label']},
+                             f'#2780 every non-comment runs-on must equal the guard-pinned '
+                             f'label {pins["expected_label"]} (in {relative})')
+
+    def test_runner_image_guard_rejects_registration_drift(self):
+        # #2780 fix-r2：登记断言的内存变异负控。每条都必须让上面的登记测试红在
+        # 绑定的失败消息上——删守卫步（两个 job 各一条）、单副本分叉、扫描面收窄、
+        # 注入口被删、步被条件化、错位、钉值互相矛盾、runs-on 漂移（含 pr-gate.yml
+        # 与引号键形态）。改动 ci.yml 的用 ci.yml 路由，改动 pr-gate.yml 的用
+        # pr-gate.yml 路由（check_ci_mutations 的按文件名路由，#1809 r9 口径）。
+        workflow = self.ci_workflow_fixture()
+        guards = self.runner_image_guard_scripts('#2780')
+        step = (self.runner_image_guard_anchor + '        working-directory: .\n'
+                '        shell: bash\n        run: |\n' + guards['negative-controls'][0])
+        self.assertEqual(workflow.count(step), 2, '#2780 both guard steps share one shape')
+        ci_cases = [('guard-step-removed-negative-controls',
+                     workflow.replace(step, '', 1),
+                     '#2780 exactly two runner image guard steps exist')]
+        head, _, tail = workflow.partition(step)
+        ci_cases.append(('guard-step-removed-rust', head + step + tail.replace(step, '', 1),
+                         '#2780 exactly two runner image guard steps exist'))
+        ci_cases.append(('guard-copies-diverge',
+                         workflow.replace('          expected="24.04"\n',
+                                           '          expected="26.04"\n', 1),
+                         '#2780 the two guard run blocks stay verbatim-identical'))
+        for label, old, new, message in (
+                ('scan-target-narrowed',
+                 '          for guard_target in .github/workflows/ci.yml '
+                 '.github/workflows/pr-gate.yml; do\n',
+                 '          for guard_target in .github/workflows/ci.yml; do\n',
+                 '#2780 the guard scans both workflows'),
+                ('os-release-override-removed',
+                 '          os_release="${PDRS_IMAGE_GUARD_OS_RELEASE:-/etc/os-release}"\n',
+                 '          os_release=/etc/os-release\n',
+                 '#2780 the guard keeps the self-test os-release override'),
+                ('pins-inconsistent',
+                 '          expected_image_os="ubuntu24"\n',
+                 '          expected_image_os="ubuntu-24"\n',
+                 '#2780 the pinned image family derives from the pinned OS version')):
+            self.assertEqual(workflow.count(old), 2, f'#2780 both copies carry {label}')
+            ci_cases.append((label, workflow.replace(old, new), message))
+        ci_cases.append(('guard-step-conditional',
+                         workflow.replace(self.runner_image_guard_anchor,
+                                           self.runner_image_guard_anchor
+                                           + '        if: false\n'),
+                         '#2780 the guard steps stay unconditional'))
+        # 错位：在 negative-controls 的守卫前插一个哑步（锚点用本 job 独有的注释行），
+        # 守卫挪到 index 2，fail-fast 语义丢失。
+        shift_anchor = ('      # 盲区⑤ fix-r1（#2780 MM P1-2）：同款 runner 镜像漂移守卫'
+                        '复制进本 job——\n')
+        self.assertEqual(workflow.count(shift_anchor), 1, '#2780 unique shift anchor')
+        ci_cases.append(('guard-shifted-past-toolchain',
+                         workflow.replace(shift_anchor,
+                                          '      - run: \'true\'\n' + shift_anchor, 1),
+                         '#2780 the guard sits immediately after checkout'))
+        for label, new in (('runs-on-arm-drift', '    runs-on: ubuntu-24.04-arm'),
+                           ('runs-on-latest-regression', '    runs-on: ubuntu-latest'),
+                           ('runs-on-matrix-assembly',
+                            '    runs-on: ubuntu-${{ matrix.os }}')):
+            ci_cases.append((label,
+                             workflow.replace('    runs-on: ubuntu-24.04', new, 1),
+                             '#2780 every non-comment runs-on must equal the guard-pinned '
+                             'label'))
+        self.check_ci_mutations(ci_cases,
+                                'test_runner_image_guard_steps_are_registered_and_identical',
+                                '#2780')
+        gate_text = (Path(__file__).resolve().parents[3]
+                     / '.github/workflows/pr-gate.yml').read_text()
+        self.assertEqual(gate_text.count('    runs-on: ubuntu-24.04\n'), 1,
+                         '#2780 unique pr-gate runs-on anchor')
+        gate_cases = [
+            ('pr-gate-runs-on-latest',
+             gate_text.replace('    runs-on: ubuntu-24.04\n', '    runs-on: ubuntu-latest\n'),
+             '#2780 every non-comment runs-on must equal the guard-pinned label'),
+            ('pr-gate-runs-on-quoted-key',
+             gate_text.replace('    runs-on: ubuntu-24.04\n',
+                               "    'runs-on': ubuntu-latest\n"),
+             '#2780 every non-comment runs-on must equal the guard-pinned label'),
+            ('pr-gate-runs-on-removed',
+             gate_text.replace('    runs-on: ubuntu-24.04\n', ''),
+             '#2780 must carry runs-on lines the guard can see'),
+        ]
+        self.check_ci_mutations(gate_cases,
+                                'test_runner_image_guard_steps_are_registered_and_identical',
+                                '#2780', mutated='pr-gate.yml')
+
+    def test_runner_image_guard_logic_self_check(self):
+        # #2780 fix-r2（P2-a / concurrency#3 / boundary#3）：守卫逻辑的行为自测。
+        # 跑从 ci.yml 提取的真实脚本（不 mock、不另写副本）：正控必须绿，每条拒绝
+        # 路径必须红在专属错误标记上——OS 漂移 / $ImageOS 漂移 / $ImageVersion 漂移
+        # 与缺失（构建维度）/ runs-on 值漂移（含 ubuntu-latest 回归）/ 目标不可读 /
+        # grep rc>=2 / 零命中。逐条跑完再汇总，任一非 KILLED 即红（不遇第一条失败
+        # 就中止）。$ImageOS/$ImageVersion 在真实 runner 上的存在性与格式属评审
+        # 推断（本环境无 GitHub 托管 runner），守卫按 fail-closed 设计覆盖。
+        guards = self.runner_image_guard_scripts('#2780')
+        script = guards['negative-controls'][1]
+        pins = self.runner_image_guard_pins(script, '#2780')
+        root = Path(__file__).resolve().parents[3]
+        ci_text = (root / '.github/workflows/ci.yml').read_text()
+        gate_text = (root / '.github/workflows/pr-gate.yml').read_text()
+        results = []
+        positive = None
+
+        def world(guard_ci=ci_text, guard_gate=gate_text, os_version=None, env=None,
+                  ci_is_dir=False, skip_gate=False):
+            def build(work):
+                flows = work / '.github/workflows'
+                flows.mkdir(parents=True)
+                if ci_is_dir:
+                    (flows / 'ci.yml').mkdir()
+                else:
+                    (flows / 'ci.yml').write_text(guard_ci)
+                if not skip_gate:
+                    (flows / 'pr-gate.yml').write_text(guard_gate)
+                release = work / 'os-release'
+                release.write_text(f'VERSION_ID="{os_version or pins["expected"]}"\n')
+                environment = {'PATH': '/usr/bin:/bin',
+                               'PDRS_IMAGE_GUARD_OS_RELEASE': str(release),
+                               'ImageOS': pins['expected_image_os'],
+                               'ImageVersion': pins['expected_image_version']}
+                environment.update(env or {})
+                return environment
+            return build
+
+        def run_guard(name, build, expect_pass, marker=None):
+            nonlocal positive
+            with tempfile.TemporaryDirectory() as temp:
+                completed = subprocess.run(
+                    ['bash', '-c', script], cwd=temp, env=build(Path(temp)),
+                    capture_output=True, text=True, timeout=60)
+            if expect_pass:
+                ok = (completed.returncode == 0
+                      and 'runner 镜像守卫通过' in completed.stdout
+                      and 'runs-on 白名单反向断言通过' in completed.stdout)
+                positive = (name, ok, f'rc={completed.returncode} '
+                                      f'stdout={completed.stdout!r} stderr={completed.stderr!r}')
+                return
+            ok = completed.returncode != 0 and marker in completed.stderr
+            status = ('KILLED' if ok
+                      else 'SURVIVED' if completed.returncode == 0 else 'INVALID')
+            results.append((name, status))
+            print(f'#2780 {name}: {status}: rc={completed.returncode} '
+                  f'stderr={completed.stderr!r}', flush=True)
+
+        run_guard('baseline-green', world(), expect_pass=True)
+        run_guard('os-version-drift', world(os_version='26.04'), expect_pass=False,
+                  marker='实际 OS 版本="26.04"')
+        run_guard('image-os-drift', world(env={'ImageOS': 'ubuntu26'}), expect_pass=False,
+                  marker='实际 ImageOS="ubuntu26"')
+        run_guard('image-version-drift',
+                  world(env={'ImageVersion': '20261101.999.0'}), expect_pass=False,
+                  marker='ImageVersion="20261101.999.0"')
+        run_guard('image-version-missing', world(env={'ImageVersion': ''}),
+                  expect_pass=False, marker='ImageVersion="<未提供>"')
+        run_guard('runs-on-arm-drift',
+                  world(guard_ci=ci_text.replace('    runs-on: ubuntu-24.04',
+                                                 '    runs-on: ubuntu-24.04-arm', 1)),
+                  expect_pass=False, marker='runs-on 值 "ubuntu-24.04-arm"')
+        run_guard('runs-on-latest-regression',
+                  world(guard_ci=ci_text.replace('    runs-on: ubuntu-24.04',
+                                                 '    runs-on: ubuntu-latest', 1)),
+                  expect_pass=False, marker='runs-on 值 "ubuntu-latest"')
+        run_guard('guard-target-unreadable', world(skip_gate=True), expect_pass=False,
+                  marker='不可读')
+        # grep rc>=2 的确定性触发：目标做成目录（-r 对目录为真、grep 报 rc=2）。
+        # BSD grep（macOS）对目录的退出码未实测，非 Linux 显式跳过并记原因，不静默通过。
+        if sys.platform == 'linux':
+            run_guard('grep-rc2-directory-target', world(ci_is_dir=True),
+                      expect_pass=False, marker='异常退出 rc=2')
+        else:
+            print(f'#2780 grep-rc2-directory-target: SKIPPED: rc>=2 of GNU grep on a '
+                  f'directory is not verified on {sys.platform}', flush=True)
+        run_guard('no-runs-on-parsed', world(guard_ci=''), expect_pass=False,
+                  marker='一条 runs-on 都没解析到')
+        self.assertTrue(positive and positive[1],
+                        f'#2780 the guard logic positive control must pass: {positive}')
+        self.assertTrue(results and all(status == 'KILLED' for _, status in results),
+                        f'#2780 every guard-logic mutant must die on its own marker: '
+                        f'{results}')
+        print(f'#2780 guard logic negative summary: {{'
+              f'"KILLED": {len(results)}}}', flush=True)
+
     def test_isolation_ci_regressions_are_rejected(self):
         workflow = self.ci_workflow_fixture()
         command = 'run: python3 -B src/pilotdeck-gateway/tests/fixtures/test_negative_adaptive_isolation.py'
