@@ -107,7 +107,11 @@ async function partA() {
   const raw = await rawKeepAliveRequest(PORT_A);
   const statusLine = raw.head.split("\r\n")[0];
   const connHeader = raw.head.toLowerCase().split("\r\n").find((l) => l.startsWith("connection:"));
-  log("A/raw-keepalive-request1", { statusLine, connHeader });
+  // #2662 fix-r1 sibling#4：裸层对称守门——响应 Connection 非 keep-alive（显式 close）时，
+  // FIN 来自响应结束而非 server.close()，观察 1/2 的结论适用条件就变了；记 rawPremise、
+  // 不成立时降级 note。头缺失 = HTTP/1.1 隐式 keep-alive（RFC 7230 §6.3），与 :134 同口径。
+  const rawPremise = connHeader === undefined || connHeader === "connection: keep-alive";
+  log("A/raw-keepalive-request1", { statusLine, connHeader, rawPremise });
   const rawEvents = [];
   watchSock(raw.sock, rawEvents, "raw-ka");
 
@@ -131,7 +135,9 @@ async function partA() {
   });
   const pooledConnection = typeof pooled1.connection === "string" ? pooled1.connection.toLowerCase() : undefined;
   // #2662：入池前提断言——ok 且 Connection: keep-alive 才意味着 socket 会入池。
-  const pooledPremise = pooled1.ok === true && pooledConnection === "keep-alive";
+  // fix-r1 boundary#1：头缺失 = HTTP/1.1 隐式 keep-alive（RFC 7230 §6.3），undefined
+  // 不再判前提失败（避免对省略该头的服务端整块丢弃有效证据）；显式 close 仍不成立。
+  const pooledPremise = pooled1.ok === true && (pooledConnection === "keep-alive" || pooledConnection === undefined);
   log("A/agent-pooled-request1", {
     pooled1,
     pooledPremise,
@@ -141,7 +147,7 @@ async function partA() {
   });
   if (!pooledPremise) {
     log("A/SKIP-agent-reuse", {
-      reason: pooled1.ok !== true ? "pooled1 failed" : "response Connection 不是 keep-alive，socket 未入池",
+      reason: pooled1.ok !== true ? "pooled1 failed" : "响应 Connection 显式非 keep-alive（close 等），socket 未入池",
       pooled1,
     });
   }
@@ -160,7 +166,10 @@ async function partA() {
   await sleep(200);
   log("A/server-close-idle-keepalive", {
     eventsSoFar: rawEvents.map((e) => ({ ...e, relMs: e.at - t0 })),
-    note: "机制 A：close() 主动关空闲 keep-alive（A14① 复核，裸层直接观测）",
+    rawPremise,
+    note: rawPremise
+      ? "机制 A：close() 主动关空闲 keep-alive（A14① 复核，裸层直接观测）"
+      : "前提未成立（裸层响应 Connection 非 keep-alive，见 A/raw-keepalive-request1）：FIN 时刻不代表 server.close() 对空闲 keep-alive 的处置",
   });
 
   // 观察 2：在同一条已 FIN 的 socket 上复用发请求 2（裸层复用态——A14 重建连推断的对照面）
@@ -177,9 +186,12 @@ async function partA() {
   await sleep(1500);
   log("A/raw-reuse-after-fin", {
     write2,
+    rawPremise,
     eventsAfterWrite: rawEvents.filter((e) => e.at >= writeAt).map((e) => ({ event: e.event, code: e.code, hadError: e.hadError })),
     socketStillOpen: !raw.sock.destroyed,
-    note: "裸层复用（allowHalfOpen）：对已收 FIN 的 socket 写第二请求的观测（写本身是否报错、随后 RST/EOF/静默）",
+    note: rawPremise
+      ? "裸层复用（allowHalfOpen）：对已收 FIN 的 socket 写第二请求的观测（写本身是否报错、随后 RST/EOF/静默）"
+      : "前提未成立（裸层响应 Connection 非 keep-alive）：FIN 来自响应结束而非 server.close()，本条按「已 FIN 连接上的写」记录，不作 close 后复用的证据",
   });
 
   // 观察 3：同 agent（close 前已池化）复用 + fetch 新连接 + 新 TCP
