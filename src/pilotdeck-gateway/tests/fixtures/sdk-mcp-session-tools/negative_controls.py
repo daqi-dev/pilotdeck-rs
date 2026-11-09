@@ -232,6 +232,28 @@ def main():
         repeated = sorted({name for name in args.selected
                            if args.selected.count(name) > 1})
         refuse(f'#1433 repeated mutation names: {repeated}')
+    # #2468 r2 (review r6 concurrency#1): the argv/env-only guards below are
+    # also refused from their inputs alone, before the stale-anchor scan
+    # reads live sources. A full mutation round holds the tree lock with
+    # `tools.rs` mutated on disk; a concurrent CI guards run with an unusable
+    # target (or an already-claimed output directory) used to hit the
+    # stale-anchor refusal first, so its stderr named no CARGO_TARGET_DIR /
+    # "already exists" cause and the guards matrix went red with nothing
+    # wrong. These three checks read no source bytes — same class as the
+    # name checks above. The target is admitted by the one shared rule
+    # (absent, empty, blank, dot, root, repo root, inside `src`) *before* the
+    # evidence directory exists, so a rejected target cannot leave a
+    # directory that reads like a finished run; `claim_dir` below still makes
+    # the real (atomic) claim, so a directory created between this precheck
+    # and the claim is still refused fail-closed.
+    if not args.check:
+        if not args.output:
+            refuse('#1433 an output directory is required')
+        if missing_target():
+            refuse('#1433 set CARGO_TARGET_DIR to the caller-owned build tree')
+        refuse_unusable_target()
+        if Path(args.output).exists():
+            refuse(f'#1433 output directory already exists: {Path(args.output).resolve()}')
     stale = []
     for name, path, old, new, test, assertion in mutations:
         text = path.read_text()
@@ -244,15 +266,8 @@ def main():
     if args.check:
         print(f'#1433 {len(EXPECTED_NAMES)} unique anchors and assertion bindings: OK')
         return 0
-    if not args.output:
-        refuse('#1433 an output directory is required')
-    # The target is admitted by the one shared rule (absent, empty, blank,
-    # dot, root, repo root, inside `src`) *before* the evidence directory
-    # exists, so a rejected target cannot leave a directory that reads like a
-    # finished run.
-    if missing_target():
-        refuse('#1433 set CARGO_TARGET_DIR to the caller-owned build tree')
-    refuse_unusable_target()
+    # The target and output-directory guards already ran above (argv/env
+    # only, before the stale scan); `claim_dir` here makes the atomic claim.
     output = claim_dir(args.output)
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
