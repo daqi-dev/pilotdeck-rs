@@ -1379,18 +1379,14 @@ impl LiveSession for ContinuationChildSession {
         &self,
         turn: &SessionQueuedTurn,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-        {
-            let mut queued = self.queued.lock().unwrap();
-            let next = queued
+        let next = {
+            let queued = self.queued.lock().unwrap();
+            queued
                 .front()
                 .filter(|next| next.item_id == turn.item_id && next.turn_id == turn.turn_id)
-                .ok_or_else(|| RuntimeError::new("Queued turn is not the next FIFO admission."))?;
-            self.live
-                .recorder
-                .start_queued_turn(&self.live.session_key, &next.turn_id, &next.item_id)
-                .map_err(|error| RuntimeError::new(error.to_string()))?;
-            queued.pop_front();
-        }
+                .cloned()
+                .ok_or_else(|| RuntimeError::new("Queued turn is not the next FIFO admission."))?
+        };
         let mut options = turn
             .submit_options
             .as_object()
@@ -1399,7 +1395,19 @@ impl LiveSession for ContinuationChildSession {
         options.insert("turnId".into(), JsValue::String(turn.turn_id.clone()));
         let input =
             continuation_queued_execution_input(&self.input_template.lock().unwrap(), &turn.input)?;
-        self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))
+        self.live
+            .recorder
+            .start_queued_turn(&self.live.session_key, &next.turn_id, &next.item_id)
+            .map_err(|error| RuntimeError::new(error.to_string()))?;
+        let stream = self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))?;
+        let mut queued = self.queued.lock().unwrap();
+        if queued
+            .front()
+            .is_some_and(|head| head.item_id == turn.item_id && head.turn_id == turn.turn_id)
+        {
+            queued.pop_front();
+        }
+        Ok(stream)
     }
 
     fn discard_queued_turns(&self, reason: &str) -> crate::runtime::project::RuntimeResult {
@@ -2166,6 +2174,78 @@ impl SessionFactory for NativeSessionFactory {
         &self,
     ) -> Option<crate::runtime::session::context_resources::ProjectMemoryRegistry> {
         Some(self.memory_registry.clone())
+    }
+}
+
+#[cfg(test)]
+mod continuation_queued_tests {
+    use super::*;
+    use crate::runtime::session::sidecar_session::{SidecarSession, SidecarSessionConfig, SidecarSpawner};
+    use crate::storage::{AsyncTranscriptAdapter, JsonlTranscriptStore, SessionStorageInput};
+
+    struct NoSpawn;
+    impl SidecarSpawner for NoSpawn {
+        fn requires_subprocess(&self) -> bool {
+            true
+        }
+
+        fn command(&self) -> std::io::Result<tokio::process::Command> {
+            Ok(tokio::process::Command::new("true"))
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_continuation_queued_turn_stays_at_head() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let root = std::env::temp_dir().join(format!(
+            "pdrs-cont-queue-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root)?;
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(|key| key.pilot_home.join("chats")),
+        );
+        let storage = adapter.create_session_storage(SessionStorageInput {
+            project_root: root.clone(),
+            pilot_home: root.clone(),
+            session_id: "child".into(),
+            now: None,
+        })?;
+        let live = LiveSessionState::new(
+            "child".into(),
+            root.to_string_lossy().as_ref().into(),
+            storage,
+        )?;
+        let inner = Arc::new(SidecarSession::new(
+            SidecarSessionConfig {
+                limits: crate::host::Limits::default(),
+                session_key: "child".into(),
+                project_key: None,
+                cwd: root.to_string_lossy().as_ref().into(),
+                snapshot: JsValue::Null,
+                services: None,
+            },
+            Arc::new(NoSpawn),
+        ));
+        let turn = SessionQueuedTurn {
+            item_id: "item".into(),
+            turn_id: "turn".into(),
+            input: JsValue::Null,
+            submit_options: JsValue::Null,
+        };
+        let session = Arc::new(ContinuationChildSession {
+            inner,
+            live,
+            queued: Mutex::new(VecDeque::from([turn.clone()])),
+            input_template: Mutex::new(JsValue::Null),
+        });
+        assert!(session.submit_queued_turn(&turn).is_err());
+        assert_eq!(session.pending_queued_turns()?.len(), 1);
+        if root.exists() {
+            std::fs::remove_dir_all(root)?;
+        }
+        Ok(())
     }
 }
 
