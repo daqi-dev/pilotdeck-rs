@@ -975,10 +975,10 @@ def _assert_subprocess_timeout_wiring():
     连续的 ``timeout=<常量名>`` 文本，数不进自己。已知边界（同 _assert_pass_counting
     的文本互证空档，评审 r1 登记跟进）：只认裸标识符形态，括号包裹或经中转变量的
     消费点不进计数；表达式改写（如 ``timeout=<常量> * 2``）仍按 1 个入账。词边界
-    ``(?!\w)``（评审 r2 boundary#1）：以常量为前缀的新标识符（如
-    ``CHECK_TIMEOUT_SECONDS_V2``）不算登记常量的消费点——否则消费点改指新常量后
-    计数仍绿、预算行仍读旧常量入算，「预算算 600 / 执行 900」无人红，恰是本守卫
-    要堵的 #2421 形态在改名边界上的复发。
+    （count 正则结尾的 word-char 否定前瞻，评审 r2 boundary#1）：以常量为前缀的
+    新标识符（如 ``CHECK_TIMEOUT_SECONDS_V2``）不算登记常量的消费点——否则消费点
+    改指新常量后计数仍绿、预算行仍读旧常量入算，「预算算 600 / 执行 900」无人红，
+    恰是本守卫要堵的 #2421 形态在改名边界上的复发。
 
     同类跟改（评审 r1 P2，zai/DS 两家撞上）：预算负控行 ``limit`` 的**执行面**在
     negative_controls 自己的三个 checker 子进程（preflight / 控件 / 正控）——本
@@ -986,6 +986,13 @@ def _assert_subprocess_timeout_wiring():
     形态在那边复发而这边照绿。CONTROLS 侧同款计数：CHECK 常量的消费点恰为
     ``EXPECTED_CONTROLS_CHECK_TIMEOUT_SITES``（3 处，其余 EMIT/NEGCTL 在那边
     无调用点，不计）。
+
+    别名拒绝（评审 r3，concurrency 与 boundary 两家独立撞上）：词边界堵住「原名
+    改指 ``*_V2``」的同时，把「原登记消费点保留 + 旁边新增一个指向别名常量的
+    消费点」从旧版前缀入账的计数 4≠3 当场红变成不可见——与本 docstring 上段
+    「新增一个未入账的消费点（2+ 个）都当场红」相反。故凡
+    ``timeout=<常量><词字符>`` 形态（以登记常量为前缀的标识符消费点）一律拒绝：
+    预算按登记常量求和，别名消费点跑的是预算从未入算的数。
     """
     source = SELF.read_text(encoding='utf-8')
     for prefix in ('EMIT', 'CHECK', 'NEGCTL'):
@@ -1000,10 +1007,19 @@ def _assert_subprocess_timeout_wiring():
                 'constants (a literal timeout means the budget inequality '
                 'covers a number nothing executes, an uncounted extra '
                 'consumer means it under-covers what does run)')
+        if re.search(
+                r'timeout\s*=\s*' + re.escape(constant) + r'\w+', source):
+            raise CheckFailure(
+                '#2421 self_check.py consumes '
+                f'`{constant}` through an alias-named constant (a prefixed '
+                'identifier such as one ending in `_V2`); the internal '
+                'worst-case budget counts the registered constant itself, so '
+                'an aliased consumer runs on a number the budget never sums')
     checker_constant = 'CHECK' + '_TIMEOUT_' + 'SECONDS'
+    controls_text = CONTROLS.read_text(encoding='utf-8')
     controls_uses = len(re.findall(
         r'timeout\s*=\s*' + re.escape(checker_constant) + r'(?!\w)',
-        CONTROLS.read_text(encoding='utf-8')))
+        controls_text))
     if controls_uses != EXPECTED_CONTROLS_CHECK_TIMEOUT_SITES:
         raise CheckFailure(
             '#2421 negative_controls.py carries '
@@ -1012,6 +1028,14 @@ def _assert_subprocess_timeout_wiring():
             'negctl budget row derives its limit from this constant (a '
             'literal timeout there recreates the #2421 drift on the '
             'execution surface the budget claims to cover)')
+    if re.search(r'timeout\s*=\s*' + re.escape(checker_constant) + r'\w+',
+                 controls_text):
+        raise CheckFailure(
+            '#2421 negative_controls.py consumes '
+            f'`{checker_constant}` through an alias-named constant (a '
+            'prefixed identifier such as one ending in `_V2`); the negctl '
+            'budget row derives its limit from the registered constant, so '
+            'an aliased consumer runs on a number the budget never sums')
     return ('EMIT / CHECK / NEGCTL subprocess timeouts consume their '
             'constants; the controls executor consumes its checker '
             'constant at every checker call site')
