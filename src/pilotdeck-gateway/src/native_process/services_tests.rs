@@ -416,6 +416,11 @@ fn lease_logical_root_keeps_alias_spelled_attachments_inline() {
         ),
         "#1618 an alias-spelled lease attachment must compose the turn",
     );
+    // The alias is a sibling of `Scratch::drop`'s root, so nothing else
+    // removes it; drop it before the assertions so a failing
+    // `negative_assert!` does not leak it either (r5 review P2a, same
+    // cleanup as `symlinked_project_spelling_keeps_lease_attachments`).
+    std::fs::remove_file(&alias).ok();
     let blocks = content_blocks(&result);
     negative_assert!(
         blocks
@@ -457,6 +462,10 @@ fn lease_canonical_root_keeps_physically_spelled_attachments_inline() {
         ),
         "#1618 a physically-spelled lease attachment must compose the turn",
     );
+    // Same as above: the alias lives outside `Scratch::drop`'s root and is
+    // dead once the turn is composed; remove it before the assertions so a
+    // failing `negative_assert!` does not leak it (r5 review P2a).
+    std::fs::remove_file(&alias).ok();
     let blocks = content_blocks(&result);
     negative_assert!(
         blocks
