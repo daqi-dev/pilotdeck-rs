@@ -3546,6 +3546,10 @@ async fn http10_request_closes_the_connection() {
     // no gateway the dispatched turn dies in its spawned task (logged into
     // the void, the recorder is absent) long after the 200 TWIML is already
     // on the wire.
+    // #2257 fix-r3: `start` swallows a bind failure into a NoopHandle, so a
+    // port collision would silently test someone else's listener — preflight
+    // the port like the replay cells do.
+    ensure_replay_port_free(PORT).await;
     let mut extra = recorded_extra(&case).cloned().unwrap_or_else(|| json!({}));
     extra["webhookPort"] = json!(PORT);
     let channel = SmsChannel::new(SmsChannelOptions {
@@ -3694,6 +3698,9 @@ async fn http10_not_found_keeps_the_close_delimited_framing() {
         let version = words.next().expect("#1913 request version");
         format!("{method} /no-such-path {version}\r\n{rest}").into_bytes()
     };
+    // #2257 fix-r3: same preflight as the 200 pin — a NoopHandle fallback on
+    // a busy port would fake-pass against a foreign listener.
+    ensure_replay_port_free(PORT).await;
     let mut extra = recorded_extra(&case).cloned().unwrap_or_else(|| json!({}));
     extra["webhookPort"] = json!(PORT);
     let channel = SmsChannel::new(SmsChannelOptions {
