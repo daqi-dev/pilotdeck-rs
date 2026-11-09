@@ -42,6 +42,26 @@ fn start_steer_run(
         .expect("#1307 steer turn start")
 }
 
+/// Captures the durable `claim` mutations the mailbox records through the
+/// injected `MutationRecorder` (A7.2-STEER-INPUT-001 差异 6).
+#[derive(Default)]
+struct RecordedClaims(std::sync::Mutex<Vec<pilotdeck_protocol::JsString>>);
+impl crate::runtime::steer::MutationRecorder for RecordedClaims {
+    fn record(
+        &self,
+        _turn_id: pilotdeck_protocol::JsString,
+        mutation: pilotdeck_protocol::JsObject,
+    ) -> crate::host::HostFuture<()> {
+        if mutation.get("mutation").and_then(JsValue::as_string)
+            == Some(&pilotdeck_protocol::JsString::from("claim"))
+            && let Some(JsValue::String(id)) = mutation.get("itemId")
+        {
+            self.0.lock().unwrap().push(id.clone());
+        }
+        Box::pin(async { Ok::<(), crate::host::HostError>(()) })
+    }
+}
+
 #[test]
 fn registry_matches_current_methods() {
     // Independent inventory of Requests::request at f53864ba4862. This is not
@@ -4824,6 +4844,89 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         0,
         "#1604 the null-id message is silently lost (TS drains [null])"
     );
+    // §差异 6 claim 门（r3 boundary#1，A7.2-STEER-INPUT-001）：durable 消费
+    // 时 Rust 的 claim 门读 `metadata.queueItemId` 并以非空文本放行——
+    // 缺席/null 格在入参边界已折成 `"undefined"`/`"null"` 文本，所以一律
+    // 走 claim，注入的 recorder 落 `{"mutation":"claim","itemId":<强转
+    // 文本>}`。TS `TurnRunner.onDurableMessage` 以真值门过滤原始
+    // `queueItemId`（TurnRunner.ts `if (itemId)`），缺席/null/0/false/""/
+    // 缺键全部跳过 claim（probe `20261109-review-2382-r2-ds/ts-probe/
+    // output6.txt`，Node v22.22.1）。经 `start_turn` 装进 router 的 drain
+    // 端口（TurnSteer 路径，填充 unacknowledged）后再 `persist_and_apply`，
+    // 钉住「缺席/null 也走 claim，键为文本」。
+    for (session, run, turn, item_id, expected) in [
+        ("ig", "igr", "igt", None::<JsValue>, "undefined"),
+        ("ih", "ihr", "iht", Some(JsValue::Null), "null"),
+    ] {
+        let _reservation = requests
+            .owner
+            .begin_turn(&session.into(), &run.into())
+            .expect("#1604 claim-gate admission slot");
+        let recorded = Arc::new(RecordedClaims::default());
+        let recorder: Arc<dyn crate::runtime::steer::MutationRecorder> = recorded.clone();
+        let mut router = crate::host::modules::ModuleRouter::default();
+        let turn = steer
+            .bind_session(session.into(), Some(recorder))
+            .expect("#1604 claim-gate session binding")
+            .start_turn(
+                turn.into(),
+                run.into(),
+                vec![],
+                crate::runtime::hooks::Cancellation::new(),
+                &mut router,
+            )
+            .expect("#1604 claim-gate turn start");
+        let mut params = vec![
+            ("sessionKey", JsValue::from(session)),
+            ("runId", JsValue::from(run)),
+        ];
+        if let Some(item_id) = item_id {
+            params.push(("itemId", item_id));
+        }
+        params.push(("message", "m".into()));
+        requests
+            .request(
+                "steer_turn".into(),
+                crate::metadata::object(params.into_iter()),
+            )
+            .await
+            .expect("#1604 the claim-gate steer stays Ok");
+        let drain_port = router
+            .turn
+            .ports
+            .drain_steer
+            .take()
+            .expect("#1604 claim-gate drain port");
+        let drained = drain_port()
+            .await
+            .expect("#1604 the claim-gate turn-steer drain");
+        negative_assert_eq!(
+            drained.len(),
+            1,
+            "#1604 the claim-gate drain offered the steer"
+        );
+        turn.persist_and_apply(
+            pilotdeck_protocol::JsString::from(expected),
+            drained[0]
+                .get("message")
+                .expect("#1604 claim-gate canonical message")
+                .clone(),
+            |_| Box::pin(async { Ok::<(), crate::host::HostError>(()) }),
+        )
+        .await
+        .expect("#1604 the durable apply of the coerced id succeeds");
+        let claims = recorded.0.lock().unwrap().clone();
+        negative_assert_eq!(
+            claims.len(),
+            1,
+            "#1604 the coerced id claims the mailbox entry while TS's truthiness gate records no claim (A7.2-STEER-INPUT-001 差异 6)"
+        );
+        negative_assert_eq!(
+            claims[0],
+            pilotdeck_protocol::JsString::from(expected),
+            "#1604 the claim mutation keys by the coerced text"
+        );
+    }
     requests
         .owner
         .shutdown()
