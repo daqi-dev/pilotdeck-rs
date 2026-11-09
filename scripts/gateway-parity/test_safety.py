@@ -3906,6 +3906,26 @@ class RetirementScoring(unittest.TestCase):
                 self.assertEqual(report['hostAudit'][face][0]['status'], status,
                                  f'#43 {tag} {key}: {report["hostAudit"][face]}')
                 self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#43 {tag} {key}')
+        # #2519 (p2batch-d7 sibling #2): the predicate's second half — rows
+        # not a list — had no in-repo pin (every existing census test passes
+        # a list), so dropping that half of `_census_unobserved` kept the
+        # whole suite green.  Truthy garbage must read as unobserved (BLOCKED)
+        # on both faces, never as a crash or a clean empty sample.
+        for tag, census in (
+                ('garbage rows', {'rows': 'garbage', 'declared': [7], 'declaredAlive': True}),
+                ('non-dict census', 'x')):
+            row = self._stream_ok_round_row()
+            row['census'] = census
+            report = self._report_for(row, expected)
+            for name in self.REPORT_FACES:
+                self.assertIn(name, report, f'#43 {tag} lacks face {name}')
+            self.assertNotEqual(report['executionStatus'], 'NOT_RUN', f'#43 {tag}')
+            self.assertEqual(report['hostAudit']['processCensus'][0]['status'], 'BLOCKED',
+                             f'#43 {tag}: {report["hostAudit"]["processCensus"]}')
+            self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#43 {tag}')
+            class2 = next(c for c in self.session._retirement_controls(row, expected)['classes']
+                          if c['class'] == 'TS_HOST')
+            self.assertEqual(class2['status'], 'NOT_APPLICABLE', f'#43 {tag}: {class2}')
 
     def test_cleanup_audit_face_reads_the_shared_stopped_predicate(self):
         # #2519: the report face's cleanupAudit and the round face's CLEANUP
@@ -3928,6 +3948,22 @@ class RetirementScoring(unittest.TestCase):
                          [row['audit']] * self.session.RETIREMENT_ROUNDS,
                          '#44 processAudit must carry the failing round audit')
 
+    def test_round_face_cleanup_require_keeps_the_shared_predicate(self):
+        # #2519 (p2batch-d7 boundary #2): the round face's CLEANUP require is
+        # the only gate that rejects an unproven round (the report face's
+        # cleanupAudit does not feed the total verdict), and #44 pins only the
+        # report consumer.  Per the #2425 precedent this static pin counts the
+        # two call-site spellings and the predicate's single `allStopped`
+        # read, so deleting the require or short-circuiting the predicate
+        # turns this red either way.
+        marker = '#2519 the round face reads the shared cleanup predicate'
+        source = (common.SCRIPT / 'session_domain.py').read_bytes().decode()
+        self.assertTrue(
+            source.count("require(_cleanup_stopped(row['audit']), 'CLEANUP',") == 1
+            and source.count('all(_cleanup_stopped(row[\'audit\']) for row in rounds)') == 1
+            and source.count('_cleanup_stopped(') == 3  # def + exactly these two call sites
+            and source.count("return bool(audit['allStopped'])") == 1,
+            marker)
 
     def test_control_attribution_requires_the_injected_object(self):
         # P1 (#1355 fix-r4d): a control PASS must be attributed to the object
