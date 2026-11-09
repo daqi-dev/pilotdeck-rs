@@ -380,13 +380,46 @@ pub async fn run_get(
     run: &RunRef,
 ) -> Result<Option<JsValue>, TurnReadError> {
     let Some(registry) = registry else {
-        return Err(TurnReadError::dialog(
-            "CAPABILITY_UNAVAILABLE",
-            "Persistent run registry is unavailable.",
-        ));
+        return Err(registry_unavailable());
     };
     let record = registry.get(run).await.map_err(registry_error)?;
     Ok(record.map(|record| to_gateway_run_record(&record)))
+}
+
+/// The `!this.options.runRegistry` capability gate every run read raises
+/// (InProcessGateway.ts:2525-2532). The methods layer also gates on it
+/// directly: the error must precede any input read (probes r11/r12).
+pub fn registry_unavailable() -> TurnReadError {
+    TurnReadError::dialog(
+        "CAPABILITY_UNAVAILABLE",
+        "Persistent run registry is unavailable.",
+    )
+}
+
+/// The `afterSeq` / `limit` validation of `runEvents`
+/// (InProcessGateway.ts:2533-2538), afterSeq first. `None` when both fields
+/// are valid or absent; an explicit `undefined` counts as absent. The methods
+/// layer runs this before the run-key coercion (probe r7).
+pub fn cursor_error(after_seq: Option<&JsValue>, limit: Option<&JsValue>) -> Option<TurnReadError> {
+    let after_seq = after_seq.filter(|value| !value.is_undefined());
+    if let Some(value) = after_seq
+        && !is_non_negative_safe_integer(value)
+    {
+        return Some(TurnReadError::dialog(
+            "INVALID_RUN_CURSOR",
+            "afterSeq must be a non-negative safe integer.",
+        ));
+    }
+    let limit = limit.filter(|value| !value.is_undefined());
+    if let Some(value) = limit
+        && !is_valid_limit(value)
+    {
+        return Some(TurnReadError::dialog(
+            "INVALID_RUN_LIMIT",
+            "limit must be an integer between 1 and 500.",
+        ));
+    }
+    None
 }
 
 /// `` `Run ${runId} is not registered.` `` (InProcessGateway.ts:2540) as
@@ -405,31 +438,15 @@ pub async fn run_events(
     input: &RunEventsInput,
 ) -> Result<JsValue, TurnReadError> {
     let Some(registry) = registry else {
-        return Err(TurnReadError::dialog(
-            "CAPABILITY_UNAVAILABLE",
-            "Persistent run registry is unavailable.",
-        ));
+        return Err(registry_unavailable());
     };
     let after_seq = input
         .after_seq
         .as_ref()
         .filter(|value| !value.is_undefined());
-    if let Some(value) = after_seq
-        && !is_non_negative_safe_integer(value)
-    {
-        return Err(TurnReadError::dialog(
-            "INVALID_RUN_CURSOR",
-            "afterSeq must be a non-negative safe integer.",
-        ));
-    }
     let limit = input.limit.as_ref().filter(|value| !value.is_undefined());
-    if let Some(value) = limit
-        && !is_valid_limit(value)
-    {
-        return Err(TurnReadError::dialog(
-            "INVALID_RUN_LIMIT",
-            "limit must be an integer between 1 and 500.",
-        ));
+    if let Some(error) = cursor_error(after_seq, limit) {
+        return Err(error);
     }
     let Some(record) = registry.get(&input.run).await.map_err(registry_error)? else {
         return Err(TurnReadError::dialog(

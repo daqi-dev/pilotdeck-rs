@@ -62,7 +62,7 @@ const clean=(v:any):any=>{
  return v;
 };
 const expand=(v:any):any=>typeof v==='string'?v.replaceAll('<root>',root):Array.isArray(v)?v.map(expand):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,expand(x)])):v;
-const methods:any={snapshot_list:'snapshotList',snapshot_get:'snapshotGet',snapshot_restore:'snapshotRestore',manager_sessions:'managerSessions',manager_browsers:'managerBrowsers',commands_list:'commandsList',skill_list:'skillsList',skill_read:'skillRead',skill_write:'skillWrite',skill_create:'skillCreate',skill_delete:'skillDelete',skill_import:'skillImport',skill_validate:'skillValidate',skill_scan:'skillScan'};
+const methods:any={snapshot_list:'snapshotList',snapshot_get:'snapshotGet',snapshot_restore:'snapshotRestore',manager_sessions:'managerSessions',manager_browsers:'managerBrowsers',commands_list:'commandsList',skill_list:'skillsList',skill_read:'skillRead',skill_write:'skillWrite',skill_create:'skillCreate',skill_delete:'skillDelete',skill_import:'skillImport',skill_validate:'skillValidate',skill_scan:'skillScan',steer_turn:'steerTurn',cancel_steer:'cancelSteer',hook_async_result:'submitAsyncHookResult',run_events:'runEvents',active_turn_snapshot:'getActiveTurnSnapshot'};
 const call=async(method:string,params:any)=>{try{return {ok:clean(await local.gateway[methods[method]](expand(params)))};}catch(e:any){return {error:clean({code:e.code||'gateway_request_failed',message:e.message,...(e.validation?{validation:e.validation}:{})})};}};
 let trace:any[]=[];
 const registry:any=local.registry, router:any=(local.gateway as any).router;
@@ -120,6 +120,26 @@ try {
   ['skill_read',{...p,scope:'project',slug:'demo'}],['skill_validate',{sourcePath:'<root>/project/.pilotdeck/skills/demo'}],
   ['skill_scan',{parentPath:'<root>/project/.pilotdeck/skills'}],['skill_delete',{...p,scope:'project',slug:'demo'}],
   ['skill_read',{...p,scope:'project',slug:'demo'}],['skill_import',{...p,scope:'project',sourcePath:'<root>/absent'}],
+ ] as any[]) requests.push({method,params,result:await call(method,params)});
+ // #1604: error and miss frames for the steer / run / active-turn read
+ // families whose input guards now follow the TS shapes
+ // (InProcessGateway.ts:1859-1930, 2479-2553; probes
+ // `_tmp/20261026-issue-1604/ts-probe/output*.txt`). The registry and replay
+ // maps are the fixture's own fresh ones: every lookup is a miss, which is
+ // exactly what these frames pin. run_get / run_reattach only differ from
+ // run_events by not throwing RUN_NOT_FOUND (their miss returns undefined),
+ // so their shared coercion frames are covered through run_events rows.
+ for(const [method,params] of [
+  ['hook_async_result',{}],['hook_async_result',{sessionKey:'s'}],['hook_async_result',{sessionKey:' '}],
+  ['hook_async_result',{sessionKey:'　'}],['hook_async_result',{sessionKey:5}],['hook_async_result',{sessionKey:'s',invocationId:5}],
+  ['hook_async_result',{sessionKey:'s',invocationId:'i'}],['hook_async_result',null],
+  ['steer_turn',{}],['steer_turn',{sessionKey:5,runId:'r'}],['steer_turn',{sessionKey:'missing-session'}],['steer_turn',null],
+  ['cancel_steer',{}],['cancel_steer',{sessionKey:5}],
+  ['run_events',{}],['run_events',{runId:5}],['run_events',{sessionKey:[1,2]}],
+  ['run_events',{afterSeq:-1}],['run_events',{afterSeq:'3'}],['run_events',{limit:0}],
+  ['run_events',{afterSeq:-1,runId:{toString:null}}],['run_events',{runId:{toString:null}}],['run_events',null],
+  ['active_turn_snapshot',{}],['active_turn_snapshot',{sessionKey:null}],['active_turn_snapshot',{sessionKey:5}],
+  ['active_turn_snapshot',{sessionKey:' '}],['active_turn_snapshot',{sessionKey:'missing-session'}],['active_turn_snapshot',null],
  ] as any[]) requests.push({method,params,result:await call(method,params)});
  // A FIFO keeps the real skill read pending. The writer is released only
  // after an independent RPC completes; no CPU load or timing sleep is used.

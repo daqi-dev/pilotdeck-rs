@@ -770,3 +770,65 @@ async fn a_maximal_drain_budget_walks_to_completion() {
     let teardown = teardown.expect("#2363 the waiver-band walk settles within the guard");
     teardown.expect("#2363 a maximal drain budget walks the idle assembly to completion");
 }
+
+/// #2351: a real runner panic must fail S2 and leave the post-halt walk able
+/// to reach the owner's finish. The stop future injects the panic on the
+/// actual runner task, after the production admission gate has sealed.
+#[tokio::test]
+async fn a_panicking_runner_halts_and_the_death_march_returns() {
+    let home = Scratch::new("2351-panicking-runner");
+    let host = native_ws_fixture(Arc::new(WiringRequests));
+    let server = NativeWsServer::bind(
+        "127.0.0.1:0".parse().expect("#2351 walk listen address"),
+        host,
+        "fixture-token".into(),
+        "probe".into(),
+    )
+    .await
+    .expect("#2351 walk binds a real WS server");
+    let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        pilot_home: home.path().to_owned(),
+        config: Arc::new(parse_json("{}").expect("#2351 walk config JSON")),
+        endpoints: Default::default(),
+        weixin: crate::channel::weixin::WeixinChannelOptions::default(),
+        weixin_maker: None,
+        feishu: crate::channel::feishu::FeishuOptions::default(),
+        log: None,
+        report_status: None,
+        close_host: None,
+    }));
+    let (trigger, trigger_rx) = watch::channel(false);
+    let phased = Arc::new(server.run_phased(
+        async move {
+            trigger_stop(trigger_rx).await;
+            panic!("#2351 injected production runner panic");
+        },
+        Duration::from_millis(100),
+    ));
+    let faces = ProductionFaces::new(None, AdmissionGate::new(channels, trigger), phased);
+    let limit = crate::switch::BoundedTimeout::from_millis(100)
+        .expect("#2351 walk machine budget is valid");
+    let machine = SwitchMachine::new(faces.clone(), SwitchTimeouts::uniform(limit));
+    let phase = machine.phase();
+    let gate = machine.gate();
+    let result = timeout(DEADLINE, machine.run())
+        .await
+        .expect("#2351 runner panic cannot hang the machine");
+    negative_assert!(
+        matches!(result, Err(SwitchError::Drain(_))),
+        "#2351 runner panic is a drain failure, not a face timeout"
+    );
+    negative_assert!(
+        *phase.borrow() == Phase::Halted && !gate.is_open(),
+        "#2351 runner panic halts before opening the new owner gate"
+    );
+    for _ in 0..2 {
+        negative_assert!(
+            timeout(DEADLINE, faces.finish_after_halt())
+                .await
+                .expect("#2351 post-halt walk returns after runner panic")
+                .is_err(),
+            "#2351 post-halt walk preserves the failed drain verdict"
+        );
+    }
+}

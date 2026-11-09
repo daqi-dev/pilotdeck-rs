@@ -81,16 +81,31 @@ sys.dont_write_bytecode = True
 
 EXIT_PASS, EXIT_FAIL, EXIT_INPUT = 0, 1, 2
 
-# 负控件条数（N1–N17）与正控件条数（当前 0）：本文件是三件套共享的**单一登记点**
-# ——negative_controls 的执行器（run_locked 拿到 controls / positives 后核数量）与
-# self_check 的 check_negctl（钉 KILLED / HELD 数）都从这里读，不各抄一份（评审
-# r7 P1：控件集被删到 0 条时执行器自己判 PASS rc=0 的空真；r9 合并补全：正控同样
-# 需要条数守卫——build_positives 被删空时 positiveCounts 全 0，status 仍 PASS）。
-# A8.6-R1 的延期正控 PC1–PC2 与负控 N18 已随 #2294 always-on 落地按反转条款撤回
-# （diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001-R2.md），正控注册数随之归 0；
-# 守卫机制保留，将来再登记正控时改这里即可。
-EXPECTED_CONTROLS = 17
-EXPECTED_POSITIVES = 0
+# 负控件名册（N1–N17 全集）与正控件名册（当前空集）：本文件是三件套共享的
+# **单一登记点**——negative_controls 的执行器（名册 / 条数守卫）与 self_check 的
+# check_negctl（钉 KILLED / HELD 数与 ID 名册）都从这里读，不各抄一份。评审
+# r7 P1：控件集被删到 0 条时执行器自己判 PASS rc=0 的空真；r9 合并补全：正控
+# 同样需要守卫——build_positives 被删空时 positiveCounts 全 0，status 仍 PASS。
+# #2378：**条数拦不住改名**（N5 改名成已有 ID 后一重复一缺失、条数不变）——
+# 登记值从条数升级为字面 ID 全集，set(实际 ids) != 名册即拒绝（rc2），
+# 绝不缩小分母。派生条数仅供既有消费者（self_check 的 retirement_budget_rows）
+# 继续用；新代码一律比对 ID 名册，不比条数。A8.6-R1 的延期正控 PC1–PC2 与
+# 负控 N18 已随 #2294 always-on 落地按反转条款撤回
+# （diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001-R2.md），名册随之收敛；将来
+# 再登记正控时改 EXPECTED_POSITIVE_IDS 即可。
+EXPECTED_CONTROL_IDS = frozenset((
+    'N1', 'N2', 'N3', 'N4', 'N5', 'N6', 'N7', 'N8', 'N9', 'N10',
+    'N11', 'N12', 'N13', 'N14', 'N15', 'N16', 'N17'))
+EXPECTED_POSITIVE_IDS = frozenset()
+EXPECTED_CONTROLS = len(EXPECTED_CONTROL_IDS)
+EXPECTED_POSITIVES = len(EXPECTED_POSITIVE_IDS)
+
+# 判决词表（r4 sibling#1）：单一登记点，执行器（negative_controls.py）与
+# self_check.py 同源读 CHECK 取这份，不各抄字面量——词表是「折叠 + 计数 +
+# 期望 counts」三方共用的键集，任何一侧漏改都会让词表外判决重新落进
+# 「两个零」空真（#2378 正文的形态）。
+NEGATIVE_VERDICTS = ('KILLED', 'SURVIVED', 'INVALID')
+POSITIVE_VERDICTS = ('HELD', 'BROKEN', 'INVALID')
 
 # —— 登记事实（diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001.md「基线依据」）——
 SCHEMA = 'retirement-outcome-parity/ts-oracle v1'

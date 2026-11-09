@@ -538,10 +538,13 @@ def load_checker():
 CHECK = load_checker()
 # 判据侧常量的唯一登记值（不在负控里再硬编码一份，避免常量漂移后测错对象）。
 CAPABILITY_UNAVAILABLE = CHECK.CAPABILITY_UNAVAILABLE
-# 控件条数同源读 check_outcome_parity（评审 r7 P1）：执行器拿到 controls 后核
-# 数量，控件集被删空 / 删部分时**空真不得判 PASS**——rc2 收口，不发布 summary。
-# r9 合并补全：正控（#2143 PC1–PC2）同一守卫——build_positives 被删空时
+# 控件名册同源读 check_outcome_parity（评审 r7 P1；#2378 升级）：执行器拿到
+# controls 后核 **ID 全集**（不是条数——条数拦不住改名：一重复一缺失时条数不变，
+# 名册不等），控件集被删空 / 删部分 / 改名时**空真不得判 PASS**——rc2 收口，不发布
+# summary。r9 合并补全：正控（#2143 PC1–PC2）同一守卫——build_positives 被删空时
 # positiveCounts 全 0，`BROKEN == 0 and INVALID == 0` 照样空真判 PASS。
+EXPECTED_CONTROL_IDS = CHECK.EXPECTED_CONTROL_IDS
+EXPECTED_POSITIVE_IDS = CHECK.EXPECTED_POSITIVE_IDS
 EXPECTED_CONTROLS = CHECK.EXPECTED_CONTROLS
 EXPECTED_POSITIVES = CHECK.EXPECTED_POSITIVES
 
@@ -1312,6 +1315,37 @@ def run_positive(positive, out_root, oracle):
     return record
 
 
+# 判决词表只此一份（r3 sibling#2 / r4 sibling#1）：登记在 check_outcome_parity.py
+# 的单一登记点（与 EXPECTED_* 同处），本执行器的 fold / tally / 期望 counts 与
+# self_check 的期望 counts 全部同源读这里。各自写字面量时，只给一侧加值而漏改
+# 另一侧，词表外判决不进任何计数键，回到 #2378 的空真形态。
+NEGATIVE_VERDICTS = CHECK.NEGATIVE_VERDICTS
+POSITIVE_VERDICTS = CHECK.POSITIVE_VERDICTS
+
+
+def fold_verdict(record, vocabulary):
+    """#2378：词表外判决一律记 INVALID，不静默丢弃。
+
+    此前汇总只数 ``record['verdict'] == verdict``，判决落不进词表（含 None）时
+    不进任何键：``SURVIVED == 0 and INVALID == 0`` 空真判 PASS。折叠在
+    **record 本身**上做（不只改计数）：summary 的 controls / positives 条目
+    直接显示 INVALID 与原因，审计可见；原判决与原原因保留在 reason 里。
+    """
+    verdict = record.get('verdict')
+    if verdict not in vocabulary:
+        record['verdict'] = 'INVALID'
+        record['reason'] = (f'verdict {verdict!r} is outside the vocabulary '
+                            f'{tuple(vocabulary)}; recorded as INVALID (#2378); '
+                            f'previous reason: {record.get("reason")!r}')
+    return record
+
+
+def tally(records, vocabulary):
+    """按词表计数（fold_verdict 之后所有判决都已在词表内，直数即可）。"""
+    return {verdict: sum(1 for record in records if record['verdict'] == verdict)
+            for verdict in vocabulary}
+
+
 def build_parser():
     """正式解析器：选项表与 ``build_classifier`` **同源**（``PARSER_OPTIONS``）。
 
@@ -1391,19 +1425,26 @@ def run_locked(args, out_root):
     except Exception as error:  # noqa: BLE001 - 控件构造失败同样按输入不可用收口
         print(f'negative_controls: cannot assemble controls: {error!r}', file=sys.stderr)
         return 2
-    if len(controls) != EXPECTED_CONTROLS:
-        # 控件集数量与登记值不符（被删空 / 删部分 / 多了未知条目）：空集会让下面的
-        # `SURVIVED == 0 and INVALID == 0` 空真判 PASS、rc=0（评审 r7 P1）。
-        print(f'negative_controls: assembled {len(controls)} controls but '
-              f'{EXPECTED_CONTROLS} are registered (N1–N{EXPECTED_CONTROLS}); '
-              'refusing to judge an unexpected control set', file=sys.stderr)
+    control_ids = [control.id for control in controls]
+    if sorted(control_ids) != sorted(EXPECTED_CONTROL_IDS):
+        # 控件 ID 名册与登记值不符（被删空 / 删部分 / 改名 / 重复 / 多了未知条目）：
+        # #2378 拒绝而非缩小——按条数拦不住改名（一重复一缺失时条数不变），空集会让
+        # 下面的 `SURVIVED == 0 and INVALID == 0` 空真判 PASS、rc=0（评审 r7 P1）。
+        # 排序后逐元素比对，重复条目（名册同长、一条出现两次）也会不等。
+        print('negative_controls: assembled control ids '
+              f'{sorted(control_ids)} do not match the registered roster '
+              f'{sorted(EXPECTED_CONTROL_IDS)} (#2378); refusing to judge an '
+              'unexpected control set', file=sys.stderr)
         return 2
-    if len(positives) != EXPECTED_POSITIVES:
-        # 正控集同一守卫（r9 合并补全，#2143）：删空 build_positives 时
-        # positiveCounts 全 0，status 仍 PASS——「应当 PASS 的性质」静默失保。
-        print(f'negative_controls: assembled {len(positives)} positives but '
-              f'{EXPECTED_POSITIVES} are registered (PC1–PC{EXPECTED_POSITIVES}); '
-              'refusing to judge an unexpected positive set', file=sys.stderr)
+    positive_ids = [positive.id for positive in positives]
+    if sorted(positive_ids) != sorted(EXPECTED_POSITIVE_IDS):
+        # 正控集同一守卫（r9 合并补全，#2143；#2378 升级为 ID 名册）：删空
+        # build_positives 时 positiveCounts 全 0，status 仍 PASS——「应当 PASS
+        # 的性质」静默失保。
+        print('negative_controls: assembled positive ids '
+              f'{sorted(positive_ids)} do not match the registered roster '
+              f'{sorted(EXPECTED_POSITIVE_IDS)} (#2378); refusing to judge an '
+              'unexpected positive set', file=sys.stderr)
         return 2
 
     records = []
@@ -1418,15 +1459,41 @@ def run_locked(args, out_root):
             positive_records.append(record)
             print(f"{positive.id}: {record['verdict']} ({record['reason']})")
 
-        counts = {verdict: sum(1 for record in records if record['verdict'] == verdict)
-                  for verdict in ('KILLED', 'SURVIVED', 'INVALID')}
-        positive_counts = {verdict: sum(1 for record in positive_records
-                                        if record['verdict'] == verdict)
-                           for verdict in ('HELD', 'BROKEN', 'INVALID')}
-        summary = {'status': 'PASS' if counts['SURVIVED'] == 0
-                   and counts['INVALID'] == 0
-                   and positive_counts['BROKEN'] == 0
-                   and positive_counts['INVALID'] == 0 else 'FAIL',
+        # 汇总前核**实际跑出的 ids**（#2378）：构造后的名册守卫之外再核一次记录侧，
+        # 拒绝而非缩小——记录侧缺一条 / 重复一条（run_control 丢记录、未来的早退
+        # 分支）同样不得靠剩下的记录全绿判 PASS。rc2 收口，不发布 summary。
+        run_control_ids = [record['id'] for record in records]
+        if sorted(run_control_ids) != sorted(EXPECTED_CONTROL_IDS):
+            print('negative_controls: recorded control ids '
+                  f'{sorted(run_control_ids)} do not match the registered roster '
+                  f'{sorted(EXPECTED_CONTROL_IDS)} (#2378); refusing to summarize '
+                  'an unexpected control set', file=sys.stderr)
+            return 2
+        run_positive_ids = [record['id'] for record in positive_records]
+        if sorted(run_positive_ids) != sorted(EXPECTED_POSITIVE_IDS):
+            print('negative_controls: recorded positive ids '
+                  f'{sorted(run_positive_ids)} do not match the registered roster '
+                  f'{sorted(EXPECTED_POSITIVE_IDS)} (#2378); refusing to summarize '
+                  'an unexpected positive set', file=sys.stderr)
+            return 2
+
+        # 词表外判决先折叠成 INVALID（#2378），再计数：不折叠的话这类判决不进任何
+        # 键，SURVIVED/INVALID 双 0 空真判 PASS。
+        records = [fold_verdict(record, NEGATIVE_VERDICTS)
+                   for record in records]
+        positive_records = [fold_verdict(record, POSITIVE_VERDICTS)
+                            for record in positive_records]
+        counts = tally(records, NEGATIVE_VERDICTS)
+        positive_counts = tally(positive_records, POSITIVE_VERDICTS)
+        # #2378：三张 counts 断言为期望值——名册 + 折叠之后 KILLED/HELD 必须恰好
+        # 等于名册条数，SURVIVED / INVALID / BROKEN 必须为 0。这不再是「两个零」的
+        # 空真式判定：任何一侧缺一条（未跑 / 未记 / 词表外）都让 counts 不等。
+        expected_counts = dict.fromkeys(NEGATIVE_VERDICTS, 0)
+        expected_counts['KILLED'] = EXPECTED_CONTROLS
+        expected_positive_counts = dict.fromkeys(POSITIVE_VERDICTS, 0)
+        expected_positive_counts['HELD'] = EXPECTED_POSITIVES
+        summary = {'status': 'PASS' if counts == expected_counts
+                   and positive_counts == expected_positive_counts else 'FAIL',
                    'controls': records, 'positives': positive_records,
                    'counts': counts, 'positiveCounts': positive_counts,
                    'oracle': str(args.oracle), 'data': str(args.data)}

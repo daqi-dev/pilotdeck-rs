@@ -217,6 +217,14 @@ impl GatewayRequests for Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
+            // Registry keys are literal wire values in the fixed TS Server.
+            // These reads neither acquire a session nor resolve a project alias;
+            // CLI callers pass their selected canonical project explicitly.
+            if let Ok(name) = method.to_utf8()
+                && matches!(name.as_str(), "run_get" | "run_events" | "run_reattach")
+            {
+                return self.run_request(name, params).await;
+            }
             // The optional embedding provider owns its input/domain contract.
             // TS forwards the original value, including null and foreign keys.
             if method.equals_str("manager_browsers") {

@@ -286,8 +286,7 @@ impl NativeWsServer {
         // connections. `drained()` observes its completion through the
         // watch; dropping the handle aborts it, restoring the drop
         // semantics of the unawaited `run()` future.
-        let (done, _) = watch::channel(None::<bool>);
-        let runner_done = done.clone();
+        let (runner_done, done) = watch::channel(None::<bool>);
         let runner_inner = inner.clone();
         let runner = tokio::spawn(async move {
             let mut guard = runner_inner.lock().await;
@@ -302,13 +301,13 @@ impl NativeWsServer {
             _cleanup: cleanup,
             inner,
             done,
-            runner: runner.abort_handle(),
+            runner,
             drain_budget,
         }
     }
 }
 
-/// The phased run's shared state, serialized by the mutex: `drained()` holds
+/// The phased run's shared state, serialized by the mutex: the runner holds
 /// it through the accept loop and the drain, `finish()` through the abort
 /// and host shutdown.
 struct PhasedInner {
@@ -557,11 +556,13 @@ pub struct PhasedRun {
     _cleanup: StopHost,
     inner: Arc<tokio::sync::Mutex<PhasedInner>>,
     /// The runner's completion: `None` while accepting/draining, then the
-    /// drain's own verdict.
-    done: watch::Sender<Option<bool>>,
+    /// drain's own verdict. Only the runner owns the sender: panic or abort
+    /// closes the channel, so every waiter observes failure without needing
+    /// the inner mutex (which a concurrent `finish()` may hold).
+    done: watch::Receiver<Option<bool>>,
     /// Aborted when this handle drops, so an abandoned phased run stops
     /// accepting exactly like an unawaited `run()` future did.
-    runner: tokio::task::AbortHandle,
+    runner: tokio::task::JoinHandle<()>,
     /// The drain budget this run was constructed with — immutable after
     /// construction, so readable without the inner lock. The post-halt walk
     /// bounds its own close join with it (`switch_wiring.rs`).
@@ -577,19 +578,19 @@ impl Drop for PhasedRun {
 impl PhasedRun {
     /// S2: stop accepting and drain existing connections. `true` means the
     /// drain completed within the budget; `false` means the budget expired
-    /// with connections outstanding (the A4/A10 failure shape `finish()`
-    /// reports). Idempotent — every waiter observes the same verdict.
+    /// with connections outstanding, or the runner exited without a verdict
+    /// (panic/abort). `finish()` reports the failure in either case.
+    /// Idempotent — every waiter observes the same verdict.
     pub async fn drained(&self) -> bool {
-        let mut receiver = self.done.subscribe();
+        let mut receiver = self.done.clone();
         loop {
             if let Some(drained) = *receiver.borrow_and_update() {
                 return drained;
             }
-            // The sender outlives the runner here, so this resolves through
-            // the value, not the closed channel; the fallback only covers a
-            // runner that exited between the check and the await.
+            // A published verdict is checked above even after the sender
+            // closes. Closure without a verdict means the runner failed.
             if receiver.changed().await.is_err() {
-                return self.inner.lock().await.drained.unwrap_or(false);
+                return false;
             }
         }
     }
