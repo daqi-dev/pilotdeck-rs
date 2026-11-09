@@ -16,12 +16,15 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
-            Ok(read::active_turn_snapshot(
+            let project =
+                pilotdeck_protocol::JsString::from(self.options.project.to_string_lossy().as_ref());
+            Ok(read::active_turn_snapshot_for_project(
                 &self.coordinator,
                 &ActiveTurnSnapshotInput {
                     session_key: string(&params, "sessionKey")?,
                     include_events: params.get("includeEvents") != Some(&JsValue::Bool(false)),
                 },
+                &project,
             )
             .to_json())
         })

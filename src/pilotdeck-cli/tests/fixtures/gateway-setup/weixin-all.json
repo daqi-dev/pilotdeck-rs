@@ -1,0 +1,57 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": "88485d2d6cbbfe16245edb5baa7152f7e773fce5e64257e7ec25f7f01233c205",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "sdkVersion": "0.1.0",
+  "cases": [
+    {
+      "id": "all-platforms-cancel",
+      "argv": [],
+      "answers": [
+        [
+          "请选择 [1/2/3/4/q]: ",
+          "4"
+        ],
+        [
+          "使用哪个平台？ [feishu/lark] (当前: feishu): ",
+          ""
+        ],
+        [
+          "App ID: ",
+          ""
+        ],
+        [
+          "App Secret: ",
+          ""
+        ],
+        [
+          "继续扫码登录？ [Y/n]: ",
+          "n"
+        ],
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          "n"
+        ],
+        [
+          "Bot ID: ",
+          ""
+        ],
+        [
+          "Secret: ",
+          ""
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n可配置的平台：\n  1) 飞书 / Lark      [未配置]\n  2) 微信 (iLink)     [未配置]\n  3) 企业微信 WeCom   [未配置]\n  4) 全部配置\n  q) 退出\n\n请选择 [1/2/3/4/q]: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  飞书 / Lark 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n使用哪个平台？ [feishu/lark] (当前: feishu): \n请在 https://open.feishu.cn 创建企业自建应用：\n  1. 创建应用 → 获取 App ID 和 App Secret\n  2. 权限管理 → 添加以下权限：\n     - im:message (收发消息)\n     - im:message:send_as_bot (以机器人身份发消息)\n     - im:resource (访问图片/文件)\n     - im:chat (群聊元信息)\n  3. 事件订阅 → 添加 im.message.receive_v1\n  4. 版本管理 → 发布版本\n\nApp ID: App Secret: \n⚠️  未提供完整凭据，跳过飞书配置。\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: 已取消。\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: \n未提供完整 Bot ID / Secret，跳过企业微信配置。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 8,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": false,
+      "events": [],
+      "clock": 0
+    }
+  ]
+}

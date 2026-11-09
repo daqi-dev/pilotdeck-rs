@@ -1,0 +1,82 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "calls": [
+    {
+      "path": "/api/v1/sop-capability-authority/module-manifest",
+      "method": "GET",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "path": "/api/v1/agents/a/sop-capability-authority/v2/module/call",
+      "method": "POST",
+      "authorization": "Bearer fixture-token",
+      "body": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "module-http-1",
+        "runId": "sop:s",
+        "operationId": "sop-authority.resolve",
+        "requestId": "sop.authority:s:t:3",
+        "module": "capability",
+        "payload": {
+          "operation": "resolve",
+          "input": {
+            "sessionKey": "s",
+            "projectKey": "/p",
+            "expectedRevision": 3,
+            "requestId": "sop.authority:s:t:3"
+          }
+        }
+      }
+    },
+    {
+      "path": "/api/v1/knowledge-module/module-manifest",
+      "method": "GET",
+      "authorization": null,
+      "body": null
+    },
+    {
+      "path": "/api/v1/agents/a/knowledge-module/v2/module/call",
+      "method": "POST",
+      "authorization": "Bearer fixture-token",
+      "body": {
+        "kind": "request",
+        "method": "module_call",
+        "messageId": "module-http-1",
+        "runId": "knowledge",
+        "operationId": "knowledge",
+        "requestId": "knowledge-query-1",
+        "module": "knowledge",
+        "payload": {
+          "operation": "query",
+          "input": {
+            "query": "fixture"
+          },
+          "authorityContext": {
+            "sessionKey": "s",
+            "projectKey": "/p",
+            "expectedRevision": 3,
+            "requestId": "sop.authority:s:t:3",
+            "snapshotId": "snap",
+            "registryGeneration": 1
+          }
+        }
+      }
+    }
+  ],
+  "result": {
+    "content": [
+      {
+        "type": "json",
+        "value": {
+          "answer": "fixture"
+        }
+      }
+    ],
+    "data": {
+      "answer": "fixture"
+    }
+  }
+}

@@ -10,6 +10,7 @@ from negative_suite import matrix_main
 
 ROOT = Path(__file__).resolve().parents[5]
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+PROJECT_SCOPE = ROOT / 'src/pilotdeck-gateway/src/native_process/project_scope.rs'
 NATIVE_ARCHIVE = ROOT / 'src/pilotdeck-gateway/src/native_archive.rs'
 REGRESSION = ROOT / 'src/pilotdeck-gateway/src/native_process/metadata_cwd_tests.rs'
 # fix-r3 (review P1-3): the six admission cells bind to the correction entry's
@@ -47,18 +48,11 @@ MUTATIONS = [
      'None | Some(JsValue::Undefined | JsValue::Null)',
      'None | Some(JsValue::Undefined | JsValue::Null | JsValue::String(_))',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
-    # #2272: the admission filter now skips `undefined` and `null` together
-    # (nullish "not provided"), so the anchor follows the new multi-line
-    # gate shape; the mutation itself is unchanged — the whole admission arm
-    # is switched off with `&& false`.
-    ('isolated-admission-skipped', REQUESTS,
-     'if let Some(project) = params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
-     'if let Some(project) = params\n'
-     '                .get("projectKey")\n'
-     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))\n'
-     '                && false',
+    # The old single-project restriction is retired; skip the real archive
+    # registered-project admission instead, retaining this slot and receipt.
+    ('isolated-admission-skipped', NATIVE_ARCHIVE,
+     'if registry(metadata)\n        .has_registered_project(&requested)\n        .map_err(cwd_error)?',
+     'if true || registry(metadata)\n        .has_registered_project(&requested)\n        .map_err(cwd_error)?',
      'archive_matrix_matches_ts', '#1154 archive configured fallback and explicit key boundary'),
     ('archive-empty-matrix', REGRESSION,
      'let oracle = archive_fixture();\n    negative_assert_eq!(oracle["node"]',
@@ -95,5 +89,5 @@ if __name__ == '__main__':
     # the shared mask table are judges and stay guarded.
     raise SystemExit(matrix_main(ROOT, __file__, PREFIX, MUTATIONS,
         passed_count=1, child_count=36, exact=True,
-        paths=[REQUESTS, NATIVE_ARCHIVE, REGRESSION, LEDGER, ORACLE,
+        paths=[REQUESTS, PROJECT_SCOPE, NATIVE_ARCHIVE, REGRESSION, LEDGER, ORACLE,
                BASELINE, MASKS, MASK_TABLE]))

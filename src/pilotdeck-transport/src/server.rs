@@ -11,9 +11,181 @@ use pilotdeck_protocol::wire::{EnvelopeRef, MessageRef, RequestBodyRef, RequestR
 use pilotdeck_protocol::{JsObject, JsString, JsValue, MODULE_PROTOCOL_VERSION, parse_json};
 use std::collections::{HashMap, VecDeque};
 use std::io::{self, BufRead, Write};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicUsize, Ordering},
+    mpsc,
+};
 use std::thread;
 use std::time::{Duration, Instant};
+
+/// A process-wide TCP limit: deadline timers own one OS thread each.
+const TCP_TIMER_LIMIT: usize = 32;
+#[derive(Default)]
+struct TimerBudget(AtomicUsize);
+struct TimerLease(Arc<TimerBudget>);
+impl TimerBudget {
+    fn acquire(self: &Arc<Self>) -> Option<TimerLease> {
+        let mut current = self.0.load(Ordering::SeqCst);
+        loop {
+            if current >= TCP_TIMER_LIMIT {
+                return None;
+            }
+            match self.0.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ) {
+                Ok(_) => return Some(TimerLease(self.clone())),
+                Err(observed) => current = observed,
+            }
+        }
+    }
+}
+impl Drop for TimerLease {
+    fn drop(&mut self) {
+        self.0.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+static TCP_TIMERS: std::sync::LazyLock<Arc<TimerBudget>> =
+    std::sync::LazyLock::new(|| Arc::new(TimerBudget::default()));
+
+fn spawn_deadline_timer(
+    deadline: Instant,
+    cancellation: Cancellation,
+    lease: Option<TimerLease>,
+    spawn: impl FnOnce(Box<dyn FnOnce() + Send>) -> io::Result<thread::JoinHandle<()>>,
+) -> io::Result<thread::JoinHandle<()>> {
+    spawn(Box::new(move || {
+        let _lease = lease;
+        if matches!(
+            cancellation.wait_until(deadline),
+            Some(CancelCause::Deadline)
+        ) {
+            cancellation.cancel(CancelCause::Deadline);
+        }
+    }))
+}
+
+fn reserve_bytes(counter: &AtomicUsize, bytes: usize, limit: usize) -> Result<(), ()> {
+    let mut current = counter.load(Ordering::SeqCst);
+    loop {
+        let next = current
+            .checked_add(bytes)
+            .filter(|next| *next <= limit)
+            .ok_or(())?;
+        match counter.compare_exchange_weak(current, next, Ordering::SeqCst, Ordering::SeqCst) {
+            Ok(_) => return Ok(()),
+            Err(observed) => current = observed,
+        }
+    }
+}
+
+const TCP_INPUT_BYTES: usize = 8 * 1024 * 1024;
+const TCP_LEDGER_BYTES: usize = 64 * 1024 * 1024;
+struct IncomingQuota {
+    used: Arc<AtomicUsize>,
+    held: usize,
+}
+impl IncomingQuota {
+    fn new(used: Arc<AtomicUsize>) -> Self {
+        Self { used, held: 0 }
+    }
+    fn acquire(&mut self, bytes: usize) -> io::Result<()> {
+        reserve_bytes(&self.used, bytes, TCP_INPUT_BYTES)
+            .map_err(|_| io::Error::other("TCP input budget exceeded."))?;
+        self.held += bytes;
+        Ok(())
+    }
+}
+impl Drop for IncomingQuota {
+    fn drop(&mut self) {
+        self.used.fetch_sub(self.held, Ordering::SeqCst);
+    }
+}
+fn read_tcp_line(
+    input: &mut impl BufRead,
+    bytes: &mut Vec<u8>,
+    quota: &mut IncomingQuota,
+) -> io::Result<usize> {
+    loop {
+        let buffer = input.fill_buf()?;
+        if buffer.is_empty() {
+            return Ok(bytes.len());
+        }
+        let end = buffer.iter().position(|byte| *byte == b'\n').map(|n| n + 1);
+        let length = end.unwrap_or(buffer.len());
+        quota.acquire(length)?;
+        bytes.extend_from_slice(&buffer[..length]);
+        input.consume(length);
+        if end.is_some() {
+            return Ok(bytes.len());
+        }
+    }
+}
+/// Conservative retained representation charge; the multiplier at admission
+/// also covers the request's queue/context clones. Traversal is iterative.
+pub(crate) fn retained_cost(value: &JsValue) -> Option<usize> {
+    let mut total = 0usize;
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        total = total.checked_add(128)?;
+        match value {
+            JsValue::String(text) => {
+                total = total.checked_add(text.units().len().checked_mul(2)?)?
+            }
+            JsValue::Array(items) => {
+                if items.len() > TCP_LEDGER_BYTES / 128 {
+                    return None;
+                }
+                pending.extend(items.iter());
+            }
+            JsValue::Object(fields) => {
+                for (key, value) in fields.own_entries() {
+                    total = total
+                        .checked_add(128)?
+                        .checked_add(key.units().len().checked_mul(2)?)?;
+                    if total > TCP_LEDGER_BYTES {
+                        return None;
+                    }
+                    pending.push(value);
+                }
+            }
+            _ => {}
+        }
+        if total > TCP_LEDGER_BYTES {
+            return None;
+        }
+    }
+    Some(total)
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct TransportBudget(AtomicUsize);
+#[derive(Debug)]
+pub(crate) struct TransportLease {
+    budget: Arc<TransportBudget>,
+    bytes: usize,
+}
+impl TransportBudget {
+    pub(crate) fn acquire(self: &Arc<Self>, value: &JsValue) -> io::Result<Arc<TransportLease>> {
+        let bytes = retained_cost(value)
+            .and_then(|cost| cost.checked_mul(4))
+            .ok_or_else(|| io::Error::other("TCP transport memory budget exceeded."))?;
+        reserve_bytes(&self.0, bytes, TCP_LEDGER_BYTES)
+            .map_err(|_| io::Error::other("TCP transport memory budget exceeded."))?;
+        Ok(Arc::new(TransportLease {
+            budget: self.clone(),
+            bytes,
+        }))
+    }
+}
+impl Drop for TransportLease {
+    fn drop(&mut self) {
+        self.budget.0.fetch_sub(self.bytes, Ordering::SeqCst);
+    }
+}
 
 /// Implementations must declare their actual original-engine date profile.
 /// Strings with an unsupported engine-valid form must not silently mean no deadline.
@@ -215,6 +387,7 @@ enum OperationPhase {
 }
 #[derive(Debug)]
 struct Operation {
+    connection_generation: JsString,
     request: ExecuteRequest,
     stream_id: JsString,
     sequence: Arc<Mutex<f64>>,
@@ -237,17 +410,40 @@ struct Work {
 }
 #[derive(Debug, Default)]
 struct State {
+    retained_bytes: usize,
     operations: HashMap<JsString, Operation>,
     requests: HashMap<JsString, JsString>,
-    queue: VecDeque<Work>,
+    queues: HashMap<JsString, VecDeque<Work>>,
+}
+/// Volatile operation state shared by the connections of one TCP sidecar.
+/// It confers no permission to replay an accepted execute or move host calls.
+#[derive(Clone, Default)]
+pub struct SharedExecutionLedger {
+    state: Arc<Mutex<State>>,
+    decoding: Arc<Mutex<()>>,
 }
 pub struct ExecutionServer {
     owner: ConnectionOwner,
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
+    operation_limit: Option<usize>,
+    incoming: Option<Arc<AtomicUsize>>,
+    decoding: Option<Arc<Mutex<()>>>,
     ready: Arc<pilotdeck_agent::ports::WakeSignal>,
     factory: Arc<dyn ExecutionFactory>,
     clock: Arc<dyn ExecutionClock>,
     queue_capacity: usize,
+}
+/// Every serving thread retires its owner and publishes completion even if
+/// its body panics. The report still records the panic as an incomplete join.
+struct ServeThreadGuard {
+    server: Arc<ExecutionServer>,
+    done: mpsc::Sender<()>,
+}
+impl Drop for ServeThreadGuard {
+    fn drop(&mut self) {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.server.retire()));
+        let _ = self.done.send(());
+    }
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ShutdownReport {
@@ -269,7 +465,31 @@ impl ExecutionServer {
     ) -> Arc<Self> {
         Arc::new(Self {
             owner,
-            state: Mutex::new(State::default()),
+            state: Arc::new(Mutex::new(State::default())),
+            operation_limit: None,
+            incoming: None,
+            decoding: None,
+            ready: Arc::default(),
+            factory,
+            clock,
+            queue_capacity: queue_capacity.max(1),
+        })
+    }
+    /// A TCP connection shares only the ledger. Queues, streams, host calls,
+    /// transport cancellation and binding generation remain connection-owned.
+    pub fn with_shared_ledger(
+        owner: ConnectionOwner,
+        factory: Arc<dyn ExecutionFactory>,
+        clock: Arc<dyn ExecutionClock>,
+        queue_capacity: usize,
+        ledger: SharedExecutionLedger,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            owner,
+            state: ledger.state,
+            operation_limit: Some(4096),
+            incoming: Some(Arc::default()),
+            decoding: Some(ledger.decoding),
             ready: Arc::default(),
             factory,
             clock,
@@ -454,6 +674,19 @@ impl ExecutionServer {
                 .operations
                 .get(prior_id)
                 .expect("registered request operation");
+            if self.operation_limit.is_some() && prior.terminal.is_none() {
+                drop(state);
+                return self.reject(request, "OPERATION_ALREADY_ACTIVE", false);
+            }
+            if prior.connection_generation != self.owner.binding().connection_generation {
+                let code = if prior.terminal.is_none() {
+                    "OPERATION_ALREADY_ACTIVE"
+                } else {
+                    "OPERATION_REQUIRES_RECONCILIATION"
+                };
+                drop(state);
+                return self.reject(request, code, false);
+            }
             if prior.request.boundary == input.boundary {
                 let cached = prior.terminal.as_ref().unwrap_or(&prior.accepted).clone();
                 drop(state);
@@ -481,7 +714,18 @@ impl ExecutionServer {
             drop(state);
             return self.reject(request, code, false);
         }
-        if state.queue.len() >= self.queue_capacity {
+        if self
+            .operation_limit
+            .is_some_and(|limit| state.operations.len() >= limit)
+        {
+            drop(state);
+            return self.reject(request, "EXECUTION_LEDGER_FULL", false);
+        }
+        if state
+            .queues
+            .get(&self.owner.binding().connection_generation)
+            .is_some_and(|queue| queue.len() >= self.queue_capacity)
+        {
             drop(state);
             return self.reject(request, "EXECUTION_QUEUE_FULL", false);
         }
@@ -503,20 +747,50 @@ impl ExecutionServer {
             .and_then(|ms| Instant::now().checked_add(execution_deadline_delay(ms - now)));
         let timer = if expired {
             None
-        } else {
-            deadline.map(|deadline| {
-                let cancellation = cancellation.clone();
-                thread::spawn(move || {
-                    if matches!(
-                        cancellation.wait_until(deadline),
-                        Some(CancelCause::Deadline)
-                    ) {
-                        cancellation.cancel(CancelCause::Deadline);
+        } else if let Some(deadline) = deadline {
+            let timer_lease = if self.operation_limit.is_some() {
+                match TCP_TIMERS.acquire() {
+                    Some(lease) => Some(lease),
+                    None => {
+                        drop(state);
+                        return self.reject(request, "EXECUTION_TIMER_LIMIT", false);
                     }
-                })
-            })
+                }
+            } else {
+                None
+            };
+            let cancellation = cancellation.clone();
+            match spawn_deadline_timer(deadline, cancellation, timer_lease, |job| {
+                thread::Builder::new().spawn(job)
+            }) {
+                Ok(timer) => Some(timer),
+                Err(_) => {
+                    drop(state);
+                    return self.reject(request, "EXECUTION_TIMER_UNAVAILABLE", false);
+                }
+            }
+        } else {
+            None
         };
         let accepted = JsValue::Object(accepted);
+        if self.operation_limit.is_some() {
+            // Account for the retained request plus worker/context clones, and
+            // reserve room for a small truthful terminal on budget exhaustion.
+            let cost = retained_cost(&input.boundary)
+                .and_then(|n| n.checked_mul(8))
+                .and_then(|n| n.checked_add(4096));
+            let total = cost.and_then(|n| state.retained_bytes.checked_add(n));
+            let Some(total) = total.filter(|n| *n <= TCP_LEDGER_BYTES) else {
+                // No operation was accepted, and no timer may be left detached.
+                cancellation.cancel(CancelCause::OwnerRetired);
+                drop(state);
+                if let Some(timer) = timer {
+                    let _ = timer.join();
+                }
+                return self.reject(request, "EXECUTION_LEDGER_FULL", false);
+            };
+            state.retained_bytes = total;
+        }
         // Acceptance/final cached before publication, including immediate expiration.
         state
             .requests
@@ -524,6 +798,7 @@ impl ExecutionServer {
         state.operations.insert(
             input.operation_id.clone(),
             Operation {
+                connection_generation: self.owner.binding().connection_generation.clone(),
                 request: input.clone(),
                 stream_id: stream_id.clone(),
                 sequence: sequence.clone(),
@@ -549,15 +824,25 @@ impl ExecutionServer {
         }
         if !expired {
             let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            state.queue.push_back(Work {
-                request: input,
-                stream_id,
-                sequence,
-                control: CallControl {
-                    cancellation,
-                    deadline,
-                },
-            });
+            if self.owner.is_closed() {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "Execution connection closed.",
+                ));
+            }
+            state
+                .queues
+                .entry(self.owner.binding().connection_generation.clone())
+                .or_default()
+                .push_back(Work {
+                    request: input,
+                    stream_id,
+                    sequence,
+                    control: CallControl {
+                        cancellation,
+                        deadline,
+                    },
+                });
             drop(state);
             self.ready.notify();
         }
@@ -573,8 +858,9 @@ impl ExecutionServer {
                 .state
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .queue
-                .pop_front();
+                .queues
+                .get_mut(&self.owner.binding().connection_generation)
+                .and_then(VecDeque::pop_front);
             let Some(work) = work else {
                 self.ready.wait(generation, None);
                 continue;
@@ -606,7 +892,7 @@ impl ExecutionServer {
             {
                 context.control.cancellation.cancel(CancelCause::Deadline);
             }
-            let terminal = if matches!(
+            let mut terminal = if matches!(
                 context.control.cancellation.cause(),
                 Some(CancelCause::Deadline)
             ) {
@@ -624,6 +910,45 @@ impl ExecutionServer {
             } else {
                 terminal
             };
+            if self.operation_limit.is_some() {
+                let mut payload = JsValue::Object(std::mem::take(&mut terminal.payload));
+                let mut error = terminal.error.take().map(JsValue::Object);
+                let cost = retained_cost(&payload)
+                    .and_then(|n| {
+                        retained_cost(error.as_ref().unwrap_or(&JsValue::Undefined))
+                            .and_then(|e| n.checked_add(e))
+                    })
+                    .and_then(|n| n.checked_mul(4));
+                let admitted = {
+                    let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                    if let Some(total) = cost
+                        .and_then(|n| state.retained_bytes.checked_add(n))
+                        .filter(|n| *n <= TCP_LEDGER_BYTES)
+                    {
+                        state.retained_bytes = total;
+                        true
+                    } else {
+                        false
+                    }
+                };
+                if admitted {
+                    if let JsValue::Object(fields) = &mut payload {
+                        terminal.payload = std::mem::take(fields);
+                    }
+                    if let Some(JsValue::Object(fields)) = &mut error {
+                        terminal.error = Some(std::mem::take(fields));
+                    }
+                } else {
+                    terminal.outcome = ModuleOutcome::ResultUnknown;
+                    terminal.error = Some(object([
+                        ("code", "EXECUTION_LEDGER_FULL".into()),
+                        (
+                            "message",
+                            "Execution result exceeded the TCP ledger budget.".into(),
+                        ),
+                    ]));
+                }
+            }
             let event_type = format!("agent.execute.{}", outcome_name(terminal.outcome));
             let final_event = context.event(
                 event_type.into(),
@@ -684,11 +1009,10 @@ impl ExecutionServer {
     pub fn retire(&self) {
         self.owner.close();
         let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
-        for op in state
-            .operations
-            .values_mut()
-            .filter(|op| op.terminal.is_none())
-        {
+        for op in state.operations.values_mut().filter(|op| {
+            op.terminal.is_none()
+                && op.connection_generation == self.owner.binding().connection_generation
+        }) {
             op.cancellation.cancel(CancelCause::TransportClosed);
             op.phase = OperationPhase::Resolving;
             op.outcome = Some(ModuleOutcome::ResultUnknown);
@@ -717,7 +1041,9 @@ impl ExecutionServer {
                 ])),
             ));
         }
-        state.queue.clear();
+        state
+            .queues
+            .remove(&self.owner.binding().connection_generation);
         drop(state);
         self.ready.notify();
         let timers: Vec<_> = {
@@ -725,6 +1051,7 @@ impl ExecutionServer {
             state
                 .operations
                 .values_mut()
+                .filter(|op| op.connection_generation == self.owner.binding().connection_generation)
                 .filter_map(|op| op.timer.take())
                 .collect()
         };
@@ -732,11 +1059,36 @@ impl ExecutionServer {
             let _ = timer.join();
         }
     }
+    pub fn is_retired(&self) -> bool {
+        self.owner.is_closed()
+    }
     /// Blocking reader/writer handles are never joined indefinitely. An incomplete
     /// report requires the owning production process to terminate, not reuse this
     /// server as a cleanly retired connection. GUI/embedding owners need an actual
     /// interruptible IO implementation before treating incomplete shutdown as safe.
     pub fn serve(
+        self: &Arc<Self>,
+        input: impl BufRead + Send + 'static,
+        output: impl Write + Send + 'static,
+        grace: Duration,
+    ) -> ShutdownReport {
+        // OS thread creation can fail. No partially spawned owner may be
+        // reported as reusable even if Rust's thread::spawn panics.
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.serve_inner(input, output, grace)
+        })) {
+            Ok(report) => report,
+            Err(_) => {
+                self.retire();
+                ShutdownReport {
+                    reader_joined: false,
+                    writer_joined: false,
+                    worker_joined: false,
+                }
+            }
+        }
+    }
+    fn serve_inner(
         self: &Arc<Self>,
         mut input: impl BufRead + Send + 'static,
         output: impl Write + Send + 'static,
@@ -746,10 +1098,20 @@ impl ExecutionServer {
         let reader_server = self.clone();
         let reader_done = done_tx.clone();
         let reader = thread::spawn(move || {
-            let mut bytes = Vec::new();
+            let _completion = ServeThreadGuard {
+                server: reader_server.clone(),
+                done: reader_done,
+            };
             while !reader_server.owner.is_closed() {
-                bytes.clear();
-                match input.read_until(b'\n', &mut bytes) {
+                // Drop the allocation and its quota together after each frame.
+                let mut quota = reader_server.incoming.clone().map(IncomingQuota::new);
+                let mut bytes = Vec::new();
+                let read = if let Some(quota) = &mut quota {
+                    read_tcp_line(&mut input, &mut bytes, quota)
+                } else {
+                    input.read_until(b'\n', &mut bytes)
+                };
+                match read {
                     Ok(0) | Err(_) => break,
                     Ok(_) => {}
                 }
@@ -763,6 +1125,13 @@ impl ExecutionServer {
                 if line.chars().all(js_whitespace) {
                     continue;
                 }
+                // A stalled partial frame spends only its own connection's
+                // allowance. Decode/dispatch one bounded frame at a time so
+                // 32 simultaneous raw buffers cannot multiply JSON expansion.
+                let _decode = reader_server
+                    .decoding
+                    .as_ref()
+                    .map(|gate| gate.lock().unwrap_or_else(|poison| poison.into_inner()));
                 let result = match parse_json(&line) {
                     Ok(value) => reader_server.receive(&value),
                     Err(_) => reader_server
@@ -772,20 +1141,23 @@ impl ExecutionServer {
                     break;
                 }
             }
-            reader_server.retire();
-            let _ = reader_done.send(());
         });
         let writer_server = self.clone();
         let writer_done = done_tx.clone();
         let writer = thread::spawn(move || {
+            let _completion = ServeThreadGuard {
+                server: writer_server.clone(),
+                done: writer_done,
+            };
             let _ = writer_server.owner.drive_writer(output);
-            writer_server.retire();
-            let _ = writer_done.send(());
         });
         let worker_server = self.clone();
         let worker = thread::spawn(move || {
+            let _completion = ServeThreadGuard {
+                server: worker_server.clone(),
+                done: done_tx,
+            };
             worker_server.worker();
-            let _ = done_tx.send(());
         });
         let _ = done_rx.recv();
         self.retire();
@@ -797,21 +1169,11 @@ impl ExecutionServer {
         {
             thread::sleep(Duration::from_millis(5));
         }
-        let report = ShutdownReport {
-            reader_joined: reader.is_finished(),
-            writer_joined: writer.is_finished(),
-            worker_joined: worker.is_finished(),
-        };
-        if report.reader_joined {
-            let _ = reader.join();
+        ShutdownReport {
+            reader_joined: reader.is_finished() && reader.join().is_ok(),
+            writer_joined: writer.is_finished() && writer.join().is_ok(),
+            worker_joined: worker.is_finished() && worker.join().is_ok(),
         }
-        if report.writer_joined {
-            let _ = writer.join();
-        }
-        if report.worker_joined {
-            let _ = worker.join();
-        }
-        report
     }
     fn response(&self, request: RequestRef<'_>, ok: bool) -> JsObject {
         let mut response = object([
@@ -1026,6 +1388,158 @@ fn execution_deadline_delay(remaining_ms: f64) -> Duration {
 }
 
 #[cfg(test)]
+mod tcp_liveness_tests {
+    use super::*;
+    use pilotdeck_protocol::admission::SidecarBinding;
+
+    #[test]
+    fn tcp_timer_limit_is_shared_and_releases_on_drop() {
+        let budget = Arc::new(TimerBudget::default());
+        let mut leases: Vec<_> = (0..TCP_TIMER_LIMIT)
+            .map(|_| budget.acquire().unwrap())
+            .collect();
+        assert!(budget.acquire().is_none());
+        drop(leases.pop());
+        assert!(budget.acquire().is_some());
+        drop(leases);
+        assert_eq!(budget.0.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn timer_spawn_failure_releases_slot() {
+        let budget = Arc::new(TimerBudget::default());
+        let lease = budget.acquire().unwrap();
+        let result =
+            spawn_deadline_timer(Instant::now(), Cancellation::default(), Some(lease), |_| {
+                Err(io::Error::other("injected thread spawn failure"))
+            });
+        assert!(result.is_err());
+        assert_eq!(budget.0.load(Ordering::SeqCst), 0);
+    }
+
+    struct BrokenInput;
+    impl std::io::Read for BrokenInput {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            panic!("injected reader panic")
+        }
+    }
+    impl BufRead for BrokenInput {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            panic!("injected reader panic")
+        }
+        fn consume(&mut self, _: usize) {}
+    }
+    struct UnusedFactory;
+    impl ExecutionFactory for UnusedFactory {
+        fn execute(
+            &self,
+            _: &ExecuteRequest,
+            _: &mut ExecutionContext,
+        ) -> PortResult<ExecutionTerminal> {
+            unreachable!("reader panics before execute")
+        }
+    }
+    struct Clock;
+    impl ExecutionClock for Clock {
+        fn now_epoch_ms(&self) -> f64 {
+            0.0
+        }
+        fn now_iso(&self) -> JsString {
+            "1970-01-01T00:00:00.000Z".into()
+        }
+        fn parse_date(&self, _: &JsString) -> Result<Option<f64>, JsString> {
+            Ok(None)
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn poisoned_shared_decode_gate_releases_between_real_connections() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::net::Shutdown;
+        use std::os::unix::net::UnixStream;
+        let ledger = SharedExecutionLedger::default();
+        let gate = ledger.decoding.clone();
+        let poison = gate.clone();
+        assert!(
+            thread::spawn(move || {
+                let _guard = poison.lock().unwrap();
+                panic!("injected decode panic");
+            })
+            .join()
+            .is_err()
+        );
+        assert!(gate.is_poisoned());
+        let (tx, rx) = mpsc::channel();
+        for index in 0..2 {
+            let owner = ConnectionOwner::new(
+                SidecarBinding {
+                    module_id: "m".into(),
+                    module_instance_id: "i".into(),
+                    connection_generation: format!("g-{index}").as_str().into(),
+                    capabilities_version: "1".into(),
+                },
+                8,
+            );
+            let server = ExecutionServer::with_shared_ledger(
+                owner,
+                Arc::new(UnusedFactory),
+                Arc::new(Clock),
+                8,
+                ledger.clone(),
+            );
+            assert!(Arc::ptr_eq(server.decoding.as_ref().unwrap(), &gate));
+            let (stream, mut client) = UnixStream::pair().unwrap();
+            client
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let input = stream.try_clone().unwrap();
+            let done = tx.clone();
+            thread::spawn(move || {
+                let _ =
+                    done.send(server.serve(BufReader::new(input), stream, Duration::from_secs(2)));
+            });
+            writeln!(
+                client,
+                "{{\"kind\":\"request\",\"messageId\":\"h\",\"method\":\"hello\",\"payload\":{{}}}}"
+            )
+            .unwrap();
+            let mut response = String::new();
+            BufReader::new(&client).read_line(&mut response).unwrap();
+            let response = pilotdeck_protocol::parse_json(&response).unwrap();
+            assert_eq!(response.get("ok"), Some(&JsValue::Bool(true)));
+            client.shutdown(Shutdown::Both).unwrap();
+            let report = rx
+                .recv_timeout(Duration::from_secs(4))
+                .expect("connection stuck");
+            assert!(report.complete(), "{report:?}");
+        }
+    }
+
+    #[test]
+    fn reader_panic_retires_and_reports_incomplete_without_hanging() {
+        let owner = ConnectionOwner::new(
+            SidecarBinding {
+                module_id: "m".into(),
+                module_instance_id: "i".into(),
+                connection_generation: "g".into(),
+                capabilities_version: "1".into(),
+            },
+            8,
+        );
+        let server = ExecutionServer::new(owner, Arc::new(UnusedFactory), Arc::new(Clock), 8);
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let _ = tx.send(server.serve(BrokenInput, io::sink(), Duration::from_secs(2)));
+        });
+        let report = rx
+            .recv_timeout(Duration::from_secs(4))
+            .expect("reader panic stranded server");
+        assert!(!report.reader_joined);
+        assert!(report.writer_joined && report.worker_joined);
+    }
+}
+
+#[cfg(test)]
 mod deadline_delay_tests {
     use super::*;
 
@@ -1053,7 +1567,7 @@ mod deadline_delay_tests {
     }
 }
 
-fn js_whitespace(c: char) -> bool {
+pub(crate) fn js_whitespace(c: char) -> bool {
     matches!(c, '\u{0009}'..='\u{000D}' | '\u{0020}' | '\u{00A0}' | '\u{1680}' | '\u{2000}'..='\u{200A}' | '\u{2028}' | '\u{2029}' | '\u{202F}' | '\u{205F}' | '\u{3000}' | '\u{FEFF}')
 }
 

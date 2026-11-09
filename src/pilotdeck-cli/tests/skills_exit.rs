@@ -2,7 +2,7 @@
 use std::{fs, process::Command};
 
 #[test]
-fn usage_json_error_exit_and_gateway_todo_are_distinct() {
+fn usage_json_error_exit_and_server_config_error_are_distinct() {
     let root = std::env::temp_dir().join(format!("pdrs-skills-exit-{}", std::process::id()));
     fs::create_dir_all(root.join("source/bad")).unwrap();
     fs::write(root.join("source/bad/SKILL.md"), "no frontmatter").unwrap();
@@ -31,13 +31,10 @@ fn usage_json_error_exit_and_gateway_todo_are_distinct() {
     assert!(text.stderr.is_empty() && json.stderr.is_empty());
     let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
     assert_eq!(report["summary"]["error"], 1);
-    let todo = invoke(&["server"]);
-    assert_eq!(todo.status.code(), Some(2));
-    assert!(
-        String::from_utf8(todo.stderr)
-            .unwrap()
-            .starts_with("pilotdeck-rs TODO: ")
-    );
+    let server = invoke(&["server"]);
+    assert_eq!(server.status.code(), Some(1));
+    assert!(server.stdout.is_empty());
+    assert_eq!(server.stderr, b"Config must contain an agent section.\n");
     assert!(!root.join("pilot").exists());
     fs::remove_dir_all(root).unwrap();
 }

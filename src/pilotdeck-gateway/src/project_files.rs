@@ -5,7 +5,9 @@ use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
 };
 use icu_casemap::CaseMapper;
-use icu_collator::{Collator, CollatorBorrowed, CollatorPreferences};
+#[cfg(test)]
+use icu_collator::Collator;
+use icu_collator::CollatorBorrowed;
 use icu_locale_core::{LanguageIdentifier, Locale};
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use sha2::{Digest, Sha256};
@@ -706,42 +708,12 @@ fn build_node_collator(
     locale: &Locale,
     process_default: bool,
 ) -> Result<CollatorBorrowed<'static>> {
-    let mut preferences: CollatorPreferences = locale.clone().into();
-    let create = |preferences: CollatorPreferences| {
-        Collator::try_new(preferences, Default::default()).map(|collator| {
-            // The pinned baked metadata omits fr-CA's backward-secondary bit.
-            // Restore the Node/ICU78 default; explicit collations (e.g. emoji)
-            // retain their own metadata. See native-collation/oracle.json.
-            let latin_or_none = |script: Option<icu_locale_core::subtags::Script>| {
-                script.is_none_or(|script| script.to_string() == "Latn")
-            };
-            if locale.id.language.as_str() == "fr"
-                && (process_default && latin_or_none(locale.id.script)
-                    || !process_default && locale.id.script.is_none())
-                && locale
-                    .id
-                    .region
-                    .is_some_and(|region| region.as_str() == "CA")
-                && preferences.collation_type.is_none()
-            {
-                collator.with_backward_second_level(true)
-            } else {
-                collator
-            }
-        })
-    };
-    create(preferences)
-        .or_else(|_| {
-            preferences.collation_type = None;
-            create(preferences)
-        })
-        .or_else(|_| Collator::try_new(Default::default(), Default::default()))
-        .map_err(|_| {
-            (
-                "gateway_request_failed",
-                "Collation data unavailable.".into(),
-            )
-        })
+    pilotdeck_transport::node_collation::node_collator(locale, process_default).map_err(|_| {
+        (
+            "gateway_request_failed",
+            "Collation data unavailable.".into(),
+        )
+    })
 }
 
 #[cfg(unix)]

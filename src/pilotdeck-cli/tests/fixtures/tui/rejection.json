@@ -1,0 +1,58 @@
+{
+  "rows": [
+    {
+      "direction": "client",
+      "frame": {
+        "type": "hello",
+        "protocolVersion": "1.2",
+        "clientName": "cli",
+        "clientVersion": "0.1.0",
+        "token": "fixture-token"
+      }
+    },
+    {
+      "direction": "server",
+      "frame": {
+        "type": "hello_ok",
+        "serverInfo": {
+          "capabilities": []
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "frame": {
+        "type": "request",
+        "id": "979450fe-c123-4fb3-a650-f3fa3f6887b1",
+        "method": "submit_turn",
+        "params": {
+          "sessionKey": "s",
+          "channelKey": "tui",
+          "projectKey": "/fixture",
+          "message": "hello",
+          "mode": "default"
+        }
+      }
+    },
+    {
+      "direction": "server",
+      "frame": {
+        "type": "response",
+        "id": "979450fe-c123-4fb3-a650-f3fa3f6887b1",
+        "ok": false,
+        "error": {
+          "code": "invalid_request",
+          "message": "fixture admission denied"
+        }
+      }
+    }
+  ],
+  "observation": {
+    "settled": false
+  },
+  "openAtObservation": true,
+  "afterCleanup": {
+    "settled": true,
+    "error": "Gateway WebSocket closed."
+  }
+}

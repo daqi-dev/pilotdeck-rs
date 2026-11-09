@@ -8,7 +8,7 @@
 //! reconciles only the keys it constructs, so `managedChannelKeys` carries
 //! exactly those.
 use crate::channel::{
-    feishu::{FeishuChannel, FeishuOptions, FeishuWebhookSlot, no_interaction},
+    feishu::{FeishuChannel, FeishuOptions, FeishuWebhookSlot},
     loader::{ChannelLoaderMounts, LoadEnabledChannelsOptions, load_enabled_channels},
     protocol::{
         ChannelAdapter, ChannelError, ChannelKey, ChannelLog, ChannelStartDeps, ChannelState,
@@ -102,25 +102,46 @@ pub(crate) fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
 
 /// The production loader-table mounts (#2301): one per implemented loader
 /// key. Each channel module owns its own mount (the sms precedent);
-/// wecomCallback's constructor takes the shared interaction port here, and
-/// the `NoInteraction` default stays until the A7 boundary grows the respond
-/// calls (the feishu/bluebubbles precedent, `A8.3-CH-FEISHU-008` /
-/// `A8.3-CH-BLUEBUBBLES-002` / `A8.3-WECOM-CALLBACK-INTERACTION-001`).
+/// IM constructors receive independent helper state backed by the same live
+/// GatewayInteractionCoordinator used by WS permission/elicitation responses.
+/// The weak publication prevents a retired gateway being kept alive by adapters.
 /// `production_mounts_cover_every_non_rejected_loader_key` keeps this closed
 /// against `CHANNEL_LOADER_KEYS`: a key that leaves the rejection table
 /// without a mount here would return to the silent skip #2301 removed.
+#[cfg(test)]
 pub(crate) fn production_loader_mounts() -> ChannelLoaderMounts {
+    production_loader_mounts_with_interactions(&Arc::new(
+        super::channel_interaction::NativeInteractionResponder::default(),
+    ))
+}
+fn production_loader_mounts_with_interactions(
+    responder: &Arc<super::channel_interaction::NativeInteractionResponder>,
+) -> ChannelLoaderMounts {
     let mut mounts = ChannelLoaderMounts::default();
     crate::channel::sms::register(&mut mounts);
-    crate::channel::bluebubbles::register(&mut mounts);
+    crate::channel::telegram::register_with_interaction(&mut mounts, responder.port());
+    crate::channel::matrix::register_with_interaction(&mut mounts, responder.port());
+    crate::channel::signal::register_with_interaction(&mut mounts, responder.port());
+    crate::channel::mattermost::register_with_interaction(&mut mounts, responder.port());
+    let home_assistant_interaction = responder.port();
+    mounts.register(
+        "homeassistant",
+        Arc::new(move |options| {
+            Ok(
+                Arc::new(crate::channel::home_assistant::HomeAssistantChannel::new(
+                    crate::channel::home_assistant::HomeAssistantOptions::from_object(options),
+                    home_assistant_interaction.clone(),
+                )) as Arc<dyn ChannelAdapter>,
+            )
+        }),
+    );
+    crate::channel::bluebubbles::register_with_interaction(&mut mounts, responder.port());
     crate::channel::slack::register(&mut mounts);
     crate::channel::api_server::register(&mut mounts);
     crate::channel::webhook::register(&mut mounts);
     mounts.register(
         "wecomCallback",
-        crate::channel::wecom_callback::WeComCallbackChannel::constructor(
-            crate::channel::wecom_callback::no_interaction(),
-        ),
+        crate::channel::wecom_callback::WeComCallbackChannel::constructor(responder.port()),
     );
     mounts
 }
@@ -163,6 +184,8 @@ pub struct NativeChannelsOptions {
 
 pub struct NativeChannels {
     server: ChannelServer,
+    interaction: Arc<super::channel_interaction::NativeInteractionResponder>,
+    pilot_home: PathBuf,
     state: ChannelStatePersistence,
     weixin: WeixinChannelOptions,
     weixin_maker: WeixinChannelMaker,
@@ -249,6 +272,8 @@ impl NativeChannels {
         let feishu_gateway = Arc::new(FeishuTurnGateway::new());
         let turn_gateway: Arc<dyn TurnGateway> = feishu_gateway.clone();
         Self {
+            interaction: Arc::default(),
+            pilot_home: options.pilot_home,
             server: ChannelServer::new(
                 ChannelStartDeps {
                     config: Some(options.config.clone()),
@@ -271,6 +296,13 @@ impl NativeChannels {
             feishu_gateway,
             config: options.config,
         }
+    }
+
+    pub fn set_interactions(
+        &self,
+        coordinator: &Arc<crate::runtime::interaction::GatewayInteractionCoordinator>,
+    ) -> bool {
+        self.interaction.publish(coordinator)
     }
 
     pub fn server(&self) -> &ChannelServer {
@@ -337,10 +369,9 @@ impl NativeChannels {
     /// the six implemented loader-table keys construct in table order, a
     /// construction failure `console.error`s and continues (the
     /// error-then-continue loop, `loadEnabledChannels.ts:132-136`), and no
-    /// options travel on this path: TS calls
-    /// `this.loadConfiguredChannels(config.adapters)` with no second
-    /// argument, so `pilotHome` stays `undefined` (only the matrix loader
-    /// reads it, and matrix is not implemented). The error port is the same
+    /// TS uses its process pilot home when no loader override is supplied.
+    /// Native embeddings pass their explicit isolated home, so a loader never
+    /// falls back to the coordinating user's home. The error port is the same
     /// best-effort console write as the channel log: `assembly::start` calls
     /// this synchronously before any channel starts, outside every
     /// `catch_unwind`, so an `eprintln!` here (std panic on a failed write,
@@ -349,8 +380,10 @@ impl NativeChannels {
     pub fn create_startup_configured(&self) -> Vec<Arc<dyn ChannelAdapter>> {
         load_enabled_channels(
             self.config.get("adapters"),
-            &LoadEnabledChannelsOptions { pilot_home: None },
-            &production_loader_mounts(),
+            &LoadEnabledChannelsOptions {
+                pilot_home: Some(self.pilot_home.to_string_lossy().into_owned().into()),
+            },
+            &production_loader_mounts_with_interactions(&self.interaction),
             &mut |message| console_log_line(&mut std::io::stderr(), &message),
         )
     }
@@ -375,7 +408,7 @@ impl NativeChannels {
             Arc::new(move |value: JsValue| state.save(feishu_key().as_js(), value));
         Arc::new(FeishuChannel::for_assembly(
             self.configured_feishu_options(config),
-            no_interaction(),
+            self.interaction.port(),
             self.feishu_slot.clone(),
             saved.as_ref(),
             Some(on_state_change),

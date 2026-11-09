@@ -34,6 +34,13 @@ impl ToolDefinition for WriteFileTool {
     fn fields(&self) -> &JsObject {
         &self.fields
     }
+    fn check_permissions<'a>(
+        &'a self,
+        input: &'a JsValue,
+        permission: &'a crate::runtime::permission::PermissionContext,
+    ) -> crate::runtime::permission::PermissionFuture<'a, Option<JsValue>> {
+        super::file_permissions::write("write_file", input, permission)
+    }
     fn is_read_only(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
     }
@@ -52,7 +59,7 @@ impl ExecutableTool for WriteFileTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move { execute(&input, &context).await })
     }
 }
 
@@ -130,7 +137,7 @@ fn validate(input: &JsValue, context: &ToolRunContext) -> Result<Option<Vec<JsOb
     }
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
     let path = input_path(input);
     let content_value = input_content(input);
     let content = String::from_utf16_lossy(content_value.units());
@@ -141,6 +148,8 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
         .and_then(JsValue::as_string)
         .is_some_and(|kind| kind.equals_str("allow"));
     let resolved = resolve_write_path(&path, context, false, allowed_outside)?;
+    #[cfg(unix)]
+    super::native_sandbox_write_path(&resolved.absolute, context)?;
     let freshness = ensure_write_snapshot_fresh(context, &resolved.absolute)?;
 
     let message = message_id(context);
@@ -158,6 +167,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
     }
     super::invalidate_read_file_state(context, &resolved.absolute);
     record_write_snapshot(context, &resolved.absolute, &content, write.mtime_ms, None);
+    super::notify_file_update(context, &resolved, freshness.previous_content.is_none()).await;
 
     let kind = if write.created { "create" } else { "update" };
     let structured_patch = build_structured_patch(freshness.previous_content.as_deref(), &content);

@@ -1,0 +1,293 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": "88485d2d6cbbfe16245edb5baa7152f7e773fce5e64257e7ec25f7f01233c205",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "absent-pilot-cancel",
+      "pilot": null,
+      "home": null,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n可配置的平台：\n  1) 飞书 / Lark      [未配置]\n  2) 微信 (iLink)     [未配置]\n  3) 企业微信 WeCom   [未配置]\n  4) 全部配置\n  q) 退出\n\n请选择 [1/2/3/4/q]: 未选择任何平台，退出。\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {},
+      "accountPilotCreated": false,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": false,
+      "homedirCalls": [
+        "<CASE>/account"
+      ],
+      "fetch": {
+        "events": [],
+        "clock": 0
+      }
+    },
+    {
+      "id": "empty-pilot-cancel",
+      "pilot": "",
+      "home": null,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n可配置的平台：\n  1) 飞书 / Lark      [未配置]\n  2) 微信 (iLink)     [未配置]\n  3) 企业微信 WeCom   [未配置]\n  4) 全部配置\n  q) 退出\n\n请选择 [1/2/3/4/q]: 未选择任何平台，退出。\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {},
+      "accountPilotCreated": false,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": false,
+      "homedirCalls": [
+        "<CASE>/account"
+      ],
+      "fetch": {
+        "events": [],
+        "clock": 0
+      }
+    },
+    {
+      "id": "literal-tilde-cancel",
+      "pilot": "~",
+      "home": null,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n可配置的平台：\n  1) 飞书 / Lark      [未配置]\n  2) 微信 (iLink)     [未配置]\n  3) 企业微信 WeCom   [未配置]\n  4) 全部配置\n  q) 退出\n\n请选择 [1/2/3/4/q]: 未选择任何平台，退出。\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {},
+      "accountPilotCreated": false,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": false,
+      "homedirCalls": [],
+      "fetch": {
+        "events": [],
+        "clock": 0
+      }
+    },
+    {
+      "id": "relative-pilot-cancel",
+      "pilot": "pilot",
+      "home": null,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n可配置的平台：\n  1) 飞书 / Lark      [未配置]\n  2) 微信 (iLink)     [未配置]\n  3) 企业微信 WeCom   [未配置]\n  4) 全部配置\n  q) 退出\n\n请选择 [1/2/3/4/q]: 未选择任何平台，退出。\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {},
+      "accountPilotCreated": false,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": false,
+      "homedirCalls": [],
+      "fetch": {
+        "events": [],
+        "clock": 0
+      }
+    },
+    {
+      "id": "absolute-pilot-cancel",
+      "pilot": "<CASE>/pilot",
+      "home": null,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n可配置的平台：\n  1) 飞书 / Lark      [未配置]\n  2) 微信 (iLink)     [未配置]\n  3) 企业微信 WeCom   [未配置]\n  4) 全部配置\n  q) 退出\n\n请选择 [1/2/3/4/q]: 未选择任何平台，退出。\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {},
+      "accountPilotCreated": false,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": false,
+      "homedirCalls": [],
+      "fetch": {
+        "events": [],
+        "clock": 0
+      }
+    },
+    {
+      "id": "weixin-cancel",
+      "pilot": "pilot",
+      "home": null,
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          "n"
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: 已取消。\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {},
+      "accountPilotCreated": false,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": false,
+      "homedirCalls": [],
+      "fetch": {
+        "events": [],
+        "clock": 0
+      }
+    },
+    {
+      "id": "weixin-save-unset",
+      "pilot": "pilot",
+      "home": null,
+      "save": true,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n✅ 微信登录成功！\n   账号 ID: fixture-account\n   凭据已保存到: pilot/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {
+        "pilot/pilotdeck.yaml": "adapters:\n  weixin:\n    enabled: true\n",
+        "pilot/weixin-credentials.json": "{\n  \"baseUrl\": \"https://fixture.invalid/api\",\n  \"botToken\": \"fixture-token\",\n  \"accountId\": \"fixture-account\"\n}"
+      },
+      "accountPilotCreated": true,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": false,
+      "homedirCalls": [
+        "<CASE>/account"
+      ],
+      "fetch": {
+        "events": [
+          {
+            "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+            "method": "GET",
+            "headers": null,
+            "body": null
+          },
+          {
+            "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=fixture-code",
+            "method": "GET",
+            "headers": {
+              "iLink-App-ClientVersion": "1"
+            },
+            "body": null
+          }
+        ],
+        "clock": 0
+      }
+    },
+    {
+      "id": "weixin-save-empty",
+      "pilot": "pilot",
+      "home": "",
+      "save": true,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n✅ 微信登录成功！\n   账号 ID: fixture-account\n   凭据已保存到: pilot/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {
+        "pilot/pilotdeck.yaml": "adapters:\n  weixin:\n    enabled: true\n",
+        "pilot/weixin-credentials.json": "{\n  \"baseUrl\": \"https://fixture.invalid/api\",\n  \"botToken\": \"fixture-token\",\n  \"accountId\": \"fixture-account\"\n}"
+      },
+      "accountPilotCreated": false,
+      "emptyPilotCreated": true,
+      "relativePilotCreated": false,
+      "homedirCalls": [
+        ""
+      ],
+      "fetch": {
+        "events": [
+          {
+            "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+            "method": "GET",
+            "headers": null,
+            "body": null
+          },
+          {
+            "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=fixture-code",
+            "method": "GET",
+            "headers": {
+              "iLink-App-ClientVersion": "1"
+            },
+            "body": null
+          }
+        ],
+        "clock": 0
+      }
+    },
+    {
+      "id": "weixin-save-relative",
+      "pilot": "pilot",
+      "home": "relative-home",
+      "save": true,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n✅ 微信登录成功！\n   账号 ID: fixture-account\n   凭据已保存到: pilot/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {
+        "pilot/pilotdeck.yaml": "adapters:\n  weixin:\n    enabled: true\n",
+        "pilot/weixin-credentials.json": "{\n  \"baseUrl\": \"https://fixture.invalid/api\",\n  \"botToken\": \"fixture-token\",\n  \"accountId\": \"fixture-account\"\n}"
+      },
+      "accountPilotCreated": false,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": true,
+      "homedirCalls": [
+        "relative-home"
+      ],
+      "fetch": {
+        "events": [
+          {
+            "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+            "method": "GET",
+            "headers": null,
+            "body": null
+          },
+          {
+            "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=fixture-code",
+            "method": "GET",
+            "headers": {
+              "iLink-App-ClientVersion": "1"
+            },
+            "body": null
+          }
+        ],
+        "clock": 0
+      }
+    },
+    {
+      "id": "weixin-save-missing-parent",
+      "pilot": "pilot",
+      "home": null,
+      "save": true,
+      "missingParent": true,
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n❌ 微信登录失败: ENOENT: no such file or directory, open 'pilot/weixin-credentials.json'\n   请检查网络连接后重试。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "files": {},
+      "accountPilotCreated": true,
+      "emptyPilotCreated": false,
+      "relativePilotCreated": false,
+      "homedirCalls": [
+        "<CASE>/account"
+      ],
+      "fetch": {
+        "events": [
+          {
+            "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+            "method": "GET",
+            "headers": null,
+            "body": null
+          },
+          {
+            "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=fixture-code",
+            "method": "GET",
+            "headers": {
+              "iLink-App-ClientVersion": "1"
+            },
+            "body": null
+          }
+        ],
+        "clock": 0
+      }
+    }
+  ]
+}

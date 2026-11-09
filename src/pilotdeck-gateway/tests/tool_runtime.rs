@@ -998,3 +998,189 @@ fn registry_releases_its_lock_before_tool_destructors_and_policies_run() {
     registry.dispose();
     assert_eq!(drops.load(Ordering::SeqCst), 6);
 }
+
+struct NestedWrapper {
+    fields: JsObject,
+}
+impl ToolDefinition for NestedWrapper {
+    fn fields(&self) -> &JsObject {
+        &self.fields
+    }
+    fn is_read_only(&self, _: &JsValue) -> Result<JsValue, HostError> {
+        Ok(JsValue::Bool(true))
+    }
+    fn is_concurrency_safe(&self, _: &JsValue) -> Result<JsValue, HostError> {
+        Ok(JsValue::Bool(false))
+    }
+}
+impl ExecutableTool for NestedWrapper {
+    fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
+        Box::pin(async move {
+            assert_eq!(
+                context.fields.get("currentToolCallId"),
+                Some(&"outer".into())
+            );
+            let executor = context
+                .execute_tool
+                .ok_or_else(|| ToolError::failed("nested hook absent"))?;
+            let result = executor(ToolCall {
+                id: "outer:code:1".into(),
+                name: "ChildAlias".into(),
+                input: input.get("nested").cloned().unwrap(),
+            })
+            .await
+            .map_err(|e| ToolError::failed(e.message))?;
+            Ok(ToolOutput {
+                data: Some(JsValue::Object(result)),
+                ..Default::default()
+            })
+        })
+    }
+}
+#[tokio::test]
+async fn nested_executor_rechecks_alias_validation_and_permission_without_detaching() {
+    let probe = Probe::new();
+    let registry = ToolRegistry::default();
+    register(
+        &registry,
+        &parse_json(r#"{"name":"child","aliases":["ChildAlias"],"readOnly":true}"#).unwrap(),
+        &probe,
+    );
+    registry
+        .register(Arc::new(NestedWrapper {
+            fields: obj([
+                ("name", "wrapper".into()),
+                ("inputSchema", parse_json(r#"{"type":"object"}"#).unwrap()),
+            ]),
+        }))
+        .unwrap();
+    let runtime = ToolRuntime::new(registry, Arc::new(Permission), SchedulerMode::Sequential);
+    let signal = ToolCancellation::new();
+    let base = ToolRunContext::new(context(&probe, &signal, None));
+    for (nested, expected) in [
+        (r#"{"decision":"deny"}"#, "error"),
+        (r#"{"validationIssues":[]}"#, "error"),
+        (r#"{"value":"fresh-child-call"}"#, "success"),
+    ] {
+        let input = JsValue::Object(obj([("nested", parse_json(nested).unwrap())]));
+        let result = runtime
+            .execute_batch(
+                vec![ToolCall {
+                    id: "outer".into(),
+                    name: "wrapper".into(),
+                    input,
+                }],
+                base.clone(),
+            )
+            .await
+            .unwrap();
+        let child = result[0].get("data").unwrap();
+        assert_eq!(child.get("type"), Some(&expected.into()));
+        assert_eq!(child.get("toolCallId"), Some(&"outer:code:1".into()));
+        assert_eq!(child.get("toolName"), Some(&"child".into()));
+    }
+    assert_eq!(
+        probe
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|row| array(row)[0] == JsValue::from("start"))
+            .count(),
+        1,
+        "denied and invalid nested calls never execute"
+    );
+    let input = parse_json(r#"{"nested":{"hang":true}}"#).unwrap();
+    let future = runtime.execute_batch(
+        vec![ToolCall {
+            id: "outer".into(),
+            name: "wrapper".into(),
+            input,
+        }],
+        base,
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(20), future)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        probe.live.load(Ordering::SeqCst),
+        0,
+        "dropping the caller synchronously drops the nested body"
+    );
+}
+
+struct RuntimeDenied;
+impl PermissionDecision for RuntimeDenied {
+    fn decide(
+        &self,
+        _tool: Arc<dyn ToolDefinition>,
+        _input: JsValue,
+        _context: RuntimeContext,
+        _id: JsString,
+    ) -> HostFuture<JsValue> {
+        Box::pin(async {
+            Ok(JsValue::Object(obj([
+                ("type", "deny".into()),
+                (
+                    "reason",
+                    JsValue::Object(obj([
+                        ("type", "runtime".into()),
+                        ("message", "Permission prompt denied.".into()),
+                    ])),
+                ),
+                ("message", "Permission prompt denied.".into()),
+            ])))
+        })
+    }
+}
+
+#[tokio::test]
+async fn denied_prompt_emits_business_event_and_required_error_without_executing_tool() {
+    let probe = Probe::new();
+    let registry = ToolRegistry::default();
+    register(
+        &registry,
+        &parse_json(r#"{"name":"bash","readOnly":false}"#).unwrap(),
+        &probe,
+    );
+    let events: Arc<Mutex<Vec<JsObject>>> = Arc::default();
+    let emitted = events.clone();
+    let runtime = ToolRuntime::new(registry, Arc::new(RuntimeDenied), SchedulerMode::Sequential)
+        .with_event_emitter(Arc::new(move |event| emitted.lock().unwrap().push(event)));
+    let signal = ToolCancellation::new();
+    let results = runtime
+        .execute_batch(
+            vec![ToolCall {
+                id: "denied-call".into(),
+                name: "bash".into(),
+                input: JsValue::Object(JsObject::new()),
+            }],
+            ToolRunContext::new(context(&probe, &signal, None)),
+        )
+        .await
+        .unwrap();
+    assert_eq!(results[0].get("type"), Some(&JsValue::from("error")));
+    assert_eq!(
+        results[0].get("error").and_then(|e| e.get("code")),
+        Some(&JsValue::from("permission_required"))
+    );
+    let events = events.lock().unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].get("type"),
+        Some(&JsValue::from("permission_denied"))
+    );
+    assert_eq!(events[0].get("sessionId"), Some(&JsValue::from("s")));
+    assert_eq!(events[0].get("turnId"), Some(&JsValue::from("t")));
+    assert_eq!(events[0].get("toolName"), Some(&JsValue::from("bash")));
+    assert_eq!(
+        events[0].get("reason"),
+        Some(&JsValue::from("Permission prompt denied."))
+    );
+    assert!(
+        probe.events.lock().unwrap().is_empty(),
+        "denied tool body must not start"
+    );
+}

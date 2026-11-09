@@ -7,6 +7,7 @@ Every mutant must compile, kill its exact test, and pass after restoration.
 from pathlib import Path
 import difflib
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -16,6 +17,9 @@ from negative_suite import Case, classify, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
 SOURCE = ROOT / 'src/pilotdeck-gateway/src/native_process/management.rs'
+TURN_SUBMIT = ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit.rs'
+SESSION_FACTORY = ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory.rs'
+SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir.rs'
 SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
 REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
 # #1352: the advertised capability table moved out of `requests.rs`.
@@ -53,7 +57,7 @@ mutations = [
     ('limit-fraction-truncated', SOURCE, 'n.fract() == 0.0 && (1.0..=100.0).contains(n)', '(1.0..=100.0).contains(n)', TEST, '#1231 method wire result'),
     ('missing-project-defaulted', SOURCE, 'validate_command_project(params)?;', 'if false { validate_command_project(params)?; }', TEST, '#1231 method wire result'),
     ('host-boundary-leaked', SOURCE, 'if e.requires_host {\n        return unavailable();\n    }', 'if false && e.requires_host {\n        return unavailable();\n    }', ADMISSION, '#1231 host-dependent skill rejected'),
-    ('surrogate-target-accepted', SOURCE, '!s.to_utf8().is_ok_and(|p| self.options.serves_project(&p))', 's.to_utf8().is_ok_and(|p| !self.options.serves_project(&p))', ADMISSION, '#1231 surrogate restore target admission'),
+    ('surrogate-target-accepted', SOURCE, 'let project = metadata.resolve_dialog_project(&JsString::from_utf16(project_key.to_vec()));', 'let project = metadata.resolve_dialog_project(&JsString::from(String::from_utf16_lossy(project_key)));', 'native_process::management_tests::snapshot_restore_uses_registered_target_project_without_touching_its_files', '#1231 surrogate restore target admission'),
     ('capability-invented-always_on_apply', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in }',
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "always_on_apply", methods: &[], wired: compiled_in }', HOST, '#1231 exact wired capability set'),
@@ -70,30 +74,33 @@ mutations = [
     ('capability-unwired-method-advertised', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },',
      'Capability { name: "commands_list", methods: &["unwired_skill_scan"], wired: compiled_in },', TABLE, '#1352 commands_list promises a method'),
-    # #1352: registered-but-unserved methods (history.rs answers
-    # CAPABILITY_UNAVAILABLE) must not be promised by any row.
+    # The historical mutation still substitutes an unrelated capability's
+    # method. Archive storage now exists, but commands_list must not promise it.
     ('capability-unserved-history-method', CAPABILITIES,
      'Capability { name: "commands_list", methods: &[], wired: compiled_in },',
      'Capability { name: "commands_list", methods: &["export_session_transcript"], wired: compiled_in },',
-     'native_process::capabilities::tests::unserved_history_methods_are_not_promised',
-     '#1352 export_session_transcript answers CAPABILITY_UNAVAILABLE'),
+     'native_process::capabilities::tests::history_methods_are_only_promised_by_archive',
+     'archive storage methods are not aliases for unrelated capabilities'),
     ('capability-registry-filter-ignored', CAPABILITIES,
      '    promised(capability).all(|method| registered.contains(&method))',
      '    let _ = (capability, registered); false', HOST, '#1231 exact wired capability set'),
 
 
-    ('skills-restart-refused', ASSEMBLY, 'if management && name == "skills" {', 'if management && name == "unwired_skills" {', HOST, '#1231 native management boot/restart'),
+    ('skills-restart-refused', ASSEMBLY, 'validate_profile_inner(options, env, false).await', 'validate_profile_inner(options, env, false).await?; Err("native skill execution disabled".into())', HOST, '#1231 imported standalone skills are supported by the native profile'),
     ('snapshot-storage-omitted', ASSEMBLY, 'let project = project_registry(&options, &env);', 'let mut env = env; env.remove("PILOTDECK_STORAGE_ROOT"); let project = project_registry(&options, &env);', HOST, '#1231 snapshot route with explicit storage'),
     ('oracle-corruption', ORACLE, '"node": "v22.22.0"', '"node": "v0.0.0"', 'native_process::management_tests::regenerates_identically', '#280 native-management/oracle.json differs'),
 ]
 mutations.append(('cursor-array-refused', SOURCE, 'JsValue::Array(items) => encode(items),', 'JsValue::Array(_items) => Err(invalid()),', TEST, '#1231 method wire result'))
-mutations.append(('pending-io-blocks-host', SOURCE, '        Some(\n            tokio::task::spawn_blocking(move || {\n                runtime.block_on(requests.management(&method, &params))\n            })\n            .await\n            .map_err(|e| RequestError::new(e.to_string()))\n            .and_then(|result| result),\n        )', '        let _ = runtime; Some(requests.management(&method, &params).await)', 'native_process::management_tests::pending_file_read_does_not_block_serial_host', '#1231 pending file IO must not block host'))
+mutations.append(('pending-io-blocks-host', SOURCE, '        Some(\n            tokio::task::spawn_blocking(move || {\n                let _permit = permit;\n                runtime.block_on(requests.management(&method, &params))\n            })\n            .await\n            .map_err(|e| RequestError::new(e.to_string()))\n            .and_then(|result| result),\n        )', '        let _permit = permit; let _ = runtime; Some(requests.management(&method, &params).await)', 'native_process::management_tests::pending_file_read_does_not_block_serial_host', '#1231 pending file IO must not block host'))
 
 mutations.append(('commands-nested-blocking', SOURCE, 'return Some(self.commands(params).await);', 'let requests = self.clone(); let params = params.clone(); let runtime = tokio::runtime::Handle::current();\n            return Some(tokio::task::spawn_blocking(move || runtime.block_on(requests.commands(&params))).await.map_err(|e| RequestError::new(e.to_string())).and_then(|r| r));', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
 
-mutations.append(('skill-execution-enabled', ASSEMBLY, 'validate_profile_inner(options, env, false).await', 'validate_profile_inner(options, env, true).await', HOST, '#1231 skill management does not enable execution'))
+# Skills are now supported. Preserve this control's name and denominator but
+# bind it to the real disabled-skills authority instead of the retired profile
+# flag (which became unused after native skill execution was installed).
+mutations.append(('skill-execution-enabled', ROOT / 'src/pilotdeck-gateway/src/native_process/skills.rs', 'if !self.1 {', 'if false && !self.1 {', 'native_process::skills::tests::disabled_skills_do_not_register_execution', '#1231 disabled skills do not enable execution'))
 
-mutations.append(('management-nested-acquire', SOURCE, 'let lease = self\n            .project\n            .acquire(None)\n            .map_err(|e| RequestError::new(e.to_string()))?;', 'let project = self.project.clone();\n        let lease = tokio::task::spawn_blocking(move || project.acquire(None)).await.map_err(|e| RequestError::new(e.to_string()))?.map_err(|e| RequestError::new(e.to_string()))?;', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
+mutations.append(('management-nested-acquire', SOURCE, 'let lease = self\n            .project\n            .acquire(Some(&self.options.project))\n            .map_err(|e| RequestError::new(e.to_string()))?;', 'let project = self.project.clone();\n        let root = self.options.project.clone();\n        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&root))).await.map_err(|e| RequestError::new(e.to_string()))?.map_err(|e| RequestError::new(e.to_string()))?;', 'native_process::management_tests::management_progress_with_one_available_blocking_thread', '#1231 management progress with one blocking slot'))
 
 mutations.append(('query-surrogate-lossy', SOURCE, 'Some(JsValue::String(text)) => Some(text.clone()),', 'Some(JsValue::String(text)) => Some(String::from_utf16_lossy(text.units()).into()),', TEST, '#1231 method wire result'))
 
@@ -172,8 +179,16 @@ mutations.append((
 mutations.append((
     'memory-project-key-exact-only',
     ASSEMBLY_MEMORY,
-    '        self.metadata\n'
-    '            .resolve_dialog_project(project_key)\n'
+    '        let metadata = Metadata {\n'
+    '            home: self.options.home.clone(),\n'
+    '            cwd: std::path::PathBuf::new(),\n'
+    '            files: crate::native_process::methods::session_dir::BoundedSessionMarkers::new(),\n'
+    '        };\n'
+    '        let resolved = metadata.resolve_dialog_project(project_key);\n'
+    '        if metadata.files.was_refused() {\n'
+    '            return Err(MemoryProviderError::new("Unsafe project marker."));\n'
+    '        }\n'
+    '        resolved\n'
     '            .map(JsString::from)\n'
     '            .ok_or_else(|| MemoryProviderError::unknown_project_key(project_key.units()))',
     '        let root = self.options.project.to_str().unwrap_or_default();\n'
@@ -195,28 +210,26 @@ mutations.append((
     '        Ok(Some(resource.management().clone()))',
     'native_process::assembly::memory::tests::memory_management_holds_the_generation_lease_through_the_call',
     '#1456 the returned service must own a generation lease'))
-# #1456 review (two lineages): the widened catalog resolution also accepts
-# every *other* registered project and the virtual General workspace; without
-# the isolation gate `memory_wipe` with a foreign key clears the served
-# project's memory.
+# Registered foreign roots must select their own generation. The old control
+# names remain: acquisition failure must not fall back to A, and a textual
+# prefix must not alias a distinct registered project to A.
 mutations.append((
     'memory-foreign-project-served',
     ASSEMBLY_MEMORY,
-    '        if !self.serves_project(project_key) {',
-    '        if false && !self.serves_project(project_key) {',
-    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
+    '            .acquire(Some(&root))\n'
+    '            .map_err(MemoryProviderError::from)?;',
+    '            .acquire(Some(&root)).or_else(|_| self.project.acquire(None))\n'
+    '            .map_err(MemoryProviderError::from)?;',
+    'native_process::assembly::memory::tests::selected_project_staging_failure_preserves_error_without_fallback',
     'must not reach the served project'))
-# #1456 r2 (codex sibling P2): the gate must be *project*-exact. Degrading the
-# shared predicate to a textual prefix admits a registered sibling whose
-# spelling starts with the served root (`<tmp>/project-2`) and would wipe the
-# served project's memory; the prefix-sharing fixture cell must kill it.
 mutations.append((
     'memory-foreign-project-served-by-prefix',
     ASSEMBLY_MEMORY,
-    '            .is_ok_and(|key| self.options.serves_project(&key))',
-    '            .is_ok_and(|key| key\n'
-    '                .starts_with(self.options.project.to_string_lossy().as_ref()))',
-    'native_process::assembly::memory::tests::resolve_project_key_accepts_the_keys_the_snapshot_route_accepts',
+    '            .acquire(Some(&root))\n'
+    '            .map_err(MemoryProviderError::from)?;',
+    '            .acquire(if root.to_string_lossy().starts_with(self.options.project.to_string_lossy().as_ref()) { None } else { Some(&root) })\n'
+    '            .map_err(MemoryProviderError::from)?;',
+    'native_process::assembly::memory::tests::registered_memory_projects_are_routed_to_their_own_provider',
     'must not reach the served project'))
 # #1320 fix-r2: resolve_settings is advertised (fix-r1 F7), so the
 # rename-to-unwired control keeps the exact wired capability set pinned.
@@ -233,7 +246,7 @@ mutations.append(('environment-storage-not-injected', ENTRY, 'inherited.insert("
 # #1431 review: the id source itself and the two remaining environment
 # semantics (ambient storage must lose to --storage-root; the separate
 # snapshot root override must survive) had assertions but no mutants.
-mutations.append(('submit-workspace-id-legacy-slug', SERVICES, 'projects.workspace_id(&project).as_str()', 'crate::metadata::project_id(std::path::Path::new(&*project)).as_str()', WIRING, '#1431 marker spelling selects the registered workspace id'))
+mutations.append(('submit-workspace-id-legacy-slug', SERVICES, 'super::management::bounded_snapshot_workspace_id(&metadata, &project)\n                    .map_err(failure)?', 'crate::metadata::project_id(std::path::Path::new(&*project))', WIRING, '#1431 marker spelling selects the registered workspace id'))
 mutations.append(('environment-storage-ambient-wins', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert(root.clone());', ENVIRONMENT, '#1431 storage root injected from --storage-root'))
 mutations.append(('environment-snapshot-root-dropped', ENTRY, 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());', 'inherited.insert("PILOTDECK_STORAGE_ROOT".into(), root.clone());\n                inherited.remove("PILOTDECK_SNAPSHOT_ROOT");', ENVIRONMENT, '#1431 snapshot root override preserved'))
 # #1431 review: the recorder extraction in `assembly::snapshot` is the last
@@ -256,8 +269,8 @@ mutations.append(('capability-add-reload_config', CAPABILITIES,
 mutations.append(('capability-add-reload_extensions', CAPABILITIES,
      'Capability { name: "resolve_settings", methods: &[], wired: compiled_in }',
      'Capability { name: "resolve_settings", methods: &[], wired: compiled_in },' + '\n    ' + 'Capability { name: "reload_extensions", methods: &[], wired: compiled_in }', SETTINGS_CAPABILITIES, '#1320 settings method reload_extensions must stay unadvertised'))
-mutations.append(('missing-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    register_project(&options)?;', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
-mutations.append(('empty-storage-defaulted', ASSEMBLY, '    register_project(&options)?;', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    register_project(&options)?;', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
+mutations.append(('missing-storage-defaulted', ASSEMBLY, '    let registration_permit = super::methods::session_dir::session_io_permit()', '    let mut env = env; env.entry("PILOTDECK_STORAGE_ROOT".into()).or_insert_with(|| options.home.join("storage").to_string_lossy().into_owned());\n    let registration_permit = super::methods::session_dir::session_io_permit()', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
+mutations.append(('empty-storage-defaulted', ASSEMBLY, '    let registration_permit = super::methods::session_dir::session_io_permit()', '    let mut env = env; if env.get("PILOTDECK_STORAGE_ROOT").is_some_and(|value| value.is_empty()) { env.insert("PILOTDECK_STORAGE_ROOT".into(), options.home.join("storage").to_string_lossy().into_owned()); }\n    let registration_permit = super::methods::session_dir::session_io_permit()', 'native_process::management_tests::empty_storage_environment_disables_snapshots', '#1231 disabled storage snapshot result'))
 mutations.append(('missing-storage-advertised', CAPABILITIES,
                   'fn snapshots(requests: &Requests) -> bool {\n    requests.snapshot_enabled\n}',
                   'fn snapshots(_requests: &Requests) -> bool {\n    true\n}', 'native_process::management_tests::missing_storage_environment_disables_snapshots', '#1231 disabled storage exact capability set'))
@@ -313,10 +326,10 @@ mutations.append(('hello-serverinfo-independent', CONNECTION,
                   HELLO, '#1352 hello_ok.serverInfo equals the describe_server result'))
 
 # fix-r2 (#1322): memory IO must stay off the serial host.
-mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'std::future::ready(requests.memory_dispatch(&method, &params))\n                    .await,', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
+mutations.append(('memory-io-blocks-host', SOURCE, 'tokio::task::spawn_blocking(move || {\n                    let _permit = permit;\n                    requests.memory_dispatch(&method, &params)\n                })', 'std::future::ready(Ok::<_, tokio::task::JoinError>({ let _permit = permit; requests.memory_dispatch(&method, &params) }))', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
 # fix-r3 (#1322): inline-sync variant — calls memory_dispatch directly on the
 # calling thread (no spawn_blocking), which blocks the serial host.
-mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || requests.memory_dispatch(&method, &params))\n                    .await\n                    .map_err(|e| RequestError::new(e.to_string()))\n                    .and_then(|result| result),', 'requests.memory_dispatch(&method, &params),', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
+mutations.append(('memory-inline-sync', SOURCE, 'tokio::task::spawn_blocking(move || {\n                    let _permit = permit;\n                    requests.memory_dispatch(&method, &params)\n                })', 'async move { Ok::<_, tokio::task::JoinError>({ let _permit = permit; requests.memory_dispatch(&method, &params) }) }', 'native_process::management_tests::pending_memory_io_does_not_block_serial_host', '#1322 pending memory IO must not block host'))
 
 # #1431 P2-3 + 收尾自查残差: two production steps had assertions but no paired
 # mutation. `non-utf8-project-accepted` reopens the unreachable-workspace path a
@@ -332,7 +345,7 @@ mutations.append(('non-utf8-project-accepted', ENTRY,
                   'native_process::tests::non_utf8_project_path_is_refused',
                   '#1431 non-UTF-8 --project must be rejected'))
 mutations.append(('snapshot-list-resolver-bypassed', SNAPSHOT,
-                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id(&project_key);\n        let limit = snapshot_limit(field(input, "limit"))?;',
+                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id_checked(&project_key)?;\n        let limit = snapshot_limit(field(input, "limit"))?;',
                   '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = crate::metadata::project_id(std::path::Path::new(&project_key));\n        let limit = snapshot_limit(field(input, "limit"))?;',
                   WIRING, '#1431 snapshot_list returns the submit-captured snapshot'))
 # #1431 review (both lineages): `snapshot_get` / `snapshot_restore` resolve the
@@ -340,11 +353,11 @@ mutations.append(('snapshot-list-resolver-bypassed', SNAPSHOT,
 # restore) and had assertions but no paired mutation, so swapping those two for
 # the legacy slug would only be caught by the oracle replay.
 mutations.append(('snapshot-get-resolver-bypassed', SNAPSHOT,
-                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id(&project_key);\n        let snapshot_id = field(input, "snapshotId");',
+                  '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = self.resolver.workspace_id_checked(&project_key)?;\n        let snapshot_id = field(input, "snapshotId");',
                   '        let project_key = self.resolve_source_project(input)?;\n        let workspace_id = crate::metadata::project_id(std::path::Path::new(&project_key));\n        let snapshot_id = field(input, "snapshotId");',
                   SNAPSHOT_TEST, '#1231 snapshot get success and workspace filter'))
 mutations.append(('snapshot-restore-resolver-bypassed', SNAPSHOT,
-                  '        let workspace_id = self.resolver.workspace_id(&source_project);\n        let snapshot_id = field(input, "snapshotId");',
+                  '        let workspace_id = self.resolver.workspace_id_checked(&source_project)?;\n        let snapshot_id = field(input, "snapshotId");',
                   '        let workspace_id = crate::metadata::project_id(std::path::Path::new(&source_project));\n        let snapshot_id = field(input, "snapshotId");',
                   SNAPSHOT_TEST, '#1231 snapshot restore success'))
 # #1431 review r2 (GLM sibling): the `--storage-root` rejection already had a
@@ -465,7 +478,46 @@ def skipped_on_this_platform(rows, platform=None):
 # and the run still reported "{n}/{n}" and read green. Pin the row count and the
 # roster (order and repeats included) as literals so a dropped, renamed or
 # duplicated mutation is refused before anything runs or compiles.
-EXPECTED_TOTAL = 97
+# Native marker guards have separate submit and management observations.
+# The child tests are bounded by these nonblocking readers and by run_owned.
+mutations.append(('submit-workspace-id-refusal-dropped', SOURCE,
+                  '    if metadata.files.was_refused() {\n        return Err("Unsafe project marker.");\n    }',
+                  '    if false && metadata.files.was_refused() {\n        return Err("Unsafe project marker.");\n    }',
+                  'native_process::management::bounded_snapshot_tests::native_submit_workspace_fifo_child',
+                  'unsafe submit marker accepted'))
+mutations.append(('snapshot-project-refusal-message-changed', SOURCE,
+                  '        if metadata.files.was_refused() {\n            return Err(SnapshotProjectionError::plain(\n                "Error",\n                "Unsafe project marker.",\n            ));\n        }',
+                  '        if metadata.files.was_refused() {\n            return Err(SnapshotProjectionError::plain(\n                "Error",\n                "Different marker error.",\n            ));\n        }',
+                  'native_process::management::bounded_snapshot_tests::native_snapshot_marker_fifo_child',
+                  'native snapshot resolver preserves unsafe marker error'))
+
+# Owned workspace access is verified both at its producer and at submit's
+# capture consumer, without extending the legacy M6 panic-anchor grammar.
+mutations.append(('workspace-cwd-from-public-snapshot', TURN_SUBMIT,
+                  'handle.workspace_cwd()',
+                  'handle.snapshot().get("cwd").and_then(JsValue::as_string).cloned()',
+                  'runtime::turn::submit::tests::workspace_capture_uses_owned_cwd_instead_of_public_snapshot',
+                  '#748 owned workspace capture uses owner cwd'))
+mutations.append(('owned-workspace-cwd-unavailable', SESSION_FACTORY,
+                  'self.storage.cwd.to_str().map(JsString::from)', 'None',
+                  'runtime::session::factory::tests::production_workspace_cwd_is_storage_owned_without_extending_public_snapshot',
+                  '#745 production owned workspace cwd'))
+
+mutations.append(('manager-marker-refusal-dropped', SOURCE,
+                  '        if metadata.files.was_refused() {\n            return Err(ManagerError::plain("Error", "Unsafe project marker."));\n        }',
+                  '        if false && metadata.files.was_refused() {\n            return Err(ManagerError::plain("Error", "Unsafe project marker."));\n        }',
+                  'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_child',
+                  'native manager preserves unsafe marker refusal'))
+
+# Same public resolver is consumed by rename/tag/status/delete/list and rewind.
+# Keep its real rejection message, not only the fact that an error occurred.
+mutations.append(('session-dir-marker-refusal-message-changed', SESSION_DIR,
+                  '    if metadata.files.was_refused() {\n        return Err(RequestError::new("Unsafe project marker."));\n    }',
+                  '    if metadata.files.was_refused() {\n        return Err(RequestError::new("Different marker error."));\n    }',
+                  'native_process::methods::session_dir::bounded_session_io_tests::native_session_io_child',
+                  'native session route preserves unsafe marker refusal'))
+
+EXPECTED_TOTAL = 103
 EXPECTED_NAMES = (
     'omit-snapshot',
     'omit-manager',
@@ -564,6 +616,12 @@ EXPECTED_NAMES = (
     'legacy-project-id-trim-omitted',
     'mcp-status-constant-empty',
     'mcp-status-disabled-spelling-flattened',
+    'submit-workspace-id-refusal-dropped',
+    'snapshot-project-refusal-message-changed',
+    'workspace-cwd-from-public-snapshot',
+    'owned-workspace-cwd-unavailable',
+    'manager-marker-refusal-dropped',
+    'session-dir-marker-refusal-message-changed',
 )
 if len(mutations) != EXPECTED_TOTAL:
     raise SystemExit(f'#1538 fixed mutation denominator: expected {EXPECTED_TOTAL}, '
@@ -642,10 +700,27 @@ def main():
                   flush=True)
         selected_rows = [case for case in selected_rows if case.mutation not in LINUX_ONLY]
 
-    def run(label, args):
+    def run(label, args, child_case=None):
+        if child_case is not None and '--no-run' not in args:
+            # Positive and restored trees also need compilation. Keep the
+            # short bound on the assertion-owning child, after each exact
+            # source state has compiled under the normal build budget.
+            compiled = run(label + '-compile', args[:args.index('--')] + ['--no-run'], child_case)
+            if compiled.returncode:
+                return compiled
         slot = wait_for_slot(ROOT / 'scripts/cargo-slots.sh', timeout=900)
         (out / (label + '.slots.log')).write_text(slot.stdout + slot.stderr)
-        result = run_owned(command + args, cwd=ROOT, env=env, timeout=900)
+        run_env = dict(env)
+        if child_case is not None:
+            run_env.update(PDRS_SESSION_IO_CASE='marker', PDRS_SESSION_IO_METHOD=child_case)
+        try:
+            result = run_owned(command + args, cwd=ROOT, env=run_env,
+                               timeout=30 if child_case is not None and '--no-run' not in args else 900)
+        except subprocess.TimeoutExpired as error:
+            def raw(value):
+                return value if isinstance(value, bytes) else (value or '').encode('utf-8')
+            (out / (label + '.log')).write_bytes(raw(error.stdout) + raw(error.stderr))
+            raise
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
         return result
 
@@ -653,31 +728,40 @@ def main():
         row = dict(mutation=case.mutation, test=case.test, assertion=case.assertion,
                    status='INVALID', reason='', compiled=False)
         args = [case.test, '--', '--exact', '--include-ignored']
+        # Bind the actual assertion-owning subprocess. A parent panic that
+        # embeds a child panic is deliberately not accepted by negative_panic.
+        child_case = {
+            'manager-marker-refusal-dropped': 'manager_sessions',
+            'session-dir-marker-refusal-message-changed': 'rename_session',
+        }.get(case.mutation)
         try:
             # Protect the executable fixture and judge, as well as product bytes.
             with mutating_sources(ROOT, [case.path, Path(__file__).resolve(), ORACLE,
                     ORACLE.with_name('generate.mts'), ORACLE.with_name('session.jsonl'),
                     METADATA,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/management_tests.rs',
+                    ROOT / 'src/pilotdeck-gateway/src/runtime/turn/submit_tests.rs',
+                    ROOT / 'src/pilotdeck-gateway/src/runtime/session/factory_tests.rs',
+                    ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir_bounded_tests.rs',
                     ASSEMBLY_MEMORY,
                     ROOT / 'src/pilotdeck-gateway/src/native_process/tests.rs']) as originals:
                 original = originals[case.path].decode()
                 changed = mutate(case, original)
-                if not passed(run(case.mutation + '-positive', args), case.test):
+                if not passed(run(case.mutation + '-positive', args, child_case), case.test):
                     raise RuntimeError('positive control failed')
                 (out / (case.mutation + '.patch')).write_text(''.join(difflib.unified_diff(
                     original.splitlines(True), changed.splitlines(True), fromfile=str(case.path), tofile=str(case.path))))
                 case.path.write_text(changed)
-                compiled = run(case.mutation + '-compile', ['--no-run'])
+                compiled = run(case.mutation + '-compile', ['--no-run'], child_case)
                 row['compiled'] = compiled.returncode == 0
                 if not row['compiled']:
                     raise RuntimeError('mutant did not compile')
-                row['status'], row['reason'] = classify(run(case.mutation + '-negative', args), case)
+                row['status'], row['reason'] = classify(run(case.mutation + '-negative', args, child_case), case)
                 # Restore and re-run inside the source guard: the restored control
                 # compiles the tree, so it must never race another runner that
                 # takes the same .negative-source.lock (#1440).
                 case.path.write_bytes(originals[case.path])
-                if not passed(run(case.mutation + '-restored', args), case.test):
+                if not passed(run(case.mutation + '-restored', args, child_case), case.test):
                     raise RuntimeError('restored positive control failed')
         except Exception as error:
             row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')

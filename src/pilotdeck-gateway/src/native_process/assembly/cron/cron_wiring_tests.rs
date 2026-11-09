@@ -18,6 +18,55 @@ use std::sync::{Arc, Mutex};
 /// `ProjectAutomationBundle.createCron` turns into a manager.
 const CRON_CONFIG: &str = "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\ncron:\n  enabled: true\n";
 
+#[tokio::test]
+async fn startup_failure_finishes_each_resource_after_any_stalled_observer() {
+    for stalled in ["channels", "session", "temporary sessions", "project"] {
+        let (_scratch, fixture) = crate::native_process::management_tests::setup();
+        let mut options = fixture.options.clone();
+        options.drain_budget = std::time::Duration::from_millis(50);
+        fixture.owner.shutdown().await.unwrap();
+        fixture.project.dispose().await.unwrap();
+        std::fs::write(options.home.join("pilotdeck.yaml"), CRON_CONFIG).unwrap();
+        std::fs::create_dir_all(options.home.join("cron/projects/broken/.cwd")).unwrap();
+        let seen: Arc<Mutex<Vec<&'static str>>> = Arc::default();
+        let completed = seen.clone();
+        let observer: crate::native_process::assembly::CleanupObserver =
+            Arc::new(move |phase, result| {
+                let completed = completed.clone();
+                Box::pin(async move {
+                    assert!(result.is_ok(), "disposal of {phase} failed");
+                    completed.lock().unwrap().push(phase);
+                    if phase == stalled {
+                        std::future::pending::<()>().await;
+                    }
+                    result
+                })
+            });
+        let started = std::time::Instant::now();
+        let result = crate::native_process::assembly::start_observed(
+            options,
+            fixture.env.clone(),
+            observer,
+            Arc::new(|_| {}),
+        )
+        .await;
+        assert!(result.err().unwrap().to_string().contains(".cwd"));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                "cron",
+                "automation",
+                "channels",
+                "session",
+                "temporary sessions",
+                "project"
+            ],
+            "{stalled}"
+        );
+    }
+}
+
 /// #1325's restart-unrecorded golden (tests/fixtures/native-cron/): a TS-era
 /// task store whose last run was interrupted mid-flight — the exact state a
 /// host carries across the switch into native mode.
@@ -441,8 +490,15 @@ async fn cleanup_stops_automation_before_the_channels() {
     let recorded = order.lock().expect("#1326 cleanup order lock").clone();
     negative_assert_eq!(
         recorded,
-        ["automation", "channels", "session", "project"],
-        "#1326 automation (the bundle that owns cron) stops first, then the channels, sessions, and project"
+        [
+            "cron",
+            "automation",
+            "channels",
+            "session",
+            "temporary sessions",
+            "project"
+        ],
+        "#1326 cron stops first, then the channels, sessions, and project"
     );
 }
 
@@ -661,10 +717,10 @@ async fn configured_assembly_advertises_and_serves_the_three_always_on_names() {
 
 /// #2294 `createAlwaysOn` conditions at the assembly: a present
 /// `alwaysOn:` section whose projects are all disabled constructs no manager
-/// — the three names stay out of capabilities and the methods keep the
-/// #1313 not_configured envelopes byte for byte.
+/// — no background manager is constructed, while the published standalone
+/// control remains available and advertised (ProjectAutomationBundle.ts:360-364).
 #[tokio::test]
-async fn a_disabled_always_on_section_keeps_the_three_names_gated() {
+async fn a_disabled_always_on_section_keeps_standalone_control() {
     let (scratch, requests) =
         std::panic::catch_unwind(crate::native_process::management_tests::setup)
             .expect("#2294 fixture setup");
@@ -693,8 +749,8 @@ async fn a_disabled_always_on_section_keeps_the_three_names_gated() {
     let advertised = capabilities(&harness);
     for name in crate::runtime::always_on::ALWAYS_ON_METHODS {
         negative_assert!(
-            !advertised.contains(&name.to_string()),
-            "#2294 the disabled section keeps {name} out of capabilities"
+            advertised.contains(&name.to_string()),
+            "#2294 standalone control advertises {name}"
         );
     }
 
@@ -709,9 +765,9 @@ async fn a_disabled_always_on_section_keeps_the_three_names_gated() {
     negative_assert_eq!(
         apply["result"],
         json!({"sessionKey": "",
-               "error": {"code": "not_configured",
-                         "message": "Always-On apply is not configured on this gateway."}}),
-        "#2294 the unconfigured envelope is byte for byte the #1313 shape"
+               "error": {"code": "cycle_not_found",
+                         "message": "Work cycle c1 not found"}}),
+        "#2294 standalone apply resolves the requested cycle"
     );
 
     harness
@@ -1029,4 +1085,41 @@ async fn a_refused_or_failed_turn_is_not_drained_into_success() {
         String::from_utf16_lossy(failure.message().units()),
         "Error: closed"
     );
+}
+
+/// Repeated real assembly/shutdown must release the actual submitter graph,
+/// including unconfigured automation and cron's native binding callbacks.
+#[tokio::test]
+async fn shutdown_releases_the_real_assembly_submission_graph() {
+    for configured in [false, true, false, true] {
+        let harness = boot(configured).await;
+        let submission = harness.host.weak_submitter();
+        let factory = harness.host.weak_session_factory();
+        assert!(factory.upgrade().is_some());
+        assert!(submission.upgrade().is_some());
+        harness
+            .host
+            .shutdown(harness.options.drain_budget)
+            .await
+            .unwrap();
+        // Both handles intentionally retain GatewayServices until dropped.
+        // Keep Scratch alive until the host's final references have gone.
+        let Harness {
+            host,
+            connection,
+            text,
+            options,
+            _scratch,
+        } = harness;
+        drop(connection);
+        drop(host);
+        drop(text);
+        drop(options);
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while submission.upgrade().is_some() || factory.upgrade().is_some() {
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        }).await.unwrap_or_else(|error| panic!("actual assembly retained graph configured={configured}, submitter={}, factory={}, wait={error}", submission.strong_count(), factory.strong_count()));
+        drop(_scratch);
+    }
 }

@@ -1,0 +1,7 @@
+# Matrix fixed-source diagnostic
+
+Capture reads only cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85 Git objects; source SHA256 is stored in output. The approved minimal matrix-bot-sdk facade implements only the members called by MatrixChannel: client/storage construction, getUserId, on, start/stop, joinRoom, sendMessage. Its HTTP calls go exclusively to an owned 127.0.0.1 mock. The pilot home resolver is an isolated boundary stub; no real account or baseline files are read or changed.
+
+oracle-diagnostic.json was actually observed on cb8 Node22.22.1/ICU78.2, explicitly PDRS_DIAGNOSTIC=1, formalAcceptance:false. Default capture refuses an environment other than Node22.22.0/ICU78.2. This diagnostic covers adapter self/notice/edit filtering, room identity and render/reply, not full underlying SDK sync/storage protocol compatibility. Native syncToken JSON preserves existing other fields, but legacy SimpleFsStorageProvider format interoperability remains to be independently proven. No completion claim is made for #1345.
+
+The Rust loopback test compares A7 fields against that source-derived diagnostic and separately exercises bearer auth, sync/invite HTTP, native token persistence and restart. Native storage adds a bounded 8MiB/regular-file policy; any TS compatibility difference still needs explicit disposition. The negative-controls runner has three anchored production mutants and separate build/runtime commands; compilation errors are ERROR, not kills. Not run yet. Formal macOS/Linux, interaction matrix, mutation runs and non-author review remain required.

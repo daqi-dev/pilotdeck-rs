@@ -407,7 +407,9 @@ fn native_config() -> native_http::Config {
         loopback: true,
         static_root: None,
         webhook: None,
+        control: None,
         api_web: None,
+        approvals: None,
     }
 }
 

@@ -710,13 +710,13 @@ async fn startup_refuses_every_unmigrated_channel() {
 #[tokio::test]
 async fn startup_rejection_reaches_stderr_in_the_debug_form() {
     let error = crate::test_negative_receipt::expect_err(
-        start_with_adapters("  telegram: {enabled: true}\n").await,
+        start_with_adapters("  discord: {enabled: true}\n").await,
         "#1763 enabled unmigrated channel must refuse native startup",
     );
     let printed = format!("Error: {error:?}");
     crate::negative_assert_eq!(
         printed,
-        "Error: Error(\"[adapters] channel \\\"telegram\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
+        "Error: Error(\"[adapters] channel \\\"discord\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
         "#1763 the process stderr line is the Debug form of ChannelError"
     );
 }

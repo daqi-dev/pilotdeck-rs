@@ -35,6 +35,11 @@ pub(crate) use prompt::PromptHooks;
 pub enum AgentInput {
     Text(JsString),
     Blocks(Vec<JsValue>),
+    /// Host-only SDK fork prelude. Raw AgentInput parsing cannot construct it.
+    Fork {
+        initial: JsString,
+        directive: JsString,
+    },
 }
 
 /// History is loop-only; synthetic input is durable but never acknowledged as
@@ -65,6 +70,8 @@ pub struct TurnRunner {
     turn: JsString,
     now: Arc<dyn Fn() -> JsString + Send + Sync>,
     phase: Phase,
+    subagent_descriptor: Option<JsObject>,
+    inbox_item: Option<JsString>,
     messages: Vec<JsValue>,
     failure_status: bool,
     callback_error: Option<String>,
@@ -95,6 +102,8 @@ impl TurnRunner {
             turn,
             now: Arc::new(|| SystemExecutionClock.now_iso()),
             phase: Phase::New,
+            subagent_descriptor: None,
+            inbox_item: None,
             messages: vec![],
             failure_status: false,
             callback_error: None,
@@ -107,6 +116,14 @@ impl TurnRunner {
             interaction_events: None,
             session_steer: None,
         }
+    }
+    pub(crate) fn with_inbox_item(mut self, item: Option<JsString>) -> Self {
+        self.inbox_item = item;
+        self
+    }
+    pub(crate) fn with_subagent_descriptor(mut self, descriptor: Option<JsObject>) -> Self {
+        self.subagent_descriptor = descriptor;
+        self
     }
     pub(crate) fn with_interaction_events(
         mut self,
@@ -150,6 +167,9 @@ impl TurnRunner {
             }
         }
         Ok(())
+    }
+    pub(super) fn callback_failure(&self) -> Option<&str> {
+        self.callback_error.as_deref()
     }
     pub fn messages(&self) -> &[JsValue] {
         &self.messages
@@ -224,12 +244,14 @@ impl TurnRunner {
         {
             let _ = port.host_started();
         }
-        // #996: start-error-propagates swallows the start failure
-        // (live-recording/schemata.py). Off — the propagate.
+        let inbox = self.inbox_item.take();
         if crate::mutants::on("gates-skip-start") || crate::mutants::on("start-error-propagates") {
-            let _ = self.io(|r, s, t| r.start_turn(s, t)).await;
+            let _ = self
+                .io(move |r, s, t| r.start_turn_with_inbox(s, t, inbox.as_ref()))
+                .await;
         } else {
-            self.io(|r, s, t| r.start_turn(s, t)).await?;
+            self.io(move |r, s, t| r.start_turn_with_inbox(s, t, inbox.as_ref()))
+                .await?;
         }
         self.phase = Phase::Started;
         let event = self.event(host_lifecycle_events()[0], []);
@@ -255,12 +277,19 @@ impl TurnRunner {
         self.messages = input.history;
         let listing_metadata = input.metadata.clone();
         let written = durable.clone();
+        let descriptor = self.subagent_descriptor.take();
         if let Err(error) = self
             .io(move |r, s, t| {
                 if crate::mutants::on("gates-skip-accept") {
                     let _ = (r, s, t, written, input.metadata);
                     Ok(())
                 } else {
+                    if let Some(descriptor) = descriptor {
+                        let mut draft = JsObject::new();
+                        draft.insert("type".into(), "subagent_descriptor".into());
+                        draft.insert("descriptor".into(), JsValue::Object(descriptor));
+                        r.writer().record_session_event_checked(s, t, draft)?;
+                    }
                     Ok(r.writer()
                         .record_accepted_input(s, t, written, input.metadata)?)
                 }

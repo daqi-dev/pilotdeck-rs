@@ -187,13 +187,17 @@ pub struct AsyncHookRegistration {
     pub timeout_ms: Option<f64>,
 }
 pub trait AsyncHookRegistrationHandler: Send + Sync {
-    fn handle(&self, registration: AsyncHookRegistration);
+    fn handle(&self, registration: AsyncHookRegistration) -> Result<(), HostError>;
 }
 
 // ------------------------------------------------------------------ event bus
 
 pub trait HookExecutionEventHandler: Send + Sync {
     fn handle(&self, event: &JsObject);
+}
+/// A native owner may enforce its delivery budget before publishing.
+pub trait HookProjectionHandler: Send + Sync {
+    fn project(&self, event: &JsObject) -> Result<(), HostError>;
 }
 struct SubscriptionImpl {
     handler: Arc<dyn HookExecutionEventHandler>,
@@ -301,18 +305,23 @@ impl RuntimeState {
     }
 }
 
+#[derive(Clone)]
 pub struct HookRuntimeOptions {
     /// `Date#toISOString()` for `pendingAsyncHooks[].startedAt`.
     pub clock: Arc<dyn Fn() -> JsString + Send + Sync>,
     pub shell: Option<Arc<dyn ShellPort>>,
+    pub http: Option<HttpHookExecutor>,
     pub on_async_registered: Option<Arc<dyn AsyncHookRegistrationHandler>>,
+    pub on_projection: Option<Arc<dyn HookProjectionHandler>>,
 }
 impl Default for HookRuntimeOptions {
     fn default() -> Self {
         Self {
             clock: Arc::new(default_clock),
             shell: None,
+            http: None,
             on_async_registered: None,
+            on_projection: None,
         }
     }
 }
@@ -337,6 +346,7 @@ struct Inner {
     next_async_hook_id: Mutex<u64>,
     clock: Arc<dyn Fn() -> JsString + Send + Sync>,
     on_async_registered: Option<Arc<dyn AsyncHookRegistrationHandler>>,
+    on_projection: Option<Arc<dyn HookProjectionHandler>>,
 }
 
 #[derive(Clone)]
@@ -361,7 +371,7 @@ impl HookRuntime {
             settings,
             command,
             prompt: PromptHookExecutor::default(),
-            http: HttpHookExecutor::default(),
+            http: options.http.unwrap_or_default(),
             agent: AgentHookExecutor::default(),
             callback: CallbackHookExecutor::default(),
             pending: PendingAsyncHooks::default(),
@@ -373,6 +383,7 @@ impl HookRuntime {
             next_async_hook_id: Mutex::new(0),
             clock: options.clock,
             on_async_registered: options.on_async_registered,
+            on_projection: options.on_projection,
         }))
     }
     pub fn lifecycle_state(&self) -> &'static str {
@@ -441,6 +452,9 @@ impl HookRuntime {
                 let hook_name = hook_name(matcher, hook);
                 let started = started_event(&input.event, &input.hook_input, &hook_name);
                 result.events.push(started.clone());
+                if let Some(projection) = &self.0.on_projection {
+                    projection.project(&started)?;
+                }
                 self.0.bus.emit(&started);
 
                 let execution = self
@@ -449,6 +463,9 @@ impl HookRuntime {
                 let response =
                     response_event(&input.event, &input.hook_input, &hook_name, &execution);
                 result.events.push(response.clone());
+                if let Some(projection) = &self.0.on_projection {
+                    projection.project(&response)?;
+                }
                 self.0.bus.emit(&response);
 
                 if let HookOutput::Async(r#async) = &execution.output {
@@ -460,7 +477,7 @@ impl HookRuntime {
                                 hook_event: input.event.clone(),
                                 invocation_id: invocation_id.clone(),
                                 timeout_ms: r#async.timeout_ms,
-                            });
+                            })?;
                         }
                         _ => {
                             let id = {
@@ -494,14 +511,21 @@ impl HookRuntime {
                     }
                 }
 
-                if execution.outcome == HookOutcome::Blocking {
+                if matches!(
+                    execution.outcome,
+                    HookOutcome::Blocking | HookOutcome::NativeOutputLimit
+                ) {
                     let message = first_non_empty(&[
                         execution.stderr.clone(),
                         execution.stdout.clone(),
                         "Hook blocked execution.".into(),
                     ]);
                     result.blocking_errors.push(LifecycleError {
-                        code: "hook_blocking_error",
+                        code: if execution.outcome == HookOutcome::NativeOutputLimit {
+                            "native_hook_output_limit"
+                        } else {
+                            "hook_blocking_error"
+                        },
                         message: message.clone(),
                         hook_name: Some(hook_name.clone()),
                         exit_code: execution.exit_code,
@@ -1161,4 +1185,147 @@ pub fn lifecycle_result_json(result: &LifecycleDispatchResult) -> String {
         .ok()
         .flatten()
         .unwrap_or_default()
+}
+
+#[cfg(all(test, unix))]
+mod native_output_limit_tests {
+    use super::*;
+    #[tokio::test]
+    async fn native_http_output_overflow_blocks_pre_tool_without_reading_unbounded_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0u8; 2048];
+            let _ = socket.read(&mut request).await;
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 8388609\r\nConnection: close\r\n\r\n",
+                )
+                .await;
+            let chunk = vec![b'x'; 65536];
+            for _ in 0..129 {
+                if socket.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let config = pilotdeck_protocol::parse_json(&format!(
+            r#"{{"PreToolUse":[{{"hooks":[{{"type":"http","url":"http://{address}/hook"}}]}}]}}"#
+        ))
+        .unwrap();
+        let runtime = HookRuntime::with_options(
+            crate::hooks::config::parse_hooks_config(&config).settings,
+            HookRuntimeOptions {
+                http: Some(HttpHookExecutor::with_native_proxy(
+                    None,
+                    &crate::config::Env::new(),
+                )),
+                ..Default::default()
+            },
+        );
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(15),
+            runtime.run(HookRuntimeRunInput {
+                event: "PreToolUse".into(),
+                hook_input: JsObject::new(),
+                match_query: None,
+                cwd: std::env::temp_dir().to_string_lossy().as_ref().into(),
+                env: None,
+                signal: None,
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            result
+                .blocking_errors
+                .iter()
+                .any(|error| error.code == "native_hook_output_limit"),
+            "{result:?}"
+        );
+        server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn native_multibyte_output_is_limited_by_bytes_not_utf16_units() {
+        let config=pilotdeck_protocol::parse_json(r#"{"PreToolUse":[{"hooks":[{"type":"command","command":"yes 中 | head -c 8388609"}]}]}"#).unwrap();
+        let settings = crate::hooks::config::parse_hooks_config(&config).settings;
+        let sandbox = Arc::new(crate::runtime::tools::sandbox::NativeSandbox::new(
+            crate::runtime::project::SandboxMode::DangerFullAccess,
+            std::env::temp_dir(),
+        ));
+        let shell = Arc::new(super::super::exec::SandboxedHookShell {
+            sandbox,
+            workspace: std::env::temp_dir().to_string_lossy().as_ref().into(),
+        });
+        let runtime = HookRuntime::with_options(
+            settings,
+            HookRuntimeOptions {
+                shell: Some(shell),
+                ..Default::default()
+            },
+        );
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            runtime.run(HookRuntimeRunInput {
+                event: "PreToolUse".into(),
+                hook_input: JsObject::new(),
+                match_query: None,
+                cwd: std::env::temp_dir().to_string_lossy().as_ref().into(),
+                env: None,
+                signal: None,
+            }),
+        )
+        .await
+        .expect("multibyte writer must be terminated")
+        .unwrap();
+        assert_eq!(result.blocking_errors.len(), 1);
+        assert_eq!(result.blocking_errors[0].code, "native_hook_output_limit");
+    }
+    #[tokio::test]
+    async fn native_hook_output_overflow_blocks_the_call_with_specific_code() {
+        let config = pilotdeck_protocol::parse_json(
+            r#"{"PreToolUse":[{"hooks":[{"type":"command","command":"yes 0123456789"}]}]}"#,
+        )
+        .unwrap();
+        let settings = crate::hooks::config::parse_hooks_config(&config).settings;
+        let sandbox = Arc::new(crate::runtime::tools::sandbox::NativeSandbox::new(
+            crate::runtime::project::SandboxMode::DangerFullAccess,
+            std::env::temp_dir(),
+        ));
+        let shell = Arc::new(super::super::exec::SandboxedHookShell {
+            sandbox,
+            workspace: std::env::temp_dir().to_string_lossy().as_ref().into(),
+        });
+        let runtime = HookRuntime::with_options(
+            settings,
+            HookRuntimeOptions {
+                shell: Some(shell),
+                ..Default::default()
+            },
+        );
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            runtime.run(HookRuntimeRunInput {
+                event: "PreToolUse".into(),
+                hook_input: JsObject::new(),
+                match_query: None,
+                cwd: std::env::temp_dir().to_string_lossy().as_ref().into(),
+                env: None,
+                signal: None,
+            }),
+        )
+        .await
+        .expect("unbounded writer must be terminated")
+        .unwrap();
+        assert_eq!(result.blocking_errors.len(), 1);
+        assert_eq!(result.blocking_errors[0].code, "native_hook_output_limit");
+        assert!(matches!(
+            result.effects.first(),
+            Some(HookEffect::Block { .. })
+        ));
+        assert!(result.non_blocking_errors.is_empty());
+    }
 }

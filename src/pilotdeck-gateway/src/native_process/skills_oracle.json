@@ -1,0 +1,280 @@
+{
+  "sourceHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceOracleSha256": "6a3b2414beaf6496fe2d85584b330fdb14fd4d8b090d33a3bf7770e2a8f9d504",
+  "normalization": "Only prompt available-skills blocks are retained; no default system prompt asset body is copied. read/render outputs are unchanged.",
+  "cases": [
+    {
+      "id": "read-plain",
+      "input": {
+        "skillName": "plain"
+      },
+      "content": "SELF-WRITTEN SKILL BODY",
+      "available": [
+        {
+          "name": "plain",
+          "description": "desc",
+          "path": "/fixture/plain/SKILL.md"
+        }
+      ],
+      "calls": [
+        {
+          "loader": "plain"
+        },
+        {
+          "lister": true
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "<skill>\n<name>plain</name>\n<path>/fixture/plain/SKILL.md</path>\nSELF-WRITTEN SKILL BODY\n</skill>"
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-xml",
+      "input": {
+        "skillName": "a<&>"
+      },
+      "content": "BODY <raw>",
+      "available": [
+        {
+          "name": "a<&>",
+          "path": "/fixture/roots <&>/SKILL.md"
+        }
+      ],
+      "calls": [
+        {
+          "loader": "a<&>"
+        },
+        {
+          "lister": true
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "<skill>\n<name>a&lt;&amp;&gt;</name>\n<path>/fixture/roots &lt;&amp;&gt;/SKILL.md</path>\nBODY <raw>\n</skill>"
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-without-entry",
+      "input": {
+        "skillName": "orphan"
+      },
+      "content": "ORPHAN BODY",
+      "available": [],
+      "calls": [
+        {
+          "loader": "orphan"
+        },
+        {
+          "lister": true
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ORPHAN BODY"
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-missing-empty",
+      "input": {
+        "skillName": "absent"
+      },
+      "available": [],
+      "calls": [
+        {
+          "loader": "absent"
+        },
+        {
+          "lister": true
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Skill 'absent' not found. No skills are currently loaded."
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-missing-listed",
+      "input": {
+        "skillName": "absent"
+      },
+      "available": [
+        {
+          "name": "one",
+          "path": "/fixture/one/SKILL.md"
+        },
+        {
+          "name": "two<&>",
+          "path": "/fixture/two/SKILL.md"
+        }
+      ],
+      "calls": [
+        {
+          "loader": "absent"
+        },
+        {
+          "lister": true
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Skill 'absent' not found. Available skills: one, two<&>"
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-empty-content",
+      "input": {
+        "skillName": "empty"
+      },
+      "content": "",
+      "available": [
+        {
+          "name": "empty",
+          "path": "/fixture/empty/SKILL.md"
+        }
+      ],
+      "calls": [
+        {
+          "loader": "empty"
+        },
+        {
+          "lister": true
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Skill 'empty' not found. Available skills: empty"
+          }
+        ]
+      }
+    },
+    {
+      "id": "read-lone-surrogate",
+      "input": {
+        "skillName": "s\ud800"
+      },
+      "content": "B\udc00",
+      "available": [
+        {
+          "name": "s\ud800",
+          "path": "/fixture/\ud800/SKILL.md"
+        }
+      ],
+      "calls": [
+        {
+          "loader": "s\ud800"
+        },
+        {
+          "lister": true
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "<skill>\n<name>s\ud800</name>\n<path>/fixture/\ud800/SKILL.md</path>\nB\udc00\n</skill>"
+          }
+        ]
+      }
+    },
+    {
+      "id": "render-no-token",
+      "content": "unchanged",
+      "path": "/fixture/root/SKILL.md",
+      "result": "unchanged"
+    },
+    {
+      "id": "render-root-quote",
+      "content": "run {{SKILL_ROOT_SHELL}}/scripts/tool.sh",
+      "path": "/fixture/O'Reilly root/SKILL.md",
+      "result": "run '/fixture/O'\"'\"'Reilly root'/scripts/tool.sh"
+    },
+    {
+      "id": "render-escape-mixed",
+      "content": "{{!SKILL_ROOT_SHELL}} {{SKILL_ROOT_SHELL}} {{!!SKILL_ROOT_SHELL}}\n{{SKILL_ROOT_SHELL}}",
+      "path": "/fixture/root space/SKILL.md",
+      "result": "{{SKILL_ROOT_SHELL}} '/fixture/root space' {{!!SKILL_ROOT_SHELL}}\n'/fixture/root space'"
+    },
+    {
+      "id": "render-lone",
+      "content": "{{SKILL_ROOT_SHELL}}\ud800",
+      "path": "/fixture/\udc00/SKILL.md",
+      "result": "'/fixture/\udc00'\ud800"
+    },
+    {
+      "id": "prompt-no-skills",
+      "skills": [],
+      "extra": {},
+      "expectedBlocks": []
+    },
+    {
+      "id": "prompt-skills",
+      "skills": [
+        {
+          "name": "one",
+          "description": "first",
+          "path": "/fixture/one/SKILL.md"
+        },
+        {
+          "name": "two<&>",
+          "path": "/fixture/two/SKILL.md"
+        }
+      ],
+      "extra": {},
+      "expectedBlocks": [
+        "<available-skills>\nUse the read_skill tool to load the full content of any skill listed below. Each entry includes the exact SKILL.md selected by the runtime.\nResolve relative references, scripts, and assets against the directory containing that SKILL.md.\nDo not search the user's home directory to rediscover a skill or infer runtime/cache paths; use the listed file and paths or commands returned by the skill.\n- one \u2014 first (file: /fixture/one/SKILL.md)\n- two<&> (file: /fixture/two/SKILL.md)\n</available-skills>"
+      ]
+    },
+    {
+      "id": "prompt-custom-no-extensions",
+      "skills": [
+        {
+          "name": "one",
+          "path": "/fixture/one/SKILL.md"
+        }
+      ],
+      "extra": {
+        "customSystemPrompt": "CUSTOM"
+      },
+      "expectedBlocks": []
+    },
+    {
+      "id": "prompt-custom-extensions",
+      "skills": [
+        {
+          "name": "one",
+          "path": "/fixture/one/SKILL.md"
+        }
+      ],
+      "extra": {
+        "customSystemPrompt": "CUSTOM",
+        "includeExtensionsWithCustomSystemPrompt": true
+      },
+      "expectedBlocks": [
+        "<available-skills>\nUse the read_skill tool to load the full content of any skill listed below. Each entry includes the exact SKILL.md selected by the runtime.\nResolve relative references, scripts, and assets against the directory containing that SKILL.md.\nDo not search the user's home directory to rediscover a skill or infer runtime/cache paths; use the listed file and paths or commands returned by the skill.\n- one (file: /fixture/one/SKILL.md)\n</available-skills>"
+      ]
+    }
+  ]
+}

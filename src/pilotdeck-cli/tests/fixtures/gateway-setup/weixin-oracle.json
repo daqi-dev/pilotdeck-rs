@@ -1,0 +1,730 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": "88485d2d6cbbfe16245edb5baa7152f7e773fce5e64257e7ec25f7f01233c205",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "sdkVersion": "0.1.0",
+  "cases": [
+    {
+      "id": "cancel",
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          "no"
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: 已取消。\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": false,
+      "events": [],
+      "clock": 0
+    },
+    {
+      "id": "reuse",
+      "argv": [
+        "wechat"
+      ],
+      "credentials": "{\"baseUrl\":\"https://fixture.invalid/old\",\"botToken\":\"old-token\",\"accountId\":\"old-account\",\"keep\":\"untouched\"}",
+      "initial": "keep: old\n",
+      "answers": [
+        [
+          "重新登录？ [y/N]: ",
+          ""
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n已有凭据 (accountId: old-account)\n重新登录？ [y/N]: ✅ 微信已启用（使用现有凭据）\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": "keep: old\nadapters:\n  weixin:\n    enabled: true\n",
+      "afterCredentials": "{\"baseUrl\":\"https://fixture.invalid/old\",\"botToken\":\"old-token\",\"accountId\":\"old-account\",\"keep\":\"untouched\"}",
+      "homePilotCreated": false,
+      "events": [],
+      "clock": 0
+    },
+    {
+      "id": "login-success",
+      "argv": [
+        "weixin"
+      ],
+      "initial": "keep: old\n",
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "confirmed",
+            "ilink_bot_id": "fixture-account",
+            "bot_token": "fixture-token",
+            "baseurl": "https://fixture.invalid/api",
+            "ilink_user_id": "not-saved"
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n✅ 微信登录成功！\n   账号 ID: fixture-account\n   凭据已保存到: pilot/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": "keep: old\nadapters:\n  weixin:\n    enabled: true\n",
+      "afterCredentials": "{\n  \"baseUrl\": \"https://fixture.invalid/api\",\n  \"botToken\": \"fixture-token\",\n  \"accountId\": \"fixture-account\"\n}",
+      "homePilotCreated": true,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "relogin-success",
+      "argv": [
+        "weixin"
+      ],
+      "credentials": "{\"baseUrl\":\"https://fixture.invalid/old\",\"botToken\":\"old-token\",\"accountId\":\"old-account\",\"keep\":\"untouched\"}",
+      "answers": [
+        [
+          "重新登录？ [y/N]: ",
+          "yes"
+        ],
+        [
+          "继续扫码登录？ [Y/n]: ",
+          "yes"
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "confirmed",
+            "ilink_bot_id": "fixture-account",
+            "bot_token": "fixture-token",
+            "baseurl": "https://fixture.invalid/api",
+            "ilink_user_id": "not-saved"
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n已有凭据 (accountId: old-account)\n重新登录？ [y/N]: ⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n✅ 微信登录成功！\n   账号 ID: fixture-account\n   凭据已保存到: pilot/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 2,
+      "after": "adapters:\n  weixin:\n    enabled: true\n",
+      "afterCredentials": "{\n  \"baseUrl\": \"https://fixture.invalid/api\",\n  \"botToken\": \"fixture-token\",\n  \"accountId\": \"fixture-account\"\n}",
+      "homePilotCreated": true,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "scanned-refresh-success",
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "scaned"
+          }
+        },
+        {
+          "json": {
+            "status": "expired"
+          }
+        },
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "confirmed",
+            "ilink_bot_id": "fixture-account",
+            "bot_token": "fixture-token",
+            "baseurl": "https://fixture.invalid/api",
+            "ilink_user_id": "not-saved"
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n📱 已扫码，等待确认...\n🔄 刷新中...\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n✅ 微信登录成功！\n   账号 ID: fixture-account\n   凭据已保存到: pilot/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": "adapters:\n  weixin:\n    enabled: true\n",
+      "afterCredentials": "{\n  \"baseUrl\": \"https://fixture.invalid/api\",\n  \"botToken\": \"fixture-token\",\n  \"accountId\": \"fixture-account\"\n}",
+      "homePilotCreated": true,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 2000
+    },
+    {
+      "id": "expired-too-many",
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "expired"
+          }
+        },
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "expired"
+          }
+        },
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "expired"
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n🔄 刷新中...\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n🔄 刷新中...\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n❌ 微信登录失败: QR code expired too many times\n   请检查网络连接后重试。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": false,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 2000
+    },
+    {
+      "id": "confirmed-missing-credentials",
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "confirmed",
+            "ilink_bot_id": "missing-token"
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n❌ 微信登录失败: Login failed: server did not return required credentials\n   请检查网络连接后重试。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": false,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "initial-http-error",
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "status": 503,
+          "raw": "{bad"
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n\n❌ 微信登录失败: Failed to fetch QR code: 503\n   请检查网络连接后重试。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": false,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "poll-http-error",
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "status": 502,
+          "raw": "{bad"
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n❌ 微信登录失败: QR status poll failed: 502\n   请检查网络连接后重试。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": false,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "abort-then-success",
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "error": "This operation was aborted",
+          "errorName": "AbortError"
+        },
+        {
+          "json": {
+            "status": "confirmed",
+            "ilink_bot_id": "fixture-account",
+            "bot_token": "fixture-token",
+            "baseurl": "https://fixture.invalid/api",
+            "ilink_user_id": "not-saved"
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n✅ 微信登录成功！\n   账号 ID: fixture-account\n   凭据已保存到: pilot/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": "adapters:\n  weixin:\n    enabled: true\n",
+      "afterCredentials": "{\n  \"baseUrl\": \"https://fixture.invalid/api\",\n  \"botToken\": \"fixture-token\",\n  \"accountId\": \"fixture-account\"\n}",
+      "homePilotCreated": true,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 1000
+    },
+    {
+      "id": "surrogate-qrcode",
+      "argv": [
+        "weixin"
+      ],
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "raw": "{\"qrcode\":\"\\ud800\",\"qrcode_img_content\":\"https://fixture.invalid/qr\"}"
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n❌ 微信登录失败: URI malformed\n   请检查网络连接后重试。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": false,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "invalid-old-credentials",
+      "argv": [
+        "weixin"
+      ],
+      "credentials": "{bad",
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "confirmed",
+            "ilink_bot_id": "fixture-account",
+            "bot_token": "fixture-token",
+            "baseurl": "https://fixture.invalid/api",
+            "ilink_user_id": "not-saved"
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n✅ 微信登录成功！\n   账号 ID: fixture-account\n   凭据已保存到: pilot/weixin-credentials.json\n   重启 PilotDeck 服务后生效\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": "adapters:\n  weixin:\n    enabled: true\n",
+      "afterCredentials": "{\n  \"baseUrl\": \"https://fixture.invalid/api\",\n  \"botToken\": \"fixture-token\",\n  \"accountId\": \"fixture-account\"\n}",
+      "homePilotCreated": true,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "missing-custom-pilot-parent",
+      "argv": [
+        "weixin"
+      ],
+      "createPilot": false,
+      "answers": [
+        [
+          "继续扫码登录？ [Y/n]: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "qrcode": "a/b 中",
+            "qrcode_img_content": "https://fixture.invalid/qr"
+          }
+        },
+        {
+          "json": {
+            "status": "confirmed",
+            "ilink_bot_id": "fixture-account",
+            "bot_token": "fixture-token",
+            "baseurl": "https://fixture.invalid/api",
+            "ilink_user_id": "not-saved"
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: \n╔══════════════════════════════════════════════╗\n║  请用微信扫描二维码                          ║\n╚══════════════════════════════════════════════╝\n\n扫码登录链接：\n  https://fixture.invalid/qr\n\n如果终端无法显示二维码，请在浏览器中打开上述链接。\n\n⏳ 等待扫码...\n\n❌ 微信登录失败: ENOENT: no such file or directory, open 'pilot/weixin-credentials.json'\n   请检查网络连接后重试。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": true,
+      "events": [
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_bot_qrcode?bot_type=3",
+          "method": "GET",
+          "headers": null,
+          "body": null
+        },
+        {
+          "url": "https://ilinkai.weixin.qq.com/ilink/bot/get_qrcode_status?qrcode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "headers": {
+            "iLink-App-ClientVersion": "1"
+          },
+          "body": null
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "menu-cancel",
+      "argv": [],
+      "answers": [
+        [
+          "请选择 [1/2/3/4/q]: ",
+          "2"
+        ],
+        [
+          "继续扫码登录？ [Y/n]: ",
+          "n"
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n可配置的平台：\n  1) 飞书 / Lark      [未配置]\n  2) 微信 (iLink)     [未配置]\n  3) 企业微信 WeCom   [未配置]\n  4) 全部配置\n  q) 退出\n\n请选择 [1/2/3/4/q]: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  微信 iLink 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️  注意：\n  - 使用 iLink Bot API，非企业微信\n  - 建议使用小号登录，有封号风险\n  - 群聊功能默认禁用\n\n继续扫码登录？ [Y/n]: 已取消。\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 2,
+      "after": null,
+      "afterCredentials": null,
+      "homePilotCreated": false,
+      "events": [],
+      "clock": 0
+    }
+  ]
+}

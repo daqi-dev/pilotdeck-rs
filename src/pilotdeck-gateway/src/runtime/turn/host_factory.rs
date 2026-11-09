@@ -1,4 +1,4 @@
-//! Per-turn host assembly from a real project lease, then the stdio sidecar.
+//! Per-turn host assembly from a real project lease, then stdio or TCP.
 //!
 //! This is the Rust landing point for `AgentLoopDeploymentProfile.ts:20-110`,
 //! `AgentSessionRuntimeBundle.ts:242-290`, `sidecarHostModulePorts.ts:240-322`
@@ -45,7 +45,7 @@ use std::{
 use tokio::process::Command;
 
 /// `AgentLoopDeploymentProfile` (TS lines 11-38). TCP is parsed for exact
-/// error/selection parity, but the native host factory has no TCP transport.
+/// error/selection parity; stdio and TCP share the bounded host engine.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Deployment {
     Native,
@@ -63,12 +63,12 @@ pub enum Deployment {
 }
 
 /// `resolveAgentLoopDeploymentProfile` (`AgentLoopDeploymentProfile.ts:44-81`).
-/// Error text is byte-for-byte the TS baseline; the tcp selection is kept so
-/// `create` can reject it explicitly (#130) instead of inventing a fallback.
+/// Error text is byte-for-byte the TS baseline; invalid profiles never silently
+/// fall back to the owned default connection.
 pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
     let transport = env
         .get("PILOTDECK_AGENT_LOOP_TRANSPORT")
-        .map(|value| value.trim().to_lowercase())
+        .map(|value| crate::metadata::js_trim(value).to_lowercase())
         .unwrap_or_default();
     match transport.as_str() {
         "" | "native" => Ok(Deployment::Native),
@@ -96,8 +96,7 @@ pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
             let sidecar_path = match env
                 .get("PILOTDECK_AGENT_LOOP_SIDECAR_PATH")
                 .map(String::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
+                .filter(|value| !crate::metadata::js_trim(value).is_empty())
             {
                 Some(value) => crate::metadata::resolve(cwd, value),
                 // TS resolves `new URL("./pilotdeck-agent-loop-sidecar.js",
@@ -126,7 +125,7 @@ pub fn resolve_deployment(env: &Env, cwd: &Path) -> Result<Deployment, String> {
 }
 
 fn required_text(value: Option<&str>, default: &str, name: &str) -> Result<String, String> {
-    let value = value.unwrap_or(default).trim();
+    let value = crate::metadata::js_trim(value.unwrap_or(default));
     if value.is_empty() {
         return Err(format!("{name} must not be empty."));
     }
@@ -148,7 +147,7 @@ fn js_integral_number(value: &str) -> Option<f64> {
 }
 
 fn required_port(value: Option<&str>) -> Result<u16, String> {
-    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+    let Some(value) = value.filter(|value| !crate::metadata::js_trim(value).is_empty()) else {
         return Err("PILOTDECK_AGENT_LOOP_TCP_PORT is required when transport is tcp.".into());
     };
     match js_integral_number(value) {
@@ -158,7 +157,7 @@ fn required_port(value: Option<&str>) -> Result<u16, String> {
 }
 
 fn optional_positive_integer(value: Option<&str>) -> Result<Option<u64>, String> {
-    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+    let Some(value) = value.filter(|value| !crate::metadata::js_trim(value).is_empty()) else {
         return Ok(None);
     };
     match js_integral_number(value) {
@@ -196,7 +195,12 @@ pub struct SessionPorts {
     pub interaction: InteractionTurnInput,
 }
 
-type PortsFactory = dyn Fn(&ExecutionIdentity, Arc<Recorder>, crate::runtime::hooks::Cancellation) -> SessionPorts
+type PortsFactory = dyn Fn(
+        &ExecutionIdentity,
+        Arc<Recorder>,
+        crate::runtime::hooks::Cancellation,
+        Option<super::interaction::TurnInteractionAuthority>,
+    ) -> SessionPorts
     + Send
     + Sync;
 
@@ -205,12 +209,22 @@ pub struct TurnHostFactory {
     deployment: Deployment,
     limits: Limits,
     expected_module_id: Option<JsString>,
+    native_terminal_errors: bool,
     ports: Arc<PortsFactory>,
     agent_config: Option<JsObject>,
+    pinned_generation: Option<std::sync::Weak<RuntimeLease>>,
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    input_admission: Option<Arc<crate::native_process::input_admission::InputAdmission>>,
+    loop_controller: Option<Arc<dyn super::loop_control::HostLoopController>>,
 }
 
 impl TurnHostFactory {
+    /// Preserve well-formed native factory errors without changing the
+    /// default TS AgentLoop client contract for other factory callers.
+    pub(crate) fn with_native_terminal_errors(mut self) -> Self {
+        self.native_terminal_errors = true;
+        self
+    }
     pub fn new(
         registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
         deployment: Deployment,
@@ -242,15 +256,69 @@ impl TurnHostFactory {
         + Sync
         + 'static,
     ) -> Self {
+        Self::new_with_authority(
+            registry,
+            deployment,
+            limits,
+            expected_module_id,
+            move |identity, recorder, signal, _authority| ports(identity, recorder, signal),
+        )
+    }
+
+    pub fn new_with_authority(
+        registry: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
+        deployment: Deployment,
+        limits: Limits,
+        expected_module_id: Option<JsString>,
+        ports: impl Fn(
+            &ExecutionIdentity,
+            Arc<Recorder>,
+            crate::runtime::hooks::Cancellation,
+            Option<super::interaction::TurnInteractionAuthority>,
+        ) -> SessionPorts
+        + Send
+        + Sync
+        + 'static,
+    ) -> Self {
         Self {
             registry,
             deployment,
             limits,
             expected_module_id,
             ports: Arc::new(ports),
+            native_terminal_errors: false,
             agent_config: None,
+            pinned_generation: None,
             permission_mode_source: None,
+            input_admission: None,
+            loop_controller: None,
         }
+    }
+
+    pub(crate) fn with_loop_controller(
+        mut self,
+        controller: Arc<dyn super::loop_control::HostLoopController>,
+    ) -> Self {
+        self.loop_controller = Some(controller);
+        self
+    }
+
+    pub(crate) fn with_input_admission(
+        mut self,
+        admission: Arc<crate::native_process::input_admission::InputAdmission>,
+    ) -> Self {
+        self.input_admission = Some(admission);
+        self
+    }
+
+    /// Native child sessions retain the parent's selected execution world.
+    /// A missing pin rejects; it never silently falls back to a newer world.
+    pub(crate) fn with_pinned_generation(
+        mut self,
+        generation: Option<std::sync::Weak<RuntimeLease>>,
+    ) -> Self {
+        self.pinned_generation = generation;
+        self
     }
 
     /// Bind the session's explicit serialized AgentRuntimeConfig.
@@ -279,8 +347,8 @@ impl TurnHostFactory {
         history: impl Fn() -> Vec<JsValue> + Send + Sync + 'static,
     ) -> LiveSessionAdapter {
         let ports = self.ports.clone();
-        self.ports = Arc::new(move |identity, recorder, signal| {
-            let mut ports = ports(identity, recorder.clone(), signal);
+        self.ports = Arc::new(move |identity, recorder, signal, authority| {
+            let mut ports = ports(identity, recorder.clone(), signal, authority);
             ports.recorder = Some(model_port::DurableRecorder {
                 recorder,
                 recording_session_id: ports.recorder.and_then(|r| r.recording_session_id),
@@ -288,17 +356,20 @@ impl TurnHostFactory {
             ports
         });
         let close_timeout = self.limits.close_timeout;
+        let unique_tcp_request_id = matches!(&self.deployment, Deployment::Tcp { .. });
         let agent_config = self.agent_config.clone();
         let permission_mode_source = self.permission_mode_source.take();
+        let input_admission = self.input_admission.take();
+        let loop_controller = self.loop_controller.clone();
         let factory = Arc::new(self);
-        let session = LiveSessionAdapter::with_interaction_signal(
+        let session = LiveSessionAdapter::with_interaction_authority(
             recorder,
             history,
-            move |identity, recorder, signal| {
+            move |identity, recorder, signal, authority| {
                 let factory = factory.clone();
                 Box::pin(async move {
                     factory
-                        .create_with_signal(&identity, recorder, signal)
+                        .create_with_authority(&identity, recorder, signal, authority)
                         .await
                 })
             },
@@ -307,9 +378,18 @@ impl TurnHostFactory {
             Limits::default().close_timeout
         } else {
             close_timeout
-        });
+        })
+        .with_unique_tcp_request_id(unique_tcp_request_id);
+        let session = match loop_controller {
+            Some(controller) => session.with_loop_controller(controller),
+            None => session,
+        };
         let session = match agent_config {
             Some(config) => session.with_agent_config(config),
+            None => session,
+        };
+        let session = match input_admission {
+            Some(admission) => session.with_input_admission(admission),
             None => session,
         };
         match permission_mode_source {
@@ -318,8 +398,8 @@ impl TurnHostFactory {
         }
     }
 
-    /// Acquire one generation lease and prepare a lazy sidecar connection. Unsupported
-    /// transports fail before any lease exists, so they cannot leak.
+    /// Acquire one generation lease and prepare a lazy stdio or TCP connection.
+    /// Native is a sentinel handled by the native composition before this API.
     pub async fn create(
         &self,
         identity: &ExecutionIdentity,
@@ -339,43 +419,117 @@ impl TurnHostFactory {
         recorder: Arc<Recorder>,
         signal: crate::runtime::hooks::Cancellation,
     ) -> Result<InteractionHost, HostError> {
-        let (command, args, cwd, env) = match &self.deployment {
-            Deployment::Stdio {
-                command,
-                args,
-                cwd,
-                env,
-            } => (command, args, cwd, env),
-            Deployment::Native => {
-                return Err(HostError::new(
-                    HostErrorKind::Protocol,
-                    "Agent loop transport 'native' has no sidecar host factory.",
-                ));
+        self.create_with_authority(identity, recorder, signal, None)
+            .await
+    }
+
+    pub async fn create_with_authority(
+        &self,
+        identity: &ExecutionIdentity,
+        recorder: Arc<Recorder>,
+        signal: crate::runtime::hooks::Cancellation,
+        authority: Option<super::interaction::TurnInteractionAuthority>,
+    ) -> Result<InteractionHost, HostError> {
+        if matches!(&self.deployment, Deployment::Native) {
+            return Err(HostError::new(
+                HostErrorKind::Protocol,
+                "Agent loop transport 'native' has no sidecar host factory.",
+            ));
+        }
+        let deployment = self.deployment.clone();
+        let lease = match &self.pinned_generation {
+            Some(generation) => generation
+                .upgrade()
+                .ok_or_else(|| {
+                    HostError::new(
+                        HostErrorKind::Session,
+                        "Pinned child execution world has been released.",
+                    )
+                })?
+                .fork(),
+            None => self.registry.acquire(None),
+        }
+        .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
+        let ports = (self.ports)(identity, recorder, signal, authority);
+        if let Some(controller) = &self.loop_controller {
+            let catalog = ports.tool_execution.clone()
+                as Arc<dyn crate::host::modules::capability::ToolCatalog>;
+            let validation = tokio::time::timeout(
+                self.limits.close_timeout,
+                controller.validate_tools(catalog),
+            )
+            .await;
+            let validation = validation.unwrap_or_else(|_| {
+                Err(HostError::new(
+                    HostErrorKind::Session,
+                    "SOP required-tool validation exceeded its host budget.",
+                ))
+            });
+            if let Err(error) = validation {
+                // No sidecar has started. Still drain the owned tool port if
+                // catalog initialization produced native owned work.
+                let execution = ports.tool_execution.clone();
+                let _ = tokio::time::timeout(self.limits.close_timeout, async move {
+                    let _ = execution.dispose().await;
+                    execution.wait_closed().await
+                })
+                .await;
+                return Err(error);
             }
-            Deployment::Tcp { .. } => {
-                return Err(HostError::new(
-                    HostErrorKind::Protocol,
-                    "Agent loop transport 'tcp' is not supported; see #130.",
-                ));
-            }
-        };
-        let lease = self
-            .registry
-            .acquire(None)
-            .map_err(|error| HostError::new(HostErrorKind::Protocol, error.message))?;
-        let ports = (self.ports)(identity, recorder, signal);
+        }
+
+        let node_template = self.loop_controller.as_ref().map(|_| {
+            Arc::new(super::sop_executor::NodeTemplate::capture(
+                &ports,
+                identity,
+                deployment.clone(),
+                self.limits,
+                self.expected_module_id.clone(),
+                self.native_terminal_errors,
+            ))
+        });
         let (router, input, lease) = match Self::assemble(lease, identity, ports).await {
             Ok(value) => value,
             // `assemble` owns (and therefore drops) the lease on error.
             Err(error) => return Err(error),
         };
-        let mut command = Command::new(command);
-        command.args(args).current_dir(cwd).env_clear().envs(env);
         let expected = self.expected_module_id.clone();
         let limits = self.limits;
+        let native_terminal_errors = self.native_terminal_errors;
         Ok(InteractionHost {
+            node_template,
             client: Box::pin(async move {
-                HostClient::spawn(&mut command, expected.as_ref(), limits).await
+                let client = match deployment {
+                    Deployment::Stdio {
+                        command,
+                        args,
+                        cwd,
+                        env,
+                    } => {
+                        let mut command = Command::new(command);
+                        command.args(args).current_dir(cwd).env_clear().envs(env);
+                        HostClient::spawn(&mut command, expected.as_ref(), limits).await
+                    }
+                    Deployment::Tcp {
+                        host,
+                        port,
+                        connect_timeout_ms,
+                    } => {
+                        HostClient::connect_tcp(
+                            &host,
+                            port,
+                            connect_timeout_ms.map(std::time::Duration::from_millis),
+                            expected.as_ref(),
+                            limits,
+                        )
+                        .await
+                    }
+                    Deployment::Native => Err(HostError::new(
+                        HostErrorKind::Protocol,
+                        "Agent loop transport 'native' has no sidecar host factory.",
+                    )),
+                }?;
+                Ok(client.with_native_terminal_errors(native_terminal_errors))
             }),
             lease,
             router,
@@ -389,6 +543,26 @@ impl TurnHostFactory {
         lease: RuntimeLease,
         identity: &ExecutionIdentity,
         ports: SessionPorts,
+    ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
+        Self::assemble_bound(lease, identity, ports, None, None, None).await
+    }
+    pub(super) async fn assemble_sop(
+        lease: RuntimeLease,
+        identity: &ExecutionIdentity,
+        ports: SessionPorts,
+        binding: Option<Arc<dyn super::loop_control::SopRunBinding>>,
+        route: Option<JsObject>,
+        model_session: JsString,
+    ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
+        Self::assemble_bound(lease, identity, ports, binding, route, Some(model_session)).await
+    }
+    async fn assemble_bound(
+        lease: RuntimeLease,
+        identity: &ExecutionIdentity,
+        ports: SessionPorts,
+        binding: Option<Arc<dyn super::loop_control::SopRunBinding>>,
+        route: Option<JsObject>,
+        model_session: Option<JsString>,
     ) -> Result<(ModuleRouter, InteractionTurnInput, RuntimeLease), HostError> {
         let SessionPorts {
             model,
@@ -415,9 +589,21 @@ impl TurnHostFactory {
                 )
             })?
             .context();
+        let profile = context.profile().interaction;
+        tool_execution.bind_execution_generation(Arc::new(
+            lease
+                .fork()
+                .map_err(|error| HostError::new(HostErrorKind::Session, error.message))?,
+        ))?;
+        tool_context.bind_interaction_profile(profile)?;
+        if interaction.switches.elicitation_available == Some(true) {
+            interaction.switches.elicitation_available =
+                Some(profile.question_provider != "disabled");
+        }
         let signal = interaction.signal.clone();
+        let model_session = model_session.unwrap_or_else(|| identity.session_id.clone());
         let turn_context = TurnContext {
-            session_id: identity.session_id.clone(),
+            session_id: model_session.clone(),
             turn_id: identity.turn_id.clone(),
             abort: Some(signal.clone()),
             ..Default::default()
@@ -438,13 +624,42 @@ impl TurnHostFactory {
                 )
             })?;
         let mut result = ModuleRouter {
-            model: model_port::compose(
-                router.router.clone(),
-                router.model_config.clone(),
-                recorder,
-                model,
-                turn_context,
-            ),
+            model: if binding.is_some() || route.is_some() {
+                let composed = model_port::ports(
+                    router.router.clone(),
+                    router.model_config.clone(),
+                    recorder,
+                    model,
+                    &model_session,
+                );
+                let mut execution = composed.execution;
+                let mut materializer = composed.materializer;
+                if let Some(binding) = &binding {
+                    execution = binding.model(execution);
+                    materializer = binding.materializer(materializer);
+                }
+                if let Some(route) = route {
+                    execution = Arc::new(super::sop_executor::NodeModel {
+                        inner: execution,
+                        route,
+                    });
+                }
+                let mut handler = crate::host::modules::model::Handler::with_ports(
+                    execution,
+                    composed.metadata,
+                    turn_context,
+                );
+                handler.materializer = materializer;
+                handler
+            } else {
+                model_port::compose(
+                    router.router.clone(),
+                    router.model_config.clone(),
+                    recorder,
+                    model,
+                    turn_context,
+                )
+            },
             ..Default::default()
         };
         if let Some(resource) = context.resource(Resource::TokenAccounting) {
@@ -513,6 +728,10 @@ impl TurnHostFactory {
             }
         };
         if let Some(runtime) = context_runtime {
+            let runtime = binding.as_ref().map_or_else(
+                || runtime.clone(),
+                |binding| binding.context(runtime.clone()),
+            );
             result.context = context::Handler::new(
                 runtime,
                 context_identity,

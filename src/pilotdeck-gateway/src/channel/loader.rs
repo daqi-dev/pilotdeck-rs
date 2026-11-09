@@ -33,29 +33,12 @@ pub const CHANNEL_LOADER_KEYS: [&str; 15] = [
     "webhook",
 ];
 
-/// The 11 channel config keys not migrated to Rust (#1302 B, #1386): enabling
-/// any of them must abort native startup. The set is the nine
-/// `CHANNEL_LOADER_KEYS` members plus `qq` and `wecom`, which TS builds
-/// through `ChannelAdapterBundle` instead of the loader table. The order is
-/// deterministic — reverse `CHANNEL_LOADER_KEYS` order, then `qq`, then
-/// `wecom`; the first enabled key in this order is the one reported. Reverse
-/// order on purpose: a table that repeats `CHANNEL_LOADER_KEYS`'s own
-/// adjacent key pairs (e.g. `"telegram",\n    "discord",`) would make the
-/// byte anchors other fixtures pin on that table ambiguous
-/// (`channel-core`'s `config-order` mutation expects exactly one match).
-pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[
-    "homeassistant",
-    "email",
-    "dingtalk",
-    "whatsapp",
-    "signal",
-    "mattermost",
-    "matrix",
-    "discord",
-    "telegram",
-    "qq",
-    "wecom",
-];
+/// Enabled adapters still awaiting their native production mount. The all-channel
+/// #1302 A scope remains required; this temporary guard refuses configuration
+/// instead of silently accepting an adapter that cannot receive messages.
+/// Reverse loader order preserves deterministic first-error behavior.
+pub const UNMIGRATED_CHANNEL_KEYS: &[&str] =
+    &["email", "dingtalk", "whatsapp", "discord", "qq", "wecom"];
 
 /// The two keys whose TS gate is strict. `qq` and `wecom` are built by
 /// `ChannelAdapterBundle.createQQ` / `createWeCom`, which both start with

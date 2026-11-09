@@ -13,12 +13,12 @@ r.mkdir(parents=True, exist_ok=False)
 for directory in ('home','xdg','tmp'):
  (r/'isolation'/directory).mkdir(parents=True)
 workspace=Path(__file__).resolve().parents[3]
-source=(workspace/'src/pilotdeck-gateway/src/project_files.rs').read_text()
-locale=source[source.index('pub(crate) fn node_locale('):source.index('fn lowercase(')]
-collator=source[source.index('pub(crate) fn node_collator('):source.index('pub(crate) fn native_entries(')]
-(r/'probe.rs').write_text("use icu_collator::{Collator,CollatorBorrowed,CollatorPreferences};\nuse icu_locale_core::Locale;\ntype Result<T> = std::result::Result<T, (&'static str,String)>;\n"+locale+collator+"""fn main() {
+source=(workspace/'src/pilotdeck-transport/src/node_collation.rs').read_text()
+locale=source[source.index('pub fn node_locale('):source.index('pub fn node_collator(')]
+collator=source[source.index('pub fn node_collator('):]
+(r/'probe.rs').write_text("use icu_collator::{Collator,CollatorBorrowed,CollatorPreferences};\nuse icu_locale_core::Locale;\n"+locale+collator+"""fn main() {
  let locale=std::env::var("PDRS_PROBE_LOCALE").ok().map(|s|s.parse().unwrap()).unwrap_or_else(||node_locale(|k|std::env::var(k).ok()));
- let collator=node_collator(&locale).unwrap();
+ let collator=node_collator(&locale,std::env::var_os("PDRS_PROBE_LOCALE").is_none()).unwrap();
  let input:Vec<String>=std::io::stdin().lines().map(|s|s.unwrap()).collect();
  let mut order=input.clone();order.sort_by(|a,b|collator.compare(a,b));
  println!("{}",serde_json::json!({"locale":locale.to_string(),"order":order,"adjacentSigns":order.windows(2).map(|pair|match collator.compare(&pair[0],&pair[1]){std::cmp::Ordering::Less=>-1,std::cmp::Ordering::Equal=>0,_=>1}).collect::<Vec<_>>(),"anchorSigns":input.iter().map(|s|match collator.compare(s,"中"){std::cmp::Ordering::Less=>-1,std::cmp::Ordering::Equal=>0,_=>1}).collect::<Vec<_>>()}));

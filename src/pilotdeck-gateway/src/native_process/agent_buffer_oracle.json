@@ -1,0 +1,91 @@
+{
+  "cases": [
+    {
+      "forwardSubagentText": false,
+      "drained": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent",
+          "turnId": "old-parent-turn",
+          "subagentId": "child",
+          "subagentType": "explore"
+        },
+        {
+          "type": "subagent_model_event",
+          "sessionId": "parent",
+          "turnId": "old-parent-turn",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "event": {
+            "type": "text_delta",
+            "text": "SELF WRITTEN LATE CHILD TEXT"
+          }
+        }
+      ],
+      "projected": [
+        {
+          "type": "agent_status",
+          "event": "subagent_started",
+          "detail": {
+            "subagentId": "child",
+            "subagentType": "explore"
+          },
+          "runId": "new-parent-run"
+        },
+        {
+          "type": "agent_status",
+          "event": "subagent_text_delta",
+          "detail": {
+            "subagentId": "child",
+            "subagentType": "explore",
+            "text": "SELF WRITTEN LATE CHILD TEXT"
+          },
+          "runId": "new-parent-run"
+        }
+      ],
+      "emptyAfterDrain": []
+    },
+    {
+      "forwardSubagentText": true,
+      "drained": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent",
+          "turnId": "old-parent-turn",
+          "subagentId": "child",
+          "subagentType": "explore"
+        },
+        {
+          "type": "subagent_model_event",
+          "sessionId": "parent",
+          "turnId": "old-parent-turn",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "event": {
+            "type": "text_delta",
+            "text": "SELF WRITTEN LATE CHILD TEXT"
+          }
+        }
+      ],
+      "projected": [
+        {
+          "type": "agent_status",
+          "event": "subagent_started",
+          "detail": {
+            "subagentId": "child",
+            "subagentType": "explore"
+          },
+          "runId": "new-parent-run"
+        },
+        {
+          "type": "subagent_text_delta",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "text": "SELF WRITTEN LATE CHILD TEXT",
+          "runId": "new-parent-run"
+        }
+      ],
+      "emptyAfterDrain": []
+    }
+  ]
+}

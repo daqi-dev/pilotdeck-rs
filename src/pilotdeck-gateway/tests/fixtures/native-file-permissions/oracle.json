@@ -1,0 +1,648 @@
+{
+  "metadata": {
+    "baselineHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "sources": {
+      "src/tool/builtin/readFile.ts": "d935447339356c44d220ed7c43082f3327c433187206706a630497ced755b5be",
+      "src/tool/builtin/filesystem/pathSafety.ts": "c5d2427501b2cc503facd86c6961b21a6fe8361ba893cd9ce1f094f883f30f43",
+      "src/tool/builtin/filesystem/writePermissions.ts": "95cc4a066c58b864ecde872277d386774b0ceb3ff3630f70155f9534190e03ed",
+      "src/permission/decision/PermissionRuntime.ts": "ea6121d29e5f3649317a915f81fbcbc1eda6b670a1e73d28dbde5ae11399a378",
+      "src/permission/protocol/types.ts": "3a5f53e76ca6435b84faa5a6226e35ffa55b0b5950d19b7f75acc4ae497737fb"
+    },
+    "instrumentation": "Actual imported createReadFileTool/createWriteFileTool checkPermissions and PermissionRuntime.decide; isolated real files, no tool effect execution; all context inputs recorded."
+  },
+  "normalization": {
+    "originalIsolatedPrefix": "/private/tmp/pdrs-native-file-permission-2qwk5hwh",
+    "replacement": "/fixture",
+    "scope": "all string values, including JSON inputSummary; raw original retained outside product"
+  },
+  "cases": [
+    {
+      "name": "extra-read",
+      "tool": "read_file",
+      "input": {
+        "file_path": "/fixture/extra/file.txt",
+        "content": "WRITE"
+      },
+      "context": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "mode": "default",
+          "canPrompt": false,
+          "bypassAvailable": true,
+          "acceptEdits": false,
+          "cwd": "/fixture/project",
+          "additionalWorkingDirectories": [
+            "/fixture/extra"
+          ],
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        },
+        "allowedReadFiles": [],
+        "env": {
+          "HOME": "/fixture/home",
+          "PILOT_HOME": "/fixture/home"
+        }
+      },
+      "predicate": {
+        "type": "passthrough"
+      },
+      "decision": {
+        "type": "allow",
+        "reason": {
+          "type": "mode",
+          "mode": "default",
+          "message": "Mode default allows read-only tool read_file."
+        }
+      }
+    },
+    {
+      "name": "foreign-read",
+      "tool": "read_file",
+      "input": {
+        "file_path": "/fixture/foreign/file.txt",
+        "content": "WRITE"
+      },
+      "context": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "mode": "default",
+          "canPrompt": false,
+          "bypassAvailable": true,
+          "acceptEdits": false,
+          "cwd": "/fixture/project",
+          "additionalWorkingDirectories": [
+            "/fixture/extra"
+          ],
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        },
+        "allowedReadFiles": [],
+        "env": {
+          "HOME": "/fixture/home",
+          "PILOT_HOME": "/fixture/home"
+        }
+      },
+      "predicate": {
+        "type": "ask",
+        "reason": {
+          "type": "tool",
+          "toolName": "read_file",
+          "message": "read_file targets a path outside the workspace."
+        },
+        "request": {
+          "toolCallId": "",
+          "toolName": "read_file",
+          "inputSummary": "{\"file_path\":\"/fixture/foreign/file.txt\"}",
+          "reason": {
+            "type": "tool",
+            "toolName": "read_file",
+            "message": "read_file targets a path outside the workspace."
+          },
+          "options": [
+            {
+              "id": "allow_once",
+              "label": "Allow once"
+            },
+            {
+              "id": "allow_session",
+              "label": "Allow this folder for this session",
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file",
+                  "pattern": "/fixture/foreign/*"
+                }
+              ]
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel"
+            }
+          ],
+          "metadata": {
+            "externalPath": "/fixture/foreign/file.txt",
+            "allowedDirectory": "/fixture/foreign",
+            "pattern": "/fixture/foreign/*"
+          }
+        }
+      },
+      "decision": {
+        "type": "deny",
+        "reason": {
+          "type": "runtime",
+          "message": "Permission prompt denied because prompts are disabled for this session."
+        },
+        "message": "Permission prompt denied because prompts are disabled for this session."
+      }
+    },
+    {
+      "name": "registered-foreign-read",
+      "tool": "read_file",
+      "input": {
+        "file_path": "/fixture/foreign/file.txt",
+        "content": "WRITE"
+      },
+      "context": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "mode": "default",
+          "canPrompt": false,
+          "bypassAvailable": true,
+          "acceptEdits": false,
+          "cwd": "/fixture/project",
+          "additionalWorkingDirectories": [],
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        },
+        "allowedReadFiles": [
+          "/fixture/foreign/file.txt"
+        ],
+        "env": {
+          "HOME": "/fixture/home",
+          "PILOT_HOME": "/fixture/home"
+        }
+      },
+      "predicate": {
+        "type": "passthrough"
+      },
+      "decision": {
+        "type": "allow",
+        "reason": {
+          "type": "mode",
+          "mode": "default",
+          "message": "Mode default allows read-only tool read_file."
+        }
+      }
+    },
+    {
+      "name": "explicit-rule-foreign-read",
+      "tool": "read_file",
+      "input": {
+        "file_path": "/fixture/foreign/file.txt",
+        "content": "WRITE"
+      },
+      "context": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "mode": "default",
+          "canPrompt": false,
+          "bypassAvailable": true,
+          "acceptEdits": false,
+          "cwd": "/fixture/project",
+          "additionalWorkingDirectories": [],
+          "rules": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "read_file"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        },
+        "allowedReadFiles": [],
+        "env": {
+          "HOME": "/fixture/home",
+          "PILOT_HOME": "/fixture/home"
+        }
+      },
+      "predicate": {
+        "type": "ask",
+        "reason": {
+          "type": "tool",
+          "toolName": "read_file",
+          "message": "read_file targets a path outside the workspace."
+        },
+        "request": {
+          "toolCallId": "",
+          "toolName": "read_file",
+          "inputSummary": "{\"file_path\":\"/fixture/foreign/file.txt\"}",
+          "reason": {
+            "type": "tool",
+            "toolName": "read_file",
+            "message": "read_file targets a path outside the workspace."
+          },
+          "options": [
+            {
+              "id": "allow_once",
+              "label": "Allow once"
+            },
+            {
+              "id": "allow_session",
+              "label": "Allow this folder for this session",
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file",
+                  "pattern": "/fixture/foreign/*"
+                }
+              ]
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel"
+            }
+          ],
+          "metadata": {
+            "externalPath": "/fixture/foreign/file.txt",
+            "allowedDirectory": "/fixture/foreign",
+            "pattern": "/fixture/foreign/*"
+          }
+        }
+      },
+      "decision": {
+        "type": "allow",
+        "reason": {
+          "type": "rule",
+          "behavior": "allow",
+          "rule": {
+            "source": "session",
+            "behavior": "allow",
+            "toolName": "read_file"
+          },
+          "message": "Session allow rule permits read_file."
+        }
+      }
+    },
+    {
+      "name": "foreign-read-canprompt",
+      "tool": "read_file",
+      "input": {
+        "file_path": "/fixture/foreign/file.txt",
+        "content": "WRITE"
+      },
+      "context": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "mode": "default",
+          "canPrompt": true,
+          "bypassAvailable": true,
+          "acceptEdits": false,
+          "cwd": "/fixture/project",
+          "additionalWorkingDirectories": [],
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        },
+        "allowedReadFiles": [],
+        "env": {
+          "HOME": "/fixture/home",
+          "PILOT_HOME": "/fixture/home"
+        }
+      },
+      "predicate": {
+        "type": "ask",
+        "reason": {
+          "type": "tool",
+          "toolName": "read_file",
+          "message": "read_file targets a path outside the workspace."
+        },
+        "request": {
+          "toolCallId": "",
+          "toolName": "read_file",
+          "inputSummary": "{\"file_path\":\"/fixture/foreign/file.txt\"}",
+          "reason": {
+            "type": "tool",
+            "toolName": "read_file",
+            "message": "read_file targets a path outside the workspace."
+          },
+          "options": [
+            {
+              "id": "allow_once",
+              "label": "Allow once"
+            },
+            {
+              "id": "allow_session",
+              "label": "Allow this folder for this session",
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file",
+                  "pattern": "/fixture/foreign/*"
+                }
+              ]
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel"
+            }
+          ],
+          "metadata": {
+            "externalPath": "/fixture/foreign/file.txt",
+            "allowedDirectory": "/fixture/foreign",
+            "pattern": "/fixture/foreign/*"
+          }
+        }
+      },
+      "decision": {
+        "type": "ask",
+        "reason": {
+          "type": "tool",
+          "toolName": "read_file",
+          "message": "read_file targets a path outside the workspace."
+        },
+        "request": {
+          "toolCallId": "call",
+          "toolName": "read_file",
+          "inputSummary": "{\"file_path\":\"/fixture/foreign/file.txt\"}",
+          "reason": {
+            "type": "tool",
+            "toolName": "read_file",
+            "message": "read_file targets a path outside the workspace."
+          },
+          "options": [
+            {
+              "id": "allow_once",
+              "label": "Allow once"
+            },
+            {
+              "id": "allow_session",
+              "label": "Allow this folder for this session",
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "read_file",
+                  "pattern": "/fixture/foreign/*"
+                }
+              ]
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel"
+            }
+          ],
+          "metadata": {
+            "externalPath": "/fixture/foreign/file.txt",
+            "allowedDirectory": "/fixture/foreign",
+            "pattern": "/fixture/foreign/*"
+          }
+        }
+      }
+    },
+    {
+      "name": "extra-write-acceptedits",
+      "tool": "write_file",
+      "input": {
+        "file_path": "/fixture/extra/new.txt",
+        "content": "WRITE"
+      },
+      "context": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "mode": "default",
+          "canPrompt": false,
+          "bypassAvailable": true,
+          "acceptEdits": true,
+          "cwd": "/fixture/project",
+          "additionalWorkingDirectories": [
+            "/fixture/extra"
+          ],
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        },
+        "allowedReadFiles": [],
+        "env": {
+          "HOME": "/fixture/home",
+          "PILOT_HOME": "/fixture/home"
+        }
+      },
+      "predicate": {
+        "type": "passthrough"
+      },
+      "decision": {
+        "type": "allow",
+        "reason": {
+          "type": "mode",
+          "mode": "default",
+          "message": "SDK acceptEdits allows workspace file tool write_file."
+        }
+      }
+    },
+    {
+      "name": "foreign-write-acceptedits",
+      "tool": "write_file",
+      "input": {
+        "file_path": "/fixture/foreign/new.txt",
+        "content": "WRITE"
+      },
+      "context": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "mode": "default",
+          "canPrompt": false,
+          "bypassAvailable": true,
+          "acceptEdits": true,
+          "cwd": "/fixture/project",
+          "additionalWorkingDirectories": [
+            "/fixture/extra"
+          ],
+          "rules": {
+            "allow": [],
+            "deny": [],
+            "ask": []
+          }
+        },
+        "allowedReadFiles": [],
+        "env": {
+          "HOME": "/fixture/home",
+          "PILOT_HOME": "/fixture/home"
+        }
+      },
+      "predicate": {
+        "type": "ask",
+        "reason": {
+          "type": "tool",
+          "toolName": "write_file",
+          "message": "write_file targets a path outside the workspace."
+        },
+        "request": {
+          "toolCallId": "",
+          "toolName": "write_file",
+          "inputSummary": "{\"file_path\":\"/fixture/foreign/new.txt\"}",
+          "reason": {
+            "type": "tool",
+            "toolName": "write_file",
+            "message": "write_file targets a path outside the workspace."
+          },
+          "options": [
+            {
+              "id": "allow_once",
+              "label": "Allow once"
+            },
+            {
+              "id": "allow_session",
+              "label": "Allow this folder for this session",
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "write_file",
+                  "pattern": "/fixture/foreign/*"
+                }
+              ]
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel"
+            }
+          ],
+          "metadata": {
+            "externalPath": "/fixture/foreign/new.txt",
+            "allowedDirectory": "/fixture/foreign",
+            "pattern": "/fixture/foreign/*"
+          }
+        }
+      },
+      "decision": {
+        "type": "deny",
+        "reason": {
+          "type": "runtime",
+          "message": "Permission prompt denied because prompts are disabled for this session."
+        },
+        "message": "Permission prompt denied because prompts are disabled for this session."
+      }
+    },
+    {
+      "name": "foreign-write-explicit-rule",
+      "tool": "write_file",
+      "input": {
+        "file_path": "/fixture/foreign/new.txt",
+        "content": "WRITE"
+      },
+      "context": {
+        "cwd": "/fixture/project",
+        "permissionMode": "default",
+        "permissionContext": {
+          "mode": "default",
+          "canPrompt": false,
+          "bypassAvailable": true,
+          "acceptEdits": false,
+          "cwd": "/fixture/project",
+          "additionalWorkingDirectories": [],
+          "rules": {
+            "allow": [
+              {
+                "source": "session",
+                "behavior": "allow",
+                "toolName": "write_file"
+              }
+            ],
+            "deny": [],
+            "ask": []
+          }
+        },
+        "allowedReadFiles": [],
+        "env": {
+          "HOME": "/fixture/home",
+          "PILOT_HOME": "/fixture/home"
+        }
+      },
+      "predicate": {
+        "type": "ask",
+        "reason": {
+          "type": "tool",
+          "toolName": "write_file",
+          "message": "write_file targets a path outside the workspace."
+        },
+        "request": {
+          "toolCallId": "",
+          "toolName": "write_file",
+          "inputSummary": "{\"file_path\":\"/fixture/foreign/new.txt\"}",
+          "reason": {
+            "type": "tool",
+            "toolName": "write_file",
+            "message": "write_file targets a path outside the workspace."
+          },
+          "options": [
+            {
+              "id": "allow_once",
+              "label": "Allow once"
+            },
+            {
+              "id": "allow_session",
+              "label": "Allow this folder for this session",
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "write_file",
+                  "pattern": "/fixture/foreign/*"
+                }
+              ]
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel"
+            }
+          ],
+          "metadata": {
+            "externalPath": "/fixture/foreign/new.txt",
+            "allowedDirectory": "/fixture/foreign",
+            "pattern": "/fixture/foreign/*"
+          }
+        }
+      },
+      "decision": {
+        "type": "deny",
+        "reason": {
+          "type": "runtime",
+          "message": "Permission prompt denied because prompts are disabled for this session."
+        },
+        "message": "Permission prompt denied because prompts are disabled for this session."
+      }
+    }
+  ]
+}

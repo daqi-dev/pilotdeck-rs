@@ -1,6 +1,8 @@
 //! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
 mod acceptor;
 mod api_web;
+#[cfg(unix)]
+pub mod atomic_file;
 // Unwired channel component; production assembly is a separate unit.
 pub mod channel;
 pub mod config;
@@ -16,9 +18,12 @@ pub mod host;
 pub mod http_proxy;
 mod js_value;
 mod metadata;
+pub use metadata::process_cwd_diagnostic;
 mod model_catalog;
 pub mod model_cost;
 mod module_host;
+#[doc(hidden)]
+pub use module_host::approvals::native_auth::maybe_owner_helper as native_installation_owner_helper;
 #[doc(hidden)]
 pub mod mutants;
 mod native_archive;

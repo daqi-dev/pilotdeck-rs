@@ -3,32 +3,18 @@ use super::{
     MemoryProviderError, Options, ProjectMemoryRegistry, ProjectResources, ProjectRuntimeRegistry,
     ProxyError, Resource, RuntimeError,
 };
-use crate::metadata::{Metadata, NativeFiles};
+use crate::metadata::Metadata;
 use crate::runtime::project::RuntimeLease;
 use pilotdeck_protocol::JsValue;
 use std::sync::Arc;
 
-/// `ProjectMemoryRegistry` adapter over the native `ProjectRuntimeRegistry`.
-/// `resolveProjectKey` is the same port the snapshot route uses
-/// (`metadata::Metadata::resolve_dialog_project`, `projectRegistry.ts:41-59`,
-/// via `SnapshotProjects`): `path.resolve` folds a trailing slash, `//`, `.`
-/// and `..` lexically and matches the registered project catalog, returning
-/// the registered spelling. The earlier exact-code-unit comparison rejected
-/// keys `snapshot_list` accepted for the same project (#1456 item 2).
-/// `memory_management` then holds the key to the isolation boundary the
-/// sibling management routes apply (`Requests::admit_management_project`):
-/// the catalog resolves *every* registered project plus the virtual General
-/// workspace, while this process stages one, so a key that folds onto a
-/// different root is rejected instead of reading or wiping the served
-/// project's memory under another project's name. It acquires the current
-/// generation, reads `Resource::MemoryManagement` from the staged context,
-/// and keeps that lease alive for as long as the returned service can be
-/// called, returning `None` when memory management was not staged (provider
-/// disabled or absent).
+/// Resolve the same catalog key as dialog/snapshot routes, then acquire that
+/// exact project's current generation. General is the configured home root;
+/// registered siblings must never be routed through the fallback project.
+/// The returned management service owns its lease through the complete call.
 struct NativeMemoryRegistry {
     project: Arc<ProjectRuntimeRegistry>,
     options: Options,
-    metadata: Metadata,
 }
 
 impl NativeMemoryRegistry {
@@ -36,35 +22,22 @@ impl NativeMemoryRegistry {
         Self {
             project,
             options: options.clone(),
-            // Same base the management snapshot route builds
-            // (`PersistenceResources::snapshot_gateway(PathBuf::new())`), so
-            // both management families resolve a project key identically.
-            metadata: Metadata {
-                home: options.home.clone(),
-                cwd: std::path::PathBuf::new(),
-                files: NativeFiles,
-            },
         }
-    }
-
-    /// The isolation boundary of the sibling management routes, delegated to
-    /// the one predicate they all use (`Options::serves_project`): the key the
-    /// projection already resolved must fold lexically onto the one project
-    /// this process staged. Both sides are `path.resolve`-shaped — the
-    /// configured project runs through `resolve_process_path` at parse, the key
-    /// through the project catalog — so the comparison is spelling-insensitive
-    /// but project-exact, and it cannot drift from the sibling routes.
-    fn serves_project(&self, project_key: &JsString) -> bool {
-        project_key
-            .to_utf8()
-            .is_ok_and(|key| self.options.serves_project(&key))
     }
 }
 
 impl ProjectMemoryRegistry for NativeMemoryRegistry {
     fn resolve_project_key(&self, project_key: &JsString) -> Result<JsString, MemoryProviderError> {
-        self.metadata
-            .resolve_dialog_project(project_key)
+        let metadata = Metadata {
+            home: self.options.home.clone(),
+            cwd: std::path::PathBuf::new(),
+            files: crate::native_process::methods::session_dir::BoundedSessionMarkers::new(),
+        };
+        let resolved = metadata.resolve_dialog_project(project_key);
+        if metadata.files.was_refused() {
+            return Err(MemoryProviderError::new("Unsafe project marker."));
+        }
+        resolved
             .map(JsString::from)
             .ok_or_else(|| MemoryProviderError::unknown_project_key(project_key.units()))
     }
@@ -73,22 +46,16 @@ impl ProjectMemoryRegistry for NativeMemoryRegistry {
         &self,
         project_key: &JsString,
     ) -> Result<Option<Arc<dyn MemoryManagementService>>, MemoryProviderError> {
-        // The catalog resolves every registered project plus the virtual
-        // General workspace, while this process stages one. Without this gate
-        // `memory_wipe` carrying another project's key would clear the served
-        // project's memory (#1456) — the same refusal the sibling management
-        // routes return from `Requests::admit_management_project`.
-        if !self.serves_project(project_key) {
-            return Err(MemoryProviderError {
-                name: "DialogGatewayError".into(),
-                code: Some("CAPABILITY_UNAVAILABLE".into()),
-                message: "The isolated native process serves only its configured project.".into(),
-                requires_host: false,
-            });
-        }
+        let root = std::path::PathBuf::from(
+            project_key
+                .to_utf8()
+                .map_err(|_| MemoryProviderError::unknown_project_key(project_key.units()))?,
+        );
+        // Resolution happens before staging. Never substitute the configured
+        // fallback after a selected project's generation fails to acquire.
         let lease = self
             .project
-            .acquire(None)
+            .acquire(Some(&root))
             .map_err(MemoryProviderError::from)?;
         let resources = lease
             .runtime()
@@ -137,30 +104,24 @@ impl MemoryManagementService for LeasedMemoryManagement {
     }
 }
 
-/// Build the `MemoryGateway` by probing the current project generation. If
-/// `Resource::MemoryManagement` is staged the gateway is enabled; otherwise
-/// (`MemoryGateway::disabled()`) it advertises `CAPABILITY_UNAVAILABLE` after
-/// parameter validation, matching the TS wrapper seam.
+/// Install the callbacks regardless of the initial project's capability.
+/// Each request resolves its own project and current generation: A being
+/// disabled must not hide B or General, and reload may change availability.
 fn build_memory_gateway(
     options: &Options,
     project: &Arc<ProjectRuntimeRegistry>,
 ) -> Result<MemoryGateway, RuntimeError> {
     let registry = Arc::new(NativeMemoryRegistry::new(project.clone(), options));
-    // Check if the current generation staged a management resource. If the
-    // project has no memory provider the gateway is disabled but not an error.
+    // Preserve startup validation of the initial project resource shape, but
+    // do not freeze that generation's optional memory capability globally.
     let lease = project.acquire(None)?;
-    let resources = lease
+    lease
         .runtime()
         .resources()
         .get::<ProjectResources>()
         .ok_or_else(|| RuntimeError::new("Native project resources are missing."))?;
-    let context = resources.context();
-    if context.resource(Resource::MemoryManagement).is_some() {
-        let projection = MemoryProjection::new(registry, options.project.clone());
-        Ok(MemoryGateway::from_projection(projection))
-    } else {
-        Ok(MemoryGateway::disabled())
-    }
+    let projection = MemoryProjection::new(registry, options.project.clone());
+    Ok(MemoryGateway::from_projection(projection))
 }
 
 pub(super) async fn build_memory(
@@ -229,15 +190,12 @@ mod tests {
         fn root(&self) -> std::path::PathBuf {
             self.0.join("project")
         }
-        /// A second project registered in the same catalog: the catalog-wide
-        /// resolution accepts its key, the isolation gate must not.
+        /// A second registered project with its own memory generation.
         fn other(&self) -> std::path::PathBuf {
             self.0.join("other-project")
         }
-        /// A registered project whose spelling *starts with* the served root as
-        /// a string (`<tmp>/project-2`): a gate degraded to `str::starts_with`
-        /// would admit it and wipe the served project's memory, so the foreign
-        /// keys must include one that shares the root's textual prefix.
+        /// A registered project sharing A's textual prefix must retain its
+        /// own provider instead of being routed to A.
         fn prefix_sibling(&self) -> std::path::PathBuf {
             self.0.join("project-2")
         }
@@ -253,6 +211,7 @@ mod tests {
     /// call" and "wiped the served project" from "refused a foreign key".
     #[derive(Default)]
     struct FakeMemory {
+        identity: &'static str,
         list_calls: AtomicUsize,
         clear_calls: AtomicUsize,
         dispose_calls: AtomicUsize,
@@ -273,7 +232,11 @@ mod tests {
     impl MemoryManagementService for FakeMemory {
         fn list(&self, _limit: usize) -> Result<Vec<JsValue>, MemoryProviderError> {
             self.list_calls.fetch_add(1, Ordering::SeqCst);
-            Ok(vec![JsValue::from("remembered")])
+            Ok(vec![JsValue::from(if self.identity.is_empty() {
+                "remembered"
+            } else {
+                self.identity
+            })])
         }
         fn clear(&self, _scope: &str) -> Result<(), MemoryProviderError> {
             self.clear_calls.fetch_add(1, Ordering::SeqCst);
@@ -302,6 +265,14 @@ mod tests {
     /// `Resource::MemoryManagement` and registered in `home/projects/a8-main`
     /// so `resolve_dialog_project` has a catalog entry to match.
     fn registry(scratch: &Scratch, provider: &Arc<FakeMemory>) -> Arc<ProjectRuntimeRegistry> {
+        registry_with_providers(scratch, vec![(scratch.root(), provider.clone())], None)
+    }
+
+    fn registry_with_providers(
+        scratch: &Scratch,
+        providers: Vec<(std::path::PathBuf, Arc<FakeMemory>)>,
+        failed_root: Option<std::path::PathBuf>,
+    ) -> Arc<ProjectRuntimeRegistry> {
         let root = scratch.root();
         let home = scratch.home();
         std::fs::create_dir_all(&root).expect("#1456 project directory");
@@ -311,16 +282,15 @@ mod tests {
         std::fs::create_dir_all(&projects).expect("#1456 project catalog entry");
         std::fs::write(projects.join(".cwd"), root.to_string_lossy().as_bytes())
             .expect("#1456 project marker");
-        // A second registered project: the catalog resolves it, this process
-        // does not serve it.
+        // Catalog registration is shared by all routes; each resolved root
+        // is staged independently by this same real project factory.
         let other = scratch.other();
         std::fs::create_dir_all(&other).expect("#1456 other project directory");
         let other_entry = home.join("projects/a8-other");
         std::fs::create_dir_all(&other_entry).expect("#1456 other catalog entry");
         std::fs::write(other_entry.join(".cwd"), other.to_string_lossy().as_bytes())
             .expect("#1456 other project marker");
-        // A third registered project sharing the served root's textual prefix,
-        // so the gate cannot be weakened to `str::starts_with`.
+        // Prefix siblings are distinct registered projects, not aliases.
         let prefix_sibling = scratch.prefix_sibling();
         std::fs::create_dir_all(&prefix_sibling).expect("#1456 prefix sibling directory");
         let prefix_entry = home.join("projects/a8-prefix");
@@ -332,14 +302,31 @@ mod tests {
         .expect("#1456 prefix sibling marker");
         let mut env = Env::new();
         env.insert("PILOT_HOME".into(), home.to_string_lossy().into_owned());
-        let provider_in_factory = Arc::clone(provider);
-        let dispose_provider = Arc::clone(provider);
-        let provider_factory: MemoryProviderFactoryFn = Arc::new(move |_| {
-            let memory: Arc<dyn MemoryResolver> = provider_in_factory.clone();
-            let management: Arc<dyn MemoryManagementService> = provider_in_factory.clone();
-            let dispose_provider = Arc::clone(&dispose_provider);
+        let provider_factory: MemoryProviderFactoryFn = Arc::new(move |input| {
+            // Like the native provider, this injected factory returns no
+            // management capability for the selected root's disabled config.
+            if !input.config.as_ref().is_some_and(|config| config.enabled) {
+                return Ok(None);
+            }
+            if failed_root.as_ref() == Some(&input.project_root) {
+                return Err(crate::runtime::memory::MemoryBundleError::Factory(
+                    MemoryProviderError {
+                        name: "RangeError".into(),
+                        code: Some("SELECTED_PROJECT_FAILURE".into()),
+                        message: "Selected project factory failed.".into(),
+                        requires_host: false,
+                    },
+                ));
+            }
+            let provider = providers
+                .iter()
+                .find(|(root, _)| root == &input.project_root)
+                .map(|(_, provider)| provider.clone())
+                .expect("memory fixture must select an explicitly mapped root");
+            let memory: Arc<dyn MemoryResolver> = provider.clone();
+            let management: Arc<dyn MemoryManagementService> = provider.clone();
             let dispose: MemoryDisposeFn = Arc::new(move || {
-                let provider = Arc::clone(&dispose_provider);
+                let provider = provider.clone();
                 Box::pin(async move {
                     provider.dispose_calls.fetch_add(1, Ordering::SeqCst);
                     Ok(())
@@ -477,74 +464,202 @@ mod tests {
                 "#1456 {foreign:?} rejection message"
             );
         }
-        // The catalog is wider than this process. Another registered project
-        // and the virtual General workspace both resolve there, so the
-        // isolation gate — not the resolution — is what must refuse them
-        // (#1456: `memory_wipe` used to clear the served project's memory
-        // under another project's key).
-        let others = [
-            scratch.other().to_string_lossy().into_owned(),
-            scratch.prefix_sibling().to_string_lossy().into_owned(),
-            scratch.home().to_string_lossy().into_owned(),
-        ];
-        for foreign in &others {
+        project.dispose().await.expect("#1456 registry disposal");
+    }
+
+    fn named(identity: &'static str) -> Arc<FakeMemory> {
+        Arc::new(FakeMemory {
+            identity,
+            ..Default::default()
+        })
+    }
+    fn assert_list(gateway: &MemoryGateway, root: &std::path::Path, identity: &str) {
+        let result = gateway
+            .dispatch("memory_list", &list_params(root.to_str().unwrap()))
+            .unwrap();
+        let expected = crate::metadata::object([("items", JsValue::Array(vec![identity.into()]))]);
+        assert_eq!(
+            result,
+            MemoryDispatch::Response(expected),
+            "#1456 selected project must not reach the served project provider"
+        );
+    }
+    fn assert_unavailable(gateway: &MemoryGateway, root: &std::path::Path) {
+        let result = gateway
+            .dispatch("memory_list", &list_params(root.to_str().unwrap()))
+            .unwrap();
+        let MemoryDispatch::Error(error) = result else {
+            panic!("disabled project returned success")
+        };
+        assert_eq!(error.code(), Some("CAPABILITY_UNAVAILABLE"));
+        assert_eq!(
+            error.message(),
+            &JsString::from("Gateway memory provider is unavailable.")
+        );
+    }
+
+    #[tokio::test]
+    async fn registered_memory_projects_are_routed_to_their_own_provider() {
+        let scratch = Scratch::new();
+        let a = named("A");
+        let b = named("B");
+        let prefix = named("PREFIX");
+        let general = named("GENERAL");
+        let project = registry_with_providers(
+            &scratch,
+            vec![
+                (scratch.root(), a.clone()),
+                (scratch.other(), b.clone()),
+                (scratch.prefix_sibling(), prefix.clone()),
+                (scratch.home(), general.clone()),
+            ],
+            None,
+        );
+        let gateway = build_memory_gateway(&options(&scratch), &project).unwrap();
+        for (root, provider) in [
+            (scratch.other(), &b),
+            (scratch.prefix_sibling(), &prefix),
+            (scratch.home(), &general),
+        ] {
+            assert_list(&gateway, &root, provider.identity);
+            let result = gateway
+                .dispatch("memory_wipe", &list_params(root.to_str().unwrap()))
+                .unwrap();
             assert!(
-                registry
-                    .resolve_project_key(&JsString::from(foreign.clone()))
-                    .is_ok(),
-                "#1456 {foreign} is in the project catalog; the gate below is what refuses it"
+                matches!(result, MemoryDispatch::Response(_)),
+                "#1456 selected project wipe must use its own provider"
             );
-            let Err(error) = registry.memory_management(&JsString::from(foreign.clone())) else {
-                panic!("#1456 {foreign} must not reach the served project's provider");
+            assert_eq!(provider.clear_calls.load(Ordering::SeqCst), 1);
+        }
+        assert_eq!(
+            a.list_calls.load(Ordering::SeqCst),
+            0,
+            "#1456 registered sibling list must not touch A"
+        );
+        assert_eq!(
+            a.clear_calls.load(Ordering::SeqCst),
+            0,
+            "#1456 registered sibling wipe must not touch A"
+        );
+        assert_list(&gateway, &scratch.root(), "A");
+        // A spelling normalized by the catalog still stages the actual B root.
+        let aliased = scratch.other().join("sub/..");
+        assert_list(&gateway, &aliased, "B");
+        project.dispose().await.unwrap();
+    }
+
+    fn write_project_memory_config(root: &std::path::Path, enabled: bool) {
+        let dir = root.join(".pilotdeck");
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = if enabled {
+            CONFIG.to_owned()
+        } else {
+            CONFIG.replace("enabled: true", "enabled: false")
+        };
+        std::fs::write(dir.join("pilotdeck.yaml"), config).unwrap();
+    }
+
+    #[tokio::test]
+    async fn disabled_initial_memory_does_not_hide_other_projects_or_later_generations() {
+        let scratch = Scratch::new();
+        let a = named("A");
+        let b = named("B");
+        let project = registry_with_providers(
+            &scratch,
+            vec![(scratch.root(), a.clone()), (scratch.other(), b.clone())],
+            None,
+        );
+        write_project_memory_config(&scratch.root(), false);
+        let gateway = build_memory_gateway(&options(&scratch), &project).unwrap();
+        assert!(
+            gateway.is_enabled(),
+            "native callbacks stay installed independently of A's provider"
+        );
+        assert_unavailable(&gateway, &scratch.root());
+        assert_list(&gateway, &scratch.other(), "B");
+        let unknown = gateway
+            .dispatch("memory_list", &list_params("/unknown-memory-project"))
+            .unwrap();
+        let MemoryDispatch::Error(error) = unknown else {
+            panic!("unknown project accepted while A disabled")
+        };
+        assert_eq!(
+            error.code(),
+            Some("PROJECT_NOT_FOUND"),
+            "resolution precedes selected capability"
+        );
+        assert_eq!(
+            error.message(),
+            &JsString::from("Unknown projectKey: /unknown-memory-project")
+        );
+        write_project_memory_config(&scratch.root(), true);
+        project.invalidate(Some(&scratch.root()));
+        assert_list(&gateway, &scratch.root(), "A");
+        write_project_memory_config(&scratch.other(), false);
+        project.invalidate(Some(&scratch.other()));
+        assert_unavailable(&gateway, &scratch.other());
+        assert_eq!(
+            b.list_calls.load(Ordering::SeqCst),
+            1,
+            "disabled B must not reuse its retired service"
+        );
+        assert_eq!(
+            a.list_calls.load(Ordering::SeqCst),
+            1,
+            "disabled B must not fall back to A"
+        );
+        write_project_memory_config(&scratch.other(), true);
+        project.invalidate(Some(&scratch.other()));
+        assert_list(&gateway, &scratch.other(), "B");
+        project.dispose().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn selected_project_staging_failure_preserves_error_without_fallback() {
+        let scratch = Scratch::new();
+        let a = named("A");
+        let project = registry_with_providers(
+            &scratch,
+            vec![(scratch.root(), a.clone())],
+            Some(scratch.other()),
+        );
+        let gateway = build_memory_gateway(&options(&scratch), &project).unwrap();
+        for method in ["memory_list", "memory_wipe"] {
+            let result = gateway
+                .dispatch(method, &list_params(scratch.other().to_str().unwrap()))
+                .unwrap();
+            let MemoryDispatch::Error(error) = result else {
+                panic!(
+                    "#1456 selected project acquisition failure must not reach the served project via fallback"
+                )
             };
             assert_eq!(
-                error.code.as_deref(),
-                Some("CAPABILITY_UNAVAILABLE"),
-                "#1456 {foreign} refusal code matches the sibling management routes"
+                error.name(),
+                "RangeError",
+                "#1456 selected project staging error name"
             );
-            assert_eq!(error.name, "DialogGatewayError", "#1456 refusal name");
             assert_eq!(
-                String::from_utf16_lossy(error.message.units()),
-                "The isolated native process serves only its configured project.",
-                "#1456 {foreign} refusal message"
+                error.code(),
+                Some("SELECTED_PROJECT_FAILURE"),
+                "#1456 selected project staging error code"
+            );
+            assert_eq!(
+                error.message(),
+                &JsString::from("Selected project factory failed."),
+                "#1456 selected project staging error message"
             );
         }
-        // The wire keeps the refusal as a thrown error and never touches the
-        // served project's provider.
-        let lists = provider.list_calls.load(Ordering::SeqCst);
-        let clears = provider.clear_calls.load(Ordering::SeqCst);
-        for method in ["memory_list", "memory_wipe"] {
-            for foreign in &others {
-                let params = list_params(foreign);
-                let outcome = gateway
-                    .dispatch(method, &params)
-                    .expect("#1456 memory methods are dispatched here");
-                let MemoryDispatch::Error(error) = &outcome else {
-                    panic!("#1456 {method} for {foreign} must answer ok:false, got {outcome:?}");
-                };
-                assert_eq!(
-                    error.code(),
-                    Some("CAPABILITY_UNAVAILABLE"),
-                    "#1456 {method} {foreign} wire code"
-                );
-                assert_eq!(
-                    String::from_utf16_lossy(error.message().units()),
-                    "The isolated native process serves only its configured project.",
-                    "#1456 {method} {foreign} wire message"
-                );
-            }
-        }
         assert_eq!(
-            provider.list_calls.load(Ordering::SeqCst),
-            lists,
-            "#1456 a refused key must not list the served project's memory"
+            a.list_calls.load(Ordering::SeqCst),
+            0,
+            "#1456 selected project failure must not list A"
         );
         assert_eq!(
-            provider.clear_calls.load(Ordering::SeqCst),
-            clears,
-            "#1456 a refused key must not wipe the served project's memory"
+            a.clear_calls.load(Ordering::SeqCst),
+            0,
+            "#1456 selected project failure must not wipe A"
         );
-        project.dispose().await.expect("#1456 registry disposal");
+        project.dispose().await.unwrap();
     }
 
     /// #1456 item 3. The sibling management route documents the invariant
@@ -597,5 +712,63 @@ mod tests {
             1,
             "#1456 the provider is disposed exactly once, after the lease is released"
         );
+    }
+    #[cfg(unix)]
+    #[test]
+    fn native_memory_marker_fifo_is_bounded_subprocess() {
+        use std::time::Instant;
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--nocapture",
+                "native_memory_marker_fifo_child",
+            ])
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                let output = child.wait_with_output().unwrap();
+                assert!(
+                    status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed; 0 failed"));
+                break;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait_with_output();
+                panic!("memory marker FIFO blocked");
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "run by bounded parent"]
+    async fn native_memory_marker_fifo_child() {
+        let scratch = Scratch::new();
+        let provider = Arc::new(FakeMemory::default());
+        let project = registry(&scratch, &provider);
+        let resolver = NativeMemoryRegistry::new(project, &options(&scratch));
+        let key = JsString::from(scratch.root().to_string_lossy().as_ref());
+        assert!(resolver.resolve_project_key(&key).is_ok());
+        let dir = scratch.home().join("projects/000-unrelated");
+        std::fs::create_dir(&dir).unwrap();
+        assert!(
+            std::process::Command::new("/usr/bin/mkfifo")
+                .arg(dir.join(".cwd"))
+                .status()
+                .unwrap()
+                .success()
+        );
+        let error = resolver
+            .resolve_project_key(&key)
+            .expect_err("unsafe marker accepted");
+        assert_eq!(error.message, JsString::from("Unsafe project marker."));
     }
 }

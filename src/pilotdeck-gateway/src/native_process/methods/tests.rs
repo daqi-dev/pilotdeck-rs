@@ -4227,3 +4227,89 @@ async fn upload_part_validates_params_before_the_capability_gate() {
         .await
         .expect("#1441 order fixture project shutdown");
 }
+
+#[tokio::test]
+async fn steer_and_cancel_use_selected_project_generation() {
+    use crate::runtime::project::interaction_steer::InteractionSteer;
+    use crate::runtime::project::{ProjectResources, Resource};
+    use crate::runtime::turn::gateway::GatewayRequests;
+    let (_scratch, requests) = super::super::management_tests::setup();
+    let a = requests.options.project.clone();
+    let b = a.parent().unwrap().join("steer-project-B");
+    std::fs::create_dir_all(&b).unwrap();
+    let mut options = requests.options.clone();
+    options.project = b.clone();
+    super::super::assembly::register_project(&options).unwrap();
+    let lease = requests.project.acquire(Some(&b)).unwrap();
+    let steer = lease
+        .runtime()
+        .resources()
+        .get::<ProjectResources>()
+        .unwrap()
+        .context()
+        .resource(Resource::InteractionSteer)
+        .unwrap()
+        .as_any()
+        .downcast_ref::<InteractionSteer>()
+        .unwrap()
+        .clone();
+    let _reservation = requests
+        .owner
+        .begin_turn(&"s-b".into(), &"r".into())
+        .unwrap();
+    let _turn = start_steer_run(&steer, "s-b", "t", "r");
+    let project = pilotdeck_protocol::JsString::from(b.to_string_lossy().as_ref());
+    let steer_result = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "s-b".into()),
+                ("runId", "r".into()),
+                ("itemId", "b-item".into()),
+                ("message", "project B".into()),
+                ("projectKey", JsValue::String(project.clone())),
+            ]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(steer_result.get("accepted"), Some(&JsValue::Bool(true)));
+    let cancel = requests
+        .request(
+            "cancel_steer".into(),
+            crate::metadata::object([
+                ("sessionKey", "s-b".into()),
+                ("runId", "r".into()),
+                ("itemId", "b-item".into()),
+                ("projectKey", JsValue::String(project)),
+            ]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(cancel.get("cancelled"), Some(&JsValue::Bool(true)));
+    assert!(
+        steer
+            .mailbox_for_test(&"s-b".into())
+            .unwrap()
+            .drain(&"t".into())
+            .is_empty()
+    );
+    _turn.close().await.unwrap();
+    requests
+        .owner
+        .end_turn(&"s-b".into(), Some(&"r".into()), Some(&_reservation));
+    drop(lease);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        requests.owner.shutdown(),
+    )
+    .await
+    .expect("B steer fixture owner cleanup must settle")
+    .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        requests.project.dispose(),
+    )
+    .await
+    .expect("B steer fixture project leases must be released")
+    .unwrap();
+}

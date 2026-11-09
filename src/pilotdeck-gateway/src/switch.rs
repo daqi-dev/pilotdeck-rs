@@ -428,21 +428,24 @@ impl<F: SwitchFaces> SwitchMachine<F> {
 /// exactly one `CronManager`, so in production this is process-global in
 /// effect (the RPC routing seam, `native_process/methods/cron.rs`, has no
 /// per-request state to thread through), while parallel test assemblies —
-/// each with its own manager — cannot observe one another's switches. The
-/// entries hold their manager alive, so a freed and reallocated address can
-/// never alias a closed one.
-static CRON_MANAGEMENT_CLOSED: Mutex<Vec<Arc<CronManager>>> = Mutex::new(Vec::new());
+/// each with its own manager — cannot observe one another's switches. Weak
+/// entries retain allocation identity without retaining the manager and its
+/// entire gateway after shutdown. Expired entries are pruned under the lock.
+static CRON_MANAGEMENT_CLOSED: Mutex<Vec<Weak<CronManager>>> = Mutex::new(Vec::new());
 
 /// Whether this manager's management methods must reject (A6). `None` (no
 /// `cron:` section) is never closed — the `requireCron` gate owns that shape.
 pub fn cron_management_closed(manager: Option<&Arc<CronManager>>) -> bool {
     match manager {
         None => false,
-        Some(manager) => CRON_MANAGEMENT_CLOSED
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .any(|closed| Arc::ptr_eq(closed, manager)),
+        Some(manager) => {
+            let mut closed = CRON_MANAGEMENT_CLOSED
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            closed.retain(|entry| entry.strong_count() != 0);
+            let identity = Arc::downgrade(manager);
+            closed.iter().any(|entry| Weak::ptr_eq(entry, &identity))
+        }
     }
 }
 
@@ -453,8 +456,10 @@ pub fn close_cron_management(manager: &Arc<CronManager>) {
     let mut closed = CRON_MANAGEMENT_CLOSED
         .lock()
         .unwrap_or_else(|e| e.into_inner());
-    if !closed.iter().any(|entry| Arc::ptr_eq(entry, manager)) {
-        closed.push(manager.clone());
+    closed.retain(|entry| entry.strong_count() != 0);
+    let identity = Arc::downgrade(manager);
+    if !closed.iter().any(|entry| Weak::ptr_eq(entry, &identity)) {
+        closed.push(identity);
     }
 }
 
@@ -546,6 +551,7 @@ impl CronManagementGate {
 
 /// Where the recording cron gateway accumulates abort rejections.
 pub type AbortRecord = Arc<Mutex<Vec<String>>>;
+type NativeCronDrain = (std::time::Duration, Arc<dyn Fn() + Send + Sync>);
 
 fn cron_message(error: &CronError) -> String {
     String::from_utf16_lossy(error.message().units())
@@ -558,7 +564,13 @@ fn cron_message(error: &CronError) -> String {
 pub struct CronStopHandle {
     manager: Arc<CronManager>,
     stopped: AtomicBool,
+    // An asynchronous caller must observe the preceding stop's completion,
+    // including when its original awaiter was cancelled. Preserve the existing
+    // repeat-call result policy after the first operation has actually returned.
+    stop_serial: Mutex<()>,
     abort_failures: AbortRecord,
+    native_drain: Option<NativeCronDrain>,
+    native_result: Mutex<Option<Result<(), CronError>>>,
 }
 
 impl CronStopHandle {
@@ -566,17 +578,67 @@ impl CronStopHandle {
         Self {
             manager,
             stopped: AtomicBool::new(false),
+            stop_serial: Mutex::new(()),
             abort_failures,
+            native_drain: None,
+            native_result: Mutex::new(None),
         }
+    }
+    /// Native host finalization; default library construction remains TS.
+    pub fn new_native(
+        manager: Arc<CronManager>,
+        abort_failures: AbortRecord,
+        budget: std::time::Duration,
+        stopping: Arc<dyn Fn() + Send + Sync>,
+    ) -> Self {
+        let mut handle = Self::new(manager, abort_failures);
+        handle.native_drain = Some((budget, stopping));
+        handle
     }
 
     /// Stop once. A second call (the host teardown after a machine-driven
     /// stop) observes the earlier stop instead of repeating it.
     pub fn stop_once(&self) -> Result<(), CronError> {
+        let _serial = self.stop_serial.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.swap(true, Ordering::SeqCst) {
+            if self.native_drain.is_some() {
+                return self
+                    .native_result
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+                    .unwrap_or_else(|| {
+                        Err(CronError::gateway(
+                            "cron_shutdown_failed",
+                            "Native cron stop result is unavailable.",
+                        ))
+                    });
+            }
             return Ok(());
         }
-        self.manager.stop()
+        if let Some((budget, stopping)) = &self.native_drain {
+            let result = self.manager.stop_and_drain(*budget, || stopping());
+            *self.native_result.lock().unwrap_or_else(|e| e.into_inner()) = Some(result.clone());
+            result
+        } else {
+            self.manager.stop()
+        }
+    }
+
+    /// Joining the scheduler/tick and synchronous store operations must not
+    /// block the current-thread gateway runtime that advances active turns.
+    pub async fn stop_async(self: &Arc<Self>) -> Result<(), CronError> {
+        close_cron_management(&self.manager);
+        // Drain management calls for both switch and native cleanup. The
+        // main-line negative control still targets this actual admission gate.
+        if !crate::mutants::on("switch-cron-stop-no-drain") {
+            let gate = cron_management_gate(&self.manager);
+            drop(gate.drain_dispatches().await);
+        }
+        let owner = self.clone();
+        tokio::task::spawn_blocking(move || owner.stop_once())
+            .await
+            .map_err(|error| CronError::error(format!("Cron stop worker failed: {error}")))?
     }
 
     pub fn is_stopped(&self) -> bool {
@@ -600,23 +662,7 @@ impl CronStopHandle {
         let handle = self.clone();
         Box::pin(async move {
             close_cron_management(&handle.manager);
-            // #2363 item 6: the admission gate's write half — every dispatch
-            // already past the closed check holds the read half across its
-            // whole body, so acquiring the write half waits for those
-            // bodies to finish before anything stops. The wait is bounded
-            // by the machine's own automation bound (a dispatch whose
-            // predecessor never completes is the same hung-face A3 the
-            // machine already polices); a dispatch arriving after the
-            // write half releases sees the closed mark and rejects.
-            // `switch-cron-stop-no-drain` (negative control, #2363): the
-            // write half skipped — the face reports Ok while an admitted
-            // dispatch is still running, the pre-item-6 check-then-act
-            // window.
-            if !crate::mutants::on("switch-cron-stop-no-drain") {
-                let gate = cron_management_gate(&handle.manager);
-                drop(gate.drain_dispatches().await);
-            }
-            handle.stop_once().map_err(|error| {
+            handle.stop_async().await.map_err(|error| {
                 StepFailure::step(format!("cron stop failed: {}", cron_message(&error)))
             })?;
             for failure in handle.abort_failures() {
@@ -651,6 +697,13 @@ impl RecordingCronGateway {
 }
 
 impl CronAgentGateway for RecordingCronGateway {
+    fn submit_turn_observed(
+        &self,
+        input: &CronTurnSubmit,
+        observe: &mut dyn FnMut(&pilotdeck_protocol::JsValue) -> Result<(), CronError>,
+    ) -> Result<(), CronError> {
+        self.inner.submit_turn_observed(input, observe)
+    }
     fn submit_turn(&self, input: &CronTurnSubmit) -> Result<(), CronError> {
         self.inner.submit_turn(input)
     }

@@ -410,24 +410,31 @@ impl DefaultContextRuntime {
             input.run_mode.as_deref(),
             &input.additional_working_directories,
             &effective_tools,
-            input.custom_system_prompt.as_deref(),
+            input.custom_system_prompt.as_ref(),
             input.use_custom_system_prompt,
-            input.append_system_prompt.as_deref(),
+            input.append_system_prompt.as_ref(),
             self.inner.include_extensions_with_custom_system_prompt,
             input.surface == RuntimeContextSurface::SystemPrompt,
             prompt_timestamp,
         )?;
         let mut parts = if has_complete_contribution {
             contributed_sections
+                .into_iter()
+                .map(|part| JsString::from(part.as_str()))
+                .collect()
         } else {
             let mut parts = prompt.parts;
-            parts.extend(contributed_sections);
+            parts.extend(
+                contributed_sections
+                    .iter()
+                    .map(|part| JsString::from(part.as_str())),
+            );
             parts
         };
 
         if input.surface == RuntimeContextSurface::SystemPrompt {
             for context in &registered_runtime_contexts {
-                parts.push(context.text.clone());
+                parts.push(context.text.as_str().into());
             }
         }
         let mut runtime_contexts = vec![(
@@ -465,7 +472,7 @@ impl DefaultContextRuntime {
             .await;
             if let Some(text) = attachment {
                 if input.surface == RuntimeContextSurface::SystemPrompt {
-                    parts.push(text.clone());
+                    parts.push(text.as_str().into());
                 }
                 runtime_contexts.push(("pilotdeck:memory:0:0".into(), text));
             }
@@ -499,9 +506,9 @@ impl DefaultContextRuntime {
                             })
                             .collect::<Vec<_>>()
                             .join("\n\n");
-                        parts.push(format!(
+                        parts.push(JsString::from(format!(
                             "<project-instructions>\nProject instructions are shown below. Adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior.\n\n{blocks}\n</project-instructions>"
-                        ));
+                        ).as_str()));
                     }
                     instruction_layers = Some(layers);
                 }
@@ -512,7 +519,7 @@ impl DefaultContextRuntime {
                 }),
             }
         }
-        let joined = parts.join("\n\n");
+        let joined = super::prompt::join_utf16(&parts, "\n\n");
         let runtime_context_messages =
             build_runtime_context_messages(&runtime_contexts, input.surface);
         let projected_messages =
@@ -609,15 +616,10 @@ impl DefaultContextRuntime {
         let tool_count = effective_tools.len();
         let mut result = object(vec![
             ("messages", JsValue::Array(projected_messages)),
-            ("systemPrompt", JsValue::String(joined.into())),
+            ("systemPrompt", JsValue::String(joined)),
             (
                 "systemPromptParts",
-                JsValue::Array(
-                    parts
-                        .into_iter()
-                        .map(|part| JsValue::String(part.into()))
-                        .collect(),
-                ),
+                JsValue::Array(parts.into_iter().map(JsValue::String).collect()),
             ),
             ("tools", JsValue::Array(effective_tools)),
             (
@@ -845,9 +847,9 @@ struct PrepareInput {
     additional_working_directories: Vec<String>,
     messages: Vec<JsValue>,
     tools: Vec<JsValue>,
-    custom_system_prompt: Option<String>,
+    custom_system_prompt: Option<JsString>,
     use_custom_system_prompt: bool,
-    append_system_prompt: Option<String>,
+    append_system_prompt: Option<JsString>,
     max_messages: Option<MaxMessages>,
     preview_only: bool,
 }
@@ -886,7 +888,7 @@ impl PrepareInput {
         let use_custom_system_prompt = !matches!(custom, JsValue::Undefined);
         let custom_system_prompt = match custom {
             JsValue::Undefined | JsValue::Null => None,
-            JsValue::String(_) => Some(display(custom)),
+            JsValue::String(value) => Some(value.clone()),
             value if truthy(value) => {
                 return Err(ModuleError::new(
                     "Context prepare input customSystemPrompt must be a string.",
@@ -896,9 +898,7 @@ impl PrepareInput {
             _ => None,
         };
         let append_system_prompt = match value("appendSystemPrompt") {
-            JsValue::String(_) if truthy(value("appendSystemPrompt")) => {
-                Some(display(value("appendSystemPrompt")))
-            }
+            JsValue::String(text) if truthy(value("appendSystemPrompt")) => Some(text.clone()),
             value if truthy(value) => {
                 return Err(ModuleError::new(
                     "Context prepare input appendSystemPrompt must be a string.",

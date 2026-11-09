@@ -12,6 +12,7 @@
 //! is replicated here rather than registered.
 use crate::{Body, ProxyError, http_proxy};
 use bytes::Bytes;
+pub(crate) mod control;
 use http_body_util::{BodyExt, Full};
 use std::{
     io,
@@ -107,10 +108,12 @@ pub(crate) struct Config {
     /// route reads the whole request body before dispatching, exactly
     /// `readBody(request)` + `await options.feishuWebhook(...)`.
     pub webhook: Option<WebhookResolver>,
+    pub control: Option<control::ControlHandler>,
     /// #2354: the `/api/web` route group (TS `handleWebApiRequest` +
     /// `options.gateway`). `None` keeps the pre-#2354 surface, the shape
     /// every non-gateway listener and frozen fixture still pins.
     pub api_web: Option<crate::api_web::Config>,
+    pub approvals: Option<crate::module_host::approvals::Config>,
 }
 
 /// Route one parsed non-upgrade request to its TS-equivalent response.
@@ -134,6 +137,26 @@ pub(crate) async fn serve_with_body(
     config: &Config,
 ) -> Result<hyper::Response<Body>, io::Error> {
     let version = request.version();
+    if let Some(approvals) = &config.approvals {
+        if let Some(rejection) = node_parser_admission(&request)? {
+            return finish(version, rejection);
+        }
+        if let Some(response) = crate::module_host::approvals::serve(&mut request, approvals).await
+        {
+            return finish(version, response?);
+        }
+    }
+    if config.control.is_some()
+        && matches!(
+            request_path(&request).as_str(),
+            "/_control/context" | "/_control/restart"
+        )
+    {
+        if let Some(rejection) = node_parser_admission(&request)? {
+            return finish(version, rejection);
+        }
+        return control::serve(request, config).await;
+    }
     // #2354: the `/api/web` route group, exactly where TS's router mounts it —
     // after the `/feishu/webhook` prefix check, before static and the plain
     // 404 (GatewayServer.ts). The path prefixes are disjoint, so testing this

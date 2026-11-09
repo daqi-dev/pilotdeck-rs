@@ -3,14 +3,21 @@
 //! under `resources/PilotDeck/src/tool/builtin`; filesystem paths are resolved
 //! lexically in UTF-16 first so path identity and state keys keep the original
 //! wire spelling, and only the OS boundary uses an `OsStr`.
+pub mod ask_user_question;
 pub mod bash;
 pub mod edit_file;
 pub mod edit_notebook;
+#[cfg(unix)]
+pub mod execute_code;
+pub(crate) mod file_permissions;
 pub mod glob;
+pub mod goal;
 pub mod grep;
 pub mod mcp_resources;
 pub mod mcp_tool;
 pub mod read_file;
+pub mod send_attachment;
+pub mod structured;
 pub mod task;
 pub mod time;
 pub mod web;
@@ -1024,7 +1031,7 @@ fn path_components(path: &Path) -> Vec<PathBuf> {
 /// and every escape is visible before the write. `NotFound` means "still
 /// missing"; every other error (ENOTDIR, EACCES, ELOOP, ...) is returned
 /// unchanged so the Node diagnostic can render it.
-fn resolve_path_following_symlinks(path: &Path) -> io::Result<PathBuf> {
+pub(super) fn resolve_path_following_symlinks(path: &Path) -> io::Result<PathBuf> {
     const MAX_SYMLINK_HOPS: usize = 40;
     let mut resolved = PathBuf::from("/");
     let mut pending: std::collections::VecDeque<PathBuf> =
@@ -1081,12 +1088,49 @@ fn resolve_path_following_symlinks(path: &Path) -> io::Result<PathBuf> {
 /// Write variant of `resolvePilotDeckWorkspacePath`. `must_exist` mirrors the
 /// notebook resolver; `allow_outside` is the host permission decision, never a
 /// model-controlled input.
+/// Exact path identity captured at the checked write, not reconstructed from tool output.
+pub(super) struct ResolvedWritePath {
+    pub absolute: JsString,
+    pub relative: JsString,
+    pub root: JsString,
+}
+/// A post-commit observation. It never changes the already-completed write result.
+#[derive(Clone)]
+pub struct FileUpdateNotice {
+    pub absolute: JsString,
+    pub relative: JsString,
+    pub root: JsString,
+    pub created: bool,
+}
+pub struct FileUpdateNotifier(
+    pub std::sync::Arc<dyn Fn(FileUpdateNotice) -> crate::host::HostFuture<()> + Send + Sync>,
+);
+async fn notify_file_update(
+    context: &crate::runtime::tools::ToolRunContext,
+    resolved: &ResolvedWritePath,
+    created: bool,
+) {
+    if let Some(notifier) = context
+        .host
+        .file_update_notifier
+        .as_ref()
+        .and_then(|value| value.downcast_ref::<FileUpdateNotifier>())
+    {
+        let notice = FileUpdateNotice {
+            absolute: resolved.absolute.clone(),
+            relative: resolved.relative.clone(),
+            root: resolved.root.clone(),
+            created,
+        };
+        let _ = (notifier.0)(notice).await;
+    }
+}
 pub(super) fn resolve_write_path(
     input: &JsString,
     context: &crate::runtime::tools::ToolRunContext,
     must_exist: bool,
     allow_outside: bool,
-) -> Result<ResolvedPath, crate::runtime::tools::ToolError> {
+) -> Result<ResolvedWritePath, crate::runtime::tools::ToolError> {
     let input_text = text(input);
     if input.is_empty() || input_text.contains('\0') {
         return Err(invalid(
@@ -1109,9 +1153,10 @@ pub(super) fn resolve_write_path(
         if write_denied(&relative_cwd) {
             return Err(denied_error(&relative_cwd));
         }
-        return Ok(ResolvedPath {
+        return Ok(ResolvedWritePath {
             absolute,
             relative: relative_cwd,
+            root: cwd.clone(),
         });
     }
 
@@ -1130,9 +1175,10 @@ pub(super) fn resolve_write_path(
             if write_denied(&relative_cwd) {
                 return Err(denied_error(&relative_cwd));
             }
-            return Ok(ResolvedPath {
+            return Ok(ResolvedWritePath {
                 absolute,
                 relative: relative_cwd,
+                root: cwd.clone(),
             });
         }
         return Err(tool_error(
@@ -1172,9 +1218,10 @@ pub(super) fn resolve_write_path(
     // for a path inside a root. TS `pathSafety.ts` likewise consults
     // `allowOutsideWorkspace` only inside its `!root` branch.
     guard_write_containment(input, &absolute, &roots)?;
-    Ok(ResolvedPath {
+    Ok(ResolvedWritePath {
         absolute,
         relative: relative_path,
+        root,
     })
 }
 
@@ -1407,3 +1454,46 @@ mod errno_tests {
         );
     }
 }
+
+/// Enforcing provider authority is installed by ToolRuntime after its host
+/// permission decision, never read from a sidecar tool argument.
+#[cfg(unix)]
+pub(super) fn native_sandbox_write_path(
+    path: &JsString,
+    context: &crate::runtime::tools::ToolRunContext,
+) -> Result<JsString, crate::runtime::tools::ToolError> {
+    use crate::runtime::{project::SandboxMode, tools::sandbox::NativeSandbox};
+    let mode = match context
+        .fields
+        .get("nativeSandboxMode")
+        .and_then(JsValue::as_string)
+    {
+        Some(mode) if mode.equals_str("read-only") => SandboxMode::ReadOnly,
+        Some(mode) if mode.equals_str("workspace-write") => SandboxMode::WorkspaceWrite,
+        _ => return Ok(path.clone()),
+    };
+    let temporary_root = context
+        .fields
+        .get("nativeSandboxTemporaryRoot")
+        .and_then(JsValue::as_string)
+        .map(os_path)
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
+    let mut root = cwd(context);
+    if !permission_mode(context).equals_str("bypassPermissions") {
+        for candidate in additional_working_directories(context) {
+            if within_root(path, &candidate) {
+                root = candidate;
+                break;
+            }
+        }
+    }
+    NativeSandbox::new(mode, temporary_root)
+        .check_write(&os_path(&root), &os_path(path))
+        .map(|_| path.clone())
+}
+
+pub mod plan_todo;
+
+mod form_draft2020;
+pub(crate) mod form_schema;
+pub(crate) mod user_dialog;

@@ -50,8 +50,8 @@ cases = [
      prefix + 'manager_catalog_keeps_committed_prefix_when_tail_is_half_written',
      '#934 a half-written tail must keep the committed session'),
     ('catalog-internal-filter-removed', file_catalog,
-     '        if !include_internal && is_internal_session(session_id) {',
-     '        if false && !include_internal && is_internal_session(session_id) {', None,
+     '        if !include_internal && is_internal_session(session_id) {\n            continue;\n        }\n        let path = entry.path();',
+     '        if false && !include_internal && is_internal_session(session_id) {\n            continue;\n        }\n        let path = entry.path();', None,
      prefix + 'manager_catalog_filters_internal_before_reading',
      '#934 default manager list must hide always-on sessions before reading'),
     ('catalog-cwd-removed', file_catalog, '''    info.insert(

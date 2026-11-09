@@ -1541,6 +1541,9 @@ fn fire_harness(delivery_fails: bool) -> FireHarness {
         default_timezone: "UTC".into(),
         release_task_session,
         on_result_delivery,
+        on_phase_event: None,
+        on_turn_event: None,
+        assistant_text_limit_units: None,
         logger: logger.clone(),
         zone_cache: Arc::new(CronZoneResolverCache::new()),
     });

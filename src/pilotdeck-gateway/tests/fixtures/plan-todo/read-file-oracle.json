@@ -1,0 +1,33 @@
+{
+  "node": "v22.22.0",
+  "rows": [
+    {
+      "name": "empty",
+      "content": "",
+      "result": {
+        "undefined": true
+      }
+    },
+    {
+      "name": "space",
+      "content": " \r\n\t",
+      "result": {
+        "undefined": true
+      }
+    },
+    {
+      "name": "js_whitespace",
+      "content": "﻿ ",
+      "result": {
+        "undefined": true
+      }
+    },
+    {
+      "name": "content",
+      "content": " \n# Plan\nDo it\n ",
+      "result": {
+        "value": "# Plan\nDo it"
+      }
+    }
+  ]
+}

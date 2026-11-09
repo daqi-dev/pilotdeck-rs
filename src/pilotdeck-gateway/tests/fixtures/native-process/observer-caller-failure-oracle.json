@@ -1,0 +1,95 @@
+{
+  "sourceHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "rawOracleSha256": "8a0dd6cab5a514bf0ab2402e94bfa8382cae2b922dabfa8f44acaaa356042b13",
+  "normalization": "exact private ORACLE_PROJECT prefix only -> <PROJECT>; missing fields preserved",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "mode": "observed-and-launch-fail",
+      "result": {
+        "ok": false,
+        "name": "AggregateError",
+        "message": "Subagent failed and its observer could not be launched.",
+        "errors": [
+          {
+            "name": "Error",
+            "message": "oracle observed failure"
+          },
+          {
+            "name": "Error",
+            "message": "oracle launcher rejection"
+          }
+        ]
+      },
+      "events": [
+        {
+          "type": "subagent_started",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker"
+        },
+        {
+          "type": "subagent_completed",
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "success": false,
+          "aborted": false,
+          "durationMs": 0
+        }
+      ],
+      "lifecycle": [
+        {
+          "event": "SubagentStart",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker"
+          }
+        },
+        {
+          "event": "SubagentStop",
+          "aborted": false,
+          "payload": {
+            "subagentId": "observed-fixed",
+            "subagentType": "worker",
+            "success": false
+          }
+        }
+      ],
+      "started": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "prompt": "self-written bounded directive",
+          "transcriptRelativePath": "",
+          "subagentSessionId": "<PROJECT>::sub::observed-fixed"
+        }
+      ],
+      "completed": [
+        {
+          "sessionId": "parent-session",
+          "turnId": "parent-turn",
+          "subagentId": "observed-fixed",
+          "subagentType": "worker",
+          "summary": "oracle observed failure",
+          "turns": 0,
+          "durationMs": 0,
+          "errored": true
+        }
+      ],
+      "providers": [],
+      "launches": [
+        {
+          "observedSubagentId": "observed-fixed",
+          "observerSubagentType": "watcher"
+        }
+      ]
+    }
+  ]
+}

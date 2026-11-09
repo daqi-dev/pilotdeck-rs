@@ -1,0 +1,228 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "typescript": "5.9.3",
+  "LANG": "en_US.UTF-8",
+  "resolved": {
+    "locale": "en-US",
+    "usage": "sort",
+    "sensitivity": "variant",
+    "ignorePunctuation": false,
+    "collation": "default",
+    "numeric": false,
+    "caseFirst": "false"
+  },
+  "source": {
+    "path": "src/context/cache/CachePlan.ts",
+    "sha256": "899b3f6973eb343d99647ce169a9076495fc935191def6f78ca14bf858b52dc7"
+  },
+  "cases": [
+    {
+      "id": "opposed-description-pair",
+      "input": {
+        "provider": "fixture",
+        "model": "anthropic-fixture",
+        "systemPrompt": "system fixture",
+        "tools": [
+          {
+            "name": "\ud801",
+            "description": "a",
+            "inputSchema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "\ud800",
+            "description": "z",
+            "inputSchema": {
+              "type": "object"
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "first"
+              }
+            ]
+          }
+        ],
+        "enabled": true
+      },
+      "generation": 90,
+      "result": {
+        "provider": "fixture",
+        "model": "anthropic-fixture",
+        "system": true,
+        "tools": false,
+        "messages": [
+          0
+        ],
+        "fingerprint": "643795a83ce23acd1a488f1c2f937186983d7fd2f77abea40ecdaf76724b0db4",
+        "generation": 90
+      }
+    },
+    {
+      "id": "reverse-opposed-description-pair",
+      "input": {
+        "provider": "fixture",
+        "model": "anthropic-fixture",
+        "systemPrompt": "system fixture",
+        "tools": [
+          {
+            "name": "\ud800",
+            "description": "z",
+            "inputSchema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "\ud801",
+            "description": "a",
+            "inputSchema": {
+              "type": "object"
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "first"
+              }
+            ]
+          }
+        ],
+        "enabled": true
+      },
+      "generation": 91,
+      "result": {
+        "provider": "fixture",
+        "model": "anthropic-fixture",
+        "system": true,
+        "tools": false,
+        "messages": [
+          0
+        ],
+        "fingerprint": "643795a83ce23acd1a488f1c2f937186983d7fd2f77abea40ecdaf76724b0db4",
+        "generation": 91
+      }
+    },
+    {
+      "id": "with-replacement-character",
+      "input": {
+        "provider": "fixture",
+        "model": "anthropic-fixture",
+        "systemPrompt": "system fixture",
+        "tools": [
+          {
+            "name": "\ud801",
+            "description": "a",
+            "inputSchema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "\ud800",
+            "description": "z",
+            "inputSchema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "�",
+            "description": "m",
+            "inputSchema": {
+              "type": "object"
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "first"
+              }
+            ]
+          }
+        ],
+        "enabled": true
+      },
+      "generation": 92,
+      "result": {
+        "provider": "fixture",
+        "model": "anthropic-fixture",
+        "system": true,
+        "tools": false,
+        "messages": [
+          0
+        ],
+        "fingerprint": "2229812659785691443fae109e2b6ce652b89bf755636e5578fa82a64c7b2d44",
+        "generation": 92
+      }
+    },
+    {
+      "id": "reverse-with-replacement-character",
+      "input": {
+        "provider": "fixture",
+        "model": "anthropic-fixture",
+        "systemPrompt": "system fixture",
+        "tools": [
+          {
+            "name": "�",
+            "description": "m",
+            "inputSchema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "\ud800",
+            "description": "z",
+            "inputSchema": {
+              "type": "object"
+            }
+          },
+          {
+            "name": "\ud801",
+            "description": "a",
+            "inputSchema": {
+              "type": "object"
+            }
+          }
+        ],
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "first"
+              }
+            ]
+          }
+        ],
+        "enabled": true
+      },
+      "generation": 93,
+      "result": {
+        "provider": "fixture",
+        "model": "anthropic-fixture",
+        "system": true,
+        "tools": false,
+        "messages": [
+          0
+        ],
+        "fingerprint": "2229812659785691443fae109e2b6ce652b89bf755636e5578fa82a64c7b2d44",
+        "generation": 93
+      }
+    }
+  ]
+}

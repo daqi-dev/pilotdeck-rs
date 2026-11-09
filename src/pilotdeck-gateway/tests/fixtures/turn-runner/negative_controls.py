@@ -25,8 +25,8 @@ mutations = [
     ('abort-outcome', 'complete_turn', [('kind.equals_str("aborted") => "aborted"', 'kind.equals_str("aborted") => "completed"')]),
     ('retryable', 'complete_turn', [('let mut draft = draft("turn_result");', 'inner.completed_turn_id = Some(turn_id.clone()); let mut draft = draft("turn_result");')]),
     ('remove-active', 'complete_turn', [('inner.turns.remove(turn_id);', '')]),
-    ('failed-start-reset', 'start_turn', [('let draft = draft("turn_started");', 'inner.completed_turn_id = None; let draft = draft("turn_started");')]),
-    ('reset-start', 'start_turn', [('inner.completed_turn_id = None;', '')]),
+    ('failed-start-reset', 'start_turn_with_inbox', [('let mut draft = draft("turn_started");', 'inner.completed_turn_id = None; let mut draft = draft("turn_started");')]),
+    ('reset-start', 'start_turn_with_inbox', [('inner.completed_turn_id = None;', '')]),
     ('reset-restore', 'restore', [('inner.completed_turn_id = None;', '')]),
 ]
 if sys.argv[1:] == ['--check']:

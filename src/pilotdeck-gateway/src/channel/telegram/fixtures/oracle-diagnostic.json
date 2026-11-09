@@ -1,0 +1,78 @@
+{
+  "environment": {
+    "node": "v22.22.1",
+    "icu": "78.2",
+    "diagnostic": true,
+    "formalAcceptance": false
+  },
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/telegram/TelegramChannel.ts": "d5a57c2b05a45dfba24fcbf0522d34bd31839211d43ca7b5be29f2ff0e488f66",
+    "src/adapters/channel/protocol/ImCronDelivery.ts": "3e505b3fa1205993089e3ed6854541fb6e7d332b7b33173d3c351880de7e8c14",
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477",
+    "src/adapters/channel/telegram/TelegramSessionMapper.ts": "ff70dd9e2f713fdf0f386eef85108ca80ddb63730391b35026fa5e2bf0635551",
+    "src/adapters/channel/telegram/telegram-render.ts": "72bf4b25b07a1f083114a1c989c6495a90598fb7c7cabadf68ab30c0d6031647"
+  },
+  "requests": [
+    {
+      "sessionKey": "telegram:chat=12:general",
+      "channelKey": "telegram",
+      "message": "hello"
+    }
+  ],
+  "calls": [
+    {
+      "method": "deleteWebhook",
+      "body": {}
+    },
+    {
+      "method": "getMe",
+      "body": {}
+    },
+    {
+      "method": "sendChatAction",
+      "body": {
+        "chat_id": "12",
+        "action": "typing"
+      }
+    },
+    {
+      "method": "sendMessage",
+      "body": {
+        "chat_id": "12",
+        "text": "answer"
+      }
+    },
+    {
+      "method": "sendMessage",
+      "body": {
+        "chat_id": "12",
+        "text": "已创建新会话。"
+      }
+    }
+  ],
+  "logs": [
+    [
+      "info",
+      "telegram: long-polling started"
+    ],
+    [
+      "info",
+      "telegram: connected as @fixture"
+    ],
+    [
+      "info",
+      "telegram: stopping (fixture)"
+    ]
+  ],
+  "mapper": {
+    "activeByChatId": {
+      "12": "telegram:chat=12:s_01234567-89ab-4cde-8fab-0123456789ab"
+    }
+  },
+  "render": [
+    "\n⚠️ Read failed\n",
+    "\n❌ bad\n"
+  ]
+}

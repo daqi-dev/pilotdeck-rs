@@ -8,7 +8,7 @@ use crate::server::{
 use crate::{AdvertisedMethods, RemoteHost};
 use pilotdeck_agent::ports::*;
 use pilotdeck_agent::request::{
-    OriginalRequestAssembler, RequestAssembler, RequestAssemblyInput, RequestPreparationObserver,
+    OriginalRequestAssembler, RequestAssemblyInput, RequestPreparationObserver,
     RequestPreparationState, RouteTokenCaps,
 };
 use pilotdeck_agent::session_state::{
@@ -23,6 +23,27 @@ use pilotdeck_protocol::module::ModuleOutcome;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::sync::{Arc, Mutex};
 
+fn assemble_with_native_collation(
+    state: &mut RequestPreparationState,
+    host: &mut dyn HostPort,
+    parameters: RequestAssemblyInput<'_>,
+    options: pilotdeck_agent::request::RequestAssemblyOptions,
+    observer: &mut dyn RequestPreparationObserver,
+) -> PortResult<pilotdeck_agent::request::PreparedRequestIntent> {
+    let locale = crate::node_collation::node_locale(|key| {
+        std::env::var_os(key).map(|value| value.to_string_lossy().into_owned())
+    });
+    let collator = crate::node_collation::node_collator(&locale, true).map_err(|message| {
+        PortError::InvalidResponse {
+            message: message.into(),
+        }
+    })?;
+    let compare = |left: &JsString, right: &JsString| {
+        collator.compare_utf16_preserving_surrogates(left.units(), right.units())
+    };
+    OriginalRequestAssembler
+        .assemble_with_collation(state, host, parameters, options, observer, &compare)
+}
 pub struct OriginalAgentFactory {
     pub clock: Arc<dyn ExecutionClock>,
     pub process_cwd: JsString,
@@ -456,7 +477,7 @@ impl TurnPreparationPort for Preparation {
             notifications: &self.notifications,
             input,
         };
-        let preview = OriginalRequestAssembler.assemble_with_options(
+        let preview = assemble_with_native_collation(
             &mut self.state,
             host,
             RequestAssemblyInput {
@@ -543,7 +564,7 @@ impl TurnPreparationPort for Preparation {
             notifications: &self.notifications,
             input,
         };
-        let preview = OriginalRequestAssembler.assemble_with_options(
+        let preview = assemble_with_native_collation(
             &mut self.state,
             host,
             RequestAssemblyInput {
@@ -612,7 +633,7 @@ impl TurnPreparationPort for Preparation {
             input,
         };
         // A:2484-2487 createModelRequest(previewOnly, no instruction events).
-        let preview = OriginalRequestAssembler.assemble_with_options(
+        let preview = assemble_with_native_collation(
             &mut self.state,
             host,
             RequestAssemblyInput {
@@ -677,7 +698,7 @@ impl TurnPreparationPort for Preparation {
             notifications: &self.notifications,
             input,
         };
-        let intent = OriginalRequestAssembler.assemble(
+        let intent = assemble_with_native_collation(
             &mut self.state,
             host,
             RequestAssemblyInput {
@@ -686,6 +707,7 @@ impl TurnPreparationPort for Preparation {
                 input,
                 messages,
             },
+            pilotdeck_agent::request::RequestAssemblyOptions::default(),
             &mut observer,
         )?;
         Ok((
@@ -1223,3 +1245,7 @@ mod calibration_lookup_tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "default_factory_cache_tests.rs"]
+mod native_cache_collation_tests;

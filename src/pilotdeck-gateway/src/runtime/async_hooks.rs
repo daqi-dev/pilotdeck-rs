@@ -170,6 +170,7 @@ type EventSink = dyn Fn(&JsString, JsObject) + Send + Sync;
 struct Pending {
     input: AsyncHookRegistration,
     turn: AsyncHookTurn,
+    pinned_guard: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     expires_at: f64,
     timer: Mutex<Option<Box<dyn AsyncHookTimer>>>,
     delivery: Mutex<Option<DeliveryReceiver>>,
@@ -245,6 +246,29 @@ impl AsyncHookRegistry {
         else {
             return Ok(());
         };
+        self.register_with_turn(input, turn, None)
+    }
+    /// Register with the admission-owned turn from its pinned project generation.
+    pub(crate) fn register_pinned(
+        &self,
+        input: AsyncHookRegistration,
+        turn: AsyncHookTurn,
+        guard: Arc<dyn Fn() -> bool + Send + Sync>,
+    ) -> Result<(), HostError> {
+        if !guard() || !turn.is_live() {
+            return Err(error(
+                "ASYNC_HOOK_STALE_TURN",
+                "The async hook turn is no longer active.",
+            ));
+        }
+        self.register_with_turn(input, turn, Some(guard))
+    }
+    fn register_with_turn(
+        &self,
+        input: AsyncHookRegistration,
+        turn: AsyncHookTurn,
+        pinned_guard: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    ) -> Result<(), HostError> {
         if blank(&input.invocation_id) {
             return Ok(());
         }
@@ -271,6 +295,7 @@ impl AsyncHookRegistry {
         let pending = Arc::new(Pending {
             input,
             turn,
+            pinned_guard,
             expires_at: self.0.clock.now_ms() + timeout,
             timer: Mutex::new(None),
             delivery: Mutex::new(None),
@@ -346,9 +371,13 @@ impl AsyncHookRegistry {
         // Empty context still has a run fence, but never enters steer. The
         // fence is run identity, never the textual turn/run ID: a restarted
         // run may reuse both.
-        let turn = (self.0.turn)(&pending.input.session_key).filter(|t| {
-            !t.run_id().is_empty() && Arc::ptr_eq(t.identity(), pending.turn.identity())
-        });
+        let turn = if let Some(guard) = &pending.pinned_guard {
+            (guard() && pending.turn.is_live()).then(|| pending.turn.clone())
+        } else {
+            (self.0.turn)(&pending.input.session_key).filter(|t| {
+                !t.run_id().is_empty() && Arc::ptr_eq(t.identity(), pending.turn.identity())
+            })
+        };
         if context.is_empty() || turn.is_none() {
             let status = if turn.is_some() && pending.turn.is_live() {
                 // TS settles synchronously here, so no timer can run between
@@ -792,11 +821,53 @@ mod spawn_tests {
                 include_hook_events: false,
             },
             turn: bare_turn(),
+            pinned_guard: None,
             expires_at: f64::INFINITY,
             timer: Mutex::new(None),
             delivery: Mutex::new(None),
         })
     }
+    #[tokio::test]
+    async fn pinned_async_survives_generation_change_but_not_turn_replacement() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let registry = AsyncHookRegistry::new(Arc::new(TokioHookClock), |_| None, |_, _| {});
+        let current = Arc::new(AtomicBool::new(true));
+        let guard = {
+            let current = current.clone();
+            Arc::new(move || current.load(Ordering::SeqCst))
+        };
+        let registration = |id: &str| AsyncHookRegistration {
+            session_key: "s".into(),
+            invocation_id: id.into(),
+            hook_name: "h".into(),
+            hook_event: "PreToolUse".into(),
+            timeout_ms: None,
+            include_hook_events: false,
+        };
+        registry
+            .register_pinned(registration("first"), bare_turn(), guard.clone())
+            .unwrap();
+        let result = registry
+            .submit("s".into(), "first".into(), JsValue::Object(JsObject::new()))
+            .await
+            .unwrap();
+        assert_eq!(result.status, AsyncHookStatus::Delivered);
+        registry
+            .register_pinned(registration("stale"), bare_turn(), guard.clone())
+            .unwrap();
+        current.store(false, Ordering::SeqCst);
+        let result = registry
+            .submit("s".into(), "stale".into(), JsValue::Object(JsObject::new()))
+            .await
+            .unwrap();
+        assert_eq!(result.status, AsyncHookStatus::Expired);
+        assert!(
+            registry
+                .register_pinned(registration("rejected"), bare_turn(), guard)
+                .is_err()
+        );
+    }
+
     fn start(
         pending: &Arc<Pending>,
         future: impl Future<Output = Delivery> + Send + 'static,

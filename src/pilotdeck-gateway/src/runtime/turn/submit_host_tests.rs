@@ -723,3 +723,27 @@ async fn prepare_preserves_ask_run_mode() {
         );
     }
 }
+
+#[tokio::test]
+async fn native_turn_limits_reach_agent_options() {
+    let fake = Arc::new(Fake::default());
+    let host = make_host(&fake);
+    let prepared = host
+        .prepare(
+            &fake.input(&[
+                ("maxTurns", JsValue::Number(3.0)),
+                ("maxBudgetUsd", JsValue::Number(0.25)),
+            ]),
+            &run(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        prepared.options.get("maxTurns"),
+        Some(&JsValue::Number(3.0))
+    );
+    assert_eq!(
+        prepared.options.get("maxBudgetUsd"),
+        Some(&JsValue::Number(0.25))
+    );
+}

@@ -225,6 +225,19 @@ impl SettingsGateway {
         Self { options }
     }
 
+    /// Presence of the actual delegate, shared with native capability discovery.
+    pub(crate) fn supports(&self, method: &str) -> bool {
+        match method {
+            "apply_flag_settings" => self.options.apply_flag_settings.is_some(),
+            "update_settings" => self.options.update_settings.is_some(),
+            "resolve_settings" => self.options.resolve_settings.is_some(),
+            "reload_output_styles" => self.options.reload_output_styles.is_some(),
+            "reload_config" => self.options.reload_config.is_some(),
+            "reload_extensions" => self.options.reload_extensions.is_some(),
+            _ => false,
+        }
+    }
+
     /// `InProcessGateway.applyFlagSettings` (client/InProcessGateway.ts:2337).
     pub async fn apply_flag_settings(&self, input: &JsValue) -> Result<JsValue, SettingsError> {
         let port = self
@@ -295,7 +308,28 @@ impl SettingsGateway {
                 "Gateway organization policy denies SDK localSettings updates.",
             ));
         }
-        let updated = chain.writer.update(settings)?;
+        // File edits and candidate validation must not park the serial Gateway
+        // executor. The permit remains in the blocking job if the caller drops.
+        static WRITE_SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+            std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+        let updated = if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            let permit = WRITE_SLOTS
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| SettingsError::plain("Error", e.to_string()))?;
+            let writer = chain.writer.clone();
+            let settings = settings.clone();
+            handle
+                .spawn_blocking(move || {
+                    let _permit = permit;
+                    writer.update(&settings)
+                })
+                .await
+                .map_err(|e| SettingsError::plain("Error", e.to_string()))??
+        } else {
+            chain.writer.update(settings)?
+        };
         if updated.changed_paths.is_empty() {
             return Ok(update_result(
                 &updated.applied,

@@ -158,6 +158,8 @@ fn stream(
         input: parse_execute_request(&input(), &options(), vec![])
             .expect("#741i/#855: static turn fixture must parse and retain its shape")
             .1,
+        prompt_input: None,
+        should_call_model: true,
         integrity,
         delivered: StreamIntegrity::new(),
         active: None,
@@ -166,6 +168,7 @@ fn stream(
         pending_event: None,
         pending_durable: None,
         callback_cancel: None,
+        host_loop: false,
         accepted: false,
         preflight: 0,
         execute_ready: None,
@@ -4947,4 +4950,120 @@ async fn wire_durable_messages_match_ts_yield_before_callback() {
             std::fs::remove_dir_all(root).expect("#748 durable fixture cleanup");
         }
     }
+}
+
+#[tokio::test]
+async fn session_input_admission_records_expanded_text_keeps_raw_prompt_and_blocks_meta_model() {
+    let commands = vec![crate::runtime::plugins::PluginCommandContribution {
+        name: "demo".into(),
+        content: "body".into(),
+        description: None,
+        argument_hint: None,
+        namespace: "fixture".into(),
+    }];
+    let admission = Arc::new(crate::native_process::input_admission::InputAdmission::new(
+        &commands,
+    ));
+    let recorder = test_recorder();
+    let title_calls = Arc::new(AtomicUsize::new(0));
+    let title_observed = title_calls.clone();
+    let tail = crate::runtime::turn::runner::tail::SessionTail::new(
+        recorder.clone(),
+        "session".into(),
+        crate::runtime::turn::runner::tail::TailConfig {
+            auto_generate_title: true,
+            title_provider: Some(crate::runtime::turn::runner::tail::TitleProvider {
+                generate: Arc::new(move |_| {
+                    title_observed.fetch_add(1, Ordering::SeqCst);
+                    Box::pin(async { Ok(None) })
+                }),
+                provider_id: None,
+                model_provenance: None,
+            }),
+            ..Default::default()
+        },
+    );
+    let client_polled = Arc::new(AtomicBool::new(false));
+    let observed = client_polled.clone();
+    let handler = Arc::new(Handler::default());
+    let session = LiveSessionAdapter::new(recorder, Vec::new, move |_| {
+        let observed = observed.clone();
+        let handler = handler.clone();
+        Box::pin(async move {
+            let client: HostFuture<HostClient> = Box::pin(async move {
+                observed.store(true, Ordering::SeqCst);
+                Err(HostError::new(
+                    crate::host::HostErrorKind::Protocol,
+                    "unexpected model execution",
+                ))
+            });
+            Ok((client, handler as Arc<dyn HostHandler>, test_lease()))
+        })
+    })
+    .with_input_admission(admission)
+    .with_tail(tail);
+    let raw = parse_json(r#"{"type":"text","text":"/demo xyz","isMeta":true}"#).unwrap();
+    let mut turn = session.submit_turn_for_test(raw, options()).unwrap();
+    let mut accepted = None;
+    let mut prompt = None;
+    let mut failure = None;
+    let mut kinds = Vec::new();
+    for _ in 0..12 {
+        let Some(event) = next(turn.as_mut()).await.unwrap() else {
+            break;
+        };
+        let ty = event.get("type").and_then(JsValue::as_string);
+        if let Some(ty) = ty {
+            kinds.push(ty.clone());
+        }
+        if ty.is_some_and(|x| x.equals_str("input_accepted")) {
+            accepted = event.get("messages").cloned();
+        }
+        if ty.is_some_and(|x| x.equals_str("user_prompt_submitted")) {
+            prompt = event.get("prompt").cloned();
+        }
+        if ty.is_some_and(|x| x.equals_str("turn_failed")) {
+            failure = event.get("error").cloned();
+        }
+    }
+    let expected = parse_json(r#"[{"role":"user","content":[{"type":"text","text":"<plugin-command name=\"/demo\">\n<command-body>\n<<<PILOTDECK_COMMAND_BODY_0>>>\nbody\n<<<PILOTDECK_COMMAND_BODY_0>>>\n</command-body>\n\n<command-argument>\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\nxyz\n<<<PILOTDECK_COMMAND_ARGUMENT_0>>>\n</command-argument>\n</plugin-command>"}]}]"#).unwrap();
+    assert_eq!(accepted, Some(expected));
+    assert_eq!(prompt, Some("/demo xyz".into()));
+    assert_eq!(
+        failure.as_ref().and_then(|x| x.get("code")),
+        Some(&"agent_unsupported_feature".into())
+    );
+    let oracle = pilotdeck_protocol::parse_json(include_str!(
+        "../../../tests/fixtures/native-input-admission/meta-title-oracle.json"
+    ))
+    .expect("fixed TS meta/title oracle");
+    let expected_kinds: Vec<JsString> = match oracle.get("events") {
+        Some(JsValue::Array(events)) => events
+            .iter()
+            .map(|event| {
+                event
+                    .get("type")
+                    .and_then(JsValue::as_string)
+                    .expect("oracle event type")
+                    .clone()
+            })
+            .collect(),
+        _ => panic!("oracle events"),
+    };
+    let oracle_failure = match oracle.get("events") {
+        Some(JsValue::Array(events)) => events
+            .iter()
+            .find(|event| event.get("type") == Some(&JsValue::from("turn_failed")))
+            .and_then(|event| event.get("error"))
+            .cloned(),
+        _ => None,
+    };
+    assert_eq!(failure, oracle_failure, "native failure matches fixed TS");
+    assert_eq!(kinds, expected_kinds);
+    assert_eq!(
+        title_calls.load(Ordering::SeqCst),
+        1,
+        "auxiliary title invoked"
+    );
+    assert!(!client_polled.load(Ordering::SeqCst));
 }

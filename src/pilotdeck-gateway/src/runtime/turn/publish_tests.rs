@@ -1334,3 +1334,162 @@ async fn witnessed_job_fails_when_the_receipt_times_out() {
     assert!(matches!(error, RunRegistryError::Invalid(_)));
     let _ = std::fs::remove_dir_all(root);
 }
+
+// Native reliable-close cases deliberately gate actual FileRunRegistry writes;
+// all gates are released before each test ends, including the budget failure.
+#[tokio::test]
+async fn reliable_close_keeps_pending_timeout_and_failure_but_not_late_events() {
+    for fail in [false, true] {
+        let registry = ControlledRegistry::new(&json!({}));
+        registry.file.accept(&input()).unwrap();
+        let publisher = TurnPublisher::start_reliable(
+            run_ref(),
+            Some(registry.clone()),
+            Arc::new(TurnEventCoordinator::default()),
+            Duration::from_secs(1),
+        );
+        let terminal = js(&json!({"type":"error","code":"turn_timeout","message":"limit"}));
+        assert!(publisher.gateway_event(terminal.clone()));
+        publisher.close_live();
+        // Late pump activity must never turn a closed stream live again.
+        assert!(publisher.gateway_event(js(&json!({"type":"assistant_text_delta","text":"late"}))));
+        registry.release(0, fail).await;
+        let visible = tokio::time::timeout(Duration::from_secs(2), publisher.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            field(&visible, "code"),
+            &JsValue::from(if fail {
+                "result_unknown"
+            } else {
+                "turn_timeout"
+            })
+        );
+        if !fail {
+            assert_eq!(visible, terminal);
+        }
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(2), publisher.next())
+                .await
+                .unwrap(),
+            None
+        );
+        // The late write remains owned and is allowed to finish durably only.
+        registry.release(1, false).await;
+        assert_eq!(publisher.next().await, None);
+        publisher.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn reliable_close_bounds_unsettled_append_without_discarding_its_writer() {
+    let registry = ControlledRegistry::new(&json!({}));
+    registry.file.accept(&input()).unwrap();
+    let publisher = TurnPublisher::start_reliable(
+        run_ref(),
+        Some(registry.clone()),
+        Arc::new(TurnEventCoordinator::default()),
+        Duration::from_millis(20),
+    );
+    assert!(publisher.gateway_event(js(&json!({"type":"error","code":"turn_timeout"}))));
+    publisher.close_live();
+    let visible = tokio::time::timeout(Duration::from_secs(2), publisher.next())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(field(&visible, "code"), &JsValue::from("result_unknown"));
+    assert_eq!(publisher.next().await, None);
+    // Not a leaked/hung thread: the held real writer is still there and can
+    // settle once storage recovers. It must not reopen the exhausted stream.
+    registry.release(0, false).await;
+    publisher.finish().await;
+    assert_eq!(publisher.next().await, None);
+    assert_eq!(registry.durable.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn legacy_close_still_discards_pending_terminal_after_close() {
+    let registry = ControlledRegistry::new(&json!({}));
+    registry.file.accept(&input()).unwrap();
+    let publisher = TurnPublisher::start(
+        run_ref(),
+        Some(registry.clone()),
+        Arc::new(TurnEventCoordinator::default()),
+    );
+    publisher.gateway_event(js(&json!({"type":"error","code":"turn_timeout"})));
+    publisher.close_live();
+    registry.release(0, false).await;
+    assert_eq!(publisher.next().await, None);
+    publisher.finish().await;
+}
+
+#[tokio::test]
+async fn late_old_publisher_cannot_corrupt_reused_run_or_detach_successor() {
+    use crate::runtime::turn::replay::ActiveTurnSnapshotInput;
+    let coordinator = Arc::new(TurnEventCoordinator::new());
+    let old_run = RunRef {
+        session_key: "same".into(),
+        run_id: "same-run".into(),
+        project_key: Some("A".into()),
+    };
+    let new_run = RunRef {
+        session_key: "same".into(),
+        run_id: "same-run".into(),
+        project_key: Some("B".into()),
+    };
+    let old = TurnPublisher::start(old_run, None, coordinator.clone());
+    // Accepted before the successor starts; deferred completion exercises
+    // finish's replay write after the successor took the slot.
+    old.gateway_event(js(
+        &json!({"type":"turn_completed","runId":"same-run","text":"old-terminal"}),
+    ));
+    let new = TurnPublisher::start(new_run, None, coordinator.clone());
+    assert!(new.gateway_event(js(
+        &json!({"type":"model_event","runId":"same-run","text":"new-visible"})
+    )));
+    assert!(!old.emit(&js(
+        &json!({"type":"model_event","runId":"same-run","text":"old-emit"})
+    )));
+    old.gateway_event(js(
+        &json!({"type":"model_event","runId":"same-run","text":"old-late"}),
+    ));
+    old.finish().await;
+    while old.next().await.is_some() {}
+    let request = ActiveTurnSnapshotInput::new("same".into());
+    let snapshot = coordinator
+        .snapshot_for_project(&request, &"B".into())
+        .expect("new project replay");
+    let serialized = stringify_json(&snapshot.to_json()).unwrap().unwrap();
+    assert!(
+        snapshot.active,
+        "late cleanup must not terminate the new generation"
+    );
+    assert!(serialized.contains("new-visible"), "{serialized}");
+    assert!(
+        !serialized.contains("old-late")
+            && !serialized.contains("old-terminal")
+            && !serialized.contains("old-emit"),
+        "{serialized}"
+    );
+    assert!(new.emit(&js(
+        &json!({"type":"model_event","runId":"same-run","text":"new-after-cleanup"})
+    )));
+    let snapshot = coordinator
+        .snapshot_for_project(&request, &"B".into())
+        .unwrap();
+    assert!(
+        stringify_json(&snapshot.to_json())
+            .unwrap()
+            .unwrap()
+            .contains("new-after-cleanup")
+    );
+    new.finish().await;
+    while new.next().await.is_some() {}
+    assert!(
+        coordinator
+            .snapshot_for_project(&request, &"B".into())
+            .unwrap()
+            .terminal
+    );
+}

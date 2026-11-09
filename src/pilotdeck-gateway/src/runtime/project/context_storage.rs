@@ -64,6 +64,8 @@ pub struct ContextStorageResources {
 /// subagent definition routing; this factory does not implement `createContext`.
 #[derive(Default)]
 pub struct SessionContextOptions {
+    /// Retained, immutable extension catalog of the same session generation.
+    pub extension: Option<Arc<dyn crate::runtime::context::ExtensionResolver>>,
     /// Set for a scoped agent whose definition has `memory: "disabled"`.
     /// The default inherits this generation's resolver.
     pub memory_disabled: bool,
@@ -177,6 +179,7 @@ impl ContextStorageResources {
             .unwrap_or(30_000.0);
         let context_runtime = DefaultContextRuntime::new(ContextOptions {
             max_context_tokens,
+            extension: options.extension,
             runtime_context_surface: self.runtime_context_surface,
             instruction_discovery: Some(InstructionDiscovery::from_environment(
                 project_root.clone(),

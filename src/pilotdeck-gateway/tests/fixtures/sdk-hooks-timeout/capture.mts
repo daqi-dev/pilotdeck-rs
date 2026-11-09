@@ -1,0 +1,14 @@
+import {createHash} from "node:crypto";
+import {execFileSync} from "node:child_process";
+const fixedRoot="/Users/da/ws/pdrs-runner/resources/PilotDeck";
+if (execFileSync("git",["-C",fixedRoot,"rev-parse","HEAD"],{encoding:"utf8"}).trim() !== "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85") throw new Error("fixed TS checkout mismatch");
+import {readFile} from "node:fs/promises";
+const fixedSource="/Users/da/ws/pdrs-runner/resources/PilotDeck/src/cli/SessionInteractionBundle.ts";
+if (process.versions.node !== "22.22.0" || process.versions.icu !== "78.2") throw new Error("Node 22.22.0 and ICU 78.2 required");
+if (createHash("sha256").update(await readFile(fixedSource)).digest("hex") !== "e31efd0d2525410915b9ec8f8a23baac757db90455ab73a2ece8a8a5f49fd209") throw new Error("fixed TS source mismatch");
+import {writeFile,mkdir} from "node:fs/promises";
+import {SessionInteractionBundle} from "/Users/da/ws/pdrs-runner/resources/PilotDeck/src/cli/SessionInteractionBundle.ts";
+const root=process.argv[2];await mkdir(root,{recursive:true});const calls=[];
+const networkFetch=async(url,init)=>{calls.push({url:String(url),method:init?.method,headers:init?.headers,body:init?.body});await new Promise((resolve,reject)=>{const timer=setTimeout(resolve,250);init?.signal?.addEventListener("abort",()=>{clearTimeout(timer);reject(new DOMException("aborted","AbortError"))},{once:true})});return new Response(JSON.stringify({decision:"block",reason:"SDK_BLOCK"}),{status:200,headers:{"Content-Type":"application/json"}})};
+const bundle=new SessionInteractionBundle({sessionKey:"s",profile:{permissionProvider:"disabled",policyMode:"interactive"},canPrompt:false,permissionRules:[],hookSettings:{},sdkHooks:{url:"http://127.0.0.1:1/hook?old=keep",headers:{"X-Fixture":"yes"},events:{PreToolUse:[{matcher:"write_file",timeout:0.01}]}},shell:{execute:async()=>({stdout:"",stderr:"",exitCode:0})},projectRoot:"/fixture",networkFetch});
+const started=performance.now();const result=await bundle.hookRuntime.run({event:"PreToolUse",hookInput:{sessionId:"s",transcriptPath:"",cwd:"/fixture",hookEventName:"PreToolUse",toolName:"write_file",toolInput:{file_path:"out"},toolUseId:"call"},matchQuery:"write_file",cwd:"/fixture"});const elapsedMs=performance.now()-started;await bundle.hookRuntime.dispose();await writeFile(root+"/sdk-timeout-oracle.json",JSON.stringify({node:process.version,elapsedMs,calls,result},null,2)+"\n",{flag:"wx"});

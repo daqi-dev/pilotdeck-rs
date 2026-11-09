@@ -61,8 +61,11 @@ if mode == "handshake-reject":
 send(response(hello, **binding))
 capabilities = read()
 assert capabilities["method"] == "capabilities"
+methods = [dict(name="execute", profiles=["streaming"])]
+if mode == "sop-cancel":
+    methods.append(dict(name="cancel"))
 send(response(capabilities, **binding, payload=dict(
-    capabilitiesVersion="v1", methods=[dict(name="execute", profiles=["streaming"])])))
+    capabilitiesVersion="v1", methods=methods)))
 execute = read()
 assert execute["method"] == "execute"
 if pid_file:
@@ -77,6 +80,30 @@ send(response(execute, requestId=execute["requestId"], streamId="stream"))
 identity = {key: execute[key] for key in ("runId", "operationId", "requestId")}
 session, turn = execute["sessionId"], execute["turnId"]
 messages = execute["payload"].get("messages", [])
+if mode == "sop-cancel":
+    send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=0, final=False,
+              **identity, payload=dict(type="model_request_started", sessionId=session, turnId=turn)))
+    while True:
+        frame = read()
+        if frame.get("method") == "cancel":
+            break
+    send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=1, final=True,
+        outcome="cancelled", **identity, payload=dict(result=dict(type="aborted", sessionId=session,
+        turnId=turn, stopReason="aborted_streaming", turns=1, usage=dict(inputTokens=0, outputTokens=0,
+        totalTokens=0), permissionDenials=[], startedAt="2026-11-09T00:00:00Z",
+        completedAt="2026-11-09T00:00:01Z"), messages=messages)))
+    sys.exit(0)
+if mode == "sop-success":
+    send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=0, final=False,
+              **identity, payload=dict(type="model_request_started", sessionId=session, turnId=turn)))
+    result = dict(type="success", sessionId=session, turnId=turn, stopReason="completed", turns=1,
+        usage=dict(inputTokens=0, outputTokens=0, totalTokens=0), permissionDenials=[],
+        startedAt="2026-11-09T00:00:00Z", completedAt="2026-11-09T00:00:01Z")
+    send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=1, final=False,
+              **identity, payload=dict(type="turn_completed", sessionId=session, turnId=turn, result=result)))
+    send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=2, final=True,
+              outcome="completed", **identity, payload=dict(result=result, messages=messages)))
+    sys.exit(0)
 if mode == "hold":
     send(dict(kind="event", eventType="agent_event", streamId="stream", sequence=0, final=False,
               **identity, payload=dict(type="model_request_started", sessionId=session, turnId=turn)))

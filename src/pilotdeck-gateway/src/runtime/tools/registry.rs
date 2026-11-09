@@ -55,12 +55,40 @@ struct Inner {
 /// Cloning this handle shares the live registry. `snapshot` implements TS clone().
 #[derive(Clone)]
 pub struct ToolRegistry(Arc<Inner>);
+#[derive(Clone)]
+pub(crate) struct WeakToolRegistry(Weak<Inner>);
+impl WeakToolRegistry {
+    pub(crate) fn upgrade(&self) -> Option<ToolRegistry> {
+        self.0.upgrade().map(ToolRegistry)
+    }
+}
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new(None, None)
     }
 }
 impl ToolRegistry {
+    pub(crate) fn downgrade(&self) -> WeakToolRegistry {
+        WeakToolRegistry(Arc::downgrade(&self.0))
+    }
+    /// Configuration diagnostics only; never use this unfiltered inventory for
+    /// model schemas, aliases or execution authorization.
+    pub(crate) fn registered_names(&self) -> Vec<JsString> {
+        let mut names = self
+            .0
+            .parent
+            .as_ref()
+            .map(Self::registered_names)
+            .unwrap_or_default();
+        for entry in &self.0.state.lock().unwrap().tools {
+            let name = name_of(entry);
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        names
+    }
+
     pub fn new(parent: Option<Self>, policy: Option<ToolPolicy>) -> Self {
         Self(Arc::new(Inner {
             state: Mutex::default(),

@@ -1,0 +1,179 @@
+{
+  "cases": [
+    {
+      "id": "provider",
+      "input": {
+        "sessionKey": "parent",
+        "subagentId": "child"
+      },
+      "calls": [
+        {
+          "kind": "agent",
+          "sessionId": "parent",
+          "transcriptPath": "<CASE>/home/projects/tmp-pdrs-subagent-terra-20261108-provider-out-provider-project/chats/parent.jsonl"
+        },
+        {
+          "kind": "subagent",
+          "sessionId": "sub-session",
+          "parentSessionId": "parent",
+          "transcriptPath": "<CASE>/home/projects/tmp-pdrs-subagent-terra-20261108-provider-out-provider-project/chats/parent/subagents/child.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "parent::sub::child-msg-0-0",
+            "sessionKey": "parent::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "PROVIDER CHILD",
+            "entryId": "e1",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 1
+          }
+        ],
+        "total": 1
+      }
+    },
+    {
+      "id": "provider-missing-session",
+      "input": {
+        "sessionKey": "parent",
+        "subagentId": "child"
+      },
+      "calls": [
+        {
+          "kind": "agent",
+          "sessionId": "parent",
+          "transcriptPath": "<CASE>/home/projects/tmp-pdrs-subagent-terra-20261108-provider-out-provider-missing-session-project/chats/parent.jsonl"
+        }
+      ],
+      "error": {
+        "name": "Error",
+        "message": "relativeTranscriptPath points outside the project transcript directory."
+      }
+    },
+    {
+      "id": "provider-duplicate",
+      "input": {
+        "sessionKey": "parent",
+        "subagentId": "child"
+      },
+      "calls": [
+        {
+          "kind": "agent",
+          "sessionId": "parent",
+          "transcriptPath": "<CASE>/home/projects/tmp-pdrs-subagent-terra-20261108-provider-out-provider-duplicate-project/chats/parent.jsonl"
+        },
+        {
+          "kind": "subagent",
+          "sessionId": "sub-session",
+          "parentSessionId": "parent",
+          "transcriptPath": "<CASE>/home/projects/tmp-pdrs-subagent-terra-20261108-provider-out-provider-duplicate-project/chats/parent/subagents/child.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "parent::sub::child-msg-0-0",
+            "sessionKey": "parent::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "PROVIDER CHILD",
+            "entryId": "e1",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 1
+          }
+        ],
+        "total": 1
+      }
+    },
+    {
+      "id": "provider-parent-override",
+      "input": {
+        "sessionKey": "parent",
+        "subagentId": "child",
+        "parentSessionId": "other-parent"
+      },
+      "calls": [
+        {
+          "kind": "agent",
+          "sessionId": "other-parent",
+          "transcriptPath": "<CASE>/home/projects/tmp-pdrs-subagent-terra-20261108-provider-out-provider-parent-override-project/chats/other-parent.jsonl"
+        },
+        {
+          "kind": "subagent",
+          "sessionId": "sub-session",
+          "parentSessionId": "other-parent",
+          "transcriptPath": "<CASE>/home/projects/tmp-pdrs-subagent-terra-20261108-provider-out-provider-parent-override-project/chats/other-parent/subagents/child.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "parent::sub::child-msg-0-0",
+            "sessionKey": "parent::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "PROVIDER CHILD",
+            "entryId": "e1",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 1
+          }
+        ],
+        "total": 1
+      }
+    },
+    {
+      "id": "background-path",
+      "input": {
+        "sessionKey": "parent",
+        "subagentId": "child",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/parent.jsonl"
+      },
+      "calls": [],
+      "result": {
+        "messages": [
+          {
+            "id": "parent::sub::child-msg-0-0",
+            "sessionKey": "parent::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "PROVIDER CHILD",
+            "entryId": "e1",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 1
+          }
+        ],
+        "total": 1
+      }
+    },
+    {
+      "id": "background-invalid",
+      "input": {
+        "sessionKey": "parent",
+        "subagentId": "child",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "../outside.jsonl"
+      },
+      "calls": [],
+      "error": {
+        "name": "Error",
+        "message": "relativeTranscriptPath points outside the project transcript directory."
+      }
+    }
+  ]
+}

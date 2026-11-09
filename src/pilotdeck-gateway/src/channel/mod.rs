@@ -3,16 +3,21 @@
 pub mod api_server;
 pub mod bluebubbles;
 pub mod feishu;
+pub mod home_assistant;
 pub(crate) mod http_client;
 pub(crate) mod im_attachment;
 pub mod im_cron;
 pub(crate) mod im_interaction;
 pub mod loader;
+pub mod matrix;
+pub mod mattermost;
 pub mod protocol;
 pub mod runtime_status;
 pub mod server;
+pub mod signal;
 pub mod slack;
 pub mod sms;
+pub mod telegram;
 #[cfg(test)]
 mod tests;
 pub mod turn_submitter;

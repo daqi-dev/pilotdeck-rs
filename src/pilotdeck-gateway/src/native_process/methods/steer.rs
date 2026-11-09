@@ -117,8 +117,9 @@ impl Requests {
         // Same shared lookup as the async-hook registry's turn resolution:
         // fetch the steer slot and guard it against the admission run ID
         // already checked above (`active_turn_for` performs the guard).
-        let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
+        let steer_info = crate::runtime::project::interaction_steer::active_turn_for_project(
             &self.project,
+            Some(&self.options.project),
             &session_key,
             Some(&active_run),
         );
@@ -199,8 +200,9 @@ impl Requests {
             ]));
         }
 
-        let steer_info = crate::runtime::project::interaction_steer::active_turn_for(
+        let steer_info = crate::runtime::project::interaction_steer::active_turn_for_project(
             &self.project,
+            Some(&self.options.project),
             &session_key,
             Some(&active_run),
         );

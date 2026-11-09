@@ -5,7 +5,7 @@
 //! separate concern in `instructions`.
 use crate::host::{HostError, ModuleError};
 use crate::metadata::js_trim;
-use crate::project_files::{node_collator, node_locale};
+use crate::project_files::{node_collator, node_compare_utf16, node_locale};
 use icu_locale_core::Locale;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -28,8 +28,8 @@ pub struct ContributedSkill {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct McpServerInstruction {
-    pub server_name: String,
-    pub instructions: Option<String>,
+    pub server_name: JsString,
+    pub instructions: Option<JsString>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContributedPrompt {
@@ -62,14 +62,14 @@ impl ExtensionResolver for NullExtensionResolver {}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PromptSections {
-    pub default_system_prompt: Vec<String>,
+    pub default_system_prompt: Vec<JsString>,
     pub user_context: Vec<String>,
     pub system_context: Vec<String>,
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PromptResult {
-    pub parts: Vec<String>,
-    pub joined: String,
+    pub parts: Vec<JsString>,
+    pub joined: JsString,
     pub sections: PromptSections,
 }
 pub struct PromptAssembler {
@@ -111,9 +111,9 @@ impl PromptAssembler {
         run_mode: Option<&str>,
         additional_working_directories: &[String],
         tools: &[pilotdeck_protocol::JsValue],
-        custom_system_prompt: Option<&str>,
+        custom_system_prompt: Option<&JsString>,
         use_custom_system_prompt: bool,
-        append_system_prompt: Option<&str>,
+        append_system_prompt: Option<&JsString>,
         include_extensions_with_custom_system_prompt: bool,
         include_user_context_in_system_prompt: bool,
         timestamp_ms: f64,
@@ -132,27 +132,37 @@ impl PromptAssembler {
         let use_custom = use_custom_system_prompt;
         if use_custom {
             if let Some(custom) = custom_system_prompt {
-                let trimmed = js_trim(custom);
+                let trimmed = crate::runtime::memory::js_trim_units(custom.units());
                 if !trimmed.is_empty() {
-                    parts.push(trimmed.to_owned());
+                    parts.push(JsString::from_utf16(trimmed.to_vec()));
                 }
             }
         } else {
             parts.extend(sections.default_system_prompt.iter().cloned());
         }
         if include_user_context_in_system_prompt {
-            parts.extend(sections.user_context.iter().cloned());
+            parts.extend(
+                sections
+                    .user_context
+                    .iter()
+                    .map(|value| JsString::from(value.as_str())),
+            );
         }
         if !use_custom || include_extensions_with_custom_system_prompt {
-            parts.extend(sections.system_context.iter().cloned());
+            parts.extend(
+                sections
+                    .system_context
+                    .iter()
+                    .map(|value| JsString::from(value.as_str())),
+            );
         }
         if let Some(append) = append_system_prompt {
-            let trimmed = js_trim(append);
+            let trimmed = crate::runtime::memory::js_trim_units(append.units());
             if !trimmed.is_empty() {
-                parts.push(trimmed.to_owned());
+                parts.push(JsString::from_utf16(trimmed.to_vec()));
             }
         }
-        let joined = parts.join("\n\n");
+        let joined = join_utf16(&parts, "\n\n");
         Ok(PromptResult {
             parts,
             joined,
@@ -198,7 +208,7 @@ impl PromptAssembler {
         run_mode: Option<&str>,
         additional_working_directories: &[String],
         tools: &[pilotdeck_protocol::JsValue],
-    ) -> Result<Vec<String>, HostError> {
+    ) -> Result<Vec<JsString>, HostError> {
         let has_web_search = has_tool(tools, "web_search")?;
         let has_web_fetch = has_tool(tools, "web_fetch")?;
         let documentation_lookup_policy = if has_web_search {
@@ -236,13 +246,13 @@ impl PromptAssembler {
                 lines.push(format!("- {dir}"));
             }
         }
+        let mut units: Vec<u16> = lines.join("\n").encode_utf16().collect();
         let mcp_block = self.format_mcp_instructions();
         if !mcp_block.is_empty() {
-            lines.push(String::new());
-            lines.push("Connected MCP server instructions:".into());
-            lines.push(mcp_block);
+            units.extend("\n\nConnected MCP server instructions:\n".encode_utf16());
+            units.extend_from_slice(mcp_block.units());
         }
-        Ok(vec![lines.join("\n")])
+        Ok(vec![JsString::from_utf16(units)])
     }
 
     fn build_system_context(&self, timestamp_ms: f64) -> Vec<String> {
@@ -260,41 +270,57 @@ impl PromptAssembler {
         sections
     }
 
-    fn format_mcp_instructions(&self) -> String {
-        let mut populated: Vec<(String, String)> = self
+    fn format_mcp_instructions(&self) -> JsString {
+        let mut populated: Vec<(JsString, JsString)> = self
             .extension
             .list_mcp_instructions()
             .into_iter()
             .filter_map(|entry| {
                 let instructions = entry.instructions?;
-                let trimmed = js_trim(&instructions);
+                let trimmed = crate::runtime::memory::js_trim_units(instructions.units());
                 if trimmed.is_empty() {
                     return None;
                 }
-                Some((entry.server_name, trimmed.to_owned()))
+                Some((entry.server_name, JsString::from_utf16(trimmed.to_vec())))
             })
             .collect();
         if populated.is_empty() {
-            return String::new();
+            return JsString::from("");
         }
-        // Prompt-cache stability: Node's default localeCompare order.
         if let Ok(collator) = node_collator(&self.locale) {
-            populated.sort_by(|a, b| collator.compare(&a.0, &b.0));
+            populated.sort_by(|a, b| node_compare_utf16(&collator, &a.0, &b.0));
         } else {
-            populated.sort_by(|a, b| a.0.encode_utf16().cmp(b.0.encode_utf16()));
+            populated.sort_by(|a, b| a.0.units().cmp(b.0.units()));
         }
-        let mut lines = vec!["<mcp-instructions>".to_owned()];
-        for (server_name, instructions) in populated {
-            lines.push(format!(
-                "<server name=\"{}\">",
-                escape_xml_attribute(&server_name)
-            ));
-            lines.push(instructions);
-            lines.push("</server>".into());
+        let mut units: Vec<u16> = "<mcp-instructions>".encode_utf16().collect();
+        for (server, instructions) in populated {
+            units.extend("\n<server name=\"".encode_utf16());
+            for unit in server.units() {
+                match *unit {
+                    0x26 => units.extend("&amp;".encode_utf16()),
+                    0x22 => units.extend("&quot;".encode_utf16()),
+                    0x3c => units.extend("&lt;".encode_utf16()),
+                    value => units.push(value),
+                }
+            }
+            units.extend("\">\n".encode_utf16());
+            units.extend_from_slice(instructions.units());
+            units.extend("\n</server>".encode_utf16());
         }
-        lines.push("</mcp-instructions>".into());
-        lines.join("\n")
+        units.extend("\n</mcp-instructions>".encode_utf16());
+        JsString::from_utf16(units)
     }
+}
+
+pub(super) fn join_utf16(parts: &[JsString], separator: &str) -> JsString {
+    let mut units = Vec::new();
+    for (index, part) in parts.iter().enumerate() {
+        if index > 0 {
+            units.extend(separator.encode_utf16());
+        }
+        units.extend_from_slice(part.units());
+    }
+    JsString::from_utf16(units)
 }
 
 fn has_tool(tools: &[pilotdeck_protocol::JsValue], name: &str) -> Result<bool, HostError> {

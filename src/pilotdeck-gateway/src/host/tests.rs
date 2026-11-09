@@ -8,7 +8,9 @@ mod cancel_exit;
 mod event;
 mod model;
 mod modules;
+mod native_terminal;
 mod resume;
+mod tcp;
 
 /// Test-only observations plus an opt-in reconnect gate. Production builds
 /// contain neither; the gate separates real child exit from virtual timers.

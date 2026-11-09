@@ -1,0 +1,1960 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": "88485d2d6cbbfe16245edb5baa7152f7e773fce5e64257e7ec25f7f01233c205",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "cases": [
+    {
+      "id": "manual",
+      "argv": [
+        "wecom"
+      ],
+      "answers": [
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          "n"
+        ],
+        [
+          "Bot ID: ",
+          "fixture-bot"
+        ],
+        [
+          "Secret: ",
+          "fixture-secret"
+        ],
+        [
+          "WebSocket URL (默认: wss://openws.work.weixin.qq.com): ",
+          ""
+        ],
+        [
+          "私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): ",
+          "2"
+        ],
+        [
+          "允许私聊的企业微信用户 ID（逗号分隔，留空则暂时禁用私聊）: ",
+          " a, b ,, "
+        ],
+        [
+          "群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): ",
+          "3"
+        ],
+        [
+          "允许响应的群聊 chat_id（逗号分隔）: ",
+          " grp-1, grp-2 "
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: WebSocket URL (默认: wss://openws.work.weixin.qq.com): 私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): 允许私聊的企业微信用户 ID（逗号分隔，留空则暂时禁用私聊）: 群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): 允许响应的群聊 chat_id（逗号分隔）: \n企业微信配置已写入 pilotdeck.yaml\n连接模式: AI Bot WebSocket (无需公网 IP)\n重启 PilotDeck 服务后生效。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 8,
+      "after": "adapters:\n  wecom:\n    enabled: true\n    token: fixture-bot\n    extra:\n      secret: fixture-secret\n      websocket_url: wss://openws.work.weixin.qq.com\n      dm_policy: allowlist\n      group_policy: allowlist\n      allow_from:\n        - a\n        - b\n      group_allow_from:\n        - grp-1\n        - grp-2\n",
+      "events": [],
+      "clock": 0
+    },
+    {
+      "id": "reuse",
+      "argv": [
+        "work-weixin"
+      ],
+      "initial": "keep: &group\n  value: old\nadapters:\n  other:\n    enabled: true\n  wecom:\n    enabled: false\n    token: old-bot-id\n    extra:\n      secret: old-secret\n      websocketUrl: wss://old.example\n      dm_policy: ' ALLOWLIST '\n      allowFrom: [a, ' b ', '', 7]\n      group_policy: invalid\n      groupAllowFrom: 'g1, g2'\n      groups: *group\n",
+      "answers": [
+        [
+          "重新配置？ [y/N]: ",
+          "no"
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n已有企业微信配置 (Bot ID: old-…t-id)\n重新配置？ [y/N]: 企业微信已启用（使用现有凭据）。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 1,
+      "after": "keep:\n  value: old\nadapters:\n  other:\n    enabled: true\n  wecom:\n    enabled: true\n    token: old-bot-id\n    extra:\n      secret: old-secret\n      websocket_url: wss://old.example\n      dm_policy: allowlist\n      group_policy: disabled\n      allow_from:\n        - a\n        - b\n        - \"7\"\n      group_allow_from:\n        - g1\n        - g2\n      groups:\n        value: old\n",
+      "events": [],
+      "clock": 0
+    },
+    {
+      "id": "skip",
+      "argv": [
+        "workwechat"
+      ],
+      "answers": [
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          "no"
+        ],
+        [
+          "Bot ID: ",
+          ""
+        ],
+        [
+          "Secret: ",
+          ""
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: \n未提供完整 Bot ID / Secret，跳过企业微信配置。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 3,
+      "after": null,
+      "events": [],
+      "clock": 0
+    },
+    {
+      "id": "qr-retry-success",
+      "argv": [
+        "wecom"
+      ],
+      "answers": [
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          ""
+        ],
+        [
+          "WebSocket URL (默认: wss://openws.work.weixin.qq.com): ",
+          ""
+        ],
+        [
+          "私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): ",
+          ""
+        ],
+        [
+          "群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "data": {
+              "scode": "a/b 中",
+              "auth_url": "https://fixture.invalid/scan"
+            }
+          }
+        },
+        {
+          "error": "fixture query failed"
+        },
+        {
+          "json": {
+            "data": {
+              "status": "SUCCESS",
+              "bot_info": {
+                "bot_id": " qr-bot ",
+                "secret": " qr-secret "
+              }
+            }
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 正在连接企业微信生成扫码链接...\n\n请用企业微信手机端扫描/打开以下链接：\nhttps://fixture.invalid/scan\n\n如果无法直接扫码，请打开：\nhttps://work.weixin.qq.com/ai/qc/gen?source=hermes&scode=a%2Fb%20%E4%B8%AD\n\n等待扫码结果...\nWebSocket URL (默认: wss://openws.work.weixin.qq.com): 私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): 群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): \n企业微信配置已写入 pilotdeck.yaml\n连接模式: AI Bot WebSocket (无需公网 IP)\n重启 PilotDeck 服务后生效。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 4,
+      "after": "adapters:\n  wecom:\n    enabled: true\n    token: qr-bot\n    extra:\n      secret: qr-secret\n      websocket_url: wss://openws.work.weixin.qq.com\n      dm_policy: open\n      group_policy: disabled\n",
+      "events": [
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/generate?source=hermes",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        }
+      ],
+      "clock": 3000
+    },
+    {
+      "id": "qr-malformed",
+      "argv": [
+        "wecom"
+      ],
+      "answers": [
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          ""
+        ],
+        [
+          "Bot ID: ",
+          ""
+        ],
+        [
+          "Secret: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "data": {}
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 正在连接企业微信生成扫码链接...\n企业微信扫码接口返回格式异常。\n\n扫码未完成或接口不可用，将使用手动输入模式。\n\n手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: \n未提供完整 Bot ID / Secret，跳过企业微信配置。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 3,
+      "after": null,
+      "events": [
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/generate?source=hermes",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "qr-http-error",
+      "argv": [
+        "wecom"
+      ],
+      "answers": [
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          ""
+        ],
+        [
+          "Bot ID: ",
+          ""
+        ],
+        [
+          "Secret: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "status": 503,
+          "raw": "{bad"
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 正在连接企业微信生成扫码链接...\n企业微信扫码失败: HTTP 503\n\n扫码未完成或接口不可用，将使用手动输入模式。\n\n手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: \n未提供完整 Bot ID / Secret，跳过企业微信配置。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 3,
+      "after": null,
+      "events": [
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/generate?source=hermes",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "qr-missing-creds",
+      "argv": [
+        "wecom"
+      ],
+      "answers": [
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          ""
+        ],
+        [
+          "Bot ID: ",
+          ""
+        ],
+        [
+          "Secret: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "data": {
+              "scode": "a/b 中",
+              "auth_url": "https://fixture.invalid/scan"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "success",
+              "bot_info": {
+                "botid": "only-id"
+              }
+            }
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 正在连接企业微信生成扫码链接...\n\n请用企业微信手机端扫描/打开以下链接：\nhttps://fixture.invalid/scan\n\n如果无法直接扫码，请打开：\nhttps://work.weixin.qq.com/ai/qc/gen?source=hermes&scode=a%2Fb%20%E4%B8%AD\n\n等待扫码结果...\n扫码成功但未返回完整 Bot 凭据。\n\n扫码未完成或接口不可用，将使用手动输入模式。\n\n手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: \n未提供完整 Bot ID / Secret，跳过企业微信配置。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 3,
+      "after": null,
+      "events": [
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/generate?source=hermes",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        }
+      ],
+      "clock": 0
+    },
+    {
+      "id": "qr-timeout",
+      "argv": [
+        "wecom"
+      ],
+      "answers": [
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          ""
+        ],
+        [
+          "Bot ID: ",
+          ""
+        ],
+        [
+          "Secret: ",
+          ""
+        ]
+      ],
+      "responses": [
+        {
+          "json": {
+            "data": {
+              "scode": "a/b 中",
+              "auth_url": "https://fixture.invalid/scan"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        },
+        {
+          "json": {
+            "data": {
+              "status": "waiting"
+            }
+          }
+        }
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 正在连接企业微信生成扫码链接...\n\n请用企业微信手机端扫描/打开以下链接：\nhttps://fixture.invalid/scan\n\n如果无法直接扫码，请打开：\nhttps://work.weixin.qq.com/ai/qc/gen?source=hermes&scode=a%2Fb%20%E4%B8%AD\n\n等待扫码结果...\n企业微信扫码超时。\n\n扫码未完成或接口不可用，将使用手动输入模式。\n\n手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: \n未提供完整 Bot ID / Secret，跳过企业微信配置。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 3,
+      "after": null,
+      "events": [
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/generate?source=hermes",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        },
+        {
+          "url": "https://work.weixin.qq.com/ai/qc/query_result?scode=a%2Fb%20%E4%B8%AD",
+          "method": "GET",
+          "body": null,
+          "headers": {
+            "User-Agent": "PilotDeck/1.0"
+          }
+        }
+      ],
+      "clock": 300000
+    },
+    {
+      "id": "reconfigure",
+      "argv": [
+        "wecom"
+      ],
+      "initial": "keep: &group\n  value: old\nadapters:\n  other:\n    enabled: true\n  wecom:\n    enabled: false\n    token: old-bot-id\n    extra:\n      secret: old-secret\n      websocketUrl: wss://old.example\n      dm_policy: ' ALLOWLIST '\n      allowFrom: [a, ' b ', '', 7]\n      group_policy: invalid\n      groupAllowFrom: 'g1, g2'\n      groups: *group\n",
+      "answers": [
+        [
+          "重新配置？ [y/N]: ",
+          "yes"
+        ],
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          "n"
+        ],
+        [
+          "Bot ID (当前: old-…t-id): ",
+          ""
+        ],
+        [
+          "Secret (回车保留当前值): ",
+          ""
+        ],
+        [
+          "WebSocket URL (默认: wss://openws.work.weixin.qq.com): ",
+          ""
+        ],
+        [
+          "私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): ",
+          "3"
+        ],
+        [
+          "群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): ",
+          "2"
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n已有企业微信配置 (Bot ID: old-…t-id)\n重新配置？ [y/N]: 企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID (当前: old-…t-id): Secret (回车保留当前值): WebSocket URL (默认: wss://openws.work.weixin.qq.com): 私聊访问策略 [1=open 推荐, 2=allowlist, 3=disabled] (默认 1): 群聊访问策略 [1=disabled 推荐, 2=open, 3=allowlist] (默认 1): \n企业微信配置已写入 pilotdeck.yaml\n连接模式: AI Bot WebSocket (无需公网 IP)\n重启 PilotDeck 服务后生效。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 7,
+      "after": "keep:\n  value: old\nadapters:\n  other:\n    enabled: true\n  wecom:\n    enabled: true\n    token: old-bot-id\n    extra:\n      secret: old-secret\n      websocket_url: wss://openws.work.weixin.qq.com\n      dm_policy: disabled\n      group_policy: open\n",
+      "events": [],
+      "clock": 0
+    },
+    {
+      "id": "menu",
+      "argv": [],
+      "answers": [
+        [
+          "请选择 [1/2/3/4/q]: ",
+          "3"
+        ],
+        [
+          "是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: ",
+          "n"
+        ],
+        [
+          "Bot ID: ",
+          ""
+        ],
+        [
+          "Secret: ",
+          ""
+        ]
+      ],
+      "stdout": "\n╔══════════════════════════════════════════════════╗\n║  PilotDeck Gateway Setup                        ║\n║  配置 IM 平台连接                                ║\n╚══════════════════════════════════════════════════╝\n\n可配置的平台：\n  1) 飞书 / Lark      [未配置]\n  2) 微信 (iLink)     [未配置]\n  3) 企业微信 WeCom   [未配置]\n  4) 全部配置\n  q) 退出\n\n请选择 [1/2/3/4/q]: ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n  企业微信 WeCom AI Bot 配置\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n企业微信 AI Bot 通过官方 WebSocket 网关连接，无需公网回调地址。\n请确保你有企业微信组织管理员权限，或已在管理后台拿到 Bot ID 和 Secret。\n\n是否扫码自动创建/获取 Bot ID 和 Secret？ [Y/n]: 手动配置步骤：\n  1. 登录企业微信管理后台\n  2. 进入应用管理，创建 AI Bot / 智能机器人\n  3. 选择 API 模式\n  4. 复制 Bot ID 和 Secret\n\nBot ID: Secret: \n未提供完整 Bot ID / Secret，跳过企业微信配置。\n\n",
+      "stderr": "",
+      "code": 0,
+      "timeout": false,
+      "answered": 4,
+      "after": null,
+      "events": [],
+      "clock": 0
+    }
+  ]
+}

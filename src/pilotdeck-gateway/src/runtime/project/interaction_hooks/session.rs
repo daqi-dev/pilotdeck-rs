@@ -6,9 +6,18 @@ pub struct SessionHooks(TurnHooks);
 impl InteractionHooks {
     pub fn bind_session(
         &self,
+        binding: lifecycle::Binding,
+        run_id: JsString,
+        settings: HooksSettings,
+    ) -> Result<SessionHooks, HostError> {
+        self.bind_session_with_options(binding, run_id, settings, HookRuntimeOptions::default())
+    }
+    pub(crate) fn bind_session_with_options(
+        &self,
         mut binding: lifecycle::Binding,
         run_id: JsString,
         settings: HooksSettings,
+        options: HookRuntimeOptions,
     ) -> Result<SessionHooks, HostError> {
         let signal = binding.signal.take();
         let scope = Self {
@@ -16,12 +25,13 @@ impl InteractionHooks {
             sessions: Arc::default(),
             permission: self.permission.clone(),
         };
-        let hooks = scope.bind_turn(
+        let hooks = scope.bind_with_options(
             binding,
             run_id,
             settings,
             None,
             &mut ModuleRouter::default(),
+            options,
         )?;
         // Revocation still signals and drains an admitted executor; ordinary
         // abort must not close this scope before the lifecycle tail runs.
@@ -112,6 +122,47 @@ mod tests {
         timeout(Duration::from_secs(5), future)
             .await
             .expect("#743 session scope bounded")
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn session_end_uses_selected_native_shell_and_output_budget() {
+        let raw = pilotdeck_protocol::parse_json(
+            r#"{"SessionEnd":[{"hooks":[{"type":"command","command":"yes 0123456789"}]}]}"#,
+        )
+        .unwrap();
+        let settings = crate::hooks::config::parse_hooks_config(&raw).settings;
+        let root = std::env::temp_dir();
+        let sandbox = Arc::new(crate::runtime::tools::sandbox::NativeSandbox::new(
+            crate::runtime::project::SandboxMode::DangerFullAccess,
+            root.clone(),
+        ));
+        let resource = InteractionHooks::new(InteractionPermission::default());
+        let session = resource
+            .bind_session_with_options(
+                binding(Cancellation::new()),
+                "bounded-end".into(),
+                settings,
+                HookRuntimeOptions {
+                    shell: Some(Arc::new(crate::runtime::hooks::exec::SandboxedHookShell {
+                        sandbox,
+                        workspace: root.to_string_lossy().as_ref().into(),
+                    })),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let result = timeout(Duration::from_secs(10), session.dispatch(input()))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            result
+                .blocking_errors
+                .iter()
+                .any(|item| item.code == "native_hook_output_limit"),
+            "{result:?}"
+        );
+        bounded(session.dispose()).await.unwrap();
     }
     #[tokio::test]
     async fn session_abort_does_not_revoke_admitted_end() {

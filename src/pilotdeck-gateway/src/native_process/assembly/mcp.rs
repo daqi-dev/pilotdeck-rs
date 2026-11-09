@@ -11,21 +11,23 @@ use std::sync::Arc;
 
 // ── U6 MCP resolver / session-plugins for the native process (#1319) ────────
 
-/// The native process serves exactly one project. The SDK MCP resolver resolves
-/// any `projectKey` (or no key) to that project's plugin runtime. This mirrors
-/// `ProjectRuntimeRegistry.resolve` without exposing the full SDK session layer.
+/// Resolve each explicit project on the same shared registry and retain its lease.
 struct NativeMcpResolver {
     project: Arc<crate::runtime::project::ProjectRuntimeRegistry>,
 }
 impl SdkMcpProjectResolver for NativeMcpResolver {
     fn resolve<'a>(
         &'a self,
-        _project_key: Option<&'a JsString>,
+        project_key: Option<&'a JsString>,
     ) -> SdkMcpFuture<'a, Result<Arc<dyn SdkMcpProject>, SdkMcpError>> {
+        let root = project_key.map(super::super::project_scope::resolve);
         let project = self.project.clone();
         Box::pin(async move {
+            let root = root
+                .transpose()
+                .map_err(|error| SdkMcpError::plain("Error", error.message))?;
             let lease = project
-                .acquire(None)
+                .acquire(root.as_deref())
                 .map_err(|e| SdkMcpError::plain("Error", JsString::from(e.to_string())))?;
             let resources = lease
                 .runtime()
@@ -97,22 +99,24 @@ pub(super) fn build_mcp_gateway(
     build_project: &Arc<ProjectRuntimeRegistry>,
     permission_rule_sets: &Arc<GatewaySessionPermissionRuleSetRegistry>,
     build_mcp_config: &Arc<std::sync::OnceLock<Arc<SdkMcpConfig>>>,
+    projects: Arc<SdkSessionProjects>,
 ) -> Arc<McpGateway> {
     // U6 MCP four-control gateway (#1319): wire the #1215 component
     // into the native request router. The SdkMcpConfig owns the
     // registry state; the McpGateway owns validation, the busy gate,
     // and the post-success close. The close_session callback mirrors
     // the TS `closeSession` that the registry calls after its commit.
-    let close_owner = owner.clone();
+    // Config is retained by the session factory. Its callback must not own
+    // the router that in turn owns that same factory.
+    let close_owner = owner.weak_close();
     let close_session: SdkMcpCloseSession = Arc::new(move |session_key, _reason| {
         let key = match &session_key {
             JsValue::String(key) => key.clone(),
             _ => JsString::from(""),
         };
-        let owner = close_owner.clone();
+        let closing = close_owner(&key);
         Box::pin(async move {
-            owner
-                .close(&key)
+            closing
                 .await
                 .map_err(|error| SdkMcpError::plain("Error", JsString::from(error.message)))
         })
@@ -125,7 +129,7 @@ pub(super) fn build_mcp_gateway(
         session_plugins: Arc::new(NoSessionPlugins),
         permission_rule_sets: permission_rule_sets.clone(),
         environment: Arc::new(SystemEnvironment),
-        projects: SdkSessionProjects::shared(),
+        projects,
     }));
     // Publish the config so the prepare closure's sync_permission_rules
     // call (on each session lease acquire) can reach it.  The set

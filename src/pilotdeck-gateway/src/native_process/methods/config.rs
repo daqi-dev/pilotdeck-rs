@@ -20,7 +20,7 @@
 use super::super::requests::Requests;
 use crate::{
     config::{self, Env},
-    metadata::{Files, Metadata, object},
+    metadata::{Metadata, object},
     runtime::{
         connection::{Call, RequestError},
         project::{ProjectResources, Resource, RuntimeError, plugins::PluginResources},
@@ -29,10 +29,7 @@ use crate::{
     storage::{AsyncTranscriptAdapter, JsonlTranscriptStore, ProjectKey, SessionStorageInput},
 };
 use pilotdeck_protocol::{JsString, JsValue};
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
 // Wire names from the gateway frames registry. All 7 pass through admission
 // as ordinary session requests.
@@ -116,6 +113,18 @@ fn config_error(error: config::Error) -> RequestError {
 
 /// A RuntimeError keeps its JS error code when it carries one; the fallback
 /// is the bare-Error wire shape.
+fn sdk_selection_error(error: crate::runtime::sdk_session::SdkSessionError) -> RequestError {
+    RequestError {
+        code: if error.code.is_empty() {
+            "gateway_request_failed".into()
+        } else {
+            error.code
+        },
+        message: error.message.into(),
+        details: None,
+        validation: None,
+    }
+}
 fn runtime_error(error: RuntimeError) -> RequestError {
     match error.js_error() {
         Some(js_error) => RequestError {
@@ -140,47 +149,63 @@ fn replacement_error(error: crate::runtime::replacement::ReplacementError) -> Re
     }
 }
 
-/// The reservation both model methods hold across their whole body: the
-/// request's `sessionKey` when present, an inert guard otherwise (the
-/// reserved body's own gate reports the missing key).
-fn reserve_model_update<'a>(
-    requests: &'a Requests,
-    params: &JsValue,
-    operation: &str,
-) -> Result<crate::runtime::replacement::TranscriptWriteReservation<'a>, RequestError> {
-    let key = params.get("sessionKey").and_then(JsValue::as_string);
-    requests
-        .replacement
-        .reserve_transcript_write_held(key, operation)
-        .map_err(replacement_error)
+/// Preserve each callback's project contract: model mutations require dialog
+/// registration; style callbacks resolve lexical roots without that registry.
+fn lexical_project(requests: &Requests, params: &JsValue) -> Result<PathBuf, RequestError> {
+    match super::input_property(params, "projectKey")?.as_ref() {
+        None | Some(JsValue::Null | JsValue::Undefined) => Ok(requests.options.project.clone()),
+        Some(JsValue::String(key)) => super::super::project_scope::resolve(key),
+        Some(other) => Err(config_error(crate::session_model::path_argument(other))),
+    }
+}
+async fn model_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
+    let fallback = JsValue::from(requests.options.project.to_string_lossy().as_ref());
+    let raw = super::input_property(params, "projectKey")?
+        .filter(|value| !matches!(value, JsValue::Null | JsValue::Undefined))
+        .unwrap_or(fallback);
+    let home = requests.options.home.clone();
+    let permit = super::session_dir::session_io_permit().await?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let root = super::super::project_scope::registered(&home, &raw)?;
+        root.to_str().map(str::to_owned).ok_or_else(|| {
+            RequestError::new("Project root is not valid UTF-8 for the config loader.")
+        })
+    })
+    .await
+    .map_err(|error| RequestError::new(error.to_string()))?
 }
 
-/// Resolves `projectKey` from params, falling back to the configured project.
-/// The session_dir slice owns the family's copy of this resolution; a local
-/// one keeps the config family inside its sanctioned file set.
-fn resolve_project(requests: &Requests, params: &JsValue) -> Result<String, RequestError> {
-    let project = params
-        .get("projectKey")
-        .and_then(JsValue::as_string)
-        .and_then(|s| s.to_utf8().ok())
-        .unwrap_or_else(|| requests.options.project.to_string_lossy().into_owned());
-    if !requests.options.serves_project(&project) {
-        return Err(gateway_error(
-            "CAPABILITY_UNAVAILABLE",
-            "The isolated native process serves only its configured project.",
-        ));
-    }
-    Ok(project)
+/// Hold the reservation through the owned async operation and any detached
+/// blocking write. Dropping an RPC waiter never abandons an admitted write.
+struct ModelWriteReservation {
+    replacement: Arc<crate::runtime::replacement::ReplacementCoordinator>,
+    key: JsString,
 }
-
-/// The metadata face the model catalog validates against, like the services
-/// slice's model-selection resolution.
-fn native_metadata(home: &std::path::Path) -> Metadata<crate::metadata::NativeFiles> {
-    Metadata {
-        home: home.to_path_buf(),
-        cwd: PathBuf::new(),
-        files: crate::metadata::NativeFiles,
+impl Drop for ModelWriteReservation {
+    fn drop(&mut self) {
+        self.replacement.release_transcript_write(&self.key);
     }
+}
+async fn bounded_model_config(
+    home: PathBuf,
+    env: Env,
+    project: Option<String>,
+) -> Result<config::Config, RequestError> {
+    static SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+        std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+    let permit = SLOTS
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|_| RequestError::new("Model configuration reader is unavailable."))?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        config::load_project_bounded_lazy(&home, &PathBuf::new(), &env, project.as_deref())
+            .map_err(config_error)
+    })
+    .await
+    .map_err(|_| RequestError::new("Model configuration reader stopped unexpectedly."))?
 }
 
 impl Requests {
@@ -210,17 +235,36 @@ impl Requests {
     /// point, or a panic unwinding the reserved body, releases too instead of
     /// stranding the key at `SESSION_BUSY` until restart.
     async fn session_model_set(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let reserved = reserve_model_update(self, params, "change the session model")?;
-        let result = self.session_model_set_reserved(params).await;
-        drop(reserved);
-        result
+        let reserved = params.get("sessionKey").and_then(JsValue::as_string);
+        if let Some(key) = &reserved
+            && let Err(error) = self
+                .replacement
+                .reserve_transcript_write(key, "change the session model")
+        {
+            return Err(replacement_error(error));
+        }
+        let held = reserved.map(|key| {
+            Arc::new(ModelWriteReservation {
+                replacement: self.replacement.clone(),
+                key: key.clone(),
+            })
+        });
+        let requests = self.clone();
+        let params = params.clone();
+        tokio::spawn(async move { requests.session_model_set_reserved(&params, held).await })
+            .await
+            .map_err(|_| RequestError::new("Session model update stopped unexpectedly."))?
     }
 
     /// GatewaySessionModelBundle.set: resolveProjectKey → hasActiveTurn →
     /// selection shape → validateSelection → normalizeSelection → port write
     /// (sessionKey gate) → router.close → result.
-    async fn session_model_set_reserved(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let project_key = resolve_project(self, params)?;
+    async fn session_model_set_reserved(
+        &self,
+        params: &JsValue,
+        reservation: Option<Arc<ModelWriteReservation>>,
+    ) -> Result<JsValue, RequestError> {
+        let project_key = model_project(self, params).await?;
         if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
             && self.owner.has_active_turn(key)
         {
@@ -236,12 +280,18 @@ impl Requests {
                 "selection is required.",
             ));
         }
-        let metadata = native_metadata(&self.options.home);
-        validate_selection(selection, &metadata, &self.env)?;
+        validate_selection_shape(selection)?;
+        // TS listModelCatalog intentionally reads the global catalog even
+        // though project defaults and transcript ownership are per project.
+        let config =
+            bounded_model_config(self.options.home.clone(), self.env.clone(), None).await?;
+        let catalog = crate::model_catalog::execute_loaded(config, &object([]), &self.env)
+            .map_err(config_error)?;
+        validate_selection_catalog(selection, &catalog)?;
         let selection = normalize_selection(selection);
         let session_key = require_session_key(params)?;
         let loaded = self
-            .record_model_selection(&session_key, Some(&selection), &project_key)
+            .record_model_selection(&session_key, Some(&selection), &project_key, reservation)
             .await?;
         // #1457 fix-r3: the entry may have been appended through a session
         // registered under an alias spelling (`a/b` vs `a-b` share one
@@ -252,16 +302,43 @@ impl Requests {
             .close(loaded.as_ref().unwrap_or(&session_key))
             .await
             .map_err(runtime_error)?;
-        model_result(&project_key, &session_key, &selection, &metadata, &self.env)
+        let default_config = if is(selection.get("mode"), "model") {
+            None
+        } else {
+            Some(
+                bounded_model_config(
+                    self.options.home.clone(),
+                    self.env.clone(),
+                    Some(project_key.clone()),
+                )
+                .await?,
+            )
+        };
+        model_result(&project_key, &session_key, &selection, default_config)
     }
 
     /// InProcessGateway.ts:2201-2209: the clear reservation mirrors set's —
     /// held in the same `Drop` guard (#2391).
     async fn session_model_clear(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let reserved = reserve_model_update(self, params, "clear the session model")?;
-        let result = self.session_model_clear_reserved(params).await;
-        drop(reserved);
-        result
+        let reserved = params.get("sessionKey").and_then(JsValue::as_string);
+        if let Some(key) = &reserved
+            && let Err(error) = self
+                .replacement
+                .reserve_transcript_write(key, "clear the session model")
+        {
+            return Err(replacement_error(error));
+        }
+        let held = reserved.map(|key| {
+            Arc::new(ModelWriteReservation {
+                replacement: self.replacement.clone(),
+                key: key.clone(),
+            })
+        });
+        let requests = self.clone();
+        let params = params.clone();
+        tokio::spawn(async move { requests.session_model_clear_reserved(&params, held).await })
+            .await
+            .map_err(|_| RequestError::new("Session model update stopped unexpectedly."))?
     }
 
     /// GatewaySessionModelBundle.clear: resolveProjectKey → requireSessionKey
@@ -269,8 +346,9 @@ impl Requests {
     async fn session_model_clear_reserved(
         &self,
         params: &JsValue,
+        reservation: Option<Arc<ModelWriteReservation>>,
     ) -> Result<JsValue, RequestError> {
-        let project_key = resolve_project(self, params)?;
+        let project_key = model_project(self, params).await?;
         let session_key = require_session_key(params)?;
         if self.owner.has_active_turn(&session_key) {
             return Err(gateway_error(
@@ -279,7 +357,7 @@ impl Requests {
             ));
         }
         let loaded = self
-            .record_model_selection(&session_key, None, &project_key)
+            .record_model_selection(&session_key, None, &project_key, reservation)
             .await?;
         self.owner
             .close(loaded.as_ref().unwrap_or(&session_key))
@@ -298,15 +376,42 @@ impl Requests {
         session_key: &JsString,
         selection: Option<&JsValue>,
         project_root: &str,
+        reservation: Option<Arc<ModelWriteReservation>>,
     ) -> Result<Option<JsString>, RequestError> {
         // #1457 fix-r1: one writer at a time per session — this path numbers its
         // append from the tail it just read, so two concurrent cold writers
         // would both claim `sequence + 1` and brick the transcript.
-        let fence_path = transcript_locks::session_transcript_path(
-            &self.options.home,
-            Path::new(project_root),
-            session_key,
-        );
+        // Resolve exactly once with bounded marker reads; the same resolved
+        // directory must feed both the writer fence and the cold adapter.
+        static WRITE_SLOTS: std::sync::LazyLock<Arc<tokio::sync::Semaphore>> =
+            std::sync::LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(4)));
+        let permit = WRITE_SLOTS
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| RequestError::new("Session model writer is unavailable."))?;
+        let lookup_home = self.options.home.clone();
+        let lookup_project = project_root.to_owned();
+        let (chat_dir, permit) = tokio::task::spawn_blocking(move || {
+            let lookup = Metadata {
+                home: lookup_home,
+                cwd: PathBuf::new(),
+                files: crate::runtime::history::HistoryMarkerFiles::new(),
+            };
+            let result = lookup
+                .process_chat_dir(&lookup_project)
+                .map_err(|error| RequestError::new(error.to_string()));
+            if lookup.files.was_refused() {
+                return Err(RequestError::new("Unsafe project marker."));
+            }
+            Ok((result?, permit))
+        })
+        .await
+        .map_err(|_| RequestError::new("Session model path reader stopped unexpectedly."))??;
+        let fence_path = chat_dir.join(format!(
+            "{}.jsonl",
+            crate::storage::sanitize_session_id(session_key)
+        ));
         let write_fence = transcript_locks::acquire(&fence_path).await?;
         // #1457 fix-r2: when the session is loaded its recorder owns the writer
         // (and the writer lease) with an in-memory sequence, so the entry is
@@ -343,27 +448,23 @@ impl Requests {
             // The fence outlives a cancelled request: dropping this future does
             // not stop a blocking closure that already started, so the guard
             // travels with the write instead of dropping at the await.
+            let _permit = permit;
+            let _reservation = reservation;
             let _write = write_fence;
             let turn = JsString::from(turn_id);
             let entry = JsValue::Object(metadata);
             if let Some((owner, recorder)) = super::super::assembly::live_recorder(&recorders, &key)
             {
+                transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                 recorder
                     .writer()
                     .record_session_metadata_checked(&key, &turn, entry)
                     .map_err(|e| RequestError::new(e.to_string()))?;
                 return Ok(Some(owner));
             }
-            let home2 = home.clone();
             let adapter = AsyncTranscriptAdapter::new(
-                Arc::new(JsonlTranscriptStore::new()),
-                Arc::new(move |k: &ProjectKey| {
-                    crate::session_chat_dir(
-                        &home2,
-                        &k.project_root,
-                        &k.project_root.to_string_lossy(),
-                    )
-                }),
+                Arc::new(JsonlTranscriptStore::new_bounded()),
+                Arc::new(move |_: &ProjectKey| chat_dir.clone()),
             );
             let storage = adapter
                 .create_session_storage(SessionStorageInput {
@@ -380,6 +481,7 @@ impl Requests {
                 if let Some((owner, recorder)) =
                     super::super::assembly::live_recorder(&recorders, &key)
                 {
+                    transcript_locks::ensure_recorder_matches(&fence_path, &recorder)?;
                     recorder
                         .writer()
                         .record_session_metadata_checked(&key, &turn, entry)
@@ -474,8 +576,13 @@ impl Requests {
     /// ProjectRuntimeRegistry.outputStylesListForSdk refreshes the plugin
     /// runtime and lists the project's (plus session's) style contributions.
     async fn output_styles_list(&self, params: &JsValue) -> Result<JsValue, RequestError> {
-        let _project = resolve_project(self, params)?;
-        let styles = self.plugin_styles().await?;
+        let project = lexical_project(self, params)?;
+        let styles = self
+            .plugin_styles(
+                &project,
+                params.get("sessionKey").and_then(JsValue::as_string),
+            )
+            .await?;
         let mut style_values = Vec::with_capacity(styles.len());
         for style in &styles {
             let mut entry = pilotdeck_protocol::JsObject::new();
@@ -501,7 +608,11 @@ impl Requests {
         // stored selection from `sdkSessionConfigs`: the field appears only
         // when a sessionKey was given and a selection is stored.
         if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
-            && let Some(selected) = self.session_overrides.output_style(key)
+            && let Some(selected) = self
+                .session_overrides
+                .effective_output_style(key)
+                .await
+                .map_err(sdk_selection_error)?
         {
             result.insert("selected".into(), JsValue::String(selected));
         }
@@ -542,26 +653,33 @@ impl Requests {
                 ));
             }
         };
-        if let Some(name) = &name {
-            let styles = self.plugin_styles().await?;
-            if !styles
+        let project = lexical_project(self, params)?;
+        let styles = self
+            .plugin_styles(
+                &project,
+                params.get("sessionKey").and_then(JsValue::as_string),
+            )
+            .await?;
+        if let Some(name) = &name
+            && !styles
                 .iter()
                 .any(|style| JsString::from(style.name.as_str()) == *name)
-            {
-                let mut units: Vec<u16> = "Unknown output style: ".encode_utf16().collect();
-                units.extend_from_slice(name.units());
-                return Err(gateway_error(
-                    "OUTPUT_STYLE_NOT_FOUND",
-                    JsString::from_utf16(units),
-                ));
-            }
+        {
+            let mut units: Vec<u16> = "Unknown output style: ".encode_utf16().collect();
+            units.extend_from_slice(name.units());
+            return Err(gateway_error(
+                "OUTPUT_STYLE_NOT_FOUND",
+                JsString::from_utf16(units),
+            ));
         }
-        match &name {
-            Some(name) => self
-                .session_overrides
-                .set_output_style(&session_key, name.clone()),
-            None => self.session_overrides.clear_output_style(&session_key),
-        }
+        self.session_overrides
+            .select_output_style(
+                &session_key,
+                &JsString::from(project.to_string_lossy().into_owned()),
+                name.clone(),
+            )
+            .await
+            .map_err(sdk_selection_error)?;
         // The TS callback closes with `sdk_output_style_changed` so the next
         // session composes the style's appendSystemPrompt.
         self.owner
@@ -581,11 +699,22 @@ impl Requests {
     /// cannot retire the runtime mid-refresh.
     async fn plugin_styles(
         &self,
+        root: &std::path::Path,
+        session: Option<&JsString>,
     ) -> Result<Vec<crate::runtime::plugins::PluginOutputStyleContribution>, RequestError> {
         // Acquire may read configuration synchronously (management.rs:118-125),
         // so the blocking job stays off the async executor.
+        let additional = match session {
+            Some(session) => self
+                .session_overrides
+                .output_style_plugins(session)
+                .await
+                .map_err(sdk_selection_error)?,
+            None => vec![],
+        };
         let project = self.project.clone();
-        let lease = tokio::task::spawn_blocking(move || project.acquire(None))
+        let root = root.to_path_buf();
+        let lease = tokio::task::spawn_blocking(move || project.acquire(Some(&root)))
             .await
             .map_err(|e| RequestError::new(e.to_string()))?
             .map_err(runtime_error)?;
@@ -609,7 +738,7 @@ impl Requests {
             .await
             .map_err(|e| RequestError::new(e.to_string()))?;
         Ok(plugin_runtime
-            .create_view(vec![])
+            .create_view(additional)
             .await
             .list_output_styles())
     }
@@ -655,10 +784,9 @@ impl Requests {
             })?;
         let context = SessionContext {
             session_key: session_key.clone(),
-            project_key: params
-                .get("projectKey")
-                .and_then(JsValue::as_string)
-                .cloned(),
+            project_key: Some(JsString::from(
+                self.options.project.to_string_lossy().as_ref(),
+            )),
             channel_key: params
                 .get("channelKey")
                 .and_then(JsValue::as_string)
@@ -730,15 +858,35 @@ fn validate_thinking(thinking: &JsValue) -> Result<(), RequestError> {
     Ok(())
 }
 
-/// modelCatalog.ts:58-84 `validateModelSelection` over the native catalog.
-fn validate_selection<F: Files>(
+/// Shape is validated before loading the catalog, as in TypeScript.
+pub(in crate::native_process) fn validate_selection_shape(
     selection: &JsValue,
-    metadata: &Metadata<F>,
-    env: &Env,
+) -> Result<(), RequestError> {
+    if is(selection.get("mode"), "auto")
+        || (is(selection.get("mode"), "model")
+            && selection
+                .get("provider")
+                .and_then(JsValue::as_string)
+                .is_some()
+            && selection
+                .get("model")
+                .and_then(JsValue::as_string)
+                .is_some())
+    {
+        Ok(())
+    } else {
+        Err(gateway_error(
+            "INVALID_MODEL_OVERRIDE",
+            "A model selection requires mode, provider, and model.",
+        ))
+    }
+}
+/// Reuse session-model policy against a caller-supplied project catalog.
+pub(in crate::native_process) fn validate_selection_catalog(
+    selection: &JsValue,
+    catalog: &JsValue,
 ) -> Result<(), RequestError> {
     if is(selection.get("mode"), "auto") {
-        let catalog =
-            crate::model_catalog::execute(metadata, &object([]), env).map_err(config_error)?;
         let available = catalog
             .get("router")
             .and_then(|router| router.get("autoAvailable"))
@@ -762,8 +910,6 @@ fn validate_selection<F: Files>(
             "A model selection requires mode, provider, and model.",
         ));
     }
-    let catalog =
-        crate::model_catalog::execute(metadata, &object([]), env).map_err(config_error)?;
     let item = match catalog.get("items") {
         Some(JsValue::Array(items)) => items
             .iter()
@@ -844,7 +990,7 @@ fn unavailable_message(provider: &JsString, model: &JsString) -> JsString {
 }
 
 /// modelCatalog.ts:92-100 `normalizeSessionModelSelection`.
-fn normalize_selection(selection: &JsValue) -> JsValue {
+pub(in crate::native_process) fn normalize_selection(selection: &JsValue) -> JsValue {
     if is(selection.get("mode"), "auto") {
         return object([("mode", "auto".into())]);
     }
@@ -879,12 +1025,11 @@ fn normalize_selection(selection: &JsValue) -> JsValue {
 /// GatewaySessionModelBundle.result: `saved` plus the effective selection —
 /// the session override for explicit selections, the project default
 /// otherwise.
-fn model_result<F: Files>(
+fn model_result(
     project_key: &str,
     session_key: &JsString,
     saved: &JsValue,
-    metadata: &Metadata<F>,
-    env: &Env,
+    default_config: Option<config::Config>,
 ) -> Result<JsValue, RequestError> {
     let effective = if is(saved.get("mode"), "model") {
         object([
@@ -910,8 +1055,8 @@ fn model_result<F: Files>(
             ),
         ])
     } else {
-        let config = config::load_project_with_files(metadata, env, Some(project_key))
-            .map_err(config_error)?;
+        let config =
+            default_config.ok_or_else(|| RequestError::new("Missing model configuration."))?;
         object([
             ("provider", JsValue::String(config.selection.0)),
             ("model", JsValue::String(config.selection.1)),
@@ -2108,6 +2253,7 @@ mod tests {
     #[tokio::test]
     async fn seed_read_state_applies_and_validates() {
         let (_scratch, r) = setup_fixture();
+        r.owner.enforce_project_binding();
         let file = r.options.project.join("seeded.txt");
         std::fs::write(&file, "seeded\n").expect("#1457 seeded file");
         let mtime_ms = std::fs::metadata(&file)
@@ -2134,6 +2280,18 @@ mod tests {
             Some(&JsValue::Bool(true)),
             "#1457 exact mtime applies"
         );
+        assert_eq!(
+            r.owner.project_key(&"cfg-seed-1".into()),
+            Some(JsString::from(r.options.project.to_string_lossy().as_ref())),
+            "omitted project must pin the selected request view"
+        );
+        assert!(
+            r.owner
+                .reserve_project(&"cfg-seed-1".into(), Some(&"other".into()), &"other".into())
+                .is_err(),
+            "a different project must not reuse the seeded session"
+        );
+
         let applied = r
             .session_config_request(
                 "seed_read_state".into(),
@@ -2454,4 +2612,42 @@ mod tests {
             .expect("#1457 the concurrently written transcript still loads");
         teardown(&r).await;
     }
+    #[tokio::test]
+    async fn selected_project_output_styles_do_not_read_fallback_generation() {
+        let (_scratch, r) = setup_fixture();
+        let a = r.options.project.clone();
+        let b = a.parent().unwrap().join("styles-only-B");
+        std::fs::create_dir_all(&b).unwrap();
+        let mut view = r.clone();
+        view.options.project = b.clone();
+        crate::native_process::assembly::register_project(&view.options).unwrap();
+        write_probe_plugin(&view);
+        let styles = view
+            .session_config_request("output_styles_list".into(), object([]))
+            .await
+            .unwrap();
+        assert!(
+            array_field(&styles, "styles")
+                .iter()
+                .any(|item| item.get("name") == Some(&"probe:compact".into()))
+        );
+        let fallback = r
+            .session_config_request("output_styles_list".into(), object([]))
+            .await
+            .unwrap();
+        assert!(
+            !array_field(&fallback, "styles")
+                .iter()
+                .any(|item| item.get("name") == Some(&"probe:compact".into()))
+        );
+        teardown(&r).await;
+    }
 }
+
+#[cfg(all(test, unix))]
+#[path = "config_model_bounded_tests.rs"]
+mod bounded_native_write_tests;
+
+#[cfg(test)]
+#[path = "../multi_project_alias_tests.rs"]
+mod multi_project_alias_tests;

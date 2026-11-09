@@ -1,0 +1,1611 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "sources": [
+    {
+      "path": "/Users/da/ws/pdrs-runner/resources/PilotDeck/src/pilot/config/loadPilotConfig.ts",
+      "sha256": "0d666bd5dec52b805be7066b7538d54919bd601b43286bdf9acf4a1354581d6e"
+    },
+    {
+      "path": "/Users/da/ws/pdrs-runner/resources/PilotDeck/src/gateway/dialog/modelCatalog.ts",
+      "sha256": "87b5ce892aefec8f2148e44b30fb78cc9c93f6140e206e44be454aa3b7ab507d"
+    }
+  ],
+  "cases": [
+    {
+      "id": "provider-__proto__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__proto__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__proto__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "__proto__/mock"
+        },
+        "model": {
+          "providers": {
+            "__proto__": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-__proto__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__proto__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__proto__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/__proto__"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "__proto__": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/__proto__",
+              "provider": "fixture",
+              "model": "__proto__"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {}
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "__proto__"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": false,
+          "name": "DialogGatewayError",
+          "code": "INVALID_MODEL_OVERRIDE",
+          "message": "Model is unavailable: fixture/__proto__"
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-constructor",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-constructor/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-constructor/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "constructor/mock"
+        },
+        "model": {
+          "providers": {
+            "constructor": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-constructor",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-constructor/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-constructor/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/constructor"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "constructor": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/constructor",
+              "provider": "fixture",
+              "model": "constructor"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "constructor": {
+                    "id": "constructor",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/constructor",
+              "provider": "fixture",
+              "model": "constructor",
+              "displayName": "constructor",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "constructor"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-toString",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-toString/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-toString/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "toString/mock"
+        },
+        "model": {
+          "providers": {
+            "toString": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-toString",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-toString/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-toString/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/toString"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "toString": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/toString",
+              "provider": "fixture",
+              "model": "toString"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "toString": {
+                    "id": "toString",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/toString",
+              "provider": "fixture",
+              "model": "toString",
+              "displayName": "toString",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "toString"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-valueOf",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-valueOf/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-valueOf/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "valueOf/mock"
+        },
+        "model": {
+          "providers": {
+            "valueOf": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-valueOf",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-valueOf/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-valueOf/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/valueOf"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "valueOf": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/valueOf",
+              "provider": "fixture",
+              "model": "valueOf"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "valueOf": {
+                    "id": "valueOf",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/valueOf",
+              "provider": "fixture",
+              "model": "valueOf",
+              "displayName": "valueOf",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "valueOf"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-hasOwnProperty",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-hasOwnProperty/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-hasOwnProperty/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "hasOwnProperty/mock"
+        },
+        "model": {
+          "providers": {
+            "hasOwnProperty": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-hasOwnProperty",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-hasOwnProperty/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-hasOwnProperty/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/hasOwnProperty"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "hasOwnProperty": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/hasOwnProperty",
+              "provider": "fixture",
+              "model": "hasOwnProperty"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "hasOwnProperty": {
+                    "id": "hasOwnProperty",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/hasOwnProperty",
+              "provider": "fixture",
+              "model": "hasOwnProperty",
+              "displayName": "hasOwnProperty",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "hasOwnProperty"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-__defineGetter__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__defineGetter__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__defineGetter__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "__defineGetter__/mock"
+        },
+        "model": {
+          "providers": {
+            "__defineGetter__": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-__defineGetter__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__defineGetter__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__defineGetter__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/__defineGetter__"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "__defineGetter__": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/__defineGetter__",
+              "provider": "fixture",
+              "model": "__defineGetter__"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "__defineGetter__": {
+                    "id": "__defineGetter__",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/__defineGetter__",
+              "provider": "fixture",
+              "model": "__defineGetter__",
+              "displayName": "__defineGetter__",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "__defineGetter__"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-__defineSetter__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__defineSetter__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__defineSetter__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "__defineSetter__/mock"
+        },
+        "model": {
+          "providers": {
+            "__defineSetter__": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-__defineSetter__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__defineSetter__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__defineSetter__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/__defineSetter__"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "__defineSetter__": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/__defineSetter__",
+              "provider": "fixture",
+              "model": "__defineSetter__"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "__defineSetter__": {
+                    "id": "__defineSetter__",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/__defineSetter__",
+              "provider": "fixture",
+              "model": "__defineSetter__",
+              "displayName": "__defineSetter__",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "__defineSetter__"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-__lookupGetter__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__lookupGetter__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__lookupGetter__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "__lookupGetter__/mock"
+        },
+        "model": {
+          "providers": {
+            "__lookupGetter__": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-__lookupGetter__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__lookupGetter__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__lookupGetter__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/__lookupGetter__"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "__lookupGetter__": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/__lookupGetter__",
+              "provider": "fixture",
+              "model": "__lookupGetter__"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "__lookupGetter__": {
+                    "id": "__lookupGetter__",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/__lookupGetter__",
+              "provider": "fixture",
+              "model": "__lookupGetter__",
+              "displayName": "__lookupGetter__",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "__lookupGetter__"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-__lookupSetter__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__lookupSetter__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-__lookupSetter__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "__lookupSetter__/mock"
+        },
+        "model": {
+          "providers": {
+            "__lookupSetter__": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-__lookupSetter__",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__lookupSetter__/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-__lookupSetter__/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/__lookupSetter__"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "__lookupSetter__": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/__lookupSetter__",
+              "provider": "fixture",
+              "model": "__lookupSetter__"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "__lookupSetter__": {
+                    "id": "__lookupSetter__",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/__lookupSetter__",
+              "provider": "fixture",
+              "model": "__lookupSetter__",
+              "displayName": "__lookupSetter__",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "__lookupSetter__"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-isPrototypeOf",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-isPrototypeOf/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-isPrototypeOf/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "isPrototypeOf/mock"
+        },
+        "model": {
+          "providers": {
+            "isPrototypeOf": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-isPrototypeOf",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-isPrototypeOf/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-isPrototypeOf/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/isPrototypeOf"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "isPrototypeOf": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/isPrototypeOf",
+              "provider": "fixture",
+              "model": "isPrototypeOf"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "isPrototypeOf": {
+                    "id": "isPrototypeOf",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/isPrototypeOf",
+              "provider": "fixture",
+              "model": "isPrototypeOf",
+              "displayName": "isPrototypeOf",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "isPrototypeOf"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-propertyIsEnumerable",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-propertyIsEnumerable/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-propertyIsEnumerable/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "propertyIsEnumerable/mock"
+        },
+        "model": {
+          "providers": {
+            "propertyIsEnumerable": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-propertyIsEnumerable",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-propertyIsEnumerable/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-propertyIsEnumerable/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/propertyIsEnumerable"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "propertyIsEnumerable": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/propertyIsEnumerable",
+              "provider": "fixture",
+              "model": "propertyIsEnumerable"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "propertyIsEnumerable": {
+                    "id": "propertyIsEnumerable",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/propertyIsEnumerable",
+              "provider": "fixture",
+              "model": "propertyIsEnumerable",
+              "displayName": "propertyIsEnumerable",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "propertyIsEnumerable"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "provider-toLocaleString",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-toLocaleString/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/provider-toLocaleString/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "toLocaleString/mock"
+        },
+        "model": {
+          "providers": {
+            "toLocaleString": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "mock": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'mock')"
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    },
+    {
+      "id": "model-toLocaleString",
+      "home": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-toLocaleString/home",
+      "projectRoot": "/Users/da/ws/pdrs-worker-wt/control-cli-20261108/_tmp/20261108-intrinsic-models-01/capture/model-toLocaleString/project",
+      "global": {
+        "schemaVersion": 1,
+        "agent": {
+          "model": "fixture/toLocaleString"
+        },
+        "model": {
+          "providers": {
+            "fixture": {
+              "protocol": "openai",
+              "url": "http://127.0.0.1:1/v1",
+              "apiKey": "fixture-only",
+              "models": {
+                "toLocaleString": {}
+              }
+            }
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "config": {
+          "agent": {
+            "model": {
+              "id": "fixture/toLocaleString",
+              "provider": "fixture",
+              "model": "toLocaleString"
+            },
+            "sandboxMode": "danger-full-access",
+            "runtimeContextSurface": "system_prompt",
+            "interactionProfile": "interactive"
+          },
+          "model": {
+            "providers": {
+              "fixture": {
+                "id": "fixture",
+                "protocol": "openai",
+                "url": "http://127.0.0.1:1/v1",
+                "apiKey": "fixture-only",
+                "credentialSource": "literal",
+                "headers": {},
+                "models": {
+                  "toLocaleString": {
+                    "id": "toLocaleString",
+                    "capabilities": {
+                      "supportsToolUse": true,
+                      "supportsStreaming": true,
+                      "supportsParallelToolCalls": true,
+                      "supportsThinking": true,
+                      "supportsJsonSchema": true,
+                      "supportsSystemPrompt": true,
+                      "supportsPromptCache": false,
+                      "maxContextTokens": 128000,
+                      "maxOutputTokens": 32768
+                    },
+                    "multimodal": {
+                      "input": [
+                        "text"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "extension": {
+            "builtinPluginsEnabled": {},
+            "includeHookEvents": false
+          },
+          "telemetry": {
+            "enabled": false
+          }
+        },
+        "diagnostics": [],
+        "catalog": {
+          "items": [
+            {
+              "id": "fixture/toLocaleString",
+              "provider": "fixture",
+              "model": "toLocaleString",
+              "displayName": "toLocaleString",
+              "available": true,
+              "capabilities": {}
+            }
+          ],
+          "defaultSelection": {
+            "mode": "model",
+            "provider": "fixture",
+            "model": "toLocaleString"
+          },
+          "router": {
+            "enabled": false,
+            "autoAvailable": false
+          }
+        },
+        "selection": {
+          "ok": true
+        }
+      },
+      "repeatedEqual": true,
+      "intrinsicsUnchanged": true
+    }
+  ]
+}

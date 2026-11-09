@@ -1,54 +1,59 @@
-//! Port of the TS always-on background runtime's control half
-//! (`src/always-on/`, baseline cc7c4e6): storage paths, the discovery state
-//! and cycle/plan stores, channel leases, the pure gate chain, the discovery
-//! lock, the dormancy signal watcher and the periodic scheduler
-//! (`DiscoveryScheduler.ts`), plus the per-project runtime and multi-project
-//! manager (`AlwaysOnRuntime.ts` / `AlwaysOnManager.ts`) that own them.
+//! Native Always-On runtime: discovery, isolated workspace, execution, report
+//! and apply run through the existing gateway/session owner. NativeFire is
+//! selected by the CLI composition; generic embeddings retain the explicit
+//! control-only fallback until they supply their own FireFactory.
 //!
-//! The deep fire pipeline — the five-phase discovery run, the workspace
-//! strategies, the report tools and the model turns behind
-//! `DiscoveryFire.run` / `runApplyPhase` / `rerunPlan` — is deliberately NOT
-//! ported: those halves return an explicit `internal` error ("not implemented
-//! in this embedding") instead of a fake success. Everything before them is
-//! real: gate reads, state bytes, the `wx` lock, session-key derivation and
-//! the control envelopes.
-//!
-//! Evidence: `tests/fixtures/always-on-2294/` (58 TS-baseline golden records,
-//! Node v22.22.0) drives the tests in this module and the assembly half.
-// The deep fire seam above means most of this port's surface — the fire
-// pipeline's inputs, the lease registry's mutators, the report paths — is
-// driven by those replay tests rather than the shipping build, until the
-// fire half itself is ported. The port's wire-shape items keep the reason
-// inline with their own `#[allow(dead_code)]`; this umbrella covers the
-// rest of the unported surface (paths, mutators, tick entries).
+//! Fixed TS contracts live in tests/fixtures/always-on-2294; native tests also
+//! exercise real Git, workspace cleanup, gateway turns and event draining.
+// Wire-shape and generic embedding entry points remain available to contract
+// tests even where the native CLI uses the richer factory.
 #![allow(dead_code)]
+mod chat_digest;
+mod chat_tool;
+mod phase_runner;
+mod phase_tools;
+mod tools;
+mod workspace_phase;
+mod workspace_tool;
+pub(crate) use tools::register_tools;
+pub(crate) mod apply;
+mod control;
 mod cycles;
+pub(crate) mod event_sink;
 mod fire;
 mod gates;
 mod leases;
 mod manager;
 mod paths;
+mod plan_contract;
+mod plan_tool;
+mod report_contract;
+mod report_tool;
+mod reports;
 mod scheduler;
+pub(crate) mod standalone;
 mod state;
+pub(crate) mod storage;
 mod watcher;
+mod workspace;
+mod workspace_copy;
+pub(crate) use workspace::{NativeWorkspace, WorkspaceError, WorkspaceHandle};
 
+pub(crate) use control::{AlwaysOnControl, StandaloneApply, create_control};
 pub(crate) use cycles::{DiscoveryPlanRecord, DiscoveryPlanStore, WorkCycleRecord, WorkCycleStore};
 pub(crate) use fire::{
-    acquire_discovery_lock, derive_execution_session_key, derive_report_session_key,
-    derive_workspace_session_key, release_discovery_lock,
+    DiscoveryFirePort, acquire_discovery_lock, derive_execution_session_key,
+    derive_report_session_key, derive_workspace_session_key, release_discovery_lock,
 };
 pub(crate) use gates::{GateBlockReason, GateInput, evaluate_always_on_discovery_gates};
 pub(crate) use leases::{ChannelLease, ChannelLeaseRegistry};
-pub(crate) use manager::{
-    AbortInput, AlwaysOnAgentGateway, AlwaysOnManagerOptions, ApplyInput, ControlError,
-    GatewayAbortInput, RerunInput,
-};
-// The one face that crosses the crate boundary: `native_process::requests`
-// carries it in a public field (`Requests::always_on`), the same `pub`
-// pattern `runtime::cron::CronManager` follows. Its methods stay
-// `pub(crate)`.
 pub use manager::AlwaysOnManager;
+pub(crate) use manager::{
+    AlwaysOnAgentGateway, AlwaysOnManagerOptions, AlwaysOnRunContextRegistry, ControlError,
+    FireFactory, FireInputs, GatewayAbortInput, PhaseCompletion, PhaseRequest, PhaseResult,
+};
 pub(crate) use paths::{AlwaysOnPaths, resolve_always_on_paths};
+pub(crate) use reports::DiscoveryReportStore;
 pub(crate) use scheduler::{ALWAYS_ON_METHODS, DiscoveryScheduler, SchedulerDeps};
 pub(crate) use state::DiscoveryStateStore;
 pub(crate) use watcher::{SignalWatcher, SignalWatcherOptions};
@@ -195,3 +200,6 @@ impl AlwaysOnConfig {
             .map(|(_, enabled)| *enabled)
     }
 }
+
+mod native_fire;
+pub(crate) use native_fire::NativeFire;

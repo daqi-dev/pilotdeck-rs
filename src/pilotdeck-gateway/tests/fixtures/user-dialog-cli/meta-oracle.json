@@ -1,0 +1,450 @@
+{
+  "records": [
+    {
+      "id": "required-dup",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "a",
+          "a"
+        ]
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: schema is invalid: data/required must NOT have duplicate items (items ## 1 and 0 are identical)"
+      },
+      "accepted": null
+    },
+    {
+      "id": "dep-dup",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {},
+          "b": {}
+        },
+        "dependentRequired": {
+          "a": [
+            "b",
+            "b"
+          ]
+        }
+      },
+      "answer": {
+        "a": 1
+      },
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: schema is invalid: data/dependentRequired/a must NOT have duplicate items (items ## 1 and 0 are identical)"
+      },
+      "accepted": null
+    },
+    {
+      "id": "type-dup",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": [
+              "string",
+              "string"
+            ]
+          }
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: schema is invalid: data/properties/a/type must be equal to one of the allowed values, data/properties/a/type must NOT have duplicate items (items ## 0 and 1 are identical), data/properties/a/type must match a schema in anyOf"
+      },
+      "accepted": null
+    },
+    {
+      "id": "enum-dup",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "enum": [
+              "x",
+              "x"
+            ]
+          }
+        }
+      },
+      "answer": {
+        "a": "x"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "a": {
+              "enum": [
+                "x",
+                "x"
+              ]
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "minimum-negative-count",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "array",
+            "minItems": -1
+          }
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: schema is invalid: data/properties/a/minItems must be >= 0"
+      },
+      "accepted": null
+    },
+    {
+      "id": "nullable-mismatch",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": false
+          }
+        }
+      },
+      "answer": {
+        "a": null
+      },
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: type: null contradicts nullable: false"
+      },
+      "accepted": null
+    },
+    {
+      "id": "nullable-only",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "nullable": true
+          }
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: \"nullable\" cannot be used without \"type\""
+      },
+      "accepted": null
+    },
+    {
+      "id": "if-no-then",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "if": {
+          "properties": {
+            "x": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: strict mode: \"if\" without \"then\" and \"else\" is ignored"
+      },
+      "accepted": null
+    },
+    {
+      "id": "contains-no-array",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "contains": {
+          "type": "number"
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: strict mode: missing type \"array\" for keyword \"contains\" at \"#\" (strictTypes)"
+      },
+      "accepted": null
+    },
+    {
+      "id": "maxcontains-without",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "array",
+            "maxContains": 1
+          }
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: strict mode: \"maxContains\" without \"contains\" is ignored"
+      },
+      "accepted": null
+    },
+    {
+      "id": "bad-id",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$id": "bad uri space"
+      },
+      "answer": {},
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$id": "bad uri space"
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "nested-id-local",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "B": {
+            "$id": "https://example.test/B",
+            "type": "object",
+            "properties": {
+              "x": {
+                "$ref": "#/$defs/S"
+              }
+            },
+            "$defs": {
+              "S": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "properties": {
+          "b": {
+            "$ref": "#/$defs/B"
+          }
+        }
+      },
+      "answer": {
+        "b": {
+          "x": "a"
+        }
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "B": {
+              "$id": "https://example.test/B",
+              "type": "object",
+              "properties": {
+                "x": {
+                  "$ref": "#/$defs/S"
+                }
+              },
+              "$defs": {
+                "S": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "properties": {
+            "b": {
+              "$ref": "#/$defs/B"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "pointer-percent",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "a b": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/a%20b"
+          }
+        }
+      },
+      "answer": {
+        "x": "a"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "$defs": {
+            "a b": {
+              "type": "string"
+            }
+          },
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/a%20b"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "pointer-badtilde",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "a~b": {
+            "type": "string"
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/a~2b"
+          }
+        }
+      },
+      "answer": {
+        "x": "a"
+      },
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: can't resolve reference #/$defs/a~2b from id #"
+      },
+      "accepted": null
+    },
+    {
+      "id": "duplicate-dynamic",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "$defs": {
+          "A": {
+            "$dynamicAnchor": "x",
+            "type": "string"
+          },
+          "B": {
+            "$dynamicAnchor": "x",
+            "type": "number"
+          }
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema must be a valid local Draft 2020-12 JSON Schema: reference \"#x\" resolves to more than one schema"
+      },
+      "accepted": null
+    },
+    {
+      "id": "content-annotation",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string",
+            "contentEncoding": "base64",
+            "contentMediaType": "application/json"
+          }
+        }
+      },
+      "answer": {
+        "x": "%%%"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string",
+              "contentEncoding": "base64",
+              "contentMediaType": "application/json"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "format-num",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "n": {
+            "type": "number",
+            "format": "int32"
+          }
+        }
+      },
+      "answer": {
+        "n": 2147483648
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "number",
+              "format": "int32"
+            }
+          }
+        }
+      },
+      "accepted": false
+    }
+  ]
+}

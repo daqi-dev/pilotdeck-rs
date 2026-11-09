@@ -2,28 +2,64 @@
 //! A config that can inspect or freeze those intrinsics must remain TS-owned.
 use super::value::*;
 use pilotdeck_protocol::JsValue;
-fn selection(v: &JsValue) -> bool {
-    let Some(s) = v.as_string() else { return false };
+fn selection(v: &JsValue, providers: &JsValue) -> bool {
+    let Some(s) = v.as_string() else {
+        return false;
+    };
     let s = trim(s);
     let Some(i) = s.units().iter().position(|u| *u == 47) else {
         return false;
     };
-    builtin_property(&pilotdeck_protocol::JsString::from_utf16(
-        s.units()[..i].to_vec(),
-    )) || builtin_property(&pilotdeck_protocol::JsString::from_utf16(
-        s.units()[i + 1..].to_vec(),
-    ))
+    let provider = pilotdeck_protocol::JsString::from_utf16(s.units()[..i].to_vec());
+    let model = pilotdeck_protocol::JsString::from_utf16(s.units()[i + 1..].to_vec());
+    if !builtin_property(&provider) && !builtin_property(&model) {
+        return false;
+    }
+    // Own, explicitly configured plain definitions never mutate shared
+    // intrinsic functions. Missing/inherited definitions remain guarded.
+    let Some(config) = providers.as_object().and_then(|p| p.get_key(&provider)) else {
+        return true;
+    };
+    field(config, "models")
+        .as_object()
+        .and_then(|models| models.get_key(&model))
+        .is_none_or(|value| !plain_intrinsic_value(value))
+}
+// The diagnostic table inherits Object.prototype's methods for these names.
+// Plain JSON values do not modify those shared functions. Continue to refuse
+// nested intrinsic keys until their cross-request effects are modelled.
+fn plain_intrinsic_value(value: &JsValue) -> bool {
+    let mut pending = vec![value];
+    while let Some(value) = pending.pop() {
+        match value {
+            JsValue::Object(object) => {
+                if object.prototype().is_some() {
+                    return false;
+                }
+                for (key, value) in object.entries() {
+                    if builtin_property(key) {
+                        return false;
+                    }
+                    pending.push(value);
+                }
+            }
+            JsValue::Array(values) => pending.extend(values),
+            _ => (),
+        }
+    }
+    true
 }
 pub(super) fn required(raw: &JsValue) -> bool {
     let providers = field(field(raw, "model"), "providers");
     if entries(providers).iter().any(|(key, p)| {
-        builtin_property(key)
+        (builtin_property(key) && !plain_intrinsic_value(p))
             || entries(field(p, "models"))
                 .iter()
-                .any(|(key, _)| builtin_property(key))
+                .any(|(key, value)| builtin_property(key) && !plain_intrinsic_value(value))
     }) {
         return true;
     }
+    let selection = |value: &JsValue| selection(value, providers);
     let agent = field(raw, "agent");
     if selection(field(agent, "model"))
         || selection(field(field(agent, "subagents"), "default"))
@@ -69,8 +105,17 @@ pub(super) fn required(raw: &JsValue) -> bool {
         return true;
     }
     let always = field(raw, "alwaysOn");
-    entries(always).iter().any(|(key, _)| builtin_property(key))
+    let shared = |key: &pilotdeck_protocol::JsString, value: &JsValue| {
+        builtin_property(key) && (key.equals_str("__proto__") || !plain_intrinsic_value(value))
+    };
+    entries(always)
+        .iter()
+        .any(|(key, value)| shared(key, value))
         || entries(field(always, "projects"))
             .iter()
-            .any(|(_, p)| entries(p).iter().any(|(key, _)| builtin_property(key)))
+            .any(|(_, project)| {
+                entries(project)
+                    .iter()
+                    .any(|(key, value)| shared(key, value))
+            })
 }

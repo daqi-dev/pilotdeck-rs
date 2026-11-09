@@ -1,0 +1,213 @@
+{
+  "node": "v22.22.0",
+  "rows": [
+    {
+      "name": "key_empty",
+      "input": {
+        "projectKey": "",
+        "sessionKey": "session"
+      },
+      "error": {
+        "name": "DialogGatewayError",
+        "code": "PROJECT_NOT_FOUND",
+        "message": "Unknown projectKey: "
+      },
+      "reads": 0
+    },
+    {
+      "name": "key_number",
+      "input": {
+        "projectKey": 123,
+        "sessionKey": "session"
+      },
+      "error": {
+        "name": "TypeError",
+        "code": "ERR_INVALID_ARG_TYPE",
+        "message": "The \"paths[0]\" argument must be of type string. Received type number (123)"
+      },
+      "reads": 0
+    },
+    {
+      "name": "key_object",
+      "input": {
+        "projectKey": {},
+        "sessionKey": "session"
+      },
+      "error": {
+        "name": "TypeError",
+        "code": "ERR_INVALID_ARG_TYPE",
+        "message": "The \"paths[0]\" argument must be of type string. Received an instance of Object"
+      },
+      "reads": 0
+    },
+    {
+      "name": "key_array",
+      "input": {
+        "projectKey": [],
+        "sessionKey": "session"
+      },
+      "error": {
+        "name": "TypeError",
+        "code": "ERR_INVALID_ARG_TYPE",
+        "message": "The \"paths[0]\" argument must be of type string. Received an instance of Array"
+      },
+      "reads": 0
+    },
+    {
+      "name": "key_null",
+      "input": {
+        "projectKey": null,
+        "sessionKey": "session"
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    },
+    {
+      "name": "key_undefined",
+      "input": {
+        "sessionKey": "session"
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    },
+    {
+      "name": "key_alias",
+      "input": {
+        "projectKey": "<project>/./child/..",
+        "sessionKey": "session"
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    },
+    {
+      "name": "key_relative",
+      "input": {
+        "projectKey": "project",
+        "sessionKey": "session"
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    },
+    {
+      "name": "key_other",
+      "input": {
+        "projectKey": "<other>",
+        "sessionKey": "session"
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    },
+    {
+      "name": "key_home",
+      "input": {
+        "projectKey": "<home>",
+        "sessionKey": "session"
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    },
+    {
+      "name": "override_empty",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": ""
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    },
+    {
+      "name": "override_zero",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": 0
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    },
+    {
+      "name": "override_true",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": true
+      },
+      "error": {
+        "name": "DialogGatewayError",
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "A model selection requires mode, provider, and model."
+      },
+      "reads": 0
+    },
+    {
+      "name": "override_string",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": "model"
+      },
+      "error": {
+        "name": "DialogGatewayError",
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "A model selection requires mode, provider, and model."
+      },
+      "reads": 0
+    },
+    {
+      "name": "override_array",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelOverride": []
+      },
+      "error": {
+        "name": "DialogGatewayError",
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "A model selection requires mode, provider, and model."
+      },
+      "reads": 0
+    },
+    {
+      "name": "selection_empty",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session",
+        "modelSelection": {}
+      },
+      "error": {
+        "name": "DialogGatewayError",
+        "code": "INVALID_MODEL_OVERRIDE",
+        "message": "A model selection requires mode, provider, and model."
+      },
+      "reads": 0
+    },
+    {
+      "name": "selection_undefined",
+      "input": {
+        "projectKey": "<project>",
+        "sessionKey": "session"
+      },
+      "result": {
+        "source": "default"
+      },
+      "reads": 1
+    }
+  ]
+}

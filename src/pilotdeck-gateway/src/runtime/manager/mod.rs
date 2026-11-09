@@ -25,7 +25,7 @@
 //! error, while an injected provider owns both values and errors.
 
 mod catalog;
-mod file_catalog;
+pub(crate) mod file_catalog;
 mod projection;
 #[cfg(test)]
 mod tests;

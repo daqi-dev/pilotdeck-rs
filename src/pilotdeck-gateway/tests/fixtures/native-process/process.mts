@@ -134,11 +134,14 @@ try{
       assert.equal(toolFrame.event.finishReason,'completed','#1071 real tool turn completes');
       assert.ok(rows.some(r=>r.provider?.messages.some((m:any)=>m.role==='tool'&&JSON.stringify(m.content).includes('native tool fixture content'))),'#1071 actual read_file result reaches model');
       const cleanConfig=await readFile(join(process.home,'pilotdeck.yaml'),'utf8');
-      await appendFile(join(process.home,'pilotdeck.yaml'),'hooks:\n  PreToolUse:\n    - hooks: [{type: command, command: must-not-run}]\n');
-      ws.send(JSON.stringify({type:'request',id:'late-hooks',method:'submit_turn',params:{sessionKey:'late-hooks-session',runId:'late-hooks-run',projectKey:process.project,channelKey:'probe',message:'late hooks'}}));
-      let refused:any;do{refused=await next();}while(!refused.final);
-      assert.equal(refused.event.type,'error','#1071 refreshed hooks refused');
-      assert.equal(refused.event.code,'CAPABILITY_UNAVAILABLE','#1071 refreshed hooks error code');
+      const ignoredHookMarker=join(process.project,'unknown-hook-must-not-run');
+      const ignoredHookCommand=`printf unexpected > '${ignoredHookMarker.replaceAll("'", "'\\''")}'`;
+      await appendFile(join(process.home,'pilotdeck.yaml'),'hooks:\n  PreToolUse:\n    - hooks: [{type: command, command: '+JSON.stringify(ignoredHookCommand)+'}]\n');
+      ws.send(JSON.stringify({type:'request',id:'late-hooks',method:'submit_turn',params:{sessionKey:'late-hooks-session',runId:'late-hooks-run',projectKey:process.project,channelKey:'probe',message:'NATIVE_TOOL',allowedTools:['read_file']}}));
+      let completed:any;do{completed=await next();}while(!completed.final);
+      assert.equal(completed.event.type,'turn_completed','#1071 refreshed unknown top-level hooks ignored');
+      assert.equal(completed.event.finishReason,'completed','#1071 unknown hooks preserve successful tool execution');
+      await assert.rejects(readFile(ignoredHookMarker),{code:'ENOENT'},'#1071 unknown top-level hook command never executed');
       await writeFile(join(process.home,'pilotdeck.yaml'),cleanConfig);
 
     }
@@ -178,7 +181,7 @@ try{
   // error, process failure or deadline remains an unclassified INVALID.
   if(error?.code==='ERR_ASSERTION'){
     const first=String(error.message).split('\n')[0];
-    if(['#1071 clean signal exit','#1071 refreshed hooks refused','#1071 readiness address carries a port','#1131 readiness reports the kernel-assigned port'].includes(first)) assertionFailure=first;
+    if(['#1071 clean signal exit','#1071 refreshed unknown top-level hooks ignored','#1071 readiness address carries a port','#1131 readiness reports the kernel-assigned port'].includes(first)) assertionFailure=first;
   }
   throw error;
 }finally{

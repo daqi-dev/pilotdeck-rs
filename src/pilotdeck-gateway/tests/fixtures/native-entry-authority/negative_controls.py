@@ -42,35 +42,20 @@ TEST_FILE = ROOT / 'src/pilotdeck-gateway/tests/native_process.rs'
 # message text is the whole observation). Early exits without that message
 # and deadlines without the advertisement stay unbound (INVALID).
 ANCHOR = (
-    '    let inherited = capture_environment(std::env::vars_os());\n'
-    '    validate_environment(&inherited)?;\n'
-    '    let env = options.environment(inherited);\n'
-    '    let (host, feishu_webhook, switch_handles) =\n'
-    '        assembly::start_with_webhook(options.clone(), env).await?;\n'
+    '    let inherited = capture_environment(std::env::vars_os());\n    validate_environment(&inherited)?;\n    let env = options.environment(inherited);\n    server_host::run_embedding(\n        options,\n        env,\n        server_host::Embedding {\n            token,\n            loopback: None,\n            static_assets: None,\n            control: None,\n            restart: None,\n            ready: Arc::new(|address| {\n                Box::pin(async move {\n                    eprintln!("native listening {address}");\n                    Ok(())\n                })\n            }),\n            native_diagnostics: true,\n        },\n    )\n    .await\n    .map(|_| ())'
 )
 mutations = [
     ('run-entry-validate-omitted', ENTRY, ANCHOR,
-     '    let inherited = capture_environment(std::env::vars_os());\n'
-     '    let env = options.environment(inherited);\n'
-     '    let (host, feishu_webhook, switch_handles) =\n'
-     '        assembly::start_with_webhook(options.clone(), env).await?;\n',
+     '    let inherited = capture_environment(std::env::vars_os());\n    let env = options.environment(inherited);\n    server_host::run_embedding(\n        options,\n        env,\n        server_host::Embedding {\n            token,\n            loopback: None,\n            static_assets: None,\n            control: None,\n            restart: None,\n            ready: Arc::new(|address| {\n                Box::pin(async move {\n                    eprintln!("native listening {address}");\n                    Ok(())\n                })\n            }),\n            native_diagnostics: true,\n        },\n    )\n    .await\n    .map(|_| ())',
      TEST, MARKERS),
     # The realistic reorder threat: validate only after assembly already
     # consumed the inherited authorities. The rejection message is still
     # printed, so assembly's own writes under home are the kill evidence.
     ('run-entry-validate-reordered', ENTRY, ANCHOR,
-     '    let inherited = capture_environment(std::env::vars_os());\n'
-     '    let env = options.environment(inherited.clone());\n'
-     '    let (host, feishu_webhook, switch_handles) =\n'
-     '        assembly::start_with_webhook(options.clone(), env).await?;\n'
-     '    validate_environment(&inherited)?;\n',
+     '    let inherited = capture_environment(std::env::vars_os());\n    let env = options.environment(inherited.clone());\n    let result = server_host::run_embedding(\n        options,\n        env,\n        server_host::Embedding {\n            token,\n            loopback: None,\n            static_assets: None,\n            control: None,\n            restart: None,\n            ready: Arc::new(|address| {\n                Box::pin(async move {\n                    eprintln!("native listening {address}");\n                    Ok(())\n                })\n            }),\n            native_diagnostics: true,\n        },\n    )\n    .await\n    .map(|_| ());\n    validate_environment(&inherited)?;\n    result',
      TEST, MARKERS),
     ('run-entry-environment-unscoured', ENTRY, ANCHOR,
-     '    let inherited = capture_environment(std::env::vars_os());\n'
-     '    validate_environment(&inherited)?;\n'
-     '    let env = inherited;\n'
-     '    let (host, feishu_webhook, switch_handles) =\n'
-     '        assembly::start_with_webhook(options.clone(), env).await?;\n',
+     '    let inherited = capture_environment(std::env::vars_os());\n    validate_environment(&inherited)?;\n    let env = inherited;\n    server_host::run_embedding(\n        options,\n        env,\n        server_host::Embedding {\n            token,\n            loopback: None,\n            static_assets: None,\n            control: None,\n            restart: None,\n            ready: Arc::new(|address| {\n                Box::pin(async move {\n                    eprintln!("native listening {address}");\n                    Ok(())\n                })\n            }),\n            native_diagnostics: true,\n        },\n    )\n    .await\n    .map(|_| ())',
      SCRUB_TEST, SCRUB_MARKER),
 ]
 

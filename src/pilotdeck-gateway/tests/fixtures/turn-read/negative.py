@@ -56,10 +56,8 @@ with mutating_sources(repo, [source, registry_source]) as snapshots:
          '"read_session_messages is not wired.",',
          'read_not_configured'),
         ('merge-stream-first', source,
-         '    let mut merged = history.as_object().cloned().unwrap_or_default();\n    merged.insert("stream".into(), stream.to_json());',
-         '    let mut merged = JsObject::new();\n    merged.insert("stream".into(), stream.to_json());\n'
-         '    for (key, value) in history.as_object().cloned().unwrap_or_default().entries().iter() {\n'
-         '        merged.insert(key.clone(), value.clone());\n    }',
+         '    let mut merged = match &mut history {\n        JsValue::Object(object) => std::mem::take(object),\n        _ => JsObject::new(),\n    };\n    merged.insert("stream".into(), stream.to_json());',
+         '    let mut merged = JsObject::new();\n    merged.insert("stream".into(), stream.to_json());\n    if let Some(history) = history.as_object() {\n        for (key, value) in history.entries().iter() {\n            merged.insert(key.clone(), value.clone());\n        }\n    }',
          'read_stable_active_merges_history_and_stream'),
         ('merge-keeps-stale-stream', source,
          '    merged.insert("stream".into(), stream.to_json());',

@@ -1,0 +1,68 @@
+{
+  "sourceOracleSha256": "d713c32822b5d0656a20cb753167989997e8bcf0dede1abef5f2d77d55f1842f",
+  "sourceHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "caseId": "loop-max-turns",
+  "modelRequests": 1,
+  "executedTools": 1,
+  "report": {
+    "markdown": "",
+    "usage": {},
+    "turns": 2,
+    "durationMs": 0,
+    "subagentSessionId": "<ROOT>::sub::child-fixed",
+    "transcriptRelativePath": "parent/subagents/child-fixed.jsonl"
+  },
+  "terminal": {
+    "type": "max_turns",
+    "stopReason": "max_turns",
+    "usage": {},
+    "permissionDenials": [],
+    "turns": 2,
+    "startedAt": "2026-01-02T03:04:05.678Z",
+    "finalMessage": {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "tool_call",
+          "id": "child-tool-1",
+          "name": "fixture_read",
+          "input": {},
+          "timeline": {
+            "version": 1,
+            "turnId": "child-fixed-t0",
+            "id": "tool:child-tool-1",
+            "order": 0,
+            "revision": 2
+          }
+        }
+      ]
+    },
+    "errors": [
+      {
+        "code": "agent_max_turns_reached",
+        "message": "Reached maximum number of turns (1).",
+        "userHint": "Max turn limit reached. Increase maxTurns in config or break the task into smaller steps."
+      }
+    ],
+    "sessionId": "<ROOT>::sub::child-fixed",
+    "turnId": "child-fixed-t0",
+    "completedAt": "2026-01-02T03:04:05.678Z"
+  },
+  "parentCompleted": {
+    "type": "subagent_completed",
+    "subagentId": "child-fixed",
+    "subagentType": "general-purpose",
+    "summaryPreview": "",
+    "summaryTruncated": false,
+    "usage": {},
+    "turns": 2,
+    "durationMs": 0,
+    "errored": false,
+    "sessionId": "parent",
+    "turnId": "parent-turn",
+    "sequence": 3,
+    "createdAt": "2026-01-02T03:04:05.678Z",
+    "entryId": "parent-entry-20",
+    "parentEntryId": "parent-entry-2"
+  }
+}

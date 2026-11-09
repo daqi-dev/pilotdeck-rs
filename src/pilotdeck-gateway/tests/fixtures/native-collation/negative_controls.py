@@ -17,6 +17,7 @@ from negative_suite import Case, classify, invalidate_completed, passed, publish
 root = Path(__file__).resolve().parents[5]
 FIXTURE = Path(__file__).resolve().parent
 PROJECT = root / 'src/pilotdeck-gateway/src/project_files.rs'
+COLLATION = root / 'src/pilotdeck-transport/src/node_collation.rs'
 CATALOG = root / 'src/pilotdeck-gateway/src/model_catalog.rs'
 SESSION = root / 'src/pilotdeck-gateway/src/session_model.rs'
 COMPARISON = root / 'src/vendor/icu_collator/src/comparison.rs'
@@ -75,7 +76,7 @@ mutations = [
      'Ok(c) => length += c.len_utf16(),',
      'Ok(c) => { if c.len_utf16() == 2 { break; } length += 1; }',
      PAIRS, '#132 comparator raw weights'),
-    ('french-secondary-forward', PROJECT,
+    ('french-secondary-forward', COLLATION,
      'collator.with_backward_second_level(true)',
      'collator.with_backward_second_level(false)',
      PAIRS, '#132 comparator raw weights'),
@@ -93,7 +94,7 @@ mutations = [
     # mutation drops that widening, so `fr-Latn-CA` falls back to generic `fr`.
     # The 14-locale oracle compares the *explicit* spelling and is blind to
     # this, so the control binds the dedicated default-spelling test.
-    ('french-script-fallback-lost', PROJECT,
+    ('french-script-fallback-lost', COLLATION,
      'script.is_none_or(|script| script.to_string() == "Latn")',
      'script.is_none_or(|_| false)',
      'project_files::tests::fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one',
@@ -101,7 +102,7 @@ mutations = [
     # The opposite direction: widening the Latin test to every script would
     # repair `fr-Cyrl-CA`, which Node's default collator does not (measured
     # row `fr_Cyrl_CA.UTF-8` in `pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`).
-    ('french-script-widened', PROJECT,
+    ('french-script-widened', COLLATION,
      'script.is_none_or(|script| script.to_string() == "Latn")',
      'script.is_none_or(|_| true)',
      'project_files::tests::fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one',
@@ -109,7 +110,7 @@ mutations = [
     # Paired mutation for the explicit spelling: dropping its script condition
     # makes `new Intl.Collator("fr-Latn-CA")` take the fr-CA repair, which the
     # oracle records as generic `fr` (sign -1 for `coté` vs `côte`).
-    ('french-explicit-script-repaired', PROJECT,
+    ('french-explicit-script-repaired', COLLATION,
      '|| !process_default && locale.id.script.is_none()',
      '|| !process_default',
      PAIRS, '#132 comparator raw weights'),
@@ -236,7 +237,7 @@ def main():
             stream.write(result.stdout + result.stderr)
         return result
 
-    guarded = [PROJECT, CATALOG, SESSION, COMPARISON, BOUNDARY, MANIFEST, ARCHIVE, TRANSCRIPT,
+    guarded = [PROJECT, COLLATION, CATALOG, SESSION, COMPARISON, BOUNDARY, MANIFEST, ARCHIVE, TRANSCRIPT,
                WORKSPACE, STORAGE_TESTS, DISPATCH, FIXTURE / 'regression.rs',
                FIXTURE / 'oracle.json', FIXTURE / 'generate.mts', Path(__file__).resolve(),
                TRANSCRIPT_ORACLE,

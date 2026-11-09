@@ -441,6 +441,7 @@ impl ApprovalBindingResolver for DynamicResolver {
             match key.as_str() {
                 "sess-dyn2" => Ok(binding("t2", "a2", "u2")),
                 "sess-dynfail" => Err(ApprovalFailure {
+                    message: None,
                     status: Some(403),
                     code: None,
                 }),
@@ -493,15 +494,18 @@ impl ApprovalBridge for StubBridge {
                 ])),
                 "stub-fail-status" => Err(failure(400, "X_CUSTOM")),
                 "stub-fail-teapot" => Err(ApprovalFailure {
+                    message: None,
                     status: Some(418),
                     code: Some(JsValue::Number(123.0)),
                 }),
                 "stub-fail-unknown" => Err(failure(499, "X_499")),
                 "stub-fail-plain" => Err(ApprovalFailure {
+                    message: None,
                     status: None,
                     code: None,
                 }),
                 "stub-fail-codeonly" => Err(ApprovalFailure {
+                    message: None,
                     status: None,
                     code: Some(JsValue::String(JsString::from("SOME_CODE"))),
                 }),
@@ -524,6 +528,7 @@ impl ApprovalBridge for StubBridge {
                 "stub-resume-ok" => Ok(json(r#"{"accepted":true,"marker":"ok"}"#)),
                 "stub-resume-undef" => Ok(JsValue::Undefined),
                 "stub-resume-conflict" => Err(ApprovalFailure {
+                    message: None,
                     status: None,
                     code: Some(JsValue::String(JsString::from(
                         "SOP_RESUME_REQUEST_CONFLICT",

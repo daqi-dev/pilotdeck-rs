@@ -693,6 +693,8 @@ struct SharedEntry {
     tools: Arc<Mutex<Vec<Arc<McpBridgeTool>>>>,
     // Changed only while holding provider.state; watch lets stop await drain.
     leases: watch::Sender<usize>,
+    // Mutated only while holding provider.state.
+    waiters: std::sync::atomic::AtomicUsize,
     ready: Settle,
     stop: Mutex<Option<Settle>>,
 }
@@ -710,6 +712,43 @@ struct ProviderState {
 pub struct ProjectMcpRuntimeProvider {
     options: Arc<ProjectMcpRuntimeProviderOptions>,
     state: Arc<Mutex<ProviderState>>,
+}
+
+// Waiting for startup also owns the generation. Dropping the last waiter
+// retires it if no lease survived, including cancellation during startup.
+struct SharedWaiter {
+    provider: ProjectMcpRuntimeProvider,
+    entry: Arc<SharedEntry>,
+    active: bool,
+}
+impl SharedWaiter {
+    fn commit_locked(&mut self) {
+        self.active = false;
+        self.entry
+            .waiters
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn release(&mut self) -> Option<Settle> {
+        if !self.active {
+            return None;
+        }
+        let mut state = lock(&self.provider.state);
+        self.active = false;
+        let previous = self
+            .entry
+            .waiters
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        if previous == 1 && *self.entry.leases.borrow() == 0 {
+            Some(self.provider.stop_entry_locked(&mut state, &self.entry))
+        } else {
+            None
+        }
+    }
+}
+impl Drop for SharedWaiter {
+    fn drop(&mut self) {
+        let _ = self.release();
+    }
 }
 
 /// `ProjectMcpRuntimeLease`: the tools of one retained generation.
@@ -811,6 +850,60 @@ impl ProjectMcpRuntimeProvider {
         if let Some(sink) = &self.options.on_diagnostic {
             sink(message, error);
         }
+    }
+
+    /// Prepare a native session without blocking its async executor or opening
+    /// unchecked config files. The owned slot follows the blocking read if its
+    /// caller is cancelled. Existing non-native provider behavior is unchanged.
+    pub(crate) async fn preload_native_config(&self) -> Result<(), RuntimeError> {
+        if lock(&self.state).configured.is_some() {
+            return Ok(());
+        }
+        static SLOTS: std::sync::OnceLock<Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
+        let permit = SLOTS
+            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4)))
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| RuntimeError::new("Native MCP configuration executor unavailable."))?;
+        let provider = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            let loaded = super::protocol::load_native_mcp_server_config(
+                Path::new(&provider.options.project_root),
+                Path::new(&provider.options.pilot_home),
+                provider.options.environment.as_ref(),
+            )
+            .map_err(RuntimeError::new)?;
+            for diagnostic in loaded.diagnostics {
+                if provider.options.on_diagnostic.is_some() {
+                    provider.diagnostic(
+                        format!(
+                            "Ignoring invalid MCP config {}: {}",
+                            diagnostic.path, diagnostic.message
+                        ),
+                        None,
+                    );
+                } else {
+                    // Parser diagnostics may quote credentials; emit only the
+                    // affected path and a bounded, content-free warning here.
+                    use std::io::Write;
+                    let path: String = diagnostic.path.chars().take(512).collect();
+                    let _ = writeln!(
+                        std::io::stderr().lock(),
+                        "Ignoring invalid MCP config {} (details omitted).",
+                        path
+                    );
+                }
+            }
+            let mut state = lock(&provider.state);
+            if state.configured.is_none() {
+                state.configured = Some(loaded.servers);
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|error| RuntimeError::new(error.to_string()))?
     }
 
     /// `getConfiguredServers()`: loaded once.
@@ -944,10 +1037,10 @@ impl ProjectMcpRuntimeProvider {
         }
         let key = signature(&servers);
         loop {
-            let entry = {
+            let (entry, mut waiter) = {
                 let mut state = lock(&self.state);
                 Self::check_active(&state)?;
-                match state
+                let entry = match state
                     .entries
                     .iter()
                     .find(|e| e.signature == key && lock(&e.stop).is_none())
@@ -974,16 +1067,28 @@ impl ProjectMcpRuntimeProvider {
                             executor: tokio::runtime::Handle::current(),
                             tools,
                             leases: watch::channel(0).0,
+                            waiters: std::sync::atomic::AtomicUsize::new(0),
                             ready,
                             stop: Mutex::new(None),
                         });
                         state.entries.push(entry.clone());
                         entry
                     }
-                }
+                };
+                entry
+                    .waiters
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let waiter = SharedWaiter {
+                    provider: self.clone(),
+                    entry: entry.clone(),
+                    active: true,
+                };
+                (entry, waiter)
             };
             if let Err(error) = settled(entry.ready.clone()).await {
-                if let Err(release) = self.release_entry(&entry).await {
+                if let Some(stop) = waiter.release()
+                    && let Err(release) = settled(stop).await
+                {
                     self.diagnostic(
                         "Failed to clean up unavailable MCP runtime".into(),
                         Some(release),
@@ -992,9 +1097,8 @@ impl ProjectMcpRuntimeProvider {
                 self.diagnostic("MCP runtime startup partial-failed".into(), Some(error));
                 return Ok(ProjectMcpRuntimeLease::empty());
             }
-            // Selecting an entry reserves no lease: cancelling while waiting
-            // for ready must not pin it. Recheck under the same lock as release
-            // and dispose, since another caller may have retired it meanwhile.
+            // Transfer the waiting reservation into a lease atomically with
+            // respect to cancellation, release and dispose.
             {
                 let state = lock(&self.state);
                 Self::check_active(&state)?;
@@ -1002,6 +1106,7 @@ impl ProjectMcpRuntimeProvider {
                     continue;
                 }
                 entry.leases.send_modify(|count| *count += 1);
+                waiter.commit_locked();
             }
             let tools = lock(&entry.tools).clone();
             return Ok(ProjectMcpRuntimeLease {

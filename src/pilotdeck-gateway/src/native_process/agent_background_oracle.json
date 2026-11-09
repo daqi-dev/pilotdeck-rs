@@ -1,0 +1,74 @@
+{
+  "cases": [
+    {
+      "id": "background-launch",
+      "input": {
+        "description": "fixture task",
+        "prompt": "self-written directive",
+        "subagent_type": "research"
+      },
+      "calls": [
+        {
+          "definitionId": "research",
+          "directive": "self-written directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-agent-call",
+          "timeoutMs": 750
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[research] fixture task\n\nBackground subagent started as task task-fixed."
+          },
+          {
+            "type": "json",
+            "value": {
+              "subagentType": "research",
+              "description": "fixture task",
+              "text": "Background subagent started as task task-fixed.",
+              "backgroundTaskId": "task-fixed"
+            }
+          }
+        ],
+        "data": {
+          "subagentType": "research",
+          "description": "fixture task",
+          "text": "Background subagent started as task task-fixed.",
+          "backgroundTaskId": "task-fixed"
+        },
+        "metadata": {
+          "subagent": "research",
+          "subagentId": "child-fixed",
+          "backgroundTaskId": "task-fixed",
+          "forkMode": "background"
+        }
+      }
+    },
+    {
+      "id": "background-launch-failure",
+      "input": {
+        "description": "fixture task",
+        "prompt": "self-written directive",
+        "subagent_type": "research"
+      },
+      "calls": [
+        {
+          "definitionId": "research",
+          "directive": "self-written directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-agent-call",
+          "timeoutMs": 750
+        }
+      ],
+      "error": {
+        "code": "tool_execution_failed",
+        "message": "background agent subagent failed to launch: fixture owner unavailable",
+        "details": {
+          "errorCode": "subagent_launch_failed"
+        }
+      }
+    }
+  ]
+}

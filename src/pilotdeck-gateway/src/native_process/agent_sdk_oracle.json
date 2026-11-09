@@ -1,0 +1,305 @@
+{
+  "cases": [
+    {
+      "id": "absent",
+      "sdk": {},
+      "child": []
+    },
+    {
+      "id": "empty-replaces-default",
+      "sdk": {
+        "agents": {}
+      },
+      "definitions": {},
+      "child": []
+    },
+    {
+      "id": "required",
+      "sdk": {
+        "agents": {
+          "research": {
+            "description": "Research fixture",
+            "prompt": "Self-written child prompt"
+          }
+        }
+      },
+      "definitions": {
+        "research": {
+          "id": "research",
+          "description": "Research fixture",
+          "systemPromptSuffix": "Self-written child prompt",
+          "allowedTools": [
+            "*"
+          ],
+          "omitProjectInstructions": false,
+          "omitGitStatus": false,
+          "isReadOnly": false
+        }
+      },
+      "child": [
+        {
+          "id": "research",
+          "provider": "fixture",
+          "model": "child",
+          "permissionMode": "default",
+          "isSubagent": true,
+          "subagentDepth": 1,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "directive"
+                }
+              ]
+            }
+          ],
+          "customPromptPresent": true
+        }
+      ]
+    },
+    {
+      "id": "tools-empty-deny",
+      "sdk": {
+        "agents": {
+          "research": {
+            "description": "fixture",
+            "prompt": "self-written",
+            "tools": [],
+            "disallowedTools": [
+              "bash"
+            ]
+          }
+        }
+      },
+      "definitions": {
+        "research": {
+          "id": "research",
+          "description": "fixture",
+          "systemPromptSuffix": "self-written",
+          "allowedTools": [],
+          "disallowedTools": [
+            "bash"
+          ],
+          "omitProjectInstructions": false,
+          "omitGitStatus": false,
+          "isReadOnly": false
+        }
+      },
+      "child": [
+        {
+          "id": "research",
+          "provider": "fixture",
+          "model": "child",
+          "permissionMode": "default",
+          "isSubagent": true,
+          "subagentDepth": 1,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "directive"
+                }
+              ]
+            }
+          ],
+          "customPromptPresent": true
+        }
+      ]
+    },
+    {
+      "id": "all-fields",
+      "sdk": {
+        "agents": {
+          "research": {
+            "description": "fixture",
+            "prompt": "Self-written prompt",
+            "tools": [
+              "read_file",
+              "bash"
+            ],
+            "disallowedTools": [
+              "bash"
+            ],
+            "model": "fixture/custom",
+            "maxTurns": 3,
+            "permissionMode": "plan",
+            "effort": "high",
+            "skills": [
+              "fixture:a"
+            ],
+            "memory": "disabled",
+            "initialPrompt": "  fixture context  ",
+            "criticalSystemReminder_EXPERIMENTAL": "child-only reminder"
+          }
+        }
+      },
+      "definitions": {
+        "research": {
+          "id": "research",
+          "description": "fixture",
+          "systemPromptSuffix": "Self-written prompt",
+          "allowedTools": [
+            "read_file",
+            "bash"
+          ],
+          "disallowedTools": [
+            "bash"
+          ],
+          "omitProjectInstructions": false,
+          "omitGitStatus": false,
+          "isReadOnly": true,
+          "modelOverride": {
+            "provider": "fixture",
+            "model": "custom"
+          },
+          "maxTurns": 3,
+          "effort": "high",
+          "permissionMode": "plan",
+          "skills": [
+            "fixture:a"
+          ],
+          "memory": "disabled",
+          "initialPrompt": "  fixture context  ",
+          "criticalSystemReminder": "child-only reminder"
+        }
+      },
+      "child": [
+        {
+          "id": "research",
+          "provider": "fixture",
+          "model": "custom",
+          "runMode": "ask",
+          "permissionMode": "plan",
+          "isSubagent": true,
+          "subagentDepth": 1,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "fixture context"
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "directive"
+                }
+              ]
+            }
+          ],
+          "customPromptPresent": true,
+          "reminderPresent": true
+        }
+      ]
+    },
+    {
+      "id": "cap-turns",
+      "cap": 2,
+      "sdk": {
+        "agents": {
+          "research": {
+            "description": "fixture",
+            "prompt": "self-written",
+            "maxTurns": 7
+          }
+        }
+      },
+      "definitions": {
+        "research": {
+          "id": "research",
+          "description": "fixture",
+          "systemPromptSuffix": "self-written",
+          "allowedTools": [
+            "*"
+          ],
+          "omitProjectInstructions": false,
+          "omitGitStatus": false,
+          "isReadOnly": false,
+          "maxTurns": 2
+        }
+      },
+      "child": [
+        {
+          "id": "research",
+          "provider": "fixture",
+          "model": "child",
+          "permissionMode": "default",
+          "isSubagent": true,
+          "subagentDepth": 1,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "directive"
+                }
+              ]
+            }
+          ],
+          "customPromptPresent": true
+        }
+      ]
+    },
+    {
+      "id": "inherit-skills",
+      "sdk": {
+        "skills": [
+          "fixture:a"
+        ],
+        "agents": {
+          "research": {
+            "description": "fixture",
+            "prompt": "self-written",
+            "skills": "all"
+          }
+        }
+      },
+      "definitions": {
+        "research": {
+          "id": "research",
+          "description": "fixture",
+          "systemPromptSuffix": "self-written",
+          "allowedTools": [
+            "*"
+          ],
+          "omitProjectInstructions": false,
+          "omitGitStatus": false,
+          "isReadOnly": false,
+          "skills": "all"
+        }
+      },
+      "child": [
+        {
+          "id": "research",
+          "provider": "fixture",
+          "model": "child",
+          "permissionMode": "default",
+          "isSubagent": true,
+          "subagentDepth": 1,
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "directive"
+                }
+              ]
+            }
+          ],
+          "customPromptPresent": true
+        }
+      ]
+    }
+  ]
+}

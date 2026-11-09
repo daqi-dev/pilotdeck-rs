@@ -1,0 +1,599 @@
+{
+  "sourceHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceOracleSha256": "942260183f465e222623fef07bf129fa0bb63fe612ba801c8eaef41aebf1b2f4",
+  "scope": "Actual TS createAgentTool, injected fork contract; no default prompt asset copied; full child loop raw evidence remains capture-r3.",
+  "cases": [
+    {
+      "id": "tool-default",
+      "input": {
+        "description": "fixture task",
+        "prompt": "self-written directive"
+      },
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "general-purpose",
+          "directive": "self-written directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": false
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[general-purpose] fixture task\n\nScope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none"
+          },
+          {
+            "type": "json",
+            "value": {
+              "subagentType": "general-purpose",
+              "description": "fixture task",
+              "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2,
+                "totalTokens": 3
+              },
+              "turns": 2,
+              "durationMs": 0,
+              "subagentSessionId": "fixture::sub::child-fixed",
+              "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+            }
+          }
+        ],
+        "data": {
+          "subagentType": "general-purpose",
+          "description": "fixture task",
+          "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "totalTokens": 3
+          },
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        },
+        "metadata": {
+          "subagent": "general-purpose",
+          "subagentId": "child-fixed",
+          "forkMode": "full",
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        }
+      }
+    },
+    {
+      "id": "tool-legacy-type",
+      "input": {
+        "description": "fixture task",
+        "prompt": "directive",
+        "subagent_type": "general_purpose"
+      },
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "general-purpose",
+          "directive": "directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": false
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[general-purpose] fixture task\n\nScope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none"
+          },
+          {
+            "type": "json",
+            "value": {
+              "subagentType": "general-purpose",
+              "description": "fixture task",
+              "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2,
+                "totalTokens": 3
+              },
+              "turns": 2,
+              "durationMs": 0,
+              "subagentSessionId": "fixture::sub::child-fixed",
+              "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+            }
+          }
+        ],
+        "data": {
+          "subagentType": "general-purpose",
+          "description": "fixture task",
+          "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "totalTokens": 3
+          },
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        },
+        "metadata": {
+          "subagent": "general-purpose",
+          "subagentId": "child-fixed",
+          "forkMode": "full",
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        }
+      }
+    },
+    {
+      "id": "tool-primary-alias",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive",
+        "subagent_type": "plan",
+        "subagentType": "explore"
+      },
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "plan",
+          "directive": "directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": false
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[plan] fixture\n\nScope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none"
+          },
+          {
+            "type": "json",
+            "value": {
+              "subagentType": "plan",
+              "description": "fixture",
+              "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2,
+                "totalTokens": 3
+              },
+              "turns": 2,
+              "durationMs": 0,
+              "subagentSessionId": "fixture::sub::child-fixed",
+              "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+            }
+          }
+        ],
+        "data": {
+          "subagentType": "plan",
+          "description": "fixture",
+          "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "totalTokens": 3
+          },
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        },
+        "metadata": {
+          "subagent": "plan",
+          "subagentId": "child-fixed",
+          "forkMode": "full",
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        }
+      }
+    },
+    {
+      "id": "tool-trim-type",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive",
+        "subagent_type": "  ExPlOrE  "
+      },
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "explore",
+          "directive": "directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": false
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[explore] fixture\n\nScope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none"
+          },
+          {
+            "type": "json",
+            "value": {
+              "subagentType": "explore",
+              "description": "fixture",
+              "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2,
+                "totalTokens": 3
+              },
+              "turns": 2,
+              "durationMs": 0,
+              "subagentSessionId": "fixture::sub::child-fixed",
+              "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+            }
+          }
+        ],
+        "data": {
+          "subagentType": "explore",
+          "description": "fixture",
+          "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "totalTokens": 3
+          },
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        },
+        "metadata": {
+          "subagent": "explore",
+          "subagentId": "child-fixed",
+          "forkMode": "full",
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        }
+      }
+    },
+    {
+      "id": "tool-plan-redirect",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive"
+      },
+      "permissionMode": "plan",
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "explore",
+          "directive": "directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": false
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[explore] fixture\n\nScope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none"
+          },
+          {
+            "type": "json",
+            "value": {
+              "subagentType": "explore",
+              "description": "fixture",
+              "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2,
+                "totalTokens": 3
+              },
+              "turns": 2,
+              "durationMs": 0,
+              "subagentSessionId": "fixture::sub::child-fixed",
+              "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+            }
+          }
+        ],
+        "data": {
+          "subagentType": "explore",
+          "description": "fixture",
+          "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "totalTokens": 3
+          },
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        },
+        "metadata": {
+          "subagent": "explore",
+          "subagentId": "child-fixed",
+          "forkMode": "full",
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        }
+      }
+    },
+    {
+      "id": "tool-ask-redirect",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive"
+      },
+      "runMode": "ask",
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "explore",
+          "directive": "directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": false
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[explore] fixture\n\nScope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none"
+          },
+          {
+            "type": "json",
+            "value": {
+              "subagentType": "explore",
+              "description": "fixture",
+              "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2,
+                "totalTokens": 3
+              },
+              "turns": 2,
+              "durationMs": 0,
+              "subagentSessionId": "fixture::sub::child-fixed",
+              "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+            }
+          }
+        ],
+        "data": {
+          "subagentType": "explore",
+          "description": "fixture",
+          "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "totalTokens": 3
+          },
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        },
+        "metadata": {
+          "subagent": "explore",
+          "subagentId": "child-fixed",
+          "forkMode": "full",
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        }
+      }
+    },
+    {
+      "id": "tool-unknown",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive",
+        "subagent_type": "absent"
+      },
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [],
+      "error": {
+        "name": "PilotDeckToolRuntimeError",
+        "code": "invalid_tool_input",
+        "message": "Unknown subagent_type \"absent\". Available: general-purpose, explore, plan, verify."
+      }
+    },
+    {
+      "id": "tool-depth-zero",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive"
+      },
+      "depth": 0,
+      "max": 0,
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [],
+      "error": {
+        "name": "PilotDeckToolRuntimeError",
+        "code": "tool_execution_failed",
+        "message": "subagent_depth_exceeded (depth=0, max=0); nested fork rejected.",
+        "details": {
+          "errorCode": "subagent_depth_exceeded"
+        }
+      }
+    },
+    {
+      "id": "tool-depth-full",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive"
+      },
+      "depth": 2,
+      "max": 2,
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [],
+      "error": {
+        "name": "PilotDeckToolRuntimeError",
+        "code": "tool_execution_failed",
+        "message": "subagent_depth_exceeded (depth=2, max=2); nested fork rejected.",
+        "details": {
+          "errorCode": "subagent_depth_exceeded"
+        }
+      }
+    },
+    {
+      "id": "tool-depth-permit",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive"
+      },
+      "depth": 1,
+      "max": 2,
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "general-purpose",
+          "directive": "directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": false
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "[general-purpose] fixture\n\nScope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none"
+          },
+          {
+            "type": "json",
+            "value": {
+              "subagentType": "general-purpose",
+              "description": "fixture",
+              "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 2,
+                "totalTokens": 3
+              },
+              "turns": 2,
+              "durationMs": 0,
+              "subagentSessionId": "fixture::sub::child-fixed",
+              "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+            }
+          }
+        ],
+        "data": {
+          "subagentType": "general-purpose",
+          "description": "fixture",
+          "text": "Scope: fixture\nResult: fixture result\nKey files: none\nFiles changed: none\nIssues: none",
+          "usage": {
+            "inputTokens": 1,
+            "outputTokens": 2,
+            "totalTokens": 3
+          },
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        },
+        "metadata": {
+          "subagent": "general-purpose",
+          "subagentId": "child-fixed",
+          "forkMode": "full",
+          "turns": 2,
+          "durationMs": 0,
+          "subagentSessionId": "fixture::sub::child-fixed",
+          "transcriptRelativePath": "fixture/subagents/child-fixed.jsonl"
+        }
+      }
+    },
+    {
+      "id": "tool-fork-failure",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive"
+      },
+      "failure": "fixture fork refused",
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "general-purpose",
+          "directive": "directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": false
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "error": {
+        "name": "PilotDeckToolRuntimeError",
+        "code": "tool_execution_failed",
+        "message": "agent subagent failed: fixture fork refused",
+        "details": {
+          "errorCode": "subagent_execution_failed"
+        }
+      }
+    },
+    {
+      "id": "tool-aborted",
+      "input": {
+        "description": "fixture",
+        "prompt": "directive"
+      },
+      "aborted": true,
+      "scope": "real TS agent tool with injected fork contract; not an actual child loop",
+      "calls": [
+        {
+          "definitionId": "general-purpose",
+          "directive": "directive",
+          "subagentId": "child-fixed",
+          "toolCallId": "parent-tool-fixed",
+          "abortSignal": {
+            "aborted": true
+          },
+          "timeoutMs": 500
+        }
+      ],
+      "error": {
+        "name": "PilotDeckToolRuntimeError",
+        "code": "tool_aborted",
+        "message": "agent subagent aborted before completion."
+      }
+    }
+  ]
+}

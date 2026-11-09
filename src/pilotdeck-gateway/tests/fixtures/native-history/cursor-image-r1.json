@@ -1,0 +1,4389 @@
+{
+  "cases": [
+    {
+      "id": "cursor-hex",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": "0x10",
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-hex",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": "0x10",
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-hex-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-hex-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          }
+        ],
+        "nextCursor": "1",
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "cursor-signed-hex",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": "+0x10",
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-signed-hex",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": "+0x10",
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-signed-hex-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-signed-hex-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          }
+        ],
+        "nextCursor": "1",
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "cursor-binary-prefix",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": "0b10",
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-binary-prefix",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": "0b10",
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-binary-prefix-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-binary-prefix-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          }
+        ],
+        "nextCursor": "1",
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "cursor-octal-prefix",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": "0o10",
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-octal-prefix",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": "0o10",
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-octal-prefix-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-octal-prefix-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          }
+        ],
+        "nextCursor": "1",
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "cursor-number-one",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": 1,
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-number-one",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": 1,
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-one-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-one-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "world",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "cursor-number-zero",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": 0,
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-number-zero",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": 0,
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-zero-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-zero-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          }
+        ],
+        "nextCursor": "1",
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "cursor-number-fraction",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": 1.5,
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-number-fraction",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": 1.5,
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-fraction-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-fraction-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "world",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "cursor-number-negative",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": -1,
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-number-negative",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": -1,
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-negative-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-negative-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          }
+        ],
+        "nextCursor": "1",
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "cursor-number-large",
+      "input": {
+        "sessionKey": "history:fixture",
+        "cursor": 1e+21,
+        "limit": 1
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "cursor-number-large",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "world"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ],
+        "input": {
+          "cursor": 1e+21,
+          "limit": 1
+        }
+      },
+      "rawJsonlSha256": "cddc27f04ee608565d569045356d81db6656e6753ebc181722f61ed122b22c2f",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-large-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-cursor-number-large-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "world"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-1-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "world",
+            "entryId": "entry-2",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          }
+        ],
+        "total": 2,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225603000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-same-message-after-result",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-same-message-after-result",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "tool_result_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-1",
+                  "isError": false,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "tool text"
+                    }
+                  ],
+                  "raw": {
+                    "toolName": "read_file"
+                  }
+                },
+                {
+                  "type": "image",
+                  "source": "base64",
+                  "mimeType": "image/png",
+                  "data": "Zg=="
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "79499297d92d3b0123f7474f99187898addaa083292d77c7aa6a5155479054a7",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-same-message-after-result-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-same-message-after-result-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-1",
+                "isError": false,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "tool text"
+                  }
+                ],
+                "raw": {
+                  "toolName": "read_file"
+                }
+              },
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "Zg=="
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-tool-2-call-1-result",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "tool text",
+            "source": "history",
+            "images": [
+              {
+                "data": "data:image/png;base64,Zg==",
+                "mimeType": "image/png"
+              }
+            ],
+            "turnId": "turn-1",
+            "sequence": 3
+          }
+        ],
+        "total": 3,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-cross-entry-after-result",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-cross-entry-after-result",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "tool_result_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-1",
+                  "isError": false,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "tool text"
+                    }
+                  ],
+                  "raw": {
+                    "toolName": "read_file"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "durable_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 4,
+            "createdAt": "2026-01-01T00:00:04.000Z",
+            "entryId": "entry-4",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "image",
+                  "source": "base64",
+                  "mimeType": "image/png",
+                  "data": "Zg=="
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "ecd0801c97d84762ef4547f79cbde02b4b194567e2c1be7d58e99df93b5930d1",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-cross-entry-after-result-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-cross-entry-after-result-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-1",
+                "isError": false,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "tool text"
+                  }
+                ],
+                "raw": {
+                  "toolName": "read_file"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "durable_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 4,
+          "createdAt": "2026-01-01T00:00:04.000Z",
+          "entryId": "entry-4",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "Zg=="
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-tool-2-call-1-result",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "tool text",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          },
+          {
+            "id": "history:fixture-msg-3-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:04.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "",
+            "images": [
+              {
+                "data": "data:image/png;base64,Zg==",
+                "mimeType": "image/png"
+              }
+            ],
+            "entryId": "entry-4",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 4
+          }
+        ],
+        "total": 4,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-cross-canonical-same-entry",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-cross-canonical-same-entry",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "tool_result",
+                    "toolCallId": "call-1",
+                    "isError": false,
+                    "content": [
+                      {
+                        "type": "text",
+                        "text": "tool text"
+                      }
+                    ],
+                    "raw": {
+                      "toolName": "read_file"
+                    }
+                  }
+                ]
+              },
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "image",
+                    "source": "base64",
+                    "mimeType": "image/png",
+                    "data": "Zg=="
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "1a6550bd8e7f5f3eb908448856cd8e5738fb5f0a214c351ff667e7bc8641518d",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-cross-canonical-same-entry-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-cross-canonical-same-entry-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-1",
+                  "isError": false,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "tool text"
+                    }
+                  ],
+                  "raw": {
+                    "toolName": "read_file"
+                  }
+                }
+              ]
+            },
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "image",
+                  "source": "base64",
+                  "mimeType": "image/png",
+                  "data": "Zg=="
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-tool-2-call-1-result",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "tool text",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          },
+          {
+            "id": "history:fixture-msg-3-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "",
+            "images": [
+              {
+                "data": "data:image/png;base64,Zg==",
+                "mimeType": "image/png"
+              }
+            ],
+            "payload": {
+              "forkUnsupportedContent": true,
+              "forkUnsupportedReason": "This turn contains attachments or media."
+            },
+            "entryId": "entry-3",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          }
+        ],
+        "total": 4,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-inside-result-content",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-inside-result-content",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "tool_result_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-1",
+                  "isError": false,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "inside"
+                    },
+                    {
+                      "type": "image",
+                      "source": "base64",
+                      "mimeType": "image/png",
+                      "data": "Zg=="
+                    }
+                  ],
+                  "raw": {
+                    "toolName": "read_file"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "523252028bc8c0ead3152290116e2df7f062ca267d1286edd4c2fd7c5343d809",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-inside-result-content-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-inside-result-content-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-1",
+                "isError": false,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "inside"
+                  },
+                  {
+                    "type": "image",
+                    "source": "base64",
+                    "mimeType": "image/png",
+                    "data": "Zg=="
+                  }
+                ],
+                "raw": {
+                  "toolName": "read_file"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-tool-2-call-1-result",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "inside\n[Image: image/png, 4 base64 characters]",
+            "images": [
+              {
+                "data": "data:image/png;base64,Zg==",
+                "mimeType": "image/png"
+              }
+            ],
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          }
+        ],
+        "total": 3,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-two-results-attach-last",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-two-results-attach-last",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "tool_result_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-1",
+                  "isError": false,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "tool text"
+                    }
+                  ],
+                  "raw": {
+                    "toolName": "read_file"
+                  }
+                },
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-2",
+                  "isError": false,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "tool text"
+                    }
+                  ],
+                  "raw": {
+                    "toolName": "read_file"
+                  }
+                },
+                {
+                  "type": "image",
+                  "source": "base64",
+                  "mimeType": "image/png",
+                  "data": "Zg=="
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "de7e4d9d1eb183745b329f3c55e0688335bdafb47bd0433643473936ec7667b6",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-two-results-attach-last-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-two-results-attach-last-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-1",
+                "isError": false,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "tool text"
+                  }
+                ],
+                "raw": {
+                  "toolName": "read_file"
+                }
+              },
+              {
+                "type": "tool_result",
+                "toolCallId": "call-2",
+                "isError": false,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "tool text"
+                  }
+                ],
+                "raw": {
+                  "toolName": "read_file"
+                }
+              },
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "Zg=="
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-tool-2-call-1-result",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "tool text",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          },
+          {
+            "id": "history:fixture-tool-2-call-2-result",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "call-2",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "tool text",
+            "source": "history",
+            "images": [
+              {
+                "data": "data:image/png;base64,Zg==",
+                "mimeType": "image/png"
+              }
+            ],
+            "turnId": "turn-1",
+            "sequence": 3
+          }
+        ],
+        "total": 4,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-empty-text-breaks-association",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-empty-text-breaks-association",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "tool_result_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-1",
+                  "isError": false,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "tool text"
+                    }
+                  ],
+                  "raw": {
+                    "toolName": "read_file"
+                  }
+                },
+                {
+                  "type": "text",
+                  "text": ""
+                },
+                {
+                  "type": "image",
+                  "source": "base64",
+                  "mimeType": "image/png",
+                  "data": "Zg=="
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "b5a2ef7e295ebcdd5f8adda508f5cfff0e74daf93b927e67134071c070b4cbc9",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-empty-text-breaks-association-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-empty-text-breaks-association-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-1",
+                "isError": false,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "tool text"
+                  }
+                ],
+                "raw": {
+                  "toolName": "read_file"
+                }
+              },
+              {
+                "type": "text",
+                "text": ""
+              },
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "Zg=="
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-tool-2-call-1-result",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "tool text",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          },
+          {
+            "id": "history:fixture-msg-2-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "",
+            "images": [
+              {
+                "data": "data:image/png;base64,Zg==",
+                "mimeType": "image/png"
+              }
+            ],
+            "entryId": "entry-3",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          }
+        ],
+        "total": 4,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-url-attachment",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-url-attachment",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "tool_result_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "tool_result",
+                  "toolCallId": "call-1",
+                  "isError": false,
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "tool text"
+                    }
+                  ],
+                  "raw": {
+                    "toolName": "read_file"
+                  }
+                },
+                {
+                  "type": "image",
+                  "source": "url",
+                  "mimeType": "image/png",
+                  "data": "https://fixture.invalid/example.png"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "a17ccca243ff0e6f147acb5d8ab96131ecb5c63a2d0512b1673e1806b48ceffb",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-url-attachment-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-url-attachment-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "call-1",
+                "isError": false,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "tool text"
+                  }
+                ],
+                "raw": {
+                  "toolName": "read_file"
+                }
+              },
+              {
+                "type": "image",
+                "source": "url",
+                "mimeType": "image/png",
+                "data": "https://fixture.invalid/example.png"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-tool-2-call-1-result",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "tool text",
+            "source": "history",
+            "images": [
+              {
+                "data": "https://fixture.invalid/example.png",
+                "mimeType": "image/png"
+              }
+            ],
+            "turnId": "turn-1",
+            "sequence": 3
+          }
+        ],
+        "total": 3,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-assistant-role",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-assistant-role",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "image",
+                  "source": "base64",
+                  "mimeType": "image/png",
+                  "data": "Zg=="
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "24d47d4d9d77f654969a22baaed362c009759c823b7b1f370e96300415811792",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-assistant-role-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-assistant-role-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "Zg=="
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-attachment-2-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "status",
+            "text": "[image attachment]",
+            "payload": {
+              "mimeType": "image/png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          }
+        ],
+        "total": 3,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    },
+    {
+      "id": "image-user-text-prefix",
+      "input": {
+        "sessionKey": "history:fixture"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "spec": {
+        "id": "image-user-text-prefix",
+        "entries": [
+          {
+            "type": "accepted_input",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 1,
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "entryId": "entry-1",
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "hello"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "assistant_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 2,
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "entryId": "entry-2",
+            "message": {
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "tool_call",
+                  "id": "call-1",
+                  "name": "read_file",
+                  "input": {
+                    "path": "fixture.png"
+                  }
+                }
+              ]
+            }
+          },
+          {
+            "type": "durable_message",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 3,
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "entryId": "entry-3",
+            "message": {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "before"
+                },
+                {
+                  "type": "image",
+                  "source": "base64",
+                  "mimeType": "image/png",
+                  "data": "Zg=="
+                },
+                {
+                  "type": "text",
+                  "text": "after"
+                }
+              ]
+            }
+          },
+          {
+            "type": "turn_result",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "sequence": 8,
+            "createdAt": "2026-01-01T00:00:08.000Z",
+            "entryId": "entry-8",
+            "result": {
+              "type": "success",
+              "sessionId": "history:fixture",
+              "turnId": "turn-1",
+              "stopReason": "completed",
+              "usage": {},
+              "permissionDenials": [],
+              "turns": 1,
+              "startedAt": "2026-01-01T00:00:00.000Z",
+              "completedAt": "2026-01-01T00:00:03.000Z"
+            }
+          }
+        ]
+      },
+      "rawJsonlSha256": "6fbd41f4eeb4ab459afd5d31a3ffec2d3f7d27f715a47b36356fbf9e1fa949f4",
+      "calls": [
+        {
+          "provider": {
+            "kind": "agent",
+            "sessionId": "history:fixture",
+            "transcriptPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-user-text-prefix-project/chats/history:fixture.jsonl",
+            "projectionCheckpointPath": "<CASE>/home/projects/private-tmp-pdrs-consolidation-history-oracle-20261108-a-capture-r1-image-user-text-prefix-project/chats/history:fixture.jsonl.projections.json"
+          }
+        },
+        {
+          "catalog": {
+            "projectRoot": "<CASE>/project",
+            "pilotHome": "<CASE>/home"
+          }
+        }
+      ],
+      "loadedEntries": [
+        {
+          "type": "accepted_input",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 1,
+          "createdAt": "2026-01-01T00:00:01.000Z",
+          "entryId": "entry-1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 2,
+          "createdAt": "2026-01-01T00:00:02.000Z",
+          "entryId": "entry-2",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "tool_call",
+                "id": "call-1",
+                "name": "read_file",
+                "input": {
+                  "path": "fixture.png"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "durable_message",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 3,
+          "createdAt": "2026-01-01T00:00:03.000Z",
+          "entryId": "entry-3",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "before"
+              },
+              {
+                "type": "image",
+                "source": "base64",
+                "mimeType": "image/png",
+                "data": "Zg=="
+              },
+              {
+                "type": "text",
+                "text": "after"
+              }
+            ]
+          }
+        },
+        {
+          "type": "turn_result",
+          "sessionId": "history:fixture",
+          "turnId": "turn-1",
+          "sequence": 8,
+          "createdAt": "2026-01-01T00:00:08.000Z",
+          "entryId": "entry-8",
+          "result": {
+            "type": "success",
+            "sessionId": "history:fixture",
+            "turnId": "turn-1",
+            "stopReason": "completed",
+            "usage": {},
+            "permissionDenials": [],
+            "turns": 1,
+            "startedAt": "2026-01-01T00:00:00.000Z",
+            "completedAt": "2026-01-01T00:00:03.000Z"
+          }
+        }
+      ],
+      "diagnostics": [],
+      "result": {
+        "messages": [
+          {
+            "id": "history:fixture-msg-0-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:01.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "hello",
+            "entryId": "entry-1",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 1
+          },
+          {
+            "id": "history:fixture-tool-1-call-1",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:02.000Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "call-1",
+            "toolName": "read_file",
+            "payload": {
+              "path": "fixture.png"
+            },
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 2
+          },
+          {
+            "id": "history:fixture-msg-2-0",
+            "sessionKey": "history:fixture",
+            "createdAt": "2026-01-01T00:00:03.000Z",
+            "provider": "pilotdeck",
+            "role": "user",
+            "kind": "text",
+            "text": "beforeafter",
+            "images": [
+              {
+                "data": "data:image/png;base64,Zg==",
+                "mimeType": "image/png"
+              }
+            ],
+            "entryId": "entry-3",
+            "source": "history",
+            "turnId": "turn-1",
+            "sequence": 3
+          }
+        ],
+        "total": 3,
+        "session": {
+          "sessionId": "history:fixture",
+          "sessionKey": "history:fixture",
+          "summary": "hello",
+          "lastModified": 1767225608000,
+          "firstPrompt": "hello",
+          "cwd": "<CASE>/project",
+          "createdAt": 1767225601000
+        }
+      },
+      "projection": {
+        "fileArtifacts": [],
+        "agentStatuses": [],
+        "turnErrors": [],
+        "tokenUsage": {},
+        "incompleteTurnIds": []
+      }
+    }
+  ]
+}

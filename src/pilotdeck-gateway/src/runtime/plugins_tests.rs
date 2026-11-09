@@ -776,6 +776,7 @@ fn plugin_disposal_receivers() -> (DisposalStartReceiver, Vec<DisposalReceiver>)
     let mut registry = PluginRegistry::new();
     let state = Arc::new(TokioMutex::new(PluginRuntimeState {
         registry: PluginRegistry::new(),
+        output_styles: Vec::new(),
         refresh_sender: None,
         refresh_receiver: None,
         disposal_requested: false,

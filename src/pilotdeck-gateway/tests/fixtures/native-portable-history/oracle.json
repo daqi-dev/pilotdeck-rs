@@ -1,0 +1,253 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "versions": {
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "sourceSha256": "54c2f856936733ef9c04d9c995a32317ed14a0d4070d202a0c2365447491869f",
+  "cases": {
+    "unknown_project_missing_session": {
+      "ok": false,
+      "code": "PROJECT_NOT_FOUND"
+    },
+    "invalid_project_empty_session": {
+      "ok": false,
+      "code": "ERR_INVALID_ARG_TYPE"
+    },
+    "cold_invalid_archive": {
+      "ok": false,
+      "code": "INVALID_SESSION_ARCHIVE",
+      "message": "Unsupported or malformed session transcript archive."
+    },
+    "empty_archive": {
+      "ok": false,
+      "code": "INVALID_SESSION_ARCHIVE",
+      "message": "Session transcript archive has an invalid message count."
+    },
+    "restore": {
+      "ok": true,
+      "value": {
+        "sessionKey": "sdk:restored",
+        "importedMessages": 2
+      }
+    },
+    "export_restored": {
+      "ok": true,
+      "value": {
+        "schemaVersion": 1,
+        "format": "portable_text_messages",
+        "messages": [
+          {
+            "role": "user",
+            "text": "hello"
+          },
+          {
+            "role": "assistant",
+            "text": "world"
+          }
+        ],
+        "title": "Title"
+      }
+    },
+    "conflict": {
+      "ok": false,
+      "code": "SESSION_RESTORE_CONFLICT",
+      "message": "A persistent transcript already exists for this session."
+    },
+    "missing": {
+      "ok": false,
+      "code": "SESSION_NOT_FOUND",
+      "message": "Session not found: sdk:missing"
+    },
+    "busy_invalid_archive": {
+      "ok": false,
+      "code": "SESSION_BUSY",
+      "message": "Cannot restore over an active Gateway session."
+    },
+    "busy_export": {
+      "ok": false,
+      "code": "SESSION_BUSY",
+      "message": "Cannot export a transcript while its session has an active turn."
+    },
+    "busy_restore": {
+      "ok": false,
+      "code": "SESSION_BUSY",
+      "message": "Cannot restore over an active Gateway session."
+    },
+    "finished_export": {
+      "ok": true,
+      "value": {
+        "schemaVersion": 1,
+        "format": "portable_text_messages",
+        "messages": [
+          {
+            "role": "user",
+            "text": "busy"
+          },
+          {
+            "role": "assistant",
+            "text": "answer"
+          }
+        ]
+      }
+    },
+    "compact_projection": {
+      "ok": true,
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "compact"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "new"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "compact": {
+    "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "events": [
+      {
+        "sessionId": "compact-source",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "entryId": "compact-entry",
+        "turnId": "t1",
+        "sequence": 2,
+        "type": "control_boundary",
+        "boundary": {
+          "kind": "compact",
+          "subtype": "compact_boundary",
+          "snapshot": {
+            "version": 1,
+            "messages": [
+              {
+                "role": "user",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "compact"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      },
+      {
+        "sessionId": "compact-source",
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "entryId": "new-entry",
+        "turnId": "t2",
+        "sequence": 3,
+        "type": "accepted_input",
+        "messages": [
+          {
+            "role": "user",
+            "content": [
+              {
+                "type": "text",
+                "text": "new"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "value": {
+      "schemaVersion": 1,
+      "format": "portable_text_messages",
+      "messages": [
+        {
+          "role": "user",
+          "text": "compact"
+        },
+        {
+          "role": "user",
+          "text": "new"
+        }
+      ]
+    }
+  },
+  "restoreDisk": [
+    {
+      "type": "session_metadata",
+      "metadata": {
+        "title": "Title",
+        "updatedAt": "2026-11-09T17:13:46.460Z"
+      },
+      "sessionId": "sdk:restored",
+      "sequence": 1
+    },
+    {
+      "type": "accepted_input",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "hello"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "world"
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "restoredFromGatewayArchive": true,
+        "archiveSchemaVersion": 1
+      },
+      "sessionId": "sdk:restored",
+      "sequence": 2
+    }
+  ],
+  "resumeMessages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "hello"
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "world"
+        }
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "followup"
+        }
+      ]
+    }
+  ]
+}

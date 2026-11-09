@@ -41,9 +41,8 @@ use std::{
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 use super::{
-    AlwaysOnConfig, AlwaysOnLogger, AlwaysOnPaths, ChannelLeaseRegistry, DiscoveryPlanRecord,
-    DiscoveryPlanStore, DiscoveryScheduler, DiscoveryStateStore, IsProjectBusy, SchedulerDeps,
-    WorkCycleStore,
+    AlwaysOnConfig, AlwaysOnLogger, AlwaysOnPaths, ChannelLeaseRegistry, DiscoveryPlanStore,
+    DiscoveryScheduler, DiscoveryStateStore, IsProjectBusy, SchedulerDeps, WorkCycleStore,
     fire::{
         ApplyPhaseInput, DiscoveryFire, DiscoveryFirePort, RerunFireInput, derive_apply_session_key,
     },
@@ -71,10 +70,74 @@ pub(crate) struct GatewayAbortInput<'a> {
     pub reason: Option<&'a str>,
 }
 
+/// One unattended phase submitted through the existing native session owner.
+#[derive(Clone)]
+pub(crate) struct PhaseRequest {
+    pub project_key: JsString,
+    pub session_key: JsString,
+    pub channel_key: JsString,
+    pub run_id: JsString,
+    pub message: JsString,
+    pub cwd: PathBuf,
+    pub permission_mode: JsString,
+    pub bypass_available: bool,
+    pub can_prompt: bool,
+    pub exclude_tools: Vec<JsString>,
+    pub permission_deny: Vec<crate::config::permission::PermissionRule>,
+    pub context_registry: Arc<AlwaysOnRunContextRegistry>,
+    pub register_automation_tools: bool,
+    pub observer: Arc<dyn PhaseObserver>,
+}
+
+/// Bounded ordered turn events, including the terminal event. `error` is the
+/// first error event; phase-specific missing codes are filled by the caller.
+pub(crate) struct PhaseResult {
+    pub events: Vec<JsValue>,
+    pub error: Option<ControlError>,
+    completion: Option<Box<dyn PhaseCompletion>>,
+}
+impl PhaseResult {
+    pub(crate) fn new(events: Vec<JsValue>, error: Option<ControlError>) -> Self {
+        Self {
+            events,
+            error,
+            completion: None,
+        }
+    }
+    pub(crate) fn with_completion(mut self, completion: Box<dyn PhaseCompletion>) -> Self {
+        self.completion = Some(completion);
+        self
+    }
+    /// Fire emits its completed/failed event before releasing the session.
+    /// An abandoned receipt still owns cleanup through the implementation's Drop.
+    pub(crate) async fn finish(&mut self) {
+        if let Some(completion) = self.completion.take() {
+            completion.close().await;
+        }
+    }
+}
+pub(crate) trait PhaseCompletion: Send {
+    fn close(self: Box<Self>) -> Pin<Box<dyn Future<Output = ()> + Send>>;
+}
+pub(crate) trait PhaseObserver: Send + Sync {
+    fn on_event<'a>(
+        &'a self,
+        session: &'a JsString,
+        channel: &'a JsString,
+        phase_run: &'a JsString,
+        event: &'a JsValue,
+    ) -> Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
+}
+
 /// The abort half of the turn facade. The error is the `Error.message` the TS
 /// catch reads (`error instanceof Error ? error.message : String(error)`,
 /// AlwaysOnRuntime.ts:399-400).
 pub(crate) trait AlwaysOnAgentGateway: Send + Sync {
+    fn run_phase<'a>(
+        &'a self,
+        request: PhaseRequest,
+    ) -> Pin<Box<dyn Future<Output = Result<PhaseResult, ControlError>> + Send + 'a>>;
+
     fn abort_turn<'a>(
         &'a self,
         input: GatewayAbortInput<'a>,
@@ -98,12 +161,14 @@ pub(crate) struct AlwaysOnRunContext {
 /// refuses a duplicate key exactly as the TS throw does
 /// (AlwaysOnRunContextRegistry.ts:82-84).
 pub(crate) struct AlwaysOnRunContextRegistry {
-    contexts: Mutex<HashMap<String, AlwaysOnRunContext>>,
+    pub(super) contexts: Mutex<HashMap<String, AlwaysOnRunContext>>,
+    pub(super) tool_handlers: Mutex<HashMap<JsString, Arc<super::tools::PhaseHandlerEntry>>>,
 }
 impl AlwaysOnRunContextRegistry {
     pub(crate) fn new() -> Self {
         Self {
             contexts: Mutex::new(HashMap::new()),
+            tool_handlers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -123,10 +188,12 @@ impl AlwaysOnRunContextRegistry {
     /// with the explicitly unported fire pipeline.
     #[allow(dead_code)]
     pub(crate) fn unregister(&self, session_key: &str) {
-        self.contexts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(session_key);
+        let mut contexts = self.contexts.lock().unwrap_or_else(|e| e.into_inner());
+        contexts.remove(session_key);
+        let mut handlers = self.tool_handlers.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = handlers.remove(&JsString::from(session_key)) {
+            *entry.active.lock().unwrap_or_else(|e| e.into_inner()) = false;
+        }
     }
 
     pub(crate) fn get(&self, session_key: &str) -> Option<AlwaysOnRunContext> {
@@ -139,10 +206,19 @@ impl AlwaysOnRunContextRegistry {
 
     /// The project-scoped sweep of `stop` (AlwaysOnRuntime.ts:304-308).
     pub(crate) fn unregister_project(&self, project_key: &str) {
-        self.contexts
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .retain(|_, context| context.project_key != project_key);
+        let mut contexts = self.contexts.lock().unwrap_or_else(|e| e.into_inner());
+        let sessions: Vec<JsString> = contexts
+            .iter()
+            .filter(|(_, context)| context.project_key == project_key)
+            .map(|(session, _)| JsString::from(session.as_str()))
+            .collect();
+        contexts.retain(|_, context| context.project_key != project_key);
+        let mut handlers = self.tool_handlers.lock().unwrap_or_else(|e| e.into_inner());
+        for session in sessions {
+            if let Some(entry) = handlers.remove(&session) {
+                *entry.active.lock().unwrap_or_else(|e| e.into_inner()) = false;
+            }
+        }
     }
 }
 
@@ -153,7 +229,7 @@ impl AlwaysOnRunContextRegistry {
 pub(crate) struct ApplyInput {
     pub project_key: String,
     pub work_cycle_id: String,
-    pub project_name: Option<String>,
+    pub project_name: Option<JsString>,
 }
 
 pub(crate) struct AbortInput {
@@ -244,7 +320,25 @@ struct RuntimeShared {
     stopping: AtomicBool,
     stop_started: AtomicBool,
     stop_finished: tokio::sync::watch::Sender<bool>,
+    stop_error: Mutex<Option<String>>,
     active_control_runs: Mutex<HashMap<String, ActiveControlRun>>,
+}
+
+/// Dependencies bound to the existing per-project runtime generation.
+pub(crate) struct FireInputs {
+    pub config: AlwaysOnConfig,
+    pub project_key: String,
+    pub paths: AlwaysOnPaths,
+    pub state_store: Arc<DiscoveryStateStore>,
+    pub plan_store: Arc<DiscoveryPlanStore>,
+    pub cycle_store: Arc<WorkCycleStore>,
+    pub contexts: Arc<AlwaysOnRunContextRegistry>,
+    pub gateway: Arc<dyn AlwaysOnAgentGateway>,
+    pub now: Arc<dyn Fn() -> f64 + Send + Sync>,
+    pub uuid: Arc<dyn Fn() -> String + Send + Sync>,
+}
+pub(crate) trait FireFactory: Send + Sync {
+    fn create(&self, input: FireInputs) -> io::Result<Arc<dyn DiscoveryFirePort>>;
 }
 
 /// `AlwaysOnRuntime` (AlwaysOnRuntime.ts:133-448): the lifecycle owner. The
@@ -289,6 +383,28 @@ impl AlwaysOnRuntime {
             files: crate::metadata::NativeFiles,
         };
         let paths = super::resolve_always_on_paths(pilot_home, project_key, &metadata)?;
+        Self::new_with_paths(
+            config,
+            paths,
+            run_contexts,
+            now,
+            uuid,
+            logger,
+            is_session_in_flight,
+        )
+    }
+
+    /// Native callers supply paths resolved by the bounded marker adapter.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_paths(
+        config: AlwaysOnConfig,
+        paths: AlwaysOnPaths,
+        run_contexts: Option<Arc<AlwaysOnRunContextRegistry>>,
+        now: Option<Arc<dyn Fn() -> f64 + Send + Sync>>,
+        uuid: Option<Arc<dyn Fn() -> String + Send + Sync>>,
+        logger: Option<Arc<dyn AlwaysOnLogger>>,
+        is_session_in_flight: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+    ) -> io::Result<Self> {
         let now: Arc<dyn Fn() -> f64 + Send + Sync> = now.unwrap_or_else(|| Arc::new(now_millis));
         let leases = Arc::new(ChannelLeaseRegistry::new(now.clone()));
         let state_store = Arc::new(DiscoveryStateStore::new(paths.clone()));
@@ -316,6 +432,7 @@ impl AlwaysOnRuntime {
                 stopping: AtomicBool::new(false),
                 stop_started: AtomicBool::new(false),
                 stop_finished,
+                stop_error: Mutex::new(None),
                 active_control_runs: Mutex::new(HashMap::new()),
             }),
         })
@@ -341,6 +458,15 @@ impl AlwaysOnRuntime {
         gateway: Arc<dyn AlwaysOnAgentGateway>,
         is_session_in_flight: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     ) -> Result<(), io::Error> {
+        self.bind_with_factory(gateway, is_session_in_flight, None)
+    }
+
+    fn bind_with_factory(
+        &self,
+        gateway: Arc<dyn AlwaysOnAgentGateway>,
+        is_session_in_flight: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
+        factory: Option<&Arc<dyn FireFactory>>,
+    ) -> Result<(), io::Error> {
         let mut bound = self
             .shared
             .agent_gateway
@@ -351,9 +477,23 @@ impl AlwaysOnRuntime {
                 "AlwaysOnRuntime.bindAgentGateway already called.",
             ));
         }
+        let fire: Arc<dyn DiscoveryFirePort> = if let Some(factory) = factory {
+            factory.create(FireInputs {
+                config: self.config.clone(),
+                project_key: self.project_key.clone(),
+                paths: self.paths.clone(),
+                state_store: self.state_store.clone(),
+                plan_store: self.plan_store.clone(),
+                cycle_store: self.cycle_store.clone(),
+                contexts: self.run_contexts.clone(),
+                gateway: gateway.clone(),
+                now: self.now.clone(),
+                uuid: self.uuid.clone(),
+            })?
+        } else {
+            Arc::new(DiscoveryFire::new(self.plan_store.clone()))
+        };
         *bound = Some(gateway);
-        let fire: Arc<dyn DiscoveryFirePort> =
-            Arc::new(DiscoveryFire::new(self.plan_store.clone()));
         let in_flight = is_session_in_flight.unwrap_or_else(|| self.is_session_in_flight.clone());
         let scheduler = Arc::new(DiscoveryScheduler::new(SchedulerDeps {
             config: self.config.clone(),
@@ -401,6 +541,10 @@ impl AlwaysOnRuntime {
     /// in-flight control run is waited out — its rejection is dropped without
     /// a log, the `allSettled` shape; nothing is ever aborted.
     pub(crate) async fn stop(&self) {
+        let _ = self.stop_checked().await;
+    }
+
+    pub(crate) async fn stop_checked(&self) -> io::Result<()> {
         if self.shared.stop_started.swap(true, Ordering::SeqCst) {
             let mut finished = self.shared.stop_finished.subscribe();
             while !*finished.borrow_and_update() {
@@ -408,7 +552,13 @@ impl AlwaysOnRuntime {
                     break;
                 }
             }
-            return;
+            return self
+                .shared
+                .stop_error
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .map_or(Ok(()), |message| Err(io::Error::other(message.clone())));
         }
         self.shared.stopping.store(true, Ordering::SeqCst);
         // The guard is a temporary of the `if let` condition, which would
@@ -440,10 +590,26 @@ impl AlwaysOnRuntime {
                 }
             }
         }
-        *self.shared.fire.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let fire = self
+            .shared
+            .fire
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
+        let error = if let Some(fire) = fire {
+            fire.close().await.err().map(|e| e.to_string())
+        } else {
+            None
+        };
         self.run_contexts.unregister_project(&self.project_key);
         self.log_info("always-on runtime stopped");
-        let _ = self.shared.stop_finished.send(true);
+        *self
+            .shared
+            .stop_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = error.clone();
+        self.shared.stop_finished.send_replace(true);
+        error.map_or(Ok(()), |message| Err(io::Error::other(message)))
     }
 
     /// `rerunPlan` (AlwaysOnRuntime.ts:317-331).
@@ -467,7 +633,7 @@ impl AlwaysOnRuntime {
         let plan_id = input.plan_id.clone();
         let now = self.now.clone();
         let fire_run_id = run_id.clone();
-        self.track_control_run(run_id, session_keys, async move {
+        self.track_control_run(run_id, session_keys, not_ready_rerun, async move {
             let started_at_ms = (now)();
             let result = fire
                 .rerun_plan(RerunFireInput {
@@ -502,10 +668,12 @@ impl AlwaysOnRuntime {
         let project_name = input.project_name.clone();
         let project_root = input.project_key.clone();
         let cycle_store = self.cycle_store.clone();
-        let plan_store = self.plan_store.clone();
         let fire_run_id = run_id.clone();
-        self.track_control_run(run_id, session_keys, async move {
-            let Some(cycle) = cycle_store.get_record(&work_cycle_id)? else {
+        self.track_control_run(run_id, session_keys, not_ready_apply, async move {
+            let Some((cycle, plans)) = cycle_store
+                .read_apply(work_cycle_id.as_str().into())
+                .await?
+            else {
                 return Ok(ApplyResult {
                     session_key: String::new(),
                     error: Some(ControlError {
@@ -514,19 +682,12 @@ impl AlwaysOnRuntime {
                     }),
                 });
             };
-            // The `{ id, title }` projection of the cycle's plan ids
-            // (AlwaysOnRuntime.ts:348-351).
-            let plans: Vec<DiscoveryPlanRecord> = plan_store
-                .list_records()?
-                .into_iter()
-                .filter(|plan| cycle.plan_ids.iter().any(|id| id == &plan.id))
-                .collect();
             let result = fire
                 .run_apply_phase(ApplyPhaseInput {
                     run_id: &fire_run_id,
                     cycle: &cycle,
                     plans: &plans,
-                    project_name: project_name.as_deref(),
+                    project_name: project_name.as_ref(),
                     project_root: &project_root,
                 })
                 .await?;
@@ -623,20 +784,29 @@ impl AlwaysOnRuntime {
         &self,
         run_id: String,
         session_keys: Vec<String>,
+        not_ready: fn() -> T,
         run: impl Future<Output = io::Result<T>> + Send + 'static,
     ) -> io::Result<T> {
         let (finished_tx, finished) = tokio::sync::watch::channel(false);
-        self.shared
-            .active_control_runs
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(
+        {
+            let mut active = self
+                .shared
+                .active_control_runs
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            // Stop publishes `stopping` before taking this same registry.
+            // Admission either precedes its drain or observes the closed gate.
+            if self.shared.stopping.load(Ordering::SeqCst) {
+                return Ok(not_ready());
+            }
+            active.insert(
                 run_id.clone(),
                 ActiveControlRun {
                     session_keys,
                     finished,
                 },
             );
+        }
         let shared = self.shared.clone();
         let task = tokio::spawn(async move {
             let result = run.await;
@@ -691,6 +861,12 @@ pub(crate) struct AlwaysOnManagerOptions {
 pub struct AlwaysOnManager {
     runtimes: Vec<Arc<AlwaysOnRuntime>>,
     logger: Arc<dyn AlwaysOnLogger>,
+    factory_state: Mutex<ManagerFactoryState>,
+}
+#[derive(Default)]
+struct ManagerFactoryState {
+    factory: Option<Arc<dyn FireFactory>>,
+    binding_started: bool,
 }
 
 impl AlwaysOnManager {
@@ -717,10 +893,55 @@ impl AlwaysOnManager {
         }
         Ok(Self {
             runtimes,
+            factory_state: Mutex::new(ManagerFactoryState::default()),
             logger: options
                 .logger
                 .unwrap_or_else(|| Arc::new(super::NoopAlwaysOnLogger)),
         })
+    }
+
+    /// Native construction resolves every enabled project's paths through its
+    /// bounded marker adapter before constructing the shared manager.
+    pub(crate) fn new_with_resolver(
+        options: AlwaysOnManagerOptions,
+        mut resolve: impl FnMut(&str) -> io::Result<AlwaysOnPaths>,
+    ) -> io::Result<Self> {
+        let run_contexts = Arc::new(AlwaysOnRunContextRegistry::new());
+        let mut runtimes = Vec::new();
+        for (project_key, enabled) in &options.config.projects {
+            if !*enabled {
+                continue;
+            }
+            let paths = resolve(project_key)?;
+            runtimes.push(Arc::new(AlwaysOnRuntime::new_with_paths(
+                options.config.clone(),
+                paths,
+                Some(run_contexts.clone()),
+                options.now.clone(),
+                options.uuid.clone(),
+                options.logger.clone(),
+                None,
+            )?));
+        }
+        Ok(Self {
+            runtimes,
+            factory_state: Mutex::new(ManagerFactoryState::default()),
+            logger: options
+                .logger
+                .unwrap_or_else(|| Arc::new(super::NoopAlwaysOnLogger)),
+        })
+    }
+
+    /// Install the native fire factory once, before any gateway bind.
+    pub(crate) fn set_fire_factory(&self, factory: Arc<dyn FireFactory>) -> io::Result<()> {
+        let mut state = self.factory_state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.binding_started || state.factory.is_some() {
+            return Err(io::Error::other(
+                "Always-On fire factory is already installed or binding started",
+            ));
+        }
+        state.factory = Some(factory);
+        Ok(())
     }
 
     /// `bindAgentGateway` (AlwaysOnManager.ts:147-160): every runtime binds
@@ -731,6 +952,16 @@ impl AlwaysOnManager {
         gateway: Arc<dyn AlwaysOnAgentGateway>,
         is_project_busy: Option<IsProjectBusy>,
     ) -> Result<(), io::Error> {
+        let factory = {
+            let mut state = self.factory_state.lock().unwrap_or_else(|e| e.into_inner());
+            if state.binding_started {
+                return Err(io::Error::other(
+                    "Always-On gateway binding already started",
+                ));
+            }
+            state.binding_started = true;
+            state.factory.clone()
+        };
         for runtime in &self.runtimes {
             let in_flight = is_project_busy.as_ref().map(|busy| {
                 let busy = busy.clone();
@@ -739,7 +970,7 @@ impl AlwaysOnManager {
                     Arc::new(move || busy(&project_key));
                 hook
             });
-            runtime.bind_agent_gateway(gateway.clone(), in_flight)?;
+            runtime.bind_with_factory(gateway.clone(), in_flight, factory.as_ref())?;
         }
         Ok(())
     }
@@ -763,10 +994,16 @@ impl AlwaysOnManager {
     }
 
     /// `stop` (AlwaysOnManager.ts:179-183).
-    pub(crate) async fn stop(&self) {
+    pub(crate) async fn stop(&self) -> io::Result<()> {
+        let mut first = None;
         for runtime in &self.runtimes {
-            runtime.stop().await;
+            if let Err(error) = runtime.stop_checked().await
+                && first.is_none()
+            {
+                first = Some(error);
+            }
         }
+        first.map_or(Ok(()), Err)
     }
 
     fn runtime_for(&self, project_key: &str) -> Option<&Arc<AlwaysOnRuntime>> {
@@ -907,6 +1144,18 @@ mod tests {
         calls: Mutex<Vec<serde_json::Value>>,
     }
     impl AlwaysOnAgentGateway for RecordingGateway {
+        fn run_phase<'a>(
+            &'a self,
+            _request: PhaseRequest,
+        ) -> Pin<Box<dyn Future<Output = Result<PhaseResult, ControlError>> + Send + 'a>> {
+            Box::pin(async {
+                Err(ControlError {
+                    code: "unexpected_phase".into(),
+                    message: "A phase was unexpectedly submitted by this fixture".into(),
+                })
+            })
+        }
+
         fn abort_turn<'a>(
             &'a self,
             input: GatewayAbortInput<'a>,
@@ -1207,6 +1456,62 @@ mod tests {
         );
     }
 
+    #[test]
+    fn native_resolver_rejection_aborts_manager_construction() {
+        let home = scratch("resolver-refusal");
+        let project_key = home.join("proj").to_string_lossy().into_owned();
+        let mut called = 0;
+        let result = AlwaysOnManager::new_with_resolver(
+            AlwaysOnManagerOptions {
+                config: config(&project_key),
+                pilot_home: home,
+                now: None,
+                uuid: None,
+                logger: None,
+            },
+            |key| {
+                called += 1;
+                assert_eq!(key, project_key);
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "marker refused",
+                ))
+            },
+        );
+        assert_eq!(called, 1);
+        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::PermissionDenied));
+    }
+
+    #[test]
+    fn native_fire_factory_is_used_once_per_enabled_project_before_binding() {
+        struct Factory(std::sync::atomic::AtomicUsize);
+        impl FireFactory for Factory {
+            fn create(&self, input: FireInputs) -> io::Result<Arc<dyn DiscoveryFirePort>> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                assert!(input.project_key.ends_with("/proj"));
+                Ok(Arc::new(DiscoveryFire::new(input.plan_store)))
+            }
+        }
+        let home = scratch("fire-factory");
+        let project_key = home.join("proj").to_string_lossy().into_owned();
+        let manager = AlwaysOnManager::new(AlwaysOnManagerOptions {
+            config: config(&project_key),
+            pilot_home: home,
+            now: None,
+            uuid: None,
+            logger: None,
+        })
+        .unwrap();
+        let factory = Arc::new(Factory(std::sync::atomic::AtomicUsize::new(0)));
+        manager.set_fire_factory(factory.clone()).unwrap();
+        let gateway = Arc::new(RecordingGateway {
+            calls: Mutex::new(Vec::new()),
+        });
+        manager.bind_agent_gateway(gateway, None).unwrap();
+        assert_eq!(factory.0.load(Ordering::SeqCst), 1);
+        assert!(manager.set_fire_factory(factory).is_err());
+    }
+
     // r9 (generate.mts:567-588): the manager answers project_not_found for
     // unknown keys — the template-literal message with the raw key.
     #[tokio::test]
@@ -1252,7 +1557,7 @@ mod tests {
                     .expect("#2294 rerun")
             ),
         });
-        manager.stop().await;
+        manager.stop().await.expect("manager stop");
         negative_assert_eq!(
             results,
             golden("r9-manager-project-not-found"),
@@ -1322,6 +1627,143 @@ mod tests {
         runtime.stop().await;
     }
 
+    #[tokio::test]
+    async fn fire_close_failure_is_reported_on_repeated_stop() {
+        struct FailedClose;
+        impl DiscoveryFirePort for FailedClose {
+            fn close<'a>(&'a self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+                Box::pin(async { Err(io::Error::other("workspace close failed")) })
+            }
+            fn run<'a>(
+                &'a self,
+                _: super::super::fire::FireRunInput<'a>,
+            ) -> Pin<
+                Box<
+                    dyn Future<
+                            Output = Result<
+                                super::super::fire::FireOutcome,
+                                super::super::AlwaysOnError,
+                            >,
+                        > + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async { unreachable!() })
+            }
+            fn rerun_plan<'a>(
+                &'a self,
+                _: super::super::fire::RerunFireInput<'a>,
+            ) -> Pin<
+                Box<
+                    dyn Future<Output = io::Result<super::super::fire::RerunFireResult>>
+                        + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async { unreachable!() })
+            }
+            fn run_apply_phase<'a>(
+                &'a self,
+                _: super::super::fire::ApplyPhaseInput<'a>,
+            ) -> Pin<
+                Box<
+                    dyn Future<Output = io::Result<super::super::fire::ApplyPhaseResult>>
+                        + Send
+                        + 'a,
+                >,
+            > {
+                Box::pin(async { unreachable!() })
+            }
+        }
+        let home = scratch("close-failure");
+        let key = home.join("proj").to_string_lossy().into_owned();
+        let runtime =
+            AlwaysOnRuntime::new(config(&key), &home, &key, None, None, None, None, None).unwrap();
+        runtime.swap_fire_for_test(Arc::new(FailedClose));
+        assert!(
+            runtime
+                .stop_checked()
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("workspace close failed")
+        );
+        let repeated =
+            tokio::time::timeout(std::time::Duration::from_secs(1), runtime.stop_checked())
+                .await
+                .expect("repeat must not hang");
+        assert!(
+            repeated
+                .unwrap_err()
+                .to_string()
+                .contains("workspace close failed")
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_between_control_precheck_and_registration_rejects_late_run() {
+        let home = scratch("stop-before-registration");
+        let key = home.join("proj").to_string_lossy().into_owned();
+        let (entered_tx, entered) = tokio::sync::oneshot::channel();
+        let entered_tx = Mutex::new(Some(entered_tx));
+        let release = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
+        let parked = release.clone();
+        let uuid = Arc::new(move || {
+            entered_tx.lock().unwrap().take().unwrap().send(()).unwrap();
+            let (lock, changed) = &*parked;
+            let (ready, _) = changed
+                .wait_timeout_while(
+                    lock.lock().unwrap(),
+                    std::time::Duration::from_secs(5),
+                    |ready| !*ready,
+                )
+                .unwrap();
+            assert!(*ready, "test must release the parked control request");
+            "late-run".into()
+        });
+        let runtime = Arc::new(
+            AlwaysOnRuntime::new(
+                config(&key),
+                &home,
+                &key,
+                None,
+                None,
+                Some(uuid),
+                None,
+                None,
+            )
+            .unwrap(),
+        );
+        runtime.swap_fire_for_test(Arc::new(DiscoveryFire::new(runtime.plan_store.clone())));
+        let task_runtime = runtime.clone();
+        let request = tokio::spawn(async move {
+            task_runtime
+                .rerun_plan(&RerunInput {
+                    project_key: key,
+                    plan_id: "missing".into(),
+                })
+                .await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), entered)
+            .await
+            .unwrap()
+            .unwrap();
+        runtime.stop_checked().await.unwrap();
+        *release.0.lock().unwrap() = true;
+        release.1.notify_all();
+        let result = request.await.unwrap().unwrap();
+        assert_eq!(result.error.unwrap().code, "not_ready");
+        assert!(
+            runtime
+                .shared
+                .active_control_runs
+                .lock()
+                .unwrap()
+                .is_empty()
+        );
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
     // Matrix §三 r3 / AlwaysOnRuntime.ts:296-315: stop waits out an in-flight
     // control run without aborting it. The run is a rerun parked inside its
     // fire await; stop resolves only after the fire releases, and the abort
@@ -1334,8 +1776,19 @@ mod tests {
         struct BlockingFire {
             release: Arc<tokio::sync::Notify>,
             entered: Arc<AtomicBool>,
+            closed: Arc<AtomicBool>,
         }
         impl DiscoveryFirePort for BlockingFire {
+            fn close<'a>(&'a self) -> Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>> {
+                Box::pin(async move {
+                    assert!(
+                        !self.entered.load(Ordering::SeqCst),
+                        "close follows control-run drain"
+                    );
+                    self.closed.store(true, Ordering::SeqCst);
+                    Ok(())
+                })
+            }
             fn run<'a>(
                 &'a self,
                 _input: super::super::fire::FireRunInput<'a>,
@@ -1367,6 +1820,7 @@ mod tests {
                 Box::pin(async move {
                     entered.store(true, Ordering::SeqCst);
                     release.notified().await;
+                    entered.store(false, Ordering::SeqCst);
                     Ok(super::super::fire::RerunFireResult {
                         run_id: input.run_id.into(),
                         error: None,
@@ -1407,9 +1861,11 @@ mod tests {
             .bind_agent_gateway(gateway, None)
             .expect("#2294 bind");
         let entered = Arc::new(AtomicBool::new(false));
+        let closed = Arc::new(AtomicBool::new(false));
         runtime.swap_fire_for_test(Arc::new(BlockingFire {
             release: release.clone(),
             entered: entered.clone(),
+            closed: closed.clone(),
         }));
 
         // Park a rerun inside its fire await.
@@ -1492,5 +1948,9 @@ mod tests {
             "#2294 the in-flight control run was waited out, not aborted"
         );
         stopping.await.expect("#2294 stop completes");
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "fire close completed before stop returned"
+        );
     }
 }

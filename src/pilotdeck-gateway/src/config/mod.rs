@@ -1,6 +1,11 @@
 //! Global/project PilotConfig loading for the native read-only gateway. Every section
 //! participates in validation, even when catalog projection does not use it.
 mod binding;
+mod bounded;
+pub(crate) use bounded::load_project_bounded_lazy;
+pub(crate) use bounded::project_binding_target_bounded;
+pub(crate) use bounded::{BoundedSourceReadError, read_setting_source_bounded};
+pub use bounded::{load_project_bounded, load_snapshot_bounded};
 pub mod changes;
 mod graph;
 mod host;

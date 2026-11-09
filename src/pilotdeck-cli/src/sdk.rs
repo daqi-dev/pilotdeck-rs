@@ -3,7 +3,8 @@ mod output;
 mod sessions;
 mod settings;
 pub(crate) mod signals;
-mod transport;
+pub(crate) mod token;
+pub(crate) mod transport;
 mod turn;
 use crate::paths::{self, Env};
 use crate::{Failure, stdout_line};
@@ -137,9 +138,7 @@ fn read_connection(argv: &[String], env: &Env, cwd: &Path) -> Result<Connection,
             Some(value) => value,
             // readFile(...).catch(() => ""): every read error, EISDIR/EACCES included,
             // is an empty token rather than a thrown error.
-            None => std::fs::read(paths::gateway_token_path(env, cwd)?)
-                .map(|bytes| paths::js_trim(&String::from_utf8_lossy(&bytes)).to_owned())
-                .unwrap_or_default(),
+            None => token::read(&paths::gateway_token_path(env, cwd)?)?,
         },
     };
     if token.is_empty() {

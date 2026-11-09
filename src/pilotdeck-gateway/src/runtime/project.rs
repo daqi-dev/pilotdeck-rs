@@ -67,7 +67,7 @@ impl RuntimeError {
     pub fn js_error(&self) -> Option<&RuntimeJsError> {
         self.js_error.as_deref()
     }
-    fn aggregate(message: &str, mut failures: Vec<Self>) -> RuntimeResult {
+    pub(crate) fn aggregate(message: &str, mut failures: Vec<Self>) -> RuntimeResult {
         match failures.len() {
             0 => Ok(()),
             1 => Err(failures.remove(0)),
@@ -323,6 +323,25 @@ pub struct RuntimeLease {
     released: bool,
 }
 impl RuntimeLease {
+    /// Derive one independently released lease from a still-held capability.
+    /// Unlike registry acquire, this deliberately retains the original retired
+    /// generation. No caller without a live lease can reopen that generation.
+    pub(crate) fn fork(&self) -> Result<Self, RuntimeError> {
+        let mut state = self.runtime.state.lock().unwrap();
+        if self.released || state.phase == RuntimeState::Disposed || state.leases == 0 {
+            return Err(RuntimeError::new(
+                "Cannot fork a released project generation lease.",
+            ));
+        }
+        state.leases = state
+            .leases
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::new("Project generation lease count overflow."))?;
+        Ok(Self {
+            runtime: self.runtime.clone(),
+            released: false,
+        })
+    }
     pub fn runtime(&self) -> &Arc<ProjectRuntime> {
         &self.runtime
     }

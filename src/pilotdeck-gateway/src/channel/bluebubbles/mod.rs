@@ -873,9 +873,15 @@ impl ChannelHandle for BlueBubblesHandle {
 /// `String()` coercion: it applies the same check at construction and
 /// surfaces the same TypeError through the same loader catch.
 pub fn register(mounts: &mut crate::channel::loader::ChannelLoaderMounts) {
+    register_with_interaction(mounts, no_interaction());
+}
+pub fn register_with_interaction(
+    mounts: &mut crate::channel::loader::ChannelLoaderMounts,
+    interaction: Arc<dyn InteractionPort>,
+) {
     mounts.register(
         "bluebubbles",
-        Arc::new(|options: &JsObject| {
+        Arc::new(move |options: &JsObject| {
             if let Some(value) = options
                 .get("serverUrl")
                 .filter(|value| !sms::nullish(value))
@@ -892,7 +898,7 @@ pub fn register(mounts: &mut crate::channel::loader::ChannelLoaderMounts) {
                     })),
                     ..BlueBubblesOptions::from_object(options)
                 },
-                no_interaction(),
+                interaction.clone(),
             )) as Arc<dyn ChannelAdapter>)
         }),
     );

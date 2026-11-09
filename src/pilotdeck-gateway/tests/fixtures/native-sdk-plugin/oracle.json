@@ -1,0 +1,45 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "project": {
+    "commands": [],
+    "skills": [],
+    "styles": [],
+    "servers": {}
+  },
+  "session": {
+    "commands": [
+      {
+        "name": "local-fixture:hello",
+        "content": "COMMAND_TOKEN\n",
+        "namespace": "session-plugin"
+      }
+    ],
+    "skills": [
+      {
+        "name": "local-fixture:guide",
+        "content": "SKILL_TOKEN\n",
+        "namespace": "session-plugin"
+      }
+    ],
+    "styles": [
+      {
+        "name": "local-fixture:brief",
+        "content": "STYLE_TOKEN\n",
+        "plugin": "session-plugin"
+      }
+    ],
+    "servers": {
+      "fixture": {
+        "type": "stdio",
+        "command": "fixture-command",
+        "deferredTools": [
+          {
+            "name": "echo",
+            "searchHint": "find echo"
+          }
+        ]
+      }
+    }
+  }
+}

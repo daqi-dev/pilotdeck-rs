@@ -34,6 +34,13 @@ impl ToolDefinition for EditFileTool {
     fn fields(&self) -> &JsObject {
         &self.fields
     }
+    fn check_permissions<'a>(
+        &'a self,
+        input: &'a JsValue,
+        permission: &'a crate::runtime::permission::PermissionContext,
+    ) -> crate::runtime::permission::PermissionFuture<'a, Option<JsValue>> {
+        super::file_permissions::write("edit_file", input, permission)
+    }
     fn is_read_only(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
     }
@@ -52,7 +59,7 @@ impl ExecutableTool for EditFileTool {
     }
 
     fn execute(&self, input: JsValue, context: ToolRunContext) -> ToolFuture<ToolOutput> {
-        Box::pin(async move { execute(&input, &context) })
+        Box::pin(async move { execute(&input, &context).await })
     }
 }
 
@@ -154,7 +161,7 @@ fn is_read_state_error(error: &ToolError) -> bool {
             ))
 }
 
-fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
+async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, ToolError> {
     let path = input_string(input, "file_path");
     let old = input_string(input, "old_string");
     let new = input_string(input, "new_string");
@@ -166,6 +173,8 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
         .and_then(JsValue::as_string)
         .is_some_and(|kind| kind.equals_str("allow"));
     let resolved = resolve_write_path(&path, context, false, allowed_outside)?;
+    #[cfg(unix)]
+    super::native_sandbox_write_path(&resolved.absolute, context)?;
     let freshness = ensure_write_snapshot_fresh(context, &resolved.absolute)?;
 
     let message = message_id(context);
@@ -175,6 +184,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
             .map_err(|error| tool_error("tool_execution_failed", error.to_string()))?;
     }
 
+    let created_for_notice = freshness.previous_content.is_none();
     let content = freshness.previous_content.clone().unwrap_or_default();
     let old_text = String::from_utf16_lossy(old.units());
     let new_text = String::from_utf16_lossy(new.units());
@@ -243,6 +253,7 @@ fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput, Tool
         None,
     );
 
+    super::notify_file_update(context, &resolved, created_for_notice).await;
     let replacements = if old_text.is_empty() {
         0
     } else if replace_all {

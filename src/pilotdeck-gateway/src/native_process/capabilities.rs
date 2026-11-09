@@ -61,14 +61,28 @@ fn memory(requests: &Requests) -> bool {
 
 /// `options.cron`: the six control names need the configured cron runtime.
 fn cron(requests: &Requests) -> bool {
-    requests.cron.is_some()
+    requests.current_cron().is_some()
+}
+
+fn flag_settings(requests: &Requests) -> bool {
+    requests.settings.supports("apply_flag_settings")
+}
+fn update_settings(requests: &Requests) -> bool {
+    requests.settings.supports("update_settings")
+}
+fn output_styles(requests: &Requests) -> bool {
+    requests.settings.supports("reload_output_styles")
 }
 
 /// `options.alwaysOnControl` (#2294): the three always-on names need the
-/// configured background runtime — a manager exists only when the
-/// `alwaysOn:` section has a project with `enabled: true`.
+/// published control, including TS standalone fallback when its background
+/// manager is disabled (ProjectAutomationBundle.ts:360-364).
 fn always_on(requests: &Requests) -> bool {
-    requests.always_on.is_some()
+    requests
+        .automation
+        .as_ref()
+        .and_then(|slot| slot.control())
+        .is_some()
 }
 
 /// Advertised names, in the order the TS baseline records them.
@@ -92,6 +106,11 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "session_model_set", methods: &[], wired: compiled_in },
     Capability { name: "session_model_clear", methods: &[], wired: compiled_in },
     Capability { name: "delete_session", methods: &[], wired: compiled_in },
+    Capability {
+        name: "session_transcript_archive",
+        methods: &["export_session_transcript", "restore_session_transcript"],
+        wired: compiled_in,
+    },
     // The name covers two requests: the manifest and its entries. TS records
     // this name in every config state (`oracle.json` contract capabilities);
     // both methods are routed by `dispatch::route` from `LOCAL_METHODS`.
@@ -120,6 +139,9 @@ pub(super) const CAPABILITIES: &[Capability] = &[
     Capability { name: "set_mcp_permission_mode_override", methods: &[], wired: compiled_in },
     Capability { name: "project_file_read", methods: &[], wired: compiled_in },
     Capability { name: "set_permission_mode", methods: &[], wired: compiled_in },
+    Capability { name: "apply_flag_settings", methods: &[], wired: flag_settings },
+    Capability { name: "update_settings", methods: &[], wired: update_settings },
+    Capability { name: "reload_output_styles", methods: &[], wired: output_styles },
     Capability { name: "resolve_settings", methods: &[], wired: compiled_in },
     Capability { name: "set_session_thinking", methods: &[], wired: compiled_in },
     Capability { name: "output_styles_list", methods: &[], wired: compiled_in },
@@ -172,28 +194,10 @@ pub(super) const CAPABILITIES: &[Capability] = &[
 // read by the capability tests only; kept in the shipping build so the
 // exception list sits next to the table it excuses
 #[allow(dead_code)]
-pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[
-    (
-        "session_transcript_archive",
-        "export/restore_session_transcript are not ported (methods/history.rs answers CAPABILITY_UNAVAILABLE)",
-    ),
-    (
-        "apply_flag_settings",
-        "settings delegate not bound in this process; porting tracked by #1671",
-    ),
-    (
-        "update_settings",
-        "settings delegate not bound in this process; porting tracked by #1671",
-    ),
-    (
-        "reload_output_styles",
-        "settings delegate not bound in this process; porting tracked by #1671",
-    ),
-    (
-        "sdk_session_config",
-        "no `set_sdk_session_config` request exists in the wire protocol and no SDK session registry here; the #1305 registry (native_process/methods/mod.rs) routes nothing by that name",
-    ),
-];
+pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[(
+    "sdk_session_config",
+    "no `set_sdk_session_config` request exists in the wire protocol; native SDK settings are consumed by turn submission in native_process/assembly.rs, not a request with this capability name",
+)];
 
 /// Capability names outside this draft. The recorded fixture never configures
 /// the delegate behind them, so they are neither advertised nor an exception
@@ -313,21 +317,33 @@ mod tests {
         }
     }
 
-    /// The other half of the same rule, for the methods that *are* registered
-    /// but not served: `native_process/methods/history.rs:50-58` answers
-    /// `CAPABILITY_UNAVAILABLE` for both transcript-archive methods, which is
-    /// why `session_transcript_archive` sits in [`NOT_ADVERTISED`]. The
-    /// registry check alone cannot see that, so without this test a row
-    /// promising `export_session_transcript` would advertise a call that can
-    /// only fail.
+    /// Both archive methods have actual storage consumers. Their RPC and
+    /// busy/conflict behavior is tested in methods::history::portable_wire_tests.
     #[test]
-    fn unserved_history_methods_are_not_promised() {
-        for method in ["export_session_transcript", "restore_session_transcript"] {
+    fn portable_archive_promises_both_storage_methods() {
+        let capability = CAPABILITIES
+            .iter()
+            .find(|c| c.name == "session_transcript_archive")
+            .expect("portable archive must be advertised");
+        negative_assert_eq!(
+            promised(capability).collect::<Vec<_>>(),
+            vec!["export_session_transcript", "restore_session_transcript"],
+            "portable archive advertises both actual storage methods"
+        );
+    }
+
+    #[test]
+    fn history_methods_are_only_promised_by_archive() {
+        for capability in CAPABILITIES
+            .iter()
+            .filter(|c| c.name != "session_transcript_archive")
+        {
             negative_assert!(
-                !CAPABILITIES
-                    .iter()
-                    .any(|capability| promised(capability).any(|declared| declared == method)),
-                "#1352 {method} answers CAPABILITY_UNAVAILABLE and must not be promised"
+                !promised(capability).any(|method| matches!(
+                    method,
+                    "export_session_transcript" | "restore_session_transcript"
+                )),
+                "archive storage methods are not aliases for unrelated capabilities"
             );
         }
     }

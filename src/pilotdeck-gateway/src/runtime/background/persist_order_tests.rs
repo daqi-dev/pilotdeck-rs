@@ -139,10 +139,13 @@ fn running_entry(state: &Path, task_id: &str) -> (JsString, Arc<Entry>) {
             ),
             child: None,
             persist_seq: 0,
+            output_limit_exceeded: false,
+            restored_failure: None,
         }),
         done: watch::channel(false).0,
         closed: watch::channel(false).0,
         never_exits: false,
+        native_persist: std::sync::OnceLock::new(),
     });
     (task_id, entry)
 }

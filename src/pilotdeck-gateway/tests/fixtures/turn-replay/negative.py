@@ -121,26 +121,8 @@ DISPOSE_CANCEL_ALL_PLAIN = DISPOSE_CANCEL_ALL_GUARDED.replace(
     "        }",
     "        self.timer.cancel_all();",
 )
-COORDINATOR_START_GUARDED = """        let mut state = lock(&self.state);
-        // The replay store may panic through its injected timer (#805): the
-        // panic surfaces at the call site like a throwing TS call, but the
-        // guard is dropped first so it cannot poison the composite-state
-        // lock for every session.
-        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {
-            self.replay.start(session_key, run_id);
-        })) {
-            drop(state);
-            resume_unwind(panic);
-        }"""
-COORDINATOR_START_PLAIN = COORDINATOR_START_GUARDED.replace(
-    "        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| {\n"
-    "            self.replay.start(session_key, run_id);\n"
-    "        })) {\n"
-    "            drop(state);\n"
-    "            resume_unwind(panic);\n"
-    "        }",
-    "        self.replay.start(session_key, run_id);",
-)
+COORDINATOR_START_GUARDED = '        let mut state = lock(&self.state);\n        // The replay store may panic through its injected timer (#805): the\n        // panic surfaces at the call site like a throwing TS call, but the\n        // guard is dropped first so it cannot poison the composite-state\n        // lock for every session.\n        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| match project_key {\n            Some(project) => self.replay.start_for_project(session_key, run_id, project),\n            None => self.replay.start(session_key, run_id),\n        })) {\n            drop(state);\n            resume_unwind(panic);\n        }'
+COORDINATOR_START_PLAIN = COORDINATOR_START_GUARDED.replace('        if let Err(panic) = catch_unwind(AssertUnwindSafe(|| match project_key {\n            Some(project) => self.replay.start_for_project(session_key, run_id, project),\n            None => self.replay.start(session_key, run_id),\n        })) {\n            drop(state);\n            resume_unwind(panic);\n        }', '        match project_key {\n            Some(project) => self.replay.start_for_project(session_key, run_id, project),\n            None => self.replay.start(session_key, run_id),\n        };')
 COORDINATOR_RETAIN_GUARDED = """        // The replay store may panic through its injected timer (#805),
         // after the sink removal — the same partial state a throwing TS
         // retainTerminal leaves. The guard is dropped first so the unwind
@@ -204,18 +186,7 @@ DRAIN_GUARD_SKIPS_POISON = DRAIN_GUARD_TOLERANT.replace(
 
 # Shared verbatim blocks of the current coordinator.rs, so the mutants that
 # rearrange or recreate parts of `emit`/`start` keep their anchors exact.
-EMIT_LOOKUP = """            let Some(sink) = state
-                .sinks
-                .get(session_key)
-                .and_then(|registration| registration.upgrade())
-                .map(|registration| Arc::clone(&registration.sink))
-            else {
-                // The host dropped the registration (or never started the
-                // session): TS looks a live sink up in its map, this port
-                // prunes the dead weak reference on the way out.
-                state.sinks.remove(session_key);
-                return false;
-            };"""
+EMIT_LOOKUP = '            let Some(sink) = state\n                .sinks\n                .get(session_key)\n                .and_then(|registration| registration.upgrade())\n                .filter(|registration| {\n                    expected\n                        .is_none_or(|expected| Arc::ptr_eq(registration, &expected.registration))\n                })\n                .map(|registration| Arc::clone(&registration.sink))\n            else {\n                // The host dropped the registration (or never started the\n                // session): TS looks a live sink up in its map, this port\n                // prunes the dead weak reference on the way out.\n                if expected.is_none() {\n                    state.sinks.remove(session_key);\n                }\n                return false;\n            };'
 EMIT_LOOKUP_TRUE = EMIT_LOOKUP.replace("return false;", "return true;")
 EMIT_RUN_ID_AND_RECORD = """            // `with_run_id` panics on the null/undefined edge like the TS
             // `event.runId` throw; the guard keeps that panic from poisoning
@@ -257,6 +228,9 @@ EMIT_ACCEPTS_IN_FLIGHT = """            let mut sink = state
                 .sinks
                 .get(session_key)
                 .and_then(|registration| registration.upgrade())
+                .filter(|registration| {
+                    expected.is_none_or(|expected| Arc::ptr_eq(registration, &expected.registration))
+                })
                 .map(|registration| Arc::clone(&registration.sink));
             if sink.is_none() && state.draining.contains_key(session_key) {
                 // The pre-r8 check asked the sink: an in-flight drainer
@@ -371,7 +345,7 @@ mutants = [
     ("coordinator-start-not-atomic", "coordinator.rs",
      COORDINATOR_START_GUARDED + "\n        #[cfg(test)]\n        self.fire_start();\n"
      + START_INSERT_AND_RETURN,
-     "        self.replay.start(session_key, run_id);\n        #[cfg(test)]\n        self.fire_start();\n        let mut state = lock(&self.state);\n"
+     '        match project_key {\n            Some(project) => self.replay.start_for_project(session_key, run_id, project),\n            None => self.replay.start(session_key, run_id),\n        };\n        #[cfg(test)]\n        self.fire_start();\n        let mut state = lock(&self.state);\n'
      + START_INSERT_AND_RETURN,
      "coordinator::tests::concurrent_starts_keep_replay_and_sink_in_the_same_epoch"),
     # codex-r1 P1 #2 and #4: expiry must be timer driven and must not read a
@@ -639,8 +613,8 @@ mutants = [
     # gate7 P1 #1: a dropped registration must reject later emits, not accept
     # them into a replay with no live sink.
     ("registration-drop-accepted", "coordinator.rs",
-     "                state.sinks.remove(session_key);\n                return false;\n            };",
-     "                return true;\n            };",
+     '                if expected.is_none() {\n                    state.sinks.remove(session_key);\n                }\n                return false;\n            };',
+     '                if expected.is_none() {\n                    state.sinks.remove(session_key);\n                }\n                return true;\n            };',
      "coordinator::tests::dropping_the_registration_unregisters_the_sink_but_keeps_the_coordinator"),
     # --- fix round 8: codex-r8 P1 #1 (registration liveness vs sink liveness)
     # and P1 #2 (documented ownership contract + explicit unregister); each

@@ -1,0 +1,547 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "rows": [
+    {
+      "id": "binary",
+      "input": {
+        "file_path": "final.bin"
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "final.bin"
+        }
+      },
+      "permission": {
+        "type": "passthrough"
+      },
+      "result": {
+        "ok": true,
+        "output": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Sending attachment: final.bin"
+            },
+            {
+              "type": "file",
+              "path": "<root>/project/final.bin",
+              "description": "Attachment requested for channel delivery: final.bin"
+            }
+          ],
+          "data": {
+            "filePath": "<root>/project/final.bin",
+            "name": "final.bin",
+            "bytes": 3
+          },
+          "metadata": {
+            "attachmentDelivery": true
+          }
+        }
+      }
+    },
+    {
+      "id": "name",
+      "input": {
+        "file_path": "final.bin",
+        "name": "﻿ a/b\\c\u0000 ",
+        "mime_type": "application/octet-stream"
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "final.bin",
+          "name": "﻿ a/b\\c\u0000 ",
+          "mime_type": "application/octet-stream"
+        }
+      },
+      "permission": {
+        "type": "passthrough"
+      },
+      "result": {
+        "ok": true,
+        "output": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Sending attachment: a_b_c_"
+            },
+            {
+              "type": "file",
+              "path": "<root>/project/final.bin",
+              "mimeType": "application/octet-stream",
+              "description": "Attachment requested for channel delivery: a_b_c_"
+            }
+          ],
+          "data": {
+            "filePath": "<root>/project/final.bin",
+            "name": "a_b_c_",
+            "bytes": 3,
+            "mimeType": "application/octet-stream"
+          },
+          "metadata": {
+            "attachmentDelivery": true
+          }
+        }
+      }
+    },
+    {
+      "id": "blank-name",
+      "input": {
+        "file_path": "final.bin",
+        "name": "﻿ \n"
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "final.bin",
+          "name": "﻿ \n"
+        }
+      },
+      "permission": {
+        "type": "passthrough"
+      },
+      "result": {
+        "ok": true,
+        "output": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Sending attachment: final.bin"
+            },
+            {
+              "type": "file",
+              "path": "<root>/project/final.bin",
+              "description": "Attachment requested for channel delivery: final.bin"
+            }
+          ],
+          "data": {
+            "filePath": "<root>/project/final.bin",
+            "name": "final.bin",
+            "bytes": 3
+          },
+          "metadata": {
+            "attachmentDelivery": true
+          }
+        }
+      }
+    },
+    {
+      "id": "missing",
+      "input": {
+        "file_path": "missing"
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "missing"
+        }
+      },
+      "permission": {
+        "type": "deny",
+        "reason": {
+          "type": "safety",
+          "message": "File missing does not exist."
+        },
+        "message": "File missing does not exist."
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "file_not_found",
+          "message": "File missing does not exist."
+        }
+      }
+    },
+    {
+      "id": "directory",
+      "input": {
+        "file_path": "."
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "."
+        }
+      },
+      "permission": {
+        "type": "passthrough"
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "invalid_tool_input",
+          "message": "Path . is not a file."
+        }
+      }
+    },
+    {
+      "id": "internal",
+      "input": {
+        "file_path": ".pilotdeck/work/draft"
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "file_path",
+            "code": "invalid_schema",
+            "message": "Cannot send .pilotdeck/work/draft directly because it is inside PilotDeck's internal work directory (<root>/project/.pilotdeck/work). Internal candidates may be incomplete or unreviewed. Publish the reviewed final artifact outside PILOTDECK_WORK_DIR with the relevant skill's delivery workflow (for DOCX, use docx.sh deliver), then send the delivered path."
+          }
+        ]
+      },
+      "permission": {
+        "type": "passthrough"
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "invalid_tool_input",
+          "message": "Cannot send .pilotdeck/work/draft directly because it is inside PilotDeck's internal work directory (<root>/project/.pilotdeck/work). Internal candidates may be incomplete or unreviewed. Publish the reviewed final artifact outside PILOTDECK_WORK_DIR with the relevant skill's delivery workflow (for DOCX, use docx.sh deliver), then send the delivered path.",
+          "details": {
+            "filePath": ".pilotdeck/work/draft",
+            "internalWorkRoot": "<root>/project/.pilotdeck/work"
+          }
+        }
+      }
+    },
+    {
+      "id": "internal-alias",
+      "input": {
+        "file_path": "alias"
+      },
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "file_path",
+            "code": "invalid_schema",
+            "message": "Cannot send alias directly because it is inside PilotDeck's internal work directory (<root>/project/.pilotdeck/work). Internal candidates may be incomplete or unreviewed. Publish the reviewed final artifact outside PILOTDECK_WORK_DIR with the relevant skill's delivery workflow (for DOCX, use docx.sh deliver), then send the delivered path."
+          }
+        ]
+      },
+      "permission": {
+        "type": "passthrough"
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "invalid_tool_input",
+          "message": "Cannot send alias directly because it is inside PilotDeck's internal work directory (<root>/project/.pilotdeck/work). Internal candidates may be incomplete or unreviewed. Publish the reviewed final artifact outside PILOTDECK_WORK_DIR with the relevant skill's delivery workflow (for DOCX, use docx.sh deliver), then send the delivered path.",
+          "details": {
+            "filePath": "alias",
+            "internalWorkRoot": "<root>/project/.pilotdeck/work"
+          }
+        }
+      }
+    },
+    {
+      "id": "custom-internal",
+      "input": {
+        "file_path": "custom/draft"
+      },
+      "work": "custom",
+      "validation": {
+        "ok": false,
+        "issues": [
+          {
+            "path": "file_path",
+            "code": "invalid_schema",
+            "message": "Cannot send custom/draft directly because it is inside PilotDeck's internal work directory (<root>/project/custom). Internal candidates may be incomplete or unreviewed. Publish the reviewed final artifact outside PILOTDECK_WORK_DIR with the relevant skill's delivery workflow (for DOCX, use docx.sh deliver), then send the delivered path."
+          }
+        ]
+      },
+      "permission": {
+        "type": "passthrough"
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "invalid_tool_input",
+          "message": "Cannot send custom/draft directly because it is inside PilotDeck's internal work directory (<root>/project/custom). Internal candidates may be incomplete or unreviewed. Publish the reviewed final artifact outside PILOTDECK_WORK_DIR with the relevant skill's delivery workflow (for DOCX, use docx.sh deliver), then send the delivered path.",
+          "details": {
+            "filePath": "custom/draft",
+            "internalWorkRoot": "<root>/project/custom"
+          }
+        }
+      }
+    },
+    {
+      "id": "external",
+      "input": {
+        "file_path": "../external.bin"
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "../external.bin"
+        }
+      },
+      "permission": {
+        "type": "ask",
+        "reason": {
+          "type": "tool",
+          "toolName": "send_attachment",
+          "message": "send_attachment targets a path outside the workspace."
+        },
+        "request": {
+          "toolCallId": "",
+          "toolName": "send_attachment",
+          "inputSummary": "{\"file_path\":\"<root>/external.bin\"}",
+          "reason": {
+            "type": "tool",
+            "toolName": "send_attachment",
+            "message": "send_attachment targets a path outside the workspace."
+          },
+          "options": [
+            {
+              "id": "allow_once",
+              "label": "Allow once"
+            },
+            {
+              "id": "allow_session",
+              "label": "Allow this folder for this session",
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "send_attachment",
+                  "pattern": "<root>/*"
+                }
+              ]
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel"
+            }
+          ],
+          "metadata": {
+            "externalPath": "<root>/external.bin",
+            "allowedDirectory": "<root>",
+            "pattern": "<root>/*"
+          }
+        }
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "path_not_allowed",
+          "message": "Path ../external.bin is outside the PilotDeck workspace."
+        }
+      }
+    },
+    {
+      "id": "external-allowed",
+      "input": {
+        "file_path": "../external.bin"
+      },
+      "allow": true,
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "../external.bin"
+        }
+      },
+      "permission": {
+        "type": "ask",
+        "reason": {
+          "type": "tool",
+          "toolName": "send_attachment",
+          "message": "send_attachment targets a path outside the workspace."
+        },
+        "request": {
+          "toolCallId": "",
+          "toolName": "send_attachment",
+          "inputSummary": "{\"file_path\":\"<root>/external.bin\"}",
+          "reason": {
+            "type": "tool",
+            "toolName": "send_attachment",
+            "message": "send_attachment targets a path outside the workspace."
+          },
+          "options": [
+            {
+              "id": "allow_once",
+              "label": "Allow once"
+            },
+            {
+              "id": "allow_session",
+              "label": "Allow this folder for this session",
+              "rules": [
+                {
+                  "source": "session",
+                  "behavior": "allow",
+                  "toolName": "send_attachment",
+                  "pattern": "<root>/*"
+                }
+              ]
+            },
+            {
+              "id": "deny",
+              "label": "Deny"
+            },
+            {
+              "id": "cancel",
+              "label": "Cancel"
+            }
+          ],
+          "metadata": {
+            "externalPath": "<root>/external.bin",
+            "allowedDirectory": "<root>",
+            "pattern": "<root>/*"
+          }
+        }
+      },
+      "result": {
+        "ok": true,
+        "output": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Sending attachment: external.bin"
+            },
+            {
+              "type": "file",
+              "path": "<root>/external.bin",
+              "description": "Attachment requested for channel delivery: external.bin"
+            }
+          ],
+          "data": {
+            "filePath": "<root>/external.bin",
+            "name": "external.bin",
+            "bytes": 8
+          },
+          "metadata": {
+            "attachmentDelivery": true
+          }
+        }
+      }
+    },
+    {
+      "id": "registered",
+      "input": {
+        "file_path": "../external.bin"
+      },
+      "registered": true,
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "../external.bin"
+        }
+      },
+      "permission": {
+        "type": "passthrough"
+      },
+      "result": {
+        "ok": true,
+        "output": {
+          "content": [
+            {
+              "type": "text",
+              "text": "Sending attachment: external.bin"
+            },
+            {
+              "type": "file",
+              "path": "<root>/external.bin",
+              "description": "Attachment requested for channel delivery: external.bin"
+            }
+          ],
+          "data": {
+            "filePath": "<root>/external.bin",
+            "name": "external.bin",
+            "bytes": 8
+          },
+          "metadata": {
+            "attachmentDelivery": true
+          }
+        }
+      }
+    },
+    {
+      "id": "outside-alias",
+      "input": {
+        "file_path": "outside-alias"
+      },
+      "allow": true,
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "outside-alias"
+        }
+      },
+      "permission": {
+        "type": "deny",
+        "reason": {
+          "type": "safety",
+          "message": "Path outside-alias resolves outside the PilotDeck workspace."
+        },
+        "message": "Path outside-alias resolves outside the PilotDeck workspace."
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "path_not_allowed",
+          "message": "Path outside-alias resolves outside the PilotDeck workspace."
+        }
+      }
+    },
+    {
+      "id": "empty",
+      "input": {
+        "file_path": ""
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": ""
+        }
+      },
+      "permission": {
+        "type": "deny",
+        "reason": {
+          "type": "safety",
+          "message": "Path must be a non-empty string without null bytes."
+        },
+        "message": "Path must be a non-empty string without null bytes."
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "invalid_tool_input",
+          "message": "Path must be a non-empty string without null bytes."
+        }
+      }
+    },
+    {
+      "id": "nul",
+      "input": {
+        "file_path": "a\u0000b"
+      },
+      "validation": {
+        "ok": true,
+        "input": {
+          "file_path": "a\u0000b"
+        }
+      },
+      "permission": {
+        "type": "deny",
+        "reason": {
+          "type": "safety",
+          "message": "Path must be a non-empty string without null bytes."
+        },
+        "message": "Path must be a non-empty string without null bytes."
+      },
+      "result": {
+        "ok": false,
+        "error": {
+          "code": "invalid_tool_input",
+          "message": "Path must be a non-empty string without null bytes."
+        }
+      }
+    }
+  ]
+}

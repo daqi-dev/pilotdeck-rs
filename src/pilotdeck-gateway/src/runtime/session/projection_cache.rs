@@ -204,6 +204,7 @@ impl ProjectionCache {
             }
         }
         *lock(&self.projection.completed_turns) = completed_turns(&entries);
+        *lock(&self.projection.inbox) = Default::default();
         *live = entries;
         *lock(&self.projection.last_valid) = state;
         self.projection.valid.store(true, Ordering::SeqCst);

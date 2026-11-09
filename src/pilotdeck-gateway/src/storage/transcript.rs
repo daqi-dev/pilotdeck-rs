@@ -138,13 +138,19 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
     // is exactly the shape `node_io::read_file` documents for that case.
     file.read_to_end(&mut bytes)
         .map_err(|error| descriptor_error(error, "read"))?;
+    let read = decode_transcript(&bytes)?;
+    Ok((bytes, read))
+}
+
+/// Decode already-bounded bytes using the same diagnostics and ordering as the legacy reader.
+fn decode_transcript(bytes: &[u8]) -> Result<TranscriptRead> {
     let mut read = TranscriptRead {
         entries: vec![],
         diagnostics: vec![],
     };
     // Match Node readFile(path, "utf8"): replacement characters are observable
     // in parsed values, while original bytes stay intact for the next append.
-    for (index, line) in String::from_utf8_lossy(&bytes).split('\n').enumerate() {
+    for (index, line) in String::from_utf8_lossy(bytes).split('\n').enumerate() {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if js_trim(line).is_empty() {
             continue;
@@ -207,7 +213,118 @@ fn load(path: &Path, diagnostic_path: &Path, max_bytes: u64) -> Result<(Vec<u8>,
                 )
         }
     });
-    Ok((bytes, read))
+    Ok(read)
+}
+
+/// Opt-in bounded descriptor read for public native history. Unlike the legacy
+/// reader it refuses special files and checks the bound after reading as well.
+pub(crate) struct BoundedTranscript {
+    pub read: TranscriptRead,
+    pub snapshot: Option<(Vec<u8>, fs::Metadata)>,
+}
+#[cfg(unix)]
+pub(crate) fn read_transcript_bounded(path: &Path) -> Result<BoundedTranscript> {
+    let mut options = OpenOptions::new();
+    options.read(true).custom_flags(libc::O_NONBLOCK);
+    let file = match options.open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(BoundedTranscript {
+                read: missing_transcript(path).1,
+                snapshot: None,
+            });
+        }
+        Err(error) => return Err(path_error(error, "open", path).into()),
+    };
+    read_open_transcript(file)
+}
+
+#[cfg(unix)]
+pub(crate) fn read_transcript_beneath(root: &Path, path: &Path) -> Result<BoundedTranscript> {
+    let file = match crate::project_files::open_beneath(root, path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(BoundedTranscript {
+                read: missing_transcript(path).1,
+                snapshot: None,
+            });
+        }
+        Err(error) => return Err(path_error(error, "open", path).into()),
+    };
+    read_open_transcript(file)
+}
+
+#[cfg(not(unix))]
+pub(crate) fn read_transcript_beneath(_root: &Path, _path: &Path) -> Result<BoundedTranscript> {
+    Err(invalid(
+        "Bounded native history is unavailable on this platform.",
+    ))
+}
+
+#[cfg(unix)]
+fn read_open_transcript(file: fs::File) -> Result<BoundedTranscript> {
+    let metadata = file
+        .metadata()
+        .map_err(|error| descriptor_error(error, "fstat"))?;
+    if !metadata.is_file() {
+        return Err(invalid("History transcript is not a regular file."));
+    }
+    if metadata.len() > MAX_BYTES {
+        return Err(invalid("History transcript exceeds the 50 MiB limit."));
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| descriptor_error(error, "read"))?;
+    if bytes.len() as u64 > MAX_BYTES {
+        return Err(invalid("History transcript exceeds the 50 MiB limit."));
+    }
+    let read = decode_transcript(&bytes)?;
+    Ok(BoundedTranscript {
+        read,
+        snapshot: Some((bytes, metadata)),
+    })
+}
+
+#[cfg(all(test, unix))]
+#[test]
+fn bounded_transcript_limit_is_inclusive_and_next_byte_is_rejected() {
+    use std::io::Write;
+    let path = std::env::temp_dir().join(format!("pdrs-transcript-limit-{}", uuid::Uuid::new_v4()));
+    let mut file = fs::File::create(&path).unwrap();
+    assert_eq!(
+        read_transcript_bounded(&path)
+            .unwrap()
+            .snapshot
+            .unwrap()
+            .0
+            .len(),
+        0
+    );
+    // Whitespace is a legal empty transcript; keep the IO boundary independent
+    // of malformed-record semantics and exercise the actual descriptor reader.
+    let chunk = vec![b' '; 1024 * 1024];
+    for _ in 0..50 {
+        file.write_all(&chunk).unwrap();
+    }
+    file.sync_all().unwrap();
+    let at_limit = read_transcript_bounded(&path).unwrap();
+    assert_eq!(
+        at_limit.snapshot.as_ref().unwrap().0.len() as u64,
+        MAX_BYTES
+    );
+    drop(at_limit);
+    file.write_all(b" ").unwrap();
+    file.sync_all().unwrap();
+    assert!(read_transcript_bounded(&path).is_err());
+    drop(file);
+    fs::remove_file(path).unwrap();
+}
+#[cfg(not(unix))]
+pub(crate) fn read_transcript_bounded(_path: &Path) -> Result<BoundedTranscript> {
+    Err(invalid(
+        "Bounded native history is unavailable on this platform.",
+    ))
 }
 
 /// A single-owner JSONL adapter, using `<canonical path>.lock` advisory locking.
@@ -467,27 +584,47 @@ impl LedgerLock {
     /// The retained canonical path lets a transfer verify the fence really
     /// guards the path the holder resolved (#1019).
     pub(crate) fn acquire(supplied: &Path) -> Result<(PathBuf, Self)> {
+        Self::acquire_with_policy(supplied, false)
+    }
+
+    pub(crate) fn acquire_bounded(supplied: &Path) -> Result<(PathBuf, Self)> {
+        Self::acquire_with_policy(supplied, true)
+    }
+
+    fn acquire_with_policy(supplied: &Path, bounded: bool) -> Result<(PathBuf, Self)> {
         let path = canonical_transcript_path(supplied)?;
         let mut lock_path = path.as_os_str().to_os_string();
         lock_path.push(".lock");
         let lock_path = PathBuf::from(lock_path);
-        let lock = private_open()
-            .read(true)
-            .write(true)
-            .create(true)
-            // Rust-only fence inode: TS has no lock syscall. Keep the errno out
-            // of the error so the wire layer cannot blame the transcript for a
-            // failure that belongs to `<transcript>.lock`; Rust text is honest.
-            .open(&lock_path)
-            .map_err(|error| {
-                io::Error::new(
-                    error.kind(),
-                    format!(
-                        "Could not open session ledger lock {}: {error}",
-                        lock_path.display()
-                    ),
-                )
-            })?;
+        let mut options = private_open();
+        options.read(true).write(true).create(true);
+        if bounded {
+            #[cfg(unix)]
+            {
+                options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+            }
+            #[cfg(not(unix))]
+            return Err(invalid(
+                "Bounded native ledger lock is unavailable on this platform.",
+            ));
+        }
+        let lock = options.open(&lock_path).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "Could not open session ledger lock {}: {error}",
+                    lock_path.display()
+                ),
+            )
+        })?;
+        if bounded
+            && !lock
+                .metadata()
+                .map_err(|error| descriptor_error(error, "fstat"))?
+                .is_file()
+        {
+            return Err(invalid("Native session ledger lock is not a regular file."));
+        }
         // Rust-only single-writer fence: TS has no lock syscall, and the
         // WouldBlock rejection is synthetic, so neither is rendered as a
         // Node fs error.
@@ -528,7 +665,7 @@ pub(super) fn uuid() -> io::Result<String> {
         &hex[20..]
     ))
 }
-pub(super) fn timestamp() -> Result<String> {
+pub(crate) fn timestamp() -> Result<String> {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|e| invalid(e.to_string()))?;

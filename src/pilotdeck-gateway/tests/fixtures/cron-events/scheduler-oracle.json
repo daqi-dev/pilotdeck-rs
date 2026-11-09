@@ -1,0 +1,41 @@
+{
+  "metadata": {
+    "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "typescript": "5.9.3",
+    "sourceSha256": {
+      "src/cron/CronTimezone.ts": "fdac81a3701e6fd7ffbc5ef273eccb2cf45c87e35a7d39d40f6b8c15c69cfe16",
+      "src/cron/runtime/CronSchedule.ts": "6f11cef379603ded179b7a896b0689c58ee738d403a9dd1278af7597645669b0",
+      "src/cron/storage/CronPaths.ts": "0298b4c9b1a1a5b0926ee4bb98fd5f873faae254405c7699fe29ca682349e4c8",
+      "src/cron/storage/CronTaskStore.ts": "7b0f6a2787a5567bf52b1ee9235eb8d9d10aff284bf4014de611e7aea7aa1db0",
+      "src/cron/runtime/CronFire.ts": "d38c501149bdf35fe47c2db6e6449b03e068116bc4d7deb5979d0975a72c1d39",
+      "src/cron/runtime/CronScheduler.ts": "bba1249d995065b6170a13c724371a16e6331e9e4c8bfa40a53509b34e5750d4"
+    },
+    "normalization": "none",
+    "now": 1767225600000
+  },
+  "rows": [
+    {
+      "id": "delay",
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task-\\ud800\",\n      \"message\": \"seeded\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\"\n    }\n  ]\n}",
+      "after": {
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task-\\ud800\",\n      \"message\": \"seeded\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"nextRunAt\": \"2026-01-01T00:01:00.000Z\",\n      \"revision\": 1\n    }\n  ]\n}"
+      }
+    },
+    {
+      "id": "once-recalc",
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task-\\ud800\",\n      \"message\": \"seeded\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0\n    }\n  ]\n}",
+      "after": {
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task-\\ud800\",\n      \"message\": \"seeded\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 1\n    }\n  ]\n}"
+      }
+    },
+    {
+      "id": "cron-recalc",
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task-\\ud800\",\n      \"message\": \"seeded\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"0 * 1 * 0\",\n        \"timezone\": \"UTC\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"nextRunAt\": \"2026-01-02T00:00:00.000Z\",\n      \"scheduleComputationVersion\": 2\n    }\n  ]\n}",
+      "after": {
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task-\\ud800\",\n      \"message\": \"seeded\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"0 * 1 * 0\",\n        \"timezone\": \"UTC\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"nextRunAt\": \"2026-01-01T01:00:00.000Z\",\n      \"revision\": 1,\n      \"scheduleComputationVersion\": 3\n    }\n  ]\n}"
+      }
+    }
+  ]
+}

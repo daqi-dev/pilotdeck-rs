@@ -1,0 +1,125 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "source": {
+    "path": "src/sop/staffdeck/SopAgentLoop.ts",
+    "sha256": "c40fde5966dc4f827371fbda50fbc3d36ab2c3e2673b0b2aeaf69da8f99342fd"
+  },
+  "extraction": "Actual prepareContext class method plus actual AST helpers; preflight/state/model context/capability are isolated fake ports; VM has no imports or network",
+  "cases": [
+    {
+      "name": "ordinary-prefix",
+      "step": {
+        "skillName": "own procedure",
+        "skillId": "procedure",
+        "nodeId": "n1",
+        "instruction": "Do the node.",
+        "expectedUserInfo": [],
+        "knownSlots": {},
+        "requiredToolNames": [],
+        "allowedNextStepIds": [],
+        "allowedActions": [],
+        "declaresHandoff": false,
+        "isTerminal": false
+      },
+      "existing": "  SDK prefix  ",
+      "correction": false,
+      "expected": "  SDK prefix  \n\n<staffdeck-sop>\nCurrent SOP: own procedure (procedure), step n1.\nStep instruction: Do the node.\nAlready persisted user fields: {}.\nA completed submission closes only this node. Its replyFragment is this node's result, not a submission or final answer for a successor node; the successor must be prepared and submitted separately.\nA question asking for missing fields is also a step result: persist it with awaiting_user and no nextStepId before ending the turn. A plain-text answer without submit_step_result does not persist SOP progress.\nWhen this step has a result, call submit_step_result exactly once. Do not claim a tool succeeded before its result is in the conversation.\nUse status awaiting_user for missing user information and handoff only when this step explicitly permits it.\n</staffdeck-sop>"
+    },
+    {
+      "name": "blank-prefix",
+      "step": {
+        "skillName": "own procedure",
+        "skillId": "procedure",
+        "nodeId": "n1",
+        "instruction": "Do the node.",
+        "expectedUserInfo": [],
+        "knownSlots": {},
+        "requiredToolNames": [],
+        "allowedNextStepIds": [],
+        "allowedActions": [],
+        "declaresHandoff": false,
+        "isTerminal": false
+      },
+      "existing": " \n ",
+      "correction": false,
+      "expected": "<staffdeck-sop>\nCurrent SOP: own procedure (procedure), step n1.\nStep instruction: Do the node.\nAlready persisted user fields: {}.\nA completed submission closes only this node. Its replyFragment is this node's result, not a submission or final answer for a successor node; the successor must be prepared and submitted separately.\nA question asking for missing fields is also a step result: persist it with awaiting_user and no nextStepId before ending the turn. A plain-text answer without submit_step_result does not persist SOP progress.\nWhen this step has a result, call submit_step_result exactly once. Do not claim a tool succeeded before its result is in the conversation.\nUse status awaiting_user for missing user information and handoff only when this step explicitly permits it.\n</staffdeck-sop>"
+    },
+    {
+      "name": "correction",
+      "step": {
+        "skillName": "own procedure",
+        "skillId": "procedure",
+        "nodeId": "n1",
+        "instruction": "Do the node.",
+        "expectedUserInfo": [],
+        "knownSlots": {},
+        "requiredToolNames": [],
+        "allowedNextStepIds": [],
+        "allowedActions": [],
+        "declaresHandoff": false,
+        "isTerminal": false
+      },
+      "existing": "parent",
+      "correction": true,
+      "expected": "parent\n\n<staffdeck-sop>\nCurrent SOP: own procedure (procedure), step n1.\nStep instruction: Do the node.\nAlready persisted user fields: {}.\nA completed submission closes only this node. Its replyFragment is this node's result, not a submission or final answer for a successor node; the successor must be prepared and submitted separately.\nA question asking for missing fields is also a step result: persist it with awaiting_user and no nextStepId before ending the turn. A plain-text answer without submit_step_result does not persist SOP progress.\nWhen this step has a result, call submit_step_result exactly once. Do not claim a tool succeeded before its result is in the conversation.\nUse status awaiting_user for missing user information and handoff only when this step explicitly permits it.\n</staffdeck-sop>\n\nSOP_STEP_RESULT_REQUIRED: Your previous response did not submit the current SOP node result. Text cannot create an approval or missing-field wait. Follow the current node contract and call submit_step_result with your actual result before ending. Do not claim a persisted wait or completion without a successful tool receipt."
+    },
+    {
+      "name": "final-correction",
+      "step": {
+        "skillName": "own procedure",
+        "skillId": "procedure",
+        "nodeId": "n1",
+        "instruction": "Do the node.",
+        "expectedUserInfo": [],
+        "knownSlots": {},
+        "requiredToolNames": [],
+        "allowedNextStepIds": [],
+        "allowedActions": [],
+        "declaresHandoff": false,
+        "isTerminal": true
+      },
+      "existing": "",
+      "correction": true,
+      "expected": "<staffdeck-sop>\nCurrent SOP: own procedure (procedure), step n1.\nStep instruction: Do the node.\nAlready persisted user fields: {}.\nThis is the active final SOP node, even if the previous node already submitted completed. Put the final user-facing answer in replyFragment and call submit_step_result with status completed, slotUpdates {}, and no nextStepId. Do not emit the answer as plain assistant text or claim the SOP is complete before this tool succeeds.\nA question asking for missing fields is also a step result: persist it with awaiting_user and no nextStepId before ending the turn. A plain-text answer without submit_step_result does not persist SOP progress.\nWhen this step has a result, call submit_step_result exactly once. Do not claim a tool succeeded before its result is in the conversation.\nUse status awaiting_user for missing user information and handoff only when this step explicitly permits it.\n</staffdeck-sop>\n\nSOP_STEP_RESULT_REQUIRED: The previous assistant text was only a draft. The final SOP node is still active. Call submit_step_result now with status completed, the final answer in replyFragment, slotUpdates {}, and no nextStepId. Do not repeat the draft as plain assistant text."
+    },
+    {
+      "name": "handoff-correction",
+      "step": {
+        "skillName": "own procedure",
+        "skillId": "procedure",
+        "nodeId": "n1",
+        "instruction": "Do the node.",
+        "expectedUserInfo": [],
+        "knownSlots": {},
+        "requiredToolNames": [],
+        "allowedNextStepIds": [],
+        "allowedActions": [],
+        "declaresHandoff": true,
+        "isTerminal": true
+      },
+      "correction": true,
+      "expected": "<staffdeck-sop>\nCurrent SOP: own procedure (procedure), step n1.\nStep instruction: Do the node.\nAlready persisted user fields: {}.\nThis step declares a human handoff. When approval is required, use status handoff to create the resumable approval wait; do not use awaiting_user. After an authorized human reply, persist the actual decision according to this node's instruction with submit_step_result and advance only to an allowed next step. A completed node means its decision was processed, not that the decision was approval. If this node instructs completed after either approval or rejection, submit completed for either decision and quote it accurately; do not substitute failed merely because the human rejected. Do not end with a plain-text approval summary.\nThis is the active final SOP node. Being final does not remove its approval or required-field contract. Persist a required wait with submit_step_result before ending; complete only when this node's conditions are satisfied, preserving supplied fields in slotUpdates and omitting nextStepId. Do not claim completion before the tool succeeds.\nA question asking for missing fields is also a step result: persist it with awaiting_user and no nextStepId before ending the turn. A plain-text answer without submit_step_result does not persist SOP progress.\nWhen this step has a result, call submit_step_result exactly once. Do not claim a tool succeeded before its result is in the conversation.\nUse status awaiting_user for missing user information and handoff only when this step explicitly permits it.\n</staffdeck-sop>\n\nSOP_STEP_RESULT_REQUIRED: Your previous response did not submit the current SOP node result. Text cannot create an approval or missing-field wait. Follow the current node contract and call submit_step_result with your actual result before ending. Do not claim a persisted wait or completion without a successful tool receipt."
+    },
+    {
+      "name": "utf16-prefix",
+      "step": {
+        "skillName": "own procedure",
+        "skillId": "procedure",
+        "nodeId": "n1",
+        "instruction": "i\ud800",
+        "expectedUserInfo": [],
+        "knownSlots": {},
+        "requiredToolNames": [],
+        "allowedNextStepIds": [],
+        "allowedActions": [],
+        "declaresHandoff": false,
+        "isTerminal": false
+      },
+      "existing": "s\udc00",
+      "correction": true,
+      "expected": "s\udc00\n\n<staffdeck-sop>\nCurrent SOP: own procedure (procedure), step n1.\nStep instruction: i\ud800\nAlready persisted user fields: {}.\nA completed submission closes only this node. Its replyFragment is this node's result, not a submission or final answer for a successor node; the successor must be prepared and submitted separately.\nA question asking for missing fields is also a step result: persist it with awaiting_user and no nextStepId before ending the turn. A plain-text answer without submit_step_result does not persist SOP progress.\nWhen this step has a result, call submit_step_result exactly once. Do not claim a tool succeeded before its result is in the conversation.\nUse status awaiting_user for missing user information and handoff only when this step explicitly permits it.\n</staffdeck-sop>\n\nSOP_STEP_RESULT_REQUIRED: Your previous response did not submit the current SOP node result. Text cannot create an approval or missing-field wait. Follow the current node contract and call submit_step_result with your actual result before ending. Do not claim a persisted wait or completion without a successful tool receipt."
+    }
+  ]
+}

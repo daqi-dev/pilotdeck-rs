@@ -506,7 +506,7 @@ impl CronAgentGateway for RejectingGateway {
     }
 }
 
-fn cron_manager(scratch: &Scratch) -> std::sync::Arc<CronManager> {
+fn cron_manager(scratch: &Scratch) -> Arc<CronManager> {
     let home = scratch.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     CronManager::new(CronManagerOptions {
@@ -970,4 +970,23 @@ fn the_management_gate_registry_forgets_dead_managers() {
         Arc::ptr_eq(&again, &second_gate),
         "#2363 the lookup reuses the registered gate"
     );
+}
+
+#[test]
+fn closed_cron_gate_does_not_retain_manager_or_close_another_manager() {
+    let scratch = Scratch::new("switch-cron-weak-close");
+    let manager = cron_manager(&scratch);
+    let other = cron_manager(&scratch);
+    let weak = Arc::downgrade(&manager);
+    assert!(!crate::switch::cron_management_closed(Some(&manager)));
+    crate::switch::close_cron_management(&manager);
+    crate::switch::close_cron_management(&manager);
+    assert!(crate::switch::cron_management_closed(Some(&manager)));
+    assert!(!crate::switch::cron_management_closed(Some(&other)));
+    drop(manager);
+    assert!(
+        weak.upgrade().is_none(),
+        "closed gate must not keep the gateway alive"
+    );
+    assert!(!crate::switch::cron_management_closed(Some(&other)));
 }

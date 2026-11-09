@@ -512,7 +512,7 @@ class SessionRunnerTests(unittest.TestCase):
             ['same-key-concurrent', 'recreate-disposed'],
             {SESSION_OWNER: 'dirty: false,\n',
              SESSION_LIVE: 'if self.disposed {\n',
-             SESSION_FACTORY_FILE: 'if self.disposed.load(Ordering::SeqCst) {\n'},
+             SESSION_FACTORY_FILE: 'pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {\n        if self.disposed.load(Ordering::SeqCst) {\n'},
             [(SESSION_PREFIX + 'same_key_concurrent', '#745 same-key-concurrent conclusion'),
              (SESSION_PREFIX + 'recreate_disposed', '#745 recreate expected failure')])
         by_name = {row['mutation']: row for row in rows}
@@ -534,7 +534,7 @@ class SessionRunnerTests(unittest.TestCase):
         code, rows, _guard_calls, restored_files = self.run_session_runner(
             SESSION_SOURCE, ['recreate-disposed'],
             {SESSION_LIVE: 'if self.disposed {\n',
-             SESSION_FACTORY_FILE: 'if self.disposed.load(Ordering::SeqCst) {\n'},
+             SESSION_FACTORY_FILE: 'pub fn snapshot(&self) -> Result<DurableSessionState, RuntimeError> {\n        if self.disposed.load(Ordering::SeqCst) {\n'},
             [(SESSION_PREFIX + 'recreate_disposed', '#745 recreate expected failure')],
             classify=classify)
         self.assertTrue(rows[0]['status'] == 'KILLED',

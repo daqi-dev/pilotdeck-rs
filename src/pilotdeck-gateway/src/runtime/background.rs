@@ -60,8 +60,8 @@ use crate::{
         tools::{
             ToolCancellation,
             builtin::bash::runner::{
-                AbortSignal, SpawnError, classify_spawn_error, inherited_env, prepare_spawn,
-                timer_delay,
+                AbortSignal, SpawnError, classify_spawn_error, inherited_env,
+                prepare_spawn_for_sandbox, timer_delay,
             },
         },
     },
@@ -80,7 +80,14 @@ use tokio::{io::AsyncReadExt, sync::watch};
 
 use super::cleanup_task::lock;
 
+mod native_limits;
 mod output;
+pub(crate) use native_limits::NativeTaskLimits;
+pub(crate) mod native_output;
+struct NativeContext {
+    limits: NativeTaskLimits,
+    output: Arc<dyn native_output::NativeOutputStorage>,
+}
 use output::OutputStore;
 
 /// Epoch milliseconds (`options.now().getTime()`).
@@ -207,6 +214,8 @@ struct EntryState {
     /// older than the newest accepted one for the task, so a late persist
     /// cannot overwrite a newer snapshot (#1233 P0-1).
     persist_seq: u64,
+    output_limit_exceeded: bool,
+    restored_failure: Option<JsString>,
 }
 
 struct Entry {
@@ -215,17 +224,36 @@ struct Entry {
     closed: watch::Sender<bool>,
     /// Node reported the spawn failure asynchronously: no `exit` will come.
     never_exits: bool,
+    native_persist: std::sync::OnceLock<watch::Sender<u64>>,
 }
 
 impl Entry {
     /// #1233 fix-r1: returns the event-time sequence number assigned under
     /// the lock, so callers can hand it to the snapshot store.
-    fn append(&self, chunk: &[u8]) -> u64 {
+    fn append(&self, chunk: &[u8], limit: Option<usize>) -> (u64, bool) {
         let mut state = self.state.lock().unwrap();
-        state.output.append(chunk);
+        if state.output_limit_exceeded {
+            return (state.persist_seq, false);
+        }
+        let mut exceeded = false;
+        if let Some(limit) = limit
+            && chunk.len() > limit.saturating_sub(state.output.total as usize)
+        {
+            const REASON: &[u8] =
+                b"\nNative background output limit reached; the owned process group was stopped.\n";
+            let remaining = limit.saturating_sub(state.output.total as usize);
+            let retained = remaining.saturating_sub(REASON.len()).min(chunk.len());
+            state.output.append(&chunk[..retained]);
+            let marker = remaining.saturating_sub(retained).min(REASON.len());
+            state.output.append(&REASON[..marker]);
+            state.output_limit_exceeded = true;
+            exceeded = true;
+        } else {
+            state.output.append(chunk);
+        }
         state.task.output_bytes = state.output.total;
         state.persist_seq += 1;
-        state.persist_seq
+        (state.persist_seq, exceeded)
     }
     fn snapshot(&self) -> BackgroundBashTask {
         self.state.lock().unwrap().task.clone()
@@ -292,6 +320,8 @@ pub struct BackgroundTaskRuntimeOptions {
 }
 
 struct Inner {
+    native: Option<NativeContext>,
+    sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     state: Mutex<RuntimeState>,
     starts: watch::Sender<usize>,
     /// `disposePromise`: `None` until the shared disposal settles, then the
@@ -440,7 +470,60 @@ fn truthy(value: &JsValue) -> bool {
 }
 
 impl BackgroundTaskRuntime {
+    /// Set the execution-world provider before sharing or starting this owner.
+    pub fn with_sandbox(
+        mut self,
+        sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    ) -> Self {
+        let inner = Arc::get_mut(&mut self.inner)
+            .expect("Configure background sandbox before sharing the owner.");
+        let state = inner
+            .state
+            .get_mut()
+            .unwrap_or_else(|error| error.into_inner());
+        assert!(
+            state.entries.iter().all(|(_, entry)| entry
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .child
+                .is_none())
+                && state.pending_starts == 0
+                && inner.sandbox.is_none(),
+            "Configure background sandbox before starting tasks."
+        );
+        inner.sandbox = Some(sandbox);
+        self
+    }
+    pub(crate) fn sandbox_matches(
+        &self,
+        expected: &Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    ) -> bool {
+        self.inner
+            .sandbox
+            .as_ref()
+            .is_some_and(|actual| Arc::ptr_eq(actual, expected))
+    }
+    pub(crate) fn new_native(
+        options: BackgroundTaskRuntimeOptions,
+        sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+        output: Arc<dyn native_output::NativeOutputStorage>,
+        limits: NativeTaskLimits,
+    ) -> Self {
+        Self::build(
+            options,
+            Some(sandbox),
+            Some(NativeContext { limits, output }),
+        )
+    }
     pub fn new(options: BackgroundTaskRuntimeOptions) -> Self {
+        Self::build(options, None, None)
+    }
+    fn build(
+        options: BackgroundTaskRuntimeOptions,
+        sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
+        native: Option<NativeContext>,
+    ) -> Self {
         // Validate snapshot store requires disk spill
         if options.snapshot_store.is_some() && options.disk_spill_dir.is_none() {
             panic!("Background task durable recovery requires disk_spill_dir for output recovery.");
@@ -448,6 +531,8 @@ impl BackgroundTaskRuntime {
 
         let runtime = Self {
             inner: Arc::new(Inner {
+                sandbox,
+                native,
                 state: Mutex::new(RuntimeState {
                     entries: Vec::new(),
                     pending_starts: 0,
@@ -532,9 +617,34 @@ impl BackgroundTaskRuntime {
             .find(task_id, access)
             .ok_or_else(|| BackgroundTaskError::unknown_task(task_id))?;
         let state = entry.state.lock().unwrap();
-        Ok(state.output.read_slice(offset, max_bytes))
+        let bounded = self.inner.native.as_ref().map(|native| {
+            let requested = match max_bytes {
+                JsValue::Number(n) if n.is_finite() => n.max(0.0),
+                _ => native.limits.read_bytes as f64,
+            };
+            JsValue::Number(requested.min(native.limits.read_bytes as f64))
+        });
+        Ok(state
+            .output
+            .read_slice(offset, bounded.as_ref().unwrap_or(max_bytes)))
     }
 
+    pub(crate) fn failure_reason(
+        &self,
+        task_id: &JsString,
+        access: TaskAccess<'_>,
+    ) -> Option<JsString> {
+        let entry = self.find(task_id, access)?;
+        let state = lock(&entry.state);
+        if state.output_limit_exceeded {
+            Some(
+                "Native background output limit reached; the owned process group was stopped."
+                    .into(),
+            )
+        } else {
+            state.restored_failure.clone()
+        }
+    }
     /// `wait(taskId, { timeoutMs, abortSignal }, access)`.
     pub async fn wait(
         &self,
@@ -584,6 +694,9 @@ impl BackgroundTaskRuntime {
         &self,
         spec: StartTaskSpec,
     ) -> Result<BackgroundBashTask, BackgroundTaskError> {
+        if let Some(native) = &self.inner.native {
+            native.limits.validate_spec(&spec)?;
+        }
         let mut reservation = {
             let mut state = lock(&self.inner.state);
             if state.phase != Phase::Active {
@@ -594,6 +707,12 @@ impl BackgroundTaskRuntime {
                     )
                     .as_str(),
                 )));
+            }
+            if let Some(native) = &self.inner.native
+                && state.entries.len().saturating_add(state.pending_starts)
+                    >= native.limits.retained_tasks
+            {
+                return Err(BackgroundTaskError::error(format!("Native background retained-task limit ({}) reached; old records were kept.", native.limits.retained_tasks).into()));
             }
             let active = state
                 .entries
@@ -643,34 +762,38 @@ impl BackgroundTaskRuntime {
         };
         // Queue the initial metadata before spawning can produce output or
         // settle the task. Pending is recoverable as Unknown after a crash.
-        let initial_snapshot = reservation.call(
+        let mut initial_snapshot = reservation.call(
             || {
                 self.inner.snapshot_store.as_ref().map(|store| {
-                    use crate::runtime::background_snapshot::{
-                        PersistedBackgroundTask, PersistedOutput, persist_task,
-                    };
-                    store.write(
-                        PersistedBackgroundTask {
-                            task: persist_task(&entry),
-                            output: PersistedOutput {
-                                total_bytes: 0,
-                                persisted: false,
-                            },
+                    store.write_task(
+                        entry.clone(),
+                        crate::runtime::background_snapshot::PersistedOutput {
+                            total_bytes: 0,
+                            persisted: false,
                         },
-                        // No entry exists yet: the initial metadata write is
-                        // older than any later event write, and seq 0 is
-                        // exactly the store's "nothing accepted yet" floor.
                         0,
+                        None,
                     )
                 })
             },
             "Background initial snapshot construction failed.",
         )?;
+        // A native archive admission/IO failure must reach the caller before
+        // any child is started. The store owns its accepted metadata write.
+        if self.inner.native.is_some()
+            && let Some(snapshot) = initial_snapshot.take()
+        {
+            snapshot
+                .await
+                .map_err(|error| BackgroundTaskError::error(error.to_string().into()))?;
+        }
         #[cfg(test)]
         if let Some(before_spawn) = &self.before_spawn {
             before_spawn();
         }
-        let result = self.spawn_task(task_id, entry, spec, &mut reservation);
+        let result = self
+            .spawn_task(task_id, entry, spec, &mut reservation)
+            .await;
         drop(reservation);
         let task = result?;
         // Release the start reservation before awaiting: dropping the caller
@@ -695,7 +818,7 @@ impl BackgroundTaskRuntime {
         entry
     }
 
-    fn spawn_task(
+    async fn spawn_task(
         &self,
         task_id: JsString,
         task: BackgroundBashTask,
@@ -705,26 +828,41 @@ impl BackgroundTaskRuntime {
         // The child state is installed before the entry is published, so a
         // concurrent `stop` can never observe a running entry with no handle.
         let disk_spill_dir = self.inner.disk_spill_dir.clone();
-        let new_entry = |task: BackgroundBashTask, never_exits: bool, child: Option<ChildState>| {
-            let output = OutputStore::with_spill(
-                DEFAULT_MEMORY_BYTES,
-                disk_spill_dir
-                    .as_ref()
-                    .map(|dir| output_path(dir, &task.task_id)),
-            );
+        let mut native_output = self
+            .inner
+            .native
+            .as_ref()
+            .map(|native| native.output.create(&task_id))
+            .transpose()
+            .map_err(|error| BackgroundTaskError::error(error.to_string().into()))?;
+        let mut new_entry =
+            |task: BackgroundBashTask, never_exits: bool, child: Option<ChildState>| {
+                let output = if let Some(file) = native_output.take() {
+                    OutputStore::with_native_file(DEFAULT_MEMORY_BYTES, file)
+                } else {
+                    OutputStore::with_spill(
+                        DEFAULT_MEMORY_BYTES,
+                        disk_spill_dir
+                            .as_ref()
+                            .map(|dir| output_path(dir, &task.task_id)),
+                    )
+                };
 
-            Entry {
-                state: Mutex::new(EntryState {
-                    task,
-                    output,
-                    child,
-                    persist_seq: 0,
-                }),
-                done: watch::channel(false).0,
-                closed: watch::channel(false).0,
-                never_exits,
-            }
-        };
+                Entry {
+                    state: Mutex::new(EntryState {
+                        task,
+                        output,
+                        child,
+                        persist_seq: 0,
+                        output_limit_exceeded: false,
+                        restored_failure: None,
+                    }),
+                    done: watch::channel(false).0,
+                    closed: watch::channel(false).0,
+                    never_exits,
+                    native_persist: std::sync::OnceLock::new(),
+                }
+            };
         let inherited;
         let resolve_env: &[(JsString, JsString)] = match &spec.env {
             Some(env) => env,
@@ -744,21 +882,40 @@ impl BackgroundTaskRuntime {
                 .map(JsString::from_utf16)
                 .map_err(|_| JsString::from(js_value::StackOverflow::MESSAGE)),
         };
-        let spawned =
-            command
-                .and_then(|command| {
-                    prepare_spawn(&command, &spec.cwd, spec.env.as_deref(), resolve_env)
-                })
-                .map_err(|message| (false, message))
-                .and_then(|prepared| {
-                    // PreparedSpawn installs the shared child-only signal reset.
-                    prepared.command(Stdio::null()).spawn().map_err(|error| {
-                        match classify_spawn_error(&error, &prepared.shell) {
-                            SpawnError::Async(message) => (true, message),
-                            SpawnError::Sync(message) => (false, message),
-                        }
-                    })
-                });
+        let spawned = command
+            .and_then(|command| {
+                prepare_spawn_for_sandbox(
+                    &command,
+                    &spec.cwd,
+                    spec.env.as_deref(),
+                    resolve_env,
+                    self.inner.sandbox.as_deref(),
+                )
+            })
+            .map_err(|message| (false, message));
+        let prepared = match spawned {
+            Ok(mut prepared) => {
+                if let Some(sandbox) = &self.inner.sandbox {
+                    prepared
+                        .apply_sandbox(sandbox, None)
+                        .await
+                        .map(|_| prepared)
+                        .map_err(|error| (false, error.message))
+                } else {
+                    Ok(prepared)
+                }
+            }
+            Err(error) => Err(error),
+        };
+        let spawned = prepared.and_then(|prepared| {
+            // PreparedSpawn installs the shared child-only signal reset.
+            prepared.command(Stdio::null()).spawn().map_err(|error| {
+                match classify_spawn_error(&error, &prepared.shell) {
+                    SpawnError::Async(message) => (true, message),
+                    SpawnError::Sync(message) => (false, message),
+                }
+            })
+        });
         match spawned {
             Err((true, message)) => {
                 let mut task = task;
@@ -792,20 +949,14 @@ impl BackgroundTaskRuntime {
                 reservation.call(
                     || {
                         if let Some(store) = &self.inner.snapshot_store {
-                            use crate::runtime::background_snapshot::{
-                                PersistedBackgroundTask, PersistedOutput, persist_task,
-                            };
-                            drop(store.write(
-                                PersistedBackgroundTask {
-                                    task: persist_task(&task),
-                                    output: PersistedOutput {
-                                        total_bytes: 0,
-                                        persisted: false,
-                                    },
+                            drop(store.write_task(
+                                task.clone(),
+                                crate::runtime::background_snapshot::PersistedOutput {
+                                    total_bytes: 0,
+                                    persisted: false,
                                 },
-                                // Same floor as the initial Pending write; the
-                                // entry's later settle bumps past it.
                                 0,
+                                None,
                             ));
                         }
                     },
@@ -959,6 +1110,9 @@ impl BackgroundTaskRuntime {
                 panic!("Background task snapshot restore failed: {error}");
             });
 
+            if let Some(original) = store.original_fields(&snapshot.task.task_id) {
+                original.apply(&mut task);
+            }
             let was_unsettled = matches!(task.status, TaskStatus::Pending | TaskStatus::Running);
 
             if was_unsettled {
@@ -971,20 +1125,36 @@ impl BackgroundTaskRuntime {
             // The baseline always opens the spill log for a configured
             // diskSpillDir (`restore: { expectedTotalBytes }`), whatever the
             // persisted flag claimed, and fails closed on any mismatch.
-            let output = OutputStore::restore_from_spill(
-                DEFAULT_MEMORY_BYTES,
-                output_path(disk_spill_dir, &task.task_id),
-                snapshot.output.total_bytes,
-            )
-            .unwrap_or_else(|error| {
-                let path = output_path(disk_spill_dir, &task.task_id);
-                let message = if error.kind() == std::io::ErrorKind::InvalidData {
-                    error.to_string()
-                } else {
-                    format!("Could not restore task output from {}.", path.display())
-                };
-                panic!("{message}");
-            });
+            let output = if let Some(native) = &self.inner.native {
+                match native
+                    .output
+                    .restore(&task.task_id, snapshot.output.total_bytes)
+                {
+                    Ok(Some(file)) => OutputStore::restore_native_file(
+                        DEFAULT_MEMORY_BYTES,
+                        file,
+                        snapshot.output.total_bytes,
+                    ),
+                    Ok(None) => Ok(OutputStore::with_spill(DEFAULT_MEMORY_BYTES, None)),
+                    Err(error) => Err(error),
+                }
+                .unwrap_or_else(|error| panic!("Native background output restore failed: {error}"))
+            } else {
+                OutputStore::restore_from_spill(
+                    DEFAULT_MEMORY_BYTES,
+                    output_path(disk_spill_dir, &task.task_id),
+                    snapshot.output.total_bytes,
+                )
+                .unwrap_or_else(|error| {
+                    let path = output_path(disk_spill_dir, &task.task_id);
+                    let message = if error.kind() == std::io::ErrorKind::InvalidData {
+                        error.to_string()
+                    } else {
+                        format!("Could not restore task output from {}.", path.display())
+                    };
+                    panic!("{message}");
+                })
+            };
 
             let entry = Arc::new(Entry {
                 state: Mutex::new(EntryState {
@@ -992,10 +1162,13 @@ impl BackgroundTaskRuntime {
                     output,
                     child: None,
                     persist_seq: 0,
+                    output_limit_exceeded: false,
+                    restored_failure: store.failure_reason(&snapshot.task.task_id),
                 }),
                 done: watch::channel(true).0,
                 closed: watch::channel(false).0,
                 never_exits: false,
+                native_persist: std::sync::OnceLock::new(),
             });
 
             state.entries.push((
@@ -1024,9 +1197,38 @@ impl BackgroundTaskRuntime {
         entry: &Arc<Entry>,
         seq: u64,
     ) -> std::io::Result<()> {
-        use crate::runtime::background_snapshot::{
-            PersistedBackgroundTask, PersistedOutput, persist_task,
+        use crate::runtime::background_snapshot::PersistedOutput;
+
+        // Capture task, byte count, failure provenance and accepted output tail
+        // under the same entry lock. Awaiting that immutable native prefix does
+        // not authorize a later pending append or falsely label it IO failure.
+        let checkpoint = {
+            let state = lock(&entry.state);
+            state.output.native_checkpoint().map(|wait| {
+                let reason = if state.output_limit_exceeded {
+                    Some("Native background output limit reached; the owned process group was stopped.".into())
+                } else { state.restored_failure.clone() };
+                (state.task.clone(), state.output.total, reason, wait)
+            })
         };
+        if let Some((task, total_bytes, reason, checkpoint)) = checkpoint {
+            if !checkpoint.await {
+                let message = "Background task output is not fully persisted.";
+                store.report_failure(message.to_owned());
+                return Err(std::io::Error::other(message));
+            }
+            return store
+                .write_task(
+                    task,
+                    PersistedOutput {
+                        total_bytes,
+                        persisted: true,
+                    },
+                    seq,
+                    reason,
+                )
+                .await;
+        }
 
         let flushed = entry.state.lock().unwrap().output.flush();
         flushed.await;
@@ -1040,20 +1242,34 @@ impl BackgroundTaskRuntime {
         };
 
         if total_bytes > 0 && !has_durable {
+            store.report_failure("Background task output is not fully persisted.".to_owned());
             return Err(std::io::Error::other(
                 "Background task output is not fully persisted.",
             ));
         }
 
-        let snapshot = PersistedBackgroundTask {
-            task: persist_task(&task),
-            output: PersistedOutput {
-                total_bytes,
-                persisted: has_durable,
-            },
+        let failure_reason = {
+            let state = lock(&entry.state);
+            if state.output_limit_exceeded {
+                Some(
+                    "Native background output limit reached; the owned process group was stopped."
+                        .into(),
+                )
+            } else {
+                state.restored_failure.clone()
+            }
         };
-
-        store.write(snapshot, seq).await
+        store
+            .write_task(
+                task,
+                PersistedOutput {
+                    total_bytes,
+                    persisted: has_durable,
+                },
+                seq,
+                failure_reason,
+            )
+            .await
     }
 
     /// `dispose()`: refuse new tasks, settle accepted starts, stop every
@@ -1192,7 +1408,49 @@ impl Inner {
         // #1233 fix-r1: the sequence number is assigned under the entry lock
         // at the append, not when the spawned persist runs, so a slow older
         // write cannot win over a newer snapshot.
-        let seq = entry.append(chunk);
+        let (seq, exceeded) = entry.append(
+            chunk,
+            self.native
+                .as_ref()
+                .map(|native| native.limits.output_bytes),
+        );
+        if exceeded {
+            entry.terminate(rustix::process::Signal::KILL);
+        }
+        if self.native.is_some()
+            && let Some(store) = &self.snapshot_store
+        {
+            let sender = entry.native_persist.get_or_init(|| {
+                let (sender, mut dirty) = watch::channel(0);
+                let weak = Arc::downgrade(entry);
+                let mut done = entry.done.subscribe();
+                let store = store.clone();
+                tokio::spawn(async move {
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = done.wait_for(|done| *done) => break,
+                            changed = dirty.changed() => if changed.is_err() { break; },
+                        }
+                        let seq = *dirty.borrow_and_update();
+                        let Some(entry) = weak.upgrade() else {
+                            break;
+                        };
+                        if let Err(error) =
+                            BackgroundTaskRuntime::persist_entry_static(&store, &entry, seq).await
+                        {
+                            store.report_failure(error.to_string());
+                        }
+                    }
+                });
+                sender
+            });
+            let changed = *sender.borrow() != seq;
+            if changed {
+                sender.send_replace(seq);
+            }
+            return;
+        }
         if let Some(store) = &self.snapshot_store {
             let store = Arc::clone(store);
             let entry = Arc::clone(entry);
@@ -1239,6 +1497,66 @@ impl Inner {
             };
             (event, should_persist, persist_seq)
         };
+        if self.native.is_some()
+            && should_persist
+            && let Some(store) = &self.snapshot_store
+        {
+            // Native wait's done capability must follow the actual terminal
+            // checkpoint. TS settleEntry awaits persistEntry(flushOutput:true)
+            // before notifyCompletion/finally(resolveDone). A spawned write
+            // followed immediately by done let a new generation restore the
+            // previous Running snapshot after wait already returned Completed.
+            let store = store.clone();
+            let entry = entry.clone();
+            let handler = self.on_completion.clone();
+            tokio::spawn(async move {
+                let persisted = {
+                    let store = store.clone();
+                    let entry = entry.clone();
+                    tokio::spawn(async move {
+                        BackgroundTaskRuntime::persist_entry_static(&store, &entry, persist_seq)
+                            .await
+                    })
+                    .await
+                };
+                // Borrow the join result until done is published, including a
+                // panicking port's payload destructor.
+                let failure = match &persisted {
+                    Ok(Ok(())) => None,
+                    Ok(Err(error)) => Some(format!(
+                        "Native background terminal state could not be persisted: {error}"
+                    )),
+                    Err(_) => {
+                        Some("Native background terminal persistence worker failed.".to_owned())
+                    }
+                };
+                let mut reported = None;
+                let mut event = event;
+                if let Some(message) = failure {
+                    let mut state = lock(&entry.state);
+                    if state.task.status == TaskStatus::Completed {
+                        state.task.status = TaskStatus::Failed;
+                    }
+                    state.restored_failure = Some(message.as_str().into());
+                    if let Some(event) = &mut event {
+                        event.insert("status".into(), state.task.status.as_str().into());
+                    }
+                    drop(state);
+                    reported = Some(catch_port(|| store.report_failure(message)));
+                }
+                let notified = if let (Some(event), Some(handler)) = (event, handler) {
+                    Some(catch_port(|| handler(event)))
+                } else {
+                    None
+                };
+                let done = &entry.done;
+                done.send_replace(true);
+                drop(notified);
+                drop(reported);
+                drop(persisted);
+            });
+            return;
+        }
         if let (Some(event), Some(handler)) = (event, &self.on_completion) {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handler(event)));
         }
@@ -1352,12 +1670,13 @@ async fn supervise(
                 };
                 let clock = {
                     let mut state = lock(&entry.state);
+                    let output_limit_exceeded = state.output_limit_exceeded;
                     let task = &mut state.task;
                     let clock = catch_port(|| (inner.now)());
                     task.ended_at = Some(*clock.as_ref().unwrap_or(&task.started_at));
                     task.exit_code = Some(code);
                     let killed = matches!(signal, Some(libc::SIGTERM | libc::SIGKILL));
-                    task.status = if task.interrupted || killed {
+                    task.status = if output_limit_exceeded { TaskStatus::Failed } else if task.interrupted || killed {
                         TaskStatus::Cancelled
                     } else if code == Some(0) {
                         TaskStatus::Completed
@@ -1674,6 +1993,22 @@ impl RuntimeResources for BackgroundResources {
     }
 }
 
+// Native execution worlds publish this same project owner through the
+// standard family resource slot. The existing disposal body remains the one
+// owner of detached children; no second cleanup implementation is installed.
+pub struct BackgroundExecutionWorld {
+    pub resources: BackgroundResources,
+    pub sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+}
+impl crate::runtime::project::FamilyResource for BackgroundExecutionWorld {
+    fn dispose(&self) -> DisposeFuture<'_> {
+        RuntimeResources::dispose(&self.resources)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+}
+
 /// A rejection from the SDK projections, as `{ name, code?, message,
 /// requires_host }`.
 ///
@@ -1851,10 +2186,24 @@ pub fn background_tasks_for_sdk(
 
 fn project_resources(
     runtime: &ProjectRuntime,
-) -> Result<&BackgroundResources, BackgroundProjectionError> {
+) -> Result<BackgroundResources, BackgroundProjectionError> {
+    if let Some(resources) = runtime.resources().get::<BackgroundResources>() {
+        return Ok(resources.clone());
+    }
     runtime
         .resources()
-        .get::<BackgroundResources>()
+        .get::<crate::runtime::project::ProjectResources>()
+        .and_then(|resources| {
+            resources
+                .context()
+                .resource(crate::runtime::project::Resource::ExecutionWorld)
+        })
+        .and_then(|resource| {
+            resource
+                .as_any()
+                .downcast_ref::<BackgroundExecutionWorld>()
+                .map(|world| world.resources.clone())
+        })
         .ok_or_else(|| BackgroundProjectionError {
             name: "Error".into(),
             code: None,
@@ -1871,7 +2220,7 @@ pub async fn stop_background_task_in_registry(
     task_id: &JsString,
 ) -> Result<JsObject, BackgroundProjectionError> {
     let runtime = registry.resolve(project_key)?;
-    stop_background_task_for_sdk(project_resources(&runtime)?, session_key, task_id).await
+    stop_background_task_for_sdk(&project_resources(&runtime)?, session_key, task_id).await
 }
 
 /// `ProjectRuntimeRegistry.backgroundTasksForSdk`: resolve, then project.
@@ -1883,7 +2232,7 @@ pub fn background_tasks_in_registry(
 ) -> Result<JsObject, BackgroundProjectionError> {
     let runtime = registry.resolve(project_key)?;
     Ok(background_tasks_for_sdk(
-        project_resources(&runtime)?,
+        &project_resources(&runtime)?,
         session_key,
         task_id,
     ))
@@ -3356,7 +3705,7 @@ mod tests {
                 .expect("#994 background-output setup")
                 .output
                 .gate_next_write();
-            entry.append(&bytes);
+            entry.append(&bytes, None);
             entered.await.expect("#994 background-output setup");
             let path = scratch.path().join("output").join(format!(
                 "{}.log",
@@ -3377,7 +3726,7 @@ mod tests {
                 !path.exists(),
                 "no filesystem write before gate release #994 background-output assertion"
             );
-            entry.append(b"rejected after begin_close");
+            entry.append(b"rejected after begin_close", None);
             assert_eq!(
                 entry.snapshot().output_bytes,
                 bytes.len() as u64,
@@ -3785,3 +4134,7 @@ mod tests {
             .expect("#947 completion preview dispose");
     }
 }
+
+#[cfg(test)]
+#[path = "background/native_persist_checkpoint_tests.rs"]
+mod native_persist_checkpoint_tests;

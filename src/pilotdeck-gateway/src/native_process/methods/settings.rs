@@ -14,14 +14,9 @@
 //! (`code: None` is a raw JS throw, which the WS layer answers
 //! `gateway_request_failed` for, like the MCP slice's adapter).
 //!
-//! The native composition (`services::native_settings`) binds the three
-//! delegates the isolated native process really owns (`resolve_settings`
-//! over the real config store, the two reloads over the real refresh
-//! bundle); the registry-bound methods (`apply_flag_settings`,
-//! `update_settings`, `reload_output_styles`) stay unconfigured — their
-//! delegates are the SDK session registry and the production local-settings
-//! writer, neither assembled into the isolated native process — and answer
-//! the TS unconfigured shapes through the component's own option handling.
+//! Production binds the shared session flag store, atomic local-settings writer,
+//! resolved config snapshot and refresh bundle. Absent optional delegates retain
+//! the component's explicit capability-unavailable response.
 use super::super::requests::Requests;
 use crate::runtime::{
     connection::{Call, RequestError},

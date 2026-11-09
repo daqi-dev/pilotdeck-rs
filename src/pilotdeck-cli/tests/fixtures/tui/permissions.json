@@ -1,0 +1,132 @@
+{
+  "normalized": [
+    {
+      "input": null,
+      "output": {
+        "version": 1,
+        "allowedTools": [],
+        "askTools": [],
+        "disallowedTools": [],
+        "skipPermissions": false
+      }
+    },
+    {
+      "input": {},
+      "output": {
+        "version": 1,
+        "allowedTools": [],
+        "askTools": [],
+        "disallowedTools": [],
+        "skipPermissions": false
+      }
+    },
+    {
+      "input": {
+        "allowedTools": [
+          " Read ",
+          "Read",
+          "Bash(git status)",
+          "Bash()",
+          "",
+          null,
+          7,
+          "unknown"
+        ],
+        "askTools": [
+          "Write",
+          "Edit"
+        ],
+        "disallowedTools": [
+          "  Glob  "
+        ],
+        "skipPermissions": [],
+        "lastUpdated": "old"
+      },
+      "output": {
+        "version": 1,
+        "allowedTools": [
+          "read_file",
+          "bash:git status",
+          "bash",
+          "unknown"
+        ],
+        "askTools": [
+          "write_file",
+          "edit_file"
+        ],
+        "disallowedTools": [
+          "glob"
+        ],
+        "skipPermissions": true,
+        "lastUpdated": "old"
+      }
+    },
+    {
+      "input": {
+        "skipPermissions": "false",
+        "allowedTools": "Read",
+        "lastUpdated": 4
+      },
+      "output": {
+        "version": 1,
+        "allowedTools": [],
+        "askTools": [],
+        "disallowedTools": [],
+        "skipPermissions": true
+      }
+    }
+  ],
+  "missing": {
+    "version": 1,
+    "allowedTools": [],
+    "askTools": [],
+    "disallowedTools": [],
+    "skipPermissions": false
+  },
+  "written": {
+    "version": 1,
+    "allowedTools": [
+      "read_file",
+      "bash:git status"
+    ],
+    "askTools": [
+      "grep"
+    ],
+    "disallowedTools": [
+      "write_file"
+    ],
+    "skipPermissions": true,
+    "lastUpdated": "2026-11-08T00:00:00.000Z"
+  },
+  "bytes": "{\n  \"version\": 1,\n  \"allowedTools\": [\n    \"read_file\",\n    \"bash:git status\"\n  ],\n  \"askTools\": [\n    \"grep\"\n  ],\n  \"disallowedTools\": [\n    \"write_file\"\n  ],\n  \"skipPermissions\": true,\n  \"lastUpdated\": \"2026-11-08T00:00:00.000Z\"\n}\n",
+  "rawNormalized": [
+    {
+      "raw": "{\"allowedTools\":[\"\\ud800\",\"\\ud800\",\" Read \",\"Bash(git  status)\"],\"disallowedTools\":[\"\\udfff\"],\"unknown\":{\"keep\":1},\"lastUpdated\":\"\\ud800\"}",
+      "output": "{\"version\":1,\"allowedTools\":[\"\\ud800\",\"read_file\",\"bash:git  status\"],\"askTools\":[],\"disallowedTools\":[\"\\udfff\"],\"skipPermissions\":false,\"lastUpdated\":\"\\ud800\"}"
+    },
+    {
+      "raw": "{\"allowedTools\":[\"\\udc00\",\"x\"],\"skipPermissions\":1e400,\"unknown\":9007199254740993}",
+      "output": "{\"version\":1,\"allowedTools\":[\"\\udc00\",\"x\"],\"askTools\":[],\"disallowedTools\":[],\"skipPermissions\":true}"
+    },
+    {
+      "raw": "{\"allowedTools\":[],\"askTools\":[],\"disallowedTools\":[],\"skipPermissions\":false}",
+      "output": "{\"version\":1,\"allowedTools\":[],\"askTools\":[],\"disallowedTools\":[],\"skipPermissions\":false}"
+    }
+  ],
+  "malformedRead": {
+    "version": 1,
+    "allowedTools": [],
+    "askTools": [],
+    "disallowedTools": [],
+    "skipPermissions": false
+  },
+  "malformedWrite": {
+    "version": 1,
+    "allowedTools": [],
+    "askTools": [],
+    "disallowedTools": [],
+    "skipPermissions": true,
+    "lastUpdated": "2026-11-08T00:00:00.000Z"
+  },
+  "malformedAfter": "{\n  \"version\": 1,\n  \"allowedTools\": [],\n  \"askTools\": [],\n  \"disallowedTools\": [],\n  \"skipPermissions\": true,\n  \"lastUpdated\": \"2026-11-08T00:00:00.000Z\"\n}\n"
+}

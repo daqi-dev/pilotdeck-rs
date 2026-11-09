@@ -1,0 +1,1445 @@
+{
+  "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": "0134f0d8865eac294864ec41fd229fa3cf0d8032125a90437cc2c8ada556470b",
+  "extraction": {
+    "start": "async function handleCommand(",
+    "end": "\nfunction buildPermissionEntry(",
+    "startLine": 661,
+    "endLine": 823,
+    "extractedSha256": "bae4518e074a9d51ab60a0753a3ac32e463205d7682b5844abb49e43a22596bf",
+    "transpiledSha256": "99080844e12f7887bc56a584016af52af062ed8af81b91ae26e9aa4cb0e8f138"
+  },
+  "runtime": {
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "typescript": "5.9.3"
+  },
+  "assumptions": {
+    "projectKey": "/fixture-project",
+    "sessions": [
+      "s1",
+      "s2"
+    ],
+    "permissionState": "controlled in-memory",
+    "submitTrim": "caller raw.trim() before handleCommand",
+    "effects": "injected fakes; no network or filesystem writes"
+  },
+  "cases": [
+    {
+      "id": "ordinary",
+      "raw": "hello",
+      "trimmed": "hello",
+      "handled": false,
+      "calls": [],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "trim",
+      "raw": "  /help  ",
+      "trimmed": "/help",
+      "handled": true,
+      "calls": [
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": true
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "uppercase",
+      "raw": "/HELP",
+      "trimmed": "/HELP",
+      "handled": true,
+      "calls": [
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "error",
+            "text": "Unknown command /HELP"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "plain-slash",
+      "raw": "/",
+      "trimmed": "/",
+      "handled": true,
+      "calls": [
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "error",
+            "text": "Unknown command /"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "new",
+      "raw": "/new",
+      "trimmed": "/new",
+      "handled": true,
+      "calls": [
+        {
+          "op": "newSession",
+          "value": {
+            "channelKey": "tui",
+            "projectKey": "/fixture-project"
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "system",
+            "text": "New session: new-session"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "new-session",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "sessions",
+      "raw": "/sessions",
+      "trimmed": "/sessions",
+      "handled": true,
+      "calls": [
+        {
+          "op": "openSidebar"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "dashboard",
+      "raw": "/dashboard",
+      "trimmed": "/dashboard",
+      "handled": true,
+      "calls": [
+        {
+          "op": "openSidebar"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "switch-missing",
+      "raw": "/switch",
+      "trimmed": "/switch",
+      "handled": true,
+      "calls": [
+        {
+          "op": "openSidebar"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "switch-prefix",
+      "raw": "/switch 2xyz",
+      "trimmed": "/switch 2xyz",
+      "handled": true,
+      "calls": [
+        {
+          "op": "listSessions",
+          "value": {
+            "projectKey": "/fixture-project",
+            "limit": 20
+          }
+        },
+        {
+          "op": "setState"
+        },
+        {
+          "op": "switchToSession",
+          "key": "s2",
+          "summary": "second"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [
+          {
+            "sessionKey": "s1",
+            "summary": "first"
+          },
+          {
+            "sessionId": "s2",
+            "summary": "second"
+          }
+        ],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "switch-plus",
+      "raw": "/switch +1",
+      "trimmed": "/switch +1",
+      "handled": true,
+      "calls": [
+        {
+          "op": "listSessions",
+          "value": {
+            "projectKey": "/fixture-project",
+            "limit": 20
+          }
+        },
+        {
+          "op": "setState"
+        },
+        {
+          "op": "switchToSession",
+          "key": "s1",
+          "summary": "first"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [
+          {
+            "sessionKey": "s1",
+            "summary": "first"
+          },
+          {
+            "sessionId": "s2",
+            "summary": "second"
+          }
+        ],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "switch-negative",
+      "raw": "/switch -2",
+      "trimmed": "/switch -2",
+      "handled": true,
+      "calls": [
+        {
+          "op": "openSidebar"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "switch-huge",
+      "raw": "/switch 9999999999999999999999999999999999",
+      "trimmed": "/switch 9999999999999999999999999999999999",
+      "handled": true,
+      "calls": [
+        {
+          "op": "listSessions",
+          "value": {
+            "projectKey": "/fixture-project",
+            "limit": 20
+          }
+        },
+        {
+          "op": "openSidebar"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "switch-space",
+      "raw": "/switch \t2",
+      "trimmed": "/switch \t2",
+      "handled": true,
+      "calls": [
+        {
+          "op": "listSessions",
+          "value": {
+            "projectKey": "/fixture-project",
+            "limit": 20
+          }
+        },
+        {
+          "op": "setState"
+        },
+        {
+          "op": "switchToSession",
+          "key": "s2",
+          "summary": "second"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [
+          {
+            "sessionKey": "s1",
+            "summary": "first"
+          },
+          {
+            "sessionId": "s2",
+            "summary": "second"
+          }
+        ],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-show",
+      "raw": "/permissions",
+      "trimmed": "/permissions",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "skipPermissions: true\nallow: bash:git\ndeny: read_file"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-allow",
+      "raw": "/permissions allow  bash:git\t status",
+      "trimmed": "/permissions allow  bash:git\t status",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "writePermissions",
+          "value": {
+            "allowedTools": [
+              "bash:git",
+              "bash:git status"
+            ]
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Added allow: bash:git status"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git",
+          "bash:git status"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-deny",
+      "raw": "/permissions deny read_file",
+      "trimmed": "/permissions deny read_file",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "writePermissions",
+          "value": {
+            "disallowedTools": [
+              "read_file",
+              "read_file"
+            ]
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Added deny: read_file"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file",
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-clear",
+      "raw": "/permissions clear bash:git",
+      "trimmed": "/permissions clear bash:git",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "writePermissions",
+          "value": {
+            "allowedTools": [],
+            "disallowedTools": [
+              "read_file"
+            ]
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Cleared: bash:git"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-bypass",
+      "raw": "/permissions bypass ignored",
+      "trimmed": "/permissions bypass ignored",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "writePermissions",
+          "value": {
+            "skipPermissions": true
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Permissions bypassed globally (skipPermissions=true)."
+          }
+        ],
+        "mode": "bypassPermissions",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-usage",
+      "raw": "/permissions allow",
+      "trimmed": "/permissions allow",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "error",
+            "text": "Usage: /permissions [allow|deny|clear <entry>|bypass]"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-unknown-usage",
+      "raw": "/permissions surprise",
+      "trimmed": "/permissions surprise",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "error",
+            "text": "Usage: /permissions [allow|deny|clear <entry>|bypass]"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-unknown",
+      "raw": "/permissions surprise xyz",
+      "trimmed": "/permissions surprise xyz",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "error",
+            "text": "Unknown /permissions subcommand: surprise"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "permission-case",
+      "raw": "/permissions Allow foo",
+      "trimmed": "/permissions Allow foo",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "error",
+            "text": "Unknown /permissions subcommand: Allow"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "mode-plan",
+      "raw": "/mode plan",
+      "trimmed": "/mode plan",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "writePermissions",
+          "value": {
+            "skipPermissions": false
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Mode: plan"
+          }
+        ],
+        "mode": "plan",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": false,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "mode-bypass",
+      "raw": "/mode bypassPermissions",
+      "trimmed": "/mode bypassPermissions",
+      "handled": true,
+      "calls": [
+        {
+          "op": "writePermissions",
+          "value": {
+            "skipPermissions": true
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Mode: bypassPermissions"
+          }
+        ],
+        "mode": "bypassPermissions",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "mode-unknown",
+      "raw": "/mode PLAN",
+      "trimmed": "/mode PLAN",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "writePermissions",
+          "value": {
+            "skipPermissions": false
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Mode: default"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": false,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "mode-empty",
+      "raw": "/mode",
+      "trimmed": "/mode",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "writePermissions",
+          "value": {
+            "skipPermissions": false
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Mode: default"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": false,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "view-first",
+      "raw": "/view 1",
+      "trimmed": "/view 1",
+      "handled": true,
+      "calls": [
+        {
+          "op": "openToolOutput",
+          "value": {
+            "role": "tool",
+            "text": "first",
+            "lineCount": 8
+          }
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "view-last",
+      "raw": "/view 900",
+      "trimmed": "/view 900",
+      "handled": true,
+      "calls": [
+        {
+          "op": "openToolOutput",
+          "value": {
+            "role": "tool",
+            "text": "last",
+            "resultPath": "/fixture"
+          }
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "view-invalid",
+      "raw": "/view 1.5",
+      "trimmed": "/view 1.5",
+      "handled": true,
+      "calls": [
+        {
+          "op": "openToolOutput",
+          "value": {
+            "role": "tool",
+            "text": "first",
+            "lineCount": 8
+          }
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "view-none",
+      "raw": "/view 2",
+      "trimmed": "/view 2",
+      "handled": true,
+      "calls": [
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "No tool output to view."
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "clear",
+      "raw": "/clear",
+      "trimmed": "/clear",
+      "handled": true,
+      "calls": [
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": null,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "help",
+      "raw": "/help",
+      "trimmed": "/help",
+      "handled": true,
+      "calls": [
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": true
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "exit",
+      "raw": "/exit",
+      "trimmed": "/exit",
+      "handled": true,
+      "calls": [
+        {
+          "op": "exit"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "unknown",
+      "raw": "/newer x",
+      "trimmed": "/newer x",
+      "handled": true,
+      "calls": [
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "error",
+            "text": "Unknown command /newer"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    },
+    {
+      "id": "tabs",
+      "raw": "  /permissions allow hello\tworld  ",
+      "trimmed": "/permissions allow hello\tworld",
+      "handled": true,
+      "calls": [
+        {
+          "op": "readPermissions"
+        },
+        {
+          "op": "writePermissions",
+          "value": {
+            "allowedTools": [
+              "bash:git",
+              "hello world"
+            ]
+          }
+        },
+        {
+          "op": "setState"
+        }
+      ],
+      "state": {
+        "messages": [
+          {
+            "role": "user",
+            "text": "question"
+          },
+          {
+            "role": "system",
+            "text": "Added allow: hello world"
+          }
+        ],
+        "mode": "default",
+        "activeSessionKey": "old",
+        "sessions": [],
+        "focusedIndex": 3,
+        "helpOpen": false
+      },
+      "settings": {
+        "skipPermissions": true,
+        "allowedTools": [
+          "bash:git",
+          "hello world"
+        ],
+        "disallowedTools": [
+          "read_file"
+        ]
+      }
+    }
+  ]
+}

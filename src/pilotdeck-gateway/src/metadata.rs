@@ -232,6 +232,11 @@ pub(crate) trait Files {
         }
         self.project_read(root, path, limit)
     }
+    /// Markers may use a tighter native resource policy than archive artifacts.
+    /// The default preserves the legacy and snapshot reader contract.
+    fn archive_marker_read(&self, root: &Path, path: &Path) -> io::Result<Vec<u8>> {
+        self.archive_read(root, path, usize::MAX)
+    }
     /// libc kill(pid, 0), through rustix's safe libc wrapper. All errors, including
     /// EPERM, mean false, matching Node's unconditional catch.
     fn process_alive(&self, pid: i32) -> bool {
@@ -317,33 +322,7 @@ impl Files for NativeFiles {
         let Ok(mut file) = fs::File::open(path) else {
             return Ok(false);
         };
-        let mut head = vec![0; size.min(LITE_BYTES as u64) as usize];
-        if file.read_exact(&mut head).is_err() {
-            return Ok(false);
-        }
-        let mut tail = head.clone();
-        if size > LITE_BYTES as u64 {
-            tail.resize(LITE_BYTES, 0);
-            if file
-                .seek(SeekFrom::Start(size - LITE_BYTES as u64))
-                .is_err()
-                || file.read_exact(&mut tail).is_err()
-            {
-                return Ok(false);
-            }
-        }
-        let (visible, fast) = summary_preview(&head, &tail, size > LITE_BYTES as u64)?;
-        if let Some(visible) = visible {
-            return Ok(visible);
-        }
-        if file.seek(SeekFrom::Start(0)).is_err() {
-            return Ok(fast);
-        }
-        let visible = fast || scan_metadata_summary(&mut file).unwrap_or(false);
-        if visible && !fast {
-            captured_field(&String::from_utf8_lossy(&head), "createdAt").map_err(|_| ())?;
-        }
-        Ok(visible)
+        summary_from_file(&mut file, size)
     }
     fn stat(&self, path: &Path) -> io::Result<Stat> {
         let stat = fs::metadata(path)?;
@@ -468,7 +447,8 @@ impl std::fmt::Display for ProcessCwdError {
 }
 impl std::error::Error for ProcessCwdError {}
 
-pub(crate) fn process_cwd_diagnostic(error: &io::Error) -> (&'static str, String) {
+/// Node-compatible startup diagnostic for consumers sharing this filesystem boundary.
+pub fn process_cwd_diagnostic(error: &io::Error) -> (&'static str, String) {
     let source = error
         .get_ref()
         .and_then(|inner| inner.downcast_ref::<ProcessCwdError>())
@@ -1085,7 +1065,7 @@ fn metadata_summary(value: &JsValue) -> bool {
         .is_some_and(|text| !js_trim_units(text.units()).is_empty())
 }
 
-const LITE_BYTES: usize = 65_536;
+pub(crate) const LITE_BYTES: usize = 65_536;
 
 fn session_has_summary(bytes: &[u8]) -> Result<bool, ()> {
     let head = &bytes[..bytes.len().min(LITE_BYTES)];
@@ -1128,6 +1108,36 @@ pub(crate) fn strict_metadata(line: &str) -> Option<JsValue> {
         }
     }
     Some(JsValue::Object(metadata))
+}
+
+pub(crate) fn summary_from_file(file: &mut (impl Read + Seek), size: u64) -> Result<bool, ()> {
+    let mut head = vec![0; size.min(LITE_BYTES as u64) as usize];
+    if file.read_exact(&mut head).is_err() {
+        return Ok(false);
+    }
+    let mut tail = head.clone();
+    if size > LITE_BYTES as u64 {
+        tail.resize(LITE_BYTES, 0);
+        if file
+            .seek(SeekFrom::Start(size - LITE_BYTES as u64))
+            .is_err()
+            || file.read_exact(&mut tail).is_err()
+        {
+            return Ok(false);
+        }
+    }
+    let (visible, fast) = summary_preview(&head, &tail, size > LITE_BYTES as u64)?;
+    if let Some(visible) = visible {
+        return Ok(visible);
+    }
+    if file.seek(SeekFrom::Start(0)).is_err() {
+        return Ok(fast);
+    }
+    let visible = fast || scan_metadata_summary(file).unwrap_or(false);
+    if visible && !fast {
+        captured_field(&String::from_utf8_lossy(&head), "createdAt").map_err(|_| ())?;
+    }
+    Ok(visible)
 }
 
 fn summary_preview(head: &[u8], tail: &[u8], large: bool) -> Result<(Option<bool>, bool), ()> {

@@ -15,6 +15,8 @@ use std::{
     sync::{Arc, Mutex, Weak},
 };
 use tokio::sync::watch;
+type CloseAfter = Box<dyn FnOnce() -> BoxFuture<RuntimeResult> + Send>;
+type CleanupClose = (Arc<()>, watch::Receiver<Option<RuntimeResult>>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionContext {
@@ -57,6 +59,11 @@ pub trait SessionFactory: Send + Sync {
     fn can_recreate(&self) -> bool {
         false
     }
+    /// Optional host-owned wake after the exact handle is published. Default
+    /// factories have no queued-background consumer and keep their old path.
+    fn published(&self, _context: SessionContext, _handle: LiveSessionHandle) -> RuntimeResult {
+        Ok(())
+    }
     fn setup(
         &self,
         _context: SessionContext,
@@ -85,6 +92,109 @@ pub struct SessionEvictionSnapshot {
     pub message_count: Option<JsValue>,
 }
 
+/// Captured native Gateway admission, independent of textual run ids. A hook
+/// may register before the turn has bound steer; only delivery requires it.
+#[derive(Clone)]
+pub(crate) struct CapturedAsyncTurn {
+    pub turn: crate::runtime::async_hooks::AsyncHookTurn,
+    pub guard: Arc<dyn Fn() -> bool + Send + Sync>,
+    pub bind_steer: crate::runtime::turn::interaction::NativeSteerBinding,
+}
+pub(crate) type AsyncTurnLookup = Arc<
+    dyn Fn(
+            &JsString,
+            Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+        ) -> Option<CapturedAsyncTurn>
+        + Send
+        + Sync,
+>;
+/// Query data only; this port never retains the owning factory graph.
+pub(crate) type ActiveTurnQuery =
+    Arc<dyn Fn(&JsString) -> Option<(Option<JsString>, JsString)> + Send + Sync>;
+struct CompletionSteer {
+    owner: Weak<Inner>,
+    session: JsString,
+    completion: TurnCompletionHandle,
+    identity: Arc<()>,
+    steer: Arc<std::sync::OnceLock<crate::runtime::project::interaction_steer::ActiveSteerInfo>>,
+}
+impl CompletionSteer {
+    fn current(&self, inner: &Inner, state: &State) -> bool {
+        !state.stopped
+            && !self.completion.is_cancelled()
+            && !self.completion.is_complete()
+            && inner
+                .turns
+                .completion
+                .is_current(&self.session, &self.completion)
+            && inner
+                .turns
+                .admission
+                .turn_identity(&self.session)
+                .is_some_and(|identity| Arc::ptr_eq(&identity, &self.identity))
+    }
+}
+struct SharedCompletionSteer(Arc<CompletionSteer>);
+impl crate::runtime::async_hooks::AsyncHookTurnHandle for SharedCompletionSteer {
+    fn run_id(&self) -> &JsString {
+        self.0.completion.run_id()
+    }
+    fn identity(&self) -> &Arc<()> {
+        &self.0.identity
+    }
+    fn is_live(&self) -> bool {
+        crate::runtime::async_hooks::AsyncHookTurnHandle::is_live(self.0.as_ref())
+    }
+    fn enqueue(
+        &self,
+        message: crate::runtime::steer::SteerMessage,
+    ) -> crate::host::HostFuture<crate::runtime::steer::EnqueueResult> {
+        crate::runtime::async_hooks::AsyncHookTurnHandle::enqueue(self.0.as_ref(), message)
+    }
+}
+impl crate::runtime::async_hooks::AsyncHookTurnHandle for CompletionSteer {
+    fn run_id(&self) -> &JsString {
+        self.completion.run_id()
+    }
+    fn identity(&self) -> &Arc<()> {
+        &self.identity
+    }
+    fn is_live(&self) -> bool {
+        self.owner.upgrade().is_some_and(|inner| {
+            let state = inner.state.lock().unwrap();
+            self.current(&inner, &state)
+        })
+    }
+    fn enqueue(
+        &self,
+        message: crate::runtime::steer::SteerMessage,
+    ) -> crate::host::HostFuture<crate::runtime::steer::EnqueueResult> {
+        let enqueue = self.owner.upgrade().and_then(|inner| {
+            // Same lock as completion replacement/abort/publication. The
+            // concrete steer call reserves its mailbox placeholder before
+            // releasing this lock, never across an await or user callback.
+            let state = inner.state.lock().unwrap();
+            if !self.current(&inner, &state) {
+                return None;
+            }
+            let info = self.steer.get()?;
+            if &info.run_id != self.completion.run_id() {
+                return None;
+            }
+            Some(info.enqueue(message))
+        });
+        enqueue.unwrap_or_else(|| {
+            Box::pin(async {
+                Ok(crate::runtime::steer::EnqueueResult {
+                    accepted: false,
+                    reason: Some(crate::runtime::steer::SteerReason::TurnClosing),
+                })
+            })
+        })
+    }
+}
+pub(crate) type SessionHandleLookup =
+    Arc<dyn Fn(&JsString) -> Option<LiveSessionHandle> + Send + Sync>;
 type IdleEvict = Arc<dyn Fn(&JsString, &SessionEvictionSnapshot) + Send + Sync>;
 type Evict = Arc<dyn Fn(&JsString, EvictionReason) + Send + Sync>;
 pub struct SessionOwnerOptions {
@@ -134,6 +244,7 @@ struct CreationOutcome {
 }
 
 struct Pending {
+    session_key: JsString,
     project: Option<JsString>,
     completion: watch::Receiver<Option<RuntimeResult>>,
 }
@@ -142,20 +253,28 @@ struct CompletionOwner {
     completion: TurnCompletionHandle,
     handle: Option<LiveSessionHandle>,
     admission: Option<Arc<()>>,
+    async_steer:
+        Arc<std::sync::OnceLock<crate::runtime::project::interaction_steer::ActiveSteerInfo>>,
 }
 
 #[derive(Default)]
 struct State {
+    project_binding: bool,
+    project_scopes: HashMap<JsString, (JsString, usize)>,
     stopped: bool,
     records: HashMap<JsString, Record>,
     completion_owners: HashMap<JsString, CompletionOwner>,
     order: Vec<JsString>,
     gates: HashMap<JsString, Weak<Serial>>,
     pending: Vec<Pending>,
+    archives: HashSet<JsString>,
     /// TS closingSessions: each key's in-flight eviction completion, from a
     /// close task, the idle sweep or a shutdown drain. A record-less close
     /// awaits the entry; a settled entry behaves as removed.
     closings: HashMap<JsString, watch::Receiver<Option<RuntimeResult>>>,
+    /// Native cleanup holds the publication ticket after eviction has settled.
+    /// A plain close observes only that eviction result, never SDK cleanup.
+    cleanup_closings: HashMap<JsString, CleanupClose>,
     paused_projects: HashSet<JsString>,
     shutdown: Option<watch::Receiver<Option<RuntimeResult>>>,
 }
@@ -189,12 +308,166 @@ impl Drop for StopFlagRestore {
     }
 }
 
+fn project_mismatch() -> RuntimeError {
+    RuntimeError::new("PROJECT_SESSION_MISMATCH: Session belongs to a different project.")
+}
+
+/// Request identity reservation. It is not a session handle or runtime lease.
+/// Dropping it merely permits a later project to claim an otherwise unowned key.
+pub struct SessionProjectScope {
+    owner: Weak<Inner>,
+    key: JsString,
+    project: JsString,
+}
+impl SessionProjectScope {
+    pub fn project_key(&self) -> &JsString {
+        &self.project
+    }
+}
+impl Drop for SessionProjectScope {
+    fn drop(&mut self) {
+        let Some(owner) = self.owner.upgrade() else {
+            return;
+        };
+        let mut state = owner
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some((_, users)) = state.project_scopes.get_mut(&self.key) {
+            *users -= 1;
+            if *users == 0 {
+                state.project_scopes.remove(&self.key);
+            }
+        }
+    }
+}
+
 impl SessionOwner {
     #[cfg(test)]
     pub(super) fn creations_sent_for_test(&self) -> watch::Receiver<usize> {
         self.0.creation_sent.subscribe()
     }
 
+    /// A host resource can await the real shutdown without retaining an
+    /// owner -> factory -> host resource ownership cycle.
+    pub(crate) fn weak_shutdown(
+        &self,
+    ) -> impl Fn() -> BoxFuture<RuntimeResult> + Send + Sync + 'static {
+        let owner = Arc::downgrade(&self.0);
+        move || {
+            let owner = owner.upgrade();
+            Box::pin(async move {
+                match owner {
+                    Some(owner) => SessionOwner(owner).shutdown().await,
+                    None => Ok(()),
+                }
+            })
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn weak_factory(&self) -> Weak<dyn super::SessionFactory> {
+        Arc::downgrade(&self.0.options.factory)
+    }
+
+    /// A weak publication lookup: callbacks never retain owner -> factory cycles.
+    pub(crate) fn weak_handle_lookup(&self) -> SessionHandleLookup {
+        let owner = Arc::downgrade(&self.0);
+        Arc::new(move |key| {
+            let owner = owner.upgrade()?;
+            let state = owner.state.lock().unwrap();
+            if state.stopped {
+                return None;
+            }
+            state
+                .records
+                .get(key)
+                .filter(|record| record.handle.state() == super::HandleState::Active)
+                .map(|record| record.handle.clone())
+        })
+    }
+
+    /// Registry callbacks live inside the session factory's SDK configuration.
+    /// Capture only Weak here so registry -> owner -> factory cannot cycle.
+    pub(crate) fn weak_active_turn_query(&self) -> ActiveTurnQuery {
+        let owner = Arc::downgrade(&self.0);
+        Arc::new(move |key| {
+            let owner = Self(owner.upgrade()?);
+            let run = owner.active_turn_run_id(key)?;
+            Some((owner.project_key(key), run))
+        })
+    }
+
+    /// Both the lookup and every returned guard hold only Weak<Inner>.
+    /// Main hooks capture once; detached hooks intentionally call per marker.
+    pub(crate) fn weak_async_turn_lookup(&self) -> AsyncTurnLookup {
+        let owner = Arc::downgrade(&self.0);
+        Arc::new(move |session, _steer| {
+            let inner = owner.upgrade()?;
+            let state = inner.state.lock().unwrap();
+            if state.stopped {
+                return None;
+            }
+            let current = state.completion_owners.get(session)?;
+            let completion = current.completion.clone();
+            if completion.is_cancelled()
+                || completion.is_complete()
+                || !inner.turns.completion.is_current(session, &completion)
+            {
+                return None;
+            }
+            let identity = current.admission.clone()?;
+            let capture = Arc::new(CompletionSteer {
+                owner: Arc::downgrade(&inner),
+                session: session.clone(),
+                completion,
+                identity,
+                steer: current.async_steer.clone(),
+            });
+            let guard_capture = capture.clone();
+            let guard = Arc::new(move || {
+                crate::runtime::async_hooks::AsyncHookTurnHandle::is_live(guard_capture.as_ref())
+            });
+            let bind_capture = capture.clone();
+            let bind_steer = Arc::new(
+                move |info: crate::runtime::project::interaction_steer::ActiveSteerInfo| {
+                    let inner = bind_capture
+                        .owner
+                        .upgrade()
+                        .ok_or_else(|| crate::host::ModuleError::new("Async hook owner closed."))?;
+                    let state = inner.state.lock().unwrap();
+                    if !bind_capture.current(&inner, &state)
+                        || &info.run_id != bind_capture.completion.run_id()
+                        || !info.is_live()
+                    {
+                        return Err(crate::host::ModuleError::new(
+                            "Async hook steer admission expired.",
+                        )
+                        .into());
+                    }
+                    if let Some(existing) = bind_capture.steer.get() {
+                        if Arc::ptr_eq(existing.identity(), info.identity()) {
+                            return Ok(());
+                        }
+                        return Err(crate::host::ModuleError::new(
+                            "Async hook steer is already bound.",
+                        )
+                        .into());
+                    }
+                    bind_capture.steer.set(info).map_err(|_| {
+                        crate::host::ModuleError::new("Async hook steer is already bound.").into()
+                    })
+                },
+            );
+            Some(CapturedAsyncTurn {
+                turn: crate::runtime::async_hooks::AsyncHookTurn::new(SharedCompletionSteer(
+                    capture,
+                )),
+                guard,
+                bind_steer,
+            })
+        })
+    }
     pub fn new(options: SessionOwnerOptions) -> Self {
         let interval = options.idle_sweep_interval_ms;
         let owner = Self(Arc::new(Inner {
@@ -225,6 +498,90 @@ impl SessionOwner {
         owner
     }
 
+    /// Opt-in native boundary. Generic SessionRouter callers retain the TS
+    /// merge behavior. Enable before accepting requests, never as a per-call toggle.
+    pub fn enforce_project_binding(&self) {
+        self.0.state.lock().unwrap().project_binding = true;
+    }
+
+    /// Creation context, including detached in-flight construction. This lookup
+    /// selects a default project only; get_or_create's locked check is admission.
+    pub fn project_key(&self, key: &JsString) -> Option<JsString> {
+        let state = self.0.state.lock().unwrap();
+        state
+            .records
+            .get(key)
+            .and_then(|r| r.context.project_key.clone())
+            .or_else(|| {
+                state
+                    .pending
+                    .iter()
+                    .find(|p| &p.session_key == key && p.completion.borrow().is_none())
+                    .and_then(|p| p.project.clone())
+            })
+            .or_else(|| {
+                state
+                    .project_scopes
+                    .get(key)
+                    .map(|(project, _)| project.clone())
+            })
+    }
+
+    /// Keep the selected request identity stable across asynchronous handlers.
+    /// No lock is held after return. A same-project request shares the lease;
+    /// an explicit different project cannot replace even an absent owner until
+    /// all such requests finish. Generic callers need not use this opt-in port.
+    pub fn reserve_project(
+        &self,
+        key: &JsString,
+        requested: Option<&JsString>,
+        fallback: &JsString,
+    ) -> Result<SessionProjectScope, RuntimeError> {
+        let mut state = self.0.state.lock().unwrap();
+        let owned = state
+            .records
+            .get(key)
+            .and_then(|r| r.context.project_key.clone())
+            .or_else(|| {
+                state
+                    .pending
+                    .iter()
+                    .find(|p| &p.session_key == key && p.completion.borrow().is_none())
+                    .and_then(|p| p.project.clone())
+            })
+            .or_else(|| {
+                state
+                    .project_scopes
+                    .get(key)
+                    .map(|(project, _)| project.clone())
+            });
+        let selected = requested
+            .cloned()
+            .or_else(|| owned.clone())
+            .unwrap_or_else(|| fallback.clone());
+        if owned.as_ref().is_some_and(|project| project != &selected)
+            || state
+                .project_scopes
+                .get(key)
+                .is_some_and(|(project, _)| project != &selected)
+        {
+            return Err(project_mismatch());
+        }
+        let entry = state
+            .project_scopes
+            .entry(key.clone())
+            .or_insert_with(|| (selected.clone(), 0));
+        entry.1 = entry
+            .1
+            .checked_add(1)
+            .ok_or_else(|| RuntimeError::new("Too many project request scopes."))?;
+        Ok(SessionProjectScope {
+            owner: Arc::downgrade(&self.0),
+            key: key.clone(),
+            project: selected,
+        })
+    }
+
     /// Starts/tracks the operation before returning the future, just like the
     /// synchronous prefix of a TS async function. Dropping the future cannot
     /// abandon an unpublished handle or remove it from shutdown's drain set.
@@ -237,12 +594,41 @@ impl SessionOwner {
         if state.stopped {
             return Box::pin(async { Err(RuntimeError::new("Session router is shut down.")) });
         }
+        if state.archives.contains(&context.session_key) {
+            return Box::pin(async { Err(archive_busy()) });
+        }
         if project_paused(&state, context.project_key.as_ref()) {
             return Box::pin(async { Err(RuntimeError::new("Project is being deleted.")) });
         }
+        if state.project_binding {
+            let Some(project) = context.project_key.as_ref() else {
+                return Box::pin(async { Err(project_mismatch()) });
+            };
+            let record_mismatch = state
+                .records
+                .get(&context.session_key)
+                .is_some_and(|record| record.context.project_key.as_ref() != Some(project));
+            let pending_mismatch = state.pending.iter().any(|pending| {
+                pending.session_key == context.session_key
+                    && pending.completion.borrow().is_none()
+                    && pending.project.as_ref() != Some(project)
+            });
+            let request_mismatch = state
+                .project_scopes
+                .get(&context.session_key)
+                .is_some_and(|(owned, _)| owned != project);
+            if record_mismatch || pending_mismatch || request_mismatch {
+                return Box::pin(async { Err(project_mismatch()) });
+            }
+        }
         let ticket = ticket(&mut state, &context.session_key);
         let (done, completion) = watch::channel(None);
-        track(&mut state, context.project_key.clone(), completion);
+        track(
+            &mut state,
+            context.session_key.clone(),
+            context.project_key.clone(),
+            completion,
+        );
         let (result, completion) = watch::channel(None);
         let owner = self.clone();
         let receiver_owner = self.clone();
@@ -483,6 +869,37 @@ impl SessionOwner {
                 disposal.await?;
             }
         }
+        if let Err(cause) = self
+            .0
+            .options
+            .factory
+            .published(context.clone(), handle.clone())
+        {
+            {
+                let mut state = self.0.state.lock().unwrap();
+                if state
+                    .records
+                    .get(&context.session_key)
+                    .is_some_and(|record| record.handle.same_identity(&handle))
+                {
+                    state.records.remove(&context.session_key);
+                    state.order.retain(|key| key != &context.session_key);
+                    state.completion_owners.remove(&context.session_key);
+                    handle.stop_new();
+                }
+            }
+            let rollback = handle
+                .dispose("agent_publication_wake_rollback".into())
+                .await;
+            return Err(match rollback {
+                Ok(()) => cause,
+                Err(error) => RuntimeError {
+                    message: "Failed to wake and roll back published agent.".into(),
+                    causes: vec![cause, error],
+                    js_error: None,
+                },
+            });
+        }
         Ok(handle)
     }
 
@@ -557,6 +974,7 @@ impl SessionOwner {
                 completion: completion.clone(),
                 handle,
                 admission,
+                async_steer: Arc::new(std::sync::OnceLock::new()),
             },
         );
         completion
@@ -665,6 +1083,64 @@ impl SessionOwner {
         }
     }
 
+    /// Reserve cold archive IO against publication, turns, close and shutdown.
+    /// The caller moves this guard into the actual blocking job, not its waiter.
+    pub fn try_reserve_archive(
+        &self,
+        key: &JsString,
+        require_absent: bool,
+    ) -> Result<Option<ArchiveReservation>, RuntimeError> {
+        let mut state = self.0.state.lock().unwrap();
+        if state.stopped {
+            return Err(RuntimeError::new("Session router is shut down."));
+        }
+        let project = state
+            .records
+            .get(key)
+            .and_then(|record| record.context.project_key.clone())
+            .or_else(|| {
+                state
+                    .project_scopes
+                    .get(key)
+                    .map(|(project, _)| project.clone())
+            });
+        if project_paused(&state, project.as_ref()) {
+            return Err(RuntimeError::new("Project is being deleted."));
+        }
+        let busy = state.archives.contains(key)
+            || (require_absent && state.records.contains_key(key))
+            || state.completion_owners.contains_key(key)
+            || state.pending.iter().any(|pending| {
+                &pending.session_key == key && pending.completion.borrow().is_none()
+            })
+            || unsettled_closing(&mut state, key).is_some()
+            || state.cleanup_closings.contains_key(key);
+        if busy {
+            return Ok(None);
+        }
+        // Existing handle references bypass owner admission. Pin their actual
+        // activity slot too; a draining handle or active body is busy.
+        let activity = match state.records.get(key) {
+            Some(record) => match record.handle.begin_maintenance() {
+                Ok(activity) => Some(activity),
+                Err(_) => return Ok(None),
+            },
+            None => None,
+        };
+        if !self.0.turns.admission.begin_maintenance(key) {
+            return Ok(None);
+        }
+        state.archives.insert(key.clone());
+        let (done, completion) = watch::channel(None);
+        track(&mut state, key.clone(), project, completion);
+        Ok(Some(ArchiveReservation {
+            owner: self.clone(),
+            key: key.clone(),
+            done,
+            activity,
+        }))
+    }
+
     /// The guard owns only admission. Actual seed/compact consumers are A7.5/6.
     pub fn begin_maintenance(
         &self,
@@ -727,7 +1203,43 @@ impl SessionOwner {
     }
 
     pub fn close(&self, key: &JsString) -> BoxFuture<RuntimeResult> {
+        self.close_after(key, None)
+    }
+    /// MCP configuration is retained by the session factory itself.
+    pub(crate) fn weak_close(
+        &self,
+    ) -> impl Fn(&JsString) -> BoxFuture<RuntimeResult> + Send + Sync + 'static {
+        let owner = Arc::downgrade(&self.0);
+        move |key| match owner.upgrade() {
+            Some(owner) => Self(owner).close(key),
+            None => Box::pin(async { Err(RuntimeError::new("Session router is shut down.")) }),
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn publication_ticket_probe(&self, key: &JsString) -> watch::Receiver<bool> {
+        let state = self.0.state.lock().unwrap();
+        let serial = state
+            .gates
+            .get(key)
+            .and_then(Weak::upgrade)
+            .expect("session has an owned publication ticket");
+        serial.tail.lock().unwrap().clone()
+    }
+    /// Native storage cleanup is part of the same owned close operation. The
+    /// same-key publication ticket remains held through this callback, including
+    /// an absent cached record and cancellation of the public waiter.
+    pub(crate) fn close_then(
+        &self,
+        key: &JsString,
+        after: impl FnOnce() -> BoxFuture<RuntimeResult> + Send + 'static,
+    ) -> BoxFuture<RuntimeResult> {
+        self.close_after(key, Some(Box::new(after)))
+    }
+    fn close_after(&self, key: &JsString, after: Option<CloseAfter>) -> BoxFuture<RuntimeResult> {
         let mut state = self.0.state.lock().unwrap();
+        if state.archives.contains(key) {
+            return Box::pin(async { Err(archive_busy()) });
+        }
         // TS SessionRouter.close's else branch (SessionRouter.ts:327-338): a
         // key without a cached record — evicted by an in-flight close, idle
         // sweep or shutdown drain, or after the router shut down — awaits the
@@ -735,26 +1247,30 @@ impl SessionOwner {
         // own result; no entry means `await undefined`: fulfilled. The
         // whole-shutdown aggregate stays shutdown()'s own answer
         // (A7.2-SESSION-CLOSE-DURING-SHUTDOWN-001, #1245).
-        // #996 switches (session-owner/schemata_close_shutdown.py):
-        // close-during-shutdown-aggregate reverts to the pre-alignment
-        // branch — every close while shutdown is set answers the aggregate
-        // and the per-key branches are skipped entirely. Off — the
-        // #1245 shape.
+        // Keep main's negative controls on the actual shared close path.
         let aggregate = crate::mutants::on("close-during-shutdown-aggregate");
         if aggregate && let Some(shutdown) = state.shutdown.clone() {
             return Box::pin(wait_result(shutdown));
         }
-        if !aggregate && let Some(closing) = unsettled_closing(&mut state, key) {
-            // #996: close-else-awaits-nothing settles immediately instead of
-            // awaiting the mid-flight eviction. Off — the original await.
-            return if crate::mutants::on("close-else-awaits-nothing") {
-                Box::pin(async { Ok(()) })
-            } else {
-                Box::pin(wait_result(closing))
-            };
+        let previous_close = unsettled_closing(&mut state, key);
+        if !aggregate && after.is_none() {
+            if let Some(closing) = previous_close.clone() {
+                return if crate::mutants::on("close-else-awaits-nothing") {
+                    Box::pin(async { Ok(()) })
+                } else {
+                    Box::pin(wait_result(closing))
+                };
+            }
+            if let Some((_, closing)) = state.cleanup_closings.get(key) {
+                return Box::pin(wait_result(closing.clone()));
+            }
         }
         if !aggregate && state.shutdown.is_some() {
-            return Box::pin(async { Ok(()) });
+            return if after.is_some() {
+                Box::pin(async { Err(RuntimeError::new("Session router is shut down.")) })
+            } else {
+                Box::pin(async { Ok(()) })
+            };
         }
         let ticket = ticket(&mut state, key);
         let (done, completion) = watch::channel(None);
@@ -762,19 +1278,42 @@ impl SessionOwner {
             .records
             .get(key)
             .and_then(|record| record.context.project_key.clone());
-        track(&mut state, project, completion.clone());
-        // #996: close-call-registration-removed drops the close task's closing
-        // registration. Off — the original insert.
-        if !crate::mutants::on("close-call-registration-removed") {
-            state.closings.insert(key.clone(), completion.clone());
-        }
+        track(&mut state, key.clone(), project, completion.clone());
+        let register_closing = !crate::mutants::on("close-call-registration-removed");
+        let (close_phase, registration) = if after.is_some() {
+            let (phase_done, phase) = watch::channel(None);
+            if register_closing && previous_close.is_none() {
+                state.closings.insert(key.clone(), phase.clone());
+            }
+            let identity = Arc::new(());
+            state
+                .cleanup_closings
+                .insert(key.clone(), (identity.clone(), phase));
+            (
+                Some(super::super::cleanup_task::Completion::new(
+                    phase_done,
+                    RuntimeError::new(
+                        "Session eviction task was dropped or panicked before completion.",
+                    ),
+                )),
+                Some(CleanupClosingRegistration {
+                    owner: Arc::downgrade(&self.0),
+                    key: key.clone(),
+                    identity,
+                }),
+            )
+        } else {
+            if register_closing {
+                state.closings.insert(key.clone(), completion.clone());
+            }
+            (None, None)
+        };
         let settle = done.clone();
         let owner = self.clone();
         let key = key.clone();
-        // #996: closing-settle-write-removed also redirects the close task's
-        // `done` sender to a fresh channel (the old paired mutation's second
-        // site), so the entry never receives the completion guard's error
-        // either; `settle_write` turns the guard's own write off.
+        // The cleanup registration's Drop also removes its index. A stopped
+        // executor may drop the spawned future synchronously.
+        drop(state);
         let settle_write = !crate::mutants::on("closing-settle-write-removed");
         let done = if settle_write {
             done
@@ -792,15 +1331,26 @@ impl SessionOwner {
             // closingSessions first. On a panic or abort no outcome is
             // staged, so the outer `Completion` guard settles this entry
             // with its dropped error after the ticket's release instead.
-            // #996: close-without-ticket-serialization skips the ticket
-            // entirely (session-owner/schemata.py). Off — the serialized
-            // entry.
             let serialized = if crate::mutants::on("close-without-ticket-serialization") {
                 None
             } else {
                 Some(ticket.enter().await)
             };
             let mut closing = ClosingGuard::new(settle, serialized, settle_write);
+            // Drop this index before ClosingGuard releases its ticket, so
+            // it can never mask a newly published same-key record.
+            let _registration = registration;
+            let mut close_phase = close_phase;
+            let predecessor = match previous_close {
+                Some(previous) => wait_result(previous).await,
+                None => Ok(()),
+            };
+            if let Err(error) = predecessor {
+                if let Some(phase) = close_phase.take() {
+                    phase.finish(Err(error.clone()));
+                }
+                return closing.settle(Err(error));
+            }
             let (record, identity) = {
                 let mut state = owner.0.state.lock().unwrap();
                 state.order.retain(|item| item != &key);
@@ -818,8 +1368,6 @@ impl SessionOwner {
                 let pending = record.unreported_creation_error.clone();
                 let result = owner.evict(&key, record, EvictionReason::Closed).await;
                 let _state = owner.0.state.lock().unwrap();
-                // #996: old-close-clears-new-reservation ends any same-key
-                // reservation unfenced. Off — the identity-filtered end.
                 if crate::mutants::on("old-close-clears-new-reservation") {
                     owner.0.turns.admission.end_turn(&key, None, None);
                 } else {
@@ -833,10 +1381,18 @@ impl SessionOwner {
             } else {
                 Ok(())
             };
+            if let Some(phase) = close_phase.take() {
+                phase.finish(outcome.clone());
+            }
+            let outcome = match outcome {
+                Ok(()) => match after {
+                    Some(after) => after().await,
+                    None => Ok(()),
+                },
+                Err(error) => Err(error),
+            };
             closing.settle(outcome)
         };
-        // #996: close-panic-guard-removed spawns the task bare, losing the
-        // completion guard (#1365 fix-r1). Off — the guarded spawn.
         if crate::mutants::on("close-panic-guard-removed") {
             drop(done);
             tokio::spawn(task);
@@ -959,6 +1515,7 @@ impl SessionOwner {
             let (done, completion) = watch::channel(None);
             track(
                 &mut state,
+                key.clone(),
                 record.context.project_key.clone(),
                 completion.clone(),
             );
@@ -1263,6 +1820,29 @@ impl SessionOwner {
     }
 }
 
+struct CleanupClosingRegistration {
+    owner: Weak<Inner>,
+    key: JsString,
+    identity: Arc<()>,
+}
+impl Drop for CleanupClosingRegistration {
+    fn drop(&mut self) {
+        if let Some(owner) = self.owner.upgrade() {
+            let mut state = owner
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            if state
+                .cleanup_closings
+                .get(&self.key)
+                .is_some_and(|(identity, _)| Arc::ptr_eq(identity, &self.identity))
+            {
+                state.cleanup_closings.remove(&self.key);
+            }
+        }
+    }
+}
+
 // A ticket is reserved at method call time, not on first poll. This preserves
 // same-key close/create order even if executor threads poll tasks in reverse.
 struct Serial {
@@ -1426,6 +2006,7 @@ fn combine_pending_error(
 
 fn track(
     state: &mut State,
+    session_key: JsString,
     project: Option<JsString>,
     completion: watch::Receiver<Option<RuntimeResult>>,
 ) {
@@ -1436,6 +2017,7 @@ fn track(
         .closings
         .retain(|_, closing| closing.borrow().is_none());
     state.pending.push(Pending {
+        session_key,
         project,
         completion,
     });
@@ -1457,6 +2039,42 @@ fn unsettled_closing(
         .get(key)
         .filter(|closing| closing.borrow().is_none())
         .cloned()
+}
+
+fn archive_busy() -> RuntimeError {
+    RuntimeError::new("Session archive IO is in progress.").with_js_error(
+        crate::runtime::project::RuntimeJsError {
+            name: "Error".into(),
+            code: Some("SESSION_BUSY".into()),
+            message: "Session archive IO is in progress.".into(),
+            requires_host: false,
+        },
+    )
+}
+
+/// Send-owned archive lifetime. It intentionally outlives a cancelled RPC waiter.
+/// Only drop after the blocking job has completed all IO and temporary cleanup.
+pub struct ArchiveReservation {
+    owner: SessionOwner,
+    key: JsString,
+    done: watch::Sender<Option<RuntimeResult>>,
+    activity: Option<super::HandleActivity>,
+}
+impl Drop for ArchiveReservation {
+    fn drop(&mut self) {
+        let activity = self.activity.take();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(activity)));
+        {
+            let mut state = crate::runtime::cleanup_task::lock(&self.owner.0.state);
+            state.archives.remove(&self.key);
+            // Admission poison must not double-panic while a blocking IO job
+            // unwinds. A poisoned gate stays fail-closed; pending still settles.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                self.owner.0.turns.admission.end_maintenance(&self.key);
+            }));
+        }
+        self.done.send_replace(Some(Ok(())));
+    }
 }
 
 pub struct MaintenanceReservation {
@@ -1541,3 +2159,275 @@ mod settle_order {
 #[cfg(test)]
 #[path = "owner_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+    use crate::runtime::{project::DisposeFuture, session::LiveSession};
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    };
+    type Lookup = Arc<dyn Fn(&JsString) -> Option<LiveSessionHandle> + Send + Sync>;
+    #[derive(Default)]
+    struct Session {
+        disposed: AtomicBool,
+    }
+    impl LiveSession for Session {
+        fn snapshot(&self) -> JsValue {
+            JsValue::Null
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async move {
+                self.disposed.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+    }
+    #[derive(Default)]
+    struct Factory {
+        lookup: OnceLock<Lookup>,
+        count: AtomicUsize,
+        fail: AtomicBool,
+        sessions: Mutex<Vec<Arc<Session>>>,
+    }
+    impl SessionFactory for Factory {
+        fn create(
+            &self,
+            _: SessionContext,
+            _: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            let session = Arc::new(Session::default());
+            self.sessions.lock().unwrap().push(session.clone());
+            Box::pin(async move { Ok(LiveSessionHandle::new(session, None)) })
+        }
+        fn published(&self, context: SessionContext, handle: LiveSessionHandle) -> RuntimeResult {
+            assert!(
+                self.lookup.get().unwrap()(&context.session_key)
+                    .is_some_and(|actual| actual.same_identity(&handle)),
+                "background wake must see the exact already-published handle"
+            );
+            self.count.fetch_add(1, Ordering::SeqCst);
+            if self.fail.load(Ordering::SeqCst) {
+                Err(RuntimeError::new("injected restore wake failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    #[tokio::test]
+    async fn publication_wake_is_after_identity_and_failed_wake_rolls_back_actual_handle() {
+        let factory = Arc::new(Factory::default());
+        let mut options = SessionOwnerOptions::new(factory.clone());
+        options.idle_sweep_interval_ms = 0;
+        let owner = SessionOwner::new(options);
+        assert!(factory.lookup.set(owner.weak_handle_lookup()).is_ok());
+        let context = SessionContext {
+            session_key: "parent".into(),
+            project_key: None,
+            channel_key: "test".into(),
+            allowed_tools: None,
+            disallowed_tools: None,
+        };
+        factory.fail.store(true, Ordering::SeqCst);
+        assert!(owner.get_or_create(context.clone()).await.is_err());
+        assert!(owner.current_handle(&"parent".into()).is_none());
+        assert!(
+            factory.sessions.lock().unwrap()[0]
+                .disposed
+                .load(Ordering::SeqCst)
+        );
+        factory.fail.store(false, Ordering::SeqCst);
+        let handle = owner.get_or_create(context.clone()).await.unwrap();
+        let cached = owner.get_or_create(context).await.unwrap();
+        assert!(handle.same_identity(&cached));
+        assert_eq!(
+            factory.count.load(Ordering::SeqCst),
+            2,
+            "cached gets must not start duplicate pumps"
+        );
+        owner.shutdown().await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod async_capture_tests {
+    use super::*;
+    struct UnusedFactory;
+    impl SessionFactory for UnusedFactory {
+        fn create(
+            &self,
+            _: SessionContext,
+            _: Option<LiveSessionHandle>,
+        ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+            Box::pin(async { Err(RuntimeError::new("factory must not run")) })
+        }
+    }
+    fn owner() -> SessionOwner {
+        let mut options = SessionOwnerOptions::new(Arc::new(UnusedFactory));
+        options.idle_sweep_interval_ms = 0;
+        SessionOwner::new(options)
+    }
+
+    #[derive(Default)]
+    struct SteerRecords(std::sync::atomic::AtomicUsize);
+    impl crate::runtime::steer::MutationRecorder for SteerRecords {
+        fn record(
+            &self,
+            _: JsString,
+            _: pilotdeck_protocol::JsObject,
+        ) -> crate::host::HostFuture<()> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+    }
+    fn probe(owner: &SessionOwner, key: &JsString) -> CompletionSteer {
+        let state = owner.0.state.lock().unwrap();
+        let current = state.completion_owners.get(key).unwrap();
+        CompletionSteer {
+            owner: Arc::downgrade(&owner.0),
+            session: key.clone(),
+            completion: current.completion.clone(),
+            identity: current.admission.clone().unwrap(),
+            steer: current.async_steer.clone(),
+        }
+    }
+    fn message(id: &str) -> crate::runtime::steer::SteerMessage {
+        crate::runtime::steer::SteerMessage {
+            item_id: id.into(),
+            message: JsValue::String(id.into()),
+            allowed_read_files: None,
+        }
+    }
+    #[tokio::test]
+    async fn same_text_old_steer_is_never_used_before_the_new_exact_receipt_is_bound() {
+        use crate::host::modules::ModuleRouter;
+        use crate::runtime::project::FamilyResource;
+        use crate::runtime::{
+            async_hooks::AsyncHookTurnHandle, hooks::Cancellation,
+            project::interaction_steer::InteractionSteer,
+        };
+        use std::sync::atomic::Ordering;
+        let owner = owner();
+        let key: JsString = "session".into();
+        let run: JsString = "same".into();
+        let lookup = owner.weak_async_turn_lookup();
+        let resource = InteractionSteer::default();
+        let records = Arc::new(SteerRecords::default());
+        let session = resource
+            .bind_session(key.clone(), Some(records.clone()))
+            .unwrap();
+        let old_admission = owner.begin_turn(&key, &run).unwrap();
+        let old_completion = owner.begin_completion(&key, &run);
+        let old = lookup(&key, Some(resource.clone())).unwrap();
+        let old_probe = probe(&owner, &key);
+        let mut router = ModuleRouter::default();
+        let old_steer = session
+            .start_turn(
+                "old-turn".into(),
+                run.clone(),
+                vec![],
+                Cancellation::new(),
+                &mut router,
+            )
+            .unwrap();
+        (old.bind_steer)(old_steer.async_hook_info().unwrap()).unwrap();
+        assert!(old_probe.enqueue(message("first")).await.unwrap().accepted);
+        let written = records.0.load(Ordering::SeqCst);
+        owner.end_turn(&key, Some(&run), Some(&old_admission));
+        let _new_admission = owner.begin_turn(&key, &run).unwrap();
+        let new_completion = owner.begin_completion(&key, &run);
+        let new = lookup(&key, Some(resource.clone())).unwrap();
+        let new_probe = probe(&owner, &key);
+        assert!(
+            old_steer.async_hook_info().is_some(),
+            "negative must retain a real live equal-text predecessor"
+        );
+        assert!(
+            !new_probe
+                .enqueue(message("must-not-hit-old"))
+                .await
+                .unwrap()
+                .accepted
+        );
+        assert_eq!(
+            records.0.load(Ordering::SeqCst),
+            written,
+            "no mailbox mutation before exact new binding"
+        );
+        old_steer.close().await.unwrap();
+        let new_steer = session
+            .start_turn(
+                "new-turn".into(),
+                run,
+                vec![],
+                Cancellation::new(),
+                &mut router,
+            )
+            .unwrap();
+        let receipt = new_steer.async_hook_info().unwrap();
+        assert!(
+            (old.bind_steer)(new_steer.async_hook_info().unwrap()).is_err(),
+            "old callback cannot bind a successor"
+        );
+        (new.bind_steer)(receipt).unwrap();
+        assert!(new_probe.enqueue(message("new")).await.unwrap().accepted);
+        assert!(!old_probe.enqueue(message("stale")).await.unwrap().accepted);
+        owner.complete_turn(&key, &old_completion);
+        assert!((new.guard)());
+        owner.complete_turn(&key, &new_completion);
+        resource.dispose().await.unwrap();
+    }
+    #[tokio::test]
+    async fn admission_capture_exists_before_steer_binding_and_expires_on_slot_release() {
+        let owner = owner();
+        let lookup = owner.weak_async_turn_lookup();
+        let key = "session".into();
+        let run = "same".into();
+        assert!(lookup(&key, None).is_none());
+        let reservation = owner.begin_turn(&key, &run).unwrap();
+        let completion = owner.begin_completion(&key, &run);
+        let capture =
+            lookup(&key, None).expect("admitted registration must not depend on steer bind");
+        assert!((capture.guard)());
+        owner.end_turn(&key, Some(&run), Some(&reservation));
+        assert!(
+            !(capture.guard)(),
+            "slot release revokes before stream/completion EOF"
+        );
+        owner.complete_turn(&key, &completion);
+        assert!(lookup(&key, None).is_none());
+    }
+    #[tokio::test]
+    async fn equal_run_ids_get_distinct_live_fences_and_captures_do_not_retain_owner() {
+        let owner = owner();
+        let lookup = owner.weak_async_turn_lookup();
+        let key = "session".into();
+        let run = "same".into();
+        let first = owner.begin_turn(&key, &run).unwrap();
+        let first_completion = owner.begin_completion(&key, &run);
+        let old = lookup(&key, None).unwrap();
+        owner.end_turn(&key, Some(&run), Some(&first));
+        let _next = owner.begin_turn(&key, &run).unwrap();
+        let next_completion = owner.begin_completion(&key, &run);
+        let current = lookup(&key, None).unwrap();
+        assert!(!(old.guard)());
+        assert!((current.guard)());
+        owner.complete_turn(&key, &first_completion);
+        assert!(
+            (current.guard)(),
+            "stale completion cannot revoke equal-text successor"
+        );
+        owner.complete_turn(&key, &next_completion);
+        assert!(!(current.guard)());
+        drop(owner);
+        assert!(lookup(&key, None).is_none());
+    }
+}
+
+#[cfg(test)]
+#[path = "archive_guard_tests.rs"]
+mod archive_guard_tests;

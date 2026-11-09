@@ -1,0 +1,1577 @@
+{
+  "source": {
+    "baselineHead": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "sourceSha256": "db806a2414a6ceacb34ce619ae8c2485a7f2e7a21aebab12153992991613fd69",
+    "sourceGitBlob": "35a7061c0a3c61832d07a23e19af7e2d34c455a8",
+    "functions": [
+      {
+        "name": "blockedToolNames",
+        "sha256": "f11e260b7adfbb82e074c8720e4d5161f8d32395f9691d375059b75df926403a"
+      },
+      {
+        "name": "matchesToolSelector",
+        "sha256": "3766aa41a93b8152ce026c4b459ce800de1bf9c13c24cf73fb20a53cc117da8a"
+      }
+    ],
+    "instrumentation": "Exact private FunctionDeclaration AST slices + export only; function bodies unchanged; helper semantics, not whole ProjectSessionRuntimeBundle setup"
+  },
+  "cases": [
+    {
+      "name": "no_policy",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {}
+      },
+      "blocked": []
+    },
+    {
+      "name": "managed_empty",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "managed": {
+          "allow": [],
+          "deny": []
+        }
+      },
+      "blocked": []
+    },
+    {
+      "name": "managed_allow_prefix",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "managed": {
+          "allow": [
+            "read*",
+            "mcp__*"
+          ],
+          "deny": []
+        }
+      },
+      "blocked": [
+        "write_file",
+        "edit_file",
+        "edit_notebook",
+        "glob",
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "plugin_cmd",
+        "web_fetch",
+        "web_search",
+        "plain_fs",
+        "status",
+        "Task_upper"
+      ]
+    },
+    {
+      "name": "managed_deny_wins",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "managed": {
+          "allow": [
+            "*"
+          ],
+          "deny": [
+            "read*",
+            "mcp__*"
+          ]
+        }
+      },
+      "blocked": [
+        "read_file",
+        "mcp__demo__echo",
+        "read_\ud800"
+      ]
+    },
+    {
+      "name": "managed_whitespace_is_not_rewritten",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "managed": {
+          "allow": [
+            " read_file "
+          ],
+          "deny": []
+        }
+      },
+      "blocked": [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "edit_notebook",
+        "glob",
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd",
+        "web_fetch",
+        "web_search",
+        "plain_fs",
+        "status",
+        "Task_upper",
+        "read_\ud800"
+      ]
+    },
+    {
+      "name": "managed_null",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "managed": null
+      },
+      "blocked": []
+    },
+    {
+      "name": "managed_false",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "managed": false
+      },
+      "blocked": []
+    },
+    {
+      "name": "filesystem_deny",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "sandbox": {
+          "filesystem": "deny"
+        }
+      },
+      "blocked": [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "edit_notebook",
+        "glob",
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd",
+        "plain_fs",
+        "read_\ud800"
+      ]
+    },
+    {
+      "name": "filesystem_read_only",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "sandbox": {
+          "type": "tool_policy",
+          "filesystem": "read_only"
+        }
+      },
+      "blocked": [
+        "write_file",
+        "edit_file",
+        "edit_notebook",
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd"
+      ]
+    },
+    {
+      "name": "network_deny",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "sandbox": {
+          "network": "deny"
+        }
+      },
+      "blocked": [
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd",
+        "web_fetch",
+        "web_search"
+      ]
+    },
+    {
+      "name": "process_deny",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "sandbox": {
+          "process": "deny"
+        }
+      },
+      "blocked": [
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd"
+      ]
+    },
+    {
+      "name": "combined_sandbox",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "sandbox": {
+          "filesystem": "read_only",
+          "network": "deny",
+          "process": "deny"
+        }
+      },
+      "blocked": [
+        "write_file",
+        "edit_file",
+        "edit_notebook",
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd",
+        "web_fetch",
+        "web_search"
+      ]
+    },
+    {
+      "name": "managed_and_sandbox",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "managed": {
+          "allow": [
+            "*"
+          ],
+          "deny": [
+            "status"
+          ]
+        },
+        "sandbox": {
+          "network": "deny"
+        }
+      },
+      "blocked": [
+        "status",
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd",
+        "web_fetch",
+        "web_search"
+      ]
+    },
+    {
+      "name": "explicit_empty",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {
+          "allowedTools": []
+        },
+        "managed": {
+          "allow": [
+            "*"
+          ],
+          "deny": []
+        }
+      },
+      "blocked": [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "edit_notebook",
+        "glob",
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd",
+        "web_fetch",
+        "web_search",
+        "plain_fs",
+        "status",
+        "Task_upper",
+        "read_\ud800"
+      ]
+    },
+    {
+      "name": "explicit_intersection",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {
+          "allowedTools": [
+            "read_file",
+            "bash",
+            "status"
+          ],
+          "disallowedTools": [
+            "status"
+          ]
+        },
+        "managed": {
+          "allow": [
+            "*"
+          ],
+          "deny": []
+        },
+        "sandbox": {
+          "process": "deny"
+        }
+      },
+      "blocked": [
+        "write_file",
+        "edit_file",
+        "edit_notebook",
+        "glob",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd",
+        "web_fetch",
+        "web_search",
+        "plain_fs",
+        "status",
+        "Task_upper",
+        "read_\ud800",
+        "bash"
+      ]
+    },
+    {
+      "name": "organization_intersection",
+      "input": {
+        "tools": [
+          {
+            "name": "read_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "write_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_file",
+            "kind": "filesystem"
+          },
+          {
+            "name": "edit_notebook",
+            "kind": "filesystem"
+          },
+          {
+            "name": "glob",
+            "kind": "filesystem"
+          },
+          {
+            "name": "bash",
+            "kind": "shell"
+          },
+          {
+            "name": "execute_code",
+            "kind": "code"
+          },
+          {
+            "name": "agent",
+            "kind": "agent"
+          },
+          {
+            "name": "task_create",
+            "kind": "background"
+          },
+          {
+            "name": "task_list",
+            "kind": "background"
+          },
+          {
+            "name": "mcp__demo__echo",
+            "kind": "mcp"
+          },
+          {
+            "name": "plugin_cmd",
+            "kind": "custom"
+          },
+          {
+            "name": "web_fetch",
+            "kind": "network"
+          },
+          {
+            "name": "web_search",
+            "kind": "network"
+          },
+          {
+            "name": "plain_fs",
+            "kind": "filesystem"
+          },
+          {
+            "name": "status",
+            "kind": "other"
+          },
+          {
+            "name": "Task_upper",
+            "kind": "other"
+          },
+          {
+            "name": "read_\ud800",
+            "kind": "filesystem"
+          }
+        ],
+        "explicit": {},
+        "organization": {
+          "allow": [
+            "read*",
+            "status"
+          ],
+          "deny": [
+            "read_file"
+          ]
+        },
+        "managed": {
+          "allow": [
+            "*"
+          ],
+          "deny": []
+        }
+      },
+      "blocked": [
+        "read_file",
+        "write_file",
+        "edit_file",
+        "edit_notebook",
+        "glob",
+        "bash",
+        "execute_code",
+        "agent",
+        "task_create",
+        "task_list",
+        "mcp__demo__echo",
+        "plugin_cmd",
+        "web_fetch",
+        "web_search",
+        "plain_fs",
+        "Task_upper"
+      ]
+    }
+  ]
+}

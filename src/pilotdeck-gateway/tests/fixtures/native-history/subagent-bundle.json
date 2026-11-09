@@ -1,0 +1,1728 @@
+{
+  "cases": [
+    {
+      "id": "missing-reference",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        },
+        {
+          "op": "parent",
+          "path": "<CASE>/chat/parent.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [],
+        "total": 0
+      }
+    },
+    {
+      "id": "unknown-id",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "other",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "sub/first.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        },
+        {
+          "op": "parent",
+          "path": "<CASE>/chat/parent.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [],
+        "total": 0
+      }
+    },
+    {
+      "id": "child",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "sub/first.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        },
+        {
+          "op": "parent",
+          "path": "<CASE>/chat/parent.jsonl"
+        },
+        {
+          "op": "child",
+          "path": "<CASE>/chat/sub/first.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "p::sub::child-msg-0-0",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "CHILD",
+            "entryId": "e3",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 3
+          },
+          {
+            "id": "e4",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "system",
+            "kind": "compact_boundary",
+            "turnId": "t",
+            "sequence": 4,
+            "text": "Context compacted",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            },
+            "source": "history",
+            "entryId": "e4"
+          }
+        ],
+        "total": 2
+      }
+    },
+    {
+      "id": "first-duplicate",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "sub/first.jsonl",
+          "subagentSessionId": "sub-session"
+        },
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "other",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "sub/second.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        },
+        {
+          "op": "parent",
+          "path": "<CASE>/chat/parent.jsonl"
+        },
+        {
+          "op": "child",
+          "path": "<CASE>/chat/sub/first.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "p::sub::child-msg-0-0",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "CHILD",
+            "entryId": "e3",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 3
+          },
+          {
+            "id": "e4",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "system",
+            "kind": "compact_boundary",
+            "turnId": "t",
+            "sequence": 4,
+            "text": "Context compacted",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            },
+            "source": "history",
+            "entryId": "e4"
+          }
+        ],
+        "total": 2
+      }
+    },
+    {
+      "id": "missing-child",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "sub/missing.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        },
+        {
+          "op": "parent",
+          "path": "<CASE>/chat/parent.jsonl"
+        },
+        {
+          "op": "child",
+          "path": "<CASE>/chat/sub/missing.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [],
+        "total": 0
+      }
+    },
+    {
+      "id": "invalid-child-path",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "../outside.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        },
+        {
+          "op": "parent",
+          "path": "<CASE>/chat/parent.jsonl"
+        }
+      ],
+      "error": {
+        "name": "Error",
+        "message": "relativeTranscriptPath points outside the project transcript directory."
+      }
+    },
+    {
+      "id": "background",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "tasks/parent.jsonl"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "child.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "p::sub::child-msg-0-0",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "CHILD",
+            "entryId": "e3",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 3
+          },
+          {
+            "id": "e4",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "system",
+            "kind": "compact_boundary",
+            "turnId": "t",
+            "sequence": 4,
+            "text": "Context compacted",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            },
+            "source": "history",
+            "entryId": "e4"
+          }
+        ],
+        "total": 2
+      }
+    },
+    {
+      "id": "background-invalid",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child",
+        "sessionKind": "background_task",
+        "relativeTranscriptPath": "../bad.jsonl"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "child.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "p::sub::child-msg-0-0",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "CHILD",
+            "entryId": "e3",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 3
+          },
+          {
+            "id": "e4",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "system",
+            "kind": "compact_boundary",
+            "turnId": "t",
+            "sequence": 4,
+            "text": "Context compacted",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            },
+            "source": "history",
+            "entryId": "e4"
+          }
+        ],
+        "total": 2
+      }
+    },
+    {
+      "id": "parent-override",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child",
+        "parentSessionId": "parent-override"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "sub/first.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "accepted_input",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "messages": [
+            {
+              "role": "user",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "FORK-PRELUDE"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 3,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e3",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "CHILD"
+              }
+            ]
+          }
+        },
+        {
+          "type": "control_boundary",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 4,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e4",
+          "boundary": {
+            "kind": "compact",
+            "subtype": "compact_boundary",
+            "compactMetadata": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 5,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e5",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "SECRET"
+              }
+            ],
+            "metadata": {
+              "synthetic": true
+            }
+          }
+        },
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 6,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e6",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "text",
+                "text": "HIDDEN"
+              }
+            ],
+            "metadata": {
+              "compactReplacement": true
+            }
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "parent-override"
+        },
+        {
+          "op": "parent",
+          "path": "<CASE>/chat/parent.jsonl"
+        },
+        {
+          "op": "child",
+          "path": "<CASE>/chat/sub/first.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "p::sub::child-msg-0-0",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "text",
+            "text": "CHILD",
+            "entryId": "e3",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 3
+          },
+          {
+            "id": "e4",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "system",
+            "kind": "compact_boundary",
+            "turnId": "t",
+            "sequence": 4,
+            "text": "Context compacted",
+            "payload": {
+              "trigger": "manual",
+              "preTokens": 10,
+              "postTokens": 4,
+              "messagesSummarized": 2
+            },
+            "source": "history",
+            "entryId": "e4"
+          }
+        ],
+        "total": 2
+      }
+    },
+    {
+      "id": "tool-thinking",
+      "input": {
+        "sessionKey": "p",
+        "subagentId": "child"
+      },
+      "options": {
+        "projectRoot": "<CASE>/project",
+        "pilotHome": "<CASE>/home",
+        "now": "2026-01-02T03:04:05.678Z"
+      },
+      "parent": [
+        {
+          "type": "subagent_started",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "subagentId": "child",
+          "subagentType": "explore",
+          "promptPreview": "inspect",
+          "promptTruncated": false,
+          "transcriptRelativePath": "sub/first.jsonl",
+          "subagentSessionId": "sub-session"
+        }
+      ],
+      "child": [
+        {
+          "type": "assistant_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 1,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e1",
+          "message": {
+            "role": "assistant",
+            "content": [
+              {
+                "type": "thinking",
+                "thinking": "reason"
+              },
+              {
+                "type": "tool_call",
+                "id": "c",
+                "name": "read_file",
+                "input": {
+                  "path": "abc"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "type": "tool_result_message",
+          "sessionId": "p",
+          "turnId": "t",
+          "sequence": 2,
+          "createdAt": "2026-01-02T03:04:05.678Z",
+          "entryId": "e2",
+          "message": {
+            "role": "user",
+            "content": [
+              {
+                "type": "tool_result",
+                "toolCallId": "c",
+                "isError": false,
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "done"
+                  }
+                ],
+                "raw": {
+                  "toolName": "read_file"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "calls": [
+        {
+          "op": "resolveStorage",
+          "sessionId": "p"
+        },
+        {
+          "op": "parent",
+          "path": "<CASE>/chat/parent.jsonl"
+        },
+        {
+          "op": "child",
+          "path": "<CASE>/chat/sub/first.jsonl"
+        }
+      ],
+      "result": {
+        "messages": [
+          {
+            "id": "p::sub::child-thinking-0-0",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "assistant",
+            "kind": "thinking",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 1
+          },
+          {
+            "id": "p::sub::child-tool-0-c",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_use",
+            "toolCallId": "c",
+            "toolName": "read_file",
+            "payload": {
+              "path": "abc"
+            },
+            "source": "history",
+            "turnId": "t",
+            "sequence": 1
+          },
+          {
+            "id": "p::sub::child-tool-1-c-result",
+            "sessionKey": "p::sub::child",
+            "createdAt": "2026-01-02T03:04:05.678Z",
+            "provider": "pilotdeck",
+            "role": "tool",
+            "kind": "tool_result",
+            "toolCallId": "c",
+            "toolName": "read_file",
+            "ok": true,
+            "text": "done",
+            "source": "history",
+            "turnId": "t",
+            "sequence": 2
+          }
+        ],
+        "total": 3
+      }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# Telegram fixed-source diagnostic
+
+`capture.mjs` reads only Git objects from fixed PilotDeck commit cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85, transpiles those bytes with the existing esbuild, and injects a minimal grammy Bot API facade that sends only to its own 127.0.0.1 HTTP server. No SDK installation, baseline edits, credentials or real accounts. Output creation is exclusive (`wx`), includes every source SHA256, environment and raw request/API/log traces.
+
+Default execution requires Node v22.22.0 / ICU78.2. `PDRS_DIAGNOSTIC=1` explicitly permits an environment diagnostic and records `formalAcceptance:false`; this does not modify any frozen prerequisite. The committed oracle-diagnostic.json was observed on cb8 Node22.22.1/ICU78.2. Earlier mbp2 exact-environment checks failed (PATH22.22.0/ICU77.1; pinned binary missing simdjson30); no formal acceptance is claimed. Channel tests compare A7 request fields against the fixed-TS diagnostic, and separately exercise the Rust HTTP/polling path. This is not a full SDK conformance fixture or a formal dual-platform acceptance record.
+
+`negative_controls.py` requires an explicitly disposable worktree and separate JSON argv for compile and runtime. Three production mutations must compile and then fail runtime tests; build failure is ERROR. Original source bytes are restored in finally. Do not run while another task writes/builds that tree. The script has not been run yet; do not report KILLED without retained output. Example runtime filter: `channel::telegram::tests`.
+
+Remaining acceptance: exact supported baseline environment, formal full-channel case matrix including interactive permission/elicitation callbacks, three real mutant kills, macOS/Linux runs and non-author review. The registered runtime is not advertised migrated until these conditions and production mounting are verified.

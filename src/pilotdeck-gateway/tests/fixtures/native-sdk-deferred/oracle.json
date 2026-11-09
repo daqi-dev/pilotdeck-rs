@@ -1,0 +1,143 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "tools": [
+    {
+      "name": "archive",
+      "description": "Read old messages",
+      "searchHint": "History lookup"
+    },
+    {
+      "name": "inspect",
+      "description": "Inspect project tree",
+      "searchHint": "Files and folders"
+    },
+    {
+      "name": "raw\ud800",
+      "description": "UTF16 \udc00 field",
+      "searchHint": "unpaired"
+    }
+  ],
+  "records": [
+    {
+      "query": "history",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Loaded 1 deferred tool:\n- archive: Read old messages\nUse the loaded tool names in a subsequent tool call."
+          }
+        ],
+        "data": {
+          "query": "history",
+          "tools": [
+            {
+              "name": "archive",
+              "description": "Read old messages",
+              "searchHint": "History lookup"
+            }
+          ]
+        }
+      },
+      "visible": [
+        "archive"
+      ]
+    },
+    {
+      "query": "project inspect",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Loaded 1 deferred tool:\n- inspect: Inspect project tree\nUse the loaded tool names in a subsequent tool call."
+          }
+        ],
+        "data": {
+          "query": "project inspect",
+          "tools": [
+            {
+              "name": "inspect",
+              "description": "Inspect project tree",
+              "searchHint": "Files and folders"
+            }
+          ]
+        }
+      },
+      "visible": [
+        "inspect"
+      ]
+    },
+    {
+      "query": "NO MATCH",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "No deferred tools matched \"NO MATCH\"."
+          }
+        ],
+        "data": {
+          "query": "NO MATCH",
+          "tools": []
+        }
+      },
+      "visible": []
+    },
+    {
+      "query": " raw\ud800 ",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Loaded 1 deferred tool:\n- raw\ud800: UTF16 \udc00 field\nUse the loaded tool names in a subsequent tool call."
+          }
+        ],
+        "data": {
+          "query": "raw\ud800",
+          "tools": [
+            {
+              "name": "raw\ud800",
+              "description": "UTF16 \udc00 field",
+              "searchHint": "unpaired"
+            }
+          ]
+        }
+      },
+      "visible": [
+        "raw\ud800"
+      ]
+    },
+    {
+      "query": "UTF16",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Loaded 1 deferred tool:\n- raw\ud800: UTF16 \udc00 field\nUse the loaded tool names in a subsequent tool call."
+          }
+        ],
+        "data": {
+          "query": "UTF16",
+          "tools": [
+            {
+              "name": "raw\ud800",
+              "description": "UTF16 \udc00 field",
+              "searchHint": "unpaired"
+            }
+          ]
+        }
+      },
+      "visible": [
+        "raw\ud800"
+      ]
+    },
+    {
+      "query": "  ",
+      "error": {
+        "code": "invalid_tool_input",
+        "message": "search_tools requires a non-empty query."
+      },
+      "visible": []
+    }
+  ]
+}

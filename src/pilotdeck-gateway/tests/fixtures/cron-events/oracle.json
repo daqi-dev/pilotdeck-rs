@@ -1,0 +1,2882 @@
+{
+  "metadata": {
+    "sourceCommit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+    "node": "v22.22.0",
+    "icu": "78.2",
+    "typescript": "5.9.3",
+    "sourceSha256": {
+      "src/cron/CronTimezone.ts": "fdac81a3701e6fd7ffbc5ef273eccb2cf45c87e35a7d39d40f6b8c15c69cfe16",
+      "src/cron/runtime/CronSchedule.ts": "6f11cef379603ded179b7a896b0689c58ee738d403a9dd1278af7597645669b0",
+      "src/cron/storage/CronPaths.ts": "0298b4c9b1a1a5b0926ee4bb98fd5f873faae254405c7699fe29ca682349e4c8",
+      "src/cron/storage/CronTaskStore.ts": "7b0f6a2787a5567bf52b1ee9235eb8d9d10aff284bf4014de611e7aea7aa1db0",
+      "src/cron/runtime/CronFire.ts": "d38c501149bdf35fe47c2db6e6449b03e068116bc4d7deb5979d0975a72c1d39"
+    },
+    "clock": {
+      "start": 1767225600000,
+      "finish": 1767225601000
+    },
+    "network": "seatbelt-deny-all, no fork; runtime APIs throw",
+    "normalization": "none; exact after file text, no ignored temp files"
+  },
+  "rows": [
+    {
+      "id": "once-text",
+      "input": {
+        "id": "once-text",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "  hello"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": " 世界  "
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-once-text",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-once-text",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-once-text",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-once-text",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "  hello"
+          }
+        },
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": " 世界  "
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-once-text",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "hello 世界"
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-once-text",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-once-text\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-once-text.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-once-text\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"  hello\"}}\n{\"schemaVersion\":1,\"runId\":\"run-once-text\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\" 世界  \"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "empty-text",
+      "input": {
+        "id": "empty-text",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": " \t\n"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-empty-text",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-empty-text",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-empty-text",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-empty-text",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": " \t\n"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-empty-text",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "定时任务已完成，但没有返回内容。"
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-empty-text",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-empty-text\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-empty-text.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-empty-text\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\" \\t\\n\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "recurring-text",
+      "input": {
+        "id": "recurring-text",
+        "recurring": true,
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "recur"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\",\n        \"timezone\": \"UTC\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"scheduleComputationVersion\": 3,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "cron",
+          "expression": "*/5 * * * *",
+          "timezone": "UTC"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "scheduleComputationVersion": 3,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-recurring-text",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-recurring-text",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-recurring-text",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-recurring-text",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "recur"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-recurring-text",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "recur"
+        }
+      ],
+      "releases": [],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-recurring-text\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-recurring-text.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-recurring-text\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"recur\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"cron\",\n        \"expression\": \"*/5 * * * *\",\n        \"timezone\": \"UTC\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:01.000Z\",\n      \"nextRunAt\": \"2026-01-01T00:05:00.000Z\",\n      \"lastRunId\": \"run-recurring-text\",\n      \"revision\": 2,\n      \"scheduleComputationVersion\": 3,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "id": "timeout-then-abort",
+      "input": {
+        "id": "timeout-then-abort",
+        "events": [
+          {
+            "type": "error",
+            "code": "turn_timeout",
+            "message": "limit hit"
+          },
+          {
+            "type": "error",
+            "code": "agent_aborted",
+            "message": "aborted later"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-timeout-then-abort",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-timeout-then-abort",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-timeout-then-abort",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-timeout-then-abort",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_run_timeout",
+            "message": "limit hit"
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "code": "turn_timeout",
+            "message": "limit hit"
+          }
+        },
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "code": "agent_aborted",
+            "message": "aborted later"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-timeout-then-abort",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "limit hit",
+          "error": {
+            "code": "cron_run_timeout",
+            "message": "limit hit"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-timeout-then-abort",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-timeout-then-abort\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_run_timeout\",\"message\":\"limit hit\"}}\n",
+        "runs/run-timeout-then-abort.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-timeout-then-abort\",\"event\":{\"type\":\"error\",\"code\":\"turn_timeout\",\"message\":\"limit hit\"}}\n{\"schemaVersion\":1,\"runId\":\"run-timeout-then-abort\",\"event\":{\"type\":\"error\",\"code\":\"agent_aborted\",\"message\":\"aborted later\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "interaction-then-timeout",
+      "input": {
+        "id": "interaction-then-timeout",
+        "events": [
+          {
+            "type": "permission_request"
+          },
+          {
+            "type": "error",
+            "code": "turn_timeout",
+            "message": "limit last"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-interaction-then-timeout",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-interaction-then-timeout",
+            "timeoutMs": 60000
+          }
+        },
+        {
+          "method": "abortTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "runId": "run-interaction-then-timeout",
+            "reason": "system:interaction_required"
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-interaction-then-timeout",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-interaction-then-timeout",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_run_timeout",
+            "message": "limit last"
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "permission_request"
+          }
+        },
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "code": "turn_timeout",
+            "message": "limit last"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-interaction-then-timeout",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "limit last",
+          "error": {
+            "code": "cron_run_timeout",
+            "message": "limit last"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-interaction-then-timeout",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-interaction-then-timeout\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_run_timeout\",\"message\":\"limit last\"}}\n",
+        "runs/run-interaction-then-timeout.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-interaction-then-timeout\",\"event\":{\"type\":\"permission_request\"}}\n{\"schemaVersion\":1,\"runId\":\"run-interaction-then-timeout\",\"event\":{\"type\":\"error\",\"code\":\"turn_timeout\",\"message\":\"limit last\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "timeout-then-interaction",
+      "input": {
+        "id": "timeout-then-interaction",
+        "events": [
+          {
+            "type": "error",
+            "code": "turn_timeout",
+            "message": "limit first"
+          },
+          {
+            "type": "elicitation_request"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-timeout-then-interaction",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-timeout-then-interaction",
+            "timeoutMs": 60000
+          }
+        },
+        {
+          "method": "abortTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "runId": "run-timeout-then-interaction",
+            "reason": "system:interaction_required"
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-timeout-then-interaction",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-timeout-then-interaction",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_interaction_required",
+            "message": "Cron run requested unsupported user interaction through elicitation_request."
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "code": "turn_timeout",
+            "message": "limit first"
+          }
+        },
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "elicitation_request"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-timeout-then-interaction",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "Cron run requested unsupported user interaction through elicitation_request.",
+          "error": {
+            "code": "cron_interaction_required",
+            "message": "Cron run requested unsupported user interaction through elicitation_request."
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-timeout-then-interaction",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-timeout-then-interaction\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_interaction_required\",\"message\":\"Cron run requested unsupported user interaction through elicitation_request.\"}}\n",
+        "runs/run-timeout-then-interaction.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-timeout-then-interaction\",\"event\":{\"type\":\"error\",\"code\":\"turn_timeout\",\"message\":\"limit first\"}}\n{\"schemaVersion\":1,\"runId\":\"run-timeout-then-interaction\",\"event\":{\"type\":\"elicitation_request\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "two-interactions",
+      "input": {
+        "id": "two-interactions",
+        "events": [
+          {
+            "type": "permission_request"
+          },
+          {
+            "type": "elicitation_request"
+          },
+          {
+            "type": "error",
+            "code": "agent_aborted",
+            "message": "later abort"
+          },
+          {
+            "type": "assistant_text_delta",
+            "text": "ignored for failed delivery"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-two-interactions",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-two-interactions",
+            "timeoutMs": 60000
+          }
+        },
+        {
+          "method": "abortTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "runId": "run-two-interactions",
+            "reason": "system:interaction_required"
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-two-interactions",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-two-interactions",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_interaction_required",
+            "message": "Cron run requested unsupported user interaction through elicitation_request."
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "permission_request"
+          }
+        },
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "elicitation_request"
+          }
+        },
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "code": "agent_aborted",
+            "message": "later abort"
+          }
+        },
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "ignored for failed delivery"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-two-interactions",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "Cron run requested unsupported user interaction through elicitation_request.",
+          "error": {
+            "code": "cron_interaction_required",
+            "message": "Cron run requested unsupported user interaction through elicitation_request."
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-two-interactions",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-two-interactions\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_interaction_required\",\"message\":\"Cron run requested unsupported user interaction through elicitation_request.\"}}\n",
+        "runs/run-two-interactions.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-two-interactions\",\"event\":{\"type\":\"permission_request\"}}\n{\"schemaVersion\":1,\"runId\":\"run-two-interactions\",\"event\":{\"type\":\"elicitation_request\"}}\n{\"schemaVersion\":1,\"runId\":\"run-two-interactions\",\"event\":{\"type\":\"error\",\"code\":\"agent_aborted\",\"message\":\"later abort\"}}\n{\"schemaVersion\":1,\"runId\":\"run-two-interactions\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"ignored for failed delivery\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "untyped-error",
+      "input": {
+        "id": "untyped-error",
+        "events": [
+          {
+            "type": "error",
+            "message": "plain failure"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-untyped-error",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-untyped-error",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-untyped-error",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-untyped-error",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_run_failed",
+            "message": "plain failure"
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "message": "plain failure"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-untyped-error",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "plain failure",
+          "error": {
+            "code": "cron_run_failed",
+            "message": "plain failure"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-untyped-error",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-untyped-error\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_run_failed\",\"message\":\"plain failure\"}}\n",
+        "runs/run-untyped-error.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-untyped-error\",\"event\":{\"type\":\"error\",\"message\":\"plain failure\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "agent-aborted",
+      "input": {
+        "id": "agent-aborted",
+        "events": [
+          {
+            "type": "error",
+            "code": "agent_aborted",
+            "message": "abort terminal"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-agent-aborted",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-agent-aborted",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-agent-aborted",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-agent-aborted",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "agent_aborted",
+            "message": "abort terminal"
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "code": "agent_aborted",
+            "message": "abort terminal"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-agent-aborted",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "aborted",
+          "text": "abort terminal",
+          "error": {
+            "code": "agent_aborted",
+            "message": "abort terminal"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-agent-aborted",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-agent-aborted\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"aborted\",\"error\":{\"code\":\"agent_aborted\",\"message\":\"abort terminal\"}}\n",
+        "runs/run-agent-aborted.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-agent-aborted\",\"event\":{\"type\":\"error\",\"code\":\"agent_aborted\",\"message\":\"abort terminal\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "throw-before-events",
+      "input": {
+        "id": "throw-before-events",
+        "events": [],
+        "throwMessage": "fixture submit throw"
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-throw-before-events",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-throw-before-events",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-throw-before-events",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-throw-before-events",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_run_failed",
+            "message": "fixture submit throw"
+          }
+        }
+      ],
+      "turnEvents": [],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-throw-before-events",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "fixture submit throw",
+          "error": {
+            "code": "cron_run_failed",
+            "message": "fixture submit throw"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-throw-before-events",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-throw-before-events\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_run_failed\",\"message\":\"fixture submit throw\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "timeout-then-throw",
+      "input": {
+        "id": "timeout-then-throw",
+        "events": [
+          {
+            "type": "error",
+            "code": "turn_timeout",
+            "message": "latched timeout"
+          }
+        ],
+        "throwMessage": "fixture stream throw"
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-timeout-then-throw",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-timeout-then-throw",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-timeout-then-throw",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-timeout-then-throw",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_run_timeout",
+            "message": "latched timeout"
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "code": "turn_timeout",
+            "message": "latched timeout"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-timeout-then-throw",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "latched timeout",
+          "error": {
+            "code": "cron_run_timeout",
+            "message": "latched timeout"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-timeout-then-throw",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-timeout-then-throw\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_run_timeout\",\"message\":\"latched timeout\"}}\n",
+        "runs/run-timeout-then-throw.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-timeout-then-throw\",\"event\":{\"type\":\"error\",\"code\":\"turn_timeout\",\"message\":\"latched timeout\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "interaction-then-throw",
+      "input": {
+        "id": "interaction-then-throw",
+        "events": [
+          {
+            "type": "permission_request"
+          }
+        ],
+        "throwMessage": "fixture stream throw"
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-interaction-then-throw",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-interaction-then-throw",
+            "timeoutMs": 60000
+          }
+        },
+        {
+          "method": "abortTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "runId": "run-interaction-then-throw",
+            "reason": "system:interaction_required"
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-interaction-then-throw",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-interaction-then-throw",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_interaction_required",
+            "message": "Cron run requested unsupported user interaction through permission_request."
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "permission_request"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-interaction-then-throw",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "Cron run requested unsupported user interaction through permission_request.",
+          "error": {
+            "code": "cron_interaction_required",
+            "message": "Cron run requested unsupported user interaction through permission_request."
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-interaction-then-throw",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-interaction-then-throw\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_interaction_required\",\"message\":\"Cron run requested unsupported user interaction through permission_request.\"}}\n",
+        "runs/run-interaction-then-throw.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-interaction-then-throw\",\"event\":{\"type\":\"permission_request\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "stopped-success",
+      "input": {
+        "id": "stopped-success",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "text before stop"
+          }
+        ],
+        "stopped": true
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-stopped-success",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-stopped-success",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-stopped-success",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-stopped-success",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "text before stop"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-stopped-success",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "stopped",
+          "text": "Cron task failed."
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-stopped-success",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-stopped-success\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"stopped\"}\n",
+        "runs/run-stopped-success.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-stopped-success\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"text before stop\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "stopped-failure",
+      "input": {
+        "id": "stopped-failure",
+        "events": [
+          {
+            "type": "error",
+            "code": "bad_run",
+            "message": "failed before stop"
+          }
+        ],
+        "stopped": true
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-stopped-failure",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-stopped-failure",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-stopped-failure",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-stopped-failure",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "bad_run",
+            "message": "failed before stop"
+          }
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "error",
+            "code": "bad_run",
+            "message": "failed before stop"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-stopped-failure",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "stopped",
+          "text": "failed before stop",
+          "error": {
+            "code": "bad_run",
+            "message": "failed before stop"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-stopped-failure",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-stopped-failure\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"stopped\",\"error\":{\"code\":\"bad_run\",\"message\":\"failed before stop\"}}\n",
+        "runs/run-stopped-failure.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-stopped-failure\",\"event\":{\"type\":\"error\",\"code\":\"bad_run\",\"message\":\"failed before stop\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "stale-claim",
+      "input": {
+        "id": "stale-claim",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "must not submit"
+          }
+        ],
+        "stale": true
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 7,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-stale-claim",
+      "gatewayCalls": [],
+      "phases": [],
+      "turnEvents": [],
+      "deliveries": [],
+      "releases": [],
+      "warns": [],
+      "active": [],
+      "clockCalls": 1,
+      "error": null,
+      "after": {
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "id": "edited-during-run",
+      "input": {
+        "id": "edited-during-run",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "edited result"
+          }
+        ],
+        "edit": true
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-edited-during-run",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-edited-during-run",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-edited-during-run",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-edited-during-run",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "edited result"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-edited-during-run",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "edited result"
+        }
+      ],
+      "releases": [],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-edited-during-run\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-edited-during-run.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-edited-during-run\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"edited result\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"edited\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"running\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"lastRunId\": \"run-edited-during-run\",\n      \"revision\": 2,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "id": "deleted-during-run",
+      "input": {
+        "id": "deleted-during-run",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "deleted result"
+          }
+        ],
+        "deleted": true
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-deleted-during-run",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-deleted-during-run",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-deleted-during-run",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-deleted-during-run",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "deleted result"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-deleted-during-run",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "deleted result"
+        }
+      ],
+      "releases": [],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-deleted-during-run\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-deleted-during-run.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-deleted-during-run\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"deleted result\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "delivery-throws",
+      "input": {
+        "id": "delivery-throws",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "delivered text"
+          }
+        ],
+        "deliveryThrows": true
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-delivery-throws",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-delivery-throws",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-delivery-throws",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-delivery-throws",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "delivered text"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-delivery-throws",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "delivered text"
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-delivery-throws",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [
+        {
+          "message": "cron result delivery failed",
+          "meta": {
+            "taskId": "task",
+            "runId": "run-delivery-throws",
+            "error": "fixture delivery throw"
+          }
+        }
+      ],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-delivery-throws\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-delivery-throws.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-delivery-throws\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"delivered text\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "turn-callback-throws",
+      "input": {
+        "id": "turn-callback-throws",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "still completes"
+          }
+        ],
+        "turnThrows": true
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-turn-callback-throws",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-turn-callback-throws",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-turn-callback-throws",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-turn-callback-throws",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "still completes"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-turn-callback-throws",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "still completes"
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-turn-callback-throws",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [
+        {
+          "message": "cron turn event delivery failed",
+          "meta": {
+            "taskId": "task",
+            "runId": "run-turn-callback-throws",
+            "error": "fixture turn callback throw"
+          }
+        }
+      ],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-turn-callback-throws\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-turn-callback-throws.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-turn-callback-throws\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"still completes\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "phase-started-throws",
+      "input": {
+        "id": "phase-started-throws",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "must not submit"
+          }
+        ],
+        "phaseThrows": "cron_started"
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-phase-started-throws",
+      "gatewayCalls": [],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-phase-started-throws",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_failed",
+          "runId": "run-phase-started-throws",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line",
+          "error": {
+            "code": "cron_run_failed",
+            "message": "fixture phase throw"
+          }
+        }
+      ],
+      "turnEvents": [],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-phase-started-throws",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "failed",
+          "text": "fixture phase throw",
+          "error": {
+            "code": "cron_run_failed",
+            "message": "fixture phase throw"
+          }
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-phase-started-throws",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-phase-started-throws\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"failed\",\"error\":{\"code\":\"cron_run_failed\",\"message\":\"fixture phase throw\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "phase-completed-throws",
+      "input": {
+        "id": "phase-completed-throws",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "turn completed"
+          }
+        ],
+        "phaseThrows": "cron_completed"
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-phase-completed-throws",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-phase-completed-throws",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-phase-completed-throws",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-phase-completed-throws",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "turn completed"
+          }
+        }
+      ],
+      "deliveries": [],
+      "releases": [],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": {
+        "name": "Error",
+        "message": "fixture phase throw"
+      },
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-phase-completed-throws\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-phase-completed-throws.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-phase-completed-throws\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"turn completed\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"running\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2026-01-01T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"lastRunId\": \"run-phase-completed-throws\",\n      \"revision\": 1,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}"
+      }
+    },
+    {
+      "id": "title-utf16",
+      "input": {
+        "id": "title-utf16",
+        "message": " ﻿😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀X\rinside\nsecond line",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": " ﻿ raw 😀 \t"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task\",\n      \"message\": \" ﻿😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀X\\rinside\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task",
+        "message": " ﻿😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀X\rinside\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-title-utf16",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": " ﻿😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀X\rinside\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-title-utf16",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-title-utf16",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-title-utf16",
+          "taskId": "task",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": " ﻿ raw 😀 \t"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task",
+          "runId": "run-title-utf16",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "raw 😀"
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task",
+          "message": " ﻿😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀X\rinside\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-title-utf16",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-title-utf16\",\"taskId\":\"task\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-title-utf16.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-title-utf16\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\" ﻿ raw 😀 \\t\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    },
+    {
+      "id": "task-id-lone-surrogate",
+      "input": {
+        "id": "task-id-lone-surrogate",
+        "taskId": "task-\ud800",
+        "events": [
+          {
+            "type": "assistant_text_delta",
+            "text": "kept UTF16 identity"
+          }
+        ]
+      },
+      "initialTasksFile": "{\n  \"schemaVersion\": 1,\n  \"tasks\": [\n    {\n      \"schemaVersion\": 1,\n      \"taskId\": \"task-\\ud800\",\n      \"message\": \"  first line\\r\\nsecond line\",\n      \"schedule\": {\n        \"type\": \"once\",\n        \"runAt\": \"2025-12-31T00:00:00.000Z\"\n      },\n      \"status\": \"scheduled\",\n      \"sessionKey\": \"cron:task\",\n      \"channelKey\": \"cron\",\n      \"projectKey\": \"/project\",\n      \"mode\": \"default\",\n      \"timezone\": \"UTC\",\n      \"createdAt\": \"2025-12-31T00:00:00.000Z\",\n      \"updatedAt\": \"2025-12-31T00:00:00.000Z\",\n      \"nextRunAt\": \"2025-12-31T00:00:00.000Z\",\n      \"revision\": 0,\n      \"originSessionKey\": \"feishu:chat:fixture\",\n      \"originChannelKey\": \"feishu\"\n    }\n  ]\n}",
+      "snapshot": {
+        "schemaVersion": 1,
+        "taskId": "task-\ud800",
+        "message": "  first line\r\nsecond line",
+        "schedule": {
+          "type": "once",
+          "runAt": "2025-12-31T00:00:00.000Z"
+        },
+        "status": "scheduled",
+        "sessionKey": "cron:task",
+        "channelKey": "cron",
+        "projectKey": "/project",
+        "mode": "default",
+        "timezone": "UTC",
+        "createdAt": "2025-12-31T00:00:00.000Z",
+        "updatedAt": "2025-12-31T00:00:00.000Z",
+        "nextRunAt": "2025-12-31T00:00:00.000Z",
+        "revision": 0,
+        "originSessionKey": "feishu:chat:fixture",
+        "originChannelKey": "feishu"
+      },
+      "runId": "run-task-id-lone-surrogate",
+      "gatewayCalls": [
+        {
+          "method": "submitTurn",
+          "input": {
+            "sessionKey": "cron:task",
+            "channelKey": "cron",
+            "projectKey": "/project",
+            "message": "  first line\r\nsecond line",
+            "mode": "bypassPermissions",
+            "runId": "run-task-id-lone-surrogate",
+            "timeoutMs": 60000
+          }
+        }
+      ],
+      "phases": [
+        {
+          "phase": "cron_started",
+          "runId": "run-task-id-lone-surrogate",
+          "taskId": "task-\ud800",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:00.000Z",
+          "title": "first line"
+        },
+        {
+          "phase": "cron_completed",
+          "runId": "run-task-id-lone-surrogate",
+          "taskId": "task-\ud800",
+          "projectKey": "/project",
+          "timestamp": "2026-01-01T00:00:01.000Z",
+          "title": "first line"
+        }
+      ],
+      "turnEvents": [
+        {
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "event": {
+            "type": "assistant_text_delta",
+            "text": "kept UTF16 identity"
+          }
+        }
+      ],
+      "deliveries": [
+        {
+          "taskId": "task-\ud800",
+          "runId": "run-task-id-lone-surrogate",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu",
+          "projectKey": "/project",
+          "outcome": "completed",
+          "text": "kept UTF16 identity"
+        }
+      ],
+      "releases": [
+        {
+          "schemaVersion": 1,
+          "taskId": "task-\ud800",
+          "message": "  first line\r\nsecond line",
+          "schedule": {
+            "type": "once",
+            "runAt": "2025-12-31T00:00:00.000Z"
+          },
+          "status": "running",
+          "sessionKey": "cron:task",
+          "channelKey": "cron",
+          "projectKey": "/project",
+          "mode": "default",
+          "timezone": "UTC",
+          "createdAt": "2025-12-31T00:00:00.000Z",
+          "updatedAt": "2026-01-01T00:00:00.000Z",
+          "nextRunAt": "2025-12-31T00:00:00.000Z",
+          "lastRunId": "run-task-id-lone-surrogate",
+          "revision": 1,
+          "originSessionKey": "feishu:chat:fixture",
+          "originChannelKey": "feishu"
+        }
+      ],
+      "warns": [],
+      "active": [],
+      "clockCalls": 2,
+      "error": null,
+      "after": {
+        "run-history.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-task-id-lone-surrogate\",\"taskId\":\"task-\\ud800\",\"sessionKey\":\"cron:task\",\"projectKey\":\"/project\",\"startedAt\":\"2026-01-01T00:00:00.000Z\",\"finishedAt\":\"2026-01-01T00:00:01.000Z\",\"outcome\":\"completed\"}\n",
+        "runs/run-task-id-lone-surrogate.events.jsonl": "{\"schemaVersion\":1,\"runId\":\"run-task-id-lone-surrogate\",\"event\":{\"type\":\"assistant_text_delta\",\"text\":\"kept UTF16 identity\"}}\n",
+        "tasks.json": "{\n  \"schemaVersion\": 1,\n  \"tasks\": []\n}"
+      }
+    }
+  ]
+}

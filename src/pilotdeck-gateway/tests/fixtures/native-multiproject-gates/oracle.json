@@ -1,0 +1,119 @@
+{
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "commit": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "cases": [
+    {
+      "id": "null-always",
+      "ok": true,
+      "value": {
+        "sessionKey": "",
+        "error": {
+          "code": "not_configured",
+          "message": "Always-On apply is not configured on this gateway."
+        }
+      },
+      "calls": []
+    },
+    {
+      "id": "null-sop",
+      "ok": false,
+      "name": "DialogGatewayError",
+      "code": "CAPABILITY_UNAVAILABLE",
+      "message": "StaffDeck SOP status is unavailable.",
+      "calls": []
+    },
+    {
+      "id": "null-resume",
+      "ok": false,
+      "name": "DialogGatewayError",
+      "code": "CAPABILITY_UNAVAILABLE",
+      "message": "StaffDeck SOP resume is unavailable.",
+      "calls": []
+    },
+    {
+      "id": "null-mcp",
+      "ok": true,
+      "value": {
+        "servers": []
+      },
+      "calls": [
+        "refresh"
+      ]
+    },
+    {
+      "id": "number-always",
+      "ok": true,
+      "value": {
+        "sessionKey": "",
+        "error": {
+          "code": "not_configured",
+          "message": "Always-On apply is not configured on this gateway."
+        }
+      },
+      "calls": []
+    },
+    {
+      "id": "number-sop",
+      "ok": false,
+      "name": "DialogGatewayError",
+      "code": "CAPABILITY_UNAVAILABLE",
+      "message": "StaffDeck SOP status is unavailable.",
+      "calls": []
+    },
+    {
+      "id": "number-resume",
+      "ok": false,
+      "name": "DialogGatewayError",
+      "code": "CAPABILITY_UNAVAILABLE",
+      "message": "StaffDeck SOP resume is unavailable.",
+      "calls": []
+    },
+    {
+      "id": "number-mcp",
+      "ok": false,
+      "name": "TypeError",
+      "code": "ERR_INVALID_ARG_TYPE",
+      "message": "The \"paths[0]\" argument must be of type string. Received type number (5)",
+      "calls": []
+    },
+    {
+      "id": "foreign-always",
+      "ok": true,
+      "value": {
+        "sessionKey": "",
+        "error": {
+          "code": "not_configured",
+          "message": "Always-On apply is not configured on this gateway."
+        }
+      },
+      "calls": []
+    },
+    {
+      "id": "foreign-sop",
+      "ok": false,
+      "name": "DialogGatewayError",
+      "code": "CAPABILITY_UNAVAILABLE",
+      "message": "StaffDeck SOP status is unavailable.",
+      "calls": []
+    },
+    {
+      "id": "foreign-resume",
+      "ok": false,
+      "name": "DialogGatewayError",
+      "code": "CAPABILITY_UNAVAILABLE",
+      "message": "StaffDeck SOP resume is unavailable.",
+      "calls": []
+    },
+    {
+      "id": "foreign-mcp",
+      "ok": true,
+      "value": {
+        "servers": []
+      },
+      "calls": [
+        "refresh"
+      ]
+    }
+  ]
+}

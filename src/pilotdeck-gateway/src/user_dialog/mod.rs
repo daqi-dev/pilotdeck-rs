@@ -31,6 +31,8 @@ mod channel_tests;
 // not-yet-open entry, so the module itself is crate-visible.
 pub mod http_store;
 mod journal;
+#[cfg(unix)]
+pub(crate) mod native_journal;
 mod store;
 
 pub use bus::{

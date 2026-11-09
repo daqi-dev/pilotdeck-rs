@@ -7,6 +7,7 @@
 | 编号 | 日期 | 标题 |
 |------|------|------|
 | [001](arch/001_phase-c-agent-loop-sidecar.md) | 2026-10-14 | 阶段 C：agent 循环 Rust sidecar——边界、对拍尺子与旧代码复用 |
+| [002](arch/002_cli-native-machine.md) | 2026-11-09 | 原生 CLI、前端机器接口、多项目与源码安装 |
 
 ## ops
 

@@ -121,6 +121,8 @@ pub struct TaskBudgetStore {
     load_error: Option<TaskBudgetError>,
     record_count: usize,
     compact_after: usize,
+    #[cfg(unix)]
+    native_files: Option<crate::user_dialog::native_journal::NativeJournalFiles>,
 }
 impl TaskBudgetStore {
     /// `None` uses TS's default threshold (512). Zero also selects the default.
@@ -130,6 +132,8 @@ impl TaskBudgetStore {
             path: pilot_home
                 .as_ref()
                 .join("gateway/sdk-task-budget-ledger.jsonl"),
+            #[cfg(unix)]
+            native_files: None,
             ledgers: vec![],
             loaded: false,
             load_error: None,
@@ -138,6 +142,14 @@ impl TaskBudgetStore {
                 .filter(|n| *n > 0)
                 .unwrap_or(DEFAULT_COMPACT_AFTER),
         }
+    }
+    /// Native CLI IO is descriptor-relative, bounded and durably replaced.
+    #[cfg(unix)]
+    pub(crate) fn with_native_home(mut self, home: &Path) -> io::Result<Self> {
+        self.native_files = Some(crate::user_dialog::native_journal::NativeJournalFiles::new(
+            home, &self.path,
+        )?);
+        Ok(self)
     }
     pub fn path(&self) -> &Path {
         &self.path
@@ -167,7 +179,14 @@ impl TaskBudgetStore {
         result
     }
     fn load_records(&mut self) -> Result<()> {
-        let bytes = match fs::read(&self.path) {
+        #[cfg(unix)]
+        let read = match &self.native_files {
+            Some(files) => files.read_raw(),
+            None => fs::read(&self.path),
+        };
+        #[cfg(not(unix))]
+        let read = fs::read(&self.path);
+        let bytes = match read {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == io::ErrorKind::NotFound => vec![],
             Err(e) => return Err(e.into()),
@@ -175,6 +194,10 @@ impl TaskBudgetStore {
         // Node readFile("utf8") replaces malformed UTF-8. A complete last line
         // without LF is valid; malformed/unknown lines stay on disk until compact.
         for line in String::from_utf8_lossy(&bytes).split('\n') {
+            #[cfg(unix)]
+            if self.native_files.is_some() {
+                crate::user_dialog::native_journal::check_json_bounds(line.as_bytes())?;
+            }
             let Ok(record) = parse_json(line) else {
                 continue;
             };
@@ -404,50 +427,90 @@ impl TaskBudgetStore {
         self.ledgers.retain(|(k, _)| k != key);
     }
     fn append(&mut self, record: JsValue) -> Result<()> {
+        let result = self.append_inner(record);
+        // The generic store retains the baseline's write-failure behavior. A
+        // native failed write must never turn an unpersisted in-memory run into
+        // a successful duplicate settlement on retry.
+        #[cfg(unix)]
+        if self.native_files.is_some()
+            && let Err(error) = &result
+        {
+            self.load_error = Some(copy_load_error(error));
+        }
+        result
+    }
+    fn append_inner(&mut self, record: JsValue) -> Result<()> {
+        #[cfg(unix)]
+        if let Some(files) = &self.native_files {
+            let mut bytes = match files.read_raw() {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+                Err(error) => return Err(error.into()),
+            };
+            bytes.extend_from_slice(json_line(&record)?.as_bytes());
+            files.write(&bytes)?;
+        } else {
+            self.append_generic(&record)?;
+        }
+        #[cfg(not(unix))]
+        self.append_generic(&record)?;
+        self.record_count += 1;
+        if self.record_count >= self.compact_after {
+            self.compact()?;
+        }
+        Ok(())
+    }
+    fn append_generic(&self, record: &JsValue) -> Result<()> {
         fs::create_dir_all(self.path.parent().unwrap())?;
         let mut file = fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)?;
-        file.write_all(json_line(&record)?.as_bytes())?;
-        self.record_count += 1;
-        if self.record_count >= self.compact_after {
-            let mut contents = String::new();
-            for (key, ledger) in &self.ledgers {
-                let mut fields = vec![
-                    ("version", JsValue::Number(1.0)),
-                    ("kind", text("snapshot")),
-                ];
-                fields.extend(identity(key));
-                let mut ids = ledger.settled_run_ids.clone();
-                ids.sort(); // JsString orders UTF-16 code units, like Array#sort.
+        file.write_all(json_line(record)?.as_bytes())?;
+        Ok(())
+    }
+    fn compact(&mut self) -> Result<()> {
+        let mut contents = String::new();
+        for (key, ledger) in &self.ledgers {
+            let mut fields = vec![
+                ("version", JsValue::Number(1.0)),
+                ("kind", text("snapshot")),
+            ];
+            fields.extend(identity(key));
+            let mut ids = ledger.settled_run_ids.clone();
+            ids.sort(); // JsString orders UTF-16 code units, like Array#sort.
+            fields.extend([
+                ("spentUsd", JsValue::Number(ledger.spent_usd)),
+                (
+                    "settledRunIds",
+                    JsValue::Array(ids.into_iter().map(JsValue::String).collect()),
+                ),
+                ("totalUsd", ledger.total_usd.clone()),
+            ]);
+            if !absent(&ledger.project_retention_ms) {
                 fields.extend([
-                    ("spentUsd", JsValue::Number(ledger.spent_usd)),
-                    (
-                        "settledRunIds",
-                        JsValue::Array(ids.into_iter().map(JsValue::String).collect()),
-                    ),
-                    ("totalUsd", ledger.total_usd.clone()),
+                    ("projectRetentionMs", ledger.project_retention_ms.clone()),
+                    ("lastActivityAtMs", ledger.last_activity_at_ms.clone()),
                 ]);
-                if !absent(&ledger.project_retention_ms) {
-                    fields.extend([
-                        ("projectRetentionMs", ledger.project_retention_ms.clone()),
-                        ("lastActivityAtMs", ledger.last_activity_at_ms.clone()),
-                    ]);
-                }
-                contents.push_str(&json_line(&object(fields))?);
             }
-            let mut temporary_name = self.path.file_name().unwrap().to_os_string();
-            temporary_name.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
-            let temporary = self.path.with_file_name(temporary_name);
-            // Same durability assumption as TS writeFileSync + renameSync:
-            // neither the file nor its directory is fsynced. Load reads only the
-            // ledger; load and later compactions leave crash-residual .tmp files
-            // untouched. A successful rename consumes only this new temporary.
-            fs::write(&temporary, contents)?;
-            fs::rename(temporary, &self.path)?;
-            self.record_count = self.ledgers.len();
+            contents.push_str(&json_line(&object(fields))?);
         }
+        #[cfg(unix)]
+        if let Some(files) = &self.native_files {
+            files.write(contents.as_bytes())?;
+            self.record_count = self.ledgers.len();
+            return Ok(());
+        }
+        let mut temporary_name = self.path.file_name().unwrap().to_os_string();
+        temporary_name.push(format!(".{}.tmp", uuid::Uuid::new_v4()));
+        let temporary = self.path.with_file_name(temporary_name);
+        // Same durability assumption as TS writeFileSync + renameSync:
+        // neither the file nor its directory is fsynced. Load reads only the
+        // ledger; load and later compactions leave crash-residual .tmp files
+        // untouched. A successful rename consumes only this new temporary.
+        fs::write(&temporary, contents)?;
+        fs::rename(temporary, &self.path)?;
+        self.record_count = self.ledgers.len();
         Ok(())
     }
 }

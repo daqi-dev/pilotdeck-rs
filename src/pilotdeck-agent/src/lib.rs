@@ -23,6 +23,7 @@ mod output_recovery_policy;
 pub mod ports;
 pub mod request;
 mod request_assembly;
+pub use request_assembly::cache_plan_with_collation;
 pub mod request_materialization;
 mod request_materialization_policy;
 pub mod session_state;

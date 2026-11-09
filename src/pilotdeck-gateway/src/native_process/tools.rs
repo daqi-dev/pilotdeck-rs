@@ -62,13 +62,29 @@ pub(super) fn session_tool_results_dir(project: &Path, session_id: &JsString) ->
 }
 
 pub struct SessionTools {
+    user_dialog: Option<super::assembly::user_dialog::NativeDialogConfig>,
+    automation: Option<super::session_overrides::AutomationOverrides>,
+    pinned_steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+    session_emit: Option<super::session_events::SessionEmit>,
+    forks: Option<Arc<super::agent::NativeForkRegistry>>,
+    fork_owner: Option<Arc<super::agent::NativeForkOwner>>,
+    fork_scope: Option<Arc<super::agent::ForkScope>>,
+    web: Option<super::web::NativeWebTools>,
+    skills: super::skills::NativeSkills,
+    knowledge: Option<Arc<super::knowledge::KnowledgeTool>>,
+    context_runtime: Option<Arc<dyn crate::host::modules::context::ContextRuntime>>,
     options: Options,
     env: JsObject,
     binding: SessionBinding,
     config: JsObject,
     interactions: Arc<GatewayInteractionCoordinator>,
     permission: Arc<Permissions>,
+    permission_rules: crate::config::permission::RuleSetHandle,
     lsp: Arc<super::families::DefaultLsp>,
+    #[cfg(unix)]
+    background_tasks: Option<crate::runtime::background::BackgroundTaskRuntime>,
+    #[cfg(unix)]
+    native_sandbox: Option<Arc<crate::runtime::tools::sandbox::NativeSandbox>>,
     /// #1433: the session's composed MCP tools, registered into every turn's
     /// tool registry after the LSP entry (composed once at prepare, like
     /// `SessionMcpRuntimeBundle.compose`).
@@ -78,6 +94,12 @@ pub struct SessionTools {
     /// same turn never runs one mode for the sidecar and another for native
     /// tool admission.
     permission_mode_source: Option<Arc<dyn Fn() -> Option<JsString> + Send + Sync>>,
+    goal: crate::runtime::goal::GoalRuntime,
+    plugin_hooks: crate::hooks::protocol::HooksSettings,
+    hook_proxy: Option<crate::runtime::model::http::ProxySettings>,
+    hook_env: crate::config::Env,
+    plan_files: Option<Arc<super::plan_todo::NativePlanFiles>>,
+    plan_serial: Arc<tokio::sync::Mutex<()>>,
 }
 impl SessionTools {
     pub fn new(
@@ -91,21 +113,176 @@ impl SessionTools {
     ) -> Result<Self, RuntimeError> {
         let context =
             permission::create_default_permission_context(DefaultPermissionContextOptions {
-                cwd: options.project.to_string_lossy().into_owned().into(),
+                cwd: config
+                    .get("cwd")
+                    .and_then(JsValue::as_string)
+                    .cloned()
+                    .unwrap_or_else(|| options.project.to_string_lossy().into_owned().into()),
+                additional_working_directories: Some(super::sdk_permission::directories(&config)),
                 can_prompt: Some(false),
+                bypass_available: Some(
+                    config.get("bypassAvailable") != Some(&JsValue::Bool(false)),
+                ),
                 ..Default::default()
             });
+        let goal = crate::runtime::goal::GoalRuntime::new(
+            binding.context.session_key.clone(),
+            binding.recorder.clone(),
+            binding.projection.clone(),
+        );
         Ok(Self {
+            user_dialog: None,
+            automation: None,
+            pinned_steer: None,
+            session_emit: None,
+            forks: None,
+            fork_owner: None,
+            fork_scope: None,
+            goal,
+            plugin_hooks: Vec::new(),
+            hook_proxy: None,
+            hook_env: env.clone(),
+            plan_files: None,
+            plan_serial: Arc::new(tokio::sync::Mutex::new(())),
+            web: None,
+            skills: Default::default(),
+            knowledge: None,
+            context_runtime: None,
             options: options.clone(),
-            env: env_object(env),
+            env: {
+                let mut env = env_object(env);
+                env.insert(
+                    "PILOT_HOME".into(),
+                    JsValue::String(options.home.to_string_lossy().into_owned().into()),
+                );
+                env
+            },
             binding,
             config,
             interactions,
             lsp,
             mcp,
             permission: Arc::new(Permissions(Mutex::new((context, None)))),
+            permission_rules: crate::config::permission::RuleSetHandle::empty(),
             permission_mode_source: None,
+            #[cfg(unix)]
+            background_tasks: None,
+            #[cfg(unix)]
+            native_sandbox: None,
         })
+    }
+
+    pub(super) fn with_knowledge(
+        mut self,
+        tool: Option<Arc<super::knowledge::KnowledgeTool>>,
+    ) -> Self {
+        self.knowledge = tool;
+        self
+    }
+
+    pub(super) fn with_user_dialog(
+        mut self,
+        config: Option<super::assembly::user_dialog::NativeDialogConfig>,
+    ) -> Self {
+        self.user_dialog = config;
+        self
+    }
+
+    fn execution_cwd(&self) -> JsString {
+        self.config
+            .get("cwd")
+            .and_then(JsValue::as_string)
+            .cloned()
+            .unwrap_or_else(|| self.options.project.to_string_lossy().as_ref().into())
+    }
+
+    pub(super) fn with_automation(
+        mut self,
+        automation: Option<super::session_overrides::AutomationOverrides>,
+    ) -> Self {
+        if let Some(automation) = &automation {
+            let denied = self
+                .binding
+                .context
+                .disallowed_tools
+                .get_or_insert_with(Vec::new);
+            for name in &automation.exclude_tools {
+                if !denied.contains(name) {
+                    denied.push(name.clone());
+                }
+            }
+        }
+        self.automation = automation;
+        self
+    }
+
+    pub(super) fn with_plan_files(mut self, files: Arc<super::plan_todo::NativePlanFiles>) -> Self {
+        self.plan_files = Some(files);
+        self
+    }
+
+    pub(super) fn with_pinned_steer(
+        mut self,
+        steer: Option<crate::runtime::project::interaction_steer::InteractionSteer>,
+    ) -> Self {
+        self.pinned_steer = steer;
+        self
+    }
+
+    pub(super) fn with_session_emitter(mut self, emit: super::session_events::SessionEmit) -> Self {
+        self.session_emit = Some(emit);
+        self
+    }
+
+    pub(super) fn with_forks(
+        mut self,
+        forks: Arc<super::agent::NativeForkRegistry>,
+        scope: Option<Arc<super::agent::ForkScope>>,
+        owner: Arc<super::agent::NativeForkOwner>,
+    ) -> Self {
+        self.forks = Some(forks);
+        self.fork_scope = scope;
+        self.fork_owner = Some(owner);
+        self
+    }
+    pub(super) fn with_fork_mcp_names(mut self, names: Vec<JsString>) -> Self {
+        if let Some(allowed) = &mut self.binding.context.allowed_tools {
+            for name in names {
+                if !allowed.contains(&name) {
+                    allowed.push(name);
+                }
+            }
+        }
+        self
+    }
+    pub(super) fn with_plugin_hooks(
+        mut self,
+        hooks: crate::hooks::protocol::HooksSettings,
+    ) -> Self {
+        self.plugin_hooks = hooks;
+        self
+    }
+    pub(super) fn with_hook_proxy(
+        mut self,
+        proxy: Option<crate::runtime::model::http::ProxySettings>,
+    ) -> Self {
+        self.hook_proxy = proxy;
+        self
+    }
+
+    pub(super) fn with_skills(
+        mut self,
+        skills: super::skills::NativeSkills,
+        context: Arc<dyn crate::host::modules::context::ContextRuntime>,
+    ) -> Self {
+        self.skills = skills;
+        self.context_runtime = Some(context);
+        self
+    }
+
+    pub(super) fn with_web(mut self, web: super::web::NativeWebTools) -> Self {
+        self.web = Some(web);
+        self
     }
 
     /// #1864 (b): the live permission-mode source, consulted on every turn
@@ -119,11 +296,58 @@ impl SessionTools {
         self
     }
 
+    pub fn with_permission_rules(
+        mut self,
+        rules: crate::config::permission::RuleSetHandle,
+    ) -> Self {
+        self.permission_rules = rules;
+        self
+    }
+
+    #[cfg(unix)]
+    pub fn with_background_tasks(
+        mut self,
+        tasks: crate::runtime::background::BackgroundTaskRuntime,
+    ) -> Self {
+        self.background_tasks = Some(tasks);
+        self
+    }
+
+    #[cfg(unix)]
+    pub fn with_native_sandbox(
+        mut self,
+        sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    ) -> Self {
+        self.native_sandbox = Some(sandbox);
+        self
+    }
+
+    pub(super) fn tool_results_dir(&self, session: &JsString) -> PathBuf {
+        let root = self
+            .config
+            .get("nativeEphemeralRoot")
+            .and_then(JsValue::as_string)
+            .and_then(|v| v.to_utf8().ok())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| self.options.project.clone());
+        session_tool_results_dir(&root, session)
+    }
+
     pub fn turn(
         &self,
         identity: &ExecutionIdentity,
         recorder: Arc<Recorder>,
         signal: Cancellation,
+    ) -> SessionPorts {
+        self.turn_with_authority(identity, recorder, signal, None)
+    }
+
+    pub fn turn_with_authority(
+        &self,
+        identity: &ExecutionIdentity,
+        recorder: Arc<Recorder>,
+        signal: Cancellation,
+        authority: Option<crate::runtime::turn::interaction::TurnInteractionAuthority>,
     ) -> SessionPorts {
         // #1864 (b): the effective mode — a non-empty
         // `managedPermissions.defaultMode` wins, else the stored selection —
@@ -133,43 +357,452 @@ impl SessionTools {
         // (`tool_context` and `resolve_workspace_path` read that copy) all
         // agree with the sidecar's payload this turn. A `None` source leaves
         // the previous mode and the plan-round-trip stack below untouched.
-        let (permission_context, permission_mode) = {
+        let (mut turn_context, permission_mode) = {
             let mut state = self.permission.0.lock().unwrap_or_else(|e| e.into_inner());
-            if let Some(mode) = permission::managed_default_mode(&self.config).or_else(|| {
+            if let Some(mode) = permission::configured_permission_mode(&self.config).or_else(|| {
                 self.permission_mode_source
                     .as_ref()
                     .and_then(|source| source())
             }) {
                 state.0.mode = crate::config::permission::PermissionMode::from(mode);
             }
-            (state.0.to_value(), state.0.mode.as_js_string().clone())
+            // TS HostPermissionModeState.applyTurnInput runs after session config
+            // composition. Mode comes from validated host admission, not a tool
+            // payload; policy rules still run before bypass in permission::decide.
+            if let Some(mode) = authority.as_ref().and_then(|a| a.permission_mode.as_ref()) {
+                if mode.equals_str("plan") && !state.0.mode.as_js_string().equals_str("plan") {
+                    state.1 = Some(
+                        authority
+                            .as_ref()
+                            .and_then(|a| a.base_permission_mode.clone())
+                            .map(crate::config::permission::PermissionMode::from)
+                            .unwrap_or_else(|| state.0.mode.clone()),
+                    );
+                }
+                state.0.mode = crate::config::permission::PermissionMode::from(mode.clone());
+            }
+            (state.0.clone(), state.0.mode.as_js_string().clone())
         };
+        // These flags belong to this invocation, never the session's shared
+        // permission-mode state. A managed false remains a policy ceiling.
+        let policy_disabled = self.config.get("canPrompt") == Some(&JsValue::Bool(false))
+            || self
+                .config
+                .get("managedPermissions")
+                .and_then(|v| v.get("canPrompt"))
+                == Some(&JsValue::Bool(false))
+            || authority
+                .as_ref()
+                .is_some_and(|a| a.policy_can_prompt == Some(false));
+        let sdk_mode = authority
+            .as_ref()
+            .and_then(|a| a.sdk_permission_mode.as_ref());
+        turn_context.accept_edits = sdk_mode.map(|m| m.equals_str("acceptEdits"));
+        turn_context.can_prompt = authority
+            .as_ref()
+            .is_some_and(|a| a.can_prompt.unwrap_or(true))
+            && !policy_disabled
+            && !sdk_mode.is_some_and(|m| m.equals_str("dontAsk"));
+        turn_context.policy_can_prompt = policy_disabled.then_some(false);
+        if let Some(automation) = &self.automation {
+            turn_context.can_prompt &= automation.can_prompt;
+            if !automation.can_prompt {
+                turn_context.policy_can_prompt = Some(false);
+            }
+            turn_context.bypass_available &= automation.bypass_available;
+        }
+        turn_context.rules = self.permission_rules.snapshot();
+        if let Some(files) = &self.plan_files {
+            turn_context.plan_directory_path = Some(files.directory_string());
+        }
+        let permission_context = turn_context.to_value();
+        let permission_emit = authority
+            .as_ref()
+            .map(|a| a.emit.clone())
+            .unwrap_or_else(|| Arc::new(|_| false));
+        #[cfg(unix)]
+        let tools = if let Some(sandbox) = &self.native_sandbox {
+            native_tools_with_sandbox(
+                self.binding.context.allowed_tools.clone(),
+                self.binding.context.disallowed_tools.clone(),
+                self.lsp.clone(),
+                sandbox.clone(),
+                &self.mcp,
+            )
+        } else {
+            native_tools(
+                self.binding.context.allowed_tools.clone(),
+                self.binding.context.disallowed_tools.clone(),
+                self.lsp.clone(),
+                &self.mcp,
+            )
+        };
+        #[cfg(not(unix))]
         let tools = native_tools(
             self.binding.context.allowed_tools.clone(),
             self.binding.context.disallowed_tools.clone(),
             self.lsp.clone(),
             &self.mcp,
         );
-        let execution = Arc::new(ToolRuntime::new(
-            tools,
-            self.permission.clone(),
-            SchedulerMode::Concurrent,
-        ));
+        let mut read_env = self.env.clone();
+        read_env.insert(
+            "PILOT_HOME".into(),
+            JsValue::String(self.options.home.to_string_lossy().into_owned().into()),
+        );
+        tools
+            .replace(Arc::new(
+                builtin::read_file::ReadFileTool::with_permissions(
+                    self.binding.checkpoint.clone(),
+                    read_env,
+                ),
+            ))
+            .expect("native read_file is registered");
+        if self.user_dialog.is_some()
+            && let Some(JsValue::Array(kinds)) = self.config.get("userDialogKinds")
+        {
+            let kinds: Vec<_> = kinds
+                .iter()
+                .filter_map(JsValue::as_string)
+                .cloned()
+                .collect();
+            builtin::user_dialog::register_user_dialog_tools(&tools, &kinds)
+                .expect("native opt-in dialog tool names are unique");
+        }
+        tools
+            .register(Arc::new(builtin::send_attachment::SendAttachmentTool::new(
+                self.binding.checkpoint.clone(),
+                self.env.clone(),
+            )))
+            .expect("native attachment tool name is unique");
+        if self.plan_files.is_some() {
+            for kind in [
+                builtin::plan_todo::Kind::Enter,
+                builtin::plan_todo::Kind::Exit,
+                builtin::plan_todo::Kind::Todo,
+            ] {
+                tools
+                    .register(Arc::new(builtin::plan_todo::Tool::new(kind)))
+                    .expect("native plan tool names are unique");
+            }
+        }
+        if let Some(contexts) = self
+            .automation
+            .as_ref()
+            .and_then(|value| value.context_registry.as_ref())
+        {
+            crate::runtime::always_on::register_tools(
+                &tools,
+                contexts.clone(),
+                &identity.session_id,
+            )
+            .expect("native automation tool names are unique");
+        }
+        self.skills.register(&tools);
+        let knowledge_catalog_error: Option<JsString> = self
+            .knowledge
+            .as_ref()
+            .and_then(|knowledge| tools.register(knowledge.clone()).err())
+            .map(|error| error.message.into());
+        if let Some(web) = &self.web {
+            web.register(&tools, identity)
+                .expect("native web tool names are unique");
+        }
+        #[cfg(unix)]
+        if let Some(tasks) = &self.background_tasks {
+            for tool in if let Some(sandbox) = &self.native_sandbox {
+                builtin::task::task_tools_with_sandbox(Some(tasks.clone()), sandbox.clone())
+            } else {
+                builtin::task::task_tools(Some(tasks.clone()))
+            } {
+                tools.register(tool).expect("native task names are unique");
+            }
+        }
         let mut config = self.config.clone();
         config.insert("env".into(), JsValue::Object(self.env.clone()));
         config.insert("permissionMode".into(), JsValue::String(permission_mode));
         config.insert("permissionContext".into(), permission_context);
+        // The SDK can only narrow the complete ordinary catalog. Capture this
+        // same view in forks and native execution so refresh/aliases cannot
+        // reintroduce a blocked native, extension or MCP definition.
+        let tools = super::sdk_tool_policy::scope(
+            tools,
+            &self.config,
+            self.binding.context.allowed_tools.clone(),
+            self.binding.context.disallowed_tools.clone(),
+        )
+        .expect("new native turn registry is active");
+        let fork_turn = self.forks.as_ref().map(|registry| {
+            super::agent::ForkTurn::new(
+                registry.clone(),
+                identity.clone(),
+                config.clone(),
+                recorder.clone(),
+                self.permission_rules.clone(),
+                authority.clone(),
+                self.fork_scope.as_deref(),
+                tools.clone(),
+                self.skills.clone(),
+                self.fork_owner.as_ref(),
+                #[cfg(unix)]
+                self.native_sandbox.clone(),
+            )
+        });
+        if let Some(turn) = &fork_turn {
+            if let Some(emit) = &self.session_emit {
+                turn.bind_session_emitter(emit.clone());
+            }
+            turn.register(&tools);
+        }
+        let sdk_catalog_error = super::sdk_tools::install(&tools, &config)
+            .err()
+            .map(|error| error.message.into());
+        let execution = ToolRuntime::new(
+            tools,
+            // Even a profile without an interaction resource keeps this turn's
+            // policy/flags/rules; session mode observation is a separate port.
+            Arc::new(Permissions(Mutex::new((turn_context.clone(), None)))),
+            SchedulerMode::Concurrent,
+        )
+        .with_catalog_error(knowledge_catalog_error.or(sdk_catalog_error))
+        .with_event_emitter({
+            let emit = permission_emit.clone();
+            Arc::new(move |event| {
+                // Match GatewayAgentEventProjector's PermissionDenied projection:
+                // internal sessionId/turnId stay behind the Gateway wire boundary.
+                let mut frame = JsObject::new();
+                for key in ["type", "toolName", "reason"] {
+                    frame.insert(
+                        key.into(),
+                        event.get(key).cloned().unwrap_or(JsValue::Undefined),
+                    );
+                }
+                let _ = emit(JsValue::Object(frame));
+            })
+        })
+        .with_native_sandbox(
+            self.config
+                .get("sandboxMode")
+                .and_then(JsValue::as_string)
+                .cloned(),
+        );
+        #[cfg(unix)]
+        let execution = if let Some(sandbox) = &self.native_sandbox {
+            execution.with_native_sandbox_provider(sandbox.clone())
+        } else {
+            execution
+        };
+        let execution = Arc::new(execution.with_mode_owner(self.permission.clone()));
+        let execution: Arc<dyn capability::ToolExecution> = if let Some(turn) = &fork_turn {
+            Arc::new(super::agent::ForkExecution::new(execution, turn.clone()))
+        } else {
+            execution
+        };
         let binding = TurnBinding {
             config: config.clone(),
             input: value([
                 ("sessionId", JsValue::String(identity.session_id.clone())),
                 ("turnId", JsValue::String(identity.turn_id.clone())),
+                ("canElicit", JsValue::Bool(self.fork_scope.is_none())),
             ]),
             checkpoint: self.binding.checkpoint.clone(),
             abort_signal: Some(Arc::new(signal.clone())),
             environment: Arc::new(NativeTurnEnvironment(self.env.clone())),
         };
+        let question_profile = Arc::new(std::sync::OnceLock::new());
+        let mut sdk_state = authority
+            .as_ref()
+            .and_then(|authority| authority.sdk_hooks.clone());
+        let on_requested = sdk_state.as_ref().map(|sdk| {
+            let handlers = sdk.handlers.clone();
+            let session = identity.session_id.clone();
+            Arc::new(move |payload: JsObject| {
+                let handler = handlers
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .session_hook_handler(&session)
+                    .cloned();
+                if let Some(handler) = handler {
+                    handler(
+                        crate::runtime::sdk_session::PilotDeckHookEvent::Elicitation,
+                        &JsValue::Object(payload),
+                    );
+                }
+            }) as super::elicitation::RequestedObserver
+        });
+        let elicitation = super::elicitation::Elicitation {
+            profile: question_profile.clone(),
+            coordinator: self.interactions.clone(),
+            on_requested,
+            session: identity.session_id.clone(),
+            can_prompt: turn_context.can_prompt,
+            emit: permission_emit.clone(),
+            timeout: Duration::from_millis(
+                self.env
+                    .get("PILOTDECK_ELICITATION_TIMEOUT_MS")
+                    .and_then(JsValue::as_string)
+                    .and_then(|s| s.to_utf8().ok())
+                    .map(|s| s.trim().to_owned())
+                    .and_then(|s| {
+                        let s = s.strip_prefix('+').unwrap_or(&s);
+                        let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
+                        digits.parse::<u64>().ok().filter(|n| *n > 0)
+                    })
+                    .unwrap_or(120_000),
+            ),
+        };
+        let profile_for_bind = question_profile.clone();
+        let profile_for_presence = question_profile;
+        let mode_owner = self.permission.clone();
+        let plan_todo = self.plan_files.as_ref().map(|_| {
+            Arc::new(super::plan_todo::PlanTodo {
+                session: identity.session_id.clone(),
+                turn: identity.turn_id.clone(),
+                projection: self.binding.projection.clone(),
+                recorder: self.binding.recorder.clone(),
+                serial: self.plan_serial.clone(),
+            })
+        });
+        let sdk_file_slot = sdk_state
+            .as_ref()
+            .filter(|sdk| {
+                sdk.settings.iter().any(|(event, matchers)| {
+                    event.equals_str("FileChanged") && !matchers.is_empty()
+                })
+            })
+            .map(|_| {
+                Arc::new(std::sync::OnceLock::<(
+                    Arc<crate::runtime::hooks::LifecycleRuntime>,
+                    Cancellation,
+                )>::new())
+            });
+        let sdk_file_notifier = sdk_file_slot.as_ref().map(|slot| {
+            let slot = slot.clone();
+            let session = identity.session_id.clone();
+            let cwd = self.execution_cwd();
+            let callback: Arc<
+                dyn Fn(
+                        crate::runtime::tools::builtin::FileUpdateNotice,
+                    ) -> crate::host::HostFuture<()>
+                    + Send
+                    + Sync,
+            > = Arc::new(move |notice| {
+                let slot = slot.clone();
+                let session = session.clone();
+                let cwd = cwd.clone();
+                Box::pin(async move {
+                    let (runtime, signal) = slot.get().ok_or_else(|| {
+                        crate::host::ModuleError::new("SDK FileChanged owner is unavailable.")
+                    })?;
+                    let input = crate::runtime::hooks::LifecycleDispatchInput {
+                        event: "FileChanged".into(),
+                        base_input: value([
+                            ("sessionId", JsValue::String(session)),
+                            ("transcriptPath", "".into()),
+                            ("cwd", JsValue::String(cwd.clone())),
+                        ]),
+                        payload: Some(value([
+                            ("filePath", JsValue::String(notice.relative.clone())),
+                            ("absolutePath", JsValue::String(notice.absolute)),
+                            ("root", JsValue::String(notice.root)),
+                            (
+                                "changeType",
+                                if notice.created {
+                                    "created".into()
+                                } else {
+                                    "updated".into()
+                                },
+                            ),
+                        ])),
+                        match_query: Some(notice.relative),
+                        cwd,
+                        env: None,
+                        signal: Some(signal.clone()),
+                    };
+                    let _ = runtime.dispatch(input).await;
+                    Ok(())
+                })
+            });
+            Arc::new(crate::runtime::tools::builtin::FileUpdateNotifier(callback))
+                as capability::RuntimeContext
+        });
+        let user_dialog = self.user_dialog.as_ref().map(|dialog| {
+            let emit = permission_emit.clone();
+            let mut options = crate::user_dialog::ChannelOptions::new(
+                identity.session_id.clone(),
+                dialog.bus.clone(),
+                Arc::new(move |event| {
+                    if emit(event) {
+                        Ok(())
+                    } else {
+                        Err(crate::user_dialog::DialogError::Invalid(
+                            "User dialog event owner is no longer active.".into(),
+                        ))
+                    }
+                }),
+            );
+            options.journal = dialog.journal.clone();
+            Arc::new(dialog.port.with_options(options)) as capability::RuntimeContext
+        });
         let tool_ports = ToolContextPorts {
+            // ToolRuntimeContext creates this callback only when the frozen
+            // session config enables includeToolProgress.  Project exactly
+            // the gateway tool_progress shape before the owned turn emitter.
+            event_emitter: Some(Arc::new({
+                let emit = permission_emit.clone();
+                move |event: JsObject| {
+                    let mut frame = JsObject::new();
+                    frame.insert("type".into(), "tool_progress".into());
+                    for key in ["toolCallId", "toolName", "message", "createdAt"] {
+                        frame.insert(
+                            key.into(),
+                            event.get(key).cloned().unwrap_or(JsValue::Undefined),
+                        );
+                    }
+                    if let Some(value) = event
+                        .get("metadata")
+                        .filter(|v| crate::runtime::turn::submit::truthy(v))
+                    {
+                        frame.insert("metadata".into(), value.clone());
+                    }
+                    let _ = emit(JsValue::Object(frame));
+                }
+            })),
+            user_dialog,
+            file_update_notifier: sdk_file_notifier,
+            subagent: fork_turn.as_ref().map(|turn| {
+                Arc::new(super::agent::ForkPort(turn.clone())) as Arc<dyn OneShotSubagent>
+            }),
+            plan_files: self
+                .plan_files
+                .clone()
+                .map(|v| v as Arc<dyn crate::host::modules::tool_context::PlanFiles>),
+            permission_mode: Some(Arc::new(move || {
+                Some(
+                    mode_owner
+                        .0
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .0
+                        .mode
+                        .as_js_string()
+                        .clone(),
+                )
+            })),
+            goal: Some(Arc::new(self.goal.clone())),
+            bind_interaction_profile: Some(Arc::new(move |profile| {
+                profile_for_bind.set(profile).map_err(|_| {
+                    crate::host::ModuleError::new("Interaction profile is already bound.").into()
+                })
+            })),
+            elicitation_enabled: Some(Arc::new(move || {
+                profile_for_presence
+                    .get()
+                    .is_some_and(|profile| profile.question_provider != "disabled")
+            })),
+            elicitation: self
+                .fork_scope
+                .is_none()
+                .then(|| Arc::new(elicitation) as capability::RuntimeContext),
             clock: Some(Arc::new(|| JsValue::String(SystemExecutionClock.now_iso()))),
             ..Default::default()
         };
@@ -179,8 +812,112 @@ impl SessionTools {
             turn: identity.turn_id.clone(),
         };
         let message_sink = sink.clone();
+        let mut turn_hooks = self.plugin_hooks.clone();
+        if let Some(sdk) = &sdk_state {
+            for (event, matchers) in &sdk.settings {
+                if event.equals_str("ConfigChange") || event.equals_str("FileChanged") {
+                    continue;
+                }
+                if let Some((_, existing)) = turn_hooks.iter_mut().find(|(name, _)| name == event) {
+                    existing.extend(matchers.iter().cloned());
+                } else {
+                    turn_hooks.push((event.clone(), matchers.clone()));
+                }
+            }
+        }
+        // One budget per submit, shared by turn and session projections.
+        let projection_budget =
+            Arc::new(super::assembly::sdk_hooks::HookProjectionBudget::default());
+        let native_async_turn = self.forks.as_ref().map(|registry| {
+            registry.capture_async_turn(&identity.session_id, self.pinned_steer.clone())
+        });
+        if let Some(sdk) = &mut sdk_state {
+            sdk.native_steer_bound = native_async_turn
+                .as_ref()
+                .and_then(Option::as_ref)
+                .map(|capture| capture.bind_steer.clone());
+        }
+        let hook_options = crate::runtime::hooks::HookRuntimeOptions {
+            on_projection: Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
+                session: identity.session_id.clone(),
+                sdk: sdk_state.as_ref().is_some_and(|sdk| sdk.include_events),
+                emit: permission_emit.clone(),
+                error_emit: permission_emit.clone(),
+                signal: signal.clone(),
+                budget: projection_budget.clone(),
+            })),
+            on_async_registered: sdk_state.as_ref().filter(|sdk| sdk.active).map(|sdk| {
+                if let Some(parent) = self
+                    .fork_scope
+                    .as_ref()
+                    .and_then(|scope| scope.sdk_async_registration.clone())
+                {
+                    // TS children share the parent's session lifecycle. The
+                    // actual child HookRuntime owns this dispatch/cancellation;
+                    // do not borrow the creating parent's expired turn guard.
+                    return parent;
+                }
+                Arc::new(super::assembly::sdk_hooks::NativeAsyncRegistration {
+                    session: identity.session_id.clone(),
+                    include_events: sdk.include_events,
+                    registry: sdk.async_registry.clone(),
+                    steer: self.pinned_steer.clone(),
+                    current_turn: sdk.current_turn.clone(),
+                    native_turn: native_async_turn.clone(),
+                })
+                    as Arc<dyn crate::runtime::hooks::runtime::AsyncHookRegistrationHandler>
+            }),
+
+            #[cfg(unix)]
+            shell: self.native_sandbox.as_ref().map(|sandbox| {
+                Arc::new(crate::runtime::hooks::exec::SandboxedHookShell {
+                    sandbox: sandbox.clone(),
+                    workspace: self.execution_cwd(),
+                }) as Arc<dyn crate::runtime::hooks::exec::ShellPort>
+            }),
+            http: Some(
+                crate::runtime::hooks::exec::HttpHookExecutor::with_native_proxy(
+                    self.hook_proxy.as_ref(),
+                    &self.hook_env,
+                ),
+            ),
+            ..Default::default()
+        };
+
+        if let Some(turn) = &fork_turn {
+            turn.bind_detached_hooks(
+                turn_hooks.clone(),
+                hook_options.clone(),
+                sdk_state.clone(),
+                self.pinned_steer.clone(),
+            )
+            .expect("native detached hooks are bound once");
+        }
+        let mut session_hook_options = hook_options.clone();
+        session_hook_options.on_projection =
+            Some(Arc::new(super::assembly::sdk_hooks::NativeHookProjection {
+                session: identity.session_id.clone(),
+                sdk: sdk_state.as_ref().is_some_and(|sdk| sdk.include_events),
+                emit: self
+                    .session_emit
+                    .clone()
+                    .unwrap_or_else(|| permission_emit.clone()),
+                error_emit: permission_emit.clone(),
+                signal: signal.clone(),
+                budget: projection_budget,
+            }));
         SessionPorts {
             model: RouterModelPortOptions {
+                is_main_agent: self.fork_scope.is_none(),
+                managed_model_policy: authority
+                    .as_ref()
+                    .and_then(|a| a.sdk_models.as_ref())
+                    .and_then(|m| m.policy.clone()),
+                fallback_models: authority
+                    .as_ref()
+                    .and_then(|a| a.sdk_models.as_ref())
+                    .map(|m| m.fallback.clone())
+                    .unwrap_or_default(),
                 project_path: Some(self.options.project.to_string_lossy().into_owned().into()),
                 agent_model: self
                     .config
@@ -189,20 +926,22 @@ impl SessionTools {
                     .zip(self.config.get("model").and_then(JsValue::as_string))
                     .map(|(p, m)| (p.clone(), m.clone())),
                 agent_max_context_tokens: self.config.get("maxContextTokens").cloned(),
-                ..RouterModelPortOptions::main_agent()
             },
             recorder: None,
-            tool_results_dir: session_tool_results_dir(&self.options.project, &identity.session_id),
-            context_runtime: None,
+            tool_results_dir: self.tool_results_dir(&identity.session_id),
+            context_runtime: self.context_runtime.clone(),
             context_identity: ContextRequestIdentity::new(binding.clone(), tool_ports.clone()),
             context_config: config,
             tool_execution: execution,
             tool_context: Arc::new(CapabilityContext {
                 builder: ToolContextBuilder::new(binding, tool_ports, true),
-                plan_todo: None,
+                plan_todo: plan_todo
+                    .clone()
+                    .map(|v| v as Arc<dyn crate::host::modules::tool_context::SessionService>),
             }),
             tool_observer: self.permission.clone(),
-            plan_todo: None,
+            plan_todo: plan_todo
+                .map(|v| v as Arc<dyn crate::host::modules::capability::PlanTodoHandler>),
             turn: Default::default(),
             interaction: InteractionTurnInput {
                 permission: PermissionTurnOptions {
@@ -211,19 +950,17 @@ impl SessionTools {
                         &RuntimeProfileOverrides::default(),
                     )
                     .interaction,
-                    context: self
-                        .permission
-                        .0
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .0
-                        .clone(),
-                    rules: crate::config::permission::RuleSetHandle::empty(),
+                    context: turn_context,
+                    rules: self.permission_rules.clone(),
                     coordinator: self.interactions.clone(),
-                    emit: Arc::new(|_| false),
+                    emit: permission_emit.clone(),
                     timeout: Duration::from_secs(30),
                 },
-                hooks: vec![],
+                hooks: turn_hooks,
+                sdk_hook_state: sdk_state.clone(),
+                sdk_file_slot,
+                hook_options: Some(hook_options),
+                session_hook_options: Some(session_hook_options),
                 contribution: None,
                 base_env: Some(self.env.clone()),
                 signal,
@@ -232,7 +969,7 @@ impl SessionTools {
                 messages: vec![],
                 switches: CompositionSwitches {
                     plan_todo: false,
-                    elicitation_available: None,
+                    elicitation_available: Some(self.fork_scope.is_none()),
                 },
                 turn_ports: Default::default(),
             },
@@ -385,6 +1122,22 @@ impl PermissionTool for Tool {
     }
 }
 impl PermissionDecision for Permissions {
+    fn current_mode(&self) -> Option<crate::config::permission::PermissionMode> {
+        Some(
+            self.0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .0
+                .mode
+                .clone(),
+        )
+    }
+    fn apply_mode_effect(&self, result: &JsObject) {
+        self.apply_result(result);
+    }
+    fn set_trusted_mode(&self, mode: crate::config::permission::PermissionMode) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).0.mode = mode;
+    }
     fn decide(
         &self,
         tool: Arc<dyn capability::ToolDefinition>,
@@ -409,34 +1162,41 @@ impl PermissionDecision for Permissions {
         )
     }
 }
+impl Permissions {
+    fn apply_result(&self, result: &JsObject) {
+        if result.get("type") != Some(&"success".into()) {
+            return;
+        }
+        let Some(mode) = result
+            .get("data")
+            .and_then(|v| v.get("requestedMode"))
+            .filter(|v| permission::is_permission_mode(v))
+            .and_then(JsValue::as_string)
+        else {
+            return;
+        };
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut mode = crate::config::permission::PermissionMode::from(mode.clone());
+        if mode.as_js_string().equals_str("plan") && !state.0.mode.as_js_string().equals_str("plan")
+        {
+            state.1 = Some(state.0.mode.clone());
+        } else if state.0.mode.as_js_string().equals_str("plan")
+            && !mode.as_js_string().equals_str("plan")
+            && let Some(previous) = state.1.take()
+        {
+            mode = previous;
+        }
+        state.0.mode = mode;
+    }
+}
 impl capability::CapabilityResultObserver for Permissions {
     fn on_capability_results(&self, results: Vec<JsObject>) -> HostFuture<()> {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        for result in results {
-            if result.get("type") != Some(&"success".into()) {
-                continue;
-            }
-            let Some(mode) = result
-                .get("data")
-                .and_then(|v| v.get("requestedMode"))
-                .filter(|v| permission::is_permission_mode(v))
-                .and_then(JsValue::as_string)
-            else {
-                continue;
-            };
-            let mut mode = crate::config::permission::PermissionMode::from(mode.clone());
-            if mode.as_js_string().equals_str("plan")
-                && !state.0.mode.as_js_string().equals_str("plan")
-            {
-                state.1 = Some(state.0.mode.clone());
-            } else if state.0.mode.as_js_string().equals_str("plan")
-                && !mode.as_js_string().equals_str("plan")
-                && let Some(previous) = state.1.take()
-            {
-                mode = previous;
-            }
-            state.0.mode = mode;
+        for result in &results {
+            self.apply_result(result);
         }
+        Box::pin(async { Ok(()) })
+    }
+    fn on_results_after_mode_effects(&self, _results: Vec<JsObject>) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
 }
@@ -484,6 +1244,46 @@ pub(super) fn native_tools(
     lsp: Arc<super::families::DefaultLsp>,
     mcp: &SessionMcpTools,
 ) -> ToolRegistry {
+    native_tools_with_definitions(allowed, denied, lsp, mcp, {
+        let mut definitions = builtin::read_only_tools();
+        definitions.extend(builtin::write_tools());
+        #[cfg(unix)]
+        definitions.extend(builtin::shell_tools());
+        #[cfg(unix)]
+        definitions.push(Arc::new(builtin::execute_code::ExecuteCodeTool::new()));
+        definitions
+    })
+}
+#[cfg(unix)]
+fn native_tools_with_sandbox(
+    allowed: Option<Vec<JsString>>,
+    denied: Option<Vec<JsString>>,
+    lsp: Arc<super::families::DefaultLsp>,
+    sandbox: Arc<crate::runtime::tools::sandbox::NativeSandbox>,
+    mcp: &SessionMcpTools,
+) -> ToolRegistry {
+    let mut definitions = builtin::read_only_tools();
+    definitions.extend(builtin::write_tools());
+    definitions.push(Arc::new(
+        builtin::execute_code::ExecuteCodeTool::with_sandbox(Some(sandbox.clone())),
+    ));
+    definitions.push(Arc::new(builtin::bash::BashTool::with_options(
+        builtin::bash::BashToolOptions {
+            runner: Some(Arc::new(
+                builtin::bash::runner::SandboxedShellCommandRunner(sandbox),
+            )),
+            ..Default::default()
+        },
+    )));
+    native_tools_with_definitions(allowed, denied, lsp, mcp, definitions)
+}
+fn native_tools_with_definitions(
+    allowed: Option<Vec<JsString>>,
+    denied: Option<Vec<JsString>>,
+    lsp: Arc<super::families::DefaultLsp>,
+    mcp: &SessionMcpTools,
+    definitions: Vec<Arc<dyn crate::runtime::tools::ExecutableTool>>,
+) -> ToolRegistry {
     let tools = ToolRegistry::new(
         None,
         Some(Arc::new(move |tool| {
@@ -494,13 +1294,28 @@ pub(super) fn native_tools(
                 && !denied.as_ref().is_some_and(|names| names.contains(name))
         })),
     );
-    // The isolated entry advertises the native read-only family. Mutating
-    // tools, subagents and integrations are not implied by an empty port.
-    for tool in builtin::read_only_tools() {
+    // Workspace mutation and foreground shell execution share the same host
+    // permission gate as read tools; registration never authorizes execution.
+    for tool in definitions {
         tools
             .register(tool)
             .expect("native builtin names are unique");
     }
+    for tool in builtin::goal::tools() {
+        tools
+            .register(tool)
+            .expect("native goal tool names are unique");
+    }
+    tools
+        .register(Arc::new(
+            builtin::ask_user_question::AskUserQuestion::default(),
+        ))
+        .expect("native question tool name is unique");
+    tools
+        .register(Arc::new(
+            builtin::structured::StructuredOutputTool::default(),
+        ))
+        .expect("native structured output name is unique");
     tools
         .register(Arc::new(LspTool::new(lsp)))
         .expect("native LSP name is unique");
@@ -511,6 +1326,9 @@ pub(super) fn native_tools(
     tools
 }
 
+#[cfg(test)]
+#[path = "tools_permission_tests.rs"]
+mod permission_turn_tests;
 // ---------------------------------------------------------------------------
 // #1433: session MCP tools in the turn composition
 // ---------------------------------------------------------------------------
@@ -559,6 +1377,10 @@ impl SessionMcpTools {
         &self.per_session
     }
 
+    pub(super) fn append_fork(&mut self, tools: Vec<Arc<McpBridgeTool>>) {
+        self.per_session.extend(tools);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.shared.is_empty() && self.per_session.is_empty()
     }
@@ -568,22 +1390,19 @@ impl SessionMcpTools {
     pub fn register(&self, tools: &ToolRegistry) {
         for tool in &self.shared {
             let name = tool.spec().wire_name.clone();
-            if !tools.has(&name) {
-                tools
-                    .register(tool.clone())
-                    .expect("#1433 shared session MCP tool name is unique");
+            // `has` applies visibility; registration also checks hidden names.
+            // A raw collision is a refusal, not a process-wide panic.
+            if !tools.has(&name)
+                && let Err(error) = tools.register(tool.clone())
+            {
+                eprintln!("Skipping shared MCP tool registration: {error}");
             }
         }
         for tool in &self.per_session {
-            let name = tool.spec().wire_name.clone();
-            if tools.has(&name) {
-                tools
-                    .replace(tool.clone())
-                    .expect("#1433 per-session MCP tool replaces its own name");
-            } else {
-                tools
-                    .register(tool.clone())
-                    .expect("#1433 per-session MCP tool name is unique");
+            // Atomic raw-name replacement does not consult policy-filtered
+            // visibility and remains correct when two normalized names collide.
+            if let Err(error) = tools.register_or_replace(tool.clone()) {
+                eprintln!("Skipping session MCP tool registration: {error}");
             }
         }
     }
@@ -597,40 +1416,66 @@ impl SessionMcpTools {
 pub struct SessionMcpRelease {
     per_session: Option<SessionMcpRuntimeRegistration>,
     shared: Option<ProjectMcpRuntimeLease>,
+    executor: Option<tokio::runtime::Handle>,
+}
+impl Drop for SessionMcpRelease {
+    fn drop(&mut self) {
+        let per_session = self.per_session.take();
+        let shared = self.shared.take();
+        if let Some(executor) = self.executor.take() {
+            drop(executor.spawn(async move {
+                let _ = release_mcp_parts(per_session, shared).await;
+            }));
+        }
+    }
 }
 impl SessionMcpRelease {
     /// Release both obligations. The first failure still releases the second,
     /// and both failures surface together.
-    pub async fn release(self) -> Result<(), RuntimeError> {
-        let mut failures = Vec::new();
-        if let Some(registration) = self.per_session
-            && let Err(error) = registration.dispose().await
-        {
-            failures.push(error);
+    pub async fn release(mut self) -> Result<(), RuntimeError> {
+        let per_session = self.per_session.take();
+        let shared = self.shared.take();
+        if let Some(executor) = self.executor.take() {
+            return executor
+                .spawn(release_mcp_parts(per_session, shared))
+                .await
+                .map_err(|error| RuntimeError::new(error.to_string()))?;
         }
-        if let Some(lease) = self.shared
-            && let Err(error) = lease.release().await
-        {
-            failures.push(error);
-        }
-        match failures.len() {
-            0 => Ok(()),
-            1 => Err(failures
-                .pop()
-                .expect("#1433 exactly one MCP release failure")),
-            _ => Err(RuntimeError {
-                message: format!(
-                    "Failed to release session MCP resources: {}",
-                    failures
-                        .iter()
-                        .map(|error| error.message.clone())
-                        .collect::<Vec<_>>()
-                        .join("; ")
-                ),
-                causes: failures,
-                js_error: None,
-            }),
-        }
+        release_mcp_parts(per_session, shared).await
+    }
+}
+async fn release_mcp_parts(
+    per_session: Option<SessionMcpRuntimeRegistration>,
+    shared: Option<ProjectMcpRuntimeLease>,
+) -> Result<(), RuntimeError> {
+    let mut failures = Vec::new();
+    if let Some(registration) = per_session
+        && let Err(error) = registration.dispose().await
+    {
+        failures.push(error);
+    }
+    if let Some(lease) = shared
+        && let Err(error) = lease.release().await
+    {
+        failures.push(error);
+    }
+    match failures.len() {
+        0 => Ok(()),
+        1 => Err(failures
+            .pop()
+            .expect("#1433 exactly one MCP release failure")),
+        _ => Err(RuntimeError {
+            message: format!(
+                "Failed to release session MCP resources: {}",
+                failures
+                    .iter()
+                    .map(|error| error.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+            causes: failures,
+            js_error: None,
+        }),
     }
 }
 
@@ -638,6 +1483,9 @@ impl SessionMcpRelease {
 pub struct SessionMcpToolsOptions<'a> {
     /// The SDK-owned session server table (`set_mcp_servers` commits here).
     pub mcp_config: &'a SdkMcpConfig,
+    /// The same frozen plugin generation used by this session's skills/hooks.
+    /// Enabled SDK entries override these declarations, as in the TS bundle.
+    pub plugin_servers: Option<&'a JsObject>,
     pub provider: &'a ProjectMcpRuntimeProvider,
     /// The session factory's per-session registry; gateway disposal drains
     /// it (`ProjectSessionFactory.mcp`).
@@ -666,6 +1514,11 @@ pub async fn session_mcp_tools(
 ) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
     let session_key = String::from_utf16_lossy(options.session_key.units());
     let servers = enabled_session_mcp_servers(options.mcp_config, options.session_key);
+    let mut combined = options.plugin_servers.cloned().unwrap_or_default();
+    for (name, config) in servers.own_entries() {
+        combined.insert(name.clone(), config.clone());
+    }
+    let servers = combined;
     let diagnostic = |message: String, error: Option<RuntimeError>| {
         if let Some(sink) = &options.on_diagnostic {
             sink(message, error);
@@ -681,6 +1534,7 @@ pub async fn session_mcp_tools(
     let mut release = SessionMcpRelease {
         per_session: None,
         shared: Some(shared_lease),
+        executor: Some(tokio::runtime::Handle::current()),
     };
     let Some(specs) = options.provider.per_session_server_specs(&servers, false)? else {
         return Ok((tools, release));
@@ -767,6 +1621,47 @@ pub async fn session_mcp_tools(
             );
             Ok((tools, release))
         }
+    }
+}
+
+pub(super) async fn fork_mcp_tools(
+    provider: &ProjectMcpRuntimeProvider,
+    registry: &SessionMcpRuntimeRegistry,
+    session: &JsString,
+    servers: &JsObject,
+    definition: &JsObject,
+) -> Result<(Vec<Arc<McpBridgeTool>>, SessionMcpRelease), RuntimeError> {
+    let specs = super::agent_mcp::server_specs(servers)
+        .map_err(|error| RuntimeError::new(error.message))?;
+    let runtime = provider.create_runtime(specs);
+    let registration =
+        registry.register(&String::from_utf16_lossy(session.units()), runtime.clone())?;
+    let release = SessionMcpRelease {
+        per_session: Some(registration),
+        shared: None,
+        executor: Some(tokio::runtime::Handle::current()),
+    };
+    let result = async {
+        runtime.start().await?;
+        create_mcp_tool_definitions_from_runtime(runtime, CreateToolDefinitionsOptions::default())
+            .await
+    }
+    .await;
+    match result {
+        Ok(tools) => Ok((
+            tools
+                .into_iter()
+                .filter(|tool| super::agent::definition_allows(definition, &tool.spec().wire_name))
+                .collect(),
+            release,
+        )),
+        Err(error) => match release.release().await {
+            Ok(()) => Err(error),
+            Err(cleanup) => Err(RuntimeError::new(format!(
+                "{}; child MCP cleanup failed: {}",
+                error.message, cleanup.message
+            ))),
+        },
     }
 }
 
@@ -999,6 +1894,40 @@ mod tests {
         }
     }
 
+    struct PendingStartRuntime {
+        entered: Arc<std::sync::atomic::AtomicBool>,
+        stopped: Arc<std::sync::atomic::AtomicUsize>,
+    }
+    impl crate::runtime::mcp::runtime::SessionMcpRuntime for PendingStartRuntime {
+        fn stop(&self) -> McpFuture<'_, Result<(), RuntimeError>> {
+            self.stopped
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(()) })
+        }
+    }
+    impl McpRuntimePort for PendingStartRuntime {
+        fn start(&self) -> McpFuture<'_, Result<Vec<McpClientStatusEntry>, RuntimeError>> {
+            self.entered
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(std::future::pending())
+        }
+        fn list_all_tools(&self) -> McpFuture<'_, Result<Vec<McpToolSpec>, RuntimeError>> {
+            Box::pin(async { Ok(vec![]) })
+        }
+        fn server_info(&self, _: &str) -> Option<McpRuntimeServerInfo> {
+            None
+        }
+        fn call_tool<'a>(
+            &'a self,
+            _: &'a str,
+            _: &'a JsString,
+            _: &'a JsValue,
+            _: McpCallOptions,
+        ) -> McpFuture<'a, Result<McpToolCallResult, McpClientError>> {
+            Box::pin(async { Err(McpClientError::new("unused", None, "unused")) })
+        }
+    }
+
     fn fake_provider(
         events: Arc<Mutex<Vec<String>>>,
         start_fails: bool,
@@ -1056,6 +1985,7 @@ mod tests {
     ) -> Result<(SessionMcpTools, SessionMcpRelease), RuntimeError> {
         session_mcp_tools(SessionMcpToolsOptions {
             mcp_config: config,
+            plugin_servers: None,
             provider,
             per_session_runtimes: runtimes,
             session_key: &JsString::from(session_key),
@@ -1063,6 +1993,123 @@ mod tests {
             on_diagnostic,
         })
         .await
+    }
+
+    #[tokio::test]
+    async fn plugin_mcp_servers_join_session_tools_with_sdk_precedence() {
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input("s", &[("collision", true), ("disabled", true)]))
+            .await
+            .unwrap();
+        config
+            .toggle_mcp_server(&toggle_input("s", "disabled", false))
+            .await
+            .unwrap();
+        let declarations = set_input(
+            "s",
+            &[
+                ("plugin_shared", false),
+                ("plugin_private", true),
+                ("collision", false),
+                ("disabled", false),
+            ],
+        );
+        let plugins = declarations.get("servers").unwrap().as_object().unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let provider = fake_provider(events.clone(), false);
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        let (tools, release) = session_mcp_tools(SessionMcpToolsOptions {
+            mcp_config: &config,
+            plugin_servers: Some(plugins),
+            provider: &provider,
+            per_session_runtimes: &runtimes,
+            session_key: &"s".into(),
+            max_per_session_instances: 5.0,
+            on_diagnostic: None,
+        })
+        .await
+        .unwrap();
+        let names = |tools: &[Arc<McpBridgeTool>]| {
+            tools
+                .iter()
+                .map(|tool| tool.spec().wire_name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(tools.shared()),
+            vec![
+                JsString::from("mcp__plugin_shared__echo"),
+                "mcp__disabled__echo".into()
+            ]
+        );
+        assert_eq!(
+            names(tools.per_session()),
+            vec![
+                JsString::from("mcp__plugin_private__echo"),
+                "mcp__collision__echo".into()
+            ]
+        );
+        assert_eq!(runtimes.size(), 1);
+        release.release().await.unwrap();
+        assert_eq!(runtimes.size(), 0);
+        provider.dispose().await.unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec!["stop:per-session", "stop:shared"]
+        );
+    }
+
+    #[tokio::test]
+    async fn cancelling_pending_session_start_releases_registration_and_stops_runtime() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        let config = test_config();
+        config
+            .set_mcp_servers(&set_input("s", &[("private", true)]))
+            .await
+            .unwrap();
+        let entered = Arc::new(AtomicBool::new(false));
+        let stopped = Arc::new(AtomicUsize::new(0));
+        let factory_entered = entered.clone();
+        let factory_stopped = stopped.clone();
+        let provider = Arc::new(ProjectMcpRuntimeProvider::new(
+            ProjectMcpRuntimeProviderOptions {
+                project_root: "/pdrs-fixture/project".into(),
+                pilot_home: "/pdrs-fixture/home".into(),
+                create_runtime: Some(Arc::new(move |_| {
+                    Arc::new(PendingStartRuntime {
+                        entered: factory_entered.clone(),
+                        stopped: factory_stopped.clone(),
+                    }) as Arc<dyn McpRuntimePort>
+                })),
+                proxy: None,
+                on_diagnostic: None,
+                environment: Arc::new(SystemEnvironment),
+                builtin_paths: BuiltinMcpPaths::default(),
+            },
+        ));
+        let registry = SessionMcpRuntimeRegistry::new();
+        let task_registry = registry.clone();
+        let task = tokio::spawn(async move {
+            compose(&config, &provider, &task_registry, "s", 5.0, None).await
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while !entered.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(registry.size(), 1);
+        task.abort();
+        assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while registry.size() != 0 || stopped.load(Ordering::SeqCst) != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled startup must release its slot and stop exactly once");
     }
 
     /// `getSdkMcpServers` (#1433): only enabled entries, projected to their
@@ -1244,6 +2291,7 @@ mod tests {
             "#1433 gated shared lease",
         );
         let release = SessionMcpRelease {
+            executor: Some(tokio::runtime::Handle::current()),
             per_session: Some(registration),
             shared: Some(lease),
         };
@@ -1917,6 +2965,23 @@ mod tests {
             }),
             CreateToolDefinitionsOptions::default(),
         ))
+    }
+
+    #[test]
+    fn policy_hidden_colliding_mcp_names_never_panic() {
+        let same = bridge_tool("mcp__a_b__echo");
+        let composed = SessionMcpTools {
+            shared: vec![same.clone(), same.clone()],
+            per_session: vec![same],
+        };
+        let hidden = native_tools(
+            None,
+            Some(vec!["mcp__a_b__echo".into()]),
+            Arc::new(super::super::families::DefaultLsp::default()),
+            &composed,
+        );
+        assert!(!hidden.has(&"mcp__a_b__echo".into()));
+        assert!(hidden.has(&"read_file".into()));
     }
 
     /// The registration tail (#1433): shared-lease tools keep existing names,

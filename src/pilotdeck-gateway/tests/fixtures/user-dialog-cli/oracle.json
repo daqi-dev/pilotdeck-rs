@@ -1,0 +1,496 @@
+{
+  "records": [
+    {
+      "id": "empty",
+      "schema": {},
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "schema.type must be object."
+      },
+      "accepted": null
+    },
+    {
+      "id": "object",
+      "schema": {
+        "type": "object"
+      },
+      "answer": {},
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object"
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "required",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "answer": {
+        "name": "ok"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 2
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "missing",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "answer": {},
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "astral-utf16",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 2
+          }
+        }
+      },
+      "answer": {
+        "name": "🙂"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 2
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "lone-surrogate",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 1
+          }
+        }
+      },
+      "answer": {
+        "name": "\ud800"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "maxLength": 1
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "extra",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "answer": {
+        "x": 2,
+        "y": 3
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "integer"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "prefix",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              }
+            ],
+            "items": {
+              "type": "integer"
+            },
+            "contains": {
+              "const": 2
+            }
+          }
+        }
+      },
+      "answer": {
+        "a": [
+          "x",
+          2
+        ]
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                }
+              ],
+              "items": {
+                "type": "integer"
+              },
+              "contains": {
+                "const": 2
+              }
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "refs",
+      "schema": {
+        "type": "object",
+        "$defs": {
+          "X": {
+            "type": "string",
+            "enum": [
+              "yes"
+            ]
+          }
+        },
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/X"
+          }
+        }
+      },
+      "answer": {
+        "x": "yes"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "$defs": {
+            "X": {
+              "type": "string",
+              "enum": [
+                "yes"
+              ]
+            }
+          },
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/X"
+            }
+          }
+        }
+      },
+      "accepted": true
+    },
+    {
+      "id": "unknown-ref",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "x": {
+            "$ref": "#/$defs/Missing"
+          }
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "$.properties.x.$ref references unknown root definition Missing."
+      },
+      "accepted": null
+    },
+    {
+      "id": "circular",
+      "schema": {
+        "type": "object",
+        "$defs": {
+          "A": {
+            "$ref": "#/$defs/B"
+          },
+          "B": {
+            "$ref": "#/$defs/A"
+          }
+        }
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "$defs contains a circular reference: A -> B -> A."
+      },
+      "accepted": null
+    },
+    {
+      "id": "dependent",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "number"
+          },
+          "b": {
+            "type": "number"
+          }
+        },
+        "dependentRequired": {
+          "a": [
+            "b"
+          ]
+        }
+      },
+      "answer": {
+        "a": 2
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "number"
+            },
+            "b": {
+              "type": "number"
+            }
+          },
+          "dependentRequired": {
+            "a": [
+              "b"
+            ]
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "unsupported-key",
+      "schema": {
+        "type": "object",
+        "contentEncoding": "base64"
+      },
+      "answer": {},
+      "result": {
+        "ok": false,
+        "message": "$.contentEncoding is not supported by form dialogs."
+      },
+      "accepted": null
+    },
+    {
+      "id": "regex-unicode",
+      "schema": {
+        "type": "object",
+        "properties": {
+          "s": {
+            "type": "string",
+            "pattern": "^\\w+$"
+          }
+        }
+      },
+      "answer": {
+        "s": "é"
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "properties": {
+            "s": {
+              "type": "string",
+              "pattern": "^\\w+$"
+            }
+          }
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "pattern-additional",
+      "schema": {
+        "type": "object",
+        "patternProperties": {
+          "^x": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      },
+      "answer": {
+        "x": 1
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "type": "object",
+          "patternProperties": {
+            "^x": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "draft-unevaluated",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "x": {
+            "type": "string"
+          }
+        },
+        "unevaluatedProperties": false
+      },
+      "answer": {
+        "x": "ok",
+        "y": 1
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "x": {
+              "type": "string"
+            }
+          },
+          "unevaluatedProperties": false
+        }
+      },
+      "accepted": false
+    },
+    {
+      "id": "draft-prefix",
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "a": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "string"
+              }
+            ],
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "answer": {
+        "a": [
+          "x",
+          2
+        ]
+      },
+      "result": {
+        "ok": true,
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "properties": {
+            "a": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                }
+              ],
+              "items": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "accepted": true
+    }
+  ]
+}

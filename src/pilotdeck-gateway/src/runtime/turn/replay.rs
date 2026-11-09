@@ -334,6 +334,7 @@ struct StoredEvent {
 }
 
 struct ActiveReplay {
+    project_key: Option<JsString>,
     /// Store-wide identity of the run that created this replay. It never
     /// repeats, so a timer callback or a racing `record` captured before a
     /// `start` cannot act on the replacement generation.
@@ -379,6 +380,24 @@ impl TurnReplayStore {
         }
     }
     pub fn start(&self, session_key: &JsString, run_id: &JsString) {
+        self.start_bound(session_key, run_id, None);
+    }
+    /// Host-owned project provenance is retained with this exact replay, even
+    /// after the live session closes. It is never inferred from a session key.
+    pub fn start_for_project(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        project_key: &JsString,
+    ) {
+        self.start_bound(session_key, run_id, Some(project_key.clone()));
+    }
+    fn start_bound(
+        &self,
+        session_key: &JsString,
+        run_id: &JsString,
+        project_key: Option<JsString>,
+    ) {
         let mut state = lock(&self.state);
         // TS `start` calls `clearTerminal` first: the previous terminal timer
         // must not fire against the new run. Cancelling only reaches
@@ -399,6 +418,7 @@ impl TurnReplayStore {
         state.replays.insert(
             session_key.clone(),
             ActiveReplay {
+                project_key,
                 identity,
                 run_id: run_id.clone(),
                 active: true,
@@ -569,7 +589,27 @@ impl TurnReplayStore {
     }
     pub fn snapshot(&self, input: &ActiveTurnSnapshotInput) -> ActiveTurnSnapshot {
         let state = lock(&self.state);
-        let Some(replay) = state.replays.get(&input.session_key) else {
+        Self::snapshot_value(input, state.replays.get(&input.session_key))
+    }
+    /// Unknown provenance is not a project match. The check and deep snapshot
+    /// share the replay lock, so a concurrent replacement cannot mix projects.
+    pub fn snapshot_for_project(
+        &self,
+        input: &ActiveTurnSnapshotInput,
+        project_key: &JsString,
+    ) -> Option<ActiveTurnSnapshot> {
+        let state = lock(&self.state);
+        let replay = state.replays.get(&input.session_key)?;
+        if replay.project_key.as_ref() != Some(project_key) {
+            return None;
+        }
+        Some(Self::snapshot_value(input, Some(replay)))
+    }
+    fn snapshot_value(
+        input: &ActiveTurnSnapshotInput,
+        replay: Option<&ActiveReplay>,
+    ) -> ActiveTurnSnapshot {
+        let Some(replay) = replay else {
             return ActiveTurnSnapshot {
                 active: false,
                 session_key: input.session_key.clone(),

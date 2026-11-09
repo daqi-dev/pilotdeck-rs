@@ -5455,3 +5455,12 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ② **2215 批收口**：三报告（场景账/归一化账/准确预期账）从 macmini 拷回主仓树内 `_tmp/`（sha256 与远端逐一核对一致）并代发 #2215/#2216/#2217 评论；发现项全部只记账不动判据——`--version` 无 entries 条目、45 条 `cli.option:*` 状态翻转口径、normalization.md §8 正文停在 #933 前、tz 数据版本不在 PINNED_NODE、oracle.json 9 例未入套件——归 A 收口/后续批次统一裁定，本轮不开新单。
 ③ **巡场判读**：#2599/#2736 前置活性红（前置 #2467/#1325 均已闭）重判归 P2 批池，A 收口处置轮消化；#1157 总表同步（评论 6743020218）：G3 三选一已消化移除，当前待人 7 项列清（#2453 托管 runner 验收 / #2133 P1-4 仲裁 / 本机卷 / mbp2 mDNS sudo / pin 拍板+队列摘除复核 / #1355 r25 子向复核 / 盲区 4 项待选），纠正旧引用只写 #2136 的指针；#2245 收货等 minimax 评审块自动续；#2771/#2770（#2152/#2153）评审 CI 在飞；#2768 state PR 22:06 MERGED 邮箱核平。fleet 22:5x 四机 OK（cb8/macmini/mbp2 负载 0.01/0.26/0.24）、树 57/60、盘 79.9/200 GiB。
 ---
+
+
+### 2026-11-10 · Gateway 共同核心整合实施
+
+按人批完整整合方案启动，固定 main 8639283b 与 CLI PR #2725 3637484a，统一目录快照 001ec389、对话树快照及未提交文件已保存在主仓 _tmp/20261110-gateway-integration/。唯一整合持有人为 Codex，临时树 _build/wt-gateway-integration；原 CLI/前端树继续保留。正在逐块整合共享核心及主线负控，mbp2 三隔离树分担自动化、渠道和真实业务探针；本机不构建。第一轮旧 CLI/TS 实测发现权限拒绝事件及错误码差异，正在修复；尚无新整合头通过或完整替换结论。后续接入全核心编译、第一轮新头真实对照、通用导出恢复与全部渠道，再承接正式 host/session/retirement 装置。
+
+### 2026-11-10 · Gateway 共同候选首批验证接续
+
+固定 main 8639283b / CLI来源3637484a 的逐块整合已消除44处文本冲突，保留双方生命周期、MCP/Cron及负控；最新 origin/main 003a0b44 与固定基点的 src 无差异。新增可用通用归档存储消费者与会话互斥、统一IM交互桥，装配Telegram/Matrix/Signal/Mattermost/HomeAssistant共5渠道。mbp2 r11 全目标check及11组定向测试均通过，历史r6路径失败、HA r10编译失败原件保留。正固定可执行候选并运行TS/Rust真实业务闭环；来源PR#2725、统一目录与前端活动树快照继续保全。本轮只达到候选阶段，未关闭任何正式Gateway/渠道验收；Discord/DingTalk待收，QQ/Email/WeCom由隔离子代理继续，WhatsApp及正式host/session/retirement/冷切换仍待接续。证据：主仓 _tmp/20261110-gateway-integration/ 与 mbp2 integrated/_tmp/integration-r11-core/。

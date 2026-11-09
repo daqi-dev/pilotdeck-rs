@@ -8,6 +8,10 @@ use std::{any::Any, sync::Arc};
 /// predicate is represented by Err and serialized as false, like TS safely().
 pub trait ToolDefinition: Send + Sync {
     fn fields(&self) -> &JsObject;
+    /// Only host-installed plan tools may change trusted permission mode.
+    fn is_trusted_mode_transition(&self) -> bool {
+        false
+    }
     fn is_read_only(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
     }
@@ -43,6 +47,7 @@ pub struct ToolCall {
 
 /// Context construction is turn-bound; checkpoint/plan state is supplied by
 /// the later runtime adapter, never reconstructed from sidecar authority here.
+#[derive(Clone)]
 pub struct ToolInvocationContext {
     pub runtime: RuntimeContext,
     pub execution: RuntimeContext,
@@ -51,11 +56,55 @@ pub struct ToolInvocationContext {
 /// handles. It is deliberately opaque to the wire adapter, not JSON data.
 pub type RuntimeContext = Arc<dyn Any + Send + Sync>;
 pub trait ToolContext: Send + Sync {
+    fn bind_interaction_profile(
+        &self,
+        _profile: crate::runtime::project::InteractionProfile,
+    ) -> Result<(), HostError> {
+        Ok(())
+    }
     fn prepare(&self, call: JsValue) -> HostFuture<ToolInvocationContext>;
 }
 
 /// Port implementations must return promptly and do I/O asynchronously.
 pub trait ToolExecution: ToolCatalog {
+    /// The actual turn's generation, bound by TurnHostFactory after acquire.
+    /// Native forks inherit this capability; they cannot choose a registry entry.
+    fn bind_execution_generation(
+        &self,
+        _generation: Arc<crate::runtime::project::RuntimeLease>,
+    ) -> Result<(), HostError> {
+        Ok(())
+    }
+    fn applies_mode_effects(&self) -> bool {
+        false
+    }
+    /// Host-only binding after the actual generation's permission resource is
+    /// installed. Remote descriptors cannot set or replace this authority.
+    fn bind_turn_permission(
+        &self,
+        _permission: crate::runtime::project::interaction_permission::TurnPermission,
+    ) -> Result<(), crate::host::HostError> {
+        Ok(())
+    }
+    /// Host-owned lifecycle authority for the same run as the permission port.
+    fn bind_turn_hooks(
+        &self,
+        _hooks: crate::runtime::project::interaction_hooks::TurnHooks,
+    ) -> Result<(), crate::host::HostError> {
+        Ok(())
+    }
+    /// Turn-owned native child work drains with this dispatcher, after callbacks.
+    fn dispose(&self) -> HostFuture<()> {
+        Box::pin(async { Ok(()) })
+    }
+    /// Owned native work must report its actual drain separately from the
+    /// TS-compatible ModuleRouter allSettled disposal result.
+    fn wait_closed(&self) -> HostFuture<()> {
+        Box::pin(async { Ok(()) })
+    }
+    fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        Ok(Vec::new())
+    }
     fn refresh(&self) -> HostFuture<()> {
         Box::pin(async { Ok(()) })
     }
@@ -67,10 +116,18 @@ pub trait ToolExecution: ToolCatalog {
 }
 pub trait CapabilityResultObserver: Send + Sync {
     fn on_capability_results(&self, results: Vec<JsObject>) -> HostFuture<()>;
+    fn on_results_after_mode_effects(&self, results: Vec<JsObject>) -> HostFuture<()> {
+        self.on_capability_results(results)
+    }
 }
 pub trait PlanTodoHandler: Send + Sync {
     fn call(&self, call: JsValue) -> HostFuture<JsObject>;
+    fn blocking_message(&self, _tool: JsString, _read_only: bool) -> HostFuture<Option<JsString>> {
+        Box::pin(async { Ok(None) })
+    }
 }
+/// Host-only type-erased plan authority; never populated from wire fields.
+pub struct PlanTodoContext(pub Arc<dyn PlanTodoHandler>);
 
 #[derive(Clone)]
 struct Ports {
@@ -108,6 +165,35 @@ impl Handler {
     pub fn with_plan_todo(mut self, handler: Arc<dyn PlanTodoHandler>) -> Self {
         self.plan_todo = Some(handler);
         self
+    }
+    pub(crate) fn wait_closed(&self) -> HostFuture<()> {
+        self.ports.as_ref().map_or_else(
+            || Box::pin(async { Ok(()) }) as HostFuture<()>,
+            |ports| ports.execution.wait_closed(),
+        )
+    }
+    pub(crate) fn drain_events(&self) -> Result<Vec<JsObject>, HostError> {
+        self.ports
+            .as_ref()
+            .map_or_else(|| Ok(Vec::new()), |ports| ports.execution.drain_events())
+    }
+    pub(crate) fn bind_turn_permission(
+        &self,
+        permission: crate::runtime::project::interaction_permission::TurnPermission,
+    ) -> Result<(), crate::host::HostError> {
+        if let Some(ports) = &self.ports {
+            ports.execution.bind_turn_permission(permission)?;
+        }
+        Ok(())
+    }
+    pub(crate) fn bind_turn_hooks(
+        &self,
+        hooks: crate::runtime::project::interaction_hooks::TurnHooks,
+    ) -> Result<(), crate::host::HostError> {
+        if let Some(ports) = &self.ports {
+            ports.execution.bind_turn_hooks(hooks)?;
+        }
+        Ok(())
     }
     /// Whether composition bound a tool execution port. TS types capability as
     /// a mandatory module, so an unbound port is a host assembly error; the
@@ -187,10 +273,17 @@ impl Handler {
                     )
                     .into());
                 }
-                ports
-                    .observer
-                    .on_capability_results(results.clone())
-                    .await?;
+                if ports.execution.applies_mode_effects() {
+                    ports
+                        .observer
+                        .on_results_after_mode_effects(results.clone())
+                        .await?;
+                } else {
+                    ports
+                        .observer
+                        .on_capability_results(results.clone())
+                        .await?;
+                }
                 let mut response = JsObject::new();
                 response.insert(
                     "results".into(),
@@ -202,17 +295,27 @@ impl Handler {
                     .into_iter()
                     .next()
                     .ok_or_else(|| ModuleError::new("Capability port returned no result."))?;
-                ports
-                    .observer
-                    .on_capability_results(vec![result.clone()])
-                    .await?;
+                if ports.execution.applies_mode_effects() {
+                    ports
+                        .observer
+                        .on_results_after_mode_effects(vec![result.clone()])
+                        .await?;
+                } else {
+                    ports
+                        .observer
+                        .on_capability_results(vec![result.clone()])
+                        .await?;
+                }
                 Ok(result)
             }
         })
     }
     pub fn dispose(&self) -> HostFuture<()> {
-        // These borrowed domain ports are not owned resources of the dispatcher.
-        Box::pin(async { Ok(()) })
+        if let Some(ports) = &self.ports {
+            ports.execution.dispose()
+        } else {
+            Box::pin(async { Ok(()) })
+        }
     }
 }
 

@@ -178,6 +178,8 @@ async fn observe(name: &str) -> (Value, Value) {
         async_hook_registry: None,
         // #1600: match production (connected), not the retired
         // observer-coupled bus.
+        dialog_recovery: None,
+        sop: None,
         user_dialog_bus: Arc::new(std::sync::Mutex::new(
             crate::user_dialog::GatewayUserDialogBus::connected(
                 crate::user_dialog::DialogRuntime::default(),
@@ -186,9 +188,11 @@ async fn observe(name: &str) -> (Value, Value) {
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         prepare_weixin_login: None,
         cron: None,
-        always_on: None,
+        automation: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        clear_sdk_state: None,
+        ephemeral: None,
     };
     let services = services::Services {
         options: options.clone(),
@@ -413,6 +417,25 @@ fn admission_ledger_line<'a>(ledger: &'a str, marker: &str) -> Option<&'a str> {
 
 #[test]
 fn archive_matrix_matches_ts() {
+    // The old R1 remains immutable historical evidence. Its removed native
+    // single-project override must not replace any fixed TS oracle row.
+    let ledger = admission_ledger();
+    negative_assert!(
+        ledger
+            .lines()
+            .any(|line| line == "original: A7.2-NATIVE-ARCHIVE-CWD-001"),
+        "#1154 archive admission expectation stays bound to its ledger"
+    );
+    negative_assert_eq!(
+        admission_ledger_line(&ledger, "admission-code: "),
+        Some(ADMISSION_CODE),
+        "#1154 archive admission expectation stays bound to its ledger"
+    );
+    negative_assert_eq!(
+        admission_ledger_line(&ledger, "admission-message: "),
+        Some(ADMISSION_MESSAGE),
+        "#1154 archive admission expectation stays bound to its ledger"
+    );
     crate::test_baseline::oracle_bounded(include_str!(
         "../../tests/fixtures/native-archive-cwd/oracle.json"
     ));
@@ -548,6 +571,8 @@ async fn observe_archive(name: &str) {
         async_hook_registry: None,
         // #1600: match production (connected), not the retired
         // observer-coupled bus.
+        dialog_recovery: None,
+        sop: None,
         user_dialog_bus: Arc::new(std::sync::Mutex::new(
             crate::user_dialog::GatewayUserDialogBus::connected(
                 crate::user_dialog::DialogRuntime::default(),
@@ -556,9 +581,11 @@ async fn observe_archive(name: &str) {
         upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
         prepare_weixin_login: None,
         cron: None,
-        always_on: None,
+        automation: None,
         settings: requests::Requests::stub_settings(&owner),
         session_overrides: Arc::default(),
+        clear_sdk_state: None,
+        ephemeral: None,
     };
     let mut params = json!({"sessionKey":"fixture"});
     match key {
@@ -596,28 +623,7 @@ async fn observe_archive(name: &str) {
             json!({"ok":false,"code":error.code,"message":error.message.to_utf8().expect("#1154 archive UTF8 error")})
         }
     };
-    let expected = if key == "empty" && cwd != "project" {
-        // Existing isolated admission policy, recorded separately from TS parity.
-        // specs/gateway-parity/diffs/A7.2-NATIVE-ARCHIVE-CWD-001-R1.md
-        let ledger = admission_ledger();
-        negative_assert!(
-            ledger
-                .lines()
-                .any(|line| line == "original: A7.2-NATIVE-ARCHIVE-CWD-001"),
-            "#1154 archive admission expectation stays bound to its ledger"
-        );
-        negative_assert_eq!(
-            admission_ledger_line(&ledger, "admission-code: "),
-            Some(ADMISSION_CODE),
-            "#1154 archive admission expectation stays bound to its ledger"
-        );
-        negative_assert_eq!(
-            admission_ledger_line(&ledger, "admission-message: "),
-            Some(ADMISSION_MESSAGE),
-            "#1154 archive admission expectation stays bound to its ledger"
-        );
-        json!({"ok":false,"code":ADMISSION_CODE,"message":ADMISSION_MESSAGE})
-    } else if row["ok"] == true {
+    let expected = if row["ok"] == true {
         json!({"ok":true,"result":row["result"]})
     } else {
         json!({"ok":false,"code":row["code"],"message":row["message"]})
