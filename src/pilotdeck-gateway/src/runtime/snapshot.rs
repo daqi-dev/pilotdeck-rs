@@ -392,7 +392,7 @@ impl<R: SnapshotProjectResolver> SnapshotProjection<R> {
 /// synthesized error. `Error` carries a thrown TS error: the real
 /// `snapshotList` / `snapshotGet` / `snapshotRestore` throw, and the WS
 /// connection answers `{ok:false,error:{code,message}}`
-/// (`GatewayWsConnection.ts:231-260`), so the entry must return a request
+/// (`GatewayWsConnection.ts:223-255`), so the entry must return a request
 /// failure rather than a successful response whose body happens to be an
 /// error object (#2194, the #1456 `MemoryDispatch` shape).
 #[derive(Clone, Debug, PartialEq)]
