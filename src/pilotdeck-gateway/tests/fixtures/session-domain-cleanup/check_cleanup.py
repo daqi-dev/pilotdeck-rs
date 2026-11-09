@@ -4296,21 +4296,6 @@ def _calls_aggregate(node, shared=None, rebound=frozenset()):
     return any(_is_shared_call(n, shared, rebound) for n in ast.walk(node))
 
 
-def _calls_aggregate_live(node, shared=None, rebound=frozenset()):
-    """A shared call on an arm the interpreter can actually take.
-
-    fix-r8 (MM sibling r7 P1, probe-verified — fix-r8-audit/probe-r8-mm-
-    before.out M1): the relay family's exemption used the full-tree scan,
-    the exact shape fix-r7 closed for the direct spellings — a
-    ``common.aggregate_status`` call sitting in an operand short-circuit
-    semantics never reach (``'PASS' or <call>``) still marked a locally
-    bound name "shared-derived" and exempted the slot it relayed into.
-    The exemption is judged on the exit arms only, and an empty arm set
-    (an unresolvable pure-literal test) certifies nothing.
-    """
-    return any(_calls_aggregate(arm, shared, rebound) for arm in _exit_arms(node))
-
-
 def _inevitably_shared(node, shared=None, rebound=frozenset()):
     """True when every value *node* can produce routes through the shared map.
 
@@ -4326,6 +4311,14 @@ def _inevitably_shared(node, shared=None, rebound=frozenset()):
     the shared call itself, a subscript whose *base* routes through
     the shared call, and a conditional every certified arm of which
     routes through the map are the only spellings that prove it.
+    fix-r25 (DS boundary#1 r24 P0, human verdict 2026-11-09 direction
+    (a), probe-verified — 20261109-1355-r25/matrix-baseline.out S05):
+    the certification must be single-direction -- a PARTIAL arm set
+    certifies no more than the empty one (the fix-r22 polarity), so the
+    companion walk is consulted before the surviving arms.  A branch the
+    flattener drops (an unresolvable pure-literal test, also reached
+    when the audit's literal budget exhausts) can still carry the
+    runtime value, and a surviving shared arm may not excuse it.
     """
     if _is_shared_call(node, shared, rebound):
         return True
@@ -4340,8 +4333,49 @@ def _inevitably_shared(node, shared=None, rebound=frozenset()):
             # certifies no shared origin either -- the empty-set polarity
             # every consumer of the flattening already uses.
             return False
+        # fix-r25 (DS boundary#1 r24 P0): the arms above are only the
+        # SURVIVORS of flattening; ``(<shared> if flag else (<shared> if
+        # (1.0 is not 1.0) else [0]))[0]`` recurses here with the
+        # dropped branch invisible -- ``all()`` over the partial set read
+        # as inevitable sharing while runtime flag=False hands back 0.
+        # An uncertifiable (or un-walkable) conditional certifies no
+        # shared origin, the same fail-closed direction every consumer
+        # of the flattening already uses.
+        try:
+            if _exit_uncertain(node):
+                return False
+        except RecursionError:
+            return False
         return all(_inevitably_shared(arm, shared, rebound) for arm in arms)
     return False
+
+
+def _armwise_shared(node, bindings, seen=None):
+    """A value whose every certified arm routes through the map or relays.
+
+    fix-r25 (DS sibling#1/#2/#3 r24 P1/P2, human verdict 2026-11-09
+    direction (a) — single-direction polarity, probe-verified —
+    20261109-1355-r25/matrix-baseline.out): the slot exemption, the
+    exit-argument status exemption and the name/container relay trust
+    used to read ``any(_inevitably_shared(arm))`` or the whole-subtree
+    mention scan ``_calls_aggregate_live`` — one shared arm or one dead
+    mention excused the whole value, so ``{'status': 'PASS' if flag else
+    <shared>[0]}`` and its name-bound twin escaped while the mixed
+    helper arm was already a violation (one source, two verdicts).
+    The exemption is now judged per arm and in one place: every certified
+    arm relays a (fail-closed) verdict or inevitably routes through the
+    map, and an empty, partial or un-walkable arm set certifies nothing.
+    """
+    try:
+        arms = _exit_arms(node)
+        if not arms:
+            return False
+        if _exit_uncertain(node):
+            return False
+    except RecursionError:
+        return False
+    return all(_relays_status(arm, bindings, seen)
+               or _inevitably_shared(arm) for arm in arms)
 
 
 # #892 r20: the module that owns the one shared aggregator.  A file that
@@ -4516,13 +4550,17 @@ def _container_relays(node, bindings, seen=None):
         # is judged by its own status slots (the ``**``-unpack rule): a call
         # buried anywhere inside it may not mark the whole container
         # shared-derived, because the arm split cannot see inside a dict.
+        # fix-r25 (DS sibling#2 r24 P1): the per-slot/per-value trust is the
+        # same single-direction arm polarity the slot exemption uses
+        # (``_armwise_shared``) — a mention inside a composite arm the
+        # flattener does not open may not certify the container.
         if isinstance(value, ast.Dict):
             slots = _status_slot_values(value)
             if slots and all(_relays_status(slot, bindings, seen)
-                             or _calls_aggregate_live(slot)
+                             or _armwise_shared(slot, bindings, seen)
                              for slot in slots):
                 continue
-        elif _calls_aggregate_live(value):
+        elif _armwise_shared(value, bindings, seen):
             continue
         if isinstance(value, (ast.Attribute, ast.Subscript)) \
                 and _container_relays(value, bindings, seen):
@@ -4573,7 +4611,17 @@ def _bind_values(target, value, bindings, lineno):
 
 
 def _name_relays(name, bindings, seen=None):
-    """True when every local assignment to *name* is shared-derived."""
+    """True when every local assignment to *name* is shared-derived.
+
+    fix-r25 (DS sibling#2 r24 P1, probe-verified — 20261109-1355-r25/
+    matrix-baseline.out S08/S11/S12): the per-binding trust is the
+    single-direction arm polarity ``_armwise_shared`` — a shared call
+    mentioned inside a composite arm the flattener does not open (a dead
+    index branch, a dropped operand) is not the binding's origin, and a
+    fail-closed literal arm keeps the name trusted exactly as the same
+    literal keeps the inline slot legal, so one source cannot keep two
+    verdicts through a name hop.
+    """
     seen = set() if seen is None else seen
     if name in seen:
         return False  # an alias cycle proves nothing (fail-closed, as _container_relays)
@@ -4582,7 +4630,7 @@ def _name_relays(name, bindings, seen=None):
     if not values:
         return False  # nothing in this function proves where it came from
     for _lineno, value in values:
-        if _calls_aggregate_live(value):
+        if _armwise_shared(value, bindings, seen):
             continue
         if isinstance(value, (ast.Attribute, ast.Subscript)) \
                 and _container_relays(value, bindings, seen):
@@ -5562,8 +5610,8 @@ def _summary_slot_violations(summary, bindings, lineno):
             if isinstance(value, ast.Dict):
                 problems.extend(_summary_slot_violations(value, bindings, lineno))
                 continue
-            if _relays_status(value, bindings) or any(
-                    _inevitably_shared(arm) for arm in _exit_arms(value)):
+            if _relays_status(value, bindings) or _armwise_shared(value,
+                                                                  bindings):
                 continue
             problems.append(f'summary unpack {ast.unparse(value)[:60]} at line {lineno}')
             continue
@@ -5581,8 +5629,14 @@ def _summary_slot_violations(summary, bindings, lineno):
             # G2 slot face): a composite arm's dead-branch mention is not
             # the slot's origin — the arm must inevitably route through the
             # map to exempt it.
-            if _relays_status(value, bindings) or any(
-                    _inevitably_shared(arm) for arm in _exit_arms(value)):
+            # fix-r25 (DS sibling#1 r24 P1, human verdict 2026-11-09 (a)):
+            # the any-arm polarity survived r24 — one shared arm excused
+            # ``{'status': 'PASS' if flag else <shared>[0]}`` while the
+            # mixed helper arm was already a violation.  The exemption is
+            # per arm (``_armwise_shared``): every certified arm relays a
+            # fail-closed verdict or inevitably routes through the map.
+            if _relays_status(value, bindings) or _armwise_shared(value,
+                                                                  bindings):
                 continue
             problems.append(f'status slot {ast.unparse(value)[:60]} at line {lineno}')
     return problems
@@ -5660,7 +5714,13 @@ def _nested_status_slots(value):
         # slot the report can never produce (false red).  An unresolved
         # test certifies no arm; the conservative fallback walks every
         # operand, which can only over-collect, never hide one.
-        arms = _exit_arms(value) or value.values
+        # fix-r25 (DS sibling#4 r24 P2c): an un-walkable (too deep) chain
+        # falls back to every operand — the same over-collect direction,
+        # not an escape through the exception.
+        try:
+            arms = _exit_arms(value) or value.values
+        except RecursionError:
+            arms = value.values
         for arm in arms:
             slots.extend(_nested_status_slots(arm))
     elif isinstance(value, ast.Starred):
@@ -5946,7 +6006,16 @@ def _helper_exits_zero(target, lookup, seen, aliases=None):
             # ("A conditional expression that can produce 0 is always
             # inline computation"), so one source may not have two
             # verdicts through a helper hop.
-            judged = [arm for arm in arms if not _inevitably_shared(arm)]
+            # fix-r25 (DS concurrency#1 r24 P2c, probe-verified — the r21
+            # shape one layer down): the per-arm exemption itself recurses
+            # (``_inevitably_shared`` re-enters ``_exit_arms`` on a
+            # composite's base), so a thousand-deep chain the outer wrap
+            # never sees can raise here — an un-walkable arm certifies no
+            # sharing, the same fail-closed direction as the empty set.
+            try:
+                judged = [arm for arm in arms if not _inevitably_shared(arm)]
+            except RecursionError:
+                return True
             if _constant_exit_zero(item.value) or any(
                     _constant_exit_zero(arm) for arm in judged):
                 return True
@@ -5958,6 +6027,21 @@ def _helper_exits_zero(target, lookup, seen, aliases=None):
                 # as a literal zero: the point-level rule already judges the
                 # relayed name, so the delegation family may not call it clean
                 # one call away (MiniMax boundary r12 P0-1).
+                return True
+            # fix-r25 (DS boundary#1 r24 P0, helper face, probe-verified —
+            # 20261109-1355-r25/matrix-baseline.out S05/E1): the point-level
+            # canon (``_exit_provenance``, GLM sibling r19) fails closed on
+            # a code spelled as an attribute or an untracked subscript, and
+            # after the fix-r25 origin polarity a judged composite arm is
+            # exactly a value whose dropped branch can still hand back 0
+            # at runtime.  One source may not keep two verdicts through a
+            # helper hop (the fix-r24 consistency principle).  A buried
+            # status word keeps the provenance skip — the status faces own
+            # that verdict (``_exit_provenance`` :6213 arm order).
+            if any(isinstance(arm, (ast.Attribute, ast.Subscript))
+                   and not (_status_literals(arm)
+                            or _has_passed_aggregate(arm))
+                   for arm in judged):
                 return True
             if _delegated_exit(item.value, lookup, seen, aliases=aliases):
                 return True
@@ -6092,6 +6176,14 @@ def _delegated_exit(value, module, seen=None, bindings=None, aliases=None):
     """
     if module is None or not isinstance(value, ast.Call):
         return False
+    # fix-r25 (DS boundary#2 r24 P1, probe-verified — 20261109-1355-r25/
+    # matrix-baseline.out S09/E1 + S13/E7s): the shared call is the proof,
+    # not a delegation to judge — the same guard ``_module_delegated_exit``
+    # has carried since #892.  Without it a helper whose body returns the
+    # aggregated value itself read as "exits zero" (a false FAIL the r24
+    # per-arm filtering introduced by un-filtering the whole value here).
+    if _is_shared_call(value):
+        return False
     if not isinstance(value.func, (ast.Name, ast.Attribute)):
         return False
     if isinstance(value.func, ast.Attribute) and not _is_shared_call(value):
@@ -6140,13 +6232,14 @@ def _exit_argument_violation(argument, bindings, function, module, point,
     # the same argument without the dead call receives.  The exemption is
     # judged on the exit arms only -- the fix-r7 shape every other
     # consumer uses.
-    try:
-        status_exempt = any(_inevitably_shared(arm)
-                            for arm in _exit_arms(argument))
-    except RecursionError:
-        status_exempt = False
+    # fix-r25 (DS sibling#3 r24 P2 + concurrency#2/simplify#3, human
+    # verdict 2026-11-09 (a)): the status exemption is the same
+    # single-direction per-arm polarity (``_armwise_shared``) — one shared
+    # arm may not excuse ``sys.exit('PASS' if flag else <shared>[0])``.
+    # It is computed only when the status face fires, so the argument is
+    # not folded twice on the non-status path.
     if (_status_literals(argument) or _has_passed_aggregate(argument)) \
-            and not status_exempt:
+            and not _armwise_shared(argument, bindings):
         return f'inline status/exit {ast.unparse(argument)[:60]} at line {lineno}'
     if _exit_provenance(argument, bindings, function, module, point, aliases):
         return f'inline exit code {ast.unparse(argument)[:60]} at line {lineno}'
@@ -6191,8 +6284,16 @@ def _exit_provenance(argument, bindings, function, module, point,
     empty one — ``sys.exit(1 if flag else (0 if (1.0 is 1.0) else 2))``
     arms [1] while runtime flag=False exits 0 — so the companion walk is
     consulted before the arms.
+    fix-r25 (DS sibling#4/concurrency#2 r24 P2c): the fold itself is
+    wrapped — an un-walkable (too deep) argument certifies no arm and no
+    exemption, the same fail-closed True as the empty set, so the
+    caller's own wrap is not the only thing standing between a deep
+    chain and the per-file boundary.
     """
-    arms = _exit_arms(argument)
+    try:
+        arms = _exit_arms(argument)
+    except RecursionError:
+        return True
     if not arms:
         return True
     try:
@@ -6315,7 +6416,13 @@ def _exit_name_violation(name, bindings, function=None, module=None,
             # one code object) while the AST fold refuses to pick one.
             # Fail closed as inline computation, exactly like the four
             # presence-scan consumers fix-r6 already guards.
-            arms = _exit_arms(value)
+            # fix-r25 (DS sibling#4 r24 P2c): the fold is wrapped — an
+            # un-walkable chain is the same 'conditional' fail-closed
+            # verdict as the empty arm set.
+            try:
+                arms = _exit_arms(value)
+            except RecursionError:
+                arms = []
             if not arms or any(_constant_exit_zero(arm) for arm in arms):
                 return 'conditional'
             # fix-r22 (DS sibling#1 r21 P1, probe-verified — fix-r22-audit/
@@ -7079,7 +7186,13 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
                 element_uncertain = _exit_uncertain(element)
             except RecursionError:
                 element_uncertain = True
-            element_arms = _exit_arms(element)
+            # fix-r25 (DS sibling#4 r24 P2c): the fold is wrapped — an
+            # un-walkable element certifies no arm, the same fail-closed
+            # violation line as the empty set.
+            try:
+                element_arms = _exit_arms(element)
+            except RecursionError:
+                element_arms = []
             if not element_arms or element_uncertain:
                 violations.append(
                     f'inline status/exit (unresolvable arm test) '
@@ -9482,6 +9595,31 @@ def _aggregation_audit_impl():
         failures.append('#892 aggregation-audit: a partial-arm shared-call '
                         'mention in the surviving arm exempted a '
                         'zero-returning helper (#1652)')
+    # fix-r25 (DS boundary#1 r24 P0, human verdict 2026-11-09 (a),
+    # probe-verified — 20261109-1355-r25/matrix-baseline.out S05/E1):
+    # the partial set may also hide under a composite subscript the
+    # top-level companion walk cannot drill — the surviving arm keeps
+    # the mention while the dropped branch hands back 0 at runtime.
+    _fsr8_partial_sub = ast.parse(
+        'def _fsr8_partial_sub(rows, flag):\n'
+        '    return (common.aggregate_status(rows) if flag else (\n'
+        '        common.aggregate_status(rows) if (1.0 is not 1.0) '
+        'else [0]))[0]\n').body[0]
+    if not _helper_exits_zero(_fsr8_partial_sub, {}, set()):
+        failures.append('#892 aggregation-audit: a partial-arm set under a '
+                        'composite subscript exempted a zero-returning '
+                        'helper (#1652)')
+    # fix-r25 (DS boundary#2 r24 P1, probe-verified — 20261109-1355-r25/
+    # matrix-baseline.out S09/E1 + probe-r24-ds-b0-r25.out F6): a helper
+    # whose body returns the aggregated value itself routes through the
+    # map — it is the proof, not a delegation to fail closed on.
+    _fsr8_delegated = ast.parse(
+        'def _fsr8_delegated(rows):\n'
+        '    return common.aggregate_status(rows)\n').body[0]
+    if _helper_exits_zero(_fsr8_delegated, {}, set()):
+        failures.append('#892 aggregation-audit: a helper returning the '
+                        'shared value itself was read as exiting zero '
+                        '(#1652)')
     # fix-r24 (DS boundary#1/sibling#1/#2 r23 P0/P1, probe-verified —
     # fix-r22-audit/probe-r24-arb.out + probe-r24-e2e.out): the same
     # escapes end to end, through the registered-point consumer chain
@@ -9584,6 +9722,153 @@ def _aggregation_audit_impl():
     if _fsr9_summary_slots:
         failures.append('#892 aggregation-audit: a shared-call summary '
                         f'was read as unshared ({_fsr9_summary_slots[:2]}) '
+                        '(#1652)')
+    # fix-r25 (DS boundary#1 r24 P0 + sibling#1/#2/#3, human verdict
+    # 2026-11-09 (a), probe-verified — 20261109-1355-r25/matrix-baseline.out):
+    # the partial-set drop also reaches the point-level exit and slot faces
+    # through the same composite, and the any-arm exemption polarity let one
+    # shared or fail-closed arm excuse the whole conditional.
+    _fsr9_buried_exit = ast.parse(
+        'def _fsr9_buried_exit(report, rows, flag):\n'
+        '    sys.exit((common.aggregate_status(rows) if flag else (\n'
+        '        common.aggregate_status(rows) if (1.0 is not 1.0) '
+        'else [0]))[0])\n').body[0]
+    _fsr9_buried_slots = unshared_status_slots(
+        _fsr9_buried_exit, ('fix-r25-self-check.py', '_fsr9_buried_exit'))
+    if not any('inline exit code' in slot for slot in _fsr9_buried_slots):
+        failures.append('#892 aggregation-audit: a partial-arm set buried '
+                        'under a composite exempted the inline exit code '
+                        '(#1652)')
+    _fsr9_buried_slot = ast.parse(
+        'def _fsr9_buried_slot(report, rows, flag):\n'
+        "    return {'status': (common.aggregate_status(rows) if flag else "
+        "(common.aggregate_status(rows) if (1.0 is not 1.0) else "
+        "['PASS']))[0]}\n").body[0]
+    _fsr9_buried_slot_slots = unshared_status_slots(
+        _fsr9_buried_slot, ('fix-r25-self-check.py', '_fsr9_buried_slot'))
+    if not any('status slot' in slot
+               for slot in _fsr9_buried_slot_slots):
+        failures.append('#892 aggregation-audit: a partial-arm set buried '
+                        'under a composite exempted the status slot (#1652)')
+    # fix-r25 (DS sibling#1 r24 P1): ``any(_inevitably_shared(arm))``
+    # survived r24 in both summary-slot branches — one shared arm may not
+    # excuse the whole conditional (matrix S11/E3).
+    _fsr9_mixed_slot = ast.parse(
+        'def _fsr9_mixed_slot(report, rows, flag):\n'
+        "    return {'status': 'PASS' if flag else "
+        'common.aggregate_status(rows)[0]}\n').body[0]
+    _fsr9_mixed_slot_slots = unshared_status_slots(
+        _fsr9_mixed_slot, ('fix-r25-self-check.py', '_fsr9_mixed_slot'))
+    if not any('status slot' in slot for slot in _fsr9_mixed_slot_slots):
+        failures.append('#892 aggregation-audit: a shared arm excused the '
+                        'other arm of a conditional status slot (#1652)')
+    # fix-r25 (DS sibling#2 r24 P1): a name relayed from a composite whose
+    # dead branch mentions the map kept the slot exempt — the relay is now
+    # judged per arm (matrix S08/E5).  The healthy twin (fail-closed arm +
+    # shared arm) stays exempt: _fsr9_name_slot below pins that side.
+    _fsr9_relay_composite = ast.parse(
+        'def _fsr9_relay_composite(report, rows):\n'
+        '    v = CODES[0 if (1.0 is 1.0) else '
+        'common.aggregate_status(rows)[0]]\n'
+        "    return {'status': v}\n").body[0]
+    _fsr9_relay_slots = unshared_status_slots(
+        _fsr9_relay_composite, ('fix-r25-self-check.py',
+                                '_fsr9_relay_composite'))
+    if not any('status slot' in slot for slot in _fsr9_relay_slots):
+        failures.append('#892 aggregation-audit: a dead-branch mention '
+                        'inside a composite kept a relayed status slot '
+                        'exempt (#1652)')
+    # fix-r25 (DS sibling#2 r24 P1, container faces): the container relay
+    # trusts its base's bindings per arm — a dict slot with one clean and
+    # one shared arm, and a composite binding with a dead-branch mention,
+    # may not certify the container (matrix S08/S11 through
+    # _container_relays).
+    _fsr9_container_dict = ast.parse(
+        'def _fsr9_container_dict(report, rows, flag):\n'
+        "    md = {'status': 'PASS' if flag else "
+        'common.aggregate_status(rows)[0]}\n'
+        "    return {'status': md['status']}\n").body[0]
+    _fsr9_container_dict_slots = unshared_status_slots(
+        _fsr9_container_dict, ('fix-r25-self-check.py',
+                               '_fsr9_container_dict'))
+    if not any('status slot' in slot
+               for slot in _fsr9_container_dict_slots):
+        failures.append('#892 aggregation-audit: a dict slot with one '
+                        'clean and one shared arm kept the container '
+                        'relay trusted (#1652)')
+    _fsr9_container_sub = ast.parse(
+        'def _fsr9_container_sub(report, rows):\n'
+        '    md = CODES[0 if (1.0 is 1.0) else '
+        'common.aggregate_status(rows)[0]]\n'
+        "    return {'status': md['status']}\n").body[0]
+    _fsr9_container_sub_slots = unshared_status_slots(
+        _fsr9_container_sub, ('fix-r25-self-check.py',
+                              '_fsr9_container_sub'))
+    if not any('status slot' in slot
+               for slot in _fsr9_container_sub_slots):
+        failures.append('#892 aggregation-audit: a dead-branch mention '
+                        'inside a composite kept the container relay '
+                        'trusted (#1652)')
+    # fix-r25 (DS sibling#3 r24 P1): the exit-argument exemption had the
+    # same whole-argument mention face — one shared arm may not excuse
+    # ``sys.exit('PASS' if flag else <shared>[0])`` (matrix S11/E2).
+    _fsr9_mixed_exit = ast.parse(
+        'def _fsr9_mixed_exit(report, rows, flag):\n'
+        "    sys.exit('PASS' if flag else "
+        'common.aggregate_status(rows)[0])\n').body[0]
+    _fsr9_mixed_exit_slots = unshared_status_slots(
+        _fsr9_mixed_exit, ('fix-r25-self-check.py', '_fsr9_mixed_exit'))
+    if not any('inline status/exit' in slot
+               for slot in _fsr9_mixed_exit_slots):
+        failures.append('#892 aggregation-audit: a shared arm excused the '
+                        'other arm of a conditional exit argument (#1652)')
+    # fix-r25 (DS sibling#5 r24 P2, positive): an all-shared conditional
+    # is the healthy shape the (a) polarity must keep exempt — both arms
+    # relay the shared call (matrix S04).
+    _fsr9_mixed_all_shared = ast.parse(
+        'def _fsr9_mixed_all_shared(report, rows, flag):\n'
+        '    sys.exit(common.aggregate_status(rows)[0] if flag else '
+        'common.aggregate_status(rows)[1])\n'
+        "    return {'status': common.aggregate_status(rows)[0] if flag "
+        'else common.aggregate_status(rows)[1]}\n').body[0]
+    _fsr9_all_shared_slots = unshared_status_slots(
+        _fsr9_mixed_all_shared, ('fix-r25-self-check.py',
+                                 '_fsr9_mixed_all_shared'))
+    if _fsr9_all_shared_slots:
+        failures.append('#892 aggregation-audit: an all-shared conditional '
+                        f'was read as unshared ({_fsr9_all_shared_slots[:2]}) '
+                        '(#1652)')
+    # fix-r25 (name-relay alignment, matrix S16/S17): a name bound to a
+    # fail-closed literal or a healthy mixed conditional relays the same
+    # verdict its inline spelling receives — the inline twins are legal, so
+    # the name-bound twins may not flag.
+    _fsr9_name_slot = ast.parse(
+        'def _fsr9_name_slot(report, rows, flag):\n'
+        "    v = 'FAIL' if flag else common.aggregate_status(rows)[0]\n"
+        "    return {'status': v}\n").body[0]
+    _fsr9_name_slot_slots = unshared_status_slots(
+        _fsr9_name_slot, ('fix-r25-self-check.py', '_fsr9_name_slot'))
+    if _fsr9_name_slot_slots:
+        failures.append('#892 aggregation-audit: a name relayed from a '
+                        f'healthy mixed conditional was read as unshared '
+                        f'({_fsr9_name_slot_slots[:2]}) (#1652)')
+    # fix-r25 (DS boundary#3 r24 P2b, matrix S09/E1): a module-level
+    # helper whose argument merely mentions the map is still a delegation
+    # to judge — the argument mention is not the helper's return value.
+    # The helper returns 0, so the delegation must flag.
+    _fsr9_dm_helper = ast.parse(
+        'def _fsr9_dm_helper(report):\n    return 0\n').body[0]
+    _fsr9_dm_point = ast.parse(
+        'def _fsr9_dm_point(report, rows):\n'
+        "    code = _fsr9_dm_helper('PASS' or "
+        'common.aggregate_status(rows)[0])\n'
+        '    sys.exit(code)\n').body[0]
+    _fsr9_dm_slots = unshared_status_slots(
+        _fsr9_dm_point, ('fix-r25-self-check.py', '_fsr9_dm_point'),
+        {'_fsr9_dm_helper': _fsr9_dm_helper})
+    if not any('inline exit code' in slot for slot in _fsr9_dm_slots):
+        failures.append('#892 aggregation-audit: a dead-mention argument '
+                        'excused a module-level helper that returns 0 '
                         '(#1652)')
     # The scan-stage RecursionError boundary (DS concurrency#2 r21) has
     # no always-on face: a real scanned file cannot carry a 1200-deep
