@@ -3748,8 +3748,14 @@ class RetirementScoring(unittest.TestCase):
             # survive the whole suite and read a corrupt status=600 artifact
             # as a HIT on /health (the port matrix gained 65536 in fix-r10
             # and the pid matrix 2**31 in fix-r11; this is the same family).
+            # fix-r14 (DS sibling#1 r13 P1, probe-verified —
+            # fix-r14-audit/probe-r14-p0.out): 99 is the mirror at the
+            # domain floor — the mutant ``100 <=`` → ``99 <=`` survived the
+            # same suite the same way (the top was pinned, the floor was
+            # not).
             for tag, bad_status in (('json string', '404'), ('boolean', True),
-                                    ('zero', 0), ('negative', -1), ('oversized', 999),
+                                    ('zero', 0), ('negative', -1),
+                                    ('below-floor', 99), ('oversized', 999),
                                     ('domain-top', 600)):
                 inventory = self.session._retirement_entry_inventory(
                     baseline, round_row('round-01', bad_status))
