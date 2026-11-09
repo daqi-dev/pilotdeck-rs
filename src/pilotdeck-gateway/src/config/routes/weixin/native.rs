@@ -14,7 +14,7 @@ use tokio::{sync::Mutex, task::JoinHandle, time::Instant};
 mod inbound;
 mod live;
 
-pub(crate) use inbound::{weixin_inbound_text, weixin_inbound_text_and_attachments};
+pub(crate) use inbound::weixin_inbound_text_and_attachments;
 
 pub const POLL_RETRY_DELAY_MS: u64 = 3000;
 pub const WEIXIN_LOGIN_RECOVERY_CHECK_INTERVAL_MS: u64 = 2000;
@@ -1595,6 +1595,11 @@ mod native_poll_alignment_tests {
             pending_replies: Default::default(),
             active_chats: Default::default(),
         };
+
+        delivery.test_mark_active("chat1");
+        assert!(delivery.active_chats().contains("chat1"));
+        delivery.mark_chat_inactive("chat1");
+        assert!(!delivery.active_chats().contains("chat1"));
 
         let whole_text = "段落1：长消息测试。".repeat(200);
         // Queue whole text directly on failure

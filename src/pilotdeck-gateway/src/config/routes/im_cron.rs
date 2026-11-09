@@ -26,7 +26,8 @@ pub fn cron_protocol_channel_key(key: &str) -> &str {
 pub fn origin_channel_matches(delivery: &Value, channel: &str) -> bool {
     match delivery.get("originChannelKey") {
         None | Some(Value::Null) => true,
-        Some(Value::String(key)) => key.is_empty() || key == channel,
+        Some(Value::String(key)) if key.is_empty() => false,
+        Some(Value::String(key)) => key == channel,
         _ => false,
     }
 }
@@ -182,12 +183,12 @@ mod tests {
 
     #[test]
     fn origin_channel_matches_ts_contract() {
-        // Empty string behavior: TS `if (delivery.originChannelKey && ...)` evaluates to false, so not rejected
-        assert!(origin_channel_matches(
+        // Empty string behavior: empty originChannelKey matches no channel
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": ""}),
             "telegram"
         ));
-        assert!(origin_channel_matches(
+        assert!(!origin_channel_matches(
             &json!({"originChannelKey": ""}),
             "weixin"
         ));

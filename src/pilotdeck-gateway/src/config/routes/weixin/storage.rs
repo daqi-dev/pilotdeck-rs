@@ -403,6 +403,11 @@ mod tests {
         let home = TestHome::new();
         let store = Storage::new(home.0.clone());
 
+        // Test starting status
+        store
+            .report_status(STATUS_STARTING, MSG_STARTING, json!({}))
+            .unwrap();
+
         // Test connected status
         store
             .report_status(
