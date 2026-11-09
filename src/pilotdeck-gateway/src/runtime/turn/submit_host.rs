@@ -513,6 +513,13 @@ pub(crate) fn shared_task_budget_port(
 ) -> Arc<dyn crate::runtime::sdk_session::SdkTaskBudget> {
     Arc::new(crate::runtime::sdk_session::TaskBudgetStorePort::with_shared(store))
 }
+
+/// B dc123d18 names the production submit host `NativeSubmitHost`; the daqi
+/// runtime composes the same role through [`GatewaySubmitHost`] (services,
+/// replacement, admission and leases). Export the B name over that type so
+/// callers written against B keep compiling onto the one real implementation
+/// instead of a second, divergent submit pipeline.
+pub type NativeSubmitHost = GatewaySubmitHost;
 pub(crate) fn accepted_input_metadata(input: &JsValue) -> Option<JsObject> {
     let mut metadata = JsObject::new();
     for key in [
