@@ -84,6 +84,7 @@ STREAM-002 保留 `textErrors(textContent,400)`，增加 `textErrors(innerText,2
 ```sh
 (
   set -eu
+  : "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节的宿主片段取锁}"
   node scripts/fe-parity/run.mjs --suite streaming-scroll --frontends old \
     --output _tmp/fe-parity/coordinator-stream-old8
 )
@@ -154,6 +155,9 @@ node scripts/fe-parity/run.mjs --self-check
 node scripts/fe-parity/run.mjs --self-check --rules-only
 # 已构建旧侧时可单独校准其资产：
 node scripts/fe-parity/run.mjs --self-check --frontends old
+# ↓ 以下命令需要 listen/Chrome，未持租约时此处硬失败（不静默无锁运行）；取锁与释放按
+#   cli-parity README「锁被保留时怎么解」节的宿主片段（含 trap 形态释放）：
+: "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节取锁}"
 # 由协调者在可listen环境跑，检查真实静态/HTTP代理/WS upgrade，两入口同mock：
 node scripts/fe-parity/run.mjs --network-self-check
 # 协调者先校准旧侧聊天，再观察新侧真实失败：
@@ -263,6 +267,7 @@ onboarding 是空 providers，无 gateway。其 OpenAI UI 预设 URL 不读 E2E 
 ```sh
 (
   set -eu
+  : "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节的宿主片段取锁}"
   node scripts/fe-parity/run.mjs --suite real --real-mode all --frontends old \
     --output _tmp/fe-parity/coordinator-real-old5
 )
@@ -491,6 +496,7 @@ runtime 目录为本 worktree `_tmp/fe-parity/deploy-run/run-*/<cell>/`。复用
 ```sh
 (
   set -eu
+  : "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节的宿主片段取锁}"
   cd /Users/da/ws/pilotdeck-rs/_build/wt-f2e
   test ! -e _tmp/fe-parity/coordinator-b-old4
   node scripts/fe-parity/run.mjs --suite blackbox-deploy \
@@ -555,8 +561,10 @@ runtime 为基线自己的 `createRuntimeSupervisor` **start-built** 模式（se
 离线正控/负控：`node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs scripts/fe-parity/coexist-accounting.test.mjs scripts/fe-parity/coexist-self-check.test.mjs`（无 listen/Chrome）。`coexist-patch.test.mjs` 用 `executeOptionAPatchBranch` **真实执行**部署模板（不再镜像谓词）；`coexist-accounting.test.mjs` 合成 Playwright 报告验证三态（含 P0-1 重复实例、P0-2 新侧三态消费）；`coexist-self-check.test.mjs` 核对 COEXIST_CASES↔spec 注册、C3 快照归属（命名空间 + 跨 storage 搬移/同名遮蔽检出力）、S1/C3 接线、端口守卫顺序、fatal ERROR 与 B 总判分接线，及 `assertCoexistExecutionEnv` 拒绝用例。浏览器级负控按本仓负控规则放 `src/pilotdeck-gateway/tests/fixtures/fe-coexist/negative_controls.py`（声明式 mutations 表，26 变异：boundary 10 + 部署模板 3 + 计分/目录 7 + C3 快照 3 + 接线 3；其中 `active-project-unchecked` / `s1-marker-reverted` 是 spec 源文本接线守卫，非行为检出——浏览器级负控需真实部署；新增文件提交前不在 HEAD，`mutating_sources` 拒跑时由协调者宿主执行）。B 新侧配对：`--suite blackbox-deploy --frontends new`（或 `old,new`）只跑 native-auth 格（冻结 `real-auth-native.spec.mjs` 原样对共存部署），其余格 `NOT_RUN_NEW_SIDE` 列理由；新侧不能把 B 变绿，其诚实 FAIL 使 B 总状态 FAIL，配对 run 证据无效（执行错误）则记 ERROR（fix-r2 P0-2）。
 
 ```sh
-# 协调者块：先按「验证与运行」节开头的租约前置取锁（coexist / blackbox-deploy 新侧同属
-# 需要 listen/Chrome 的协调者命令，释放用 cli-parity 该节 trap 形态）：
+# 协调者块：前两条需要 listen/Chrome（coexist / blackbox-deploy 新侧），未持租约时硬失败；
+# 取锁与释放按 cli-parity README「锁被保留时怎么解」节的宿主片段（含 trap 形态释放）。
+# 第三条 node --test 是离线项，本身不需要租约：
+: "${TOKEN:?需要 /tmp/pdrs-parity.lock 租约——先按 scripts/cli-parity/README.md「锁被保留时怎么解」节取锁}"
 node scripts/fe-parity/run.mjs --suite coexist --frontends old    # 当前预期：N3 原验收格 FAIL → 总状态 FAIL（F3 决策项）
 node scripts/fe-parity/run.mjs --suite blackbox-deploy --frontends new   # 新侧配对（native-auth only，诚实 FAIL）
 node --test scripts/fe-parity/coexist-boundary.test.mjs scripts/fe-parity/coexist-patch.test.mjs \
