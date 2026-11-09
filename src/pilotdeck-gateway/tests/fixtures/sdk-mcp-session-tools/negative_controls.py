@@ -197,7 +197,14 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
-    check_binding_scope()
+    # #2441: the binding self-check runs before any mutation, so its failure is
+    # a "never started" refusal (rc 2) — the pre-`mutating_sources` boundary
+    # every guard below already follows (`specs/negative-controls/README.md`)
+    # — not an uncaught traceback a host would read as "ran and not green" (1).
+    try:
+        check_binding_scope()
+    except RuntimeError as error:
+        refuse(str(error))
     # #1433 fix-r1 (review P1-1): every refusal below happens before any
     # mutation, so it is rc 2 ("this run never started", printed by
     # `negative_selection.refuse`) and not rc 1 ("ran, not green") — the
