@@ -2010,4 +2010,106 @@ re-exports a head spelling under `*` stays unregistered, because the export
 list of an arbitrary module is statically unknowable; the local shadow stays
 in force and the site behind it stays unreported.  `builtins` is the one
 source whose public exports are known (and its star still skips underscore
-names, so `__import__` cannot come back that way).
+names, so `__import__` cannot come back that way).  **Round 39 reversed the
+first half of this trade-off** (see the round-39 section below): an unknown
+star may re-export the head, so the shadow is no longer provable and the
+site stays -- over-report, chosen because the miss was a false PASS.
+
+### Closed by `fix-r1` round 39 (codex r38 C-P0-1..C-P0-7 / C-P1-1..C-P1-3; GLM r38 boundary P0-1 / P1-2, concurrency P1-1 / P1-2 / P2-3 / P2-4; sibling G-s2 / G-s3, probe 2026-11-09)
+
+Round 38 severed the container walk at *any* rebound wrapper spelling.  A
+**passthrough** wrapper -- `iter = lambda hs: (h for h in hs)` -- hands the
+very handles back, so severing hid a real write (false PASS, C-P0-1); the
+guard also asked only the innermost scope, so a harmless module-scope
+wrapper severed the walk for the function scope below it (false FAIL,
+C-P1-3).  `_wrapper_fresh` now walks the scope chain and severs only on a
+unique, certainly-executed **lambda whose body never reads one of its own
+parameters** -- the one shape that provably cannot pass the container
+through.  A match subject that is a plain **name** cleared an imported
+helper through a value the resolver never made (`held = _sa if True else
+None; match held: case _sa:`, C-P0-3b); `set()` subjects read certain
+through `ast.literal_eval` accepting the call syntax (C-P0-3a) --
+`_capture_subject_resolvable` now accepts only a provably inert subject,
+and `_provably_inert` (like `_static_truth`) rejects any `ast.Call` in the
+tree, because `set()` is built with the module's own binding.  Starred
+displays counted **elements** as items: `[*()]`, `(*(),)`, `{*()}`,
+`{**{}}` all read provably nonempty and a walrus filter behind them stayed
+certain (C-P0-4) -- `_static_nonempty` answers unknown for a display built
+only from `Starred` elements / `None` keys.  An **unconsumed genexp** never
+runs any part past its first iterable (PEP 289), so a walrus filter inside
+it stayed certain (C-P0-5) -- the comprehension marks now defer everything
+but `gen0.iter` for a `GeneratorExp`.  A `global` under an `except:`
+handler or a `case:` body was dropped whole (`ast.ExceptHandler` /
+`ast.match_case` are not `ast.stmt`, C-P0-6a/b).  The class span started at
+`node.body[0].lineno`, but a decorator of `body[0]` sits on an earlier line
+and runs in the class namespace, so its walrus fell outside the span and
+read as a module binding (C-P1-1) -- the span now starts at the earliest
+decorator.  A provably-true filter (`if True`) downgraded the parts behind
+it (C-P1-2) -- `_static_truth` now decides.  The attrgetter factory behind
+a walrus (`(_g := operator.attrgetter)(k)(md)`) left the raw `NamedExpr`
+callee unread (C-P0-7), and walrus `partial` / aliased `__import__` callees
+missed their kinds (G-s2) -- the decode reads the factory through
+`_callee_expr`, `__import__` joined the callable kinds, and
+`_import_literal` decodes the callee.  Three whole-module visits
+(`_sys_modules_write_values`, `_module_import_binding_counts`,
+`_module_import_sources`) and `_container_base` still recursed per child /
+per link, so parser-deep expressions and subscript chains crashed the audit
+(concurrency P1-2); the self-copy recursion in `_dynamic_result_in_force`
+and the deep-call recursion in `_expr_kinds` crashed it too (P2-3) -- the
+first three are explicit stacks now, `_container_base` a plain loop, and
+the two unstackable recursions answer fail-closed (`True` / unknown) on
+`RecursionError`.  `from .builtins import *` names a package sibling, not
+builtins (P2-4) -- every builtins check now also requires `level == 0`.
+The two `RecursionError` guards arm only the **outermost** entry (a module
+global busy flag): the resolver's own recursion re-enters through the public
+wrapper, and an intermediate catch let each caller re-descend into its other
+sub-expressions -- one near-limit try and traceback build per level, minutes
+of pure exception churn on the 2000-deep call chain.  The cross-scope half
+of C-P1-3 needed two more pieces: the scope chain spells the module level
+`None` while the binding and block tables key it as the tree, and a use
+inside a nested scope never appears in the outer level's block map -- the
+guard now reads the module level through the tree key and compares the
+binding against the **statement that defines the nested scope** (a binding
+certain before the `def` ran before the function object existed, hence
+before any call into it; anything later keeps the descent, fail-closed).
+
+**Display element relay (round 39, macmini r36b table survivor, 2026-11-09).**
+The r36b interim negative-control table left exactly one survivor on macmini
+(`calibrate-for-target-name-iter`), reproduced locally on the pre-fix r39 head
+(python 3.14): `_hs = [getattr(md, k) for k in (_n,)]` then
+`_items = (_hs[0],)`; `for _h in _items: pass`; `_f = _h`; `_f('common', ...)`.
+The container fixpoint decoded a comprehension relay and a bare-name handover
+but not a **display whose elements take handles out of a known container**,
+so `_items` never entered the alias table and the iteration stayed invisible.
+The fixpoint now also collects, for a tuple/list/set display, each element's
+source container (a bare name registered in the table, or the container a
+`_container_callee` subscript/wrapper spelling names) and carries its roots
+onto the display's target -- same hand-over, same fixpoint, no new consumer.
+
+| Shape | Self-test |
+|---|---|
+| **A passthrough wrapper still carries** (false PASS guard): `iter = lambda hs: (h for h in hs); next((_h := iter)(hs))('common', object())` -- the receiver must withdraw. | `... severed the walk at a passthrough wrapper (round 39)` |
+| **A harmless module-scope wrapper severs** (false FAIL guard): module-level `iter = lambda hs: (h for h in (lambda *a: None,))`, used inside the function -- no withdrawal. | `... followed the walk through a harmless module-scope wrapper (round 39)` (the round-38 row `... trusted a wrapper spelling the scope had rebound (round 38)` stays green) |
+| **A star import restores a shadowed helper** (false PASS guard): `from os.path import join as setattr; from builtins import *; setattr(md, 'common', object())`. | `... let a star import leave a shadowed helper in force (round 39)` |
+| **A relative star is not builtins** (false PASS guard): `from .builtins import *` with an underscore head (`__import__`) shadowed -- the site stays, fail-closed. | `... read a relative star import as builtins and kept an underscore head shadowed (round 39)` |
+| **An unknown star may re-export the head** (false PASS guard, supersedes the round-38 json row): `import json; globals = lambda: {...}; from json import *` -- the site stays. | `... let an unknown star import unshadow a head the source may re-export (round 39)` (the `_m38_star_json` row, message rewritten) |
+| **A name / `set()` match subject stays conditional** (false PASS guard): `held = _sa if True else None` / `held = set()`, `match held: case _sa:` -- the helper must withdraw. | `... read a match capture over "<subject>" as certain (round 39)` |
+| **Starred displays may be empty** (false PASS guard): `[x for x in [*()] if (globals := ...)]` (also `(*(),)`, `{*()}`, `{**{}}`) -- the site stays. | `... proved a starred display "<display>" nonempty (round 39)` |
+| **An unconsumed genexp defers everything but its first iterable** (false PASS guard): `held = (x for x in (0,) if (globals := ...))` with nothing consuming it -- the site stays. | `... kept a genexp walrus certain though nothing consumes it (round 39)` |
+| **A consumed genexp keeps the site** (documented over-report): the same genexp inside `list(...)` -- the site stays, because a consumer whitelist is unsound (`list` is shadowable). | `... resolved a genexp consumer it cannot prove (round 39)` |
+| **A `global` under except / case registers** (false PASS guard): `class C:` with `except Exception: global globals` or `case 0: global globals` above `globals = saved`. | `... dropped a global under except-handler/match-case (round 39)` |
+| **A walrus attrgetter factory takes its object** (false PASS guard): `(_g := operator.attrgetter)(_k)(md)`. | `... lost the receiver a walrus factory callee handed a dynamic attrgetter (round 39)` |
+| **A walrus partial callee writes** (false PASS guard): `(_g := functools.partial)(setattr, md)`. | `... lost the receiver a walrus partial callee wrote (round 39)` |
+| **An aliased walrus `__import__` binds the module kind** (false PASS guard): `from builtins import __import__ as _imp; _s = (_g := _imp)('sys')`. | `... lost the module kind an aliased walrus __import__ binds (round 39)` |
+| **Deep expressions / chains do not crash** (crash guards): a 1100-term sum through the three whole-module visits; a 2000-deep subscript chain and a 2000-deep call chain through the decoders; a 1100-step self-copy chain through the head resolver. | `... let a deep expression crash a whole-module visit (round 39)` / `... let a deep subscript/call chain crash the decoders (round 39)` / `... let a self-copy chain crash the dynamic resolver (round 39)` |
+| **A decorator walrus is class-local** (false FAIL guard): `class C:` with `@((globals := saved) and (lambda f: f))` above `def f(): pass` -- the module shadow stays. | `... swallowed a decorator walrus into the class span (round 39)` |
+| **A provably true filter never downgrades** (false FAIL guard): `[(globals := ...) for x in (0,) if True]` -- the walrus is certain. | `... downgraded a walrus behind a provably true filter (round 39)` |
+| **A display of taken-out handles still relays** (false PASS guard): `hs = [getattr(md, k) for k in (n,)]`, `items = (hs[0],)` (also `[hs[0]]`, `(hs,)`, `items[0]` after the loop), `for f in items: ...`, `f('common', object())` -- the receiver must withdraw. | `... lost a handle relayed through a display before the iteration (round 39)` |
+| **A call-shaped display cannot prove a head shadow** (false PASS guard): `set = lambda: __import__; __import__ = set(); s = __import__('sys')` -- `ast.literal_eval` parses the `set()` syntax but the runtime builds it with the module's own binding, so the rebind hands back the true head and the site stays. | `... let a call-shaped display prove a head shadow (round 39)` |
+
+Two recursion families are unreachable in practice and stay recursive by
+design: deep **tuple / del-target** nesting, because the CPython parser caps
+parenthesis nesting first (measured: >200 parses, 250 raises `SyntaxError`;
+probe `probe-r39-pre.py` in the PR evidence), and the deep `list(zN)` copy
+chain, which did not reproduce at 600/700/900/1100 copies on either head
+(GLM concurrency r38 #3 -- no fix without a reproducer).
