@@ -295,6 +295,14 @@ class ReviewControls(unittest.TestCase):
             ('negated-fullwidth-slash', '| 1 | DS | 无 P0／P1 | — |\n', True),
             ('pure-negation-row', '| 1 | DS | 无 P0/P1/P2 | — |\n', True),
             ('misaligned-row', '| 1 | DS | P1：foo | 已修（c1） | extra |\n', False),
+            ('pending-merge', '| 1 | DS | P1：foo | 待合入 main |\n', False),
+            ('pending-merged-but', '| 1 | DS | P1：foo | 已修但未合入 |\n', False),
+            ('pending-incomplete', '| 1 | DS | P1：foo | 未完成 |\n', False),
+            ('pending-fold', '| 1 | DS | P1：foo | 尚未并入 #1234 |\n', False),
+            ('pending-dated-plan', '| 1 | DS | P1：foo | 计划 2026 年 12 月修复 |\n', False),
+            ('english-not-done', '| 1 | DS | P1: foo | not done |\n', False),
+            ('english-not-resolved', '| 1 | DS | P1: foo | not resolved |\n', False),
+            ('english-unfixed', '| 1 | DS | P1: foo | unfixed |\n', False),
         ]
         for name, row, expected in row_cases:
             with self.subTest(name=name):
@@ -305,6 +313,8 @@ class ReviewControls(unittest.TestCase):
         # whole-record cases: table shape, fences, second tables, endings.
         findings_table = '\n| 文件 | 结论 |\n|---|---|\n| x.py | P2 遗留未修 |\n'
         unrelated_table = '\n| 名 | 值 |\n|---|---|\n| a | b |\n'
+        combined_header_table = ('\n| 角色 | 不变量 | 结论 / 处理 | 证据 |\n'
+                                 '|---|---|---|---|\n| a | b | P1：未修 | c |\n')
         fenced_example = '```\n| a | b |\n|---|---|\n| 1 | 2 |\n```\n\n'
         record_cases = [
             ('no-table', '# 记录\n' + conclusion, False),
@@ -314,6 +324,8 @@ class ReviewControls(unittest.TestCase):
              + '```\n| 结论 | 处理 |\n|---|---|\n| P1：x | — |\n```\n', True),
             ('second-findings-table', table + conclusion + findings_table, False),
             ('second-unrelated-table', table + conclusion + unrelated_table, True),
+            ('combined-header-findings-table', table + conclusion + combined_header_table, False),
+            ('dropped-leading-pipe', table + '2 | DS | P2：b | — |\n' + conclusion, False),
             ('cr-only-endings', (table + conclusion).replace('\n', '\r'), True),
             ('cr-only-poison', ((table + '| 1 | DS | P1：foo | — |\n') + conclusion)
              .replace('\n', '\r'), False),
@@ -326,8 +338,12 @@ class ReviewControls(unittest.TestCase):
         record.write_bytes(b'# \xff\xfe not utf-8 \n')
         with patch.object(G, 'WORKTREE', self.root):
             self.assertIs(check_ruler.independent_review(), False)
-        # The real in-repo record must stay clean under the tightened rule.
-        self.assertIs(check_ruler.independent_review(), True)
+        # The real in-repo record must stay clean under the tightened rule:
+        # assert on a byte snapshot, not the live path (r2 concurrency review).
+        (record_dir / '001_ruler-recheck.md').write_bytes(
+            (G.WORKTREE / 'docs/reviews/001_ruler-recheck.md').read_bytes())
+        with patch.object(G, 'WORKTREE', self.root):
+            self.assertIs(check_ruler.independent_review(), True)
 
 
 if __name__ == '__main__':

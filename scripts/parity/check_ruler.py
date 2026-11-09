@@ -74,11 +74,15 @@ _LEVEL_TOKEN = re.compile(r'(?<![0-9A-Za-z])p[012](?![0-9A-Za-z])', re.IGNORECAS
 _CLOSED_HANDLING = ('修', '解决', '关闭', '拒', '保留', '无需', '完成', '合入',
                     '并入', '降级', '升级', 'done', 'fixed', 'resolved', 'closed',
                     'wontfix')
+# Pending must bind to the same disposal verbs the closure list knows (r2
+# review: 待合入/未完成/not done let a finding read as closed). The gap
+# between marker and verb is bounded but wide enough for dates etc.
 _IN_PROGRESS_HANDLING = re.compile(
-    r'(?:待|计划|拟|暂不?|未|后续|尚未|正在)[^，,。;；）)]{0,8}'
-    r'(?:修|解决|关闭|处置|处理)'
+    r'(?:待|计划|拟|暂不?|暂缓|未|后续|尚未|正在)[^，,。;；）)]{0,16}'
+    r'(?:修|解决|关闭|处置|处理|完成|合入|并入|降级|升级)'
     r'|修复中|进行中|观察中|保留观察|继续观察|待定|待办'
-    r'|\bin[ -]progress\b|\bnot[ -]?fixed\b|\bun[- ]?resolved\b|\bun[- ]?done\b'
+    r'|\bin[ -]progress\b|\bnot[ -]?(?:fixed|done|resolved|closed|merged)\b'
+    r'|\bun[- ]?resolved\b|\bun[- ]?done\b|\bunfixed\b'
     r'|\bpending\b|\btodo\b|\btbd\b|\bwip\b', re.IGNORECASE)
 
 
@@ -104,14 +108,13 @@ def _open_review_rows(text):
     table: unverifiable is not clean. Lines come from the shared LF-only
     splitter, so a U+2028 inside a cell cannot hide half of a finding (CR/CRLF
     are normalised first). Fenced code blocks are skipped. Each table is
-    classified by its own header: one with both 结论 and 处理 is a review
-    table (rows read per its columns); one with exactly one of them is a
-    findings table whose P-level rows cannot show a disposition and are
-    therefore open. A review-table row whose cell count no longer matches
-    its header is unreadable and therefore open.
+    classified by its own header: one with both 结论 and 处理 cells is a
+    review table (rows read per its columns, misaligned rows open); any other
+    table cannot show a disposition, so its P-level rows are open. A row that
+    drops its leading pipe while a table is open is unreadable and open.
     """
     open_rows, review_table = [], False
-    fence, table = False, None  # table: None | 'review' | 'finding' | 'other'
+    fence, table = False, None  # table: None while outside, set at its header
     columns = None
     for line in G.jsonl_lines(text.replace('\r\n', '\n').replace('\r', '\n')):
         stripped = line.strip()
@@ -122,20 +125,23 @@ def _open_review_rows(text):
         if fence:
             continue
         if not stripped.startswith('|'):
+            if table is not None and re.search(r'(?<!\\)\|', stripped):
+                # A row that drops its leading pipe while a table is open
+                # cannot be read reliably: unreadable is not clean (r2).
+                open_rows.append(_row_cells(stripped))
             table, columns = None, None  # prose or blank line ends the table
             continue
         cells = _row_cells(stripped)
         if all(not cell.strip('-: ') for cell in cells):
             continue  # |---|---| delimiter, not a review round
         if table is None:
-            has_finding_col, has_handling_col = '结论' in cells, '处理' in cells
-            if has_finding_col and has_handling_col:
+            if '结论' in cells and '处理' in cells:
                 table, review_table = 'review', True
                 columns = (cells.index('结论'), cells.index('处理'), len(cells))
-            elif has_finding_col or has_handling_col:
-                table = 'finding'
             else:
-                table = 'other'
+                # Any other table cannot show a disposition; a P-level row in
+                # it is therefore open (fail-closed, r2 review boundary #2).
+                table = 'opaque'
             continue  # the header row itself carries no finding
         if table == 'review':
             finding_at, handling_at, width = columns
@@ -148,10 +154,10 @@ def _open_review_rows(text):
                     not any(closed in handling for closed in _CLOSED_HANDLING)
                     or _IN_PROGRESS_HANDLING.search(handling)):
                 open_rows.append(cells)
-        elif table == 'finding':
+        else:  # opaque table: no readable 结论/处理 columns
             if any(_LEVEL_TOKEN.search(_NEGATED_LEVELS.sub('', cell))
                    for cell in cells):
-                open_rows.append(cells)  # no 处理 column: unverifiable
+                open_rows.append(cells)
     return open_rows if review_table else None
 
 
