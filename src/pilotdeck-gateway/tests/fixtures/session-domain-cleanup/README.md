@@ -1486,3 +1486,33 @@ folded non-status words and genuinely runtime arms stay misses.  The
 `_fsr5_*` pins cover the fold faces, key/value faces with negative
 controls, and seven end-to-end rogues with three negative controls.
 Ten revert mutants are killed by the named pins.
+
+fix-r20 (DS r19 boundary#1 P0 + sibling#1/#2 P1 + sibling#3 P2(b) +
+simplify#1 P2(a), probe-verified — `fix-r20-audit/probe-r20-p0.out`
+PB1/PB2/PB3/S1/S2K/S2V/S2F; the anthropic r19 boundary#1 P0 claim was
+arbitrated by a four-case probe and refuted): `_exit_arms` flattening
+DROPPED a sub-expression whose constant-but-unresolvable test
+(`1.0 is 1.0`) certifies no arm — the surviving arms read as the
+complete answer while the dropped branch could still carry the runtime
+value (PB1 even folded the deterministic WRONG string 'x'; the miss was
+non-monotonic: nesting B's runtime value set is a superset of control
+A's, yet detection went True→False).  The fix is deliberately
+consumer-side: a new `_exit_uncertain(node)` companion walk is consulted
+only by the two consumers that must not trust a partial arm set —
+`_folded_string_fold` answers the sentinel (never a wrong string) and
+`_assigns_clean_status` fails closed — because making `_exit_arms`
+itself propagate the empty set upward would LOSE the surviving arms'
+detection for the 15+ presence-scan consumers (`_calls_aggregate` and
+friends read [] as "certifies nothing").  `_assigns_clean_status` also
+gains the word-aware arm rule (the third folded-word consumer: the
+write path may not disagree with the return path), and
+`_conditional_status_word` gains a per-operand BinOp branch (Subscript
+deliberately not a recursion face — the walk fallback's literal-slice
+over-collection is the r18-established rule); the key and value side now
+share one `_spelling_hit` three-step pipeline.  Pins `_fsr5b_*` (fold
+sentinel, key/value faces with negative controls, fail-closed
+over-collection, the write-policy faces, six end-to-end rogues with one
+negative); a first S3 pin draft did not isolate the arm-loop polarity
+(mutant M7 survived through the BinOp branch's own operand fold), the
+f-string sentinel-interpolation arm is the isolating face.  Twelve
+revert mutants are killed (`fix-r20-audit/mutneg-r20-variants.out`).
