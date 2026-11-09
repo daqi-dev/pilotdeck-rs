@@ -2914,7 +2914,15 @@ class SameJsonSurfaces(unittest.TestCase):
         # the reserve arithmetic and the below-MAX_AGE invariant by value,
         # and the tail reserve's derivation (guarded-path count times the
         # real _git worst case, imported constants) so it cannot silently
-        # become a hand-picked number again (DS concurrency#1).
+        # become a hand-picked number again (DS concurrency#1).  #2552 r2:
+        # the imported-constant derivation is only as real as the import,
+        # so the import line and the KILL_TIMEOUT alias are pinned by bytes
+        # and the constants are checked for identity against a fresh exec of
+        # negative_process itself (DS r2 concurrency#1 -- a local
+        # redefinition would shrink both sides of the derivation together
+        # and stay green), and the clock line is pinned so the branch
+        # cannot be made unreachable by shifting the clock origin
+        # (DS r2 boundary#1).
         marker = '#2552 a spent lease budget marks the remaining cases INVALID'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
@@ -2922,6 +2930,11 @@ class SameJsonSurfaces(unittest.TestCase):
             spec = importlib.util.spec_from_file_location('samejson_budget_drift', path)
             module = importlib.util.module_from_spec(spec)
             exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+            negproc_path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/negative_process.py'
+            negproc_spec = importlib.util.spec_from_file_location(
+                'samejson_negproc_identity', negproc_path)
+            negproc = importlib.util.module_from_spec(negproc_spec)
+            exec(compile(negproc_path.read_bytes(), str(negproc_path), 'exec'), negproc.__dict__)
             reserve = (3 * (module.RUN_TIMEOUT_SECONDS + 2 * module.KILL_GRACE_SECONDS)
                        + module.TAIL_OVERHEAD_SECONDS)
             self.assertTrue(
@@ -2930,6 +2943,11 @@ class SameJsonSurfaces(unittest.TestCase):
                 and source.count("results.append({'name': row[0], 'status': 'INVALID',") == 1
                 and source.count("' by name'})\n                        continue") == 1
                 and source.count('mutating_sources(root, GUARDED_PATHS,') == 1
+                and source.count('clock = time.monotonic()\n') == 1
+                and source.count('from negative_process import (GIT_TIMEOUT, KILL_TIMEOUT,') == 1
+                and source.count('KILL_GRACE_SECONDS = KILL_TIMEOUT') == 1
+                and module.GIT_TIMEOUT == negproc.GIT_TIMEOUT
+                and module.KILL_GRACE_SECONDS == negproc.KILL_TIMEOUT
                 and module.TAIL_OVERHEAD_SECONDS
                     == len(module.GUARDED_PATHS) * (module.GIT_TIMEOUT
                                                      + 2 * module.KILL_GRACE_SECONDS)
