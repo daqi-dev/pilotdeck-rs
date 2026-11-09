@@ -109,6 +109,18 @@ impl Handler {
         self.plan_todo = Some(handler);
         self
     }
+    /// Optional form used by session assembly, where the durable plan/todo
+    /// service may be absent for a host without one.
+    pub fn with_plan_todo_opt(mut self, handler: Option<Arc<dyn PlanTodoHandler>>) -> Self {
+        self.plan_todo = handler;
+        self
+    }
+    /// Whether this turn's capability handler can answer `plan_todo`. The
+    /// manifest must advertise the method only for a bound handler, otherwise
+    /// the sidecar is told a capability the host would reject.
+    pub fn has_plan_todo(&self) -> bool {
+        self.plan_todo.is_some()
+    }
     /// Whether composition bound a tool execution port. TS types capability as
     /// a mandatory module, so an unbound port is a host assembly error; the
     /// router fails the manifest closed instead of advertising tool methods

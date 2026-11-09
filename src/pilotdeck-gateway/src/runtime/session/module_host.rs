@@ -1689,7 +1689,16 @@ pub fn build_with_router_state(
                 permission: permission.clone(),
             }),
             permission.clone(),
-        ),
+        )
+        // The session owns one durable plan/todo service; bind its handler so
+        // the capability module can answer plan_todo for this turn.
+        .with_plan_todo_opt(services.as_ref().and_then(|value| {
+            value
+                .plan_todo
+                .handler(&session_id, &turn_id)
+                .ok()
+                .map(|handler| handler as Arc<dyn capability::PlanTodoHandler>)
+        })),
         permission: permission::Handler::new(
             tools,
             permission,
@@ -1752,7 +1761,13 @@ pub fn host_manifest(router: &ModuleRouter) -> JsValue {
     if let Some(methods) = router.budget.methods() {
         insert("budget", methods);
     }
-    insert("capability", vec!["list_tools", "execute", "execute_batch"]);
+    let mut capability_methods = vec!["list_tools", "execute", "execute_batch"];
+    if router.capability.has_plan_todo() {
+        // Advertise plan_todo only when the handler is bound for this turn; the
+        // manifest must not promise a method the router would reject.
+        capability_methods.push("plan_todo");
+    }
+    insert("capability", capability_methods);
     insert("permission", HOST_PERMISSION_METHODS.to_vec());
     insert("context", router.context.methods());
     if let Some(methods) = router.turn.methods() {
