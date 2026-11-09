@@ -1588,3 +1588,26 @@ report as SyntaxError on 3.12+ and as ValueError on <=3.11; both now
 answer with the same per-file line).  New `_fsr8` pins cover both top
 shapes, the partial-arm mention, and the live/mixed no-over-collection
 faces; revert mutants are killed (`mutneg-r23.out`).
+
+fix-r24 (DS r23 boundary#1 P0 + sibling#1/#2 P1 + P2x4, probe-verified): the
+r23 any-arm exemption polarity exempted a whole return whenever ANY reachable
+arm mentioned the shared aggregate, so a mixed arm set (`0 if flag else
+common.aggregate_status(rows)[0]`, flattening to `[0, agg[0]]`) carried its
+clean constant arm past the zero-exit judgement.  The exemption is now
+per-arm: `judged = [arm for arm in arms if not _inevitably_shared(arm)]`,
+with the new `_inevitably_shared` predicate True only for the shared call
+itself, a Subscript whose `.value` recursively routes through it, or an
+IfExp/BoolOp whose certified arms (`_exit_arms`, empty set False) all route
+through the map -- dead operands, dead arms and constant shells keep being
+judged.  The `_exit_argument_violation` exemption is judged on the exit
+arms only (`status_exempt`, RecursionError -> False fail-closed; it was a
+whole-argument mention scan before -- a dead operand `'PASS' or <shared
+call>` suppressed the verdict); three mention-based checks (the
+`_proven_callee` proof and its two siblings) now require `_is_shared_call(call)`; the `_exit_arms` call inside
+`_helper_exits_zero` is wrapped RecursionError -> fail-closed True
+(function-level kill only: the r22 scan-stage boundary fires first at every
+depth that would reach it, `probe-r24-m19-depth{,2}.out` swept 300..1200);
+both parse sites share the `_PARSE_FAILURES` constant.  New `_fsr8` pins
+(six: five positive, one live-relay negative) and `_fsr9` pins (seven) cover
+every face; revert mutants are killed (`mutneg-r24.out`, first-run 14/18
+record `mutneg-r24-run1.out` kept alongside).
