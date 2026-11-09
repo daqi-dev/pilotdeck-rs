@@ -5416,3 +5416,10 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 
 ① **PR #2753（#2662 当轮修）fix-r4 超限裁定（AI 代批，待人复核）**：fix-r4（`c139dde40`，修 r5 boundary P1「finObserved 无 t0 下界 + 单次计算复用」）在边界消息送达前已推——车道对「修 P0/P1 的轮次仍两家复核」条款扩大解读所致。裁定：**已发生不回退**（回退作废 r6 评审损失更大）、下不为例；**r6 为绝对末轮**，r6 结果除 P0 外全部折跟进单不修；P0 出现即挂起报协调者仲裁。新跟进单：#2756 已扩记（认领评论 6738849881）、**#2759**（p16 内部七条 P2 精化收编），均前置于 #1353 收口。
 ② #1353 收口车道其余进度：G2 登记评论已发（#1353 6738094228）；#2737 在 merge queue 位次上移（monitor b23r5x2zb）；收敛路径 = 全 PASS 块 → 贴 #2753 正文 → pr-gate 重跑绿 → 入队；#2737 MERGED 后核邮箱 + 清 main checkout untracked R5 件。
+
+### 段末增记（19:5x–20:1x 机队事故拍板，coord2/e7）
+
+① **#2762 根因落定 + 钉版拍板（AI 代批，待人复核）**：#2367 车道实测——GitHub 将 ubuntu-latest 滚到 **26.04**（镜像 20261101.186.1；main 最后绿 run 08:31Z 是 24.04），新镜像三测稳定红：`builtin_tool_outputs_match_real_ts`（Invalid timezone: US/Pacific）+ `every_utf16_code_unit…json_stringify` + `finite_random_numbers…binary64_json_oracle`（均 node oracle BrokenPipe）；merge_group run 42609449491 同红，**10:45Z 后无任何全量 rust job 绿（整条合并队列被堵，与所有在审 diff 无关）**。根因+影响+处置已评论 #2762（6739685455）。拍板：**ci.yml 8 处 + pr-gate.yml 1 处（共 9 处，全仓实数）runs-on 钉回 ubuntu-24.04**；改测试适配 26.04 属 oracle 语义面（须走冻结变更程序）登记为 #2762 后续项，不当紧急修复。
+② **钉版修复 PR 车道已起**：任务书 `_tmp/20261109-coord/task-2762-fix/task.md`，本机车道（GLM 署名），树 `_build/wt-2762`、分支 `claude/issue-2762-ci-pin-ubuntu-2404`，Refs #2762 不 Closes；评审（非作者双谱系）与入队由协调者接手，队列解锁第一优先。
+③ **受影响车道接续口径（已通知 #2367/#1353/#2195；#2140/#2170 车道跨上下文不可恢复，其 #2750 哨兵 b9n5jd57f 响时就地传话）**：一切 CI 重试停手（无健康 runner 存在）；钉版 PR MERGED 后各分支 rebase 新 main → 重跑 CI → 按流程入队。#2195 回执：#2747 三查/双谱系（DS+MM 双 PASS）/cb8 终杀/gate 双过全就绪，唯等解锁。#2367 监视器 bp2y1srk0 只认「main 上 ci.yml 变更」或「任一 run rust 实跑且 success」两真信号。
+④ 队列 8 张全部受堵（#2382/#2718/#2729/#2742/#2561/#2731/#2732/#2737），钉版合入后逐一 rebase 恢复；#2729 守望 bvkg1xkfu 照旧。
