@@ -2,20 +2,8 @@ use super::super::requests::Requests;
 use crate::runtime::connection::{Call, RequestError};
 use pilotdeck_protocol::JsValue;
 
-// Wire names are the WebSocket frame method names from the TS frames registry
-// (frames.ts:47-48). Both methods pass through admission as ordinary session
-// requests; the isolated native process never attaches an SOP runtime.
 pub(super) const METHODS: &[&str] = &["sop_status", "sop_resume"];
 pub(super) const HANDLER: super::Handler = super::Handler::AfterAdmission(Requests::sop_request);
-
-fn unavailable(message: &str) -> RequestError {
-    RequestError {
-        code: "CAPABILITY_UNAVAILABLE".into(),
-        message: message.into(),
-        details: None,
-        validation: None,
-    }
-}
 
 impl Requests {
     pub(in crate::native_process) fn sop_request(
@@ -24,34 +12,30 @@ impl Requests {
         params: JsValue,
     ) -> Call<'_, Result<JsValue, RequestError>> {
         Box::pin(async move {
-            let _ = (method, params);
-
-            // The isolated native process never attaches an SOP runtime, so
-            // both methods return CAPABILITY_UNAVAILABLE. For sop_resume the
-            // TS capability gate fires before every other guard
-            // (GatewayWsConnection.ts:332 and InProcessGateway.ts:640, ahead
-            // of the :641 busy gate and the createLocalGateway.ts:1066-1069
-            // authority/subject override guard): a request carrying an
-            // override or racing an active turn still fails with
-            // CAPABILITY_UNAVAILABLE, like a TS gateway whose resumeSop
-            // callback is absent. These guards are documented to come back
-            // with a wired SOP runtime; tracking lives in #1313 and
-            // follow-ups, and the gate order must be re-verified against TS
-            // when they return.
-            //
-            // The capability gate also precedes every params guard, including
-            // the required sessionKey: the TS connection layer has no runtime
-            // schema parsing for params (GatewayWsConnection.ts:630-637
-            // isRequestFrame validates only type/id/method, and dispatch hands
-            // `frame.params as never` to the gateway), and the
-            // InProcessGateway.ts:635/:640 capability check is the first
-            // statement of sopStatus/resumeSop, so any field access or
-            // validation in the downstream callback is never reached. A frame
-            // missing sessionKey — or any other required field — therefore
-            // answers CAPABILITY_UNAVAILABLE, not a validation error.
-            Err(unavailable(
-                "StaffDeck SOP is not configured on this isolated native process.",
-            ))
+            let home = &self.options.home;
+            let project = &self.options.project;
+            match method.as_str() {
+                "sop_status" => crate::runtime::sop::status(home, project, &params).await,
+                "sop_resume" => {
+                    // Hold admission across disk/auth awaits so a turn cannot
+                    // start between the busy check and the state commit.
+                    let _reservation = params
+                        .get("sessionKey")
+                        .and_then(JsValue::as_string)
+                        .map(|key| {
+                            self.owner
+                                .begin_maintenance(key)
+                                .map_err(|err| RequestError::new(err.message))?
+                                .ok_or_else(|| RequestError {
+                                    code: "SESSION_BUSY".into(),
+                                    ..RequestError::new("Cannot resume SOP while a turn is active.")
+                                })
+                        })
+                        .transpose()?;
+                    crate::runtime::sop::resume(home, project, &params).await
+                }
+                _ => Err(RequestError::new("Unknown SOP method.")),
+            }
         })
     }
 }
@@ -61,20 +45,16 @@ mod tests {
     use crate::native_process::management_tests::setup;
     use crate::negative_assert_eq;
 
-    // sop_status: sessionKey missing → CAPABILITY_UNAVAILABLE, not a validation
-    // error. In TS the capability gate is the first statement of sopStatus
-    // (InProcessGateway.ts:635) and the connection layer never schema-parses
-    // params, so the required-field check is unreachable.
     #[tokio::test]
-    async fn sop_status_missing_session_key_hits_capability_gate_first() {
+    async fn sop_status_missing_session_key_is_invalid() {
         let (_scratch, requests) =
             std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
         let params = pilotdeck_protocol::JsValue::Object(Default::default());
         let result = requests.sop_request("sop_status".into(), params).await;
         negative_assert_eq!(
             result.unwrap_err().code.as_str(),
-            "CAPABILITY_UNAVAILABLE",
-            "#1312 sop_status missing sessionKey hits capability gate first"
+            "APPROVAL_INPUT_INVALID",
+            "#1312 sop_status missing sessionKey validates input"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
         requests
@@ -84,10 +64,6 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_status: valid sessionKey + wrong projectKey → shared entry gate in
-    // Requests::request rejects before sop_request runs, code is gateway_request_failed.
-    // The per-method guard that used to live in sop_request was dead code because
-    // native_process/requests.rs:179-188 always intercepts first with a different error code.
     #[tokio::test]
     async fn sop_status_rejects_wrong_project() {
         let (_scratch, requests) =
@@ -115,17 +91,16 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_status: valid sessionKey, no SOP runtime → CAPABILITY_UNAVAILABLE.
     #[tokio::test]
-    async fn sop_status_unavailable_without_runtime() {
+    async fn sop_status_reports_disabled_module() {
         let (_scratch, requests) =
             std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
         let params = crate::metadata::object([("sessionKey", "s1".into())]);
         let result = requests.sop_request("sop_status".into(), params).await;
         negative_assert_eq!(
             result.unwrap_err().code.as_str(),
-            "CAPABILITY_UNAVAILABLE",
-            "#1312 sop_status no runtime"
+            "SOP_MODULE_DISABLED",
+            "#1312 sop_status disabled module"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
         requests
@@ -135,12 +110,8 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_resume: authority/subject override fields → the TS capability
-    // gate fires before the createLocalGateway.ts:1066-1069 override guard
-    // (GatewayWsConnection.ts:332, InProcessGateway.ts:640), so the isolated
-    // process answers CAPABILITY_UNAVAILABLE, not APPROVAL_AUTHORITY_OVERRIDE.
     #[tokio::test]
-    async fn sop_resume_override_input_hits_capability_gate_first() {
+    async fn sop_resume_rejects_authority_override() {
         let (_scratch, requests) =
             std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
         for key in ["authority", "subject"] {
@@ -155,8 +126,8 @@ mod tests {
             let result = requests.sop_request("sop_resume".into(), params).await;
             negative_assert_eq!(
                 result.unwrap_err().code.as_str(),
-                "CAPABILITY_UNAVAILABLE",
-                "#1312 sop_resume {key} override still hits the capability gate first"
+                "APPROVAL_AUTHORITY_OVERRIDE",
+                "#1312 sop_resume {key} override is rejected"
             );
         }
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
@@ -167,12 +138,8 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_resume: an active turn plus an authority override — the TS
-    // capability gate still wins over both the busy gate
-    // (InProcessGateway.ts:641) and the override guard. Mutation: moving the
-    // busy or override guard ahead of the capability return flips the code.
     #[tokio::test]
-    async fn sop_resume_active_turn_and_override_hit_capability_gate_first() {
+    async fn sop_resume_busy_precedes_override() {
         let (_scratch, requests) =
             std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
         let session_key: pilotdeck_protocol::JsString = "s1".into();
@@ -192,8 +159,8 @@ mod tests {
         let result = requests.sop_request("sop_resume".into(), params).await;
         negative_assert_eq!(
             result.unwrap_err().code.as_str(),
-            "CAPABILITY_UNAVAILABLE",
-            "#1312 sop_resume capability gate precedes busy and override"
+            "SESSION_BUSY",
+            "#1312 sop_resume busy precedes override"
         );
         requests
             .owner
@@ -206,9 +173,8 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_resume: no active turn, no runtime → CAPABILITY_UNAVAILABLE.
     #[tokio::test]
-    async fn sop_resume_unavailable_without_runtime() {
+    async fn sop_resume_requires_revision_for_human() {
         let (_scratch, requests) =
             std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
         let params = crate::metadata::object([
@@ -221,8 +187,8 @@ mod tests {
         let result = requests.sop_request("sop_resume".into(), params).await;
         negative_assert_eq!(
             result.unwrap_err().code.as_str(),
-            "CAPABILITY_UNAVAILABLE",
-            "#1312 sop_resume no runtime"
+            "APPROVAL_INPUT_INVALID",
+            "#1312 sop_resume disabled module"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
         requests
@@ -232,22 +198,16 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // sop_resume: every required field — sessionKey, message, requestId,
-    // waitId, source — missing. TS still answers CAPABILITY_UNAVAILABLE: the
-    // capability gate is the first statement of resumeSop
-    // (InProcessGateway.ts:640) and nothing above it parses params, so a
-    // single-field validation added for sop_resume ahead of the capability
-    // return would drift from TS to gateway_request_failed.
     #[tokio::test]
-    async fn sop_resume_missing_required_fields_hits_capability_gate_first() {
+    async fn sop_resume_missing_required_fields_is_invalid() {
         let (_scratch, requests) =
             std::panic::catch_unwind(setup).expect("#1312 sop fixture setup");
         let params = pilotdeck_protocol::JsValue::Object(Default::default());
         let result = requests.sop_request("sop_resume".into(), params).await;
         negative_assert_eq!(
             result.unwrap_err().code.as_str(),
-            "CAPABILITY_UNAVAILABLE",
-            "#1312 sop_resume missing all required fields still hits capability gate first"
+            "APPROVAL_INPUT_INVALID",
+            "#1312 sop_resume missing all required fields still validates input"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
         requests
@@ -257,10 +217,6 @@ mod tests {
             .expect("#1312 sop project dispose");
     }
 
-    // Full wire path: a correct projectKey routes sop_status through
-    // GatewayRequests::request into the sop family — not into the generic
-    // metadata fallback, whose CAPABILITY_UNAVAILABLE message is
-    // "Native gateway method {method} is not configured." instead.
     #[tokio::test]
     async fn sop_status_full_path_reaches_sop_family() {
         let (_scratch, requests) =
@@ -279,12 +235,12 @@ mod tests {
         let error = result.unwrap_err();
         negative_assert_eq!(
             error.code.as_str(),
-            "CAPABILITY_UNAVAILABLE",
+            "SOP_MODULE_DISABLED",
             "#1312 sop_status full path code"
         );
         negative_assert_eq!(
             error.message.to_utf8().expect("#1312 message UTF-8"),
-            "StaffDeck SOP is not configured on this isolated native process.",
+            "The StaffDeck SOP module is not enabled for this project.",
             "#1312 sop_status full path reaches the sop family, not the generic fallback"
         );
         requests.owner.shutdown().await.expect("#1312 sop shutdown");
@@ -293,5 +249,73 @@ mod tests {
             .dispose()
             .await
             .expect("#1312 sop project dispose");
+    }
+    #[tokio::test]
+    async fn sop_native_status_resume_persist_and_replay() {
+        use crate::runtime::turn::gateway::GatewayRequests;
+        use pilotdeck_protocol::{JsValue, parse_json};
+        let (_scratch, requests) = setup();
+        let config = requests.options.home.join("pilotdeck.yaml");
+        let mut yaml = std::fs::read_to_string(&config).unwrap();
+        yaml.push_str(
+            "
+modules:
+  sop:
+    enabled: true
+    provider: staffdeck
+    endpoint: http://127.0.0.1:1
+    definitionsPath: sops.json
+    defaultSopId: sop
+",
+        );
+        std::fs::write(config, yaml).unwrap();
+        let sessions = requests.options.home.join("sop/sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let state = parse_json(r#"{"schemaVersion":3,"sessionId":"s1","bundle":{"sops":[]},"state":{"status":"handoff","slots_json":{"retained":true}},"revision":2,"wait":{"id":"wait","kind":"external_task","createdAt":"2026-11-09T00:00:00.000Z"},"resumeRequests":{},"updatedAt":"2026-11-09T00:00:00.000Z"}"#).unwrap();
+        let path = crate::runtime::sop::store::path(&sessions, "s1");
+        std::fs::write(
+            &path,
+            pilotdeck_protocol::stringify_json(&state).unwrap().unwrap(),
+        )
+        .unwrap();
+        let params = crate::metadata::object([("sessionKey", "s1".into())]);
+        let status = requests.request("sop_status".into(), params).await.unwrap();
+        assert_eq!(status.get("revision"), Some(&JsValue::Number(2.0)));
+        let command = parse_json(r#"{"sessionKey":"s1","requestId":"resume-1","waitId":"wait","source":"external_task","message":"done","expectedRevision":2,"slotUpdates":{"result":"ok"}}"#).unwrap();
+        let key = pilotdeck_protocol::JsString::from("s1");
+        let reservation = requests.owner.begin_maintenance(&key).unwrap().unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let busy = requests
+            .request("sop_resume".into(), command.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(busy.code, "SESSION_BUSY");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(requests.owner.begin_turn(&key, &"blocked".into()).is_none());
+        drop(reservation);
+        let receipt = requests
+            .request("sop_resume".into(), command.clone())
+            .await
+            .unwrap();
+        assert_eq!(receipt.get("accepted"), Some(&JsValue::Bool(true)));
+        assert_eq!(receipt.get("revision"), Some(&JsValue::Number(3.0)));
+        let persisted = parse_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(persisted.get("revision"), Some(&JsValue::Number(3.0)));
+        assert_eq!(
+            persisted
+                .get("state")
+                .unwrap()
+                .get("slots_json")
+                .unwrap()
+                .get("retained"),
+            Some(&JsValue::Bool(true))
+        );
+        let replay = requests
+            .request("sop_resume".into(), command)
+            .await
+            .unwrap();
+        assert_eq!(replay.get("duplicate"), Some(&JsValue::Bool(true)));
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
     }
 }
