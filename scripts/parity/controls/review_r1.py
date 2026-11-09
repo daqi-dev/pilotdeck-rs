@@ -266,6 +266,69 @@ class ReviewControls(unittest.TestCase):
         self.assertFalse(result['fully_frozen'])
         self.assertFalse(result['machine_checks_pass'])
 
+    def test_independent_review_disposal_matrix(self):
+        """#2245: the conclusion sentence plus a fully-disposed table must pass;
+        un-disposed, in-progress or unreadable P0/P1/P2 rows must fail."""
+        record_dir = self.root / 'docs' / 'reviews'
+        record_dir.mkdir(parents=True)
+        record = record_dir / '001_ruler-recheck.md'
+        table = ('# 记录\n\n| 轮 | 审查方 | 结论 | 处理 |\n|---|---|---|---|\n'
+                 '| 1 | DS | P1：foo | 已修（c1） |\n')
+        conclusion = '\n结论：**无 P0/P1/P2。**\n'
+        # (name, row to replace the closed row with, expected independent_review)
+        row_cases = [
+            ('closed', '| 1 | DS | P1：foo | 已修（c1） |\n', True),
+            ('undisposed-dash', '| 1 | DS | P1：foo | — |\n', False),
+            ('in-progress', '| 1 | DS | P1：foo | 修复中 |\n', False),
+            ('planned-fix', '| 1 | DS | P1：foo | 计划修复 |\n', False),
+            ('pending-verb', '| 1 | DS | P1：foo | 待 codex 修 |\n', False),
+            ('english-not-fixed', '| 1 | DS | P1: foo | not fixed |\n', False),
+            ('english-unresolved', '| 1 | DS | P1: foo | unresolved |\n', False),
+            ('keep-observing', '| 1 | DS | P1：foo | 保留观察 |\n', False),
+            ('escaped-pipe-hides-p1', '| 1 | DS \\| GLM | P1：foo | 待修复 |\n', False),
+            ('escaped-pipe-clean', '| 1 | DS \\| GLM | 无 P0/P1/P2 | 已修（c1） |\n', True),
+            ('closed-with-未-elsewhere', '| 1 | DS | P1：foo | 已修，未引入回归 |\n', True),
+            ('merged-to-main', '| 1 | DS | P1：foo | 已合入 main（abc1234） |\n', True),
+            ('folded-into-issue', '| 1 | DS | P1：foo | 已并入 #1234 |\n', True),
+            ('downgraded', '| 1 | DS | P1：foo | 已降级（P3） |\n', True),
+            ('negated-lowercase', '| 1 | DS | 无 p0/p1/p2 | — |\n', True),
+            ('negated-fullwidth-slash', '| 1 | DS | 无 P0／P1 | — |\n', True),
+            ('pure-negation-row', '| 1 | DS | 无 P0/P1/P2 | — |\n', True),
+            ('misaligned-row', '| 1 | DS | P1：foo | 已修（c1） | extra |\n', False),
+        ]
+        for name, row, expected in row_cases:
+            with self.subTest(name=name):
+                record.write_text(table.replace('| 1 | DS | P1：foo | 已修（c1） |\n', row) + conclusion,
+                                  encoding='utf-8')
+                with patch.object(G, 'WORKTREE', self.root):
+                    self.assertIs(check_ruler.independent_review(), expected)
+        # whole-record cases: table shape, fences, second tables, endings.
+        findings_table = '\n| 文件 | 结论 |\n|---|---|\n| x.py | P2 遗留未修 |\n'
+        unrelated_table = '\n| 名 | 值 |\n|---|---|\n| a | b |\n'
+        fenced_example = '```\n| a | b |\n|---|---|\n| 1 | 2 |\n```\n\n'
+        record_cases = [
+            ('no-table', '# 记录\n' + conclusion, False),
+            ('no-conclusion', table, False),
+            ('fence-before-table', fenced_example + table + conclusion, True),
+            ('fenced-poison-ignored', table + conclusion
+             + '```\n| 结论 | 处理 |\n|---|---|\n| P1：x | — |\n```\n', True),
+            ('second-findings-table', table + conclusion + findings_table, False),
+            ('second-unrelated-table', table + conclusion + unrelated_table, True),
+            ('cr-only-endings', (table + conclusion).replace('\n', '\r'), True),
+            ('cr-only-poison', ((table + '| 1 | DS | P1：foo | — |\n') + conclusion)
+             .replace('\n', '\r'), False),
+        ]
+        for name, body, expected in record_cases:
+            with self.subTest(name=name):
+                record.write_text(body, encoding='utf-8')
+                with patch.object(G, 'WORKTREE', self.root):
+                    self.assertIs(check_ruler.independent_review(), expected)
+        record.write_bytes(b'# \xff\xfe not utf-8 \n')
+        with patch.object(G, 'WORKTREE', self.root):
+            self.assertIs(check_ruler.independent_review(), False)
+        # The real in-repo record must stay clean under the tightened rule.
+        self.assertIs(check_ruler.independent_review(), True)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
