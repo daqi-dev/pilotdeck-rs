@@ -16,7 +16,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
-                               run_owned, wait_for_slot)
+                               run_owned, tree_lock, wait_for_slot)
 from negative_suite import Case, classify, passed, publish_summary
 
 root = Path(__file__).resolve().parents[5]
@@ -70,10 +70,14 @@ cases = [
 def main():
     if sys.argv[1:] == ['--check-anchors']:
         failures = []
-        for name, path, old, _, _, _ in cases:
-            count = path.read_text().count(old)
-            if count != 1:
-                failures.append(f'{name}: expected 1 anchor, got {count}')
+        # Hold the tree lock while reading: a sibling mutating runner may
+        # have a mutant on disk between its write and restore phases, which
+        # would make this read-only check see `count == 0` spuriously.
+        with tree_lock(root):
+            for name, path, old, _, _, _ in cases:
+                count = path.read_text().count(old)
+                if count != 1:
+                    failures.append(f'{name}: expected 1 anchor, got {count}')
         print('\n'.join(failures) if failures else f'{len(cases)} anchors OK')
         return int(bool(failures))
     args = [argument for argument in sys.argv[1:] if argument != '--compile-only']
@@ -92,13 +96,13 @@ def main():
                '-p', 'pilotdeck-gateway', '--lib']
     results = []
 
-    def run(label, test, compile_only=False):
+    def run(label, arguments, test, compile_only=False):
         try:
             slot = wait_for_slot(root / 'scripts/cargo-slots.sh', timeout=CARGO_SLOTS_WAIT_SECONDS)
             (out / f'{label}.slots.log').write_text(slot.stdout + slot.stderr)
             # No `--nocapture` and no `-q`: the classifier needs the named
             # per-test FAILED line and its panic payload intact (#938 r14).
-            suffix = ['--no-run'] if compile_only else [test, '--', '--exact']
+            suffix = ['--no-run'] if compile_only else arguments
             result = run_owned(command + suffix, cwd=root, env=env, timeout=900)
             (out / f'{label}.log').write_text(result.stdout + result.stderr)
             return result
@@ -134,7 +138,7 @@ def main():
                     if not compile_only and not passed(run(name + '-positive', arguments, test), test):
                         raise RuntimeError('positive control did not pass')
                     path.write_text(original.replace(old, new, 1))
-                    if run(name + '-compile', test, compile_only=True).returncode != 0:
+                    if run(name + '-compile', arguments, test, compile_only=True).returncode != 0:
                         raise RuntimeError('mutant did not compile; never a kill')
                     row['compiled'] = True
                     if compile_only:
