@@ -459,12 +459,16 @@ mutations = [
     # leaves the error type uninferred (E0282, cb8 r1 compile log in
     # _tmp/20261026-issue-2195/review-r1/); the issue's recipe said the bare
     # form compiled, which the first host run disproved.
+    # Re-anchored after #2641 merged: the closure body is now
+    # `dispatch_under_management_gate(&cron, ...)` — same handoff, the gate
+    # wraps the same `cron::dispatch` call, so the kill semantics are
+    # unchanged (turbofish kept for the same E0282 reason as above).
     ('cron-inline-sync', CRON,
      '            let dispatched = tokio::task::spawn_blocking(move || {\n'
-     '                cron::dispatch(cron.as_deref(), &dispatch_method, &params)\n'
+     '                dispatch_under_management_gate(&cron, &dispatch_method, &params)\n'
      '            })\n'
      '            .await;',
-     '            let dispatched = Ok::<_, tokio::task::JoinError>(cron::dispatch(cron.as_deref(), &dispatch_method, &params));',
+     '            let dispatched = Ok::<_, tokio::task::JoinError>(dispatch_under_management_gate(&cron, &dispatch_method, &params));',
      'native_process::methods::cron::cron_tests::cron_request_dispatches_off_the_async_worker',
      '#1509 cron dispatch must yield the async worker before answering'),
 ]
