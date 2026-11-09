@@ -599,11 +599,18 @@ class EnvironmentControls(unittest.TestCase):
                 jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
 
         # 闸门 step 删掉 `shell: bash`：裸 run step 继承任何 defaults.run.shell。
+        # 锚串里的 timeout-minutes 值同源派生（评审 r2 sibling#1）：手抄的 5 是
+        # GATE_STEP_TIMEOUT_MINUTES['check 5 轮'] 的第二份拷贝，登记值合法变更后
+        # 锚串 count=0，本样本红在「unique anchor」、误导为锚点损坏。
+        check_minutes = self.retirement_gate_step_timeouts(issue='#1809')['check 5 轮']
+        check_anchor = ('      - name: check 5 轮\n        shell: bash\n'
+                         f'        timeout-minutes: {check_minutes}\n'
+                         '        run: |\n')
+        check_shell_removed = ('      - name: check 5 轮\n'
+                               f'        timeout-minutes: {check_minutes}\n'
+                               '        run: |\n')
         change_job('retirement-gate-shell-removed', 'retirement-outcome-parity',
-                   '      - name: check 5 轮\n        shell: bash\n'
-                   '        timeout-minutes: 5\n        run: |\n',
-                   '      - name: check 5 轮\n        timeout-minutes: 5\n'
-                   '        run: |\n',
+                   check_anchor, check_shell_removed,
                    '#1809 the retirement-outcome-parity run step pins `shell: bash` (parsed)')
         # 必需检查的聚合 Require step 换 shell 值：`/bin/true {0}` 把 exit 1 变 rc=0。
         change_job('require-scope-shell-swapped', 'check',
