@@ -69,14 +69,17 @@ impl GatewayRequests for Requests {
             if self.hold_request.swap(false, Ordering::SeqCst) {
                 // Register before publishing entered: notify_waiters keeps no
                 // permit for a Notified created after the release broadcast.
-                let released = self.release.notified();
-                tokio::pin!(released);
-                released.as_mut().enable();
+                // #2391 fix-r1: this local is `gate`, not `released` — the
+                // native-ws-notify `skip-release-wait` anchor pins
+                // `released.await;` to exactly the describe_server branch.
+                let gate = self.release.notified();
+                tokio::pin!(gate);
+                gate.as_mut().enable();
                 self.request_entered.notify_one();
-                released.await;
+                gate.await;
                 self.request_done.notify_waiters();
             }
-            Ok(crate::metadata::object([]))
+            Err(RequestError::new("#749 unexpected method"))
         })
     }
 }

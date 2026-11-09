@@ -211,6 +211,11 @@ jobs:
           python3 -I src/pilotdeck-gateway/tests/fixtures/sdk-mcp-session-tools/negative_controls.py --check
           # #1354（minimax r2 P2，同一先例）：入口路由负控夹具的 --check 同理进 CI。
           python3 -I src/pilotdeck-gateway/tests/fixtures/mode-routing/negative_controls.py --check
+          # #2391 fix-r1（评审三家同条，同 #1433/#1354 先例）：transcript-write 预留与
+          # session-delete 清理两套新负控夹具的 --check 也进 CI——锚点 / 绑定 / 静态名册
+          # 任一漂移即本步非零退出；全量杀灭轮（需要 cargo 与净树）仍由协调者在宿主跑。
+          python3 -I src/pilotdeck-gateway/tests/fixtures/session-reservation-2391/negative_controls.py --check
+          python3 -I src/pilotdeck-gateway/tests/fixtures/session-delete-2392/negative_controls.py --check
       # #2516 fix-r1（P2-a 5）：槽位探针残余负控全量进 CI。纯 Python 零 cargo
       # （变异体经 published_module 内存发布，不写树、不需要净树），全量含基线
       # 17 例 + 七杀 + 名册核验，任一 SURVIVED / INVALID / 名册漂移即本步非零

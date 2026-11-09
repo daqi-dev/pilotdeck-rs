@@ -1525,8 +1525,10 @@ async fn reload_extensions_order_per_key() {
 }
 
 /// The `reload_config` capture listener is detached `finally`-style,
-/// including when the future is dropped at the store-flight await point
-/// (the WS layer drops in-flight requests on disconnect).
+/// including when the future is dropped at the store-flight await point (a
+/// client disconnect alone does not drop it — the WS layer retains and
+/// drains request jobs; it is the host's own teardown that aborts a draining
+/// job past its budget, see `runtime/settings/gateway.rs`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn reload_config_drop_detaches_capture() {
     let stack = stack(&[]);

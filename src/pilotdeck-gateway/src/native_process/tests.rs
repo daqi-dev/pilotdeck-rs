@@ -1091,7 +1091,11 @@ async fn production_listener_mounts_the_api_web_group() {
 /// the lanes outside the group answer (`/api/web` without the trailing
 /// slash, and `/` for the static lane the production listener does not
 /// serve — `with_static_root` stays test-only), plus the 401 before any
-/// routing.
+/// routing. The ledger half is machine-checked, not asserted in prose: the
+/// test reads entries.json and dies unless its `/api/web` routes are
+/// exactly the five probed (each still in group A678 at `partial-native`),
+/// and the probe URLs are built from the same route ids, so neither side
+/// can drift alone.
 #[tokio::test]
 async fn production_listener_presents_the_api_web_ledger_surface() {
     use crate::runtime::{
@@ -1114,6 +1118,69 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
             Box::pin(async { Ok(JsValue::Null) })
         }
     }
+    // The ledger's route ids for the group, in `gateway.http:<METHOD> <path>`
+    // form; the probes below are built from these so the test cannot drift
+    // from the ledger it claims to hold up (`:projectKey` is the ledger's
+    // placeholder, `route_path` substitutes the encoded scratch root).
+    const LIST: &str = "GET /api/web/projects";
+    const DESCRIBE: &str = "GET /api/web/projects/:projectKey";
+    const TREE: &str = "GET /api/web/projects/:projectKey/files/tree";
+    const READ: &str = "GET /api/web/projects/:projectKey/files/read";
+    const WRITE: &str = "POST /api/web/projects/:projectKey/files/write";
+    const ROUTES: [&str; 5] = [LIST, DESCRIBE, TREE, READ, WRITE];
+    fn route_path(route: &str, encoded_root: &str) -> String {
+        let (_, path) = route.split_once(' ').expect("#2395 route id shape");
+        path.replace(":projectKey", encoded_root)
+    }
+    // The cross-check itself: the `gateway.http:` routes under `/api/web/`
+    // in specs/product-coverage/entries.json must be exactly these five,
+    // each still in group A678 at `partial-native`. A sixth route, a moved
+    // group or a status flip in the ledger dies here instead of silently
+    // outliving the probes.
+    let ledger: Value = serde_json::from_str(include_str!(
+        "../../../../specs/product-coverage/entries.json"
+    ))
+    .expect("#2395 ledger JSON");
+    let mut held_up = Vec::new();
+    for entry in ledger["entries"].as_array().expect("#2395 ledger entries") {
+        let id = entry["id"].as_str().expect("#2395 entry id").to_string();
+        let group = entry["group"]
+            .as_str()
+            .expect("#2395 entry group")
+            .to_string();
+        let status = entry["status"]
+            .as_str()
+            .expect("#2395 entry status")
+            .to_string();
+        let route = match id.strip_prefix("gateway.http:") {
+            Some(route) => route,
+            None => continue,
+        };
+        let path = match route.split_once(' ') {
+            Some((_, path)) => path,
+            None => continue,
+        };
+        if path.starts_with("/api/web/") {
+            held_up.push((id, group, status));
+        }
+    }
+    held_up.sort();
+    let mut probed: Vec<(String, String, String)> = ROUTES
+        .iter()
+        .map(|route| {
+            (
+                format!("gateway.http:{route}"),
+                "A678".to_string(),
+                "partial-native".to_string(),
+            )
+        })
+        .collect();
+    probed.sort();
+    negative_assert_eq!(
+        held_up,
+        probed,
+        "#2395 the ledger's /api/web routes are exactly the five this test probes"
+    );
     let scratch = Scratch::new();
     // One registered project in the WS lane's home — the same marker shape
     // `assembly::register_project` writes — with one file the tree/read/write
@@ -1195,7 +1262,10 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
     // is the 401, not a 404.
     let unauthorized = exchange(
         address,
-        "GET /api/web/projects HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        &format!(
+            "GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            route_path(LIST, &encoded_root)
+        ),
     )
     .await;
     assert!(
@@ -1209,7 +1279,7 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
 
     // Entry `GET /api/web/projects`: the native catalog lists the registered
     // project through the production composition.
-    let listed = exchange(address, &get("/api/web/projects".to_string())).await;
+    let listed = exchange(address, &get(route_path(LIST, &encoded_root))).await;
     assert!(
         listed.starts_with("HTTP/1.1 200"),
         "#2395 the project list route serves the native catalog: {listed:?}"
@@ -1220,7 +1290,7 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
     );
 
     // Entry `GET /api/web/projects/:projectKey`.
-    let described = exchange(address, &get(format!("/api/web/projects/{encoded_root}"))).await;
+    let described = exchange(address, &get(route_path(DESCRIBE, &encoded_root))).await;
     assert!(
         described.starts_with("HTTP/1.1 200"),
         "#2395 the describe route serves the native catalog: {described:?}"
@@ -1231,11 +1301,7 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
     );
 
     // Entry `GET /api/web/projects/:projectKey/files/tree`.
-    let tree = exchange(
-        address,
-        &get(format!("/api/web/projects/{encoded_root}/files/tree")),
-    )
-    .await;
+    let tree = exchange(address, &get(route_path(TREE, &encoded_root))).await;
     assert!(
         tree.starts_with("HTTP/1.1 200") && tree.contains("hello.txt"),
         "#2395 the tree route lists the project file: {tree:?}"
@@ -1245,7 +1311,8 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
     let read = exchange(
         address,
         &get(format!(
-            "/api/web/projects/{encoded_root}/files/read?path=hello.txt"
+            "{}?path=hello.txt",
+            route_path(READ, &encoded_root)
         )),
     )
     .await;
@@ -1260,7 +1327,8 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
     let written = exchange(
         address,
         &format!(
-            "POST /api/web/projects/{encoded_root}/files/write HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            "POST {} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            route_path(WRITE, &encoded_root),
             body.len()
         ),
     )
@@ -1272,7 +1340,8 @@ async fn production_listener_presents_the_api_web_ledger_surface() {
     let reread = exchange(
         address,
         &get(format!(
-            "/api/web/projects/{encoded_root}/files/read?path=written-2395.txt"
+            "{}?path=written-2395.txt",
+            route_path(READ, &encoded_root)
         )),
     )
     .await;
