@@ -153,16 +153,22 @@
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
-被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；没装取消处理器的入口（如
-`settings-gateway`）按信号默认处置退出：守卫回写窗口外被 SIGTERM 当场杀死、退出码
-143（SIGHUP 129 / SIGQUIT 131 同理），树可能停在变异中、证据不完整；SIGINT 由
-解释器自身转成 KeyboardInterrupt、未捕获退 130；落在回写窗口内则先完成还原与复核
-再退 128+signum（守卫对 SIG_DFL 同样换 handler 延迟）。装了取消处理器的自管脚本
-分两族：`issue-297` 两入口（`issue-297`、`issue-297-domain-fold`）在处理器装好
-之后、守卫回写窗口外的取消当「从未开跑」拒跑，退 2（处理器安装前的启动段仍按
-默认处置）；`same-json-surfaces` 与 `mode-routing` 的 `terminate_cleanly`
-（session-domain-cleanup #892 r23 镜像）窗口外只对它注册的三个信号
-（SIGTERM / SIGHUP / SIGQUIT）退 128+signum，SIGINT 不在其列。落在共享守卫回写
+被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；以下退出码都以前台、未继承
+SIG_IGN 为前提（nohup / 后台链式宿主把 SIGINT / SIGTERM 设成 SIG_IGN 传给子进程时，
+信号被静默吞掉，进程既不退、证据也不终止，宿主需 SIGKILL / 超时兜底；实测：SIG_IGN
+子进程对 SIGINT+SIGTERM 均存活）。没装取消处理器的入口（如 `settings-gateway`）
+按信号默认处置退出：守卫回写窗口外被 SIGTERM 当场杀死、退出码 143（SIGHUP 129 /
+SIGQUIT 131 同理），树可能停在变异中、证据不完整；SIGINT 由解释器自身转成
+KeyboardInterrupt、未捕获退 130（实测 `raise KeyboardInterrupt` → 130；settings-gateway
+顶层 `except BaseException` 在 `entered` 翻转前的启动段把它收成拒跑码 2，之后
+record_failed_run 再抛、退 130）；落在回写窗口内则先完成还原与复核再退 128+signum
+（守卫对 SIG_DFL 同样换 handler 延迟；继承来的 SIG_IGN 不换，窗内收 SIGINT 既不
+延迟也不退）。装了取消处理器的自管脚本分两族，都在装好处理器之后才谈取消语义，
+安装前的启动段一律按信号默认处置：`issue-297` 两入口（`issue-297`、
+`issue-297-domain-fold`）在守卫回写窗口外的取消当「从未开跑」拒跑，退 2；
+`same-json-surfaces` 与 `mode-routing` 的 `terminate_cleanly`（session-domain-cleanup
+#892 r23 镜像）窗口外只对它注册的三个信号（SIGTERM / SIGHUP / SIGQUIT）退
+128+signum，SIGINT 不在其列。落在共享守卫回写
 窗口内的取消一律先完成还原与复核，随后按相位分码：issue-297 的编译预检
 （`compile_controls` 自己的 `mutating_sources` 窗口）让守卫退出抛的
 `SystemExit(128+signum)` 穿过 `except Exception` 成为进程退出码，且不写
