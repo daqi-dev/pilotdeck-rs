@@ -2624,3 +2624,146 @@ are unchanged from round 44.
 | **Every binding spelling of the class-body `__new__` keeps the import standing** (false PASS guard): AnnAssign, tuple-target, walrus, `from m import f as __new__`, and the clean *assigned* builder (the registered conservative standing) -- registered; a clean `def __new__` stays value-analyzed. | `... dropped the import standing behind an AnnAssign __new__ / a tuple-target __new__ / a walrus __new__ / an imported __new__ / a clean AnnAssign __new__ builder (conservative standing) (round 45)`; `... kept the import standing behind a clean def __new__ builder (value-analyzed) (round 45)` |
 | **The walrus callee keeps its reading at the six helper sites** (false PASS guard / false FAIL guard): `(_a := all)(r.passed ...)`, `(_c := md.common.aggregate_status)(report)`, `(_l := load)('x')`, `(_s := str)('a')`, `(_h := h)()`, `(_p := load_pristine_common)()` all read; the `len`/`other`/`open`/pure-read mirrors do not. | `... lost the aggregate marker / the shared call / the guard loader / the fresh value / the loop-target handle use / the proven source behind a walrus callee (round 45)`; the four negative mirrors each carry their own `kept ... behind a walrus non-X / pure read` message (round 45) |
 | **A tuple-target `del` rebinds the base name** (floor lock): `del (_B, _x)` before `class imp(_B)` keeps the conservative import standing. | `... dropped the import standing behind a tuple-target del rebind (round 45)` |
+
+### Closed by `fix-r1` round 46 (GLM r45 boundary-rerun#1..#3 / concurrency#1..#4 / sibling#1/#2/#5; anthropic r45 boundary#1..#8 / sibling#1..#5; probe 2026-11-10)
+
+Every finding was probe-reproduced against the round-45 committed ruler
+before any fix (frozen procedure: `probe-r46.log` holds the pre-fix
+columns -- the "r45" column there is the round-45 commit `c0f24ca86`,
+the "r44" column the round-44 commit `72f6f67ee` kept as a second
+witness, and every dirty row carries a runtime oracle;
+`probe-r46-after3.log` holds the post-fix state, re-run byte-identical
+after the last battery-round fix).  Two reviewer claims did not
+reproduce and were rejected *with* that probe evidence: the
+closure-store shape (`a-store-closure`) already convicts at round 45
+(the display store guard fires without the window walk -- the claim's
+false-PASS premise was the window, the ruler never needed it), and the
+double-pop Assign (`b-assign-dirty2`) already convicts at round 45 --
+it is runtime-clean but the selection *address changes*, which the
+registered address-change conservative floor convicts by design (the
+same standing the round-44 section registered; the probe claim text
+itself notes the floor).
+
+The scope-execution family (GLM concurrency#1a; anthropic boundary#1).
+A *class* body executes at its `class` statement, but `_scoped_nodes`
+never yields the `ClassDef` node itself (it pushes only the header
+expressions), so round 45 lost every class-body event the round-44
+`ast.walk` window used to price -- a false PASS regression.  The window
+now walks `_window_statements`, the same walk with one rule changed: a
+`ClassDef` child enters the stream as a statement, so its body descends
+right where the `class` line sits (a nested `def`/`lambda` inside the
+class body keeps the headers-only rule).  An immediately-invoked lambda
+runs its body at the call: `_eval_order_nodes` descends a
+Lambda-callee's body after the call's argument expressions (CPython
+evaluates defaults, then the argument list, then the body).
+
+The mutator net (GLM concurrency#1b; GLM sibling#2).  A wrapper that
+only *calls* a mutator stayed outside `mutators` while its inner call
+sat in a nested scope the window never walks -- a false PASS.  The
+seeding is now a transitive fixpoint: `_body_calls_mutator` closes
+wrapper definitions, `_body_mutates` reads non-Call stores and deletes
+on display names (Assign/AugAssign/AnnAssign/Delete targets and For
+targets through `_target_hits_display`), binding values unwrap
+`NamedExpr` (`_g = (_h := lambda: ...)` seeds both names), a for target
+bound to a mutating lambda over a literal Tuple/List iterable seeds the
+target names, and `_name_alias_closure` runs inside the fixpoint so
+alias chains feed back.
+
+The evaluation-order family, second wave (GLM concurrency#2; GLM
+boundary-rerun#2; anthropic sibling#1/concurrency#1/boundary#2).  The
+AST *field* order is not the evaluation order on the remaining
+composite spellings: an assignment evaluates its value before the
+target's subscript components (`Assign._fields` lists targets first),
+an `AnnAssign`'s value runs before its target while its *annotation*
+is not evaluated at the statement at all (PEP 649 lazy annotations --
+kept out of the order), a dict display interleaves each key with its
+value (`Dict._fields` lists all keys then all values; `**`-unpacking
+keys are `None` and skipped), and a `for` evaluates its iterable
+before its target.  `_eval_order_nodes` spells all of these as the
+runtime order; the mirror Assign (runtime-clean under value-first
+order) stopped reporting at the same time.
+
+The fork family (GLM concurrency#3; anthropic boundary#5).  The
+round-44/45 replay ran *every* priced event in the window, so the
+unexecuted arm of an `if`/`else` (or a short-circuited boolop right
+side) could cancel the executed arm's move -- a false PASS.
+`_conditional_arm_chains` maps every node of the scope to its chain of
+`(fork, arm)` placements; the replay enumerates the cartesian product
+of arm choices and convicts when any *executable* path convicts.  An
+`if` with an `else` carries exactly one arm ({0, 1}); without one it
+also carries the no-arm choice ({0, -1}); an `IfExp` always evaluates
+exactly one arm; a `match` carries the no-case-matched choice; a
+`BoolOp` operand at index i runs only when the chain reached it
+(choice >= i; operand 0 always runs).  `Try` arms keep the registered
+conservative read (all handlers replayed); match *patterns* cannot hold
+calls or deletes, so only guards sit inside an arm.  The combination
+count is capped at 16 -- beyond it the verdict is `True` (fail-closed).
+A first draft of this walk iterated `IfExp.body`, which is a single
+expression node, and crashed the whole audit on the round-45 `IfExp`
+battery row; the battery caught it before commit and the walk now has
+an `IfExp`-specific branch.
+
+The post-use truncation (anthropic boundary#4).  The window filtered at
+*statement* granularity, so an event after the use inside the use's own
+compound statement entered the replay and could cancel the move -- a
+false PASS.  Every priced event now carries its own position: an event
+at or after `use_pos` never enters the replay.
+
+The del dedup completion (GLM concurrency#4 + sibling#1 in both
+lineages; anthropic sibling#2).  The round-45 `priced` guard covered
+only Call events; a nested `del items[k]` entered the replay once per
+enclosing compound statement (a false report).  The removal append
+carries the same guard.
+
+The for-target repetition (anthropic boundary#6).  `_repeated_between`
+never pushed the `for` target, so its per-iteration subscript events
+were priced once -- a false PASS.  The target now re-runs like body
+events unless the iterable is a one-element literal (which keeps the
+linear single-iteration read); an empty, longer or non-literal iterable
+takes the conservative `inner` flag.
+
+The match-capture spellings (GLM boundary-rerun#3; anthropic
+sibling#3).  A toplevel `case <pattern> as _n2:` binds the *whole
+subject* even under a sub-pattern, and every `MatchOr` arm that
+captures the whole subject does the same; the round-45 closure read
+only bare `MatchAs(pattern=None)`.  `_toplevel_match_captures`
+unwraps both spellings for the alias closure (nested-element captures
+stay outside, as registered).  The class-body `__new__` walk reads the
+same shapes (anthropic sibling#4: a class-body `match` binds `__new__`
+through its capture) and now descends def/lambda/class *headers* in the
+class body (anthropic boundary#8: a walrus default
+`def f(x=(__new__ := staticmethod(...)))` binds the class attribute;
+the block comment always promised "header expressions still run").
+
+The last two bare `.func` reads (GLM sibling#5, fixed the same round as
+a 15-minute shape): `_module_load_call` and `_iterable_dict_keys` route
+through the shared `_callee_expr` walrus unwrap.
+
+Known residuals (follow-up issue): a callback-passed mutator
+(`map(_mutate, ...`) is still not an invocation; nested-element match
+captures and non-literal for iterables stay outside the alias closure
+(pinned by battery); comprehension later-parts keep their conservative
+reading; `literal_seed_iterable` returns a vacuous True on an *empty*
+literal (over-report direction only); Try arms and cross-case match
+guard composites stay conservative; events inside the use's own
+subscript path truncate with the same-statement nuance;
+`_unbounded_write`'s `_expr_kinds` and `_getattribute_pure_read`'s
+parent chain do not unwrap `NamedExpr` (false-FAIL direction); PEP 649
+laziness can still price a phantom annotation event (false-FAIL
+direction); `_target_names` returns no name for a Starred for-target;
+Call keyword/starred source-order mixing is unverified against CPython;
+the round-45 simplify debt (walrus-unwrap dedup helper, comment phrase,
+two-pass walk merge, `_body_mutates` layering) is unchanged.
+
+| Shape | Self-test |
+|---|---|
+| **Scope-execution spellings enter the window** (false PASS guard): a class-body composite, an indirect wrapper (`_outer()` calling `_mutate()`), an immediately-invoked mutating lambda, a closure body storing into a display subscript, and a for-target bound to a mutating lambda -- withdraw. | `... lost a receiver behind a class-body composite between binding and use / an indirect mutator call through a wrapper / an immediately-invoked mutating lambda / a closure body storing a handle into a display subscript / a for-target bound to a mutating lambda over a literal (round 46)` |
+| **The scope-execution clean twins stay clean** (false FAIL guard): a compensating class-body composite, a wrapper calling a clean reader, an immediately-invoked clean lambda, a closure body storing into another name's subscript, and a for-target clean reader. | `... withdrew a clean receiver behind a compensating class-body composite / a wrapper calling a clean reader / an immediately-invoked clean lambda / a closure body storing into another name's subscript / a for-target bound to a clean reader lambda (round 46)` |
+| **Composite spellings replay in evaluation order** (false PASS guard): Assign value-before-target, AnnAssign value-before-target, Dict pair-interleaved, For iter-before-target, a For target re-evaluated every iteration, and the double-pop Assign address change (the registered conservative floor) -- withdraw. | `... lost a receiver behind an Assign value-before-target composite / an AnnAssign value-before-target composite / a Dict pair-interleaved composite / a For iter-before-target composite / a For target re-evaluated every iteration / a double-pop Assign address change (conservative floor) (round 46)` |
+| **The evaluation-order clean twins stay clean** (false FAIL guard): the same three shapes at the clean index, and the mirror Assign whose value-first order removes the handle before the use (the round-45 false report on this spelling is gone). | `... withdrew a clean receiver behind an Assign composite keeping the use clean / a Dict pair-interleaved composite keeping the use clean / a For iter-before-target composite keeping the use clean / a mirror Assign whose value-first order stays clean (round 46)` |
+| **Mutually exclusive regions fork the replay** (false PASS guard): a statically-taken if arm with a cancelling else arm, a statically-taken else arm composite, a boolop right side that never runs, and a trailing pop after the use inside its own statement -- withdraw. | `... lost a receiver behind a statically-taken if arm with a cancelling else arm / a statically-taken else arm composite / a boolop right side that never runs / a trailing pop after the use inside its statement (round 46)` |
+| **The fork clean twins stay clean** (false FAIL guard): mutually exclusive arms each pricing safe alone, and a trailing pop after a clean move at the use. | `... withdrew a clean receiver behind mutually exclusive arms each pricing safe alone / a trailing pop after a clean move at the use (round 46)` |
+| **A nested `del` enters the replay once** (false FAIL guard / false PASS guard): a single `del _items[1]` inside an `if` does not withdraw; two distinct dels and a walrus-wrapped lambda mutator called twice still withdraw; a walrus-wrapped reader lambda stays clean. | `... withdrew a clean receiver behind a single nested del / a walrus-wrapped reader lambda (round 46)`; `... lost a receiver behind two distinct nested dels / a walrus-wrapped lambda mutator called twice (round 46)` |
+| **A sub-pattern `as` capture binds the whole subject** (false PASS guard): `case [*_] as _n2: _n2.reverse()`, a `MatchOr` arm capture, and a sub-pattern match-capture mutator alias call -- withdraw; the capture used only to read stays clean. | `... lost a receiver behind a sub-pattern whole-subject match capture mutation / a MatchOr whole-subject capture mutation / a sub-pattern match-capture mutator alias call (round 46)`; `... withdrew a clean receiver behind a sub-pattern match capture used only to read (round 46)` |
+| **A class-body match capture and a header walrus bind `__new__`** (false PASS guard): `match staticmethod(_mk): case __new__:` and `def f(x=(__new__ := staticmethod(...)))` keep the import standing; the plain-attribute controls do not. | `... dropped the import standing behind a match-captured __new__ / a walrus-default __new__ in a class-body def header (round 46)`; `... kept the import standing behind a match capture on a plain attribute / a walrus default on a plain attribute (round 46)` |
+| **The last two helper sites unwrap a walrus callee** (false FAIL guard): `(_g := sys.modules.get)('_guard')` stays a proven load; `(_d := d.keys)()` reads the dict's keys. | `... lost a proven module load behind a walrus callee / withdrew dict keys behind a walrus callee (round 46)` |
