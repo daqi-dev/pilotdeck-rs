@@ -76,10 +76,10 @@ STREAM-002 保留 `textErrors(textContent,400)`，增加 `textErrors(innerText,2
 
 边界回源限制：冻结 Gateway `mapModelEvent`（约 :530–543）不投影 message_end，不能声称当前原生链路实际发出了 assistant_stream_end。mock 使用 TurnTimeline 的真实 message_end 边界坐标，覆盖 bridge 已支持的 assistant_stream_end → stream_end 契约；自检明确断言该原生 projector 输出为空，并单独验证边界的 bridge 形状。timeline 的 delta 与 assistant_block 最终块则确实由原生 projector 逐帧对比，前端 `useChatRealtimeHandlers.ts:745–750` 会将它们送入 applyTimelineMessage。
 
-协调者 old8 命令（无需重建旧 Vite 产物；output 必须尚不存在；先取
-`/tmp/pdrs-parity.lock` 目录租约——发布 `cleanupPending: true` 或整块 <2280 s，
-回收与残留按 `scripts/cli-parity/README.md`「锁被保留时怎么解」节，不用裸
-`mkdir` + `trap rmdir`，无 guard 删锁会与自动接管竞态，见该节）：
+协调者 old8 命令（无需重建旧 Vite 产物；output 必须尚不存在；先按
+`scripts/cli-parity/README.md`「锁被保留时怎么解」节的宿主片段取
+`/tmp/pdrs-parity.lock` 租约并发布 `cleanupPending: true`——本块无墙钟上界、
+不得用短块豁免——跑完按同片段释放，回收与残留同节）：
 
 ```sh
 (
@@ -253,10 +253,10 @@ onboarding 是空 providers，无 gateway。其 OpenAI UI 预设 URL 不读 E2E 
 
 离线：`node --test scripts/fe-parity/mock-llm.test.mjs`（14 组正负控制；冻结 native OpenAI parser 验证流式/非流式，冻结 PNG 编码验证 4 色，stub 网络保护，无 listen/Chrome）；`run.mjs --self-check` 同时核对两个 real 配置的实际注册。默认 self-check 仍要求 old/new 资产齐备；只有 old 资产的现场使用 `--self-check --frontends old`；无资产的规则验证使用既有 `--rules-only`。real 浏览器 preflight 不要求 mock-UI 静态 bundle，因为运行只读 Vite dev 源码，而规则/协议/注册检查全部执行。
 
-协调者在沙箱外运行（output 必须尚不存在；无需再提供真实 API key；先取
-`/tmp/pdrs-parity.lock` 目录租约——发布 `cleanupPending: true` 或整块 <2280 s，
-回收与残留按 `scripts/cli-parity/README.md`「锁被保留时怎么解」节，不用裸
-`mkdir` + `trap rmdir`，无 guard 删锁会与自动接管竞态，见该节）：
+协调者在沙箱外运行（output 必须尚不存在；无需再提供真实 API key；先按
+`scripts/cli-parity/README.md`「锁被保留时怎么解」节的宿主片段取
+`/tmp/pdrs-parity.lock` 租约并发布 `cleanupPending: true`——本块无墙钟上界、
+不得用短块豁免——跑完按同片段释放，回收与残留同节）：
 
 ```sh
 (
@@ -481,10 +481,9 @@ runtime 目录为本 worktree `_tmp/fe-parity/deploy-run/run-*/<cell>/`。复用
 **StaffDeck BLOCKED 的具体缺项**：PilotDeck 基线仅含接入 profile/协议和 replacement fixture，真实模块来自独立锁定 StaffDeck checkout。回源 `tests/composition/formal-approval-fixture.ts:79–83` 要求 `STAFFDECK_SOP_ROOT` 与匹配 Python；`products/pilotdeck-staffdeck-sop/conformance/run_staffdeck_knowledge_lifecycle.py:28,40–43,47–63,115–131` 使用外部 `app.module_knowledge_app` 和预置种子。基线默认路径 `/Users/a1/.../StaffDeck-portable-sop` 不在本机；本机另有 StaffDeck 目录/venv，但缺这两个所需模块入口，不等价于锁定 runtime。还需真实预置 Knowledge 的 `kb_preset_data_001` / `kb_preset_sales_001` / `kchunk_preset_sales_001`；SOP 原件 `sops/operator-approval.yaml` 已同时包含 `operator_approval` 与 `operator_approval_alternate`，需由隔离真实模块加载，不能误报为缺少定义文件。现入口固定报告 BLOCKED，**不会**接受任意外部服务 URL 或假 Knowledge/SOP 作为替代。人提供锁定源码、已有依赖与种子后还需补其受审计的隔离启动编排；本轮未下载、安装、借用活跃服务或伪造业务结果。这是尚未完成的前提，不是永久降低验收分母。
 
 协调者整块旧侧命令（output 必须新建；当前预期因 StaffDeck 为 BLOCKED 最终 exit 1，
-保留其余格原始结果；先取 `/tmp/pdrs-parity.lock` 目录租约——发布
-`cleanupPending: true` 或整块 <2280 s，回收与残留按
-`scripts/cli-parity/README.md`「锁被保留时怎么解」节，不用裸 `mkdir` +
-`trap rmdir`，无 guard 删锁会与自动接管竞态，见该节）：
+保留其余格原始结果；先按 `scripts/cli-parity/README.md`「锁被保留时怎么解」节的
+宿主片段取 `/tmp/pdrs-parity.lock` 租约并发布 `cleanupPending: true`——本块无
+墙钟上界、不得用短块豁免——跑完按同片段释放，回收与残留同节）：
 
 ```sh
 (
