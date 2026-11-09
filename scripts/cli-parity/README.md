@@ -30,10 +30,12 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 
 ## 锁被保留时怎么解
 
-本节是共享锁 `/tmp/pdrs-parity.lock` 的**唯一正本**：取锁/释放形态、回收与残留处置都在
-这里，各 fixture README（如 sdk-signals 的 28999 串行前置段）与 fe-parity 等协调者
-配方引用本节，不自创、不复写。持锁形态决定会不会被自动接管：带接管逻辑的装置在锁龄超
-2400 s（gateway 系 `MAX_AGE`（`common.py` `:27`）/ parity 系 `LOCK_MAX_AGE`
+本节是共享锁 `/tmp/pdrs-parity.lock` 的**唯一正本**：取锁/释放形态与通用人工回收
+流程（下文第 1–3 步）都在这里；gateway 系装置车次现场读自家工件（`processes.json` /
+`lock.json` 等）的口径见 `scripts/gateway-parity/README.md:169` 与各装置文档（双向
+指针待 #1783）。各 fixture README（如 sdk-signals 的 28999 串行前置段）与 fe-parity
+等协调者配方引用本节，不自创、不复写。持锁形态决定会不会被自动接管：带接管逻辑的装置
+在锁龄超 2400 s（gateway 系 `MAX_AGE`（`common.py` `:27`）/ parity 系 `LOCK_MAX_AGE`
 （`round.py` `:74`））后按 `expired` 接管**没有** `cleanupPending` 的锁——活 owner
 也会被接管（判据只看锁龄与 pid，无心跳；接管判定 `round.py` `:225-231`、
 `scripts/gateway-parity/common.py` `:624-633`，接管语义与「不自愈」例外详见本节
@@ -42,28 +44,105 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 `run_round.py` 的 `signal.alarm(2280)`——2280 s 是调用方闹钟，不是租约属性），没有
 硬截止的块（如 fe-parity 的协调者配方，`run.mjs` 无墙钟上限）一律发布。
 
-宿主（沙箱外协调者）的取锁/释放片段（形态对齐三装置：`.guard` flock + mkdir +
-`owner.json`；类型约束：`pid` 正整数、`timestamp` 有限数、`token` 十六进制串、
-`cleanupPending` 真值——类型不符会被读侧判 `damaged`，锁永不接管、也无法自动回收）：
+宿主（沙箱外协调者）的取锁/释放片段。形态对齐三装置（`.guard` flock + mkdir +
+`owner.json`），实现为**短命 `python3 -I` 进程**：不依赖 `flock(1)`/`uuidgen`（macOS
+无 `flock(1)`，仓内装置一律 `fcntl.flock`），guard 由 helper 持有并在退出时关闭——
+受保护块的后代不继承任何带锁 fd；任一步失败即非零退出，**不进入受保护块**
+（fail-closed，绝不静默降级成无锁运行）。`owner.json` 字段口径按各读侧真实校验集：
+parity/gateway 读侧只校验 `pid`（正整数）与 `timestamp`（有限数），不符判 `damaged`；
+`ui-server-parity/calibrate.sh` 读侧校验 `pid` 与 `token`（字符串）、不校验
+`timestamp`；`cleanupPending` 各读侧只做**真值**判断——必须是 JSON `true` 才阻止
+接管，假值或缺键 2400 s 后照常被接管；`token` 在 parity/gateway 读侧不参与校验（写
+小写 uuid hex 仅为与装置形态一致）：
 
 ```sh
-LOCK=/tmp/pdrs-parity.lock
-: >>"$LOCK.guard" && exec 9>>"$LOCK.guard" && flock 9     # guard 临界区（释放前重取）
-if [ -d "$LOCK" ]; then echo "parity lock held: $LOCK" >&2; exit 1; fi
-mkdir "$LOCK" && printf '{"pid":%s,"timestamp":%s,"token":"%s","cleanupPending":true}\n' \
-  "$$" "$(date +%s)" "$(uuidgen | tr -d -)" > "$LOCK/owner.json"
-flock -u 9
+# 取锁：TOKEN 由执行本片段的 shell/子壳持有；owner 的 pid 由该 shell 显式传 $$ 记入
+# ——不能在 python 里用 os.getppid()：$(... <<'PY') 形态下 bash 会在 heredoc 命令替换里
+# 多 fork 一层中间子壳，getppid 记到的是这个**即退出**的中间壳，释放侧对不上号
+# （2026-11-10 macOS 实测）；而 $$ 在命令替换子壳里仍指**取锁的那个 shell**，
+# 释放 helper 同样重传 $$，同一 shell 上下文两端恒等
+TOKEN=$(python3 -I - "$$" <<'PY'
+import fcntl, json, os, stat, sys, time, uuid
+LOCK = '/tmp/pdrs-parity.lock'
+shell_pid = int(sys.argv[1])
+assert shell_pid > 0, 'shell pid must be positive'
+fd = os.open(LOCK + '.guard', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        sys.exit('guard damaged: ' + LOCK + '.guard')
+    fcntl.flock(fd, fcntl.LOCK_EX)                 # 临界区：等前一个 guard 持有者退出
+    if os.path.isdir(LOCK):
+        sys.exit('parity lock held: ' + LOCK)
+    token = uuid.uuid4().hex
+    tmp = LOCK + '/owner.json.tmp.' + token
+    try:
+        os.mkdir(LOCK, 0o700)
+        with open(tmp, 'x') as f:                  # 原子发布：tmp + rename，读方见不到半截
+            f.write(json.dumps({'pid': shell_pid, 'timestamp': time.time(),
+                                'token': token, 'cleanupPending': True}) + '\n')
+        os.replace(tmp, LOCK + '/owner.json')
+        print(token)
+    except BaseException:                          # 发布失败：只清自己的 tmp 与空目录再上抛
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        try:
+            os.rmdir(LOCK)
+        except OSError:
+            pass
+        raise
+finally:
+    os.close(fd)
+PY
+) || exit 1                                        # 取不到租约即退出稍后重跑，不是自动排队
+
+# 释放（trap 形态：set -e 中止、INT/TERM、正常跑完都先走这里；guard 由短命 helper
+# 重取，核 token 与 pid（同样重传 $$）仍是本 shell 再删；核不过一律保留锁）
+pdrs_lock_release() {
+  python3 -I - "${TOKEN:-}" "$$" <<'PY'
+import fcntl, json, os, stat, sys
+LOCK = '/tmp/pdrs-parity.lock'
+token = sys.argv[1]
+if not token:
+    sys.exit(0)                                    # 从未取到锁，无事可做
+shell_pid = int(sys.argv[2])
+fd = os.open(LOCK + '.guard', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        sys.exit('guard damaged; retaining lock')
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        owner = json.loads(open(LOCK + '/owner.json').read())
+    except (OSError, ValueError):
+        sys.exit('owner unreadable; retaining lock')
+    if owner.get('token') != token or owner.get('pid') != shell_pid:
+        sys.exit('lock ownership changed; retaining lock')
+    os.remove(LOCK + '/owner.json')
+    try:                                           # 顺带清自己的 tmp（若有）；别的文件不碰
+        os.remove(LOCK + '/owner.json.tmp.' + token)
+    except OSError:
+        pass
+    os.rmdir(LOCK)                                 # 目录里还有别的文件则失败保留，走人工回收
+finally:
+    os.close(fd)
+PY
+}
+trap pdrs_lock_release EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # ……受保护的命令块……
-flock 9
-python3 -I -c "import json,sys;sys.exit(0 if json.load(open('$LOCK/owner.json'))['pid']==$$ else 1)" \
-  || { echo 'lock ownership changed; retaining lock' >&2; exit 1; }
-rm "$LOCK/owner.json" && rmdir "$LOCK"
-flock -u 9; exec 9>&-
 ```
 
-释放时核 `owner.json` 的 pid 仍是自己（变了说明已被接管，保留锁退出）；异常中断留下的
-残留按本节第 1–3 步人工回收——发布过 `cleanupPending` 的锁**不会被自动接管**，只能
-人工持 guard 回收，这是防接管的代价。
+取锁与释放必须挂在**同一 shell 上下文**（同一子壳/脚本里取 `TOKEN` 并定义 trap）；
+两段贴进两个独立 shell 时 pid 对不上，释放按「ownership changed」保留锁——跨 shell
+只能走本节人工回收。释放核 `token` 与 `pid` 双证（对齐装置的整条 owner 比对）。被
+SIGKILL/断电打断来不及释放，或核对不过（锁已被接管/身份变了），一律保留锁并按本节
+第 1–3 步人工回收——发布过 `cleanupPending` 的锁**不会被自动接管**，只能人工持
+guard 回收，这是防接管的代价。宿主块自行保证不留下活监听；怀疑有残留（fe-parity
+拉起的 Chrome/Vite 等）时先按第 1 步核进程组再释放。
 
 运行器报「retaining shared lock」或下次运行报锁被占时：
 1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并找残留 pgid：
@@ -72,7 +151,7 @@ flock -u 9; exec 9>&-
      启动会话与子进程组（`ps -o pid,pgid,sess,command -p <pid>`，再看 `-g <pgid>`）——**只按 pid 查进程树不够**：
      子进程常以 `start_new_session=True` 起在**另一个会话/进程组**里，owner 被 SIGKILL 后它们已被 reparent，
      进程树上与 owner 没有父子关系。
-   - 本装置（`run_round.py` 等，`scripts/cli-parity/common.py:368`）的 `owner.json` **没有** `cleanupPending` 键，
+   - 本装置（`run_round.py` 等，`scripts/cli-parity/common.py:373`）的 `owner.json` **没有** `cleanupPending` 键，
      残留只能看本次输出目录 `round.json` / `isolation.json` 的 `audit.remaining`。
    - `scripts/parity/round.py` 看 `run.json` 的 `cleanup.remaining` 与 `ownedGroupsRemaining`；
      被 SIGKILL 时 `run.json` 停在启动快照、这两个键可能根本没有。

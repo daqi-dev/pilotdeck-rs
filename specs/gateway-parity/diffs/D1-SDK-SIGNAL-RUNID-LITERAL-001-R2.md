@@ -44,7 +44,9 @@ original: D1-SDK-SIGNAL-RUNID-LITERAL-001
    用相对路径读取、依赖 CWD=仓根（不符即 `FileNotFoundError`）。命令正本迁至
    `src/pilotdeck-cli/tests/fixtures/sdk-signals/README.md`「Rust 回放与产品负控」节的
    验收段（与原条目对验收命令块的正本+指针做法一致），并补 None 守护、evidence 根
-   目录与 source.json 双显式传参；本条与 R1 只留判据语义与指针。复算语义不变：
+   目录与 source.json 双显式传参、两格 `comparison.json` 的 stdout 单面前置（把
+   evidence 根绑到真实跑过本矩阵的批次）与显式 utf-8 读取；本条与 R1 只留判据语义
+   与指针。复算语义不变：
    `evidence/<格>/stdout.bin`（只剥精确 libtest driver 前缀，Rust 侧不归一化）的
    36 字节 runId 替换为金样 UUID 后须与金样 stdout 逐字节相等。
 
