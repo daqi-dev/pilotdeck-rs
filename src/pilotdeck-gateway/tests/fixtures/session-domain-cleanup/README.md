@@ -1465,3 +1465,24 @@ test_safety lockstep pin now compares full catch sets (members read via
 revert mutants (both layers, four pin directions, the set-equality pin
 direction, and one dropped member per catch-set file) are killed by the
 named pins.
+
+fix-r19 (DS r18 boundary#1 P0 + sibling#1 P2, probe-verified —
+`fix-r19-audit/probe-r19-p0.out` G1-G7): the r18 branch judged a whole
+IfExp/BoolOp subtree with `_test_is_runtime`, so a dead-arm Name or a
+runtime test turned a conditional that IS one constant string
+(`('sta' + 'tus') if True else name`, `('sta' + 'tus') or name`) back
+into the fail-open None — a folded status word escaped both the key and
+the value side — while an all-constant NON-string conditional
+(`{} if True else {}`) read the sentinel and could flag a healthy
+function.  Two halves: the fold now resolves per reachable arm
+(`_exit_arms` — a constant test keeps the taken arm, a settled BoolOp
+stops at its settling operand; a single arm folds as itself, an
+unresolvable constant test keeps the sentinel, a runtime branch keeps
+None); and a new word-aware `_conditional_status_word` makes
+`_status_key` / `_status_literals` treat a runtime conditional whose
+reachable arm folds to a status word (or stops the fold) as a hit —
+folded non-status words and genuinely runtime arms stay misses.  The
+`_fsr4_shapes` pin now demands the exact 'status' fold, and new
+`_fsr5_*` pins cover the fold faces, key/value faces with negative
+controls, and seven end-to-end rogues with three negative controls.
+Ten revert mutants are killed by the named pins.
