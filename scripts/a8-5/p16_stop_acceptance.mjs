@@ -111,6 +111,25 @@ async function partA() {
   const rawEvents = [];
   watchSock(raw.sock, rawEvents, "raw-ka");
 
+  // 复用直测前提（fix-r1 评审 P1）：close 前经同一 keep-alive agent 完成一次
+  // 请求，socket 入池——close 后同 agent 的第二次请求才是「复用已关连接」的
+  // 直测，而不是新建 agent 的新连接。
+  const agent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1000 });
+  const pooled1 = await new Promise((res) => {
+    const req = http.request({ host: "127.0.0.1", port: PORT_A, path: "/health", agent, timeout: 3000 }, (r) => {
+      let body = "";
+      r.on("data", (c) => (body += c));
+      r.on("end", () => res({ ok: true, status: r.statusCode }));
+    });
+    req.on("timeout", () => { req.destroy(); res({ ok: false, error: "timeout" }); });
+    req.on("error", (e) => res({ ok: false, code: e.code, message: e.message }));
+    req.end();
+  });
+  log("A/agent-pooled-request1", {
+    pooled1,
+    note: "close() 前经该 agent 完成请求 1、socket 入池（复用直测前提）",
+  });
+
   const t0 = Date.now();
   const closePromise = server.close().then(
     () => ({ settled: true, ms: Date.now() - t0 }),
@@ -147,11 +166,9 @@ async function partA() {
     note: "裸层复用（allowHalfOpen）：对已收 FIN 的 socket 写第二请求的观测（写本身是否报错、随后 RST/EOF/静默）",
   });
 
-  // 观察 3：agent 复用（node:http.Agent keep-alive）与 fetch、新 TCP
-  const http2 = await import("node:http");
-  const agent = new http2.Agent({ keepAlive: true, keepAliveMsecs: 1000 });
+  // 观察 3：同 agent（close 前已池化）复用 + fetch 新连接 + 新 TCP
   const agentReuse = await new Promise((res) => {
-    const req = http2.request({ host: "127.0.0.1", port: PORT_A, path: "/health", agent, timeout: 3000 }, (r) => {
+    const req = http.request({ host: "127.0.0.1", port: PORT_A, path: "/health", agent, timeout: 3000 }, (r) => {
       let body = "";
       r.on("data", (c) => (body += c));
       r.on("end", () => res({ ok: true, status: r.statusCode }));
@@ -165,7 +182,7 @@ async function partA() {
     agentReuse,
     fetchNew: await fetchProbe(PORT_A, "/health"),
     newTcpRefused: await tcpRefused(PORT_A),
-    note: "agent 复用观测到的 ECONNREFUSED 是 connect 相位错误（重建连），非同 socket 报错——与裸层复用（写成功后 RST）对照",
+    note: "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错；裸层复用对照为静默悬挂（写成功、无回包、无 RST，见 A/raw-reuse-after-fin）",
   });
 
   log("A/close-settled", await Promise.race([closePromise, sleep(4000).then(() => ({ settled: false, note: "4s 窗未 settle（有活连接时预期）" }))]));

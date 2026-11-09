@@ -27,7 +27,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
   ICU 78.2。
 - **落位**：`scripts/a8-5/`（common.mjs + 各探针；`--base`/`--out` 参数化，默认基线取
   `PILOTDECK_BASE` 或标准 runner 路径）。`node scripts/a8-5/<probe>.mjs --out <证据目录>`。
-- **纪律**：仅 loopback 高位端口（39871–39891 段）、隔离 `PILOT_HOME`/`diskSpillDir`、不外发网络
+- **纪律**：仅 loopback 高位端口（39871–39898 段）、隔离 `PILOT_HOME`/`diskSpillDir`、不外发网络
   （provider 指不可路由 loopback）、子进程记 pid 逐个收尸、观察窗全部有界、无无界派生。
 - **证据**：P1–P7 原始输出（cb8）归档于主仓
   `_tmp/20261107-archive-wt-1353/20261026-issue-1353/raw/`；P8–P16 原始输出（mbp2）在
@@ -52,7 +52,7 @@ related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fi
 | p13_empty_set | #2255 空集合格 | 组件级三格 + 全空五步组合级：全部 0–4ms 落定（空集合不挂起、退出路径可达） |
 | p14_child/p14_half_stop | #2255 半停格 | 真 cron 先真停不回滚 + alwaysOn stop 失败：单失败原样抛、finally 照走 unpublish、二次 stop no-op；server 级半停窗口 E1/E2 可服务、后续四步照走、退出码 0 |
 | p15_child/p15_driver | #2255 单飞 + 退出码抬升 | 重复信号（SIGTERM×2+SIGINT）下 automation.stop 恰 1 次（两层单飞缓存）；挂起窗口内 late unhandledRejection ⇒ exit 1（对照 0） |
-| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（agent 的 ECONNREFUSED 只能来自重建连）；机制 B-RST/B-EOF（纯 node 受控）：握手一律完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET） |
+| p16_stop_acceptance | #2258 停接纳机制观测面 | 机制 A（关 listener，真实 server）：新连接三层 ECONNREFUSED、空闲 keep-alive 服务端 FIN、裸层复用已 FIN 连接 = 写成功后静默悬挂（同 keep-alive agent close 前池化、close 后复用直测 ECONNREFUSED connect 相位——重建连直测）；机制 B-RST/B-EOF（纯 node 受控）：握手一律完成后 RST（ECONNRESET）或 EOF（node:http 层两者同为 ECONNRESET 码，fetch 层可区分 ECONNRESET / UND_ERR_SOCKET） |
 
 ## 结论
 
