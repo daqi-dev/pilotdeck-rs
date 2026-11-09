@@ -20,6 +20,10 @@ mod settings;
 // test; the value is `crate::runtime::settings::METHODS` verbatim.
 #[cfg(test)]
 pub(crate) use settings::METHODS;
+// #2363 item 6: crate-visible for the switch-side race test, which runs the
+// routing seam's own dispatch body against the S1 stop face.
+#[cfg(test)]
+pub(crate) use cron::dispatch_under_management_gate;
 mod sop;
 mod steer;
 mod tools;
