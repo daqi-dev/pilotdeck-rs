@@ -83,6 +83,10 @@ SCRIPTS = (
     # #2425: same entry shape after the CLI alignment from ``--case NAME`` to
     # positional names (select + claim_dir + registered + verdict_exit).
     ('same-json-surfaces/negative_controls.py', (), ('-I',)),
+    # #2131 fix-r3: same entry shape after the migration to negative_selection
+    # (registered + select + claim_dir + missing_target/refuse_unusable_target
+    # + verdict_exit).
+    ('utf16-residual-sort/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
