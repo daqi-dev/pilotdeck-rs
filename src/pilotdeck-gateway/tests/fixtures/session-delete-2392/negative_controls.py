@@ -9,6 +9,9 @@ the test that must die:
 - `mcp-clear-removed`: the whole clear is gone — the exact gap the issue
   reported.
 - `thinking-clear-removed`: only the thinking override survives the delete.
+- `output-style-clear-removed`: only the output-style selection survives the
+  delete (the TS clear drops the whole `sdkSessionConfigs` row that carries
+  it, ProjectRuntimeRegistry.ts:779).
 - `clear-before-not-found`: the clear runs before the transcript check, so a
   `SESSION_NOT_FOUND` refusal also wipes the rows it must keep.
 
@@ -20,7 +23,10 @@ import os
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                               write_source_atomic)
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered, verdict_exit)
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 ROOT = Path(__file__).resolve().parents[5]
@@ -45,6 +51,13 @@ mutations = [
      'let _ = self.session_overrides.thinking(&key);',
      CFG + 'session_delete_clears_the_sdk_session_state',
      "#2392 delete drops the session's thinking override"),
+    # Only the output-style selection survives the delete (fix-r1): the TS
+    # clear deletes the whole `sdkSessionConfigs` row that carries it.
+    ('output-style-clear-removed', SESSION_DIR,
+     'self.session_overrides.clear_output_style(&key);',
+     'let _ = self.session_overrides.output_style(&key);',
+     CFG + 'session_delete_clears_the_sdk_session_state',
+     "#2392 delete drops the session's output-style selection"),
     # The clear runs before the transcript check: a SESSION_NOT_FOUND refusal
     # also wipes the rows it must keep.
     ('clear-before-not-found', SESSION_DIR,
@@ -70,8 +83,21 @@ mutations = [
 LITERAL_ANCHORS = [
     (SESSION_DIR, "#2392 delete drops the session's MCP permission overrides"),
     (SESSION_DIR, "#2392 delete drops the session's thinking override"),
+    (SESSION_DIR, "#2392 delete drops the session's output-style selection"),
     (SESSION_DIR, "#2392 the refusal keeps the session's MCP permission overrides"),
 ]
+
+# The denominator is this literal, never `len(mutations)` (#2391 fix-r1,
+# specs/negative-controls/README.md invariant 1): `registered()` compares the
+# two in order and refuses on any drift, so a dropped, renamed, duplicated or
+# reordered row is a startup refusal (rc 2) instead of a silently shorter run
+# that still reports "N/N killed".
+EXPECTED_NAMES = (
+    'mcp-clear-removed',
+    'thinking-clear-removed',
+    'output-style-clear-removed',
+    'clear-before-not-found',
+)
 
 
 def _assertions(case):
@@ -86,27 +112,27 @@ def check_literal_anchors(cases, bound_rows=None):
         try:
             texts[path] = path.read_text()
         except OSError as error:
-            raise SystemExit(f'#2392 scanned source unreadable: {path.name}: {error}')
+            refuse(f'#2392 scanned source unreadable: {path.name}: {error}')
     for case in cases:
         if case.path not in texts:
-            raise SystemExit('#2392 row mutates a file outside SOURCE_TEXTS: '
-                             f'{case.mutation} -> {case.path.name}')
+            refuse('#2392 row mutates a file outside SOURCE_TEXTS: '
+                   f'{case.mutation} -> {case.path.name}')
     for path, anchor in LITERAL_ANCHORS:
         if path not in texts:
-            raise SystemExit(f'#2392 literal anchor declared outside SOURCE_TEXTS: {path.name}')
+            refuse(f'#2392 literal anchor declared outside SOURCE_TEXTS: {path.name}')
         if anchor not in texts[path]:
-            raise SystemExit(f'#2392 literal anchor not in {path.name}: {anchor!r}')
+            refuse(f'#2392 literal anchor not in {path.name}: {anchor!r}')
         if not any(anchor == assertion
                    for case in bound_rows for assertion in _assertions(case)):
-            raise SystemExit(f'#2392 literal anchor unbound to any row: {anchor!r}')
+            refuse(f'#2392 literal anchor unbound to any row: {anchor!r}')
     pinned = set(LITERAL_ANCHORS)
     for case in cases:
         for assertion in _assertions(case):
             unregistered = [path.name for path, text in texts.items()
                             if assertion in text and (path, assertion) not in pinned]
             if unregistered:
-                raise SystemExit('#2392 unpinned literal anchor '
-                                 f'(verbatim in {", ".join(unregistered)}): {assertion!r}')
+                refuse('#2392 unpinned literal anchor '
+                       f'(verbatim in {", ".join(unregistered)}): {assertion!r}')
 
 
 def mutate(case, original):
@@ -116,59 +142,53 @@ def mutate(case, original):
     return original.replace(case.old, case.new, 1)
 
 
-PUBLISH_DIR = ROOT / '.negctl-publish'
-
-
-def write_atomic(path, data):
-    """Publish the source in one rename so a concurrent reader never sees a
-    half-written file. The temp lives in `.negctl-publish` at the repository
-    root (outside the `src` / `.cargo` / `rust-toolchain*` scan areas), so a
-    SIGKILL residue is not read back as an untracked build input; the mode
-    comes from the source (#1692 §9, same shape as native-config)."""
-    PUBLISH_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = PUBLISH_DIR / f'.negctl-{path.name}.tmp'
-    mode = path.stat().st_mode & 0o7777
-    try:
-        with tmp.open('wb') as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(tmp, mode)
-        os.replace(tmp, path)
-    finally:
-        tmp.unlink(missing_ok=True)
-
-
 def main():
     args = sys.argv[1:]
     compile_only = '--compile-only' in args
     args = [arg for arg in args if arg != '--compile-only']
     every_row = [Case(*row) for row in mutations]
     selected_rows = every_row
-    if len({case.mutation for case in every_row}) != len(every_row):
-        raise SystemExit('#2392 duplicate mutation name in the table')
+    # #2391 fix-r1: every refusal below happens before any mutation, so it is
+    # rc 2 ("this run never started", printed by `negative_selection.refuse`)
+    # and not rc 1 ("ran, not green") — the four-way exit table in
+    # `specs/negative-controls/README.md`.
+    try:
+        registered(mutations, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(f'mutation roster drifted: {error}')
     if args == ['--check']:
+        # Guard first (native-config shape): it reports an unreadable scanned
+        # source as a clean refusal, while the anchor count probe below would
+        # raise a bare OSError on the same tree.
+        check_literal_anchors(selected_rows, bound_rows=every_row)
         for case in selected_rows:
             mutate(case, case.path.read_text())
         print(f'#2392 {len(selected_rows)} mutation anchors OK; '
               f'{len(LITERAL_ANCHORS)} literal anchors OK')
         return 0
     if not args:
-        raise SystemExit('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')
-    env = dict(os.environ)
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#2392 CARGO_TARGET_DIR must be supplied by the caller')
-    for key in ('PDRS_NEGATIVE_RECEIPTS', 'PDRS_NEGATIVE_PARENT_TEST', 'PDRS_MUTANT'):
-        env.pop(key, None)
+        refuse('usage: negative_controls.py --check | [--compile-only] NEW_OUTPUT [mutation ...]')
     selected = args[1:]
-    if (len(selected) != len(set(selected))
-            or set(selected) - {case.mutation for case in selected_rows}):
-        raise SystemExit('#2392 unknown/duplicate mutation name')
+    unknown = sorted(set(selected) - {case.mutation for case in selected_rows})
+    if unknown:
+        refuse(f'#2392 unknown mutation names: {unknown}')
+    if len(selected) != len(set(selected)):
+        repeated = sorted({name for name in selected if selected.count(name) > 1})
+        refuse(f'#2392 repeated mutation names: {repeated}')
     if selected:
         selected_rows = [case for case in selected_rows if case.mutation in selected]
     check_literal_anchors(selected_rows, bound_rows=every_row)
-    out = Path(args[0]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    # The target is admitted by the shared rule (absent, empty, blank, dot,
+    # root, repo root, inside `src`) *before* the evidence directory exists,
+    # so a rejected target cannot leave a directory that reads like a
+    # finished run.
+    if missing_target():
+        refuse('#2392 set CARGO_TARGET_DIR to the caller-owned build tree')
+    refuse_unusable_target()
+    out = claim_dir(args[0])
+    env = dict(os.environ)
+    for key in ('PDRS_NEGATIVE_RECEIPTS', 'PDRS_NEGATIVE_PARENT_TEST', 'PDRS_MUTANT'):
+        env.pop(key, None)
     env.update(CARGO_PROFILE_DEV_DEBUG='line-tables-only', CARGO_PROFILE_TEST_DEBUG='line-tables-only')
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--lib']
@@ -203,7 +223,7 @@ def main():
                         changed = mutate(case, originals[case.path].decode())
                         if not compile_only and not passed(run(case.mutation + '-positive', args), case.test):
                             raise RuntimeError('#2392 positive control failed')
-                        write_atomic(case.path, changed.encode())
+                        write_source_atomic(ROOT, case.path, changed.encode())
                         compiled = run(case.mutation + '-compile', ['--no-run'])
                         row['compiled'] = compiled.returncode == 0
                         if not row['compiled']:
@@ -216,7 +236,7 @@ def main():
                         row.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                     finally:
                         phase = 'restore'
-                        write_atomic(case.path, originals[case.path])
+                        write_source_atomic(ROOT, case.path, originals[case.path])
                         if case.path.read_bytes() != originals[case.path]:
                             raise RuntimeError('#2392 source restoration failed')
                         phase = 'body'
@@ -242,8 +262,11 @@ def main():
             return 2
         return 1
     publish_summary(out, results)
-    success = 'COMPILED' if compile_only else 'KILLED'
-    return int(not results or any(row['status'] != success for row in results))
+    # The shared exit contract (#2391 fix-r1): zero rows is never 0 (`0/0
+    # killed` is not a pass), and every row must be KILLED — COMPILED under
+    # --compile-only.
+    return verdict_exit(results, key='status',
+                        killed='COMPILED' if compile_only else 'KILLED')
 
 
 if __name__ == '__main__':

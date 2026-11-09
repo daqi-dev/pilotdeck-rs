@@ -294,18 +294,21 @@ impl Requests {
         // storage delete succeeded, exactly like the baseline. The native
         // split (#2392): the MCP fields (server table, permission-mode
         // overrides, generated permission rules, the shared session→project
-        // entry) live in `SdkMcpConfig`; `sdkThinkingOverrides` lives in
+        // entry) live in `SdkMcpConfig`; `sdkThinkingOverrides` and
+        // `sdkSessionConfigs.outputStyle` (the TS clear deletes the whole
+        // config row, ProjectRuntimeRegistry.ts:776-786) live in
         // `session_overrides`. The registry half of the TS clear (task-budget
-        // ledger, session configs, plugins, handler registrations) has no
-        // production instance in this process yet — see `clear_session_state`'s
-        // contract (runtime/sdk_session/registry.rs): it must be called
-        // **before** the MCP clear, because the MCP clear drops the shared
-        // projects entry its budget step reads. When that half is wired
-        // (#1872-74 follow-up), it belongs above this line, never below it.
+        // ledger, plugins, handler registrations) has no production instance
+        // in this process yet — see `clear_session_state`'s contract
+        // (runtime/sdk_session/registry.rs): it must be called **before**
+        // the MCP clear, because the MCP clear drops the shared projects
+        // entry its budget step reads. When that half is wired (#1839), it
+        // belongs above this line, never below it.
         self.mcp
             .config()
             .clear_sdk_session_state(&JsValue::String(key.clone()));
         self.session_overrides.clear_thinking(&key);
+        self.session_overrides.clear_output_style(&key);
         Ok(JsValue::Undefined)
     }
 
@@ -1086,10 +1089,12 @@ mod tests {
             .collect()
     }
 
-    /// Seed the two `clearSdkSessionState` halves this process owns for one
-    /// key: the MCP permission tables (an override row plus its generated
-    /// rule, exactly what `setMcpPermissionModeOverrideForSdk` leaves) and
-    /// the thinking override.
+    /// Seed the `clearSdkSessionState` halves this process owns for one key:
+    /// the MCP permission tables (an override row plus its generated rule,
+    /// exactly what `setMcpPermissionModeOverrideForSdk` leaves), the thinking
+    /// override, and the output-style selection (`sdkSessionConfigs`'s
+    /// `outputStyle` row, the other `session_overrides` half the TS clear
+    /// drops with the config row).
     async fn seed_sdk_session_state(requests: &Requests, session: &str) {
         let input = object([
             ("sessionKey", session.into()),
@@ -1114,14 +1119,19 @@ mod tests {
             .set_thinking(&session.into(), object([("enabled", JsValue::Bool(true))]));
         requests
             .session_overrides
+            .set_output_style(&session.into(), "pdrs-2392-style".into());
+        requests
+            .session_overrides
             .set_permission_mode(&session.into(), "acceptEdits".into());
     }
 
     /// #2392: `deleteSession` ends with `clearSdkSessionState`
     /// (createLocalGateway.ts:1160), so the deleted session's registry rows
-    /// must not outlive its files. The permission-mode selection is the
-    /// counter-scope: the TS clear never touches `sessionOverrides`, so the
-    /// native delete must keep it.
+    /// must not outlive its files — the MCP tables, the thinking override,
+    /// and the output-style selection (the config row the TS clear drops
+    /// carries it, ProjectRuntimeRegistry.ts:779). The permission-mode
+    /// selection is the counter-scope: the TS clear never touches
+    /// `sessionOverrides`, so the native delete must keep it.
     #[tokio::test]
     async fn session_delete_clears_the_sdk_session_state() {
         let (_scratch, requests) = crate::native_process::management_tests::setup();
@@ -1139,6 +1149,10 @@ mod tests {
         negative_assert!(
             requests.session_overrides.thinking(&session).is_some(),
             "#2392 delete starts with a seeded thinking override"
+        );
+        negative_assert!(
+            requests.session_overrides.output_style(&session).is_some(),
+            "#2392 delete starts with a seeded output-style selection"
         );
 
         let result = crate::runtime::turn::gateway::GatewayRequests::request(
@@ -1162,6 +1176,10 @@ mod tests {
         negative_assert!(
             requests.session_overrides.thinking(&session).is_none(),
             "#2392 delete drops the session's thinking override"
+        );
+        negative_assert!(
+            requests.session_overrides.output_style(&session).is_none(),
+            "#2392 delete drops the session's output-style selection"
         );
         negative_assert_eq!(
             requests
@@ -1208,6 +1226,10 @@ mod tests {
         negative_assert!(
             requests.session_overrides.thinking(&session).is_some(),
             "#2392 the refusal keeps the session's thinking override"
+        );
+        negative_assert!(
+            requests.session_overrides.output_style(&session).is_some(),
+            "#2392 the refusal keeps the session's output-style selection"
         );
 
         requests.owner.shutdown().await.expect("#2392 shutdown");

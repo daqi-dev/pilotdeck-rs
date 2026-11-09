@@ -83,6 +83,12 @@ SCRIPTS = (
     # #2425: same entry shape after the CLI alignment from ``--case NAME`` to
     # positional names (select + claim_dir + registered + verdict_exit).
     ('same-json-surfaces/negative_controls.py', (), ('-I',)),
+    # #2391 fix-r1: the two session-family entries born on the
+    # negative_selection contract (registered + refuse + claim_dir +
+    # missing_target/refuse_unusable_target + verdict_exit); their --check is
+    # also wired into CI.
+    ('session-reservation-2391/negative_controls.py', (), ()),
+    ('session-delete-2392/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption

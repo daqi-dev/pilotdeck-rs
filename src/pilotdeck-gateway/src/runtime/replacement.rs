@@ -142,6 +142,7 @@ pub enum SubmitClaim {
 /// { release }` wrapper runs under a Promise that cannot be dropped, so the
 /// Rust port's extra exits (a request future dropped at an await point, a
 /// panic unwinding the reserved body) must still release.
+#[must_use = "hold the reservation for the reserved body"]
 pub struct TranscriptWriteReservation<'a> {
     coordinator: &'a ReplacementCoordinator,
     key: Option<JsString>,
@@ -173,7 +174,7 @@ impl ReplacementCoordinator {
         key: &JsString,
         operation: &str,
     ) -> Result<(), ReplacementError> {
-        let mut state = self.0.state.lock().unwrap();
+        let mut state = self.0.state.lock().unwrap_or_else(|e| e.into_inner());
         if state.reservations.contains(key) || state.pending.contains_key(key) {
             return Err(ReplacementError::dialog(
                 "SESSION_BUSY",
@@ -184,10 +185,20 @@ impl ReplacementCoordinator {
         Ok(())
     }
     pub fn release_transcript_write(&self, key: &JsString) {
-        self.0.state.lock().unwrap().reservations.remove(key);
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reservations
+            .remove(key);
     }
     pub fn has_transcript_write_reservation(&self, key: &JsString) -> bool {
-        self.0.state.lock().unwrap().reservations.contains(key)
+        self.0
+            .state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .reservations
+            .contains(key)
     }
     /// [`Self::reserve_transcript_write`] returning the release as a `Drop`
     /// guard instead of a paired call, so the caller's whole body — returns,
