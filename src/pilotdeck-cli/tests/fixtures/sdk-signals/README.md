@@ -178,7 +178,10 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 #1178 的 4 个 abort-rst 格同属该形状，已入名单，名单现 20 格）；
 产品侧负控 `initialization-query-close-before-control` 把顺序改回旧写法点名用例即红。
 `rst_cells_keep_verified_original_shape` 离线钉住 4 格 abort-rst 原件形状（穷尽集合、
-退出码、双关闭序、rstApplied milestone、归一化后 stderr、不适用任何例外登记）。
+rstApplied milestone、归一化后 stderr、reset 在 query 连接上的 trace 位置与 dispatched
+abort 的先后、reset 之后无 wire 事件；其余全部 surface 含 initial/final 与 close-order pin
+同范式经 `compare_surfaces` 一次覆盖，格序严格与不适用任何例外登记由上面的 stable 名单
+断言和 `approved_stderr_match_domain_is_exact` 旁证钉住）。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 `approved_stderr_match_domain_is_exact` 用 proc-macro2 读取匹配臂，严格核对独立八 ID 常量与差异条目；
 新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件
