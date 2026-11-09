@@ -3906,26 +3906,54 @@ class RetirementScoring(unittest.TestCase):
                 self.assertEqual(report['hostAudit'][face][0]['status'], status,
                                  f'#43 {tag} {key}: {report["hostAudit"][face]}')
                 self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#43 {tag} {key}')
-        # #2519 (p2batch-d7 sibling #2): the predicate's second half — rows
-        # not a list — had no in-repo pin (every existing census test passes
-        # a list), so dropping that half of `_census_unobserved` kept the
-        # whole suite green.  Truthy garbage must read as unobserved (BLOCKED)
-        # on both faces, never as a crash or a clean empty sample.
-        for tag, census in (
-                ('garbage rows', {'rows': 'garbage', 'declared': [7], 'declaredAlive': True}),
-                ('non-dict census', 'x')):
+
+    def test_present_but_malformed_observations_keep_their_faces(self):
+        # #2519 (p2batch-d7 sibling #2, coord2 a档): the "present but
+        # malformed" half — the observation key holds truthy garbage of the
+        # wrong type.  #43 above pins missing/null; this pins truthy garbage
+        # per observation key on both faces (report face keeps all 16 faces
+        # and reads unobserved/FAIL, control face reads NOT_APPLICABLE), so
+        # narrowing any of the isinstance guards turns this red.  Shapes are
+        # measured current behavior, not reviewer inference (probe:
+        # _tmp/20261109-p2batch-d7-harvest/probe-garbage-shapes.py):
+        # census is guarded on both faces (any non-dict / non-list-rows shape
+        # reads unobserved); connections and listeners read unobserved for
+        # non-dict shapes, and listeners additionally tolerates non-list
+        # rows (the listeners face only judges loopbackOnly).  The one
+        # unregistered crash family — connections rows non-list (e.g.
+        # {'rows': 5}) still raises TypeError/AttributeError out of the
+        # report face — is pre-existing behavior outside this PR's two
+        # registered criteria and is real-round unreachable; it is documented
+        # here rather than pinned, so a future hardening is free to fix it.
+        expected = ['submit_turn', 'run_get']
+        census = self._stream_ok_round_row()['census']
+        cases = (  # (tag, key, value, hostAudit face, its status, control class)
+            ('non-dict census', 'census', 'x',
+             'processCensus', 'BLOCKED', 'TS_HOST'),
+            ('garbage census rows', 'census', {**census, 'rows': 'garbage'},
+             'processCensus', 'BLOCKED', 'TS_HOST'),
+            ('int census rows', 'census', {**census, 'rows': 5},
+             'processCensus', 'BLOCKED', 'TS_HOST'),
+            ('non-dict connections', 'connections', 'x',
+             'network', 'BLOCKED', 'FORWARDING_MISLABELED'),
+            ('non-dict listeners', 'listeners', 'x',
+             'listeners', 'FAIL', 'TS_HOST'),
+            ('int listeners rows', 'listeners', {'rows': 5},
+             'listeners', 'FAIL', 'TS_HOST'),
+        )
+        for tag, key, value, face, status, control in cases:
             row = self._stream_ok_round_row()
-            row['census'] = census
+            row[key] = value
             report = self._report_for(row, expected)
             for name in self.REPORT_FACES:
-                self.assertIn(name, report, f'#43 {tag} lacks face {name}')
-            self.assertNotEqual(report['executionStatus'], 'NOT_RUN', f'#43 {tag}')
-            self.assertEqual(report['hostAudit']['processCensus'][0]['status'], 'BLOCKED',
-                             f'#43 {tag}: {report["hostAudit"]["processCensus"]}')
-            self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#43 {tag}')
-            class2 = next(c for c in self.session._retirement_controls(row, expected)['classes']
-                          if c['class'] == 'TS_HOST')
-            self.assertEqual(class2['status'], 'NOT_APPLICABLE', f'#43 {tag}: {class2}')
+                self.assertIn(name, report, f'#2519 {tag} lacks face {name}')
+            self.assertNotEqual(report['executionStatus'], 'NOT_RUN', f'#2519 {tag}')
+            self.assertEqual(report['hostAudit'][face][0]['status'], status,
+                             f'#2519 {tag}: {report["hostAudit"][face]}')
+            self.assertNotEqual(report['hostAudit']['status'], 'PASS', f'#2519 {tag}')
+            classX = next(c for c in report['controls']['classes']
+                          if c['class'] == control)
+            self.assertEqual(classX['status'], 'NOT_APPLICABLE', f'#2519 {tag}: {classX}')
 
     def test_cleanup_audit_face_reads_the_shared_stopped_predicate(self):
         # #2519: the report face's cleanupAudit and the round face's CLEANUP
@@ -3949,19 +3977,43 @@ class RetirementScoring(unittest.TestCase):
                          '#44 processAudit must carry the failing round audit')
 
     def test_round_face_cleanup_require_keeps_the_shared_predicate(self):
-        # #2519 (p2batch-d7 boundary #2): the round face's CLEANUP require is
-        # the only gate that rejects an unproven round (the report face's
-        # cleanupAudit does not feed the total verdict), and #44 pins only the
-        # report consumer.  Per the #2425 precedent this static pin counts the
-        # two call-site spellings and the predicate's single `allStopped`
-        # read, so deleting the require or short-circuiting the predicate
-        # turns this red either way.
+        # #2519 (p2batch-d7 boundary #2, coord2 a档): the round face's CLEANUP
+        # require is the only gate that rejects an unproven round (the report
+        # face's cleanupAudit does not feed the total verdict), and #44 pins
+        # only the report consumer.  The pins bind to the executed bytes
+        # (`_apparatus_source`, the same bytes #166 verified — a disk swap
+        # after load cannot forge a green), and locate each call site inside
+        # its owning function as an ast node, so commenting the require out,
+        # moving it into a dead helper, or reflowing lines cannot keep a green
+        # run.  Counts pin the twins' call sites the same way their dynamic
+        # pins pin their semantics: `_cleanup_stopped` is called exactly
+        # twice (round-face require, report-face all()), `_census_unobserved`
+        # exactly twice (verdict guard, controls rows derivation), and each
+        # predicate keeps its single defining read.  (ast.parse precedent:
+        # test_safety.py:1940-1990; #2425 count-pin precedent: :2670-2702.)
+        import ast
         marker = '#2519 the round face reads the shared cleanup predicate'
-        source = (common.SCRIPT / 'session_domain.py').read_bytes().decode()
+        source = self.session._apparatus_source.decode()
+        tree = ast.parse(source)
+        functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+
+        def calls(node, name):
+            return [c for c in ast.walk(node)
+                    if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == name]
+
+        # Round face: inside _retirement_round, require(_cleanup_stopped(...), ...).
+        round_face = any(isinstance(c.args[0], ast.Call) and c.args[0].func.id == '_cleanup_stopped'
+                         for c in calls(functions['_retirement_round'], 'require')
+                         if isinstance(c.args[0], ast.Call) and isinstance(c.args[0].func, ast.Name))
+        # Report face: inside _retirement_report, all(_cleanup_stopped(...) for ...).
+        report_face = any(isinstance(arg, ast.GeneratorExp) and calls(arg, '_cleanup_stopped')
+                          for c in calls(functions['_retirement_report'], 'all') for arg in c.args)
         self.assertTrue(
-            source.count("require(_cleanup_stopped(row['audit']), 'CLEANUP',") == 1
-            and source.count('all(_cleanup_stopped(row[\'audit\']) for row in rounds)') == 1
-            and source.count('_cleanup_stopped(') == 3  # def + exactly these two call sites
+            round_face and report_face
+            and len(calls(tree, '_cleanup_stopped')) == 2  # exactly the two call sites above
+            and len(calls(tree, '_census_unobserved')) == 2  # verdict guard + controls rows
+            and source.count("if _census_unobserved(census):") == 1
+            and source.count("census_rows = [] if _census_unobserved(census) else census['rows']") == 1
             and source.count("return bool(audit['allStopped'])") == 1,
             marker)
 
