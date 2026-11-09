@@ -1356,3 +1356,32 @@ red.  Fourteen revert mutants (consumer reverts, propagation removal,
 per-branch exhaustion-to-None, both wiring downgrades, billing deletions,
 and the `session_domain.py` floor relaxed to 99) are killed by the named
 pins and the `test_safety` 99-as-NO_HIT pin that joined the same round.
+fix-r15 (DS r14 concurrency#1 P0, probe-verified) closed the last
+fail-open face of the string fold: the Mod size-cap rejection was
+returning None on an *over-estimated* bound — a precision conversion
+(`'%.6s'`) truncates at runtime, so a 1e6-char operand can produce the
+exact word `'status'` while the fold refuses to compute it, and the
+consumers read that refusal as negative evidence with no padding needed.
+The Mod rejection now stops the fold as the sentinel
+`_FOLD_STRING_UNRESOLVED` (the same fail-closed polarity as budget
+exhaustion); the Add and Mult size rejections keep their plain None —
+their bounds are exact, so the result is provably too long to equal any
+status word.  The three consumers' sentinel polarity now lives in one
+place, `_folded_status_hit` (whose docstring pins the one consumer that
+must NOT use it: `_nested_slot_fail_closed` keeps the bare `in`, where
+False is the safe direction).  The end-to-end padding pin now derives
+its pad count from the cap family (`_AUDIT_PASS_WORK_CAP //
+(_FOLD_MAX_ITEMS - 1) + 1`) instead of a hand-written 17 and asserts the
+cell was actually spent, so a raised cap turns a vacuous pass into a
+red.  Self-tests added: the unit face (an oversized `'%.6s'` operand
+folds to the sentinel while a small one still folds to the exact word)
+and two end-to-end rogues (a precision-truncated status key and status
+value must each enter `found`); the oversized-format pin moved its
+expectation to the sentinel.  `controls/session_domain.py`'s single-case
+handler now records a MemoryError as a verdict.json FAIL (pinned
+statically in test_safety — #166 blocks executing a mutated registered
+file, so the revert mutant is killed by reading the source).  Five
+revert mutants (the Mod rejection back to None, the oversized-format
+pin's expectation reverted, the helper's sentinel arm removed, the
+padding count without the +1, and the controls MemoryError dropped) are
+killed by the named pins.
