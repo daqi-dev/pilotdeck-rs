@@ -319,6 +319,14 @@ cases = [
 }''', None,
      'metadata::tests::blank_title_full_scan_keeps_the_ts_trim_rule',
      '#970 a blank title outside both windows must not count as a summary'),
+    # #2309: a dispatch failure is `Error`, never a flattened response body
+    # (the snapshot-projection family's `error-mapped-to-response` row,
+    # mirrored).
+    ('error-mapped-to-response', projection,
+     '            Err(error) => ManagerDispatch::Error(error),\n',
+     '            Err(error) => ManagerDispatch::Response(error.as_json()),\n', None,
+     prefix + 'dispatch_routes_only_manager_methods',
+     '#2309 manager_sessions failure must dispatch as ManagerDispatch::Error'),
 ]
 
 def main():

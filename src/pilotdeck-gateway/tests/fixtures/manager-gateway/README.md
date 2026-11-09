@@ -110,6 +110,8 @@ title/createdAt 反转义错误被吞、`constructor.name` 对象退化成 `Obje
 metadata-only 字段序、session_model/config/skills/manager 四处描述器有损转换。
 #970 再加 3 个：skills 描述阶段 Throws 宿主标志被丢弃、file_catalog 完整路径空白标题
 不 trim、metadata `metadata_summary` 完整路径空白标题不 trim（共 35 个）。
+#2309 再加 1 个：dispatch 把 `Err` 压回 `Response` 成功体（`error-mapped-to-response`，
+镜像 snapshot-projection 同名行，绑 `dispatch_routes_only_manager_methods`；共 36 个）。
 执行器是 `tests/fixtures/negative_suite.py`：逐项正控 → 变异 → 恢复 → 汇总
 KILLED/SURVIVED/INVALID，任一非 KILLED 非零退出。新增产品文件在提交前不在 HEAD，
 `mutating_sources` 会拒绝；提交后由协调者运行。`--audit` 只核对锚点。
