@@ -2922,7 +2922,15 @@ class SameJsonSurfaces(unittest.TestCase):
         # redefinition would shrink both sides of the derivation together
         # and stay green), and the clock line is pinned so the branch
         # cannot be made unreachable by shifting the clock origin
-        # (DS r2 boundary#1).
+        # (DS r2 boundary#1), by moving it (adjacency to the guarded
+        # for loop, whose first statement is the budget check -- the
+        # memory-mode loop at the same depth is followed by one(row)
+        # instead, so the anchor names the guarded branch, DS r4
+        # boundary#2), or by duplicating it inside the loop body, where
+        # a per-case reset would silently rearm the budget (unique
+        # count at any indentation, DS r4 boundary#1 P0 + concurrency#1,
+        # two independent hits; both lines of the adjacency are 16-space
+        # with-body lines, per DS r4 simplify#2).
         marker = '#2552 a spent lease budget marks the remaining cases INVALID'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
@@ -2943,8 +2951,11 @@ class SameJsonSurfaces(unittest.TestCase):
                 and source.count("results.append({'name': row[0], 'status': 'INVALID',") == 1
                 and source.count("' by name'})\n                        continue") == 1
                 and source.count('mutating_sources(root, GUARDED_PATHS,') == 1
+                and source.count('clock = time.monotonic()\n') == 1
                 and source.count('\n                clock = time.monotonic()\n'
-                                '                for row in selected:\n') == 1
+                                '                for row in selected:\n'
+                                '                    if lease_budget_left(clock, '
+                                'time.monotonic()) <= 0:\n') == 1
                 and source.count('from negative_process import (GIT_TIMEOUT, KILL_TIMEOUT,') == 1
                 and source.count('KILL_GRACE_SECONDS = KILL_TIMEOUT') == 1
                 and module.GIT_TIMEOUT == negproc.GIT_TIMEOUT
