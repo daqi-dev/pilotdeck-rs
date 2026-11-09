@@ -685,27 +685,42 @@ pub async fn session_mcp_tools(
     let Some(specs) = options.provider.per_session_server_specs(&servers, false)? else {
         return Ok((tools, release));
     };
+    let server_list = specs
+        .iter()
+        .map(|spec| spec.id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let limit_diagnostic = || {
+        format!(
+            "Per-session MCP limit reached ({}). Session {session_key} will not start: {}.",
+            options.max_per_session_instances, server_list,
+        )
+    };
+    // The TS check (SessionMcpRuntimeBundle.ts:70) refuses before the runtime
+    // factory runs, so the pre-check stays ahead of `create_runtime`.
     if options.per_session_runtimes.size() as f64 >= options.max_per_session_instances {
-        diagnostic(
-            format!(
-                "Per-session MCP limit reached ({}). Session {session_key} will not start: {}.",
-                options.max_per_session_instances,
-                specs
-                    .iter()
-                    .map(|spec| spec.id.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", "),
-            ),
-            None,
-        );
+        diagnostic(limit_diagnostic(), None);
         return Ok((tools, release));
     }
     let runtime = options.provider.create_runtime(specs);
+    // #2442: the pre-check above and the insertion below are two separate
+    // lock acquisitions; another session's concurrent prepare can register
+    // between them, so the cap is re-checked and the entry inserted in one
+    // critical section (`register_below_cap`).
     // Registration precedes the start (SessionMcpRuntimeBundle.ts:119-125):
     // even a failed start is disposed at close, never leaked.
-    let registration = options
-        .per_session_runtimes
-        .register(&session_key, runtime.clone())?;
+    let registration = match options.per_session_runtimes.register_below_cap(
+        &session_key,
+        runtime.clone(),
+        options.max_per_session_instances,
+    ) {
+        Ok(Some(registration)) => registration,
+        Ok(None) => {
+            diagnostic(limit_diagnostic(), None);
+            return Ok((tools, release));
+        }
+        Err(error) => return Err(error),
+    };
     release.per_session = Some(registration);
     match runtime.start().await {
         Ok(statuses) => {
@@ -1509,6 +1524,193 @@ mod tests {
             runtimes.size(),
             2,
             "#1433 both releases dispose their own obligations"
+        );
+    }
+
+    /// #2442: the size pre-check and the registry insertion are separate
+    /// lock acquisitions, so a concurrent session's compose can register
+    /// between them. The gated factory parks session-a's compose after its
+    /// pre-check (size 4 < cap 5) and before its registration; session-b's
+    /// compose registers the fifth runtime in the meantime; the sixth must
+    /// still be refused (`register_below_cap` re-checks the cap under the
+    /// registry's own lock). Unfixed, both register and the size ends at 6.
+    /// The owner runs creations for different session keys as independent
+    /// tasks (see the factory overlap probe), so the interleave is reachable
+    /// from the production path.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn session_mcp_tools_refuses_the_sixth_runtime_when_a_racer_registers_after_the_check() {
+        use std::{
+            sync::atomic::{AtomicBool, Ordering},
+            time::{Duration, Instant},
+        };
+        let config = test_config();
+        for key in ["session-a", "session-b"] {
+            config
+                .set_mcp_servers(&set_input(
+                    key,
+                    &[("shared-echo", false), ("private-echo", true)],
+                ))
+                .await
+                .expect("#2442 fixture servers commit");
+        }
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let runtimes = SessionMcpRuntimeRegistry::new();
+        for key in ["p1", "p2", "p3", "p4"] {
+            runtimes
+                .register(
+                    key,
+                    Arc::new(FakeMcpRuntime {
+                        label: "per-session",
+                        tools: Vec::new(),
+                        start_fails: false,
+                        events: events.clone(),
+                    }),
+                )
+                .expect("#2442 pre-existing per-session runtime");
+        }
+        // Session-a's provider: the per-session factory call (private-echo)
+        // parks until the racing registration has landed (size reaches 5),
+        // holding the compose between its pre-check and its register; the
+        // shared call (shared-echo) returns immediately. In production both
+        // composes share one provider; only the registry is the shared race
+        // surface, so the racer below uses its own provider.
+        let entered = Arc::new(AtomicBool::new(false));
+        let racing_registry = runtimes.clone();
+        let entered_flag = entered.clone();
+        let gated_events = events.clone();
+        let gated_provider = Arc::new(ProjectMcpRuntimeProvider::new(
+            ProjectMcpRuntimeProviderOptions {
+                project_root: "/pdrs-fixture/project".into(),
+                pilot_home: "/pdrs-fixture/home".into(),
+                create_runtime: Some(Arc::new(move |specs: Vec<McpServerSpec>| {
+                    let per_session = specs.iter().any(|spec| spec.id == "private-echo");
+                    let runtime: Arc<dyn McpRuntimePort> = Arc::new(FakeMcpRuntime {
+                        label: if per_session { "per-session" } else { "shared" },
+                        tools: specs
+                            .iter()
+                            .map(|spec| McpToolSpec {
+                                server_id: spec.id.as_str().into(),
+                                tool_name: "echo".into(),
+                                wire_name: format!("mcp__{}__echo", spec.id).into(),
+                                description: "fake echo".into(),
+                                input_schema: pilotdeck_protocol::parse_json("{}")
+                                    .expect("#2442 fake tool schema"),
+                                annotations: None,
+                                meta: None,
+                            })
+                            .collect(),
+                        start_fails: false,
+                        events: gated_events.clone(),
+                    });
+                    if !per_session {
+                        return runtime;
+                    }
+                    entered_flag.store(true, Ordering::SeqCst);
+                    let deadline = Instant::now() + Duration::from_secs(10);
+                    while racing_registry.size() < 5 {
+                        if Instant::now() > deadline {
+                            panic!("#2442 the racing registration never landed");
+                        }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    runtime
+                })),
+                proxy: None,
+                on_diagnostic: None,
+                environment: Arc::new(SystemEnvironment),
+                builtin_paths: BuiltinMcpPaths::default(),
+            },
+        ));
+        let diagnostics: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink = diagnostics.clone();
+        let gated_config = config.clone();
+        let gated_runtimes = runtimes.clone();
+        let compose_a = tokio::spawn(async move {
+            compose(
+                &gated_config,
+                &gated_provider,
+                &gated_runtimes,
+                "session-a",
+                5.0,
+                Some(Arc::new(move |message: String, _: Option<RuntimeError>| {
+                    sink.lock().expect("#2442 diagnostics lock").push(message);
+                })),
+            )
+            .await
+        });
+        // Wait until session-a is parked inside its per-session factory call —
+        // past the pre-check (it read size 4) and before its registration.
+        let mut parked = false;
+        for _ in 0..400 {
+            if entered.load(Ordering::SeqCst) {
+                parked = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        crate::negative_assert!(
+            parked,
+            "#2442 the gated compose parks between its pre-check and its registration"
+        );
+        // The racer: a full compose for another session, whose registration
+        // is the fifth runtime (its own pre-check still reads 4).
+        let racing_provider = fake_provider(events.clone(), false);
+        let (racing_tools, racing_release) = crate::test_negative_receipt::expect_ok(
+            compose(&config, &racing_provider, &runtimes, "session-b", 5.0, None).await,
+            "#2442 the racing compose succeeds",
+        );
+        crate::negative_assert!(
+            racing_tools
+                .per_session()
+                .iter()
+                .any(|tool| wire_name(tool) == "mcp__private-echo__echo"),
+            "#2442 the racing compose registers the fifth runtime"
+        );
+        // The gated compose resumes and must be refused past the cap.
+        let gated = tokio::time::timeout(Duration::from_secs(10), compose_a)
+            .await
+            .expect("#2442 the gated compose finishes once the racer registered")
+            .expect("#2442 the gated compose task joins");
+        let (gated_tools, gated_release) =
+            crate::test_negative_receipt::expect_ok(gated, "#2442 the gated compose returns");
+        crate::negative_assert!(
+            gated_tools.per_session().is_empty(),
+            "#2442 the over-cap compose starts no per-session runtime"
+        );
+        crate::negative_assert!(
+            gated_tools
+                .shared()
+                .iter()
+                .any(|tool| wire_name(tool) == "mcp__shared-echo__echo"),
+            "#2442 the refusal keeps the shared tools"
+        );
+        crate::negative_assert!(
+            diagnostics
+                .lock()
+                .expect("#2442 diagnostics lock")
+                .iter()
+                .any(|message| message.starts_with(
+                    "Per-session MCP limit reached (5). Session session-a will not start: private-echo."
+                )),
+            "#2442 the refusal reports the TS diagnostic"
+        );
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            5,
+            "#2442 the racing registration stands and the sixth runtime is refused"
+        );
+        racing_release
+            .release()
+            .await
+            .expect("#2442 racing release");
+        gated_release
+            .release()
+            .await
+            .expect("#2442 the refused compose releases its shared lease");
+        crate::negative_assert_eq!(
+            runtimes.size(),
+            4,
+            "#2442 only the four pre-existing runtimes remain"
         );
     }
 
