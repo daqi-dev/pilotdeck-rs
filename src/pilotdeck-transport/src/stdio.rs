@@ -117,6 +117,7 @@ impl ConnectionOwner {
         let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
         let packet = state.data.pop_front()?;
         drop(state);
+        self.0.wake.notify();
         Some(packet.line)
     }
     /// Drain one control response for embedded execution owners.
@@ -207,8 +208,8 @@ impl ConnectionOwner {
             identity,
         })
     }
-    /// Reader never waits for output capacity. Controls change cancellation/state
-    /// first; output overload retires the connection instead of freezing input.
+    /// Reader never waits for output capacity. A full control queue returns
+    /// WouldBlock for retry without discarding already queued controls.
     pub fn send_control(&self, message: &JsValue) -> io::Result<()> {
         let line = line(message)?;
         let mut state = self.0.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -216,8 +217,6 @@ impl ConnectionOwner {
             return Err(closed());
         }
         if state.control.len() >= self.0.queue_capacity {
-            drop(state);
-            self.close();
             return Err(io::Error::new(
                 io::ErrorKind::WouldBlock,
                 "Module control output queue is full.",
@@ -531,6 +530,7 @@ impl BoundExchange {
         })?;
         let request_line = line(&request).map_err(before)?;
         self.owner.0.wake_registered(control);
+        let mut direct_host = self.owner.direct_host();
         loop {
             let generation = self.owner.0.wake.generation();
             let mut state = self.owner.0.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -557,13 +557,7 @@ impl BoundExchange {
             if state.closed {
                 return Err(before(closed()));
             }
-            let direct = effect == CallEffect::ReadOnly;
-            let queue_len = if direct {
-                state.control.len()
-            } else {
-                state.data.len()
-            };
-            if queue_len < self.owner.0.queue_capacity {
+            if direct_host.is_some() || state.data.len() < self.owner.0.queue_capacity {
                 let admission_sequence = state.next_call_sequence;
                 state.next_call_sequence =
                     state.next_call_sequence.checked_add(1).ok_or_else(|| {
@@ -591,7 +585,17 @@ impl BoundExchange {
                         deadline_rejected: false,
                     },
                 );
-                let direct_host = self.owner.direct_host();
+                if direct_host.is_none() {
+                    // Capacity check and enqueue share the lock; module calls
+                    // never consume the independent control queue.
+                    state.data.push_back(Packet {
+                        pending: Some(message_id.clone()),
+                        line: request_line,
+                    });
+                    drop(state);
+                    self.owner.0.wake.notify();
+                    break;
+                }
                 drop(state);
                 if let Some(result) =
                     crate::direct_host::try_direct_dispatch(&direct_host, control, &request_line)
@@ -609,21 +613,12 @@ impl BoundExchange {
                     let response =
                         crate::direct_host::direct_module_response(&request_value, result);
                     let _ = self.owner.receive_response(&response);
-                } else {
-                    let mut state = self.owner.0.state.lock().unwrap_or_else(|p| p.into_inner());
-                    let packet = Packet {
-                        pending: Some(message_id.clone()),
-                        line: request_line,
-                    };
-                    if direct {
-                        state.control.push_back(packet);
-                    } else {
-                        state.data.push_back(packet);
-                    }
-                    drop(state);
-                    self.owner.0.wake.notify();
+                    break;
                 }
-                break;
+                // No dispatch occurred. Fall back through bounded data
+                // admission; a dispatched host error is already a response.
+                direct_host = None;
+                continue;
             }
             drop(state);
             self.owner.0.wake.wait(generation, control.deadline);
