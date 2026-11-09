@@ -172,6 +172,32 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 这 2 格的 `recovery.runId` 一个字段，属该登记的预期红格；`comparison.json` 的
 `acceptedDifferences` 不含该条，比较器与金样语义不变）；16 个稳定关闭顺序差异已由 #1260
 按实测 TS 顺序修好（query 连接先于 control，hello-reject 为服务端 4003），修复后不再 FAIL。
+该 2 格红的验收与复核**不只数红格**：`differing surfaces: ["stdout"]` 是整段字节
+比较的单一名，单凭它分不清「仅 runId 不同」与「该两格 stdout 混入其它回归」，
+surface 判据不单独构成放行依据。放行前必须按 `D1-SDK-SIGNAL-RUNID-LITERAL-001`
+「机器判据」的字段级复算执行——登记件与更正件（R1 补分母 96→100；R2 修租约前置
+引用并把复算命令正本迁到本节）只留判据语义与指针，命令正本如下：把该批落盘的
+`evidence/<格>/stdout.bin`（只剥精确 libtest driver 前缀，Rust 侧**不归一化**；
+勿用含 driver 横幅的 `stdout.raw`）中 `recovery.runId` 的 36 字节值替换为金样
+固定 UUID 后与金样 stdout 逐字节比对，相等才在登记范围内，否则红格不得按该登记
+放行（evidence 根目录与 source.json 均显式传参，不依赖 CWD）：
+
+```sh
+python3 -I - <evidence-root> <repo>/src/pilotdeck-cli/tests/fixtures/sdk-signals/source.json <<'PY'
+import json, pathlib, re, sys
+root, source = (pathlib.Path(arg) for arg in sys.argv[1:3])
+caps = {c['input']['id']: c for c in json.loads(source.read_text())['captures']}
+for cid in ('run--unknown-cleanup', 'resume--unknown-cleanup'):
+    g = caps[cid]['stdout'].encode()
+    a = (root / cid / 'stdout.bin').read_bytes()
+    ar = re.search(rb'"runId":"([0-9a-f-]{36})"', a)
+    gr = re.search(rb'"runId":"([0-9a-f-]{36})"', g)
+    assert ar is not None, f'{cid}: actual stdout has no 36-byte runId literal'
+    assert gr is not None, f'{cid}: golden stdout has no 36-byte runId literal'
+    assert a.replace(ar.group(1), gr.group(1)) == g, f'{cid}: runId-substituted stdout differs'
+print('both cells: runId-substituted stdout byte-equal')
+PY
+```
 `signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order`
 逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
 该名单还与 source.json 里呈同一形状的格集合逐集合相等（防丢格、防新增同形格；
@@ -196,16 +222,33 @@ trace 位置与 dispatched abort 的先后、reset 之后无 wire 事件；再�
 所有窗口格断言 12 秒内没有自然退出，再由本测试 SIGKILL 并在 3 秒内回收。
 
 整批执行须独占 28999 mock 端口车道：批内只有进程内 `SERIAL` 互斥（`signal_replay.rs:34`），
-跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的测试 / 脚本须串行（名单用
-`grep -rl 28999 src/pilotdeck-cli src/pilotdeck-gateway/tests scripts` 现取：
-覆盖 `tests/common/`、fixtures 脚本与 `src/`，含仅引用不绑定者，宁多勿漏，
-不在此维护名单）——宿主先取 `/tmp/pdrs-parity.lock` 目录租约，再执行本文件任何
-绑 28999 的命令块（本节 100 格矩阵与下方 pending_abort 单测两处；取不到租约即
-退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件；锁的形态、
-回收与残留处置不自创，以 `scripts/cli-parity/README.md`「锁被保留时怎么解」节
-为正本（`owner.json` + guard 互斥，空目录不等于残留）。否则
-`TcpListener::bind` 在比较阶段之前直接 panic（该格没有 `differing surfaces`
-行），不再满足「失败恰为 2 格且两格均为 stdout 单面」。
+跨进程无互斥，与同机任何绑定 `127.0.0.1:28999` 的测试 / 脚本须串行。名单是活口径，
+不在本文件维护固定枚举：直接绑定者以
+`grep -rl 28999 src/pilotdeck-cli src/pilotdeck-gateway/src src/pilotdeck-gateway/tests scripts`
+现跑为准（覆盖 `tests/common/`、fixtures 脚本与两侧 `src/`，含仅引用不绑定者，
+宁多勿漏）；间接绑定者不含 28999 字面量、grep 抓不到，判定口径是「执行路径会真实
+到达 `TcpListener::bind("127.0.0.1:28999")`（mock 端口）的入口都算」——不含字面量
+的调用方顺着 `--test sdk_signal_exit` / `signal_cases::` 这类测试选择器找，现知一处：
+`src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py`（自身不取
+parity 锁，内部 cargo test 选 `signal_cases::*` / `pending_abort_*` 真 bind 28999，
+与本节矩阵同样须宿主先持租约再跑）。宿主先取 `/tmp/pdrs-parity.lock` 目录租约，再
+执行本文件任何绑 28999 的命令块（不在此枚举，以 grep 现跑加间接判定口径为准；
+取不到租约即退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件；
+重采块相反——`capture.py:45` 自取同一租约，宿主预持会使它 `Blocked`
+（`probe.mjs:16-17` 还断言 owner.pid 是 capture.py 自己），不要为它预持。持锁形态
+必须防接管：带接管逻辑的装置（`scripts/parity/round.py` 的 `parity_lock()`、
+`scripts/gateway-parity/common.py` 的 `parity_lock()`、`scripts/native-witness/collect.py:182`）
+在锁龄超 `MAX_AGE = 2400 s` 后按 `expired` `rmtree` 接管没有 `cleanupPending` 的锁，
+活 owner 也一样（判据只看锁龄与 pid，无心跳）；而全批兜底上界按
+`选择格数 × (2×12 + 5×3) + 30` 秒保守推导（100 格为 3930 s），远超 2400 s，
+短持中途被接管即两批并行 bind。因此宿主持锁须发布 `cleanupPending: true`（对齐上述
+三装置的 `owner.json` 形态：pid / timestamp / token / cleanupPending，`.guard` flock
+下 mkdir 后发布），或单块持锁 <2280 s（与 cli-parity 批装置 2280 s 硬截止同口径，
+只适用于远短于全批的块，全批矩阵只能用前者）。锁的回收与残留处置不自创，以
+`scripts/cli-parity/README.md`「锁被保留时怎么解」节为正本——该节只讲回收与残留、
+不含取锁形态（取锁形态即上一句），`owner.json` + guard 互斥、空目录不等于残留的
+口径不变。否则 `TcpListener::bind` 在比较阶段之前直接 panic（该格没有
+`differing surfaces` 行），不再满足「失败恰为 2 格且两格均为 stdout 单面」。
 
 ```sh
 scripts/cargo-slots.sh
