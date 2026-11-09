@@ -292,33 +292,94 @@ mutations = [
     # the bound test's expect_err dies on a success.
     ('set-alias-owner-busy-removed', CONFIG,
      '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && trimmed_string_is_non_empty(key)\n'
      '            && (self.owner.has_active_turn(key)\n'
-     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '                || trimmed_string_is_non_empty(key)\n'
+     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
      '        {',
      '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
      '            && self.owner.has_active_turn(key)\n'
      '        {',
      CFG + 'session_model_set_rejects_active_turn_on_alias_owner',
      '#1872 session_model_set is busy on the alias owner'),
-    # ── #1872: the blank-key arm of the same gate. TS consults
-    # hasActiveTurn on the request spelling only, where a blank key matches
-    # nothing, and answers INVALID_SESSION_KEY at the port write. Dropping
-    # the blank guard lets the owner-side check fire first for a key that
-    # folds onto the `session` transcript, and the bound test dies on the
-    # SESSION_BUSY answer instead of the sessionKey gate's.
+    # ── #1872 fix-r2: the owner-side blank-key arm of the same gate. TS's
+    # busy gate consults the request spelling alone, so a blank request key
+    # that folds onto the `session` transcript must reach the port write's
+    # sessionKey gate; removing the `trimmed_string_is_non_empty(key)`
+    # conjunct lets the owner-side check fire first and the bound test dies
+    # on the SESSION_BUSY answer instead of the sessionKey gate's. The
+    # anchor is the test's own assert label — the expect_err message never
+    # reaches the panic payload on this path (cb8 sample r1 INVALID).
     ('set-busy-gate-blank-key-guard-removed', CONFIG,
      '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
-     '            && trimmed_string_is_non_empty(key)\n'
      '            && (self.owner.has_active_turn(key)\n'
-     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '                || trimmed_string_is_non_empty(key)\n'
+     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
      '        {',
      '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
      '            && (self.owner.has_active_turn(key)\n'
      '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
      '        {',
      CFG + 'session_model_set_blank_key_answers_the_session_key_gate',
-     '#1872 a blank key answers the sessionKey gate'),
+     '#1872 the blank key is a sessionKey error'),
+    # ── #1872 fix-r2: the request-side arm for a blank key. TS answers
+    # SESSION_BUSY for a turn held on the blank spelling itself (probe B),
+    # so the request-side check must stay live; reverting to the fix-r1
+    # whole-gate skip makes the bound test see INVALID_SESSION_KEY instead
+    # of the busy code.
+    ('set-blank-key-busy-reverted-to-gate-skip', CONFIG,
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || trimmed_string_is_non_empty(key)\n'
+     '                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && trimmed_string_is_non_empty(key)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     CFG + 'session_model_set_reports_busy_for_a_turn_held_on_the_blank_key',
+     '#1872 the blank key answers busy'),
+    # ── #1872 fix-r2 arbitration of the DS P1: the real TS wiring runs
+    # hasActiveTurn on the raw request key before the callback's sessionKey
+    # gate (probe C), so permission needs no blank-key guard — this mutant
+    # is the reviewed-away shape, and the bound test dies on the
+    # INVALID_SESSION_KEY answer instead of the busy code.
+    ('permission-blank-key-busy-skipped', CONFIG,
+     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
+     '            && self.owner.has_active_turn(key)\n'
+     '        {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot change permission mode during an active turn.",\n'
+     '            ));\n'
+     '        }',
+     '        if let Some(JsValue::String(key)) = params.get("sessionKey")\n'
+     '            && trimmed_string_is_non_empty(key)\n'
+     '            && self.owner.has_active_turn(key)\n'
+     '        {\n'
+     '            return Err(gateway_error(\n'
+     '                "SESSION_BUSY",\n'
+     '                "Cannot change permission mode during an active turn.",\n'
+     '            ));\n'
+     '        }',
+     CFG + 'set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key',
+     '#1872 the blank key answers busy for permission'),
+    # ── #1872 fix-r2: clear answers the sessionKey gate first — TS's
+    # sessionModelClear runs requireSessionKey before hasActiveTurn. The
+    # mutant weakens the require to a blank default, so the busy gate (with
+    # a live blank-spelling turn) answers SESSION_BUSY and the bound test
+    # dies on the INVALID_SESSION_KEY assert.
+    ('clear-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        if self.owner.has_active_turn(&session_key)\n'
+     '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
+     '        {',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n'
+     '        if self.owner.has_active_turn(&session_key)\n'
+     '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
+     '        {',
+     CFG + 'session_model_clear_blank_key_answers_the_session_key_gate',
+     '#1872 the blank key is a sessionKey error on clear'),
     ('clear-alias-owner-busy-removed', CONFIG,
      '        if self.owner.has_active_turn(&session_key)\n'
      '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
@@ -692,7 +753,10 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1872 session_model_clear is busy on the alias owner'),
     (CONFIG, '#1872 the owner and alias reservations are held while the write is parked'),
     (CONFIG, '#1872 the clear-side owner and alias reservations are held while the write is parked'),
-    (CONFIG, '#1872 a blank key answers the sessionKey gate'),
+    (CONFIG, '#1872 the blank key is a sessionKey error'),
+    (CONFIG, '#1872 the blank key answers busy'),
+    (CONFIG, '#1872 the blank key answers busy for permission'),
+    (CONFIG, '#1872 the blank key is a sessionKey error on clear'),
     (CONFIG, '#1872 the fallback reports the admitted turn as busy'),
     (CONFIG, '#1872 the close targeted the owner spelling, not the request spelling'),
     (CONFIG, '#1457 pm busy message'),

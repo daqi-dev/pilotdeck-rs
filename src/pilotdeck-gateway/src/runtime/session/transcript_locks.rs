@@ -163,7 +163,9 @@ pub(crate) fn append_metadata_with_lease(
         };
     };
     // Seed the writer's sequence from the existing transcript so the entry
-    // continues the chain rather than restarting at 1.
+    // continues the chain rather than restarting at 1. A probe error
+    // (`Some(Err(_))` / `None`) currently skips the restore and can brick a
+    // stale transcript with a sequence:1 rewrite — registered in #2686.
     if matches!(storage.transcript_exists(), Some(Ok(true))) {
         storage
             .restore()
