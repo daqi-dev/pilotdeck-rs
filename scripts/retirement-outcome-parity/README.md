@@ -307,8 +307,10 @@ r9 的 85 min、r10 的 130 min 均源自不完整和；本轮补全覆盖范围
 机器化（#2453）：被声明限压到 cap 的必须恰是直跑负控行（emit/check 的声明值与入算值
 相等），cap 必须吸收恰 3 个整 checker 超时（`cap % limit == 0`、
 `cap // limit == NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS`），
-raw = passes × limit 一并断言——第 4 次 checker 超时才落进 step 硬杀（summary.json 只在
-控件循环结束后写，硬杀下没有 summary、哪一控挂了不可见）；整除关系被破坏当场红。
+raw = passes × limit 一并断言——名义上第 4 次 checker 超时落进 step 硬杀（summary.json 只在
+控件循环结束后写，硬杀下没有 summary、哪一控挂了不可见）；机器钉的是声明配置的整除
+关系，真实硬杀边界受 step 时钟先启动与进程启动开销影响**略早**（评审 r1 登记）；
+整除关系被破坏当场红。
 外层不足会退化为平台硬杀（cancelled，summary 不发布）。
 
 `self_check.py` 是这些守卫的单一实现，本地可整跑：
