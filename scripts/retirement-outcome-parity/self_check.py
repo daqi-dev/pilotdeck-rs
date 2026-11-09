@@ -114,6 +114,11 @@ EXPECTED_POSITIVES = CHECK.EXPECTED_POSITIVES
 # #2378：ID 名册（条数拦不住改名/重复），check_negctl 与执行器同源读这里。
 EXPECTED_CONTROL_IDS = CHECK.EXPECTED_CONTROL_IDS
 EXPECTED_POSITIVE_IDS = CHECK.EXPECTED_POSITIVE_IDS
+# 判决词表（r4 sibling#1）：期望 counts 的键集也从登记点同源取，不做第四份
+# 字面量副本——执行器词表扩/改后 self_check 按旧键集比较，闸门要跑完最长
+# 1800 s 的负控轮才暴露。
+NEGATIVE_VERDICTS = CHECK.NEGATIVE_VERDICTS
+POSITIVE_VERDICTS = CHECK.POSITIVE_VERDICTS
 # 各检查子进程的内部超时（评审 r9 P2：外层 timeout-minutes 的预算算式要用它们，
 # 之前是散在调用点的字面量——抬哪个都改不动派生断言）。最坏和见
 # INTERNAL_WORST_CASE_SECONDS。
@@ -448,12 +453,18 @@ def check_negctl():
     # counts **整字典**等于期望值。名册从 summary 的 controls / positives 条目
     # 里读 id（执行器侧已拒绝不等名册，这里再核一遍「self_check 拿到的 summary
     # 确实覆盖了登记全集」，防两端各改一边后仍然互相自洽地变绿）。
-    if counts != {'KILLED': EXPECTED_CONTROLS, 'SURVIVED': 0, 'INVALID': 0}:
+    # r4 sibling#1：期望 counts 的键集从登记点的词表同源推导（不再写字面量），
+    # 整字典比较保留——执行器词表多出词表外键时这里照样不等。
+    expected_counts = dict.fromkeys(NEGATIVE_VERDICTS, 0)
+    expected_counts['KILLED'] = EXPECTED_CONTROLS
+    if counts != expected_counts:
         raise CheckFailure(f'expected counts {{KILLED: {EXPECTED_CONTROLS}, '
                            f'SURVIVED: 0, INVALID: 0}}, got {counts}')
     # 正控条数同样钉死（r9 合并补全）：build_positives 被删空时 positiveCounts 全 0、
     # status 仍 PASS——「应当 PASS 的性质」静默失保；#2378 同样升级为整字典 + ID 名册。
-    if positive_counts != {'HELD': EXPECTED_POSITIVES, 'BROKEN': 0, 'INVALID': 0}:
+    expected_positive_counts = dict.fromkeys(POSITIVE_VERDICTS, 0)
+    expected_positive_counts['HELD'] = EXPECTED_POSITIVES
+    if positive_counts != expected_positive_counts:
         raise CheckFailure(f'expected positiveCounts {{HELD: {EXPECTED_POSITIVES}, '
                            f'BROKEN: 0, INVALID: 0}}, got {positive_counts}')
     control_ids = sorted(str(entry.get('id')) for entry
