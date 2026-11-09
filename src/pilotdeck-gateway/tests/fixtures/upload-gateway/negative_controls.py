@@ -119,13 +119,16 @@ LEASE_ID_SWAP = (
     'upload::tests::upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round')
 RELEASE_REALPATH = (
     'upload::tests::upload_lease_release_surfaces_and_caches_a_realpath_failure')
-# #2276: the #1631 pair regression lives in the `tests/` integration target, not
-# the lib — the runner picks `--test <target>` for a named test by this
+# #2276: the #1631 pair regressions live in the `tests/` integration target,
+# not the lib — the runner picks `--test <target>` for a named test by this
 # registry (the roster names the target; it is never guessed from the test
-# name), and everything not in it keeps the `--lib` face.
-INTERLEAVED = 'interleaved_complete_and_cancel_cannot_both_win'
+# name), and everything not in it keeps the `--lib` face. Fix-r1 (review,
+# MM boundary#6): every `#[test]` of the target is registered, so a future
+# row that names any of them cannot silently fall to the `--lib` face.
 INTEGRATION_TESTS = {
-    INTERLEAVED: 'upload_concurrency_1631',
+    'interleaved_complete_and_cancel_cannot_both_win': 'upload_concurrency_1631',
+    'interleaved_complete_and_complete_has_one_winner': 'upload_concurrency_1631',
+    'interleaved_cancel_and_cancel_wins_exactly_once': 'upload_concurrency_1631',
 }
 
 # (name, source, original, mutant, named test, exclusive failure text)
@@ -957,8 +960,35 @@ mutations = [
         Ok(updated)
     }
 
-''', INTERLEAVED,
+''', 'interleaved_complete_and_cancel_cannot_both_win',
      'both calls must not be able to report success'),
+    # #2279 (review fix-r1, DS sibling#1 + MM sibling#2/concurrency#3): the
+    # in-gate re-read's non-fallback is itself a defense — this row reverts
+    # it to the pre-fix outside-snapshot fallback (with the pre-#2275
+    # unconditional change, the exact pre-batch shape), so a swept record is
+    # resurrected and reported completed again.
+    ('mutate-reread-falls-back-to-outside-snapshot', STORE, '''            let mut current = self.read_at(&project, &id)?.ok_or_else(|| {
+                UploadError::dialog("UPLOAD_NOT_FOUND", format!("Unknown uploadId: {id}"))
+            })?;
+            if !change(&mut current) {
+                return Ok(current);
+            }
+''', '''            let mut current = self
+                .read_at(&project, &id)?
+                .unwrap_or_else(|| record.clone());
+            change(&mut current);
+''', 'upload::tests::upload_complete_after_the_sweep_removed_the_record_refuses_without_resurrecting',
+     '#2279 complete reported success over a swept record'),
+    # #2275 (review fix-r1, same reviewers): the no-change gate is a defense —
+    # dropping it restores the pre-fix "every verdict rewrites the record",
+    # so an injected metadata-write failure answers in place of the refusal's
+    # semantic code.
+    ('mutate-no-change-gate-dropped', STORE, '''            if !change(&mut current) {
+                return Ok(current);
+            }
+''', '''            change(&mut current);
+''', 'upload::tests::upload_refusals_write_nothing_emit_nothing_and_do_not_poison_the_gate',
+     '#2275 the refusal answers its semantic code, not the injected write fault'),
 ]
 
 # #1666: static denominator; a deleted row must not shrink the run silently and
@@ -1005,6 +1035,10 @@ EXPECTED_NAMES = (
     'release-err-not-cached',
     # #2276 的这一条（#1631 对判定双双挪回门外——预修复形态），与上面同一名册口径。
     'pair-verdicts-outside-gate',
+    # #2279/#2275 两条（评审 fix-r1：门内重读回退门外快照 / no-change 闸门删除），
+    # 同一名册口径。
+    'mutate-reread-falls-back-to-outside-snapshot',
+    'mutate-no-change-gate-dropped',
 )
 
 if '--check' in sys.argv[1:]:
