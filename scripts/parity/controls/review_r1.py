@@ -362,17 +362,18 @@ class ReviewControls(unittest.TestCase):
             # fix-r5: level negation tolerates short modifiers.
             ('negated-with-modifier', '| 1 | DS | 无新增 P0/P1/P2 | — |\n', True),
             ('negated-any-modifier', '| 1 | DS | 未发现任何 P0/P1/P2 | — |\n', True),
-            # fix-r6: the modifier window is a whitelist, so a level that
-            # follows negation-looking prose survives (r5 reviews P0).
-            ('negated-whitelist-cannot-confirm',
+            # fix-r7: level negation is grammar — negation + a bounded gap
+            # that excludes verb-initial characters, so a level following
+            # verb-headed prose survives instead of folding away (r5/r6 P0).
+            ('negation-grammar-cannot-confirm',
              '| 1 | DS | 无法确认 P1 是否已修 | — |\n', False),
-            ('negated-whitelist-cannot-repro',
+            ('negation-grammar-cannot-repro',
              '| 1 | DS | 无法复现 P1 | — |\n', False),
-            ('negated-whitelist-unseen-fix',
+            ('negation-grammar-unseen-fix',
              '| 1 | DS | 未见修复 P1：锁无过期回收 | — |\n', False),
-            ('negated-whitelist-not-handled',
+            ('negation-grammar-not-handled',
              '| 1 | DS | 没有处理 P1 | — |\n', False),
-            ('negated-whitelist-irrelevant',
+            ('negation-grammar-irrelevant',
              '| 1 | DS | 无关 P1 | — |\n', False),
             ('negated-any-new-of', '| 1 | DS | 未发现任何新增的 P0/P1/P2 | — |\n', True),
             ('negated-new-severe-level',
@@ -416,13 +417,71 @@ class ReviewControls(unittest.TestCase):
             ('guard-已修复后续观察', '| 1 | DS | P1：foo | 已修复，后续观察 |\n', True),
             ('guard-不需要进一步处理',
              '| 1 | DS | P1：foo | 已修复，不需要进一步处理 |\n', True),
+            # fix-r7 (r6 reviews, both families — structural round): the
+            # in-progress form needs its right edge, so a verb+object noun
+            # after 中 must not read in-progress (DS boundary#3).
+            ('closed-升级中间件', '| 1 | DS | P1：foo | 已升级中间件到 2.1 |\n', True),
+            ('closed-关闭中间层', '| 1 | DS | P1：foo | 已关闭中间层缓存 |\n', True),
+            ('closed-保留中间态', '| 1 | DS | P1：foo | 已保留中间态 |\n', True),
+            ('pending-升级中', '| 1 | DS | P1：foo | 升级中 |\n', False),
+            # fix-r7: level negation is grammar, not a modifier whitelist —
+            # a single-character modifier folds too (DS boundary#4).
+            ('negated-single-新', '| 1 | DS | 未发现新 P1 | — |\n', True),
+            ('negated-unseen-新', '| 1 | DS | 未见新 P1 | — |\n', True),
+            ('negated-无新', '| 1 | DS | 无新 P1 | — |\n', True),
+            # fix-r7: bare 需/会 intent markers carry morpheme guards, so
+            # noun compounds must not reopen a closed row (MM boundary#3).
+            ('marker-guard-需求方', '| 1 | DS | P1：foo | 已修复，需求方确认 |\n', True),
+            ('marker-guard-需求已关闭', '| 1 | DS | P1：foo | 已修复，需求已关闭 |\n', True),
+            ('marker-guard-会议已通过', '| 1 | DS | P1：foo | 已修复，会议已通过 |\n', True),
+            ('marker-guard-机会再验证', '| 1 | DS | P1：foo | 已修复，有机会再验证 |\n', True),
+            # fix-r7: the curly apostrophe folds before matching (MM#4) and
+            # ASCII '.' splits clauses with digit protection (MM#5).
+            ('english-curly-hasnt', "| 1 | DS | P1: foo | hasn’t been fixed |\n", False),
+            ('english-curly-wontfix', "| 1 | DS | P1: foo | won’t fix |\n", True),
+            ('english-period-wontfix',
+             '| 1 | DS | P1: foo | Not reproducible. Closed as wontfix. |\n', True),
+            ('english-period-merged',
+             '| 1 | DS | P1: foo | Has not been fixed. Merged to main. |\n', False),
+            ('english-period-digit-guard',
+             '| 1 | DS | P1: foo | Fixed in v1.2. Merged to main. |\n', True),
+            # fix-r7: the English verb source covers verification verbs, so a
+            # negated one binds (DS boundary#2) and a bare one closes.
+            ('english-not-verified', '| 1 | DS | P1: foo | fixed, but not verified |\n', False),
+            ('english-verified-closes', '| 1 | DS | P1: foo | verified |\n', True),
+            # fix-r7: right-extension guards keep 拒绝 / 保留意见 open (MM#2).
+            ('refuse-拒绝修复', '| 1 | DS | P1：foo | 拒绝修复 |\n', False),
+            ('refuse-已拒绝合入', '| 1 | DS | P1：foo | 已拒绝合入 |\n', False),
+            ('refuse-保留意见', '| 1 | DS | P1：foo | 保留意见 |\n', False),
+            # fix-r7: 待观察 joins its 保留观察/继续观察 family (MM boundary#8).
+            ('pending-待观察', '| 1 | DS | P1：foo | 已修，待观察 |\n', False),
         ]
         for name, row, expected in row_cases:
             with self.subTest(name=name):
                 record.write_text(table.replace('| 1 | DS | P1：foo | 已修（c1） |\n', row) + conclusion,
                                   encoding='utf-8')
                 with patch.object(G, 'WORKTREE', self.root):
-                    self.assertIs(check_ruler.independent_review(), expected)
+                    self.assertIs(check_ruler.independent_review(), expected,
+                                  '#2245-r7 row:' + name)
+        # fix-r7 invariant 1 (both families' P0): dual-column records judge
+        # every 处理/处置 cell on its own — a closed sibling never rescues a
+        # dash or a pending one, and pending in any single cell fails the row.
+        dual_table = ('# 记录\n\n| 轮 | 审查方 | 结论 | 处理 | 处置 |\n|---|---|---|---|---|\n')
+        dual_cases = [
+            ('dual-both-closed', '已修（c1）', '已修', True),
+            ('dual-chuzhi-dash', '已修（c1）', '—', False),
+            ('dual-chuli-dash', '—', '已修', False),
+            ('dual-pending-second', '已修复', '暂缓', False),
+            ('dual-pending-first', '暂缓', '已修复', False),
+            ('dual-both-dash', '—', '—', False),
+        ]
+        for name, h1, h2, expected in dual_cases:
+            with self.subTest(name=name):
+                record.write_text(dual_table + f'| 1 | DS | P1：foo | {h1} | {h2} |\n'
+                                  + conclusion, encoding='utf-8')
+                with patch.object(G, 'WORKTREE', self.root):
+                    self.assertIs(check_ruler.independent_review(), expected,
+                                  '#2245-r7 dual:' + name)
         # whole-record cases: table shape, fences, second tables, endings.
         findings_table = '\n| 文件 | 结论 |\n|---|---|\n| x.py | P2 遗留未修 |\n'
         unrelated_table = '\n| 名 | 值 |\n|---|---|\n| a | b |\n'
@@ -500,7 +559,8 @@ class ReviewControls(unittest.TestCase):
             with self.subTest(name=name):
                 record.write_text(body, encoding='utf-8')
                 with patch.object(G, 'WORKTREE', self.root):
-                    self.assertIs(check_ruler.independent_review(), expected)
+                    self.assertIs(check_ruler.independent_review(), expected,
+                                  '#2245-r7 record:' + name)
         record.write_bytes(b'# \xff\xfe not utf-8 \n')
         with patch.object(G, 'WORKTREE', self.root):
             self.assertIs(check_ruler.independent_review(), False)
@@ -512,49 +572,93 @@ class ReviewControls(unittest.TestCase):
             self.assertIs(check_ruler.independent_review(), True)
 
     def test_pending_and_closure_families_stay_paired(self):
-        """#2245 r6 reviews (both families): closure, failing and in-progress
-        families are all derived from the verb list, and this check walks the
-        module's real lists — no hand-copied vocabulary that can drift
-        one-sidedly (r5's hand-copied Chinese side let 验收失败 / 评审不通过 /
-        not 修复 read as closed)."""
-        gate_verbs = [v for v in check_ruler._CJK_VERBS
-                      if v not in check_ruler._CJK_OBSERVE_ONLY]
-        # closure really is derived from the verb list + English list.
-        for word in gate_verbs + list(check_ruler._ENGLISH_CLOSURE):
-            self.assertIn(word, check_ruler._CLOSED_HANDLING)
-        # the failing family really is <two-char verb>失败 (+ 修复).
-        self.assertEqual(set(check_ruler._CJK_FAILING),
-                         {v for v in check_ruler._CJK_VERBS if len(v) >= 2}
-                         | {'修复'})
+        """#2245 r7 (structural round, both families): closure, failing and
+        in-progress families are all derived from the module's verb lists,
+        and this check walks those real lists — no hand-copied vocabulary
+        that can drift one-sidedly (r5's hand-copied Chinese side let
+        验收失败 / 评审不通过 / not 修复 read as closed; r6 asked for module
+        constants + traversal, r7 delivered them)."""
+        # closure really is derived: gate verbs + English verbs + closure
+        # phrases, and nothing else (r6 MM sibling#2: set equality, not
+        # containment; observe-only 观察 never closes).
+        self.assertEqual(set(check_ruler._CLOSED_HANDLING),
+                         set(check_ruler._CJK_GATE_VERBS)
+                         | set(check_ruler._ENGLISH_VERBS)
+                         | {'无需', 'wontfix', "won't fix"})
+        self.assertNotIn('观察', check_ruler._CLOSED_HANDLING)
+        # the failing / in-progress families really are <two-char verb>失败 /
+        # <two-char verb>中 over the module's own verb list, derived once.
+        self.assertEqual(set(check_ruler._CJK_LONG_VERBS),
+                         {v for v in check_ruler._CJK_VERBS if len(v) >= 2})
         # every gate verb keeps every negated/failed/in-progress/intended
         # form on the pending side, in both languages and across them.
-        for word in gate_verbs:
+        for word in check_ruler._CJK_GATE_VERBS:
             for form in (f'未{word}', f'没{word}', f'无法{word}', f'不能{word}',
                          f'推迟{word}', f'延后{word}', f'待{word}', f'not {word}',
                          f'never {word}'):
-                self.assertTrue(check_ruler._handling_pending(form), form)
+                self.assertTrue(check_ruler._handling_pending(form),
+                                '#2245-r7 pending-family:' + form)
             if len(word) >= 2:
                 self.assertTrue(check_ruler._handling_pending(word + '失败'),
-                                word + '失败')
+                                '#2245-r7 failing-family:' + word + '失败')
                 self.assertTrue(check_ruler._handling_pending(word + '中'),
-                                word + '中')
-        for word in check_ruler._ENGLISH_CLOSURE:
+                                '#2245-r7 in-progress-family:' + word + '中')
+                # r7 right edge (DS boundary#3): <verb>中 inside a longer
+                # noun is not in-progress — the noun must not reopen a row.
+                self.assertFalse(check_ruler._handling_pending(word + '中间层'),
+                                '#2245-r7 in-progress-right-edge:' + word + '中间层')
+        for word in check_ruler._ENGLISH_VERBS:
             for form in (f'not {word}', f'never {word}', f'un{word}',
                          f'un-{word}', f'un {word}', f'un_{word}',
                          f"hasn't been {word}", f'未 {word}', f'待 {word}'):
-                self.assertTrue(check_ruler._handling_pending(form), form)
+                self.assertTrue(check_ruler._handling_pending(form),
+                                '#2245-r7 english-pending:' + form)
+        # DS sibling#2: intent markers are module constants — walk every one
+        # of them paired with a gate verb, so adding a marker without the
+        # grammar cannot pass silently.
+        for marker in check_ruler._INTENT_WORDS:
+            for word in ('修复', '验证'):
+                self.assertTrue(check_ruler._handling_pending(marker + word),
+                                '#2245-r7 intent-marker:' + marker + word)
+        # r7 invariant 7: the English pending words are a word-list residual,
+        # so each one gets its own traversal assertion (the paired-verb forms
+        # above cannot cover them — no verb is involved).
+        for form in ('in progress', 'in-progress', 'pending', 'todo', 'tbd',
+                     'wip'):
+            self.assertTrue(check_ruler._handling_pending(form),
+                            '#2245-r7 en-pending:' + form)
+        # the guarded markers fire on a bare 需/会 but not inside their
+        # compounds (r7 MM boundary#3): 需求方/需求已关闭/会议已通过/有机会.
+        for form in ('需修复', '会修复'):
+            self.assertTrue(check_ruler._handling_pending(form),
+                            '#2245-r7 intent-marker:' + form)
+        for guard in ('需求方确认', '需求已关闭', '会议已通过', '有机会再验证'):
+            self.assertFalse(check_ruler._handling_pending(guard),
+                            '#2245-r7 intent-guard:' + guard)
         # intention markers may look forward across clauses; negation stays
         # in its clause; observe-only verbs never close a row.
         for form in ('计划 12 月 31 日，修复', '暂缓，修复方案见 #100',
                      '已修，待人工验证', '需要修复', '下周修复', '将修复',
                      'will be fixed', 'to be fixed',
                      'not planned for this release, will be fixed later'):
-            self.assertTrue(check_ruler._handling_pending(form), form)
+            self.assertTrue(check_ruler._handling_pending(form),
+                            '#2245-r7 forward-intent:' + form)
         for closed in ('已修（c1）', '已验收', '已复核', '已合并 to main',
                       '已通过', '已迁移至 #456', "won't fix", '不会修复',
                       '无需处理', '已修，未引入回归', '没发现问题，已修复',
-                      '已修复，不需要进一步处理', '已修复，后续观察'):
-            self.assertFalse(check_ruler._handling_pending(closed), closed)
+                      '已修复，不需要进一步处理', '已修复，后续观察',
+                      '已升级中间件到 2.1', '已关闭中间层缓存', '已保留中间态'):
+            self.assertFalse(check_ruler._handling_pending(closed),
+                             '#2245-r7 closed-family:' + closed)
+        # observe-only verbs and explicit pending words never close a row
+        # (r7 MM boundary#8: 待观察 joins its 保留观察/继续观察 family).
+        for form in ('观察', '待观察', '继续观察'):
+            self.assertFalse(check_ruler._handling_closed(form),
+                             '#2245-r7 observe-only:' + form)
+        for form in ('待观察', '保留观察', '继续观察', '待定', '待办', '进行中',
+                     '拒绝', '拒绝修复', '已拒绝合入', '保留意见'):
+            self.assertTrue(check_ruler._handling_pending(form),
+                            '#2245-r7 explicit-pending:' + form)
 
 
 if __name__ == '__main__':

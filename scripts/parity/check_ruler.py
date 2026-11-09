@@ -60,117 +60,151 @@ run_controls, DEFAULT_SOURCE = _controls.run_controls, _controls.DEFAULT_SOURCE
 check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 
 
-# #2245: the conclusion sentence alone let a record pass while its table still
-# carried an un-disposed P0/P1/P2 row. A handling cell closes a finding only
-# when it names a closure and is not still pending; anything else stays open.
-# fix-r1 (r1 reviews): closure/pending were bare substrings, so "修复中" or
-# "not fixed" read as closed (ruler false-PASS) while a stray 未/待 anywhere
-# poisoned a closed row ("已修，未引入回归" read open, false-FAIL). Pending now
-# binds to a disposal verb (待X修 / 未修 / 计划修复 / 修复中 / not fixed …),
-# closure covers the CLAUDE.md disposal kinds (合入/并入/降级/升级), and both
-# level scanning and negation are case-insensitive and share one token shape.
-# fix-r3 (r2 reviews): the level scan reads every cell of a review row (a
-# 等级 column must not hide a finding), full-width Ｐ１ folds to P1 before
-# matching, and the conclusion sentence obeys the same fence visibility as
-# the tables — an unclosed fence makes the whole record unreadable.
-# fix-r4 (r3 reviews): ~~~ fences hide content like ``` fences; a row that
-# names no level is prose or quote noise, not an open finding (a pipe in
-# prose no longer fails a clean record); a failed or still-expected disposal
-# (修复失败 / 计划 2026 年 12 月 31 日修复 / 待下轮（r3）修复 / not yet
-# fixed / never been fixed) reads as pending; merged closes like 合入, and
-# 合并 joins both the closure and the pending verb families.
-# fix-r5 (r4 reviews, both families): pending derives from the closure lists
-# (un- / not / n't / X失败 / 无法X forms can no longer drift one-sidedly);
-# Chinese negation markers bind within their clause while intention markers
-# look forward across clauses, removing the character-count window; level
-# negation tolerates short modifiers (无新增 P0/P1/P2); a backtick fence's
-# info string may not contain backticks; a 处置 header column reads like
-# 处理; 已验收/已复核/已评审 close; won't fix is the wontfix closure.
-# fix-r6 (r5 reviews, both families — corrective round, AI 代批 per ruling):
-# the r5 derivation was incomplete — the failing family, the paired test's
-# Chinese side and the modifier window were still hand-copied, so 验收失败 /
-# 评审不通过 / 无法确认 P1 read as closed. Now one verb list feeds closure,
-# failing, in-progress and marker-binding alike: closure = verbs minus the
-# observe-only word plus the English list; <verb>失败 and <verb>中 derive;
-# the level-negation window is a modifier whitelist (新增/任何/遗留…), so
-# 无法确认 P1 / 未见修复 P1 keep their level; negation markers (未/没/not/
-# n't) bind to any verb in their clause — including across languages
-# (not 修复 / never 合并); intention markers (待/计划/需要/将/下周/will be…)
-# look forward to gate verbs only, so 已修复，后续观察 stays closed while
-# 已修，待人工验收 stays pending; English drops its {0,24} windows for the
-# same clause scan; a 处理 column beside 处置 is judged too, not silently
-# dropped; 通过/迁移/验证/确认 close (已通过/已迁移至 #456).
-_NEGATED_LEVELS = re.compile(
-    r'(?:无|没有|未发现|不含|未见)(?:新增|任何|明显|其他|额外|遗留|已知|相关'
-    r'|可疑|潜在|严重|级别|的)*\s*P[012](?:\s*[/／、]\s*P[012])*', re.IGNORECASE)
-# Word boundaries keep identifiers (`case_p1`) from reading as a level.
-_LEVEL_TOKEN = re.compile(r'(?<![0-9A-Za-z_])p[012](?![0-9A-Za-z_])', re.IGNORECASE)
-# One source of truth: the verb list. Closure is derived from it (minus the
-# observe-only word, which binds markers but never closes a row), and the
-# failed / in-progress / marker-binding families are derived from the same
-# list — no side can drift one-sidedly, and the paired machine check in
-# controls/review_r1.py walks these very lists (r5 reviews caught the r5
-# hand-copied pairs drifting: 验收失败 / 评审不通过 / not 修复 read closed).
-_ENGLISH_CLOSURE = ('done', 'fixed', 'resolved', 'closed', 'merged')
-_CJK_OBSERVE_ONLY = ('观察',)  # 待观察 stays pending; 观察 never closes a row
-_CJK_VERBS = ('修', '解决', '关闭', '拒', '保留', '完成', '合入', '并入', '合并',
+# #2245 fix-r7 (r6 reviews, both families — structural redesign per the
+# 2026-11-10 coordinator ruling; round history: specs/parity/frozen/
+# 20261109-2245.md through 20261110-2245-r8.md). Five patch rounds proved
+# lexical enumeration does not converge, so verdicts now derive structurally:
+#   1. every 处理/处置 cell is judged on its own copy, never concatenated —
+#      a row closes only when each cell names a closure and none is pending;
+#   2. the judgement copy is normalised first (NFKC + curly-apostrophe fold,
+#      r6 MM#4) and never written back to the record bytes;
+#   3. word/token edges: <verb>中 needs a right edge (升级中 must not match
+#      已升级中间件, r6 DS#3), bare 需/会 intent markers carry morpheme
+#      guards (需求方 / 会议 / 机会, r6 MM#3), explicit pending words take
+#      right edges, and closure verbs block known right extensions that form
+#      a different lexeme (拒绝 / 保留意见, r6 MM#2);
+#   4. clause separators cover the CJK+ASCII punctuation set, '.' included
+#      with digit protection so v1.2 stays one token (r6 MM#5);
+#   5. level negation is grammar, not a modifier whitelist (r6 DS#4): an
+#      existence negation + a bounded gap free of verb-initial characters +
+#      the level token folds (未发现新 P1 / 无严重级别 P0), while a gap that
+#      carries a verb-initial character marks a real finding (无法复现 P1 /
+#      未见修复 P1 / 没有处理 P1 / 无关 P1 keep their level);
+#   6. unknown shapes stay open, never guessed (fail-closed).
+# Vocabulary that cannot be derived structurally stays in named closed lists
+# below; each residual entry is paired with a control in
+# controls/review_r1.py (memory: ruler-real-data).
+_ENGLISH_VERBS = ('done', 'fixed', 'resolved', 'closed', 'merged',
+                  'verified', 'confirmed', 'reviewed', 'tested', 'checked')
+_CJK_OBSERVE_ONLY = ('观察',)  # 观察 never closes a row; 已修，后续观察 stays closed
+_CJK_VERBS = ('修', '修复', '解决', '关闭', '拒', '保留', '完成', '合入', '并入', '合并',
               '降级', '升级', '处置', '处理', '评审', '复核', '验收', '通过',
               '验证', '确认', '检查', '测试', '复检', '迁移', '观察')
-_CLOSED_HANDLING = (tuple(v for v in _CJK_VERBS if v not in _CJK_OBSERVE_ONLY)
-                    + _ENGLISH_CLOSURE + ('无需', 'wontfix', "won't fix"))
-_CJK_FAILING = tuple(v for v in _CJK_VERBS if len(v) >= 2) + ('修复',)
-# ^ two-char verb forms (修复 comes as a pair with 修): X失败 and X中 both
-# derive from here — a single-char verb cannot carry a 中 suffix (修中 is not
-# a word; the in-progress form of 修 is 修复中).
+_CJK_GATE_VERBS = tuple(v for v in _CJK_VERBS if v not in _CJK_OBSERVE_ONLY)
+_CJK_LONG_VERBS = tuple(v for v in _CJK_VERBS if len(v) >= 2)
+_CLOSED_HANDLING = _CJK_GATE_VERBS + _ENGLISH_VERBS + ('无需', 'wontfix', "won't fix")
+# Right extensions that turn a closure verb into a different lexeme with a
+# non-closure meaning (拒绝修复 / 已拒绝合入 / 保留意见 stay open, r6 MM#2).
+_CJK_CLOSURE_GUARDS = {'拒': '绝', '保留': '意见'}
+
+
+def _longest_first(words):
+    return sorted(words, key=len, reverse=True)
+
+
+_WORD_EDGE = r'(?![0-9A-Za-z一-鿿])'
+_CJK_CLOSURE_RE = re.compile('|'.join(
+    verb + ('(?!%s)' % _CJK_CLOSURE_GUARDS[verb]
+            if verb in _CJK_CLOSURE_GUARDS else '')
+    for verb in _longest_first(_CJK_GATE_VERBS)))
+_EN_CLOSURE_RE = re.compile(r'\b(?:' + '|'.join(_ENGLISH_VERBS) + r'|wontfix)\b')
+_CLOSURE_PHRASES = ('无需', "won't fix")
+_CJK_FAILING_RE = re.compile(
+    '(?:' + '|'.join(_longest_first(_CJK_LONG_VERBS)) + ')失败')
+_CJK_IN_PROGRESS_RE = re.compile(
+    '(?:' + '|'.join(_longest_first(_CJK_LONG_VERBS)) + ')中' + _WORD_EDGE)
+# 拒绝 keeps matching inside longer phrases (拒绝修复 / 已拒绝合入); every
+# other explicit pending word needs its right edge (进行中断分析 is not pending).
+_EXPLICIT_PENDING_RE = re.compile('|'.join(
+    word + ('' if word == '拒绝' else _WORD_EDGE)
+    for word in _longest_first(('进行中', '保留观察', '继续观察', '待观察', '待定',
+                                '待办', '不通过', '拒绝', '保留意见'))))
+_EN_PENDING_RE = re.compile(r'\bin[ -]?progress\b|\bpending\b|\btodo\b|\btbd\b'
+                            r'|\bwip\b', re.IGNORECASE)
+_EN_UNDONE_RE = re.compile(r'\bun[- _]?(?:' + '|'.join(_ENGLISH_VERBS) + r')\b',
+                           re.IGNORECASE)
 # Negation markers bind within their clause; intention markers may look
 # forward across clauses (#2245 r5). 裸「需/会」不与前接 无/不 组合
-# （无需修复 closed；不会修复 is the wontfix closure）；「暂」拆成 暂不
+# （无需修复 closed；不会修复 is the wontfix closure）且排除名词复合
+# （需求/需求方、会议/会话/机会/社会/体会，r6 MM#3）；「暂」拆成 暂不
 # (negation) 与 暂缓/暂时/暂且 (intention)。
-_NEGATION_MARKER = re.compile(r'未|没|尚未|暂不|正在')
-_INTENT_MARKER = re.compile(
-    r'待|计划|拟|暂缓|暂时|暂且|无法|不能|推迟|延后|后续|仍需|尚需|稍后'
-    r'|下周|本周|(?<![无不])需|(?<!不)会|将')
+_NEGATION_WORDS = ('未', '没', '尚未', '暂不', '正在')
+_INTENT_WORDS = ('待', '计划', '拟', '暂缓', '暂时', '暂且', '无法', '不能',
+                 '推迟', '延后', '后续', '稍后', '下周', '本周', '需', '会', '将')
+_MARKER_GUARDS = {
+    '需': r'(?<![无不])需(?!求)',
+    '会': r'(?<!不)(?<![机社体])会(?!议|话)',
+}
+_NEGATION_MARKER = re.compile('|'.join(_longest_first(_NEGATION_WORDS)))
+_INTENT_MARKER = re.compile('|'.join(
+    _MARKER_GUARDS.get(word, word) for word in _longest_first(_INTENT_WORDS)))
 _EN_NEGATION = re.compile(r"\bnot\b|\bnever\b|\b(?!won)\w+n't\b", re.IGNORECASE)
-_EN_INTENT = re.compile(r'\bwill\s+be\b|\bto\s+be\b|\bneeds?\s+to\s+be\b'
-                       r'|\bgoing\s+to\s+be\b|\bplanned\b|\bdeferred\b'
-                       r'|\bpostponed\b|\bscheduled\b', re.IGNORECASE)
-_ANY_VERB = re.compile('|'.join(_CJK_VERBS + _ENGLISH_CLOSURE))
+_EN_INTENT = re.compile(r'\bwill\s+be\b|\bto\s+be\b|\bplanned\b|\bdeferred\b'
+                        r'|\bpostponed\b|\bscheduled\b', re.IGNORECASE)
+_ANY_VERB = re.compile('|'.join(_longest_first(list(_CJK_VERBS) + list(_ENGLISH_VERBS))))
 # Intention binds to gate verbs only: 观察 follows a completed disposal
 # (已修复，后续观察) instead of reopening it, while 验收 stays a gate
 # (已修，待人工验收 stays pending).
 _GATE_VERB = re.compile('|'.join(
-    [v for v in _CJK_VERBS if v not in _CJK_OBSERVE_ONLY] + list(_ENGLISH_CLOSURE)))
+    _longest_first(list(_CJK_GATE_VERBS) + list(_ENGLISH_VERBS))))
+_CLAUSE_SPLIT = re.compile(r'[，、。；：！？,;:!?]|(?<!\d)\.(?!\d)')
+# Level negation by grammar (invariant 5): the gap may span at most 8
+# characters that start no verb (a verb-initial character in the gap marks a
+# real finding, not a negated level) and carry no clause punctuation.
+_VERB_HEADS = ''.join(sorted({v[0] for v in _CJK_VERBS}))
+_NEGATED_LEVELS = re.compile(
+    '(?:没有|未发现|未见|不含|未|无(?!法))'
+    '[^' + _VERB_HEADS + '，、。；：！？,;:!?/／]{0,8}'
+    r'(?<![0-9A-Za-z_])P[012](?![0-9A-Za-z_])'
+    r'(?:\s*[/／、]\s*P[012](?![0-9A-Za-z_]))*', re.IGNORECASE)
+# Word boundaries keep identifiers (`case_p1`) from reading as a level.
+_LEVEL_TOKEN = re.compile(r'(?<![0-9A-Za-z_])p[012](?![0-9A-Za-z_])', re.IGNORECASE)
+
+
+def _normalized_handling(cell):
+    """Judgement copy of a handling cell (#2245 r7): NFKC and the curly
+    apostrophe already folded on the text copy; strip bold markers and case."""
+    return cell.replace('*', '').lower()
+
+
+def _handling_closed(handling):
+    """The 处理/处置 cell names a disposal closure (#2245 r7).
+
+    A gate verb matches as a substring — a verb with its object must still
+    close (已升级中间件到 2.1) — except its known right extensions; English
+    words match on \b edges; 无需 / won't fix are the wontfix closure phrases.
+    """
+    return bool(_CJK_CLOSURE_RE.search(handling)
+                or _EN_CLOSURE_RE.search(handling)
+                or any(phrase in handling for phrase in _CLOSURE_PHRASES))
 
 
 def _handling_pending(handling):
-    """The 处理/处置 cell still leaves its finding open (#2245 r6)."""
-    if re.search('(?:' + '|'.join(v + '失败' for v in _CJK_FAILING) + ')', handling):
+    """The 处理/处置 cell still leaves its finding open (#2245 r7)."""
+    if _CJK_FAILING_RE.search(handling):
         return True  # a failed attempt (合并失败/验收失败…) is pending
-    if re.search('(?:' + '|'.join(_CJK_FAILING) + ')中', handling):
-        return True  # 修复中 / 处置中 / 验收中 / 检查中 …
-    if re.search(r'进行中|保留观察|继续观察|待定|待办|不通过', handling):
-        return True
-    if re.search(r'\bin[ -]progress\b|\bpending\b|\btodo\b|\btbd\b|\bwip\b',
-                 handling, re.IGNORECASE):
-        return True
-    if re.search(r'\bun[- _]?(?:' + '|'.join(_ENGLISH_CLOSURE) + r')\b',
-                 handling, re.IGNORECASE):
-        return True  # unmerged / un-fixed / un closed
-    clauses = re.split(r'[，,。;；]', handling)
+    if _CJK_IN_PROGRESS_RE.search(handling):
+        return True  # 修复中 / 处置中 / 验收中 …（升级中 ≠ 已升级中间件）
+    if _EXPLICIT_PENDING_RE.search(handling):
+        return True  # 进行中 / 保留观察 / 待观察 / 拒绝 / 保留意见 / 不通过 …
+    if _EN_PENDING_RE.search(handling) or _EN_UNDONE_RE.search(handling):
+        return True  # in progress / todo / tbd / wip / unmerged / un-fixed …
+    clauses = _CLAUSE_SPLIT.split(handling)
     for i, clause in enumerate(clauses):
         for marker in _NEGATION_MARKER.finditer(clause):
             if _ANY_VERB.search(clause, marker.start()):
                 return True  # 未修 / 没合并 / 未保留 / not 修复 / hasn't 合入
         for marker in _EN_NEGATION.finditer(clause):
             if _ANY_VERB.search(clause, marker.start()):
-                return True  # not yet fixed / never been fixed / wasn't merged
+                return True  # not yet fixed / never been fixed / not verified
+        # Intention binds to gate verbs in the clause or in later clauses; the
+        # forward scan is hoisted out of the marker loop (one pass per clause).
+        forward = any(_GATE_VERB.search(later) for later in clauses[i + 1:])
         for marker in _INTENT_MARKER.finditer(clause):
-            if _GATE_VERB.search(clause, marker.start()) or any(
-                    _GATE_VERB.search(later) for later in clauses[i + 1:]):
+            if _GATE_VERB.search(clause, marker.start()) or forward:
                 return True  # 计划…修复 / 需人工验收 / 待人工验证
         for marker in _EN_INTENT.finditer(clause):
-            if _GATE_VERB.search(clause, marker.start()) or any(
-                    _GATE_VERB.search(later) for later in clauses[i + 1:]):
+            if _GATE_VERB.search(clause, marker.start()) or forward:
                 return True  # will be fixed / to be fixed / deferred, merged later
     return False
 
@@ -241,10 +275,12 @@ def _scan_table(run):
         elif len(cells) != width:
             open_rows.append(cells)  # misaligned: unreadable, fail-closed
         else:
-            handling = ' '.join(cells[i] for i in handling_cols).replace(
-                '*', '').lower()
-            if (not any(closed in handling for closed in _CLOSED_HANDLING)
-                    or _handling_pending(handling)):
+            # r7: every handling cell is judged on its own normalised copy —
+            # cells are never concatenated, so an empty or pending cell
+            # cannot hide behind another cell's closure (r6 DS#1/MM#1).
+            judged = [_normalized_handling(cells[i]) for i in handling_cols]
+            if any(_handling_pending(cell) for cell in judged) or not all(
+                    _handling_closed(cell) for cell in judged):
                 open_rows.append(cells)
     return open_rows, True
 
@@ -283,14 +319,16 @@ def _visible_text(text):
 def _open_review_rows(text):
     """Review-table rows whose P0/P1/P2 finding the 处理/处置 cell(s) leave open (#2245).
 
-    Returns those rows, or None when the record has no readable 结论/处理
-    table: unverifiable is not clean. Lines come from the shared LF-only
-    splitter, so a U+2028 inside a cell cannot hide half of a finding (CR/CRLF
-    are normalised first). Full-width Ｐ１ folds to P1 before matching, and
-    the text must already be fence-free (see _visible_text). Each run of
-    consecutive pipe lines is one table block classified by its own header.
+    Returns those rows, or None when the record has no readable
+    结论/处理/处置 table: unverifiable is not clean. Lines come from the
+    shared LF-only splitter, so a U+2028 inside a cell cannot hide half of a
+    finding (CR/CRLF are normalised first). Full-width Ｐ１ folds to P1 and
+    the curly apostrophe folds to ' on this judgement copy — never on the
+    record bytes — before matching, and the text must already be fence-free
+    (see _visible_text). Each run of consecutive pipe lines is one table
+    block classified by its own header.
     """
-    text = unicodedata.normalize('NFKC', text)
+    text = unicodedata.normalize('NFKC', text).replace('’', "'")
     open_rows, review_table, run = [], False, []
     for line in G.jsonl_lines(re.sub(r'\r\n?', '\n', text)):
         stripped = line.strip()

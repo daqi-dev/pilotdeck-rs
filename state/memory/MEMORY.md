@@ -41,6 +41,7 @@
 - [rebase-conflict-merge](20261020-rebase-conflict-merge.md) — 状态文件冲突可取 main 侧；代码测试逐块真合并，#142 机械取侧丢 8 测试
 - [arbitration-runtime-test](20261020-arbitration-runtime-test.md) — 仲裁结论依赖运行时/标准库行为时必须最小实测贴输出（readdir 排序误判）
 - [ruler-real-data](20261020-ruler-real-data.md) — 尺子/装置改动用真实数据复算；对照全过不证明真实输入可用（#35、F2）
+- [词表判定不收敛](20261110-lexical-verdict-fix-nonconvergence.md) — 中文处置判定走结构派生不走词表枚举；r2–r6 五轮逐词补丁每轮同位置开新洞，评审词表建议只收形状不收方案
 - [GLM 5 小时额度](20261020-glm-5h-quota.md) — 429/1308「Usage limit reached for 5 hour」会让闸门全 ERROR（模型不符 <synthetic>）；等重置时间过了再重跑，不算闸门结论
 - [测试日志归属](20261021-test-log-tree-identity.md) — 跨 worktree 全量测试先用「本分支新测试在、他分支不在」核日志属于哪棵树；通过数相等先 diff 名单
 - [macOS exec SIGKILL](20261022-macos-exec-sigkill.md) — 测试二进制 `--list` 也 137 是系统拒启动非测试失败；复制新 inode + ad-hoc 重签取真实结果，不记通过
