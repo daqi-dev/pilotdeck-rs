@@ -229,15 +229,17 @@ jobs:
     needs: [scope]
     if: ${{ needs.scope.outputs.docs_only != 'true' }}
     runs-on: ubuntu-latest
-    # 外层预算必须**大于**全 job 内部最坏和 + 开销（r11 P0）：self_check.py
-    # 遍历实际 steps 求和，并与 RETIREMENT_STEP_ORDER 双向互证；未知贡献规则即红。
-    # 直跑 emit/check 各有声明上限 5 min；直跑负控按其模块登记推导：
-    # (参考轮数 5 + 跨轮 1 + 负控 17 + 正控 0) × 600 s = 13800 s 原始上限，
-    # 再由该 step 的 30 min 声明限到 1800 s（与自检 NEGCTL 上限同源）。
-    # 七项自检 3260 s + 变异自检 4200 s（沿用 _assert_pass_counting 互证）
-    # → 全有效内部和 9860 s ≈ 164.3 min；checkout/setup/upload 显式共享 300 s
-    # overhead 桶并核覆盖。170 min = 10200 s > 9860 + 300 s，低于托管 job 6 h 上限。
-    # r9 85 min / r10 130 min 的不完整和均被替代，不改严格大于的派生判据。
+    # 外层预算必须**大于**全 job 内部最坏和 + 开销（r11 P0）：判据是
+    # RETIREMENT_JOB_TIMEOUT_MINUTES × 60 > INTERNAL_WORST_CASE_SECONDS
+    # + JOB_OVERHEAD_MARGIN_SECONDS，由 self_check.py 遍历实际 steps 求值
+    # （retirement_budget_rows 与 RETIREMENT_STEP_ORDER 双向互证；未知贡献
+    # 规则即红）。直跑 emit/check/负控以各自 step 声明的 timeout-minutes 为
+    # 入算上限（负控原始贡献按其模块登记推导，再被声明限压低）；两项自检
+    # 沿用 _assert_pass_counting 互证；checkout/setup/upload 显式共享
+    # JOB_OVERHEAD_MARGIN_SECONDS 桶并核覆盖。量级给读者：有效内部和 ≈ 2.7 h，
+    # 外层 170 min 低于托管 job 6 h 平台上限——具体数值以 retirement_budget_rows
+    # 求值为准，本注释不维护第二份精确和（#2454；r9 85 min / r10 130 min 的
+    # 不完整和均被替代，不改严格大于的派生判据）。
     timeout-minutes: 170
     steps:
       - uses: actions/checkout@v4

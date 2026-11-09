@@ -925,6 +925,44 @@ class EnvironmentControls(unittest.TestCase):
         self.check_ci_mutations(cases, 'test_pr_gate_wiring_is_pinned_by_parsed_yaml',
                                 '#1809', mutated='pr-gate.yml')
 
+    def _retirement_same_source_constants(self, print_statement, issue):
+        """subprocess 按 spec 加载 self_check.py 后求值 print_statement（同源读，
+        不跑 main）。预算常量与 gate step 上限共用这一条加载通道。
+
+        #2437：同族前言（self_check.py 的 LOCK_HOLDER / GUARD_PROBE / WRITE_PROBE
+        样板逐字同构）——`-I` 不等于 `-B`，未设 pycache_prefix 时
+        spec_from_file_location 会读 scripts/retirement-outcome-parity/__pycache__/
+        self_check.*.pyc；树里预置的 PEP 552 unchecked-hash pyc 被无条件采用、
+        不比对源码，兄弟侧的「同源推导」就被抽换的常量抽空（170 → 999 即红）。
+        前缀只服务于加载期；用后即清（mkdtemp 不泄漏）。
+        """
+        source = (Path(__file__).resolve().parents[3]
+                  / 'scripts/retirement-outcome-parity/self_check.py')
+        loader = (
+            'import importlib.util, json, shutil, sys, tempfile\n'
+            'try:\n'
+            "    sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')\n"
+            'except OSError:\n'
+            "    print('budget loader: cannot reserve a fresh pycache prefix', "
+            'file=sys.stderr)\n'
+            '    raise SystemExit(2)\n'
+            'sys.dont_write_bytecode = True\n'
+            'own = sys.pycache_prefix\n'
+            'spec = importlib.util.spec_from_file_location("self_check", '
+            f'{str(source)!r})\n'
+            'module = importlib.util.module_from_spec(spec)\n'
+            'spec.loader.exec_module(module)\n'
+            'shutil.rmtree(own, ignore_errors=True)\n'
+            'module._assert_step_budget_coverage(module.retirement_budget_rows())\n'
+            + print_statement + '\n')
+        result = subprocess.run([sys.executable, '-I', '-c', loader],
+                                capture_output=True, text=True, timeout=120,
+                                check=False)
+        self.assertEqual(result.returncode, 0,
+                         f'{issue} cannot load the retirement constants from '
+                         f'self_check.py: {result.stderr.strip()[:400]}')
+        return json.loads(result.stdout)
+
     def retirement_budget_constants(self, issue='#1809'):
         """#1632 / #1692 §1 的推导范式：预算常量从装置源码**同源**读，不手抄第二份。
 
@@ -934,26 +972,18 @@ class EnvironmentControls(unittest.TestCase):
         RETIREMENT_JOB_TIMEOUT_MINUTES / INTERNAL_WORST_CASE_SECONDS /
         JOB_OVERHEAD_MARGIN_SECONDS 三个登记值。
         """
-        source = (Path(__file__).resolve().parents[3]
-                  / 'scripts/retirement-outcome-parity/self_check.py')
-        loader = (
-            'import importlib.util, json\n'
-            'spec = importlib.util.spec_from_file_location("self_check", '
-            f'{str(source)!r})\n'
-            'module = importlib.util.module_from_spec(spec)\n'
-            'spec.loader.exec_module(module)\n'
-            'module._assert_step_budget_coverage(module.retirement_budget_rows())\n'
+        return self._retirement_same_source_constants(
             'print(json.dumps([module.RETIREMENT_JOB_TIMEOUT_MINUTES, '
             'module.INTERNAL_WORST_CASE_SECONDS, '
-            'module.JOB_OVERHEAD_MARGIN_SECONDS]))\n')
-        result = subprocess.run([sys.executable, '-I', '-c', loader],
-                                capture_output=True, text=True, timeout=120,
-                                check=False)
-        self.assertEqual(result.returncode, 0,
-                         f'{issue} cannot load the retirement budget constants '
-                         f'from self_check.py: {result.stderr.strip()[:400]}')
-        minutes, internal, margin = json.loads(result.stdout)
-        return minutes, internal, margin
+            'module.JOB_OVERHEAD_MARGIN_SECONDS]))', issue)
+
+    def retirement_gate_step_timeouts(self, issue='#2451'):
+        """#2451：三个直跑 gate 的 step 级声明上限同源读
+        （`GATE_STEP_TIMEOUT_MINUTES`——负控值由装置从 `NEGCTL_TIMEOUT_SECONDS`
+        派生），兄弟侧不手抄第二份 5/5/30。
+        """
+        return self._retirement_same_source_constants(
+            'print(json.dumps(module.GATE_STEP_TIMEOUT_MINUTES))', issue)
 
     def test_retirement_job_bounds_its_wall_clock(self):
         # #1809 r11 P0：导出和遍历实际 job steps，包含三个直跑 gate、七项与
@@ -989,6 +1019,70 @@ class EnvironmentControls(unittest.TestCase):
                'internal worst case')
         self.check_ci_mutations(cases, 'test_retirement_job_bounds_its_wall_clock',
                                 '#1809')
+
+    def test_retirement_gate_steps_declare_step_timeouts(self):
+        # #2451：三个直跑 gate 的 step 级声明上限。r11 起外层 job 超时被
+        # test_retirement_job_bounds_its_wall_clock 钉住，但 step 声明值本身
+        # （5/5/30）此前没有兄弟侧守卫——改小让挂住的检查打不满内部超时（失败退
+        # 化成 step 硬杀），改大改变预算遍历的入算和。登记值同源读
+        # （GATE_STEP_TIMEOUT_MINUTES），不手抄第二份。
+        step_timeouts = self.retirement_gate_step_timeouts()
+        self.assertEqual(set(step_timeouts),
+                         {'emit 复算与金样逐字节比对', 'check 5 轮',
+                          '负控 N1–N17 全 KILLED'},
+                         '#2451 the three direct-run gate steps are registered '
+                         'with step timeouts')
+        body = self.ci_jobs('#1809')['retirement-outcome-parity']
+        for label, minutes in step_timeouts.items():
+            header = f'      - name: {label}\n'
+            self.assertEqual(body.count(header), 1,
+                             f'#2451 unique `{label}` step header')
+            start = body.index(header)
+            end = body.find('\n      - ', start)
+            block = body[start:end if end != -1 else len(body)]
+            self.assertIn(f'        timeout-minutes: {minutes}\n', block,
+                          f'#2451 the `{label}` step declares its registered '
+                          'timeout-minutes (same-source from self_check)')
+
+    def test_retirement_step_timeout_regressions_are_rejected(self):
+        # #2451：step 级声明上限的删 / 改。装置侧（self_check 的
+        # gate-step-timeout-* / negctl-step-timeout-* 样本）钉住「值被预算遍历
+        # 消费」；这里钉住「行还在且值同源」——两道守卫独立红，拆掉任何一道，
+        # 另一道仍红。emit 的 5 与 check 的 5 同值，锚串带 step 头区分。
+        step_timeouts = self.retirement_gate_step_timeouts()
+        emit_minutes = step_timeouts['emit 复算与金样逐字节比对']
+        negctl_minutes = step_timeouts['负控 N1–N17 全 KILLED']
+        emit_anchor = ('      - name: emit 复算与金样逐字节比对\n'
+                       '        shell: bash\n'
+                       f'        timeout-minutes: {emit_minutes}\n')
+        negctl_line = f'        timeout-minutes: {negctl_minutes}\n'
+        workflow = self.ci_workflow_fixture()
+        body = self.ci_jobs('#1809')['retirement-outcome-parity']
+        cases = []
+
+        def change(label, old, new, message):
+            self.assertEqual(body.count(old), 1, f'#2451 unique anchor: {label}')
+            cases.append((label, workflow.replace(body, body.replace(old, new, 1), 1),
+                          message))
+
+        change('emit-step-timeout-removed', emit_anchor,
+               emit_anchor.replace(f'        timeout-minutes: {emit_minutes}\n', '', 1),
+               '#2451 the `emit 复算与金样逐字节比对` step declares its registered '
+               'timeout-minutes (same-source from self_check)')
+        change('emit-step-timeout-changed', emit_anchor,
+               emit_anchor.replace(f'timeout-minutes: {emit_minutes}\n',
+                                   f'timeout-minutes: {emit_minutes - 1}\n', 1),
+               '#2451 the `emit 复算与金样逐字节比对` step declares its registered '
+               'timeout-minutes (same-source from self_check)')
+        change('negctl-step-timeout-removed', negctl_line, '',
+               '#2451 the `负控 N1–N17 全 KILLED` step declares its registered '
+               'timeout-minutes (same-source from self_check)')
+        change('negctl-step-timeout-changed', negctl_line,
+               f'        timeout-minutes: {negctl_minutes - 1}\n',
+               '#2451 the `负控 N1–N17 全 KILLED` step declares its registered '
+               'timeout-minutes (same-source from self_check)')
+        self.check_ci_mutations(
+            cases, 'test_retirement_gate_steps_declare_step_timeouts', '#2451')
 
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()

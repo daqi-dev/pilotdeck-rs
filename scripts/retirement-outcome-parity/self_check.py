@@ -33,6 +33,8 @@ if not sys.flags.isolated:
     raise SystemExit(2)
 
 import argparse
+import atexit
+import functools
 import hashlib
 import importlib.util
 import json
@@ -50,8 +52,14 @@ from pathlib import Path
 # 缓存字节码。本文件自己的 `check_lock` 会用 `spec_from_file_location` 把
 # `check_outcome_parity.py` 在子进程里再加载一次（本目录的第三个再加载点），子进程
 # 的守卫见 LOCK_HOLDER；`-I` 只是 isolated，**不等于** `-B`，所以入口这一侧也要设。
+# #2452：自建前缀注册 atexit 清理（rmtree 容错）——此前三个装置入口 + 三个子进程
+# 探针各自 mkdtemp 一份、全仓无任何 rmtree，`pdrs-retirement-pyc-*` 在 $TMPDIR
+# 无界累积（本机开工实测 2052 个）。目录由 mkdtemp 独占创建（mode 700）且
+# `dont_write_bytecode` 下恒为空目录，退出时 rmtree 只会删掉自己的空目录；OSError
+# 回退路径核实不存在，不注册（rmtree 别人后建的目录不是清理自己的产物）。
 try:
     sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+    atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 except OSError:
     base = os.path.dirname(os.path.abspath(__file__))
     for _ in range(8):
@@ -85,11 +93,18 @@ def _load_checker():
     只为读 `EXPECTED_CONTROLS`：条数的单一登记点在 check_outcome_parity.py，
     negative_controls 的执行器与这里的 check_negctl 同源读，不各抄一份
     （评审 r7 P1——控件集被删到 0 条时执行器空真判 PASS）。
+    #2452：checker 模块体第一件事是自建一个新的 `sys.pycache_prefix`——进程内
+    exec 会把宿主的前缀顶掉（复写进程级状态）。这里保存/还原：加载期间用 checker
+    自建的隔离前缀（它自己的 atexit 负责清理），加载完宿主前缀原样恢复。
     """
-    spec = importlib.util.spec_from_file_location('check_outcome_parity', CHECKER)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    previous = sys.pycache_prefix
+    try:
+        spec = importlib.util.spec_from_file_location('check_outcome_parity', CHECKER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.pycache_prefix = previous
 
 
 CHECK = _load_checker()
@@ -124,12 +139,14 @@ LOCK_BASENAME_LITERAL = '.retirement-outcome-parity.lock'
 # 父进程用**两个进程的时间戳序**证明互斥真的成立（评审 r7 P2——「等锁」那行字符串
 # 只是「在等」的自述，吞掉 BlockingIOError 继续跑的弱化同样能打出它）。
 LOCK_HOLDER = r'''
-import importlib.util, os, select, sys, tempfile, time
+import atexit, importlib.util, os, select, shutil, sys, tempfile, time
 # 同族口径：加载 checker **之前**先把字节码缓存关掉。`-I` 不等于 `-B`，
 # `spec_from_file_location` 在 exec 前会读本目录的 __pycache__/*.pyc——
 # 预置的 unchecked-hash pyc 可以只打印 LOCKED 而不真持锁，锁守卫就假 PASS 了。
+# #2452：自建前缀注册 atexit 清理（同三个装置入口），探针退出即收。
 try:
     sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+    atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 except OSError:
     print('lock holder: cannot reserve a fresh pycache prefix', file=sys.stderr)
     raise SystemExit(2)
@@ -315,7 +332,7 @@ def check_check(fixtures=None):
     for round_dir in rounds:
         command += ['--round', str(round_dir)]
     result = subprocess.run(command, capture_output=True, text=True,
-                            timeout=300, check=False)
+                            timeout=CHECK_TIMEOUT_SECONDS, check=False)
     if result.returncode != 0:
         raise CheckFailure(f'check rc={result.returncode}: '
                            f'{(result.stdout or result.stderr).strip()[:800]}')
@@ -535,9 +552,10 @@ GUARD_FD_TIMEOUT_SECONDS = 20.0
 # 的最小驱动（与 LOCK_HOLDER / WRITE_PROBE 同族口径：先设 pycache_prefix 再加载模块
 # ——预置的 unchecked-hash pyc 不能替我们说 KEPT）。
 GUARD_PROBE = r'''
-import importlib.util, sys, tempfile
+import atexit, importlib.util, shutil, sys, tempfile
 try:
     sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+    atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 except OSError:
     print('guard probe: cannot reserve a fresh pycache prefix', file=sys.stderr)
     raise SystemExit(2)
@@ -569,6 +587,12 @@ GUARD_FD_MUTATIONS = (
      'os.O_RDONLY | os.O_CREAT | nonblock',
      'the summary guard deleted a published summary'),
 )
+# 条数钉死（#2436，对齐 EXPECTED_LOCK_HOSTILE_PLANTS 口径）：锁趟数算式
+# `LOCK_CHECK_PASSES − len(GUARD_FD_MUTATIONS)` 在登记簿缩水时代数上仍成立——
+# LOCK_CHECK_PASSES 本身从 len(...) 推导，删一条变异只会让两边一起降、不等式照绿，
+# 「r9 的『跟随符号链接删除已发布 summary』形态不再被覆盖」这件事没有任何变红。
+# 条数断言把删一条变成当场红，而不是少测一种还全绿。
+EXPECTED_GUARD_FD_MUTATIONS = 3
 
 
 def _assert_guard_fd_fail_closed(controls, root, label):
@@ -581,31 +605,41 @@ def _assert_guard_fd_fail_closed(controls, root, label):
       summary.json 被删（哨兵内容变没）；
     - 守卫丢了 `O_NOFOLLOW`：符号链接被跟随到普通文件 → 同上删 summary。
     """
-    process = subprocess.Popen(
-        [sys.executable, '-I', '-c', GUARD_PROBE, str(controls), str(root)],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # #2452：超时路径上探针被 kill（SIGKILL 下 atexit 不运行），它自建/加载期建的
+    # pycache 前缀会泄漏——把探针的 TMPDIR 圈进一个专属沙盒目录，父进程收尾统一
+    # rmtree（kill 与正常退出都收；正常退出时探针与被加载模块的 atexit 已各自清
+    # 空，rmtree 只是收空目录）。沙盒名不带 pdrs-retirement-pyc- 前缀，不混入
+    # 泄漏计数的对照口径。
+    sandbox = Path(tempfile.mkdtemp(prefix='pdrs-retirement-guard-probe-'))
     try:
-        out, err = process.communicate(timeout=GUARD_FD_TIMEOUT_SECONDS)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=HOSTILE_CLEANUP_WAIT_SECONDS)
-        raise CheckFailure(
-            f'{label}: the summary guard fd hung on a planted non-regular lock '
-            f'file (no exit within {GUARD_FD_TIMEOUT_SECONDS:.0f}s); the guard '
-            'must open with O_NONBLOCK and treat the directory as occupied')
-    if process.returncode != 0 or b'GUARD KEPT' not in out:
-        raise CheckFailure(
-            f'{label}: the summary guard fd failed on a planted hostile lock '
-            f'file (rc={process.returncode}, out={out[-200:]!r}, '
-            f'err={err[-200:]!r})')
-    sentinel = root / 'summary.json'
-    if not sentinel.is_file() \
-            or sentinel.read_text(encoding='utf-8') != '{"sentinel": "must-survive"}':
-        raise CheckFailure(
-            f'{label}: the summary guard deleted a published summary.json while '
-            'the lock path was hostile; the guard must fail closed (treat the '
-            'directory as occupied) instead of trusting a non-regular lock file')
-    return process.returncode
+        process = subprocess.Popen(
+            [sys.executable, '-I', '-c', GUARD_PROBE, str(controls), str(root)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env={**os.environ, 'TMPDIR': str(sandbox)})
+        try:
+            out, err = process.communicate(timeout=GUARD_FD_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=HOSTILE_CLEANUP_WAIT_SECONDS)
+            raise CheckFailure(
+                f'{label}: the summary guard fd hung on a planted non-regular lock '
+                f'file (no exit within {GUARD_FD_TIMEOUT_SECONDS:.0f}s); the guard '
+                'must open with O_NONBLOCK and treat the directory as occupied')
+        if process.returncode != 0 or b'GUARD KEPT' not in out:
+            raise CheckFailure(
+                f'{label}: the summary guard fd failed on a planted hostile lock '
+                f'file (rc={process.returncode}, out={out[-200:]!r}, '
+                f'err={err[-200:]!r})')
+        sentinel = root / 'summary.json'
+        if not sentinel.is_file() \
+                or sentinel.read_text(encoding='utf-8') != '{"sentinel": "must-survive"}':
+            raise CheckFailure(
+                f'{label}: the summary guard deleted a published summary.json while '
+                'the lock path was hostile; the guard must fail closed (treat the '
+                'directory as occupied) instead of trusting a non-regular lock file')
+        return process.returncode
+    finally:
+        shutil.rmtree(sandbox, ignore_errors=True)
 
 
 def check_lock(checker=None, controls=None):
@@ -737,9 +771,10 @@ EXPECTED_WRITE_HOSTILE_TARGETS = 4
 # 子进程里直接调 negative_controls.write_at 的最小驱动（与 LOCK_HOLDER 同族口径：
 # 先设 pycache_prefix 再加载模块——预置的 unchecked-hash pyc 不能替我们说 REJECTED）。
 WRITE_PROBE = r'''
-import importlib.util, os, sys, tempfile
+import atexit, importlib.util, os, shutil, sys, tempfile
 try:
     sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+    atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 except OSError:
     print('write probe: cannot reserve a fresh pycache prefix', file=sys.stderr)
     raise SystemExit(2)
@@ -904,10 +939,48 @@ def _assert_pass_counting():
             'control_check subprocesses must be counted in the internal '
             'worst-case sum or the outer budget silently over-covers them '
             '(the r9 failure shape)')
+    if len(GUARD_FD_MUTATIONS) != EXPECTED_GUARD_FD_MUTATIONS:
+        raise CheckFailure(
+            '#2436 the guard-fd mutation registry carries '
+            f'{len(GUARD_FD_MUTATIONS)} samples but {EXPECTED_GUARD_FD_MUTATIONS} '
+            'are registered; the lock-pass algebra (LOCK_CHECK_PASSES - len(...)) '
+            'still holds when an entry is deleted, so nothing else would go red '
+            'here — deleting a guard-fd mutation must go red here, not silently '
+            'narrow the lock budget passes')
     return (f'{lock_calls} direct call sites + 1 registry pass + '
             f'{len(GUARD_FD_MUTATIONS)} guard-fd loop passes = '
             f'{LOCK_CHECK_PASSES} lock passes; {check_calls} control_check '
             'subprocesses')
+
+
+def _assert_subprocess_timeout_wiring():
+    """#2421：内部超时常量必须被**真实调用点**消费（源码级互证）。
+
+    check_check 的 checker 子进程超时曾写字面量 ``timeout=300``（r9 引入
+    ``CHECK_TIMEOUT_SECONDS`` 后的漂移）：抬高常量时预算不等式（内部最坏和）跟着
+    变长、README/ci.yml 口径同步，而实际子进程超时不动——预算算的与执行的不再是
+    同一个数（同族于 r10 P0 的「预算假 PASS」形态）。这里按源码文本数每个
+    ``timeout=<常量>`` 形态的消费点并要求恰为 1：改回字面量（0 个）或新增一个
+    未入账的消费点（2+ 个）都当场红，逼着改动者同步预算算式。三个常量
+    （EMIT / CHECK / NEGCTL）一起钉：同族正确写法是 check_emit / check_negctl，
+    check_check 漂移过一次，其余两个没有理由豁免（同类跟改）。
+
+    计数用**拼接正则**（同 _assert_pass_counting 的自指规避）：本函数源码里不出现
+    连续的 ``timeout=<常量名>`` 文本，数不进自己。
+    """
+    source = SELF.read_text(encoding='utf-8')
+    for prefix in ('EMIT', 'CHECK', 'NEGCTL'):
+        constant = prefix + '_TIMEOUT_' + 'SECONDS'
+        uses = len(re.findall(r'timeout\s*=\s*' + re.escape(constant), source))
+        if uses != 1:
+            raise CheckFailure(
+                '#2421 self_check.py carries '
+                f'{uses} `timeout={constant}` call sites but exactly 1 is '
+                'registered; the internal worst-case budget counts these '
+                'constants (a literal timeout means the budget inequality '
+                'covers a number nothing executes, an uncounted extra '
+                'consumer means it under-covers what does run)')
+    return 'EMIT / CHECK / NEGCTL subprocess timeouts consume their constants'
 
 
 # —— 行定位正则，**只**给 wiring_samples() 构造变异样本用：把真实 ci.yml 的文本切成
@@ -995,6 +1068,13 @@ JOB_OVERHEAD_STEPS = frozenset({
     ('setup', '安装钉死 PyYAML（#2017-A）'),
     ('uses', '上传负控证据'),
 })
+# #2453：直跑负控的 step 声明上限吸收的**整** checker 超时数（cap 1800 s = 3 ×
+# limit 600 s）。前 3 次 checker 超时被声明限「吃掉」（该控件判为 KILLED、照常出
+# summary）；第 4 次起挂住的行为落进 step 硬杀——summary.json 只在控件循环全部
+# 结束后才写，硬杀下没有 summary，哪一控挂了不可见。cap 与 limit 的整除关系被
+# 破坏（改声明 30 min / 改负控 checker 上限 600 s）时，「第几次超时开始硬杀」就
+# 变了，`_assert_step_budget_coverage` 据此当场红。
+NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS = 3
 
 
 def _retirement_run_step_keys(kind, label):
@@ -1243,11 +1323,53 @@ def _step_list(yaml, path, node, job):
             for item in node.value]
 
 
+@functools.lru_cache(maxsize=1)
+def _load_negative_controls():
+    """预算求值专用的 negative_controls 模块——进程级单例（#2452）。
+
+    r11 起预算行从 negative_controls 同源读参考轮集合、控件登记与 checker 超时；
+    此前每次 `retirement_budget_rows` 都在进程内**重新 exec** 模块体（连带经其
+    `load_checker` 再 exec 一遍 checker）：`--self-check-controls` 一轮约 45 次
+    预算调用 × 2 个模块体 ≈ 90 个常驻空临时目录，且每次都把进程级
+    `sys.pycache_prefix` 复写成刚建的目录。选型：**进程级单例缓存**
+    （`functools.lru_cache`）而不是 ast/正则从源码读登记值——预算的语义是
+    「同一份源码的同源推导」（r11 评审批掉的就是手抄第二份计数/秒数），ast/正则
+    会成为登记值的第二个解析器（锚点一漂就读错对象）；单例缓存保住同源语义，同时
+    把 exec 从每次调用降到每进程一次。加载期间新建的 pycache 前缀由各模块自己的
+    atexit 清理；这里保存/还原进程级前缀，宿主的前缀不被顶掉。
+    """
+    previous = sys.pycache_prefix
+    try:
+        spec = importlib.util.spec_from_file_location('negative_controls', CONTROLS)
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except SystemExit as error:
+            # 负控模块体把入口失败收口成 SystemExit(2)（`-I` 断言 / checker 加载
+            # 失败）；进程内加载时它不是退出码，是裸异常穿透预算求值——包成守卫
+            # 判词（CheckFailure），不被下游读成装置崩溃。
+            raise CheckFailure(
+                f'#2452 cannot load {CONTROLS} for the budget rows: '
+                f'negative_controls exited during import with rc={error.code!r} '
+                '(the module wraps its own entry-level failures in SystemExit(2))'
+            ) from error
+        return module
+    finally:
+        sys.pycache_prefix = previous
+
+
 def retirement_budget_rows(workflow=None):
     """逐个遍历真实 job steps，返回实际入算记录（再由守卫独立核覆盖）。
 
     七项/变异自检沿用 r10 内部公式及 _assert_pass_counting 互证；直跑负控从
     自己的模块读参考轮与控件登记、子进程超时，不抄第二份计数或秒数。
+
+    #2452 P3（双重解析，**保留并写明理由**）：本函数与 check_wiring 各自
+    `_workflow_root` 解析同一份 ci.yml——不合并。`retirement_budget_rows` 是独立
+    导出面（模块级 `INTERNAL_WORST_CASE_SECONDS` 求值与兄弟测试的 subprocess 都
+    **不带解析上下文**单独调它），把解析结果穿进调用面要改两层签名，收益只是省
+    一次毫秒级 parse；两个解析入口共用同一 fail-closed 判词（多文档 / 解析失败
+    即红），语义不受影响。
     """
     path = Path(workflow or WORKFLOW)
     yaml, root = _workflow_root(path)
@@ -1281,10 +1403,16 @@ def retirement_budget_rows(workflow=None):
             seconds, passes, limit = cap_seconds, 1, cap_seconds
             source = 'declared step timeout-minutes'
         elif kind == 'gate' and label == '负控 N1–N17 全 KILLED':
-            spec = importlib.util.spec_from_file_location('negative_controls', CONTROLS)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            names = module.reference_rounds(FIXTURES)
+            module = _load_negative_controls()
+            try:
+                names = module.reference_rounds(FIXTURES)
+            except module.CHECK.InputError as error:
+                # #2452：reference_rounds 抛的是负控模块**自己那份** checker 的
+                # InputError（每次 exec 产生新的类对象，self_check 的 CHECK.InputError
+                # 接不住）——裸异常穿透预算求值会被读成装置崩溃，包成守卫判词。
+                raise CheckFailure(
+                    f'#2452 the negative-controls budget row cannot derive the '
+                    f'reference-round set from {FIXTURES}: {error}') from error
             passes = (len(names) + 1 + module.EXPECTED_CONTROLS
                       + module.EXPECTED_POSITIVES)
             limit = module.CHECK_TIMEOUT_SECONDS
@@ -1308,8 +1436,9 @@ def retirement_budget_rows(workflow=None):
             raise CheckFailure(
                 f'#1809 r11 budget rule missing: {identity!r}; every declared '
                 'step needs a derived contribution or a registered overhead bucket')
-        # 保留底层原始推导供复算，再应用声明的硬上限。直跑负控原始 13800 s
-        # 不能只靠 400 min 外层兜底：ubuntu-latest 的 job 平台上限是 6 小时。
+        # 保留底层原始推导供复算，再应用声明的硬上限。直跑负控的原始贡献
+        # （passes × CHECK_TIMEOUT_SECONDS，量级 ≈ 3.8 h）不能只靠外层兜底：
+        # ubuntu-latest 的 job 平台上限是 6 小时，须由 step 声明限压低。
         raw_seconds = seconds
         if cap_seconds is not None:
             seconds = min(seconds, cap_seconds)
@@ -1338,6 +1467,37 @@ def _assert_step_budget_coverage(rows):
         raise CheckFailure(
             f'#1809 r11 step cap coverage: expected '
             f'{sorted(GATE_STEP_TIMEOUT_MINUTES)!r}, got {sorted(capped)!r}')
+    # #2453：消费 raw_seconds / passes / limit 三个此前只写不读的推导字段，把
+    # 「raw > cap」的降级语义机器化——被声明限压到 cap 的必须恰是直跑负控这一行
+    # （emit/check 的声明值与入算值相等，raw 不超 cap），且 cap 吸收的整 checker
+    # 超时数是登记值：raw = passes × limit（23 次 600 s），cap = 3 × limit，
+    # 第 4 次 checker 超时才落进 step 硬杀（summary 只在控件循环后写，硬杀无迹）。
+    negctl_label = '负控 N1–N17 全 KILLED'
+    over_cap = [row for row in rows if row['cap_seconds'] is not None
+                and row['raw_seconds'] > row['cap_seconds']]
+    if [row['identity'][1] for row in over_cap] != [negctl_label]:
+        raise CheckFailure(
+            f'#2453 cap absorption: expected exactly the `{negctl_label}` row to '
+            f'contribute a raw value above its declared cap, got '
+            f'{[row["identity"] for row in over_cap]!r}; the raw-above-cap '
+            'degradation is what keeps the 4th-checker-timeout step hard-kill '
+            'semantics machine-checked')
+    negctl_row = over_cap[0]
+    cap, limit = negctl_row['cap_seconds'], negctl_row['limit']
+    if negctl_row['passes'] * limit != negctl_row['raw_seconds']:
+        raise CheckFailure(
+            f'#2453 cap absorption: the `{negctl_label}` raw contribution must '
+            f'stay passes ({negctl_row["passes"]}) × limit ({limit}s) = '
+            f'{negctl_row["raw_seconds"]:.0f}s, got {negctl_row["raw_seconds"]:.0f}s')
+    if cap % limit or cap // limit != NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS:
+        raise CheckFailure(
+            f'#2453 cap absorption: the `{negctl_label}` cap ({cap}s) must absorb '
+            f'exactly {NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS} whole checker '
+            f'timeouts (limit {limit}s; got cap//limit = {cap // limit} with '
+            f'remainder {cap % limit}s); at the registered value the '
+            f'{NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS + 1}th checker timeout '
+            'is what degrades into the step hard-kill (cancelled, no summary of '
+            'which control hung)')
 
 
 def _step_with_keys(yaml, path, step, what):
@@ -1591,6 +1751,7 @@ def check_wiring(workflow=None, pr_gate=None):
     # 红了都看不见）。算式输入（锁趟数 / control_check 子进程数）由
     # _assert_pass_counting 与本文件源码的调用点同源互证，乘数漂移当场红。
     _assert_pass_counting()
+    _assert_subprocess_timeout_wiring()
     timeout_text = _scalar_text(
         yaml, path, retirement.get('timeout-minutes'),
         f'`{RETIREMENT_JOB}` job `timeout-minutes`')
@@ -2294,6 +2455,42 @@ def wiring_samples():
                            f'`{timeout_line.strip()}` line to mutate')
     samples.append(('retirement-job-timeout-lowered', text.replace(
         timeout_line, '    timeout-minutes: 55\n', 1)))
+
+    # —— #2451（r11 P0 的 step 级声明上限）：三个直跑 gate 各自的 step
+    # `timeout-minutes` 是预算遍历的入算上限。降值：挂住的检查打不满自己的内部
+    # 超时，失败退化成 step 硬杀（cancelled，哪个 sub-check 红了都看不见）；升值
+    # 同样改变入算和（外层 170 min 的派生判据跟着变）。钉值判定住在
+    # `retirement_budget_rows`（workflow 样本里只有 check_wiring 的预算接线块会调
+    # 它）——预算接线块被删掉时，这四条 SURVIVED：守卫退化成「没人消费的常量
+    # 比对」的机器证据，正是 #2451 点名的形态。第五条（删键）红在 step 键集判定：
+    # 键没了是第一道拦截（`plus its registered timeout-minutes`）。——
+    emit_start, emit_end = _step_range(lines, 'emit 复算与金样逐字节比对')
+    emit_timeout = next((index for index in range(emit_start, emit_end)
+                         if lines[index].rstrip('\n') == '        timeout-minutes: 5'), None)
+    if emit_timeout is None:
+        raise CheckFailure('the emit step does not carry the registered '
+                           '`timeout-minutes: 5` line to mutate')
+    for label, value in (
+            ('gate-step-timeout-lowered', '        timeout-minutes: 4\n'),
+            ('gate-step-timeout-raised', '        timeout-minutes: 6\n')):
+        mutated = list(lines)
+        mutated[emit_timeout] = value
+        samples.append((label, ''.join(mutated)))
+    # 负控 step 的 30 是 `NEGCTL_TIMEOUT_SECONDS // 60` 的登记面（声明限把原始
+    # 贡献压低一个量级，降级语义见 NEGCTL_STEP_CAP_ABSORBED_CHECKER_TIMEOUTS）。
+    negctl_timeout = next((index for index, line in enumerate(lines)
+                          if line.rstrip('\n') == '        timeout-minutes: 30'), None)
+    if negctl_timeout is None:
+        raise CheckFailure('the 负控 step does not carry the registered '
+                           '`timeout-minutes: 30` line to mutate')
+    for label, value in (
+            ('negctl-step-timeout-lowered', '        timeout-minutes: 29\n'),
+            ('negctl-step-timeout-raised', '        timeout-minutes: 31\n')):
+        mutated = list(lines)
+        mutated[negctl_timeout] = value
+        samples.append((label, ''.join(mutated)))
+    samples.append(('negctl-step-timeout-removed', ''.join(
+        lines[:negctl_timeout] + lines[negctl_timeout + 1:])))
     return samples
 
 
@@ -2419,9 +2616,11 @@ def pr_gate_samples():
 # = 有形态失保，多一条 = 没登记就上岗），任何一条红在别的判定上都算 misattributed；
 # 条数另钉死在 `EXPECTED_WIRING_SAMPLES`（评审 r9 P2 sibling#3：样本 + 锚串**一起**
 # 删时逐名全等照样成立、登记簿静默缩水——对齐 LOCK_HOSTILE_PLANTS 先例）；数量
-# 同步登记在装置 README（r9 起四十四条）。锚串全部取自真实运行的失败文案
+# 同步登记在装置 README（r9 起四十四条；#2451 起四十九条——补 step 级声明上限五条）。
+# 锚串全部取自真实运行的失败文案
 # （2026-11-07/08 实测，`_tmp/20261107-issue-1809-r7/`、`_tmp/20261107-issue-1809-r8/`
-# 与本轮 `_tmp/20261026-issue-1809/fix-r9/`）。
+# 与 `_tmp/20261026-issue-1809/fix-r9/`；#2451 五条 2026-11-09 实测，
+# `_tmp/20261109-p2batch-g/s4-controls-wiring.txt`）。
 SAMPLE_FAILURE_ANCHORS = {
     'removed': 'no `retirement-outcome-parity` job under `jobs:`',
     'commented-out': 'no `retirement-outcome-parity` job under `jobs:`',
@@ -2462,6 +2661,13 @@ SAMPLE_FAILURE_ANCHORS = {
     'job-outside-jobs': 'no `retirement-outcome-parity` job under `jobs:`',
     'retirement-job-timeout-lowered':
         f'must stay exactly `{RETIREMENT_JOB_TIMEOUT_MINUTES}`',
+    # #2451：直跑 gate 的 step 级声明上限钉值——前四条红在预算遍历的钉值判定
+    # （锚串即该判定文案），第五条删键红在 step 键集判定（第一道拦截）。
+    'gate-step-timeout-lowered': '#1809 r11 step timeout',
+    'gate-step-timeout-raised': '#1809 r11 step timeout',
+    'negctl-step-timeout-lowered': '#1809 r11 step timeout',
+    'negctl-step-timeout-raised': '#1809 r11 step timeout',
+    'negctl-step-timeout-removed': 'plus its registered timeout-minutes',
     'pr-gate-step-shell-removed': "found ['env', 'name', 'run']",
     'pr-gate-root-defaults-shell':
         'the pr-gate workflow carries the unregistered root key',
@@ -2477,7 +2683,22 @@ SAMPLE_FAILURE_ANCHORS = {
 }
 # 条数常量（评审 r9 P2 sibling#3）：与 LOCK_HOSTILE_PLANTS 同口径——删样本 +
 # 删锚串两边一起删时逐名全等仍成立，条数当场红。数量同步登记在装置 README。
-EXPECTED_WIRING_SAMPLES = 44
+# #2451 起 49（补 step 级声明上限的五条：gate/negctl 钉值四条 + 负控删键一条）。
+EXPECTED_WIRING_SAMPLES = 49
+# #2451：r11 预算接线的另外五个判定只有预算面（`retirement_budget_rows` /
+# `_assert_step_budget_coverage` / `check_wiring` 的 budget total）消费——workflow
+# 样本够不到：改 step 顺序 / 键集 / 脚本标量的变异会先红在顺序 / 键集 / 脚本判定
+# 上，到不了预算判定。control_wiring 对**登记簿本身**做进程内变异直攻点名的判定
+# （口径对齐 GUARD_FD_MUTATIONS / LOCK_HOSTILE_PLANTS：样本名 + 锚串 + 条数一起
+# 钉死，少一条当场红）。
+REGISTRY_MUTATION_ANCHORS = {
+    'gate-timeout-registry-ghost': 'step cap coverage',
+    'overhead-registry-ghost': 'overhead coverage',
+    'overhead-registry-drop-upload': 'budget rule missing',
+    'step-order-registry-swap': 'budget coverage',
+    'emit-timeout-constant-drift': 'budget total',
+}
+EXPECTED_REGISTRY_MUTATIONS = 5
 
 
 def control_check():
@@ -2615,8 +2836,103 @@ def control_wiring():
     if misattributed:
         raise CheckFailure('wiring samples rejected by the wrong judgment: '
                            f'{misattributed}')
+    # —— #2451：登记簿内变异控件（REGISTRY_MUTATION_ANCHORS 注）。每条：临时改
+    # 模块级登记簿 → 调消费点名的判定的探针 → 期望 CheckFailure 文案含锚串 →
+    # finally 还原。探针直调预算面（emit-timeout-constant-drift 例外：budget total
+    # 判定只住在 check_wiring），让锚串落在点名的判定上，不被顺序 / 键集 / 脚本
+    # 判定提前拦截——那正是 workflow 样本够不到这些判定的原因。变异只在本控件
+    # 进程内、finally 必还原，不落任何文件。——
+    if len(REGISTRY_MUTATION_ANCHORS) != EXPECTED_REGISTRY_MUTATIONS:
+        raise CheckFailure(
+            f'the registry-mutation control carries {len(REGISTRY_MUTATION_ANCHORS)} '
+            f'entries but {EXPECTED_REGISTRY_MUTATIONS} are registered; deleting an '
+            'entry (and its anchor) must go red here, not silently narrow the control')
+
+    registry_survived = []
+    registry_misattributed = []
+
+    def expect_registry_failure(label, probe):
+        executed.append(label)
+        try:
+            probe()
+        except CheckFailure as error:
+            anchor = REGISTRY_MUTATION_ANCHORS[label]
+            if anchor not in str(error):
+                registry_misattributed.append(
+                    f'{label}: rejected by the wrong judgment ({error}), '
+                    f'expected the failure to mention `{anchor}`')
+        else:
+            registry_survived.append(label)
+
+    executed = []
+    gate_timeouts_saved = dict(GATE_STEP_TIMEOUT_MINUTES)
+    GATE_STEP_TIMEOUT_MINUTES['幽灵 gate（#2451 内变异）'] = 5
+    try:
+        # 幽灵闸门超时登记：预算行的 cap 集合（3 个真声明）不再等于登记面（4 条）
+        # → step cap coverage 当场红。
+        expect_registry_failure(
+            'gate-timeout-registry-ghost',
+            lambda: _assert_step_budget_coverage(retirement_budget_rows()))
+    finally:
+        GATE_STEP_TIMEOUT_MINUTES.clear()
+        GATE_STEP_TIMEOUT_MINUTES.update(gate_timeouts_saved)
+    overhead_saved = JOB_OVERHEAD_STEPS
+    globals()['JOB_OVERHEAD_STEPS'] = overhead_saved | {
+        ('uses', '幽灵上传（#2451 内变异）')}
+    try:
+        # 幽灵 overhead 桶：行的桶集合（3 个真桶）不再等于登记面（4 条）。
+        expect_registry_failure(
+            'overhead-registry-ghost',
+            lambda: _assert_step_budget_coverage(retirement_budget_rows()))
+    finally:
+        globals()['JOB_OVERHEAD_STEPS'] = overhead_saved
+    globals()['JOB_OVERHEAD_STEPS'] = frozenset(
+        entry for entry in overhead_saved
+        if entry != ('uses', '上传负控证据'))
+    try:
+        # 摘掉 upload 步的桶登记：该步掉进「无预算规则」分支——上传步 0 秒入算
+        # 恰是靠登记桶显式给的，撤销登记必须红而不是静默归零。
+        expect_registry_failure(
+            'overhead-registry-drop-upload',
+            lambda: retirement_budget_rows())
+    finally:
+        globals()['JOB_OVERHEAD_STEPS'] = overhead_saved
+    step_order_saved = RETIREMENT_STEP_ORDER
+    globals()['RETIREMENT_STEP_ORDER'] = (
+        step_order_saved[:2] + (step_order_saved[3], step_order_saved[2])
+        + step_order_saved[4:])
+    try:
+        # 重排登记顺序：行的实际顺序（按 workflow 里的 step 顺序）不再等于登记面
+        # ——kinds 映射不受顺序影响，红点恰在双向覆盖判定上。
+        expect_registry_failure(
+            'step-order-registry-swap',
+            lambda: _assert_step_budget_coverage(retirement_budget_rows()))
+    finally:
+        globals()['RETIREMENT_STEP_ORDER'] = step_order_saved
+    emit_timeout_saved = EMIT_TIMEOUT_SECONDS
+    globals()['EMIT_TIMEOUT_SECONDS'] = emit_timeout_saved + 60
+    try:
+        # 常量漂移：模块级 INTERNAL_WORST_CASE_SECONDS（导入时求值）不再等于按步
+        # 遍历的和——预算接线块被绕过 / 常量被单独改时，正是这条判定在挡。
+        expect_registry_failure('emit-timeout-constant-drift',
+                                lambda: check_wiring())
+    finally:
+        globals()['EMIT_TIMEOUT_SECONDS'] = emit_timeout_saved
+    if executed != list(REGISTRY_MUTATION_ANCHORS):
+        raise CheckFailure(
+            f'the registry-mutation cases drifted from the registry: ran '
+            f'{executed}, registered {list(REGISTRY_MUTATION_ANCHORS)}')
+    if registry_survived:
+        raise CheckFailure('budget-registry mutations not rejected: '
+                           f'{registry_survived} (the r11 budget wiring has '
+                           'no live consumer)')
+    if registry_misattributed:
+        raise CheckFailure('registry mutations rejected by the wrong judgment: '
+                           f'{registry_misattributed}')
     return (f'{len(samples)} mutated workflows '
-            f'({", ".join(s for s, _ in samples)}) rejected')
+            f'({", ".join(s for s, _ in samples)}) rejected + '
+            f'{EXPECTED_REGISTRY_MUTATIONS} in-registry budget mutations '
+            f'({", ".join(REGISTRY_MUTATION_ANCHORS)}) rejected')
 
 
 CONTROLS_FOR_CHECK = {

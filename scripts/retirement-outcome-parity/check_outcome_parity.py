@@ -23,10 +23,12 @@ if not sys.flags.isolated:
     raise SystemExit(2)
 
 import argparse
+import atexit
 import contextlib
 import hashlib
 import json
 import os
+import shutil
 import stat
 import tempfile
 from pathlib import Path
@@ -48,8 +50,14 @@ LOCK_BASENAME = '.retirement-outcome-parity.lock'
 # **不读**缓存字节码。只设 dont_write_bytecode 挡不住读取已有的
 # __pycache__/*.pyc（PEP 552 unchecked-hash 可直接执行），而本目录会被负控以
 # spec_from_file_location 再加载一次——陈旧字节码会让「跑的是当前源码」不成立。
+# #2452：自建前缀注册 atexit 清理（rmtree 容错）——本模块被 self_check /
+# negative_controls 在进程内 exec，也被 self_check 的三个子进程探针按 spec 加载；
+# 此前每次加载各泄漏一个常驻空临时目录（$TMPDIR 无界累积）。目录由 mkdtemp 独占
+# 创建（mode 700）且 dont_write_bytecode 下恒为空，退出时 rmtree 只会删掉自己的
+# 空目录。OSError 回退路径核实不存在，不注册。
 try:
     sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')
+    atexit.register(shutil.rmtree, sys.pycache_prefix, ignore_errors=True)
 except OSError:
     # 没有可写临时目录（只读环境 / 临时目录被清理）也不能让判据起不来：指向一个
     # **核实不存在**的目录，效果等价于「读不到任何缓存」，写仍被 dont_write_bytecode
