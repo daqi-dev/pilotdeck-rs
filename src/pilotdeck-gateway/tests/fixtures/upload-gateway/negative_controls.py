@@ -119,6 +119,14 @@ LEASE_ID_SWAP = (
     'upload::tests::upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round')
 RELEASE_REALPATH = (
     'upload::tests::upload_lease_release_surfaces_and_caches_a_realpath_failure')
+# #2276: the #1631 pair regression lives in the `tests/` integration target, not
+# the lib — the runner picks `--test <target>` for a named test by this
+# registry (the roster names the target; it is never guessed from the test
+# name), and everything not in it keeps the `--lib` face.
+INTERLEAVED = 'interleaved_complete_and_cancel_cannot_both_win'
+INTEGRATION_TESTS = {
+    INTERLEAVED: 'upload_concurrency_1631',
+}
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -797,6 +805,160 @@ mutations = [
         computed
     }''', RELEASE_REALPATH,
      'a cached release failure must stay cached after the root heals'),
+    # #1631/#2276: the pair verdicts re-judged outside the gate — the
+    # pre-#1631 shapes (require_active / status checks on the outside-`get`
+    # snapshot), with the #2276 rendezvous kept so the barrier still
+    # schedules 'both callers passed the snapshot, neither entered the gate'.
+    # Reverting only one of the two is gate-order-dependent (flaky), so the
+    # row reverts the pair together and the kill is deterministic round 1.
+    ('pair-verdicts-outside-gate', STORE, '''    pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
+        let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
+        let mut refusal: Option<UploadError> = None;
+        let updated = self.mutate(&record, |r| {
+            if !active(r) {
+                refusal = Some(invalid_state(r));
+                return false;
+            }
+            if array(r, "manifest")
+                .iter()
+                .any(|m| !array(r, "receivedClientFileIds").contains(&value(m, "clientFileId")))
+            {
+                let message = JsString::from("One or more declared files were not uploaded.");
+                mark_failed(r, "UPLOAD_MANIFEST_MISMATCH", &message);
+                refusal = Some(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
+            } else {
+                set(r, "status", text("completed"));
+                set(r, "uploadedBytes", value(r, "totalBytes"));
+            }
+            true
+        })?;
+        match refusal {
+            Some(e) => Err(e),
+            None => Ok(updated),
+        }
+    }
+
+    /// Same #1631 gate-internal verdict as [`Self::complete`]: only the
+    /// in-gate transition to `cancelled` is followed by `remove_tree`, so a
+    /// `completed` record's files survive a racing cancel. The `remove_tree`
+    /// itself still runs after the gate (the module-doc pair scope and #1503
+    /// cover what a concurrently in-flight `write_part` can interleave).
+    ///
+    /// #1850: that delete is the fourth removal point on the `chat-uploads`
+    /// tree, and unlike the sweeps it runs after the whole `mutate` rewrite —
+    /// a window wide enough to swap `.tmp` (or the task directory itself) for
+    /// a symlink, which `remove_tree` would follow out of the project. The
+    /// status transition is already durable at that point, so a refused
+    /// delete is logged and skipped, never a `cancel` error: the record is
+    /// cancelled either way, and the sweep's "rather not delete" trade-off
+    /// (A8-UPLOAD-CLEANUP-ROBUSTNESS-001) applies unchanged.
+    pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
+        let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
+        let mut refusal: Option<UploadError> = None;
+        let mut cancelled = false;
+        let updated = self.mutate(&record, |r| {
+            if active(r) {
+                set(r, "status", text("cancelled"));
+                cancelled = true;
+                true
+            } else if status(r) == "completed" {
+                refusal = Some(UploadError::dialog(
+                    "UPLOAD_ALREADY_COMPLETED",
+                    "Completed uploads cannot be cancelled.",
+                ));
+                false
+            } else {
+                // #2275: cancelling a cancelled (or otherwise settled) upload
+                // is a no-op, not a change: nothing to write or emit.
+                false
+            }
+        })?;
+        if let Some(e) = refusal {
+            return Err(e);
+        }
+        if cancelled {
+            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
+            let dir = task_dir(&updated).join("files");
+            let root_real = match plain_root(&project, "chat-uploads") {
+                PlainRoot::Plain(root) => root,
+                // The record was just read from this tree, so `Missing` means
+                // the whole task directory is gone: the same quiet no-op the
+                // bare `remove_tree` gave.
+                PlainRoot::Missing => return Ok(updated),
+                PlainRoot::Blocked => {
+                    self.log_cleanup(format!(
+                        "[uploads] cancel skipped {}: uploads root is not a plain directory",
+                        project.join(".tmp/chat-uploads").display()
+                    ));
+                    return Ok(updated);
+                }
+            };
+            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+            // passes a linked `<id>` whose resolution stays inside the root —
+            // a deterministic alias onto another upload. The component walk
+            // `canonical_home` uses for the lease/store roots refuses every
+            // link component down to `files`; the residual between the walk
+            // and `remove_tree` is the instruction-level TOCTOU family the
+            // A8 ledger registers.
+            if canonical_home(&dir, &project, &root_real).is_none() {
+                self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
+                    dir.display()
+                ));
+                return Ok(updated);
+            }
+            remove_tree(&dir)?;
+        }
+        Ok(updated)
+    }
+
+''', '''    pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
+        let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
+        require_active(&record)?;
+        if array(&record, "manifest")
+            .iter()
+            .any(|m| !array(&record, "receivedClientFileIds").contains(&value(m, "clientFileId")))
+        {
+            let message = JsString::from("One or more declared files were not uploaded.");
+            self.fail(upload_id, "UPLOAD_MANIFEST_MISMATCH", &message)?;
+            return Err(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
+        }
+        self.mutate(&record, |r| {
+            set(r, "status", text("completed"));
+            set(r, "uploadedBytes", value(r, "totalBytes"));
+            true
+        })
+    }
+
+    pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
+        let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
+        if status(&record) == "completed" {
+            return Err(UploadError::dialog(
+                "UPLOAD_ALREADY_COMPLETED",
+                "Completed uploads cannot be cancelled.",
+            ));
+        }
+        if !active(&record) {
+            return Ok(record);
+        }
+        let updated = self.mutate(&record, |r| {
+            set(r, "status", text("cancelled"));
+            true
+        })?;
+        remove_tree(&task_dir(&updated).join("files"))?;
+        Ok(updated)
+    }
+
+''', INTERLEAVED,
+     'both calls must not be able to report success'),
 ]
 
 # #1666: static denominator; a deleted row must not shrink the run silently and
@@ -841,6 +1003,8 @@ EXPECTED_NAMES = (
     'cancel-alias-walk-downgraded',
     'cleanup-lease-id-guard-dropped', 'release-realpath-swallowed',
     'release-err-not-cached',
+    # #2276 的这一条（#1631 对判定双双挪回门外——预修复形态），与上面同一名册口径。
+    'pair-verdicts-outside-gate',
 )
 
 if '--check' in sys.argv[1:]:
@@ -891,10 +1055,18 @@ with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
         try:
             wait_for_slot(root / 'scripts/cargo-slots.sh')
             source.write_text(changed)
-            result = run_owned(
-                ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
-                 '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact'],
-                cwd=root, env=env, timeout=900)
+            # #2276: a named test registered in INTEGRATION_TESTS runs against
+            # its `tests/<target>.rs` integration target; every other row
+            # keeps the lib face. The target comes from the registry, not a
+            # guess off the test name.
+            target = INTEGRATION_TESTS.get(test)
+            command = (['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                        '-p', 'pilotdeck-gateway', '--test', target,
+                        '--', '--exact', test]
+                       if target is not None else
+                       ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                        '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact'])
+            result = run_owned(command, cwd=root, env=env, timeout=900)
             log = result.stdout + result.stderr
             (out / f'{name}.log').write_text(log)
             killed = (result.returncode == 101

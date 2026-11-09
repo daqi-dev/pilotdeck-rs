@@ -4,6 +4,11 @@
 //! gate. A barrier-aligned pair racing on the same store instance can
 //! therefore no longer both report success, and the cancel path can no
 //! longer delete the files behind a completion that was already reported.
+//!
+//! #2276: the barrier is the store's pre-mutate hook, fired between each
+//! caller's outside-`get()` snapshot and the gate, so "both callers passed
+//! the snapshot, neither entered the gate" is a scheduled fact instead of a
+//! scheduler coincidence.
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -99,22 +104,30 @@ fn race_pair(
     first: Op,
     second: Op,
 ) -> (Result<JsValue, UploadError>, Result<JsValue, UploadError>) {
+    // #2276: both callers rendezvous at the pre-mutate hook — after their
+    // outside-`get()` snapshots, before either touches the gate — so the
+    // interleaving window is deterministic, not a scheduler coincidence.
     let barrier = Arc::new(Barrier::new(2));
-    let spawn = |op: Op, store: Arc<UploadStore>, id: String, gate: Arc<Barrier>| {
-        thread::spawn(move || {
-            gate.wait();
-            match op {
-                Op::Complete => store.complete(&id),
-                Op::Cancel => store.cancel(&id),
-            }
+    let gate = barrier.clone();
+    store.set_pre_mutate_hook(Some(Arc::new(move || {
+        gate.wait();
+    })));
+    let spawn = |op: Op, store: Arc<UploadStore>, id: String| {
+        thread::spawn(move || match op {
+            Op::Complete => store.complete(&id),
+            Op::Cancel => store.cancel(&id),
         })
     };
-    let t_first = spawn(first, store.clone(), id.to_string(), barrier.clone());
-    let t_second = spawn(second, store.clone(), id.to_string(), barrier.clone());
-    (
+    let t_first = spawn(first, store.clone(), id.to_string());
+    let t_second = spawn(second, store.clone(), id.to_string());
+    let results = (
         t_first.join().expect("first thread panicked"),
         t_second.join().expect("second thread panicked"),
-    )
+    );
+    // Clear the rendezvous: a later sequential call on the same store must
+    // not block on a barrier nobody else is approaching.
+    store.set_pre_mutate_hook(None);
+    results
 }
 
 fn assert_exactly_one_ok(
@@ -132,10 +145,21 @@ fn assert_exactly_one_ok(
     );
 }
 
+/// #2276: the wall-clock cap may cut the loop short on a slow host, but it
+/// must never allow zero rounds — a pair that was never raced is no evidence
+/// at all, so an empty run is a red test, not a green one.
+fn assert_rounds_floor(ran: usize) {
+    assert!(
+        ran >= 1,
+        "WALL_CAP allowed zero rounds — the pair was never raced",
+    );
+}
+
 #[test]
 fn interleaved_complete_and_cancel_cannot_both_win() {
     let scratch = scratch::Scratch::new("1631-cc");
     let start = Instant::now();
+    let mut ran = 0usize;
     for round in 1..=ROUNDS {
         if start.elapsed() > WALL_CAP {
             break;
@@ -147,6 +171,7 @@ fn interleaved_complete_and_cancel_cannot_both_win() {
         let disk = disk_status(&f.task_dir);
         let file_exists = f.file.exists();
         assert_exactly_one_ok(round, &complete_res, &cancel_res);
+        ran += 1;
 
         match (&complete_res, &cancel_res) {
             (Ok(record), Err(e)) => {
@@ -181,12 +206,14 @@ fn interleaved_complete_and_cancel_cannot_both_win() {
             _ => unreachable!("exactly-one-Ok already asserted"),
         }
     }
+    assert_rounds_floor(ran);
 }
 
 #[test]
 fn interleaved_complete_and_complete_has_one_winner() {
     let scratch = scratch::Scratch::new("1631-cm");
     let start = Instant::now();
+    let mut ran = 0usize;
     for round in 1..=ROUNDS {
         if start.elapsed() > WALL_CAP {
             break;
@@ -197,6 +224,7 @@ fn interleaved_complete_and_complete_has_one_winner() {
         let (first, second) = race_pair(&f.store, &f.id, Op::Complete, Op::Complete);
         let disk = disk_status(&f.task_dir);
         assert_exactly_one_ok(round, &first, &second);
+        ran += 1;
 
         match (&first, &second) {
             (Ok(record), Err(e)) | (Err(e), Ok(record)) => {
@@ -215,4 +243,73 @@ fn interleaved_complete_and_complete_has_one_winner() {
             _ => unreachable!("exactly-one-Ok already asserted"),
         }
     }
+    assert_rounds_floor(ran);
+}
+
+/// #2275/#2276 on the integration face: a cancel×cancel pair both report
+/// `Ok`, but exactly one transition happens — one event, one metadata write —
+/// and the second winner is a settled no-op whose bytes on disk never move.
+/// The losing double-delete stays quiet (`remove_tree` treats a vanished
+/// directory as success), so the event stream and the stable bytes are the
+/// observable half of "no double delete".
+#[test]
+fn interleaved_cancel_and_cancel_wins_exactly_once() {
+    let scratch = scratch::Scratch::new("1631-cx");
+    let start = Instant::now();
+    let mut ran = 0usize;
+    for round in 1..=ROUNDS {
+        if start.elapsed() > WALL_CAP {
+            break;
+        }
+        let project = scratch.path().join(format!("r{round:03}"));
+        fs::create_dir_all(&project).unwrap();
+        let f = setup(&project);
+        let sub = f.store.subscribe(&f.id);
+        let (first, second) = race_pair(&f.store, &f.id, Op::Cancel, Op::Cancel);
+        ran += 1;
+        let first = first.expect("a cancel of an active upload is Ok");
+        let second = second.expect("a settled cancel is a no-op Ok, not a refusal");
+        assert_eq!(status_of(&first), "cancelled", "round {round}");
+        assert_eq!(status_of(&second), "cancelled", "round {round}");
+        assert_eq!(
+            disk_status(&f.task_dir),
+            "cancelled",
+            "round {round}: disk status"
+        );
+        assert!(
+            !f.file.exists() && !f.task_dir.join("files").exists(),
+            "round {round}: cancelled upload's bytes must be gone"
+        );
+        // Exactly one event: the winning transition emits; the settled
+        // no-op must not.
+        assert_eq!(
+            status_of(
+                &sub.receiver
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("round {round}: the winning cancel emits exactly one event")
+            ),
+            "cancelled",
+            "round {round}"
+        );
+        assert!(
+            sub.receiver.try_recv().is_err(),
+            "round {round}: the settled no-op must not emit a second event"
+        );
+        // The sequential third cancel is bytes-stable: same metadata bytes,
+        // no further event.
+        let metadata = f.task_dir.join("metadata.json");
+        let before = fs::read(&metadata).unwrap();
+        let third = f.store.cancel(&f.id).expect("a settled cancel stays Ok");
+        assert_eq!(status_of(&third), "cancelled", "round {round}");
+        assert_eq!(
+            fs::read(&metadata).unwrap(),
+            before,
+            "round {round}: a no-op cancel must not rewrite the metadata"
+        );
+        assert!(
+            sub.receiver.try_recv().is_err(),
+            "round {round}: a no-op cancel must not emit"
+        );
+    }
+    assert_rounds_floor(ran);
 }
