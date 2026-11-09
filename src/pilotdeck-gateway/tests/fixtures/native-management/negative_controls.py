@@ -667,7 +667,7 @@ def main():
                     raise RuntimeError('positive control failed')
                 (out / (case.mutation + '.patch')).write_text(''.join(difflib.unified_diff(
                     original.splitlines(True), changed.splitlines(True), fromfile=str(case.path), tofile=str(case.path))))
-                case.path.write_text(changed)
+                write_source_atomic(ROOT, case.path, changed.encode())
                 compiled = run(case.mutation + '-compile', ['--no-run'])
                 row['compiled'] = compiled.returncode == 0
                 if not row['compiled']:

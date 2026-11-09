@@ -180,7 +180,8 @@ def main():
                 mutated = original
                 for _path, before, after in row['changes']:
                     mutated = mutated.replace(before, after, 1)
-                row['changes'][0][0].write_text(mutated)
+                write_source_atomic(root, row['changes'][0][0],
+                                    mutated.encode())
                 compiled = run(row['name'] + '-compile', ['--no-run'])
                 if compiled.returncode != 0:
                     raise RuntimeError('mutant failed to compile; not a runtime kill')

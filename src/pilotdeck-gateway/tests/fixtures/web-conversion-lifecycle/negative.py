@@ -100,7 +100,8 @@ def main():
                     raise ValueError(f'ANCHOR_EXPIRED {name}: {count} matches, expected {expected}')
                 if not passed(run(name + '-positive', arguments), test):
                     raise RuntimeError('positive control did not pass the bound test')
-                path.write_text(original.replace(before, after))
+                write_source_atomic(root, path,
+                                    original.replace(before, after).encode())
                 compiled = run(name + '-compile', ['--no-run'])
                 if compiled.returncode != 0:
                     raise RuntimeError('mutant failed to compile; not a runtime kill')
