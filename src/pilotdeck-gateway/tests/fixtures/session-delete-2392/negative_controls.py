@@ -14,6 +14,8 @@ the test that must die:
   it, ProjectRuntimeRegistry.ts:779).
 - `clear-before-not-found`: the clear runs before the transcript check, so a
   `SESSION_NOT_FOUND` refusal also wipes the rows it must keep.
+- `output-style-clear-before-not-found`: only the output-style clear runs
+  before the transcript check, so the refusal wipes that row alone.
 
 Each mutant compiles before its exact test runs. Every case is reported, then
 restoration and all statuses determine the exit code; never bypass HEAD.
@@ -36,7 +38,8 @@ CFG = 'native_process::methods::session_dir::tests::'
 CLEAR = ('self.mcp\n'
          '            .config()\n'
          '            .clear_sdk_session_state(&JsValue::String(key.clone()));\n'
-         '        self.session_overrides.clear_thinking(&key);')
+         '        self.session_overrides.clear_thinking(&key);\n'
+         '        self.session_overrides.clear_output_style(&key);')
 mutations = [
     # The whole clear is gone: the pre-#2392 gap restored — a deleted session's
     # registry rows outlive its files.
@@ -59,7 +62,8 @@ mutations = [
      CFG + 'session_delete_clears_the_sdk_session_state',
      "#2392 delete drops the session's output-style selection"),
     # The clear runs before the transcript check: a SESSION_NOT_FOUND refusal
-    # also wipes the rows it must keep.
+    # also wipes the rows it must keep. The early block covers all three
+    # groups (MCP, thinking, output-style), so the MCP assertion dies first.
     ('clear-before-not-found', SESSION_DIR,
      '// Close the live session first so the writer drains before we delete.\n'
      '        self.owner\n'
@@ -74,9 +78,27 @@ mutations = [
      '        self.mcp\n'
      '            .config()\n'
      '            .clear_sdk_session_state(&JsValue::String(key.clone()));\n'
-     '        self.session_overrides.clear_thinking(&key);',
+     '        self.session_overrides.clear_thinking(&key);\n'
+     '        self.session_overrides.clear_output_style(&key);',
      CFG + 'session_delete_not_found_keeps_the_sdk_session_state',
      "#2392 the refusal keeps the session's MCP permission overrides"),
+    # The output-style clear alone runs before the transcript check (fix-r2,
+    # the third half's own row): the refusal wipes that row while the MCP,
+    # rules and thinking rows survive, so the test dies at its own assertion.
+    ('output-style-clear-before-not-found', SESSION_DIR,
+     '// Close the live session first so the writer drains before we delete.\n'
+     '        self.owner\n'
+     '            .close(&key)\n'
+     '            .await\n'
+     '            .map_err(|e| RequestError::new(e.to_string()))?;',
+     '// Close the live session first so the writer drains before we delete.\n'
+     '        self.owner\n'
+     '            .close(&key)\n'
+     '            .await\n'
+     '            .map_err(|e| RequestError::new(e.to_string()))?;\n'
+     '        self.session_overrides.clear_output_style(&key);',
+     CFG + 'session_delete_not_found_keeps_the_sdk_session_state',
+     "#2392 the refusal keeps the session's output-style selection"),
 ]
 # Every bound assertion lives verbatim in the scanned source; each needs its
 # own pin or the completeness rule refuses the run (#2065 shape).
@@ -85,6 +107,7 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, "#2392 delete drops the session's thinking override"),
     (SESSION_DIR, "#2392 delete drops the session's output-style selection"),
     (SESSION_DIR, "#2392 the refusal keeps the session's MCP permission overrides"),
+    (SESSION_DIR, "#2392 the refusal keeps the session's output-style selection"),
 ]
 
 # The denominator is this literal, never `len(mutations)` (#2391 fix-r1,
@@ -97,6 +120,7 @@ EXPECTED_NAMES = (
     'thinking-clear-removed',
     'output-style-clear-removed',
     'clear-before-not-found',
+    'output-style-clear-before-not-found',
 )
 
 
@@ -159,10 +183,15 @@ def main():
     if args == ['--check']:
         # Guard first (native-config shape): it reports an unreadable scanned
         # source as a clean refusal, while the anchor count probe below would
-        # raise a bare OSError on the same tree.
-        check_literal_anchors(selected_rows, bound_rows=every_row)
-        for case in selected_rows:
-            mutate(case, case.path.read_text())
+        # raise a bare OSError on the same tree. A stale anchor reaches this
+        # branch as a ValueError, refused the same #1433 way so --check never
+        # reports "ran, not green" (rc 1) for a run that never started.
+        try:
+            check_literal_anchors(selected_rows, bound_rows=every_row)
+            for case in selected_rows:
+                mutate(case, case.path.read_text())
+        except ValueError as error:
+            refuse(str(error))
         print(f'#2392 {len(selected_rows)} mutation anchors OK; '
               f'{len(LITERAL_ANCHORS)} literal anchors OK')
         return 0

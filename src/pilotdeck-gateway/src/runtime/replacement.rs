@@ -169,6 +169,13 @@ impl ReplacementCoordinator {
             warn: warn.unwrap_or_else(|| Arc::new(|message, error| eprintln!("{message} {error}"))),
         }))
     }
+    // Poison boundary (deliberate, not a missed sweep): only the three
+    // transcript-write methods below tolerate a poisoned state lock —
+    // `release` runs from `TranscriptWriteReservation::drop`, which also
+    // executes while a panic unwinds the reserved body, where `.unwrap()`
+    // would double-panic and abort. The file's other 13 `state.lock()`
+    // sites never run under unwind and keep the repo-wide mainstream
+    // (poison = the panic propagates).
     pub fn reserve_transcript_write(
         &self,
         key: &JsString,
