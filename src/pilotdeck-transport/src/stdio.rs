@@ -1952,6 +1952,9 @@ mod reconciliation_tests {
         assert!(received.try_recv().is_err(), "accepted call was replayed");
     }
     fn fixture() -> (ConnectionOwner, CallControl, BoundExchange) {
+        fixture_with_capacity(8)
+    }
+    fn fixture_with_capacity(capacity: usize) -> (ConnectionOwner, CallControl, BoundExchange) {
         let owner = ConnectionOwner::new(
             SidecarBinding {
                 module_id: "pilotdeck-agent-loop".into(),
@@ -1959,7 +1962,7 @@ mod reconciliation_tests {
                 connection_generation: "generation".into(),
                 capabilities_version: "1".into(),
             },
-            8,
+            capacity,
         );
         let identity = ExecutionIdentity {
             session_id: "s".into(),
@@ -1980,6 +1983,210 @@ mod reconciliation_tests {
             },
             exchange,
         )
+    }
+    #[test]
+    fn module_calls_use_data_fifo_and_leave_controls_for_the_writer() {
+        let (owner, control, mut exchange) = fixture_with_capacity(2);
+        let read = exchange
+            .start(
+                &control,
+                "model",
+                "get_metadata",
+                CallEffect::ReadOnly,
+                JsObject::new(),
+            )
+            .unwrap();
+        let advance = exchange
+            .start(
+                &control,
+                "model",
+                "open_stream",
+                CallEffect::Advance,
+                JsObject::new(),
+            )
+            .unwrap();
+        let status = ack(&"status".into());
+        owner.send_control(&status).unwrap();
+        {
+            let state = owner.0.state.lock().unwrap();
+            assert_eq!(state.control.len(), 1);
+            assert_eq!(state.data.len(), 2);
+        }
+        let (sent, received) = mpsc::channel();
+        let writer_owner = owner.clone();
+        let writer = std::thread::spawn(move || {
+            writer_owner.drive_writer(Recorder {
+                bytes: Vec::new(),
+                sent,
+            })
+        });
+        assert_eq!(
+            received.recv_timeout(Duration::from_secs(2)).unwrap(),
+            line(&status).unwrap().as_bytes()
+        );
+        for pending in [read, advance] {
+            let wire = received.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(wire_id(&wire), pending.message_id);
+        }
+        owner.close();
+        assert!(writer.join().unwrap().is_ok());
+    }
+    #[test]
+    fn full_control_queue_preserves_frames_and_allows_retry() {
+        let (owner, _, _) = fixture_with_capacity(1);
+        let first = ack(&"cancel".into());
+        let second = ack(&"status".into());
+        owner.send_control(&first).unwrap();
+        assert_eq!(
+            owner.send_control(&second).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert!(!owner.is_closed());
+        assert_eq!(owner.try_pop_control_line(), Some(line(&first).unwrap()));
+        owner.send_control(&second).unwrap();
+        assert_eq!(owner.try_pop_control_line(), Some(line(&second).unwrap()));
+    }
+    #[test]
+    fn read_only_call_waits_for_data_capacity_and_embedded_drain_wakes_it() {
+        let (owner, mut control, mut exchange) = fixture_with_capacity(1);
+        control.deadline = Some(Instant::now() + Duration::from_secs(2));
+        let prefix = ack(&"stream-prefix".into());
+        owner.publish(&control, &prefix).unwrap();
+        let (started, starting) = mpsc::channel();
+        let (sent, received) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            let result = exchange.start(
+                &control,
+                "model",
+                "get_metadata",
+                CallEffect::ReadOnly,
+                JsObject::new(),
+            );
+            sent.send(result).unwrap();
+        });
+        starting.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(matches!(
+            received.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        let cancel = ack(&"cancel".into());
+        owner.send_control(&cancel).unwrap();
+        assert_eq!(owner.try_pop_control_line(), Some(line(&cancel).unwrap()));
+        assert_eq!(owner.try_pop_stream_line(), Some(line(&prefix).unwrap()));
+        let pending = received
+            .recv_timeout(Duration::from_secs(1))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            owner.try_pop_stream_line(),
+            Some(owner.call_record(&pending.message_id).unwrap().request_line)
+        );
+        assert!(!owner.is_closed());
+        worker.join().unwrap();
+    }
+    #[test]
+    fn full_data_queue_read_only_wait_is_cancelled_without_dispatch_or_close() {
+        let (owner, mut control, mut exchange) = fixture_with_capacity(1);
+        control.deadline = Some(Instant::now() + Duration::from_secs(2));
+        owner.publish(&control, &ack(&"prefix".into())).unwrap();
+        let cancellation = control.cancellation.clone();
+        let (sent, received) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            sent.send(exchange.start(
+                &control,
+                "model",
+                "get_metadata",
+                CallEffect::ReadOnly,
+                JsObject::new(),
+            ))
+            .unwrap();
+        });
+        assert!(matches!(
+            received.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        cancellation.cancel(CancelCause::Requested("stop".into()));
+        assert!(matches!(
+            received.recv_timeout(Duration::from_secs(1)).unwrap(),
+            Err(PortError::Cancelled {
+                cause: CancelCause::Requested(_)
+            })
+        ));
+        worker.join().unwrap();
+        let state = owner.0.state.lock().unwrap();
+        assert!(!state.closed);
+        assert!(state.calls.is_empty());
+        assert!(state.control.is_empty());
+        assert_eq!(state.data.len(), 1);
+    }
+    #[test]
+    fn full_data_queue_read_only_wait_obeys_deadline() {
+        let (owner, mut control, mut exchange) = fixture_with_capacity(1);
+        owner.publish(&control, &ack(&"prefix".into())).unwrap();
+        control.deadline = Some(Instant::now() + Duration::from_millis(20));
+        assert!(matches!(
+            exchange.start(
+                &control,
+                "model",
+                "get_metadata",
+                CallEffect::ReadOnly,
+                JsObject::new()
+            ),
+            Err(PortError::Cancelled {
+                cause: CancelCause::Deadline
+            })
+        ));
+        let state = owner.0.state.lock().unwrap();
+        assert!(!state.closed);
+        assert!(state.calls.is_empty());
+        assert!(state.control.is_empty());
+        assert_eq!(state.data.len(), 1);
+    }
+    struct DirectRecorder {
+        requests: Mutex<Vec<JsValue>>,
+        fail: bool,
+    }
+    impl crate::direct_host::DirectHostCallback for DirectRecorder {
+        fn dispatch_module_call(&self, _: &CallControl, request: &JsValue) -> PortResult<JsObject> {
+            self.requests.lock().unwrap().push(request.clone());
+            if self.fail {
+                Err(PortError::InvalidResponse {
+                    message: "host failed".into(),
+                })
+            } else {
+                Ok(JsObject::new())
+            }
+        }
+    }
+    #[test]
+    fn direct_host_dispatch_ignores_effect_and_stdio_capacity_without_replay() {
+        for fail in [false, true] {
+            let (owner, control, mut exchange) = fixture_with_capacity(1);
+            owner.publish(&control, &ack(&"prefix".into())).unwrap();
+            owner.send_control(&ack(&"status".into())).unwrap();
+            let host = Arc::new(DirectRecorder {
+                requests: Mutex::new(Vec::new()),
+                fail,
+            });
+            owner.set_direct_host(Some(host.clone()));
+            for effect in [CallEffect::ReadOnly, CallEffect::Advance] {
+                let pending = exchange
+                    .start(&control, "model", "get_metadata", effect, JsObject::new())
+                    .unwrap();
+                let record = owner.call_record(&pending.message_id).unwrap();
+                assert_eq!(record.phase, DispatchPhase::Replied);
+                assert_eq!(
+                    record.response.unwrap().value().get("ok"),
+                    Some(&JsValue::Bool(!fail))
+                );
+            }
+            assert_eq!(host.requests.lock().unwrap().len(), 2);
+            let state = owner.0.state.lock().unwrap();
+            assert!(!state.closed);
+            assert_eq!(state.data.len(), 1);
+            assert_eq!(state.control.len(), 1);
+        }
     }
     fn wire_id(wire: &[u8]) -> JsString {
         pilotdeck_protocol::parse_json(std::str::from_utf8(wire).unwrap())
