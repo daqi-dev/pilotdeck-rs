@@ -275,12 +275,17 @@ def check_manifest():
     errors = []
     # The count lives in the negative_controls.py bullet of this README's
     # Chinese file list (cron-schedule has a per-section counts table instead).
+    # Exactly one: a duplicated bullet whose copy drifted must not hide behind
+    # whichever copy re.search happened to hit first.
     text = readme.read_text(encoding='utf-8')
-    match = re.search(r'`negative_controls\.py` — (\d+) 变异负控', text)
-    if not match:
+    found = re.findall(r'`negative_controls\.py` — (\d+) 变异负控', text)
+    if not found:
         errors.append('README: no count row for negative_controls.py mutations')
-    elif int(match.group(1)) != len(mutations):
-        errors.append(f'README: negative_controls.py says {match.group(1)} mutations, '
+    elif len(found) != 1:
+        errors.append(f'README: expected exactly one negative_controls.py count row, '
+                      f'found {len(found)}')
+    elif int(found[0]) != len(mutations):
+        errors.append(f'README: negative_controls.py says {found[0]} mutations, '
                       f'script has {len(mutations)}')
     # The list lives in its own paragraph (`Rows: `a`, `b`, …`), so scope the
     # scan to that paragraph: prose elsewhere in the README that mentions the
