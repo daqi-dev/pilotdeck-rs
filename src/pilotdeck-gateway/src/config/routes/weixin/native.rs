@@ -1551,6 +1551,9 @@ mod native_poll_alignment_tests {
         assert!(rebuild_client_after_poll_error(&storage, &mut client_opt, &error));
         assert_eq!(client_opt.as_ref().unwrap().cursor, "c1");
 
+        let _lock = crate::config::routes::weixin::attachment_net::test_settings_lock();
+        let _ = crate::config::routes::weixin::attachment_net::test_permit_loopback_fetch();
+
         let _ = std::fs::remove_dir_all(&temp);
     }
 
