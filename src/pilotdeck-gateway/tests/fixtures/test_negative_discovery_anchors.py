@@ -1815,9 +1815,18 @@ def _literal_combinations(generators, constants):
 
 
 def _add_operands(node):
-    """Every operand of a left-associated ``a + b + c`` chain."""
+    """Every operand of an ``a + b + c`` concatenation, any nesting shape.
+
+    Python parses the unparenthesised chain left-associatively, but a table
+    may parenthesise its own grouping — ``head + ('/dir' + '/sub/')`` puts
+    the separators in a *right*-nested subtree the left-spine-only walk
+    never saw. Flattening both sides keeps the operand list one reading
+    regardless of where the parentheses sit (r33, arbitration design round:
+    the right-nested separators let the concatenated-slice head pass
+    silently).
+    """
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _add_operands(node.left) + [node.right]
+        return _add_operands(node.left) + _add_operands(node.right)
     return [node]
 
 
@@ -1902,7 +1911,11 @@ def _slices_a_string_constant(node, constants, seen=()):
     (``WORD[0:1]``) is reported too: fail-closed, one extra report beats a
     hole (the split that r30 introduced when it stopped treating the string
     itself as the container). An f-string interpolating such a slice is the
-    same build. A ``+`` concatenation carries whatever either side reads:
+    same build, and the interpolated reading carries the visited names so a
+    self-referential constant chain terminates instead of recursing
+    (r33, arbitration design round: the JoinedStr reading dropped its
+    ``seen``, and the ``+`` branch made the cycle reachable). A ``+``
+    concatenation carries whatever either side reads:
     ``Path(WORD[:3] + '/pilotdeck-gateway')`` still builds from the substring
     (r32, review P0 — the predicate stopped at the ``BinOp`` and let the head
     pass silently). An *all-literal* ``+`` chain has no slice on either side
@@ -1920,7 +1933,8 @@ def _slices_a_string_constant(node, constants, seen=()):
                                          seen + (node.id,))
     if isinstance(node, ast.JoinedStr):
         return any(isinstance(part, ast.FormattedValue)
-                   and _slices_a_string_constant(part.value, constants)
+                   and _slices_a_string_constant(part.value, constants,
+                                                 seen)
                    for part in node.values)
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
         return (_slices_a_string_constant(node.left, constants, seen)
@@ -2696,8 +2710,25 @@ def _join_resets_to_absolute(node, constants, aliases):
     fallback must not report it: the reset argument has already thrown the
     dynamic head away (r29, review P1). Only the *filesystem* joins reset;
     ``os.sep.join`` concatenates and keeps its own reading, so it never
-    reaches this question.
+    reaches this question. The resetting join may also sit *behind* the
+    expression the caller hands over — wrapped in a ``Path``/``str`` call,
+    ``Path(os.path.join(WORD[:3], '/tmp')) / 'src'`` — and the pathlib
+    ``/`` operator resets on an absolute right operand exactly like a join's
+    absolute argument, ``Path(WORD[:3]) / '/tmp'`` reading ``/tmp``
+    (r33, arbitration design round: the entry saw only the outer chain and
+    let both wrapped spellings through to a report the reset semantics
+    contradict). Walking the ``/`` spine to its head first keeps one reset
+    predicate for every spelling.
     """
+    while isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        segment = _string_value(node.right, constants)
+        if segment is not None and _resets_join(segment):
+            return True
+        node = node.left
+    while (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in ('str', 'Path') and len(node.args) == 1
+            and not node.keywords):
+        node = node.args[0]
     if not isinstance(node, ast.Call) or not isinstance(
             node.func, (ast.Attribute, ast.Name)):
         return False
@@ -8310,6 +8341,167 @@ class DiscoveryAnchorTests(unittest.TestCase):
         )
         self.assertEqual(violations(all_literal,
                                     'example/negative_controls.py'), [])
+
+    def test_a_right_nested_concatenation_head_is_reported(self):
+        """Parenthesised ``+`` grouping hides operands from a left-spine walk.
+
+        ``head + ('/dir' + '/sub/')`` puts the separators in a right-nested
+        subtree: the operands list only flattened the left spine, so both
+        spellings — the f-string interpolation and the ``Path`` head — let
+        the sliced head pass silently while its key sat inside the spelled
+        constant (r33 arbitration design round, codex review P0 and its
+        second syntax shape). Flattening both sides keeps one reading
+        wherever the parentheses sit; a slice on either side of the chain
+        is the same report, so the reversed head is pinned here too
+        (anthropic review P2: only the left-side spelling was nailed).
+        """
+        right_nested_fstring = (
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return f'{WORD[:3] + (\"/pilotdeck-gateway\" + \"/src/\")}{name}'\n"
+        )
+        problems = violations(right_nested_fstring,
+                              'example/negative_controls.py')
+        self.assertTrue(
+            any('unsupported f-string path' in problem
+                for problem in problems), problems)
+        right_nested_path_head = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path(WORD[:3] + ('/pilotdeck-gateway' + '/src/')) / 'lib.rs'\n"
+        )
+        problems = violations(right_nested_path_head,
+                              'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+        # The slice may sit on either side of the concatenation — the
+        # reversed head is the same substring read (anthropic review P2:
+        # the r32 test only exercised the slice-on-left spelling).
+        reversed_head = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path('/pilotdeck-gateway' + WORD[:3]) / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(reversed_head, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+        reversed_nested = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path('/pilotdeck-gateway' + ('src/' + WORD[:3])) / 'lib.rs'\n"
+        )
+        problems = violations(reversed_nested, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+        # The all-literal registration holds for the nested spelling too:
+        # no slice on either side of any nesting is still no report.
+        all_literal_nested = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row():\n"
+            "    return Path('sms' + ('/' + 'mod.rs'))\n"
+        )
+        self.assertEqual(violations(all_literal_nested,
+                                    'example/negative_controls.py'), [])
+
+    def test_a_self_referential_fstring_constant_terminates(self):
+        """A constant cycle through an interpolated ``+`` must not recurse.
+
+        ``name = f'{name + chr(120)}'`` binds the constant to the very
+        JoinedStr it spells. The interpolated reading used to drop its
+        visited-names tuple, so once the ``+`` branch resolved the left
+        operand back into that JoinedStr the walk had no memory and
+        recursed until the interpreter gave up — a crash in the guard
+        itself (r33 arbitration design round, codex review P0). Carrying
+        ``seen`` through the interpolation terminates the cycle; the
+        build is an opaque head joined to an opaque tail, so it keeps the
+        registered silence rather than reporting.
+        """
+        self_referential = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "name = f'{name + chr(120)}'\n"
+            "def row():\n"
+            "    return Path(name) / 'lib.rs'\n"
+        )
+        self.assertEqual(violations(self_referential,
+                                   'example/negative_controls.py'), [])
+
+    def test_a_wrapped_or_operatored_absolute_reset_stays_silent(self):
+        """The absolute-reset silence holds behind wrappers and ``/`` chains.
+
+        ``Path(os.path.join(WORD[:3], '/tmp')) / 'src'`` wraps the resetting
+        join in a ``Path`` call, and ``Path(WORD[:3]) / '/tmp'`` resets on
+        the pathlib operator itself — both read ``/tmp/…``, outside the
+        repository, so no discovery key exists to report (r33 arbitration
+        design round, codex review P1 and anthropic review P2: the reset
+        predicate saw only the outer chain). The entry walks the ``/``
+        spine and the wrappers to the join first; a relative tail keeps
+        reporting, so the reset cannot silence a real key.
+        """
+        wrapped_join = (
+            "import os\n"
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path(os.path.join(WORD[:3], '/tmp')) / 'src' / 'mod.rs'\n"
+        )
+        self.assertEqual(violations(wrapped_join,
+                                    'example/negative_controls.py'), [])
+        operatored = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path(WORD[:3]) / '/tmp' / 'mod.rs'\n"
+        )
+        self.assertEqual(violations(operatored,
+                                    'example/negative_controls.py'), [])
+        # The reset only silences absolute segments: a relative tail keeps
+        # the slice head reported exactly as without the reset entry.
+        relative_tail = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row():\n"
+            "    return Path(WORD[:3]) / 'src' / 'mod.rs'\n"
+        )
+        problems = violations(relative_tail, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+
+    def test_a_display_counter_with_a_sliced_head_is_reported_fail_closed(self):
+        """``f'{WORD[:3] + '/'}{total} killed'`` reports — the pinned ruling.
+
+        A display counter whose head slices a module string constant is
+        statically indistinguishable from a repository build: the guard
+        cannot read the constant's value into the judgment, and the r31
+        fail-closed ruling prefers one extra report over a hole (r33
+        arbitration: option (a), the README registers the over-report as
+        a known blind shape instead of guessing values).
+        """
+        display_counter = (
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'failed'\n"
+            "def summary(total):\n"
+            "    return f'{WORD[:3] + \"/\"}{total} killed'\n"
+        )
+        problems = violations(display_counter, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unsupported f-string path' in problem
+                for problem in problems), problems)
 
     def test_a_module_function_with_keyword_arguments_reads_its_first_argument(self):
         """``os.path.realpath(D[name], strict=False)`` builds from the argument.
