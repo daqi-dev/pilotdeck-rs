@@ -1448,11 +1448,11 @@ async fn two_different_session_keys_can_overlap_inside_prepare() {
     let first = h.owner.get_or_create(h.context());
     let second = h.owner.get_or_create(other);
     // Both prepares must be parked inside the factory simultaneously, right
-    // before the per-session MCP registration section; if the owner
-    // serialized creations, the second `entered` would never resolve
-    // (bounded above by the 8 s deadline).
-    h.gate.entered().await;
-    h.gate.entered().await;
+    // before the per-session MCP registration section; if the owner ever
+    // serialized creations, the second `entered` below would time out and
+    // panic (bounded by the same 8 s deadline as the futures themselves).
+    bounded(name, h.gate.entered()).await;
+    bounded(name, h.gate.entered()).await;
     h.gate.open();
     h.gate.open();
     let a = bounded(name, first)
