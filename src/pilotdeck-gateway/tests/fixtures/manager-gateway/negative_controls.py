@@ -11,6 +11,12 @@ coordinator commits:
 
 `--audit` only checks every anchor against the current source; it does not
 mutate, compile, or require a commit.
+
+The table is pinned to the static `EXPECTED_NAMES` roster: drift refuses to
+start (rc 2, no evidence directory claimed), and a run whose recorded verdicts
+do not match the roster publishes `roster-mismatch.json` instead of
+`summary.json` and exits 1 (#1666, the memory-gateway / snapshot-projection
+contract).
 """
 import json
 import os
@@ -23,6 +29,7 @@ sys.path[:0] = [str(fixtures), str(fixtures / 'turn-runner')]
 # negative_suite owns mutating_sources/run_owned/wait_for_slot; no local
 # backup/restore or alternate baseline is permitted here.
 from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_selection import registered
 from negative_suite import Case, run_cases
 from _negative_common import mutate
 
@@ -329,6 +336,51 @@ cases = [
      '#2309 manager_sessions failure must dispatch as ManagerDispatch::Error'),
 ]
 
+# #2309 fix-r1 (MM boundary P1, DS boundary P2): the denominator of this run
+# is this static roster, not `len(cases)`. `run_cases` exits 0 while every
+# surviving row stays KILLED, so a deleted or renamed row would silently
+# shrink the run and keep printing a green count (#1666). `main` refuses to
+# start on drift and re-checks the recorded verdicts after the run, the same
+# contract as the memory-gateway / snapshot-projection families.
+EXPECTED_NAMES = (
+    'catalog-tail-partial-dropped',
+    'catalog-internal-filter-removed',
+    'catalog-cwd-removed',
+    'catalog-summary-trimmed',
+    'invalid-params-fallback',
+    'invalid-project-key-stringified',
+    'pagination-negative-end',
+    'browser-port-always-unavailable',
+    'error-code-projection',
+    'session-key-filter-removed',
+    'catalog-limit',
+    'dispatch-registration',
+    'unknown-project-lossy',
+    'mtime-node-rounding',
+    'same-mtime-name-order',
+    'surrogate-fast-title-lossy',
+    'surrogate-prompt-lossy',
+    'surrogate-fallback-lossy',
+    'metadata-title-escape-swallowed',
+    'metadata-createdat-escape-swallowed',
+    'projectkey-name-explained-by-object',
+    'projectkey-name-array-branch',
+    'projectkey-name-surrogate-lossy',
+    'internal-filter-after-read',
+    'deep-project-key-recursive-tostring',
+    'projectkey-description-throws-rewritten',
+    'shared-fast-title-trimmed',
+    'metadata-only-lite-field-order',
+    'shared-descriptor-session-model-lossy',
+    'shared-descriptor-skills-lossy',
+    'shared-descriptor-binding-lossy',
+    'shared-descriptor-manager-lossy',
+    'skills-throws-host-flag-dropped',
+    'metadata-full-title-untrimmed',
+    'shared-metadata-full-title-untrimmed',
+    'error-mapped-to-response',
+)
+
 def main():
     args = sys.argv[1:]
     only = None
@@ -336,6 +388,14 @@ def main():
         index = args.index('--only')
         only = set(args[index + 1].split(','))
         del args[index:index + 2]
+    # #2309 fix-r1: a drifted roster is a "never started" (2) and refuses
+    # before the evidence directory is claimed, so a shrunken table leaves no
+    # out/ behind — never a quietly shorter green run (#1666).
+    try:
+        registered(cases, EXPECTED_NAMES)
+    except ValueError as error:
+        print(f'mutation roster drifted: {error}', file=sys.stderr)
+        return 2
     selected = [case for case in cases if only is None or case[0] in only]
     if '--audit' in args:
         for name, path, old, new, scope, _test, _expected in selected:
@@ -353,11 +413,33 @@ def main():
                CARGO_PROFILE_TEST_DEBUG='line-tables-only', CARGO_TERM_QUIET='false')
     out = Path(args[0])
     out.mkdir(parents=True, exist_ok=False)
-    return run_cases(
+    code = run_cases(
         root,
         [Case(name, path, old, new, test, expected, scope)
          for name, path, old, new, scope, test, expected in selected],
         out, env, mutate, timeout=900, baseline='HEAD')
+    # #2309 fix-r1: the startup roster only proves the source table is intact;
+    # require exactly one verdict per selected name before anything reads as
+    # success. A run that lost a row keeps a green count line, so a mismatch
+    # publishes no summary.json at all — only a file whose name says what
+    # happened (the memory-gateway r5/r6 post-run re-check).
+    expected = [name for name in EXPECTED_NAMES if only is None or name in only]
+    summary = out / 'summary.json'
+    published = json.loads(summary.read_text(encoding='utf-8'))
+    recorded = [row['mutation'] for row in published['controls']]
+    if recorded != expected:
+        message = f'verdict roster mismatch: recorded={recorded} expected={expected}'
+        print(message, file=sys.stderr)
+        report = json.dumps(
+            {'verdict': 'ROSTER_MISMATCH', 'expected': expected,
+             'recorded': recorded, 'rows': published['controls']},
+            ensure_ascii=False, indent=2) + '\n'
+        tmp = out / 'roster-mismatch.json.tmp'
+        tmp.write_text(report, encoding='utf-8')
+        tmp.replace(out / 'roster-mismatch.json')
+        summary.unlink()
+        return 1
+    return code
 
 
 if __name__ == '__main__':

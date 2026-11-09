@@ -1134,6 +1134,37 @@ fn dispatch_routes_only_manager_methods() {
     );
 }
 
+/// #2309: the dispatch `Error` arm must also hold for a `code() == None`
+/// failure. `manager_sessions` reads `projectKey` before any provider call, so
+/// a nullish input throws a plain `TypeError` (no wire code, so it cannot
+/// assemble `{ok:false,error:{code,message}}`); dispatch must still surface it
+/// as `ManagerDispatch::Error`, never a flattened response body.
+#[test]
+fn dispatch_routes_codeless_errors_to_error() {
+    let root = PathBuf::from("/project");
+    let sessions = ManagerGateway::from_parts(
+        Some(Arc::new(RecordingCatalog {
+            input: Mutex::new(None),
+            items: vec![],
+        }) as Arc<dyn SessionCatalogPort>),
+        None,
+        ReplayResolver { root: root.clone() },
+        root.clone(),
+        root.clone(),
+    );
+    let outcome = sessions.dispatch("manager_sessions", &JsValue::Null);
+    let Some(ManagerDispatch::Error(error)) = outcome else {
+        panic!(
+            "#2309 a codeless TypeError must dispatch as ManagerDispatch::Error, got {outcome:?}"
+        )
+    };
+    assert_eq!(
+        error.code(),
+        None,
+        "#2309 a nullish input keeps its codeless TypeError at dispatch"
+    );
+}
+
 #[test]
 fn manager_projects_keeps_unknown_key_units() {
     let scratch = Scratch::new();
