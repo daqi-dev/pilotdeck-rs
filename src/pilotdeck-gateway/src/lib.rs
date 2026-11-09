@@ -1,8 +1,5 @@
 //! Parsed WebSocket proxy. TS owns authentication and methods outside the verified local whitelist.
 mod acceptor;
-// 2026-11-09 scope handoff: unfinished channels are isolated from SOP builds.
-#[cfg(any())]
-pub mod channel_runtime;
 pub mod config;
 mod dispatch;
 mod fetch_redirect;

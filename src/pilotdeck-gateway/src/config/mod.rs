@@ -1,12 +1,6 @@
 //! Global/project PilotConfig loading for the native read-only gateway. Every section
 //! participates in validation, even when catalog projection does not use it.
 mod binding;
-// 2026-11-09 scope handoff: unfinished channels are isolated from SOP builds.
-#[cfg(any())]
-pub mod channel_commands;
-// 2026-11-09 scope handoff: unfinished channels are isolated from SOP builds.
-#[cfg(any())]
-pub mod routes;
 pub mod changes;
 mod graph;
 mod host;
