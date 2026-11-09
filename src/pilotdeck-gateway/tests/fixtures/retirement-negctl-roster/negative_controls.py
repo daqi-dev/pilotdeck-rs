@@ -157,9 +157,13 @@ install_terminate_handlers()
 # 运行时 pin（r4 sibling#2）：处理器装上才算数——删掉上面的调用点，getsignal
 # 仍是默认处置，这里直接红（same-json-surfaces 三件套的等价物：那边是源码
 # 计数断言 + 自变异，本夹具调用点 0 缩进锚点难写，直接验生效更强）。
-for _sig_name in ('SIGTERM', 'SIGHUP', 'SIGQUIT'):
-    _sig = getattr(signal, _sig_name, None)
-    if _sig is not None and signal.getsignal(_sig) is not terminate_cleanly:
+# 信号常量直接引用（CI 修复轮）：getattr(signal, name) 会被锚点自检按
+# 「unsupported snapshot dynamic write: getattr」拒收（anchor_selfcheck.py
+# 快照禁用符号表），本夹具只在 POSIX 跑，SIGHUP/SIGQUIT 恒存在、无需容缺。
+for _sig_name, _sig in (('SIGTERM', signal.SIGTERM),
+                        ('SIGHUP', signal.SIGHUP),
+                        ('SIGQUIT', signal.SIGQUIT)):
+    if signal.getsignal(_sig) is not terminate_cleanly:
         print(f'self-check: terminate handler for {_sig_name} not installed',
               file=sys.stderr)
         raise SystemExit(2)
