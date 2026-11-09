@@ -700,6 +700,31 @@ impl ParkingGateway {
         drop(state);
         self.signal.notify_all();
     }
+
+    /// `release()` on any exit path (the storage suite's `BarrierRelease`
+    /// shape): a guard held across the whole test body frees the parked
+    /// dispatch on every panic that can fire while it is parked — an
+    /// anchor, a plain assert, or `wait_arrived`'s own readiness bound —
+    /// so a failure stays a red light instead of hanging the test binary
+    /// on the `#[tokio::test]` runtime's blocking-pool shutdown. The tests'
+    /// explicit `release()` calls stay where they are: the park must end at
+    /// the points the test then awaits, which a drop-at-scope-end guard
+    /// cannot express.
+    fn release_on_drop(&self) -> ParkRelease<'_> {
+        ParkRelease(self)
+    }
+}
+
+/// The drop half of [`ParkingGateway::release_on_drop`]: releases the
+/// park when the test body unwinds for any reason. `release()` is
+/// idempotent, so a scope that already released explicitly re-releases to
+/// a no-op.
+struct ParkRelease<'a>(&'a ParkingGateway);
+
+impl Drop for ParkRelease<'_> {
+    fn drop(&mut self) {
+        self.0.release();
+    }
 }
 
 impl CronAgentGateway for ParkingGateway {
@@ -750,6 +775,7 @@ async fn the_stop_face_drains_an_in_flight_management_dispatch() {
     seed_cron_project(&scratch);
     let manager = cron_manager(&scratch);
     let parking = Arc::new(ParkingGateway::new());
+    let _park_release = parking.release_on_drop();
     manager
         .bind_agent_gateway(parking.clone())
         .expect("#2363 test gateway binds");
@@ -785,25 +811,10 @@ async fn the_stop_face_drains_an_in_flight_management_dispatch() {
     // and report Ok yet.
     let mut face = handle.stop_face();
     let elapsed = tokio::time::timeout(Duration::from_millis(500), &mut face).await;
-    if elapsed.is_ok() {
-        // The mutant's face reported Ok without waiting. Free the parked
-        // body before the anchor fails — a dropped #[tokio::test] runtime
-        // waits for its blocking tasks, so a failure path that leaves the
-        // park held hangs the binary instead of failing it.
-        parking.release();
-    }
     negative_assert!(
         elapsed.is_err(),
         "#2363 the stop face waits for the in-flight dispatch"
     );
-    // The same failure-path guard, second anchor: if the mark never landed
-    // (the face's first poll no longer closes the management face), free the
-    // parked body before the anchor fails — a dropped #[tokio::test] runtime
-    // waits for its blocking tasks, so a failure path that leaves the park
-    // held hangs the binary instead of failing it.
-    if !crate::switch::cron_management_closed(Some(&manager)) {
-        parking.release();
-    }
     negative_assert!(
         crate::switch::cron_management_closed(Some(&manager)),
         "#2363 the A6 mark landed on the face's first poll"
@@ -840,6 +851,7 @@ async fn a_cancelled_stop_face_leaves_the_gate_closed() {
     seed_cron_project(&scratch);
     let manager = cron_manager(&scratch);
     let parking = Arc::new(ParkingGateway::new());
+    let _park_release = parking.release_on_drop();
     manager
         .bind_agent_gateway(parking.clone())
         .expect("#2363 test gateway binds");
@@ -869,18 +881,11 @@ async fn a_cancelled_stop_face_leaves_the_gate_closed() {
     parking.wait_arrived().await;
     // The face is polled inside the window (the mark lands, the drain queues
     // behind the dispatch's read half) and then dropped — the machine's
-    // timeout shape.
+    // timeout shape. Any assert below that fails while the dispatch is
+    // parked releases it through `_park_release`'s drop on unwind.
     {
         let mut face = handle.stop_face();
         let elapsed = tokio::time::timeout(Duration::from_millis(50), &mut face).await;
-        // The same failure-path guard `the_stop_face_drains…` carries: the
-        // mutant's face reports Ok without waiting. Free the parked body
-        // before the anchor fails — a dropped #[tokio::test] runtime waits
-        // for its blocking tasks, so a failure path that leaves the park
-        // held hangs the binary instead of failing it.
-        if elapsed.is_ok() {
-            parking.release();
-        }
         negative_assert!(
             elapsed.is_err(),
             "#2363 the cancelled face is parked in its drain, not done"
