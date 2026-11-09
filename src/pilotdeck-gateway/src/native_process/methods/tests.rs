@@ -3944,3 +3944,286 @@ async fn user_dialog_respond_settle_failure_still_delivers_the_expired_lease() {
         .await
         .expect("#1599 settle fixture project shutdown");
 }
+
+/// #1441 五方法分发（wired 态）：upload_create/get/part/complete/cancel 经
+/// `Requests::request`（admission → methods::request → upload family →
+/// spawn_blocking）打到真实 `UploadStore`，生命周期全链（探针
+/// ts-probe/p3-lease-lifecycle.out.txt 的 Rust 镜像）。
+#[tokio::test]
+async fn upload_methods_dispatch_to_the_wired_store() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1441 registry fixture setup");
+    let project = requests.options.project.clone();
+    let project_key = project.to_string_lossy().into_owned();
+    let owned = project.clone();
+    let listed = project.clone();
+    let store = Arc::new(crate::upload::UploadStore::new(
+        crate::upload::UploadStoreOptions::new(
+            // #1441 (fix-r1, simplify#1): the production wiring closure —
+            // the dispatch test must not carry a hand copy of the
+            // dual-spelling rule that can drift from the real one.
+            move |key: &pilotdeck_protocol::JsString| {
+                super::super::assembly::upload_resolve_project(&owned, key)
+            },
+            move || Ok(vec![listed.clone()]),
+        ),
+    ));
+    let wired = super::super::requests::Requests {
+        upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::new(store.clone())),
+        ..requests
+    };
+    let manifest = JsValue::Array(vec![crate::metadata::object([
+        ("clientFileId", "f1".into()),
+        ("name", "a.txt".into()),
+        ("relativePath", "a.txt".into()),
+        ("size", JsValue::Number(3.0)),
+    ])]);
+    // upload_create
+    let created = wired
+        .request(
+            "upload_create".into(),
+            crate::metadata::object([
+                ("projectKey", JsValue::from(project_key.as_str())),
+                ("files", manifest),
+            ]),
+        )
+        .await
+        .expect("#1441 upload_create must dispatch to the wired store");
+    let upload_id = created
+        .get("uploadId")
+        .and_then(JsValue::as_string)
+        .and_then(|s| s.to_utf8().ok())
+        .expect("#1441 the created record carries uploadId");
+    negative_assert_eq!(
+        created.get("status").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("created")),
+        "#1441 the created record reports created"
+    );
+    // upload_part
+    let part = wired
+        .request(
+            "upload_part".into(),
+            crate::metadata::object([
+                ("uploadId", JsValue::from(upload_id.as_str())),
+                ("clientFileId", "f1".into()),
+                ("contentBase64", "YWJj".into()),
+            ]),
+        )
+        .await
+        .expect("#1441 upload_part must dispatch to the wired store");
+    negative_assert_eq!(
+        part.get("bytes").and_then(JsValue::as_number),
+        Some(3.0),
+        "#1441 the part response reports the decoded byte count"
+    );
+    // upload_get
+    let got = wired
+        .request(
+            "upload_get".into(),
+            crate::metadata::object([("uploadId", JsValue::from(upload_id.as_str()))]),
+        )
+        .await
+        .expect("#1441 upload_get must dispatch to the wired store");
+    negative_assert_eq!(
+        got.get("uploadedBytes").and_then(JsValue::as_number),
+        Some(3.0),
+        "#1441 the fetched record reports the uploaded bytes"
+    );
+    // upload_complete
+    let done = wired
+        .request(
+            "upload_complete".into(),
+            crate::metadata::object([("uploadId", JsValue::from(upload_id.as_str()))]),
+        )
+        .await
+        .expect("#1441 upload_complete must dispatch to the wired store");
+    negative_assert_eq!(
+        done.get("status").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("completed")),
+        "#1441 the completed record reports completed"
+    );
+    // upload_cancel on completed: the TS refusal crosses the whole chain
+    let refused = wired
+        .request(
+            "upload_cancel".into(),
+            crate::metadata::object([("uploadId", JsValue::from(upload_id.as_str()))]),
+        )
+        .await
+        .expect_err("#1441 a completed upload must refuse cancel");
+    negative_assert_eq!(
+        refused.code,
+        "UPLOAD_ALREADY_COMPLETED",
+        "#1441 the completed-cancel refusal keeps its code"
+    );
+    // upload_cancel on an in-gate upload: cancelled + files removed
+    let second = wired
+        .request(
+            "upload_create".into(),
+            crate::metadata::object([
+                ("projectKey", JsValue::from(project_key.as_str())),
+                (
+                    "files",
+                    JsValue::Array(vec![crate::metadata::object([
+                        ("clientFileId", "f1".into()),
+                        ("name", "b.txt".into()),
+                        ("relativePath", "b.txt".into()),
+                        ("size", JsValue::Number(3.0)),
+                    ])]),
+                ),
+            ]),
+        )
+        .await
+        .expect("#1441 the second create must dispatch");
+    let second_id = second
+        .get("uploadId")
+        .and_then(JsValue::as_string)
+        .and_then(|s| s.to_utf8().ok())
+        .expect("#1441 the second record carries uploadId");
+    let cancelled = wired
+        .request(
+            "upload_cancel".into(),
+            crate::metadata::object([("uploadId", JsValue::from(second_id.as_str()))]),
+        )
+        .await
+        .expect("#1441 upload_cancel must dispatch to the wired store");
+    negative_assert_eq!(
+        cancelled.get("status").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("cancelled")),
+        "#1441 the cancelled record reports cancelled"
+    );
+    wired
+        .owner
+        .shutdown()
+        .await
+        .expect("#1441 wired fixture owner shutdown");
+    wired
+        .project
+        .dispose()
+        .await
+        .expect("#1441 wired fixture project shutdown");
+    drop(scratch);
+}
+
+/// #1441 五方法分发（unavailable 态）：宿主未接线 `uploadLifecycle`
+/// （`UploadGateway::unavailable()`）时五个方法一律 CAPABILITY_UNAVAILABLE
+/// "Gateway uploads are unavailable."——与 wired 态互为反差。
+#[tokio::test]
+async fn upload_methods_refuse_when_unwired() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1441 registry fixture setup");
+    for method in [
+        "upload_create",
+        "upload_get",
+        "upload_part",
+        "upload_complete",
+        "upload_cancel",
+    ] {
+        // upload_part 校验参数在能力门之前，所以它要带全合法参数才能
+        // 穿过参数层、停在能力门；其余四门能力门在前，空参数即可。
+        let params = if method == "upload_part" {
+            crate::metadata::object([
+                ("uploadId", "01890a7e-4d8a-7b1e-9d20-64b9f2a5a1a1".into()),
+                ("clientFileId", "f1".into()),
+                ("contentBase64", "YWJj".into()),
+            ])
+        } else {
+            crate::metadata::object([(
+                "uploadId",
+                JsValue::from("01890a7e-4d8a-7b1e-9d20-64b9f2a5a1a1"),
+            )])
+        };
+        let error = requests
+            .request(method.into(), params)
+            .await
+            .expect_err("#1441 every upload method must refuse when unwired");
+        negative_assert_eq!(
+            error.code,
+            "CAPABILITY_UNAVAILABLE",
+            "#1441 {method} must report the capability code when unwired"
+        );
+        negative_assert_eq!(
+            String::from_utf16_lossy(error.message.units()),
+            "Gateway uploads are unavailable.",
+            "#1441 {method} must keep the TS message when unwired"
+        );
+    }
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1441 unwired fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1441 unwired fixture project shutdown");
+}
+
+/// #1441 参数序反差：`upload_part` 校验参数在能力门之前（gateway.rs
+/// :156-161——uploadId/clientFileId/base64 都过了才 require()），而
+/// create/get/complete/cancel 的能力门在参数之前。unavailable 态钉序：
+/// part 传坏参数要报参数错，create 缺 projectKey 仍报能力错。
+#[tokio::test]
+async fn upload_part_validates_params_before_the_capability_gate() {
+    use crate::runtime::turn::gateway::GatewayRequests;
+
+    let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
+        .expect("#1441 registry fixture setup");
+    // part：坏 base64 → UPLOAD_PART_INVALID（不是 CAPABILITY_UNAVAILABLE）
+    let error = requests
+        .request(
+            "upload_part".into(),
+            crate::metadata::object([
+                ("uploadId", "01890a7e-4d8a-7b1e-9d20-64b9f2a5a1a1".into()),
+                ("clientFileId", "f1".into()),
+                ("contentBase64", "!!!".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1441 an invalid part payload must fail on the parameter, not the capability");
+    negative_assert_eq!(
+        error.code,
+        "UPLOAD_PART_INVALID",
+        "#1441 upload_part validates contentBase64 before requiring the provider"
+    );
+    // part：缺 clientFileId → UPLOAD_MANIFEST_MISMATCH（同样先于能力门）
+    let error = requests
+        .request(
+            "upload_part".into(),
+            crate::metadata::object([
+                ("uploadId", "01890a7e-4d8a-7b1e-9d20-64b9f2a5a1a1".into()),
+                ("contentBase64", "YWJj".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1441 a missing clientFileId must fail on the parameter");
+    negative_assert_eq!(
+        error.code,
+        "UPLOAD_MANIFEST_MISMATCH",
+        "#1441 upload_part validates clientFileId before requiring the provider"
+    );
+    // create：缺 projectKey → CAPABILITY_UNAVAILABLE（能力门在参数前）
+    let error = requests
+        .request("upload_create".into(), crate::metadata::object([]))
+        .await
+        .expect_err("#1441 a parameterless create must fail on the capability first");
+    negative_assert_eq!(
+        error.code,
+        "CAPABILITY_UNAVAILABLE",
+        "#1441 upload_create requires the provider before validating the manifest"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1441 order fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1441 order fixture project shutdown");
+}

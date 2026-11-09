@@ -145,6 +145,9 @@ root = Path(__file__).resolve().parents[5]
 helper = root / 'src/pilotdeck-gateway/tests/common/scratch.rs'
 source = root / 'src/pilotdeck-gateway/src/runtime/tools/builtin/grep.rs'
 publication = root / 'src/pilotdeck-gateway/tests/scratch_publication.rs'
+# #2142 fix-r2: the production sweep's own criterion file — the lib's
+# `test_process` module, the copy the #2138 audit actually runs.
+production = root / 'src/pilotdeck-gateway/src/test_process.rs'
 stress = 'runtime::tools::builtin::grep::tests::script_spawn_survives_concurrent_forks'
 residue = 'failed_publication_removes_the_temporary_name'
 stalled = 'a_stalled_helper_is_killed_and_cleaned_up'
@@ -173,6 +176,18 @@ link_unit = 'an_unreadable_link_is_a_release_only_when_its_holder_is_gone'
 # #1409 item 1 (r2 review, concurrency): a live thread group behind a zombie
 # leader is not terminal — Linux-only, it forks a pthread_exit probe.
 leader_unit = 'a_live_group_behind_a_zombie_leader_is_not_terminal'
+# #2154: the EOF-before-pid stranding shape — Linux-only, it parks a probe's
+# child in the poison state and asserts the group guard's kill ends it.
+eof_unit = 'a_probe_that_dies_before_the_pid_line_takes_its_group_with_it'
+# #2142 fix-r3 (concurrency #1): the error-side classification of the
+# group-is-gone wait — Linux-only like the wait itself.
+gone_error_unit = 'a_proc_read_error_means_gone_only_when_the_entry_is_absent'
+# #2142 fix-r2 (sibling r2 #2 / boundary r2 #2 / simplify r2 #1): the
+# production sweep's own classification test — Linux-only like the criterion
+# it pins, and module-qualified because the executor always passes --exact
+# (the pid_mode precedent above).
+production_blind_unit = (
+    'test_process::a_blind_source_is_skipped_only_when_it_cannot_be_a_child')
 # #1155 fix-r1 review P1: the two ETXTBSY races stay bound to the lib stress
 # test; every publication mutant runs the dedicated integration binary, whose
 # process owns the subreaper lease instead of the shared lib test process.
@@ -332,7 +347,15 @@ cases = [
     boundary.and(published)
 }
 ''',
-     '''    let mut file = fs::File::create(path)?;
+     '''    // #2142 fix-r2 (sibling r2 #1): the in-process shape uses none of the
+    // helper machinery, but the parameters — and the `mpsc` import, whose
+    // only user is the replaced body — must stay referenced, or a
+    // `-D warnings` host fails the mutant's compile on unused variables or
+    // unused imports and reads the row INVALID; the fn item touches the
+    // import without running anything.
+    let _ = (deadline, &build_helper, &spawned, &reaped, &returning,
+        mpsc::channel::<()>);
+    let mut file = fs::File::create(path)?;
     io::Write::write_all(&mut file, body.as_bytes())?;
     #[cfg(unix)]
     file.set_permissions(fs::Permissions::from_mode(mode))?;
@@ -391,11 +414,17 @@ cases = [
     # dead-helper group test (the old pid-mode test is now a Linux-only
     # contract); its stranger holds the read end the same way, and the
     # writer-exit assert needs no `/proc`, so this kills on every unix host.
+    # #2142 fix-r2 (sibling r2 #1): the replacement keeps `expiry` referenced
+    # (`if false && <original condition>` — same tautology, "state alone
+    # decides" is not what this mutant removes), the same shape
+    # `zombie-leader-is-terminal` already uses: the runner inherits the
+    # caller's RUSTFLAGS, and a `-D warnings` host would otherwise fail the
+    # mutant's compile on the now-unused `expiry` and read the row INVALID.
     ('writer-deadline-removed', helper,
      '''                if Instant::now() >= expiry {
                     return Err(helper_deadline_error(deadline));
                 }''',
-     '''                if false {
+     '''                if false && Instant::now() >= expiry {
                     return Err(helper_deadline_error(deadline));
                 }''',
      publication_target, dead_stranger, '#1125 helper writer did not exit by its deadline'),
@@ -606,9 +635,13 @@ cases = [
     # the deadline-kind assertion of the dead-helper test kills with the
     # scan's message inside it — so the binding no longer depends on which
     # downstream assertion the scan error displaces.
+    # #2142 fix-r2 (sibling r2 #1): `if false && access & 0o3 == 0` keeps the
+    # `for (fd, access)` binding referenced on a `-D warnings` host — same
+    # tautology, the mutant is still "no access-mode filter", not an unused
+    # `access`.
     ('boundary-write-end-filter-removed', publication,
      '''                        if access & 0o3 == 0 {''',
-     '''                        if false {''',
+     '''                        if false && access & 0o3 == 0 {''',
      publication_target, dead_stranger, '#1155 a write end of the publication pipe'),
     # #1155 fix-r1 review opus row 1: the scan must fail closed. A fdinfo
     # that cannot be read is an unknown — not a read end — and only the fd's
@@ -745,6 +778,10 @@ cases = [
     # #1409 item 3: the other half — a re-check that runs but never evicts
     # keeps a released candidate for the whole grace and then reports it,
     # the same false FAIL by a slower route.
+    # #2142 fix-r2 (sibling r2 #1): the replacement keeps `wanted`/`sources`
+    # referenced — the runner inherits the caller's RUSTFLAGS, and a
+    # `-D warnings` host would otherwise fail the mutant's compile on the two
+    # now-unused parameters and read the row INVALID.
     ('boundary-grace-never-evicts', publication,
      '''        candidates.retain(|fd| match fs::read_link(fd) {
             Ok(target) => target.to_string_lossy() == wanted,
@@ -754,7 +791,8 @@ cases = [
             // being quietly dropped from the verdict.
             Err(error) => !link_failure_is_a_release(Path::new(fd), &error, sources),
         });''',
-     '''        candidates.retain(|_| true);''',
+     '''        let _ = (&wanted, &sources);
+        candidates.retain(|_| true);''',
      publication_target, grace_unit,
      '#1409 the grace must evict'),
     # #1409 item 1/3: the shared link rule itself, turned fail-open — every
@@ -796,13 +834,20 @@ cases = [
     # fd table — `/proc/<tgid>/fd` answers EACCES in exactly that state (cb8
     # 6.17, `_tmp/20261107-issue-1409/zombie-leader-probe3.log`), so the scan
     # would skip the one source that still holds the write end.
+    # #2142: the criterion is one function now (`terminal_state`), so the
+    # anchor is its body — the mutation fail-opens BOTH entries (the
+    # enumeration's first check and the settle re-check), where before it
+    # could only reach the enumeration's copy.
+    # #2142 fix-r1 (boundary r1 #3): the replacement keeps `pid` referenced —
+    # `(pid.is_empty() || true)` is a tautology, still "state alone decides" —
+    # because the runner inherits the caller's RUSTFLAGS, and a `-D warnings`
+    # host would otherwise fail the mutant's compile on an unused variable and
+    # read the row INVALID.
     ('zombie-leader-is-terminal', publication,
-     '''    if matches!(state, 'Z' | 'X') && thread_group_is_dead(pid) {
-        return BlindSource::Terminal;
-    }''',
-     '''    if matches!(state, 'Z' | 'X') {
-        return BlindSource::Terminal;
-    }''',
+     '''    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+''',
+     '''    matches!(state, 'Z' | 'X') && (pid.is_empty() || true)
+''',
      publication_target, leader_unit,
      '#1409 a zombie leader with a live group has not released its descriptors'),
     # #1409 item 1 (r2 review, concurrency): the group-liveness check itself,
@@ -818,6 +863,45 @@ cases = [
         }''',
      publication_target, leader_unit,
      '#1409 a zombie leader with a live group has not released its descriptors'),
+    # #2142: the shared criterion, hardcoded never to fire — the `if false &&`
+    # shape of thread-group-dead-ignores-live-tasks, applied to the one
+    # function both entries consult. A dead thread group stops being terminal,
+    # so the scan fails closed on every corpse it should have skipped: the
+    # direction no existing mutant pinned (zombie-leader-is-terminal and
+    # thread-group-dead-ignores-live-tasks both fail OPEN, and the settle
+    # mutant only pins the deadline arm). Bound to the blind-source unit test,
+    # the one that genuinely walks the settle entry (its own process is
+    # related and non-terminal, so every blind_source(self) descends into the
+    # settle) and that pins the Terminal verdict of both entries on one dead
+    # pid in a single assert: the failure payload carries both halves, so the
+    # kill exists only while both entries really share the criterion.
+    ('terminal-state-hardcoded-false', publication,
+     '''    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+''',
+     '''    false && matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+''',
+     publication_target, blind_unit,
+     '#2142 a dead thread group must be terminal'),
+    # #2142 fix-r2 (sibling r2 #2 / boundary r2 #2 / simplify r2 #1, five
+    # reviewers): the production sweep (`src/test_process.rs`, #2138) has its
+    # own `terminal_state`, and before this row nothing pinned it — the two
+    # mutants above mutate only the publication copy, so a production
+    # criterion hardcoded never to fire (fail-closed: every corpse reported)
+    # kept every test green while the audit misfired. Same anchor shape, now
+    # in the production file: the mutation fail-closes BOTH of its entries,
+    # and the production unit test now pins the Terminal verdict of both on
+    # one killed-unreaped group (mirroring the publication tuple assert), so
+    # "the two copies change together" is a killable fact on each side. The
+    # bound test runs in the shared lib process but takes no subreaper lease
+    # and parks no poison state — its probe is a killed, all-`Z` group, the
+    # one shape every scan must read as terminal.
+    ('terminal-state-production-hardcoded-false', production,
+     '''    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+''',
+     '''    false && matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+''',
+     lib_target, production_blind_unit,
+     '#2142 a dead thread group must be terminal'),
     # #1409 item 1: the source classification itself. Anyone unreadable is
     # skipped once the relation check is short-circuited — this process
     # included — which is the shape that would let a host hide a descendant's
@@ -830,6 +914,85 @@ cases = [
         settles_into_a_terminal_source(pid)''',
      publication_target, blind_unit,
      '#1409 this process is the scan\'s own source and must never be skipped'),
+    # #2154 (probe OOM window): the group kill in the probe guard's Drop is
+    # the only thing that ends the poison state when the probe dies before
+    # the pid line — a test that panics there unwinds through exactly this
+    # drop, so removing it strands a zombie leader with a live thread group
+    # past the scan window's release. Bound to the EOF-path test, whose whole
+    # front path is assert-bounded at 4s (pid line, on a reader thread with
+    # its own deadline) + 10s (receipt) + 10s (zombie) + 5s (kill window)
+    # = 29s, inside the hold thread's 30s cap — and the sums are a
+    # compile-time fact in the test file (`PROBE_HOLD_SECS` and the margin
+    # assert below it), not prose — the mutant cannot be outwaited by the
+    # front loops' own clocks on a slow host (#2142 fix-r1 concurrency r1 #1 /
+    # boundary r1 #2; fix-r2 boundary r2 #1 closed the last unbounded wait,
+    # the pid-line read itself), and the timeout branch's own explicit killpg
+    # plus its bounded death confirmation — a different line from this
+    # anchor — bounds the mutant's on-disk residue and keeps the window
+    # release behind a proven dying group (fix-r2 concurrency r2 #2; fix-r3
+    # concurrency P1 made that confirmation an asserted escalation — a
+    # second kill and `PROBE_DEATH_RETRY_WINDOW` before the branch panics —
+    # so the fail-closed wait below cannot hand this row a false PASS).
+    ('probe-group-kill-removed', publication,
+     '''        let _ = rustix::process::kill_process_group(self.0, Signal::KILL);
+''',
+     '''        let _ = self.0;
+''',
+     publication_target, eof_unit,
+     '#2154 the poison group must not outlive'),
+    # #2142 fix-r3 (concurrency #1): the fail-open the group-is-gone wait
+    # used to have — any /proc metadata error read as "already gone", so a
+    # restricted procfs (hidepid, a restricted container) could confirm a
+    # death it never observed, and the kill-removed mutant above could have
+    # false-PASSED through it. The classification is one function now
+    # (`metadata_failure_is_gone`), pinned by its own unit test the way the
+    # link rule is — a healthy host's /proc never answers the error side for
+    # a descendant. The mutant reverts it to "every error is gone".
+    ('metadata-failure-always-gone', publication,
+     '''fn metadata_failure_is_gone(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+}''',
+     '''fn metadata_failure_is_gone(_error: &io::Error) -> bool {
+    true
+}''',
+     publication_target, gone_error_unit,
+     "#2142 an unreadable /proc entry means the group's state is unknown, never gone"),
+    # #2142 fix-r3 (concurrency P1 — two reviewers): the timeout branch's
+    # death confirmation is an assert now, not a dropped `let _ =`. This
+    # mutant hardcodes the confirm verdict false — the shape of a /proc that
+    # can never prove death — so the bound leader test enters the branch,
+    # escalates through the retry round, and must fail on the confirm's own
+    # message instead of the branch panic sailing over an unconfirmed group.
+    # Against the pre-fix code the same run fails with the branch panic's
+    # message alone, so this row's marker is what makes the assert — and its
+    # dedicated message — the killable fact.
+    ('group-gone-always-false', publication,
+     '''fn group_is_gone_within(pid: &str, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        let gone = match fs::metadata(format!("/proc/{pid}")) {
+            // The usual exit: reaped, and gone from the tree.
+            Err(error) if metadata_failure_is_gone(&error) => true,
+            // Anything else unreadable is an unknown — alive for a wait
+            // whose whole job is proving death.
+            Err(_) => false,
+            Ok(_) => thread_group_is_dead(pid),
+        };
+        if gone {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}''',
+     '''fn group_is_gone_within(pid: &str, budget: Duration) -> bool {
+    let _ = (pid, budget);
+    false
+}''',
+     publication_target, leader_unit,
+     '#2142 the timeout branch must not panic over a group whose death it could not confirm'),
 ]
 
 
@@ -861,8 +1024,13 @@ INVALID_OFF_LINUX = (
     'blind-source-settle-always-terminal',
     'zombie-leader-is-terminal',
     'thread-group-dead-ignores-live-tasks',
+    'terminal-state-hardcoded-false',
+    'terminal-state-production-hardcoded-false',
     'stranger-pid-reap-removed',
     'blind-source-self-unrelated',
+    'probe-group-kill-removed',
+    'metadata-failure-always-gone',
+    'group-gone-always-false',
 )
 
 
@@ -956,7 +1124,8 @@ def main():
         print(f'{name}: {status}: {reason}', flush=True)
 
     try:
-        with mutating_sources(root, [helper, source, publication]) as snapshots:
+        with mutating_sources(root, [helper, source, publication,
+                                     production]) as snapshots:
             for name, path, old, new, target, test, assertion in selected:
                 status, reason = 'INVALID', 'not run'
                 try:

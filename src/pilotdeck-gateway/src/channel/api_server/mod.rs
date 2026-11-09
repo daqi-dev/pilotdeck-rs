@@ -12,7 +12,7 @@ mod tests;
 
 use self::mapper::SessionMapper;
 use super::protocol::*;
-use pilotdeck_protocol::JsValue;
+use pilotdeck_protocol::{JsObject, JsValue};
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -34,13 +34,14 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 /// body read only, like the webhook lane's `DEFAULT_REQUEST_TIMEOUT`.
 pub const DEFAULT_BODY_READ_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Constructor options of the TS adapter. `port`/`cors_origins` accept JS
-/// values because `loadEnabledChannels` forwards `cfg.extra` unchanged; `env`
-/// lets a host inject `API_SERVER_*` without touching process globals in tests.
+/// Constructor options of the TS adapter. `port`/`apiKey`/`cors_origins` accept
+/// JS values because `loadEnabledChannels` forwards `cfg.extra` / `cfg.apiKey`
+/// unchanged; `env` lets a host inject `API_SERVER_*` without touching process
+/// globals in tests.
 #[derive(Clone, Default)]
 pub struct ApiServerOptions {
     pub port: Option<JsValue>,
-    pub api_key: Option<String>,
+    pub api_key: Option<JsValue>,
     pub host: Option<String>,
     pub model_name: Option<String>,
     pub cors_origins: Option<JsValue>,
@@ -148,7 +149,7 @@ impl ApiServerChannel {
     fn resolve(&self, config: Option<&JsValue>) -> Resolved {
         let extra = config.and_then(|config| config.get("extra"));
         let config_port = extra.and_then(|extra| extra.get("port"));
-        let config_key = config.and_then(|config| config.get("apiKey"));
+        let config_key = config.and_then(|config| config.get("apiKey").cloned());
         let port = self
             .0
             .options
@@ -164,18 +165,25 @@ impl ApiServerChannel {
                     .get("API_SERVER_PORT")
                     .map(|value| JsValue::from(value.as_str()))
             });
+        // `options.apiKey ?? process.env.API_SERVER_KEY ?? ""`: only nullish
+        // values fold — a present `false`/`0`/`NaN` is *kept* by `??` and then
+        // fails checkAuth's `!this.apiKey` falsy gate, exactly like a `""` from
+        // the last fallback.
         let api_key = self
             .0
             .options
             .api_key
             .clone()
+            .filter(|value| !nullish(value))
+            .or_else(|| config_key.filter(|value| !nullish(value)))
             .or_else(|| {
-                config_key
-                    .and_then(|value| value.as_string())
-                    .map(js_string_value)
+                self.0
+                    .env
+                    .get("API_SERVER_KEY")
+                    .map(|value| JsValue::from(value.as_str()))
             })
-            .or_else(|| self.0.env.get("API_SERVER_KEY").cloned())
-            .unwrap_or_default();
+            .map(|value| ApiKey::of(&value))
+            .unwrap_or(ApiKey::Off);
         Resolved {
             host: self
                 .0
@@ -214,9 +222,64 @@ pub(crate) struct Resolved {
     pub host: String,
     /// Always present: TS falls back to `DEFAULT_PORT` when nothing configures one.
     pub port: f64,
-    pub api_key: String,
+    pub api_key: ApiKey,
     pub model_name: String,
     pub cors_origins: Vec<String>,
+}
+
+/// The TS constructor's `this.apiKey` after
+/// `options.apiKey ?? process.env.API_SERVER_KEY ?? ""`, classified the way
+/// `checkAuth` consumes it (ApiServerChannel.ts:52, 110-125): a falsy value
+/// leaves the gate open; a truthy string is the UTF-8 bytes `Buffer.from`
+/// holds; a truthy array is its per-element `ToUint8` bytes
+/// (`Buffer.from([256, 257])` is `[0, 1]`, Node v22.22.0 probes in
+/// `_tmp/20261026-issue-p2batch-f/`); any other truthy value makes
+/// `Buffer.from(this.apiKey)` throw inside checkAuth's try, the catch
+/// swallows it and every request answers 401 — never the pre-#2428 fold of
+/// a non-string into the env/"" fallback that silently disabled auth.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ApiKey {
+    /// `!this.apiKey`: checkAuth answers ok without reading the request.
+    Off,
+    /// A truthy string or array: compared as bytes, length first, timing-safe.
+    Key(Vec<u8>),
+    /// A truthy value `Buffer.from` refuses (number, `true`, object): always 401.
+    Never,
+}
+
+impl ApiKey {
+    fn of(value: &JsValue) -> Self {
+        match value {
+            JsValue::Undefined | JsValue::Null | JsValue::Bool(false) => Self::Off,
+            JsValue::Number(number) if *number == 0.0 || number.is_nan() => Self::Off,
+            JsValue::String(text) if text.is_empty() => Self::Off,
+            JsValue::String(text) => Self::Key(js_string_value(text).into_bytes()),
+            JsValue::Array(items) => Self::Key(
+                items
+                    .iter()
+                    .map(|item| to_uint8(server::js_number(item)))
+                    .collect(),
+            ),
+            _ => Self::Never,
+        }
+    }
+
+    /// checkAuth's `if (!this.apiKey) return { ok: true }` gate.
+    fn is_off(&self) -> bool {
+        matches!(self, Self::Off)
+    }
+}
+
+/// `Buffer.from(array)`'s per-element conversion (Node v22.22.0 probes:
+/// `Buffer.from([256, 257])` = `[0, 1]`, `[-1]` = `[255]`, `[1.7]` = `[1]`,
+/// `["65", "a"]` = `[65, 0]`, `[{}]` = `[0]`): `ToNumber`, then ToUint8 —
+/// NaN/±Infinity are 0, fractions truncate toward zero, negatives wrap
+/// modulo 256.
+fn to_uint8(number: f64) -> u8 {
+    if !number.is_finite() {
+        return 0;
+    }
+    number.trunc().rem_euclid(256.0) as u8
 }
 
 fn js_string_value(value: &pilotdeck_protocol::JsString) -> String {
@@ -389,4 +452,46 @@ fn noop_handle() -> Arc<dyn ChannelHandle> {
         }
     }
     Arc::new(Noop)
+}
+
+/// Loader mount: builds the adapter from the `apiServer` loader option object
+/// (`build_options` already forwarded `extra.port` / `apiKey`). Absent values
+/// stay present-but-undefined like the TS literal's, and `resolve`'s nullish
+/// filters fold them back into the env / `DEFAULT_PORT` chain — the TS
+/// `Number(options.port ?? process.env.API_SERVER_PORT ?? DEFAULT_PORT)` /
+/// `options.apiKey ?? process.env.API_SERVER_KEY ?? ""` order. `apiKey`
+/// forwards raw (#2428): the TS literal is `apiKey: cfg.apiKey`, and folding a
+/// non-string at either seam re-ordered the `??` chain into a silent
+/// auth-off fail-open — a truthy non-string now classifies in `ApiKey`
+/// exactly where TS's `Buffer.from(this.apiKey)` throws.
+/// #2301 fix-r1: the TS constructor's `Number(options.port ?? …)` throws on a
+/// failed toPrimitive, the loader's catch records the key and continues, and
+/// the channel never enters the startup array — the Rust channel defers the
+/// port conversion to `start`, so the mount applies the same check at
+/// construction and surfaces the same TypeError through the same loader catch
+/// (fix-r2: the shared coercion walk also covers arrays and the prototype
+/// chain the config merge installs, matching `Number()`'s join behavior).
+pub fn register(mounts: &mut super::loader::ChannelLoaderMounts) {
+    mounts.register(
+        "apiServer",
+        Arc::new(|options: &JsObject| {
+            if let Some(port) = options.get("port").filter(|value| !nullish(value))
+                && let Some(error) = crate::js_value::number_conversion_error(port)
+            {
+                return Err(ChannelError::Plain(error));
+            }
+            Ok(Arc::new(ApiServerChannel::new(ApiServerOptions {
+                port: options.get("port").cloned(),
+                api_key: options.get("apiKey").cloned(),
+                ..ApiServerOptions::default()
+            })) as Arc<dyn ChannelAdapter>)
+        }),
+    );
+}
+
+/// An option absent vs nullish: only a present, non-nullish value reaches the
+/// TS `??` chain's left side (the nullish arm falls back to the env / default
+/// chain, which never throws and never disables auth on its own).
+fn nullish(value: &JsValue) -> bool {
+    matches!(value, JsValue::Undefined | JsValue::Null)
 }

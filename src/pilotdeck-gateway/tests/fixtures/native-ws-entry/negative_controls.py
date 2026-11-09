@@ -81,16 +81,27 @@ switches = [
     ('native-ws-error-skips-cleanup', TURN_GATEWAY, PREFIX + 'host_cleanup_runs_after_session_failure', '#749 cleanup runs after session failure'),
     # #1942: the failed-initialization teardown (#1746) shipped with only its
     # positive control, so `dispose_initialization` had no switch watching it.
-    # Both rows below are compiled there and bound to that one test's two
-    # markers: the first skips the whole teardown (the coordinator and its
+    # The first two rows below are compiled there and bound to that one test's
+    # two markers: the first skips the whole teardown (the coordinator and its
     # interactions stay live), the second skips only the embedding cleanup
-    # poll while the synchronous disposals still run.
+    # poll while the synchronous disposals still run. The third (#1942 panic
+    # chain) lets a panicking embedding cleanup escape the host thread
+    # instead of being caught, so the disposals behind it never run and the
+    # caller sees the panic, not the builder error. The fourth is the drain
+    # twin: the same escape on the shutdown-drain poll of the same future,
+    # so the drain never settles and the disposals behind it never run.
     ('native-ws-skip-initialization-cleanup', TURN_GATEWAY,
      TURN_TESTS + 'a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup',
      '#1746 a builder error must still dispose the coordinator'),
     ('native-ws-skip-initialization-embedding-cleanup', TURN_GATEWAY,
      TURN_TESTS + 'a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup',
      '#1746 a builder error must still poll the embedding cleanup'),
+    ('native-ws-initialization-cleanup-panic-uncaught', TURN_GATEWAY,
+     TURN_TESTS + 'a_panicking_cleanup_still_disposes_the_coordinator',
+     '#1942 a panicking cleanup must still dispose the coordinator'),
+    ('native-ws-drain-cleanup-panic-uncaught', TURN_GATEWAY,
+     TURN_TESTS + 'a_panicking_drain_cleanup_still_disposes_the_coordinator',
+     '#1942 a panicking drain cleanup must still dispose the coordinator'),
     ('native-ws-skip-drain', SOURCE, PREFIX + 'stop_accepting_drains_existing', '#749 drain waits for existing socket'),
     ('native-ws-input-boundary', ROOT / 'src/pilotdeck-gateway/src/frame.rs', PREFIX + 'input_limit_boundary_preserves_proxy', '#749 exact input boundary remains accepted'),
     ('native-ws-full-close-signal', SOURCE, PREFIX + 'output_slot_budget_and_full_close', '#749 full output queue preserves close frame'),

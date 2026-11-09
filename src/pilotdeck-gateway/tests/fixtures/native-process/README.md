@@ -1,8 +1,8 @@
 # #1071 原生进程夹具
 
-`pilotdeck-gateway --native` 显式启动单 project 的 Rust 宿主；无该首参数时保留 A4 代理入口。当前生产装配支持文本主代理、原生只读工具、默认空 provider LSP、模型标题、session JSONL、run registry 与取消。配置的 MCP、plugins/skills/hooks、subagents、附件及每轮 model/SDK override 尚未装配，入口明确拒绝相应请求。它不是完整 native 格验收结论。
+`pilotdeck-gateway --native` 显式启动单 project 的 Rust 宿主；入口另有 `PILOTDECK_GATEWAY_MODE=native` 配置路由（#1354），两条路由都不走时保留 A4 代理入口。当前生产装配支持文本主代理、原生只读工具、默认空 provider LSP、模型标题、session JSONL、run registry 与取消。配置的 MCP、plugins/skills/hooks、subagents、附件及每轮 model/SDK override 尚未装配，入口明确拒绝相应请求。它不是完整 native 格验收结论。
 
-启动参数均显式提供。home 与 project 是已存在的绝对目录，二者不得相同或互相包含；token 文件非空；sidecar 为绝对文件路径；监听仅接受 `127.0.0.1` 的高位端口或 `0`。`--sidecar-arg` 可重复，`--drain-ms` 默认 5000、范围 1..300000。`--storage-root` 可选：给出时按原样注入 `PILOTDECK_STORAGE_ROOT` 并启用 snapshot 能力，缺省或空白值保持 snapshot 关闭（生产默认关闭，见决策卡 `state/decisions-20261101-1231-u3-scope.md` 选项 B）；非 UTF-8 值按启动参数硬错误拒绝；与 home/project 不同，相对值按进程 cwd 解析，不要求绝对或已存在。配置从隔离 home/project 加载，继承的 `PILOTDECK_CONFIG_PATH`、代理 upstream、sidecar TCP 地址被移除；未给 `--storage-root` 时继承的 `PILOTDECK_STORAGE_ROOT` 与 `PILOTDECK_SNAPSHOT_ROOT`（含空白值）一并移除，给出时只注入 `PILOTDECK_STORAGE_ROOT`、继承的 `PILOTDECK_SNAPSHOT_ROOT` 原样保留。继承到非空的 managed/storage/snapshot 根时拒绝启动（校验先于 `Options::environment`，所以「继承的 `PILOTDECK_SNAPSHOT_ROOT` 原样保留」只在直接调用该函数时可见；经入口时能活下来的继承 snapshot 根只有空值，非空值一律先拒绝）。
+启动参数均显式提供。home 与 project 是已存在的绝对目录，二者不得相同或互相包含；token 文件非空；sidecar 为绝对文件路径；监听仅接受 `127.0.0.1` 的高位端口或 `0`。`--sidecar-arg` 可重复，`--drain-ms` 默认 5000、范围 1..300000。`--storage-root` 可选：给出时按原样注入 `PILOTDECK_STORAGE_ROOT` 并启用 snapshot 能力，缺省或空白值保持 snapshot 关闭（生产默认关闭，见决策卡 `state/decisions-20261101-1231-u3-scope.md` 选项 B）；非 UTF-8 值按启动参数硬错误拒绝；与 home/project 不同，相对值按进程 cwd 解析，不要求绝对或已存在。配置从隔离 home/project 加载，继承的 `PILOTDECK_CONFIG_PATH`、代理 upstream、sidecar TCP 地址被移除；`PILOTDECK_GATEWAY_MODE` 是入口作用域（#1354：本进程已消费完自己的路由），同样被移除、不下沉进 native 子树环境；未给 `--storage-root` 时继承的 `PILOTDECK_STORAGE_ROOT` 与 `PILOTDECK_SNAPSHOT_ROOT`（含空白值）一并移除，给出时只注入 `PILOTDECK_STORAGE_ROOT`、继承的 `PILOTDECK_SNAPSHOT_ROOT` 原样保留。继承到非空的 managed/storage/snapshot 根时拒绝启动（校验先于 `Options::environment`，所以「继承的 `PILOTDECK_SNAPSHOT_ROOT` 原样保留」只在直接调用该函数时可见；经入口时能活下来的继承 snapshot 根只有空值，非空值一律先拒绝）。
 
 token 仅移除末尾 CR/LF，保留空格与 tab；全部为空白则拒绝启动，客户端须发送处理后的精确 token。环境键值以有损 UTF-8 捕获，非法字节替换为 U+FFFD，因此不保证含非 UTF-8 字节的路径仍可访问；此处说明既有行为，不改变鉴权或路径规则。
 
@@ -19,7 +19,7 @@ pilotdeck-gateway --native \
 
 YAML 顶层 `hooks` 在固定 TS 配置层是未知字段，会被投影丢弃；本入口按该诊断明确拒绝该字段（包括空值），不把它当作已装配的 hooks。实际 hooks 来源是插件贡献和 SDK session hooks：磁盘 plugins/skills 非空被拒绝，内置插件为空，`sdkConfig` 请求被拒绝。每轮既有 `prepare_attachment_turn` 会重新校验 profile，进程测试另验证启动后加入 hooks 被拒绝。
 
-`default_mode_unchanged` 是源码守卫：精确移除唯一 opt-in 片段后计算 A4 源码 SHA；它不等同运行时行为证明。`explicit_entry_selects_parser` 启动真实二进制，以 native 专属参数错误和 A4 地址错误区分分支，涵盖首参、非首参及 `--native=true`。
+`default_mode_unchanged` 是源码守卫：精确移除入口的两段 native 路由（#1354 的路由块与参数转发 helper）后计算 A4 源码 SHA；它不等同运行时行为证明。`explicit_entry_selects_parser` 启动真实二进制，以 native 专属参数错误和 A4 地址错误区分分支，涵盖首参、非首参及 `--native=true`。
 
 清理矩阵调用真实 TS `LocalGatewayLifecycleBundle`，覆盖成功、单错、双错、前驱释放/取消/永不完成。Rust `production_cleanup_matrix` 走真实生产装配，在实际资源 dispose 后注入故障，核对顺序、首错、project 诊断和 deadline。TS 吞错、Rust 返回首错仍是未批准差异，见 `specs/gateway-parity/diffs/A7.2-NATIVE-PROCESS-SHUTDOWN-001-R1.md`。
 

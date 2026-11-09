@@ -29,8 +29,9 @@ mod baseline;
 /// Instrumenting `_native_run` in a scratch copy recorded **two** entries during
 /// that single control (`_tmp/20261107-issue-1408/07-reachability-probe.log`).
 /// The 19 controls as a whole take 0.9 s
-/// (`_tmp/20261107-issue-1408/01-baseline-full19.txt`), so nothing legitimate
-/// comes anywhere near the backstop.
+/// (`_tmp/20261107-issue-1408/01-baseline-full19.txt`); the #2396 adapter
+/// controls add ~0.6 s of in-process scripted drives (same measurement run:
+/// 28 controls, 1.4 s), so nothing legitimate comes anywhere near the backstop.
 fn fixture_script() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/fixtures/native-stimulus-plan/test_plan.py")
@@ -86,6 +87,35 @@ fn native_stimulus_plan_controls() {
         "PlanTests.test_registry_free_settle_synthetic_control",
         "PlanTests.test_unknown_and_detached_plan",
         "PlanTests.test_unwitnessed_is_not_run",
+        "PlanTests.test_memory_rehearsal_holds_tree_lock",
+        "AdapterTests.test_storage_arms_match_the_arming_table",
+        "AdapterTests.test_driver_slow_status_choreography",
+        "AdapterTests.test_driver_slow_append_two_barriers",
+        "AdapterTests.test_driver_known_final_pending_release",
+        "AdapterTests.test_driver_after_complete_fence",
+        "AdapterTests.test_driver_unknown_first_timer_observation",
+        "AdapterTests.test_adapter_precise_missing_per_target",
+        "AdapterTests.test_adapter_cross_case_receipts_do_not_attest",
+        "AdapterTests.test_adapter_registry_closure_requires_product_receipt",
+        // The #2396 fix rounds added controls in the fixture without
+        // re-listing them here, so `cargo test` never ran them (codex r3
+        // sibling P2#3 — the fixture list is the only selective entry).
+        "AdapterTests.test_case_budget_counts_every_armed_barrier",
+        "AdapterTests.test_driver_bounded_release_receipt_does_not_attest",
+        "AdapterTests.test_driver_cross_case_loop_final_does_not_attest",
+        "AdapterTests.test_driver_foreign_request_final_is_ignored",
+        "AdapterTests.test_driver_foreign_prefix_frame_does_not_attest_phase",
+        "AdapterTests.test_driver_foreign_timeout_frame_keeps_timer_clear",
+        "AdapterTests.test_plan_missing_request_id_attests_nothing",
+        "AdapterTests.test_driver_order_edge_final_before_held_release",
+        "AdapterTests.test_driver_receipt_without_seq_attests_no_order",
+        "AdapterTests.test_plan_loop_receipt_without_seq_attests_no_phase_bracket",
+        "AdapterTests.test_plan_status_block_without_seq_attests_no_rearm_edge",
+        "AdapterTests.test_plan_missing_control_records_attest_no_rearm_edge",
+        "AdapterTests.test_plan_special_variant_seq_edges_attest",
+        "AdapterTests.test_plan_bool_seq_never_attests_order_edge",
+        "AdapterTests.test_driver_pidless_loop_receipts_do_not_attest",
+        "AdapterTests.test_driver_slow_append_out_of_order_receipts_do_not_attest",
     ]);
 }
 

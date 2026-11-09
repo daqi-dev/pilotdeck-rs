@@ -890,7 +890,7 @@ async fn leading_ows_head_still_parses_a_valid_request() {
     );
     let payload = String::from_utf8_lossy(&response);
     assert!(
-        payload.contains("\"version\":1"),
+        payload.contains("\"version\":1,"),
         "#1555 the list response body must be intact behind the OWS-dropped head"
     );
     server.close().await;
@@ -1427,7 +1427,7 @@ async fn persistent_responses_advertise_keep_alive_like_node() {
     let head = read_head(&mut persistent).await.to_ascii_lowercase();
     assert!(head.starts_with("http/1.1 405"), "{head}");
     assert!(head.contains("connection: keep-alive"), "{head}");
-    assert!(head.contains("keep-alive: timeout=5"), "{head}");
+    assert!(head.contains("keep-alive: timeout=5\r"), "{head}");
 
     let mut closing = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
     closing.write_all(&http_get(true)).await.unwrap();
@@ -1444,7 +1444,7 @@ async fn persistent_responses_advertise_keep_alive_like_node() {
     let head = read_head(&mut head_request).await.to_ascii_lowercase();
     assert!(head.starts_with("http/1.1 405"), "{head}");
     assert!(head.contains("connection: keep-alive"), "{head}");
-    assert!(head.contains("keep-alive: timeout=5"), "{head}");
+    assert!(head.contains("keep-alive: timeout=5\r"), "{head}");
 
     drop((persistent, closing, head_request));
     server.close().await;
@@ -1595,6 +1595,12 @@ async fn oversized_chunked_body_rejection_closes_connection() {
 /// server: `.../probe/node-real-server.out.txt`, plus a focused probe showing
 /// `res.shouldKeepAlive === true` but `Connection: close` on the wire). Rust
 /// must not let hyper turn the parsed keep-alive into an advertisement.
+///
+/// #1947: the whole 1.0 reply is pinned, not just the close. Node's store
+/// form (`response.end(buffer)`) is close-delimited on 1.0, so the reply
+/// carries no `content-length` (and no chunking or keep-alive advertisement);
+/// the 1.1 control keeps its `content-length`, because only the 1.0 framing
+/// changed.
 #[tokio::test]
 async fn http_10_requests_close_like_node() {
     let (store, directory) = file_store("http-1.0-close");
@@ -1607,9 +1613,102 @@ async fn http_10_requests_close_like_node() {
             exchange_until_eof(port, request.as_bytes(), Duration::from_secs(5)).await;
         assert_close_without_keep_alive(&response, 405, request);
         assert!(closed, "{request:?}: HTTP/1.0 connection stayed open");
+        assert_http10_store_reply(
+            &response,
+            405,
+            "{\"version\":1,\"error\":\"method_not_allowed\",\"message\":\"Only POST is supported.\"}",
+            request,
+        );
     }
+    // A 200 with a real body is close-delimited on 1.0 too.
+    let list = list_body();
+    let mut request = format!(
+        "POST {STORE_PATH_PREFIX}list HTTP/1.0\r\nHost: h\r\nAuthorization: Bearer {TOKEN}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+        list.len()
+    )
+    .into_bytes();
+    request.extend_from_slice(&list);
+    let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
+    assert_close_without_keep_alive(&response, 200, "http-1.0-list");
+    assert!(closed, "http-1.0-list: HTTP/1.0 connection stayed open");
+    assert_http10_store_reply(
+        &response,
+        200,
+        "{\"version\":1,\"result\":[]}",
+        "http-1.0-list",
+    );
+
+    // 1.1 control: the same list reply keeps its `content-length`.
+    let request = http_request(
+        "POST",
+        &format!("{STORE_PATH_PREFIX}list"),
+        &[
+            ("Authorization", &format!("Bearer {TOKEN}")),
+            ("Content-Type", "application/json"),
+            ("Connection", "close"),
+        ],
+        &list,
+    );
+    let (response, closed) = exchange_until_eof(port, &request, Duration::from_secs(5)).await;
+    assert!(closed, "the 1.1 close response ended the connection");
+    let head = String::from_utf8_lossy(&response).to_ascii_lowercase();
+    assert!(
+        head.contains("content-length: 25"),
+        "#1947 the 1.1 reply keeps its content-length: {head}"
+    );
     server.close().await;
     let _ = std::fs::remove_dir_all(directory);
+}
+
+/// #1947: pin the whole shape of an HTTP/1.0 store reply. The status line is
+/// hyper's own 1.0 rewrite — the registered A7.4-HTTPSTORE-KEEPALIVE-001
+/// diff, as in the webhook lane — and the header set is Node's close-delimited
+/// reply: `content-type`, `connection: close` and hyper's automatic `date`,
+/// with **no** `content-length`. The body runs to the connection's end.
+/// Header order is pinned nowhere on this lane, so the set, not the sequence,
+/// is asserted.
+fn assert_http10_store_reply(response: &[u8], expected: u16, body: &str, note: &str) {
+    assert_eq!(status(response), expected, "{note}: {response:?}");
+    let text = String::from_utf8_lossy(response);
+    let (head, rest) = text
+        .split_once("\r\n\r\n")
+        .unwrap_or_else(|| panic!("{note}: no header terminator: {response:?}"));
+    let mut lines = head.split("\r\n");
+    let status_line = lines.next().unwrap_or_default();
+    assert!(
+        status_line.starts_with("HTTP/1.0 "),
+        "{note}: the 1.0 status line is hyper's own rewrite (the registered A7.4-HTTPSTORE-KEEPALIVE-001 diff): {response:?}"
+    );
+    let mut names = Vec::new();
+    for line in lines {
+        let (name, value) = line
+            .split_once(':')
+            .unwrap_or_else(|| panic!("{note}: malformed header {line:?}"));
+        match name.to_ascii_lowercase().as_str() {
+            "content-type" => assert_eq!(
+                value.trim(),
+                "application/json; charset=utf-8",
+                "{note}: the store content type is Node's: {response:?}"
+            ),
+            "connection" => assert_eq!(
+                value.trim().to_ascii_lowercase(),
+                "close",
+                "{note}: the 1.0 reply closes: {response:?}"
+            ),
+            _ => {}
+        }
+        names.push(name.to_ascii_lowercase());
+    }
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        ["connection", "content-type", "date"],
+        "{note}: #1947 the 1.0 header set is exactly Node's close-delimited reply (no content-length, no chunking, no keep-alive advertisement): {response:?}"
+    );
+    assert_eq!(
+        rest, body,
+        "{note}: #1947 the 1.0 body runs to the connection end: {response:?}"
+    );
 }
 
 /// Node v22.22.0 S1: `server.close()` inside the handler, before the
@@ -1678,7 +1777,7 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
     assert_eq!(status(&response), 200, "{response:?}");
     let head = String::from_utf8_lossy(&response).to_ascii_lowercase();
     assert!(
-        head.contains("connection: keep-alive") && head.contains("keep-alive: timeout=1"),
+        head.contains("connection: keep-alive") && head.contains("keep-alive: timeout=1\r"),
         "Node keeps the in-flight advertisement even after close(): {head}"
     );
     assert!(
@@ -1705,7 +1804,7 @@ async fn shutdown_during_inflight_request_does_not_advertise_keep_alive() {
     let second_head = String::from_utf8_lossy(&second).to_ascii_lowercase();
     assert!(
         second_head.contains("connection: keep-alive")
-            && second_head.contains("keep-alive: timeout=1"),
+            && second_head.contains("keep-alive: timeout=1\r"),
         "the post-close request is still on the advertised keep-alive connection: {second_head}"
     );
 
@@ -1833,7 +1932,7 @@ async fn empty_response_body_arms_idle_timer_without_a_body_poll() {
             Ok::<_, Infallible>(
                 Response::builder()
                     .status(StatusCode::NO_CONTENT)
-                    .body(KeepAliveBody::new(Full::new(Bytes::new()), timer))
+                    .body(KeepAliveBody::new(Full::new(Bytes::new()), timer, false))
                     .expect("static response"),
             )
         }
@@ -1959,7 +2058,7 @@ async fn dropping_a_fully_polled_body_does_not_rearm_the_idle_deadline() {
         Arc::new(AtomicBool::new(false)),
     ));
     timer.request_started();
-    let mut body = KeepAliveBody::new(Full::new(Bytes::from_static(b"x")), timer.clone());
+    let mut body = KeepAliveBody::new(Full::new(Bytes::from_static(b"x")), timer.clone(), false);
     loop {
         let frame = std::future::poll_fn(|cx| Pin::new(&mut body).poll_frame(cx)).await;
         if frame.is_none() {
@@ -1973,6 +2072,27 @@ async fn dropping_a_fully_polled_body_does_not_rearm_the_idle_deadline() {
         timer.nearest_deadline(),
         Some(deadline),
         "Drop re-armed the idle timer after a fully polled body"
+    );
+}
+
+/// #1947: a 1.0 reply body reports no size, so hyper cannot write a
+/// `content-length` on the close-delimited reply; the sized path is
+/// unchanged.
+#[test]
+fn http10_reply_body_reports_an_unknown_size() {
+    let timer = Arc::new(KeepAliveTimer::new(
+        Duration::from_secs(5),
+        Duration::from_secs(1),
+        Arc::new(AtomicBool::new(false)),
+    ));
+    let sized = KeepAliveBody::new(Full::new(Bytes::from_static(b"x")), timer.clone(), false);
+    assert_eq!(sized.size_hint().exact(), Some(1));
+    let close_delimited = KeepAliveBody::new(Full::new(Bytes::from_static(b"x")), timer, true);
+    assert_eq!(close_delimited.size_hint().exact(), None);
+    assert_eq!(
+        close_delimited.size_hint().lower(),
+        0,
+        "#1947 the 1.0 reply size stays unknown to hyper"
     );
 }
 

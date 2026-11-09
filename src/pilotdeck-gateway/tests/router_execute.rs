@@ -144,7 +144,7 @@ fn expected_port_action_mutation_is_detected() {
     assert!(
         replay_port_actions(&mutated)
             .unwrap_err()
-            .contains("port action 5")
+            .contains("port action 5:")
     );
 }
 fn replay_health_case(case: &JsValue) -> Result<(), String> {

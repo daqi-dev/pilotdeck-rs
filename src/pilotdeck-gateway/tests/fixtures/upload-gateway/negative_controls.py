@@ -99,10 +99,41 @@ LEASE_ENTRY = 'upload::tests::upload_lease_cleanup_never_deletes_through_an_entr
 SWAP_RECORD = 'upload::tests::upload_cleanup_record_removal_does_not_follow_a_root_swapped_mid_round'
 RECORD_RM = 'upload::tests::upload_cleanup_record_removal_failure_does_not_stop_the_sweep'
 LEASE_SWAP = 'upload::tests::upload_lease_cleanup_does_not_follow_a_root_swapped_mid_round'
+# fix-r1 (#2423): the lease entry gate is the `canonical_home` component walk;
+# its downgrade mutant is killed by the deterministic in-root alias test.
+LEASE_ALIAS = (
+    'upload::tests::upload_lease_cleanup_does_not_sweep_through_an_aliased_id_dir')
 LEASE_RELEASE = 'upload::tests::upload_lease_release_does_not_follow_a_swapped_leases_root'
 PLAIN_ROOT = 'upload::tests::plain_root_rejects_a_root_that_resolves_elsewhere'
 ORPHAN_RM = 'upload::tests::upload_cleanup_orphan_removal_failure_does_not_stop_the_sweep'
 SCHEDULE = 'upload::tests::cleanup_failure_keeps_the_schedule_alive'
+# #1850: the cancel delete gate, the emptied `<id>` removal guard, and the
+# release `realpath` branches.
+CANCEL_ROOT_SWAP = (
+    'upload::tests::upload_cancel_does_not_follow_a_root_swapped_mid_mutate')
+CANCEL_TASK_SWAP = (
+    'upload::tests::upload_cancel_does_not_follow_a_task_dir_swapped_mid_mutate')
+CANCEL_ALIAS = (
+    'upload::tests::upload_cancel_does_not_delete_through_an_aliased_task_dir')
+LEASE_ID_SWAP = (
+    'upload::tests::upload_lease_cleanup_does_not_remove_an_id_dir_swapped_mid_round')
+RELEASE_REALPATH = (
+    'upload::tests::upload_lease_release_surfaces_and_caches_a_realpath_failure')
+# #2276: the #1631 pair regressions live in the `tests/` integration target,
+# not the lib — the runner picks `--test <target>` for a named test by this
+# registry (the roster names the target; it is never guessed from the test
+# name), and everything not in it keeps the `--lib` face. Fix-r1 (review,
+# MM boundary#6): every `#[test]` of the target is registered, so a future
+# row that names any of them cannot silently fall to the `--lib` face.
+INTEGRATION_TESTS = {
+    'interleaved_complete_and_cancel_cannot_both_win': 'upload_concurrency_1631',
+    'interleaved_complete_and_complete_has_one_winner': 'upload_concurrency_1631',
+    'interleaved_cancel_and_cancel_wins_exactly_once': 'upload_concurrency_1631',
+    # fix-r2 (DS r2 boundary#1): registered for the same reason as the three
+    # above — the deadline test is a `#[test]` of this target, and the
+    # every-test-registered invariant above must stay true.
+    'rendezvous_deadline_panics_when_the_pair_never_meets': 'upload_concurrency_1631',
+}
 
 # (name, source, original, mutant, named test, exclusive failure text)
 # Every mutation is applied to the pristine original, never cumulatively.
@@ -537,9 +568,9 @@ mutations = [
             }
 ''', '', SWAP_RECORD,
      'a record delete must not follow a root swapped mid-round'),
-    ('cleanup-lease-entry-symlink-swept', STORE, '''                if !inside_root(&root_real, &dir) {
+    ('cleanup-lease-entry-symlink-swept', STORE, '''                if canonical_home(&dir, &root_real, &root_real).is_none() {
                     self.log_cleanup(format!(
-                        "[uploads] lease cleanup skipped {}: outside the leases root",
+                        "[uploads] lease cleanup skipped {}: outside the leases root or a linked lease dir",
                         dir.display()
                     ));
                     continue;
@@ -547,16 +578,29 @@ mutations = [
 ''', '', LEASE_ENTRY,
      'a symlinked lease entry must not be swept'),
     # #1646 review r3: the record half's "do not re-resolve the root per entry"
-    # property had two mutations; the lease half had none.
-    ('cleanup-lease-root-recanonicalized', STORE, '''                if !inside_root(&root_real, &dir) {
-                    self.log_cleanup(format!(
-                        "[uploads] lease cleanup skipped {}: outside the leases root",
-''', '''                let root_real = fs::canonicalize(&root_real).unwrap_or_default();
-                if !inside_root(&root_real, &dir) {
-                    self.log_cleanup(format!(
-                        "[uploads] lease cleanup skipped {}: outside the leases root",
-''', LEASE_SWAP,
+    # property had two mutations; the lease half had none. fix-r1 (#2423) moved
+    # the gate to the `canonical_home` walk, so the snapshot property now lives
+    # in the containment anchor: the walk's own stats go through a swapped
+    # `.tmp` ancestor and find real dirs, only the round-start anchor refuses.
+    ('cleanup-lease-root-recanonicalized', STORE,
+     '''                if canonical_home(&dir, &root_real, &root_real).is_none() {''',
+     '''                if canonical_home(
+                    &dir,
+                    &root_real,
+                    &fs::canonicalize(&root_real).unwrap_or_default(),
+                )
+                .is_none()
+                {''', LEASE_SWAP,
      'a lease delete must not follow a root swapped mid-round'),
+    # fix-r1 (#2423 deepseek r1 concurrency#1，仲裁实测坐实): downgrading the
+    # entry gate back to the containment-only comparison re-opens the
+    # deterministic alias — a linked `<id>` whose resolution stays inside the
+    # root lists the victim's inner files as "leases", whose lease.json read
+    # ENOTDIRs into expired orphans.
+    ('lease-alias-walk-downgraded', STORE,
+     '''                if canonical_home(&dir, &root_real, &root_real).is_none() {''',
+     '''                if !inside_root(&root_real, &dir) {''', LEASE_ALIAS,
+     "an aliased id dir must not put an active lease's files on the sweep"),
     # #1646 review r3: `release` is the third delete point on the leases tree and
     # fires long after acquire; it must not follow a swapped root either.
     ('lease-release-symlink-root-swept', STORE, '''                if root_real != root {
@@ -616,6 +660,339 @@ mutations = [
                 return;
             }''', SCHEDULE,
      'the next tick sweeps again after the failed one'),
+    # #1850: the cancel delete is the fourth removal point on the `chat-uploads`
+    # tree; the mutant is its pre-#1850 shape — the bare `remove_tree` after
+    # the in-gate transition, which follows a `.tmp` swapped during cancel's
+    # record read / mutate rewrite window.
+    ('cancel-remove-tree-ungated', STORE, '''        if cancelled {
+            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
+            let dir = task_dir(&updated).join("files");
+            let root_real = match plain_root(&project, "chat-uploads") {
+                PlainRoot::Plain(root) => root,
+                // The record was just read from this tree, so `Missing` means
+                // the whole task directory is gone: the same quiet no-op the
+                // bare `remove_tree` gave.
+                PlainRoot::Missing => return Ok(updated),
+                PlainRoot::Blocked => {
+                    self.log_cleanup(format!(
+                        "[uploads] cancel skipped {}: uploads root is not a plain directory",
+                        project.join(".tmp/chat-uploads").display()
+                    ));
+                    return Ok(updated);
+                }
+            };
+            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+            // passes a linked `<id>` whose resolution stays inside the root —
+            // a deterministic alias onto another upload. The component walk
+            // `canonical_home` uses for the lease/store roots refuses every
+            // link component down to `files`; the residual between the walk
+            // and `remove_tree` is the instruction-level TOCTOU family the
+            // A8 ledger registers.
+            if canonical_home(&dir, &project, &root_real).is_none() {
+                self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
+                    dir.display()
+                ));
+                return Ok(updated);
+            }
+            remove_tree(&dir)?;
+        }''', '''        if cancelled {
+            remove_tree(&task_dir(&updated).join("files"))?;
+        }''', CANCEL_ROOT_SWAP,
+     'a cancel delete must not follow a root swapped mid-mutate'),
+    # #1850 + fix-r1: the plain-root gate alone is not enough — the record's
+    # task directory itself can be the swapped component, so the delete needs
+    # the per-entry gate; the row drops the whole gate block.
+    ('cancel-delete-gate-dropped', STORE, '''            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+            // passes a linked `<id>` whose resolution stays inside the root —
+            // a deterministic alias onto another upload. The component walk
+            // `canonical_home` uses for the lease/store roots refuses every
+            // link component down to `files`; the residual between the walk
+            // and `remove_tree` is the instruction-level TOCTOU family the
+            // A8 ledger registers.
+            if canonical_home(&dir, &project, &root_real).is_none() {
+                self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
+                    dir.display()
+                ));
+                return Ok(updated);
+            }
+''', '', CANCEL_TASK_SWAP,
+     'a cancel delete must not follow a task dir swapped mid-mutate'),
+    # fix-r1 (minimax concurrency#2 arbitration): downgrading the component
+    # walk back to the containment-only comparison re-opens the deterministic
+    # cross-upload alias — the resolved path is inside the root, so only the
+    # link-component term refuses the delete.
+    ('cancel-alias-walk-downgraded', STORE,
+     '''            if canonical_home(&dir, &project, &root_real).is_none() {''',
+     '''            if !inside_root(&root_real, &dir) {''', CANCEL_ALIAS,
+     "a cancel delete must not remove another upload's files through an aliased task dir"),
+    # #1850: the emptied `<id>` directory at the end of a lease round. The
+    # entry sweep skips a linked `<id>` entirely, so `names` reads through the
+    # link and finds the outside target empty; without the `inside_root` term
+    # the parent removal unlinks the symlinked `<id>` itself.
+    ('cleanup-lease-id-guard-dropped', STORE, '''            if names(&leases).is_empty() && inside_root(&root_real, &leases) {
+                remove_tree(&leases)?;
+            }''', '''            if names(&leases).is_empty() {
+                remove_tree(&leases)?;
+            }''', LEASE_ID_SWAP,
+     'an id directory swapped mid-round must not be removed'),
+    # #1850: the non-`NotFound` `realpath` branch of `release` had no direct
+    # regression test (A8 registered it as untestable without permission
+    # injection); an ELOOP root is the deterministic shape. The mutant swallows
+    # the failure into the idempotent `Ok`.
+    ('release-realpath-swallowed', STORE,
+     '''                    Err(e) => return Err(UploadError::io(e, "realpath", Some(root))),''',
+     '''                    Err(_) => return Ok(()),''', RELEASE_REALPATH,
+     'a release realpath failure must surface, not be swallowed'),
+    # #1850: `release` caches its result — including errors — via
+    # `get_or_insert_with`, so a retried release answers with the same verdict
+    # instead of re-running against a since-healed root. The mutant caches
+    # successes only, which lets the retry re-run and delete the lease tree.
+    ('release-err-not-cached', STORE, '''    pub fn release(&self) -> Result<()> {
+        self.released
+            .lock()
+            .unwrap()
+            .get_or_insert_with(|| {
+                // The same guard as the lease sweep, applied late: `dir` was
+                // built from the record's canonical project at acquire time,
+                // and the lease can live for many turns. If `.tmp` or
+                // `chat-upload-leases` was swapped for a symlink since, the
+                // recursive delete would follow it out of the project. Require
+                // the root to still resolve to exactly the plain path, then the
+                // entry to still be strictly inside it.
+                let Some(root) = self.dir.parent().and_then(Path::parent) else {
+                    return Ok(());
+                };
+                // "Gone" stays a quiet no-op (the lease is already clean, and
+                // `release` is idempotent); any other failure keeps the
+                // original `remove_tree` behaviour of surfacing the error
+                // instead of caching a success that never happened.
+                let root_real = match fs::canonicalize(root) {
+                    Ok(real) => real,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+                    Err(e) => return Err(UploadError::io(e, "realpath", Some(root))),
+                };
+                if root_real != root {
+                    return Ok(());
+                }
+                match resolved_inside(&root_real, &self.dir) {
+                    Ok(Some(_)) => remove_tree(&self.dir),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(UploadError::io(e, "realpath", Some(&self.dir))),
+                }
+            })
+            .clone()
+    }''', '''    pub fn release(&self) -> Result<()> {
+        let mut slot = self.released.lock().unwrap();
+        if let Some(cached) = slot.clone() {
+            return cached;
+        }
+        let computed = (|| {
+                let Some(root) = self.dir.parent().and_then(Path::parent) else {
+                    return Ok(());
+                };
+                let root_real = match fs::canonicalize(root) {
+                    Ok(real) => real,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+                    Err(e) => return Err(UploadError::io(e, "realpath", Some(root))),
+                };
+                if root_real != root {
+                    return Ok(());
+                }
+                match resolved_inside(&root_real, &self.dir) {
+                    Ok(Some(_)) => remove_tree(&self.dir),
+                    Ok(None) => Ok(()),
+                    Err(e) => Err(UploadError::io(e, "realpath", Some(&self.dir))),
+                }
+        })();
+        if computed.is_ok() {
+            *slot = Some(computed.clone());
+        }
+        computed
+    }''', RELEASE_REALPATH,
+     'a cached release failure must stay cached after the root heals'),
+    # #1631/#2276: the pair verdicts re-judged outside the gate — the
+    # pre-#1631 shapes (require_active / status checks on the outside-`get`
+    # snapshot), with the #2276 rendezvous kept so the barrier still
+    # schedules 'both callers passed the snapshot, neither entered the gate'.
+    # Reverting only one of the two is gate-order-dependent (flaky), so the
+    # row reverts the pair together and the kill is deterministic round 1.
+    ('pair-verdicts-outside-gate', STORE, '''    pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
+        let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
+        let mut refusal: Option<UploadError> = None;
+        let updated = self.mutate(&record, |r| {
+            if !active(r) {
+                refusal = Some(invalid_state(r));
+                return false;
+            }
+            if array(r, "manifest")
+                .iter()
+                .any(|m| !array(r, "receivedClientFileIds").contains(&value(m, "clientFileId")))
+            {
+                let message = JsString::from("One or more declared files were not uploaded.");
+                mark_failed(r, "UPLOAD_MANIFEST_MISMATCH", &message);
+                refusal = Some(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
+            } else {
+                set(r, "status", text("completed"));
+                set(r, "uploadedBytes", value(r, "totalBytes"));
+            }
+            true
+        })?;
+        match refusal {
+            Some(e) => Err(e),
+            None => Ok(updated),
+        }
+    }
+
+    /// Same #1631 gate-internal verdict as [`Self::complete`]: only the
+    /// in-gate transition to `cancelled` is followed by `remove_tree`, so a
+    /// `completed` record's files survive a racing cancel. The `remove_tree`
+    /// itself still runs after the gate (the module-doc pair scope and #1503
+    /// cover what a concurrently in-flight `write_part` can interleave).
+    ///
+    /// #1850: that delete is the fourth removal point on the `chat-uploads`
+    /// tree, and unlike the sweeps it runs after the whole `mutate` rewrite —
+    /// a window wide enough to swap `.tmp` (or the task directory itself) for
+    /// a symlink, which `remove_tree` would follow out of the project. The
+    /// status transition is already durable at that point, so a refused
+    /// delete is logged and skipped, never a `cancel` error: the record is
+    /// cancelled either way, and the sweep's "rather not delete" trade-off
+    /// (A8-UPLOAD-CLEANUP-ROBUSTNESS-001) applies unchanged.
+    pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
+        let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
+        let mut refusal: Option<UploadError> = None;
+        let mut cancelled = false;
+        let updated = self.mutate(&record, |r| {
+            if active(r) {
+                set(r, "status", text("cancelled"));
+                cancelled = true;
+                true
+            } else if status(r) == "completed" {
+                refusal = Some(UploadError::dialog(
+                    "UPLOAD_ALREADY_COMPLETED",
+                    "Completed uploads cannot be cancelled.",
+                ));
+                false
+            } else {
+                // #2275: cancelling a cancelled (or otherwise settled) upload
+                // is a no-op, not a change: nothing to write or emit.
+                false
+            }
+        })?;
+        if let Some(e) = refusal {
+            return Err(e);
+        }
+        if cancelled {
+            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
+            let dir = task_dir(&updated).join("files");
+            let root_real = match plain_root(&project, "chat-uploads") {
+                PlainRoot::Plain(root) => root,
+                // The record was just read from this tree, so `Missing` means
+                // the whole task directory is gone: the same quiet no-op the
+                // bare `remove_tree` gave.
+                PlainRoot::Missing => return Ok(updated),
+                PlainRoot::Blocked => {
+                    self.log_cleanup(format!(
+                        "[uploads] cancel skipped {}: uploads root is not a plain directory",
+                        project.join(".tmp/chat-uploads").display()
+                    ));
+                    return Ok(updated);
+                }
+            };
+            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+            // passes a linked `<id>` whose resolution stays inside the root —
+            // a deterministic alias onto another upload. The component walk
+            // `canonical_home` uses for the lease/store roots refuses every
+            // link component down to `files`; the residual between the walk
+            // and `remove_tree` is the instruction-level TOCTOU family the
+            // A8 ledger registers.
+            if canonical_home(&dir, &project, &root_real).is_none() {
+                self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
+                    dir.display()
+                ));
+                return Ok(updated);
+            }
+            remove_tree(&dir)?;
+        }
+        Ok(updated)
+    }
+
+''', '''    pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
+        let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
+        require_active(&record)?;
+        if array(&record, "manifest")
+            .iter()
+            .any(|m| !array(&record, "receivedClientFileIds").contains(&value(m, "clientFileId")))
+        {
+            let message = JsString::from("One or more declared files were not uploaded.");
+            self.fail(upload_id, "UPLOAD_MANIFEST_MISMATCH", &message)?;
+            return Err(UploadError::dialog("UPLOAD_MANIFEST_MISMATCH", message));
+        }
+        self.mutate(&record, |r| {
+            set(r, "status", text("completed"));
+            set(r, "uploadedBytes", value(r, "totalBytes"));
+            true
+        })
+    }
+
+    pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
+        let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
+        if status(&record) == "completed" {
+            return Err(UploadError::dialog(
+                "UPLOAD_ALREADY_COMPLETED",
+                "Completed uploads cannot be cancelled.",
+            ));
+        }
+        if !active(&record) {
+            return Ok(record);
+        }
+        let updated = self.mutate(&record, |r| {
+            set(r, "status", text("cancelled"));
+            true
+        })?;
+        remove_tree(&task_dir(&updated).join("files"))?;
+        Ok(updated)
+    }
+
+''', 'interleaved_complete_and_cancel_cannot_both_win',
+     'both calls must not be able to report success'),
+    # #2279 (review fix-r1, DS sibling#1 + MM sibling#2/concurrency#3): the
+    # in-gate re-read's non-fallback is itself a defense — this row reverts
+    # it to the pre-fix outside-snapshot fallback (with the pre-#2275
+    # unconditional change, the exact pre-batch shape), so a swept record is
+    # resurrected and reported completed again.
+    ('mutate-reread-falls-back-to-outside-snapshot', STORE, '''            let mut current = self.read_at(&project, &id)?.ok_or_else(|| {
+                UploadError::dialog("UPLOAD_NOT_FOUND", format!("Unknown uploadId: {id}"))
+            })?;
+            if !change(&mut current) {
+                return Ok(current);
+            }
+''', '''            let mut current = self
+                .read_at(&project, &id)?
+                .unwrap_or_else(|| record.clone());
+            change(&mut current);
+''', 'upload::tests::upload_complete_after_the_sweep_removed_the_record_refuses_without_resurrecting',
+     '#2279 complete reported success over a swept record'),
+    # #2275 (review fix-r1, same reviewers): the no-change gate is a defense —
+    # dropping it restores the pre-fix "every verdict rewrites the record",
+    # so an injected metadata-write failure answers in place of the refusal's
+    # semantic code.
+    ('mutate-no-change-gate-dropped', STORE, '''            if !change(&mut current) {
+                return Ok(current);
+            }
+''', '''            change(&mut current);
+''', 'upload::tests::upload_refusals_write_nothing_emit_nothing_and_do_not_poison_the_gate',
+     '#2275 the refusal answers its semantic code, not the injected write fault'),
 ]
 
 # #1666: static denominator; a deleted row must not shrink the run silently and
@@ -648,9 +1025,24 @@ EXPECTED_NAMES = (
     'cleanup-symlink-root-swept', 'cleanup-record-rm-aborts',
     'cleanup-orphan-root-recanonicalized', 'cleanup-lease-symlink-root-swept',
     'cleanup-record-rm-follows-swapped-root', 'cleanup-lease-entry-symlink-swept',
-    'cleanup-lease-root-recanonicalized', 'lease-release-symlink-root-swept',
+    'cleanup-lease-root-recanonicalized', 'lease-alias-walk-downgraded',
+    'lease-release-symlink-root-swept',
     'plain-root-accepts-any-resolve', 'cleanup-orphan-rm-silent',
     'cleanup-schedule-stop-on-failure',
+    # #1850 的五条（cancel 删除点闸门 / 条目 containment / 空目录守卫 /
+    # release realpath 分支 / Err 缓存）+ fix-r1 四条（cancel 与 lease 条目
+    # 删除点各两条：删除闸门整块删除 / 别名走查降级回 containment-only），
+    # 与上面同一名册口径。
+    'cancel-remove-tree-ungated', 'cancel-delete-gate-dropped',
+    'cancel-alias-walk-downgraded',
+    'cleanup-lease-id-guard-dropped', 'release-realpath-swallowed',
+    'release-err-not-cached',
+    # #2276 的这一条（#1631 对判定双双挪回门外——预修复形态），与上面同一名册口径。
+    'pair-verdicts-outside-gate',
+    # #2279/#2275 两条（评审 fix-r1：门内重读回退门外快照 / no-change 闸门删除），
+    # 同一名册口径。
+    'mutate-reread-falls-back-to-outside-snapshot',
+    'mutate-no-change-gate-dropped',
 )
 
 if '--check' in sys.argv[1:]:
@@ -701,10 +1093,18 @@ with mutating_sources(root, [GATEWAY, STORE], baseline=baseline) as snapshots:
         try:
             wait_for_slot(root / 'scripts/cargo-slots.sh')
             source.write_text(changed)
-            result = run_owned(
-                ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
-                 '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact'],
-                cwd=root, env=env, timeout=900)
+            # #2276: a named test registered in INTEGRATION_TESTS runs against
+            # its `tests/<target>.rs` integration target; every other row
+            # keeps the lib face. The target comes from the registry, not a
+            # guess off the test name.
+            target = INTEGRATION_TESTS.get(test)
+            command = (['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                        '-p', 'pilotdeck-gateway', '--test', target,
+                        '--', '--exact', test]
+                       if target is not None else
+                       ['cargo', 'test', '--manifest-path', 'src/Cargo.toml',
+                        '-p', 'pilotdeck-gateway', '--lib', test, '--', '--exact'])
+            result = run_owned(command, cwd=root, env=env, timeout=900)
             log = result.stdout + result.stderr
             (out / f'{name}.log').write_text(log)
             killed = (result.returncode == 101

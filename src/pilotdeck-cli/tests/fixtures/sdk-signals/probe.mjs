@@ -90,7 +90,7 @@ async function capture(input) {
   let connections = 0, active = 0, registered = false, triggerReached = false, signalDelivered = false;
   let aborts = 0, secondDelivered = false, expired = false, cleanupStarted = false, exit;
   let held, stream, pendingAbort, streamReady = false, terminalConsumed = false, resolvedHeld = false;
-  let abortEntered = false, terminalAfterAbort = false, lateAbortHandled = false;
+  let abortEntered = false, terminalAfterAbort = false, lateAbortHandled = false, rstApplied = false;
   let closeFailure;
   const failedClose = new Promise((_, reject) => { closeFailure = reject; });
   // Attach immediately so a spawn/setup failure cannot leave a rejected promise
@@ -226,6 +226,13 @@ async function capture(input) {
       assert.ok(secondDelivered, '#1145 second signal delivered after abort RPC');
     }
     if (input.stage === 'abort-terminal') { pendingAbort = request; terminal('completed', input.final); }
+    else if (input.action === 'rst') {
+      // #1178: the peer answers the dispatched abort with a TCP RST instead
+      // of a reply; resetAndDestroy sends a real RST on the query socket.
+      rstApplied = true;
+      record({ kind: 'server-rst', connection: socket.identity });
+      socket._socket.resetAndDestroy();
+    }
     else if (input.action !== 'hold') reply(request, input.action !== 'error');
   }
   try {
@@ -291,6 +298,7 @@ async function capture(input) {
       terminalConsumed: input.stage !== 'terminal' || terminalConsumed,
       terminalAfterAbort: input.stage !== 'abort-terminal' || terminalAfterAbort,
       lateAbortHandled: input.stage !== 'abort-terminal' || lateAbortHandled,
+      rstApplied: input.action !== 'rst' || rstApplied,
       blockingStdin: input.stage !== 'stdin' || !/(?:EAGAIN|EPERM|EACCES).*?(?:read|open)/.test(Buffer.concat(stderr).toString()),
     };
     const missingMilestones = Object.keys(milestones).filter(key => !milestones[key]);

@@ -5,7 +5,7 @@
 //! home is touched. Wire requests are raw HTTP/1.1 so the target the TS
 //! generator sent (`//host/health`, `/v1/../health`) is reproduced verbatim.
 use super::*;
-use pilotdeck_protocol::{JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -363,8 +363,8 @@ fn every_replay_option_key_is_mapped_into_the_channel_options() {
     for key in REPLAY_OPTION_KEYS {
         match key {
             "apiKey" => assert_eq!(
-                parsed.api_key.as_deref(),
-                Some("key-from-fixture"),
+                parsed.api_key,
+                Some(JsValue::String(JsString::from("key-from-fixture"))),
                 "#1759: `apiKey` must reach the channel options"
             ),
             "modelName" => assert_eq!(
@@ -391,7 +391,11 @@ fn absent_containers_stay_legal() {
     // cell without those keys relies on.
     let options = options(&json!({}), None);
     assert_eq!(options.model_name.as_deref(), Some("parity-model"));
-    assert_eq!(options.api_key.as_deref(), Some(""));
+    assert_eq!(
+        options.api_key,
+        Some(JsValue::String(JsString::from(""))),
+        "#1333 absent apiKey replays as the empty string the reader maps"
+    );
     gateway_from(&json!({}), None, Arc::new(AtomicBool::new(false)));
 }
 
@@ -1325,7 +1329,9 @@ fn options(case: &Value, timeout: Option<Duration>) -> ApiServerOptions {
     let options = &case["options"];
     ApiServerOptions {
         port: Some(JsValue::Number(0.0)),
-        api_key: Some(case_option(options, "apiKey", "")),
+        api_key: Some(JsValue::String(JsString::from(case_option(
+            options, "apiKey", "",
+        )))),
         host: Some("127.0.0.1".to_owned()),
         model_name: Some(case_option(options, "modelName", "parity-model")),
         cors_origins: case_origins(options),
@@ -2911,5 +2917,405 @@ fn port_numbers_follow_the_es_string_numeric_literal() {
     assert!(
         server::js_number(&JsValue::String(lone)).is_nan(),
         "#1333 a lone-surrogate port string is NaN, not the empty string"
+    );
+}
+
+// ---------------------------------------------------------------- loader
+
+/// #2428: a buffered-turn request with an optional Bearer token.
+fn bearer_chat(token: Option<&str>) -> ReqSpec {
+    ReqSpec {
+        method: "POST".to_owned(),
+        path: "/v1/chat/completions".to_owned(),
+        headers: match token {
+            Some(token) => vec![
+                ("authorization".to_owned(), format!("Bearer {token}")),
+                ("x-hermes-session-id".to_owned(), "chat-2428".to_owned()),
+            ],
+            None => vec![("x-hermes-session-id".to_owned(), "chat-2428".to_owned())],
+        },
+        body: b"{\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}".to_vec(),
+        keep_alive: false,
+        set_host: true,
+    }
+}
+
+/// #2428: `options.apiKey ?? process.env.API_SERVER_KEY ?? ""` keeps any
+/// non-nullish value; `checkAuth`'s `Buffer.from(this.apiKey)` then throws on
+/// a number/`true`/object, the catch answers 401 for every request. The Rust
+/// mount used to fold a non-string into `None` and fall through to the
+/// env/"" fallback — a configured number silently disabled auth (fail-open).
+/// Each classification is pinned: a number never matches any Bearer, `false`
+/// is `Off` like TS's `!this.apiKey` gate, and an array compares as its
+/// `Buffer.from` bytes (`[104, 105]` is `"hi"`).
+///
+/// Reachability note (review r1, arbitrated against the TS source): this
+/// seam is the loader's option/`extra` mount, where a non-nullish
+/// non-string genuinely reaches `ApiKey::of`. A non-string **platform**
+/// `apiKey` never gets here — the TS snapshot layer folds it first
+/// (`parsePlatformAdapter` reads it with `stringField`, `parseGatewayConfig`
+/// :102-112, which keeps only strings) and Rust's `platform()` mirrors that
+/// with `as_string()`; that snapshot-side fold is pinned in
+/// `config/tests.rs::snapshot_folds_a_non_string_platform_api_key_like_string_field`.
+#[tokio::test]
+async fn non_string_api_keys_never_fold_to_unset() {
+    let turn_gateway = || {
+        Some(gateway_from(
+            &json!({"gateway": {"turns": [{"events": []}]}}),
+            None,
+            Arc::new(AtomicBool::new(false)),
+        ) as Arc<dyn TurnGateway>)
+    };
+    let number = start(
+        ApiServerOptions {
+            port: Some(JsValue::Number(0.0)),
+            api_key: Some(JsValue::Number(7.0)),
+            ..ApiServerOptions::default()
+        },
+        turn_gateway(),
+    )
+    .await;
+    crate::negative_assert_eq!(
+        exchange(number.addr, &bearer_chat(None)).await.status,
+        Some(401),
+        "#2428 a configured number apiKey still rejects a request without the Bearer key"
+    );
+    crate::negative_assert_eq!(
+        exchange(number.addr, &bearer_chat(Some("7"))).await.status,
+        Some(401),
+        "#2428 a configured number apiKey rejects even the string it never equals"
+    );
+    number
+        .handle
+        .stop("test")
+        .await
+        .expect("#2428 api_server stop");
+
+    // `false` is falsy, not nullish: TS keeps it and `!this.apiKey` opens the
+    // gate — it must not be folded into the env/"" fallback either.
+    let false_key = start(
+        ApiServerOptions {
+            port: Some(JsValue::Number(0.0)),
+            api_key: Some(JsValue::Bool(false)),
+            ..ApiServerOptions::default()
+        },
+        turn_gateway(),
+    )
+    .await;
+    crate::negative_assert_eq!(
+        exchange(false_key.addr, &bearer_chat(None)).await.status,
+        Some(200),
+        "#2428 a configured false apiKey answers 200 like TS's !this.apiKey gate"
+    );
+    false_key
+        .handle
+        .stop("test")
+        .await
+        .expect("#2428 api_server stop");
+
+    let array = start(
+        ApiServerOptions {
+            port: Some(JsValue::Number(0.0)),
+            api_key: Some(JsValue::Array(vec![
+                JsValue::Number(104.0),
+                JsValue::Number(105.0),
+            ])),
+            ..ApiServerOptions::default()
+        },
+        turn_gateway(),
+    )
+    .await;
+    crate::negative_assert_eq!(
+        exchange(array.addr, &bearer_chat(Some("hi"))).await.status,
+        Some(200),
+        "#2428 an array apiKey matches its Buffer.from bytes"
+    );
+    crate::negative_assert_eq!(
+        exchange(array.addr, &bearer_chat(Some("hi!"))).await.status,
+        Some(401),
+        "#2428 an array apiKey only matches its Buffer.from bytes"
+    );
+    array
+        .handle
+        .stop("test")
+        .await
+        .expect("#2428 api_server stop");
+}
+
+/// #2428 review r1: the classification table pinned at the seam — the
+/// server-level test above exercises only `7`/`false`/`[104, 105]`, leaving
+/// the falsy numbers, `true`, objects, the empty array and `Buffer.from`'s
+/// ToUint8 boundaries unpinned. Every row follows the Node v22.22.0 probes
+/// in `_tmp/20261026-issue-p2batch-f/s4-probe/api-key-buffer-gates.raw`:
+/// `Buffer.from(42)`/`(true)`/`({})` throw (the 401 `Never` limb), the
+/// empty array is truthy (`![]` is false) and classifies as an empty `Key`,
+/// and `[256, 257, -1, 1.7, -1.7, "65", "a", null]` maps through ToUint8
+/// to `[0, 1, 255, 1, 255, 65, 0, 0]`.
+#[test]
+fn api_key_classification_pins_the_checkauth_table() {
+    let of = |value: &JsValue| ApiKey::of(value);
+    // The `??`-kept falsy values `!this.apiKey` opens the gate for.
+    crate::negative_assert_eq!(
+        of(&JsValue::Undefined),
+        ApiKey::Off,
+        "#2428 an undefined apiKey is Off"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Null),
+        ApiKey::Off,
+        "#2428 a null apiKey is Off"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Bool(false)),
+        ApiKey::Off,
+        "#2428 a false apiKey is Off"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::String(JsString::from(""))),
+        ApiKey::Off,
+        "#2428 an empty-string apiKey is Off"
+    );
+    // A falsy number apiKey is Off — `!0`, `!(-0)` and `!NaN` are all true.
+    crate::negative_assert_eq!(
+        of(&JsValue::Number(0.0)),
+        ApiKey::Off,
+        "#2428 a falsy number apiKey is Off"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Number(-0.0)),
+        ApiKey::Off,
+        "#2428 a falsy number apiKey is Off (-0)"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Number(f64::NAN)),
+        ApiKey::Off,
+        "#2428 a falsy number apiKey is Off (NaN)"
+    );
+    // Truthy values `Buffer.from` refuses — every request answers 401.
+    crate::negative_assert_eq!(
+        of(&JsValue::Bool(true)),
+        ApiKey::Never,
+        "#2428 a boolean apiKey is Never"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Number(7.0)),
+        ApiKey::Never,
+        "#2428 a truthy number apiKey is Never"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Object(JsObject::new())),
+        ApiKey::Never,
+        "#2428 an object apiKey is Never"
+    );
+    // A truthy string is its UTF-8 bytes.
+    crate::negative_assert_eq!(
+        of(&JsValue::String(JsString::from("hi"))),
+        ApiKey::Key(b"hi".to_vec()),
+        "#2428 a string apiKey is its UTF-8 bytes"
+    );
+    // The empty array is truthy (`![]` is false) but holds zero bytes.
+    crate::negative_assert_eq!(
+        of(&JsValue::Array(vec![])),
+        ApiKey::Key(vec![]),
+        "#2428 an empty array apiKey is an empty Key"
+    );
+    // `Buffer.from(array)`'s per-element ToUint8: NaN/±Infinity are 0,
+    // fractions truncate toward zero, negatives and out-of-range values
+    // wrap modulo 256, strings go through ToNumber first.
+    crate::negative_assert_eq!(
+        of(&JsValue::Array(vec![
+            JsValue::Number(256.0),
+            JsValue::Number(257.0),
+            JsValue::Number(-1.0),
+            JsValue::Number(1.7),
+            JsValue::Number(-1.7),
+            JsValue::String(JsString::from("65")),
+            JsValue::String(JsString::from("a")),
+            JsValue::Null,
+        ])),
+        ApiKey::Key(vec![0, 1, 255, 1, 255, 65, 0, 0]),
+        "#2428 an array apiKey wraps elements modulo 256"
+    );
+    // The boundary rows on the converter itself, so the wrap cannot drift
+    // with the classification still pinned only at ASCII values.
+    crate::negative_assert_eq!(to_uint8(256.0), 0, "#2428 ToUint8 wraps 256 to 0");
+    crate::negative_assert_eq!(to_uint8(257.0), 1, "#2428 ToUint8 wraps 257 to 1");
+    crate::negative_assert_eq!(to_uint8(-1.0), 255, "#2428 ToUint8 wraps -1 to 255");
+    crate::negative_assert_eq!(to_uint8(1.7), 1, "#2428 ToUint8 truncates 1.7 to 1");
+    crate::negative_assert_eq!(to_uint8(-1.7), 255, "#2428 ToUint8 wraps -1.7 to 255");
+    crate::negative_assert_eq!(to_uint8(0.5), 0, "#2428 ToUint8 truncates 0.5 to 0");
+    crate::negative_assert_eq!(to_uint8(f64::NAN), 0, "#2428 ToUint8 maps NaN to 0");
+    crate::negative_assert_eq!(
+        to_uint8(f64::INFINITY),
+        0,
+        "#2428 ToUint8 maps Infinity to 0"
+    );
+    crate::negative_assert_eq!(
+        to_uint8(f64::NEG_INFINITY),
+        0,
+        "#2428 ToUint8 maps -Infinity to 0"
+    );
+}
+
+/// #2428 review r1: the empty array is truthy (`![]` is false, so checkAuth's
+/// gate stays closed) but holds zero bytes — its only possible Bearer match
+/// is the empty token (`timingSafeEqual(empty, empty)` is true, Node v22.22.0
+/// probe). A raw `Bearer ` (trailing space) never reaches that comparison on
+/// either side — Node's and hyper's parsers both trim trailing OWS, so the
+/// header arrives as `Bearer` and the prefix check fails — which is why the
+/// empty-token limb is pinned by the classification table
+/// (`ApiKey::Key(vec![])`). The empty-token wire cell below pins that trim
+/// end-to-end in this suite (r2 boundary): the raw header carries the
+/// trailing space, the parsed value must not. The remaining wire-level pin is
+/// the closed gate: unlike `Off` (which answers 200 to the no-Bearer
+/// request), an empty array apiKey must answer 401 to every request.
+#[tokio::test]
+async fn empty_array_api_key_keeps_the_gate_closed() {
+    let turn_gateway = || {
+        Some(gateway_from(
+            &json!({"gateway": {"turns": [{"events": []}]}}),
+            None,
+            Arc::new(AtomicBool::new(false)),
+        ) as Arc<dyn TurnGateway>)
+    };
+    let empty = start(
+        ApiServerOptions {
+            port: Some(JsValue::Number(0.0)),
+            api_key: Some(JsValue::Array(vec![])),
+            ..ApiServerOptions::default()
+        },
+        turn_gateway(),
+    )
+    .await;
+    crate::negative_assert_eq!(
+        exchange(empty.addr, &bearer_chat(None)).await.status,
+        Some(401),
+        "#2428 an empty array apiKey keeps the gate closed for a request without the Bearer key"
+    );
+    crate::negative_assert_eq!(
+        exchange(empty.addr, &bearer_chat(Some("x"))).await.status,
+        Some(401),
+        "#2428 an empty array apiKey rejects a non-empty Bearer token"
+    );
+    // The raw header is `Bearer ` with the trailing space; both Node and
+    // hyper trim trailing OWS, so the parsed value must arrive as `Bearer`
+    // and the empty-token limb stays unreachable over the wire (r2 boundary:
+    // pin the trim in this suite, not only in #1349's other channel).
+    crate::negative_assert_eq!(
+        exchange(empty.addr, &bearer_chat(Some(""))).await.status,
+        Some(401),
+        "#2428 a trailing-space Bearer header is trimmed to no token and rejected"
+    );
+    empty
+        .handle
+        .stop("test")
+        .await
+        .expect("#2428 api_server stop");
+}
+
+// #2301: the mount is the production construction seam — the startup
+// assembly registers it through `production_loader_mounts` and calls
+// `load_enabled_channels` (pilotdeckServer.ts:288-296, the loadEnabledChannels
+// port). The mount forwards `extra.port` / `apiKey`; `resolve` folds them
+// back into the env / `DEFAULT_PORT` chain, so a concrete port through the
+// loader config reaches the real listener and the TS dist start line —
+// `api-server: listening on http://127.0.0.1:<port>` — is observable. The
+// port is an OS-assigned free port (bind :0, read, drop, rebind through the
+// channel), the same trick the busy-port blocker uses, rather than a
+// hard-coded constant that could collide on a shared runner.
+#[tokio::test]
+async fn loader_mount_builds_api_server_channel() {
+    let mut mounts = crate::channel::loader::ChannelLoaderMounts::default();
+    register(&mut mounts);
+    assert!(mounts.is_registered("apiServer"), "#1333 loader mount key");
+    let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("#2301 free-port probe");
+    let port = probe.local_addr().expect("#2301 probe address").port();
+    drop(probe);
+    let adapters = pilotdeck_protocol::parse_json(
+        &json!({
+            "apiServer": {"enabled": true, "apiKey": "probe-key", "extra": {"port": port}},
+            "telegram": {"enabled": false},
+        })
+        .to_string(),
+    )
+    .expect("#2301 adapters JSON");
+    let mut errors = Vec::new();
+    let channels = crate::channel::loader::load_enabled_channels(
+        Some(&adapters),
+        &crate::channel::loader::LoadEnabledChannelsOptions { pilot_home: None },
+        &mounts,
+        &mut |message| errors.push(message),
+    );
+    assert!(errors.is_empty(), "#2301 loader errors: {errors:?}");
+    assert_eq!(
+        channels.len(),
+        1,
+        "#2301 exactly the api_server channel loads"
+    );
+    assert_eq!(channels[0].channel_key().to_string(), "api_server");
+
+    // The constructed adapter really listens through the mount's options: the
+    // start line is the TS dist anchor and the port accepts a connection.
+    let logs: Arc<Mutex<Vec<(String, String)>>> = Arc::default();
+    let sink = logs.clone();
+    let handle = channels[0]
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: Some(Arc::new(move |level: &str, message: &str| {
+                sink.lock()
+                    .expect("#2301 log sink")
+                    .push((level.to_owned(), message.to_owned()));
+            })),
+            turn_gateway: Some(gateway_from(
+                &json!({"gateway": {"turns": [{"events": []}]}}),
+                None,
+                Arc::new(AtomicBool::new(false)),
+            )),
+        })
+        .await
+        .expect("#2301 loader-built api_server start");
+    let listening = format!("api-server: listening on http://127.0.0.1:{port}");
+    assert!(
+        logs.lock()
+            .expect("#2301 log sink")
+            .iter()
+            .any(|(level, message)| level == "info" && message == &listening),
+        "#2301 the TS dist anchor line {listening:?} in {:?}",
+        logs.lock().expect("#2301 log sink")
+    );
+    TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#2301 the loader-built listener accepts connections");
+
+    // #2428: the mount forwards `cfg.apiKey` raw and `resolve` keeps the TS
+    // `??` order, so a configured key reaches checkAuth — a request without
+    // the Bearer token and one with a wrong token answer 401, and only the
+    // configured key reaches the gateway and answers 200.
+    let address: std::net::SocketAddr = format!("127.0.0.1:{port}")
+        .parse()
+        .expect("#2428 loopback address");
+    let missing = exchange(address, &bearer_chat(None)).await;
+    crate::negative_assert_eq!(
+        missing.status,
+        Some(401),
+        "#2428 a request without the Bearer key is rejected"
+    );
+    let wrong = exchange(address, &bearer_chat(Some("wrong-key"))).await;
+    crate::negative_assert_eq!(
+        wrong.status,
+        Some(401),
+        "#2428 a wrong Bearer token is rejected"
+    );
+    let correct = exchange(address, &bearer_chat(Some("probe-key"))).await;
+    crate::negative_assert_eq!(
+        correct.status,
+        Some(200),
+        "#2428 the configured Bearer key answers 200"
+    );
+    handle.stop("test").await.expect("#2301 api_server stop");
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).await.is_err(),
+        "#2301 the listener is gone after stop"
     );
 }

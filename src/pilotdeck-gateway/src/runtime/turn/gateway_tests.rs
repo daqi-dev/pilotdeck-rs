@@ -1646,3 +1646,540 @@ fn a_caller_budget_decides_the_failure_teardown_bound() {
         "#1746 the caller's budget must bound the wait, took {elapsed:?}"
     );
 }
+
+/// #2081: the production wiring test for `start_with_cleanup_budget`. The
+/// bound test above feeds `super::declared_cleanup_budget` to the bounds
+/// function by hand, so nothing went through the production entry — changing
+/// `start_with_cleanup_budget`'s call to pass the raw budget (dropping the
+/// slack) left every test green while a legitimate slow cleanup got cut
+/// mid-poll. The observable is the deadline the host actually enforces: a
+/// cleanup that finishes just inside `declared + SLACK` (but past the raw
+/// `declared`) must be allowed to complete.
+#[test]
+fn the_declared_cleanup_budget_reaches_the_initialization_teardown() {
+    let declared = std::time::Duration::from_millis(300);
+    let finished = Arc::new(AtomicBool::new(false));
+    let completed = finished.clone();
+    let error = TurnGateway::start_with_cleanup_budget(
+        TurnReplayOptions::new(),
+        declared,
+        |_| Err(std::io::Error::other("#2081 wiring fixture")),
+        async move {
+            tokio::time::sleep(declared + super::INITIALIZATION_TEARDOWN_SLACK / 2).await;
+            completed.store(true, Ordering::SeqCst);
+            std::future::pending::<()>().await;
+            Ok(())
+        },
+    )
+    .err()
+    .expect("#2081 a builder failure must fail the host");
+    assert_eq!("#2081 wiring fixture", error.to_string());
+    assert!(
+        finished.load(Ordering::SeqCst),
+        "#2081 the initialization cleanup must run on the production deadline \
+         (declared budget + slack), not the raw declared budget"
+    );
+}
+
+/// #2081: the other side of the wiring pin — the deadline must not be larger
+/// than `declared_cleanup_budget` either, or a runaway cleanup would hold the
+/// failure report for longer than the embedding declared. A cleanup sleeping
+/// past the declared bound must be cut.
+#[test]
+fn the_declared_cleanup_budget_does_not_outlive_the_declared_bound() {
+    let declared = std::time::Duration::from_millis(300);
+    let finished = Arc::new(AtomicBool::new(false));
+    let completed = finished.clone();
+    let started = std::time::Instant::now();
+    let error = TurnGateway::start_with_cleanup_budget(
+        TurnReplayOptions::new(),
+        declared,
+        |_| Err(std::io::Error::other("#2081 cut fixture")),
+        async move {
+            tokio::time::sleep(declared + super::INITIALIZATION_TEARDOWN_SLACK * 2).await;
+            completed.store(true, Ordering::SeqCst);
+            Ok(())
+        },
+    )
+    .err()
+    .expect("#2081 a builder failure must fail the host");
+    assert_eq!("#2081 cut fixture", error.to_string());
+    assert!(
+        !finished.load(Ordering::SeqCst),
+        "#2081 a cleanup sleeping past the declared bound must be cut"
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "#2081 the declared bound must bound the wait, took {:?}",
+        started.elapsed()
+    );
+}
+
+/// #1949: the refusal branch's failure path costs the two bounds together.
+/// The refused owner runs on the default teardown deadline (the host's own
+/// resource) and the embedding cleanup then gets its own full deadline on a
+/// fresh clock, so a builder failure with both hung costs
+/// `owner_bound + cleanup_bound` — the two-segment-clock contract the failure
+/// path documents. A regression back to one shared deadline (the r2→r3 fix)
+/// leaves only the larger of the two.
+///
+/// The owner's hang needs the creation worker parked **inside** the factory
+/// before the host exists: `create_active` re-checks `state.stopped` before
+/// every factory call, so a worker first polled after the host's `shutdown()`
+/// set that flag bails with "Session router is shut down." instead of hanging,
+/// and the drain resolves immediately. Firing the creation on the test's own
+/// runtime and waiting for the factory's entered flag parks the worker past
+/// that check for good — the drain on the host thread then waits on a
+/// completion only that parked worker can send.
+#[tokio::test]
+async fn a_refused_owner_and_a_hung_cleanup_cost_the_two_bounds_together() {
+    let declared = std::time::Duration::from_millis(300);
+    let (owner_bound, cleanup_bound) =
+        super::initialization_teardown_bounds(super::declared_cleanup_budget(declared));
+    // #1949 fixture: an owner with a creation that never settles, so its
+    // shutdown() waits on the pending drain and the host must cut it at the
+    // owner bound instead of the cleanup's.
+    let entered = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mut options = SessionOwnerOptions::new(Arc::new(PendingCreationFactory {
+        entered: entered.clone(),
+    }));
+    options.idle_sweep_interval_ms = 0;
+    let owner = SessionOwner::new(options);
+    // Fire the creation and let go of the public waiter: the drain below (the
+    // spawned worker) is what the shutdown must wait on.
+    drop(owner.get_or_create(SessionContext {
+        session_key: "s".into(),
+        project_key: None,
+        channel_key: "channel".into(),
+        allowed_tools: None,
+        disallowed_tools: None,
+    }));
+    for _ in 0..100 {
+        if entered.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        entered.load(std::sync::atomic::Ordering::SeqCst),
+        "#1949 fixture: the creation worker must reach the factory before the host starts"
+    );
+    let started = std::time::Instant::now();
+    let error = TurnGateway::start_with_cleanup_budget(
+        TurnReplayOptions::new(),
+        declared,
+        move |_coordinator| {
+            let interactions = Arc::new(GatewayInteractionCoordinator::default());
+            Ok(GatewayServices {
+                submitter: Arc::new(TurnSubmitter {
+                    owner,
+                    // #1949 fixture: a coordinator this host does not drive.
+                    coordinator: Arc::new(TurnEventCoordinator::new()),
+                    registry: None,
+                    projector: Arc::new(
+                        GatewayAgentEventProjector::new(Default::default())
+                            .expect("#1949 fixture projector"),
+                    ),
+                    host: Arc::new(Host {
+                        interactions: interactions.clone(),
+                        finally_failure: false,
+                    }),
+                    workspace_admissions: WorkspaceAdmissions::default(),
+                }),
+                interactions,
+                requests: Arc::new(Requests),
+            })
+        },
+        // #1949 fixture: an embedding cleanup that never completes.
+        std::future::pending::<Result<(), String>>(),
+    )
+    .err()
+    .expect("#1949 a refused submitter must fail the host");
+    assert_eq!(
+        "submitter must use the serial host coordinator",
+        error.to_string()
+    );
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed >= owner_bound + cleanup_bound - std::time::Duration::from_millis(30),
+        "#1949 the failure path must wait out both bounds (expected ~{:?}), took {elapsed:?}",
+        owner_bound + cleanup_bound
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "#1949 the two bounds together must bound the wait, took {elapsed:?}"
+    );
+}
+
+/// #1949: `Duration::MAX` is the idiomatic "no bound" a library caller can
+/// pass straight into the public `start_with_cleanup_budget`. The deadline
+/// arithmetic must not overflow on it — the std panic used to kill the host
+/// thread, so the caller got an opaque "gateway host initialization stopped"
+/// with the coordinator and its interactions left live instead of the
+/// declared deadline semantics. A fast cleanup still completes, the builder
+/// error is reported verbatim, and the coordinator is disposed.
+#[test]
+fn a_maximal_teardown_budget_still_reports_the_builder_error() {
+    let coordinator_disposed = Arc::new(AtomicBool::new(false));
+    let disposed = coordinator_disposed.clone();
+    let error = TurnGateway::start_with_cleanup_budget(
+        TurnReplayOptions::new(),
+        std::time::Duration::MAX,
+        move |coordinator| {
+            coordinator.set_after_dispose_hook(Arc::new(move || {
+                disposed.store(true, Ordering::SeqCst);
+            }));
+            Err(std::io::Error::other("#1949 maximal budget fixture"))
+        },
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            Ok(())
+        },
+    )
+    .err()
+    .expect("#1949 a builder failure must fail the host");
+    assert_eq!("#1949 maximal budget fixture", error.to_string());
+    assert!(
+        coordinator_disposed.load(Ordering::SeqCst),
+        "#1949 a maximal budget must still dispose the coordinator after its cleanup"
+    );
+}
+
+/// #1949: the failed-initialization twin of the clock-edge drain test below
+/// — a budget that fits the clock but lands within the tick-conversion
+/// headroom of its ceiling still gets the waiver, and the teardown still
+/// completes, the builder error still reaches the caller verbatim, and the
+/// coordinator is still disposed. Behavior anchor, not a regression
+/// discriminator (#2501): the teardown site reads its own, later clock, and
+/// this fixture's cleanup is immediately `Ready` — `Timeout::poll` polls the
+/// future before the delay (tokio 1.48), so the timer registration the
+/// headroom guards against is not even reached on this path. The tier
+/// routing itself is pinned deterministically by
+/// `the_clock_edge_tier_decision_is_deterministic` below.
+#[test]
+fn a_clock_edge_teardown_budget_still_reports_the_builder_error() {
+    let coordinator_disposed = Arc::new(AtomicBool::new(false));
+    let disposed = coordinator_disposed.clone();
+    // The same maximal-fit binary search the drain twin documents, backed
+    // off into the middle of the tick-conversion headroom so the teardown
+    // site's own (later) clock read still admits it inside that tier.
+    let mut lo = std::time::Duration::ZERO;
+    let mut hi = std::time::Duration::MAX;
+    for _ in 0..512 {
+        let mid = lo + (hi - lo) / 2;
+        if tokio::time::Instant::now().checked_add(mid).is_some() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let error = TurnGateway::start_with_cleanup_budget(
+        TurnReplayOptions::new(),
+        lo - TICK_CONVERSION_HEADROOM / 2,
+        move |coordinator| {
+            coordinator.set_after_dispose_hook(Arc::new(move || {
+                disposed.store(true, Ordering::SeqCst);
+            }));
+            Err(std::io::Error::other("#1949 clock-edge budget fixture"))
+        },
+        async { Ok(()) },
+    )
+    .err()
+    .expect("#1949 a builder failure must fail the host");
+    assert_eq!("#1949 clock-edge budget fixture", error.to_string());
+    assert!(
+        coordinator_disposed.load(Ordering::SeqCst),
+        "#1949 a clock-edge budget must still dispose the coordinator after its cleanup"
+    );
+}
+
+/// #1942: the embedding cleanup is third-party code polled on the host
+/// thread; a panic in it must not skip the coordinator and interaction
+/// disposals behind it (`caught_cleanup` converts the panic to an `Err` the
+/// teardown already ignores). The caller still gets the builder error
+/// verbatim instead of the host thread's panic.
+#[test]
+fn a_panicking_cleanup_still_disposes_the_coordinator() {
+    let coordinator_disposed = Arc::new(AtomicBool::new(false));
+    let disposed = coordinator_disposed.clone();
+    let error = TurnGateway::start_with_cleanup(
+        TurnReplayOptions::new(),
+        move |coordinator| {
+            coordinator.set_after_dispose_hook(Arc::new(move || {
+                disposed.store(true, Ordering::SeqCst);
+            }));
+            Err(std::io::Error::other("#1942 panicking cleanup fixture"))
+        },
+        async {
+            panic!("#1942 injected cleanup panic");
+        },
+    )
+    .err()
+    .expect("#1942 a builder failure must fail the host");
+    // #1942: the native-ws-entry roster binds the
+    // `native-ws-initialization-cleanup-panic-uncaught` switch to the
+    // coordinator assertion below, and that runner only accepts a kill that
+    // carries a nonce receipt — so it must run before the verbatim-error
+    // check: with the panic escaping, the host thread dies before the
+    // disposals below it and the caller gets the opaque host error instead.
+    crate::negative_assert!(
+        coordinator_disposed.load(Ordering::SeqCst),
+        "#1942 a panicking cleanup must still dispose the coordinator"
+    );
+    assert_eq!("#1942 panicking cleanup fixture", error.to_string());
+}
+
+/// #1942: the drain polls the same third-party cleanup the failed
+/// initialization does, so the panic guard must cover it there too — with
+/// the panic escaping (the roster switch below), the host thread dies before
+/// the disposals behind it and the drain never settles; the guard timeout
+/// stands in for that hang so the kill runs through the coordinator
+/// assertion, which is the one the roster binds (the same ordering rule the
+/// initialization twin above documents).
+#[tokio::test]
+async fn a_panicking_drain_cleanup_still_disposes_the_coordinator() {
+    let coordinator_disposed = Arc::new(AtomicBool::new(false));
+    let disposed = coordinator_disposed.clone();
+    let host = TurnGateway::start_with_cleanup(
+        TurnReplayOptions::new(),
+        move |coordinator| {
+            coordinator.set_after_dispose_hook(Arc::new(move || {
+                disposed.store(true, Ordering::SeqCst);
+            }));
+            let session = Arc::new(Session {
+                thread: std::thread::current().id(),
+                native: vec![
+                    parse_json(r#"{"type":"turn_started","sessionId":"s","turnId":"r"}"#)
+                        .expect("#1942 fixture native event"),
+                ],
+                coordinator: coordinator.clone(),
+                accepted: Gate::new(),
+                terminal: Gate::new(),
+                end: Gate::new(),
+                aborts: AtomicUsize::new(0),
+            });
+            let mut options =
+                SessionOwnerOptions::new(Arc::new(NativeFixtureFactory(session, false)));
+            options.idle_sweep_interval_ms = 0;
+            let interactions = Arc::new(GatewayInteractionCoordinator::default());
+            Ok(GatewayServices {
+                submitter: Arc::new(TurnSubmitter {
+                    owner: SessionOwner::new(options),
+                    coordinator,
+                    registry: None,
+                    projector: Arc::new(
+                        GatewayAgentEventProjector::new(Default::default())
+                            .expect("#1942 fixture projector"),
+                    ),
+                    host: Arc::new(Host {
+                        interactions: interactions.clone(),
+                        finally_failure: false,
+                    }),
+                    workspace_admissions: WorkspaceAdmissions::default(),
+                }),
+                interactions,
+                requests: Arc::new(Requests),
+            })
+        },
+        async move {
+            panic!("#1942 injected drain cleanup panic");
+        },
+    )
+    .expect("#1942 fixture serial host");
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        host.shutdown(std::time::Duration::from_secs(5)),
+    )
+    .await;
+    crate::negative_assert!(
+        coordinator_disposed.load(Ordering::SeqCst),
+        "#1942 a panicking drain cleanup must still dispose the coordinator"
+    );
+    let error = settled
+        .expect("#1942 the drain must settle once the panic is caught")
+        .expect_err("#1942 a caught drain cleanup panic must surface as the drain error");
+    assert_eq!(
+        "#1942 injected drain cleanup panic", error,
+        "#1942 the caught panic message must reach the drain result"
+    );
+}
+
+/// #1949: an embedding that declares `Duration::MAX` for shutdown has
+/// explicitly waived the drain deadline (see `declared_cleanup_budget` for
+/// the waiver), so the drain must settle with its real result (here `Ok`)
+/// rather than hang. Behavior anchor, not a regression discriminator:
+/// tokio's `timeout` saturates a MAX bound into a far-future timer, so the
+/// pre-#1949 `timeout(budget, drain)` settled too — the drain-side
+/// `checked_add` spells that waiver out and additionally waives the
+/// tick-conversion band (`TICK_CONVERSION_HEADROOM`). The drain's own `Result` has
+/// been asserted here from the start: the guard above consumes its outer
+/// `Result` with `.expect`, and the pre-image asserted the inner `is_ok()`;
+/// the later restatement as `expect` only unified the form, adding no
+/// discriminating power (a host panic that escapes the drain settles the
+/// inner `Err` under either form).
+#[tokio::test]
+async fn a_maximal_drain_budget_still_settles_the_drain() {
+    let host = native_ws_fixture_with_cleanup(Arc::new(Requests), async { Ok(()) });
+    let settled = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        host.shutdown(std::time::Duration::MAX),
+    )
+    .await
+    .expect("#1949 the maximal-budget drain must settle within the guard");
+    settled.expect("#1949 a maximal drain budget must settle the drain itself");
+}
+
+/// #1949: a budget that fits the clock but lands within the tick-conversion
+/// headroom of its ceiling still gets the waiver, and the drain must settle
+/// with its own result (here `Ok`) without panicking the host thread.
+/// Behavior anchor, not a regression discriminator (#2501): the 500 ms
+/// backoff is far outside the ~999_999 ns band tokio actually panics in
+/// (tokio 1.48 `TimeSource::deadline_to_tick`'s unchecked
+/// `Duration::from_nanos(999_999)` addition; see `TICK_CONVERSION_HEADROOM`),
+/// and the drain site reads its own, later clock, so a pre-fix tree that
+/// registered this very deadline through `timeout_at` settles `Ok` too —
+/// the binary search below only keeps the budget off the overflowing tier
+/// at that later read. The tier routing itself is pinned deterministically
+/// by `the_clock_edge_tier_decision_is_deterministic` below, and the panic
+/// band by the registration probe beside it.
+#[tokio::test]
+async fn a_budget_at_the_clock_edge_is_treated_as_the_waiver() {
+    let host = native_ws_fixture_with_cleanup(Arc::new(Requests), async { Ok(()) });
+    // Binary-search the maximal duration the monotonic clock still admits;
+    // 512 rounds exhaust the nanosecond resolution long before they run out.
+    let mut lo = std::time::Duration::ZERO;
+    let mut hi = std::time::Duration::MAX;
+    for _ in 0..512 {
+        let mid = lo + (hi - lo) / 2;
+        if tokio::time::Instant::now().checked_add(mid).is_some() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    // Back the maximum off into the middle of the tick-conversion headroom:
+    // the drain site reads its clock after this one (the host thread wakes
+    // to observe the shutdown), so the exact maximum overflows at that later
+    // read, while this budget still lands within the headroom of the
+    // ceiling — the tier `TICK_CONVERSION_HEADROOM` treats as the waiver.
+    let budget = lo - TICK_CONVERSION_HEADROOM / 2;
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(5), host.shutdown(budget))
+        .await
+        .expect("#1949 a clock-edge budget must still settle the drain within the guard");
+    settled.expect("#1949 a clock-edge budget is the waiver, so the drain keeps its own result");
+}
+
+/// #2501: the clock-edge tier decision is a pure function of one captured
+/// clock read, so its boundaries are testable deterministically — the
+/// e2e twins above cannot do this: each poll site reads its own, later
+/// clock, so their binary searches drift past the exact band, and their
+/// 500 ms backoff lands far outside the ~999_999 ns band tokio actually
+/// panics in, which is why they stay behavior anchors. Binary-search the
+/// maximal budget this very `now` admits: its deadline is the clock's
+/// ceiling, inside the [`super::TICK_CONVERSION_HEADROOM`] waiver tier;
+/// backed off two seconds it is past that headroom and must map back to a
+/// deadline. The same captured `now` makes both boundaries exact — the
+/// window the headroom keeps open covers the `+999_999 ns` tokio adds
+/// unchecked when converting a deadline to a timer tick, which the probe
+/// test below pins directly.
+#[test]
+fn the_clock_edge_tier_decision_is_deterministic() {
+    let now = tokio::time::Instant::now();
+    // Binary-search the maximal duration this very `now` still admits; 512
+    // rounds exhaust the nanosecond resolution long before they run out.
+    let mut lo = std::time::Duration::ZERO;
+    let mut hi = std::time::Duration::MAX;
+    for _ in 0..512 {
+        let mid = lo + (hi - lo) / 2;
+        if now.checked_add(mid).is_some() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    assert!(
+        super::deadline_or_waiver(now, lo).is_none(),
+        "#2501 a budget whose deadline lands within the tick-conversion headroom of the clock's ceiling must take the waiver, not a deadline"
+    );
+    let backed_off = lo - std::time::Duration::from_secs(2);
+    assert!(
+        super::deadline_or_waiver(now, backed_off).is_some(),
+        "#2501 a budget backed off past the tick-conversion headroom must still get its deadline"
+    );
+}
+
+/// #2501: the mechanism the headroom guards against, measured in-tree
+/// instead of asserted by prose. Tokio 1.48 converts a deadline into a
+/// timer tick through `TimeSource::deadline_to_tick`'s unchecked
+/// `deadline + Duration::from_nanos(999_999)` (`src/runtime/time/source.rs`),
+/// so registering a deadline that fits the clock but sits within that band
+/// of its ceiling panics — here, at the maximal fitting deadline itself.
+/// The inner future must be `pending` for the registration to happen at
+/// all: `Timeout::poll` polls the future first and returns on `Ready`
+/// without ever polling the delay, which is why the failed-initialization
+/// twin above, whose cleanup is `async { Ok(()) }`, never reaches the
+/// registration path either. The panic is observed through a spawned
+/// task's join error rather than `#[should_panic]` so the assertion
+/// messages stay bindable for the negative controls, and the guard timeout
+/// turns a non-panicking registration into a marked failure instead of a
+/// hang. If tokio ever stops panicking here, this probe fails and the
+/// headroom can be revisited; until then it is the measured fact
+/// `TICK_CONVERSION_HEADROOM` is sized against.
+#[tokio::test]
+async fn a_maximal_deadline_panics_on_timer_registration() {
+    let now = tokio::time::Instant::now();
+    let mut lo = std::time::Duration::ZERO;
+    let mut hi = std::time::Duration::MAX;
+    for _ in 0..512 {
+        let mid = lo + (hi - lo) / 2;
+        if now.checked_add(mid).is_some() {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let registration = tokio::spawn(async move {
+        let _ = tokio::time::timeout_at(now + lo, std::future::pending::<()>()).await;
+    });
+    // The guard bounds the probe: a deadline that no longer lands in the
+    // panic band leaves the registration pending forever, so without it a
+    // mutant would hang the test instead of failing at this marker.
+    let settled = tokio::time::timeout(std::time::Duration::from_secs(5), registration)
+        .await
+        .expect("#2501 the timer-registration probe must settle within the guard");
+    let failure = settled.expect_err("#2501 registering the maximal fitting deadline must panic");
+    let panic = failure
+        .try_into_panic()
+        .expect("#2501 the registration failure must be a panic, not a cancellation");
+    let message = panic
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("#2501 the registration panic carried no message");
+    assert!(
+        message.contains("overflow when adding duration to instant"),
+        "#2501 the registration panic must be the unchecked tick conversion, got {message:?}"
+    );
+}
+
+/// #1949 fixture: a factory whose creation never settles, so the owner's
+/// shutdown() drains its pending creation forever — the host must cut that
+/// wait at the owner bound. `entered` flips on the first poll so the test can
+/// wait for the worker to be parked inside the factory before it starts the
+/// host (see the test above for why that ordering is the whole fixture).
+struct PendingCreationFactory {
+    entered: Arc<std::sync::atomic::AtomicBool>,
+}
+impl SessionFactory for PendingCreationFactory {
+    fn create(
+        &self,
+        _: SessionContext,
+        _: Option<LiveSessionHandle>,
+    ) -> BoxFuture<Result<LiveSessionHandle, RuntimeError>> {
+        let entered = self.entered.clone();
+        Box::pin(async move {
+            entered.store(true, std::sync::atomic::Ordering::SeqCst);
+            std::future::pending().await
+        })
+    }
+}

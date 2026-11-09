@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 HANDLE_PATH = ROOT / 'src/pilotdeck-gateway/src/handle_path.rs'
 sys.path.insert(0, str(FIXTURES))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
@@ -144,7 +145,16 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
-    check_binding_scope()
+    # #1990 fix-r1 (review P2): the binding self-check runs before any
+    # mutation, so its failure is a "never started" refusal (rc 2) — the
+    # pre-`mutating_sources` boundary every guard below already follows
+    # (`specs/negative-controls/README.md`) — not an uncaught traceback a
+    # host would read as "ran and not green" (1). Same class of fix as
+    # #2441's sdk-mcp-session-tools fixture in this same tree.
+    try:
+        check_binding_scope()
+    except RuntimeError as error:
+        refuse(str(error))
     # Every refusal below happens before any mutation, so it is rc 2 ("this
     # run never started") and not rc 1 ("ran, not green") — the four-way table
     # in `specs/negative-controls/README.md`.
@@ -152,30 +162,42 @@ def main():
         registered(mutations, EXPECTED_NAMES)
     except ValueError as error:
         refuse(str(error))
+    # #2468 r3 (review r7 sibling#1/boundary#1): every guard below reads
+    # argv/env only, so it is refused before the stale-anchor scan touches
+    # live sources — same class as the sdk-mcp-session-tools fixture. A full
+    # mutation round holds the tree lock with `handle_path.rs` mutated on
+    # disk; a concurrent caller with an unknown name or an unusable
+    # CARGO_TARGET_DIR would otherwise hit the stale-anchor refusal first,
+    # naming none of the real cause. `--check` keeps its own argv contract
+    # (no output, no names), and the non-Darwin `skip_rows` path still
+    # requires no target (cargo never starts there). The output-path
+    # precheck is a fast fail on the same condition `claim_dir` owns below
+    # (an atomic `mkdir(exist_ok=False)`), so a path created after it is
+    # still refused.
+    selected = [row for row in mutations if not args.selected or row[0] in args.selected]
+    if not args.check:
+        if not selected or (args.selected and len(selected) != len(args.selected)):
+            refuse('#1990 unknown or repeated mutation')
+        if not args.output:
+            refuse('#1990 output directory required')
+        if sys.platform == 'darwin':
+            if missing_target():
+                refuse('#1990 set CARGO_TARGET_DIR to a dedicated target directory')
+            refuse_unusable_target()
+            if Path(args.output).exists():
+                refuse(f'#1990 output path already exists: {Path(args.output).resolve()}')
     stale = stale_names()
     if stale:
         refuse('#1990 stale anchor/test/assertion bindings: ' + ', '.join(stale))
     if args.check:
         print(f'#1990 {len(mutations)} unique anchors and assertion bindings: OK')
         return 0
-    selected = [row for row in mutations if not args.selected or row[0] in args.selected]
-    if not selected or (args.selected and len(selected) != len(args.selected)):
-        refuse('#1990 unknown or repeated mutation')
-    if not args.output:
-        refuse('#1990 output directory required')
     if sys.platform != 'darwin':
         # Nothing below this line can be judged off-macOS; cargo never starts,
         # so a caller-owned target is not required here. The evidence
         # directory is still claimed the shared way (an existing one is a
         # refusal, not a verdict).
         return skip_rows(selected, claim_dir(args.output))
-    # #1990 fix-r1: the target is admitted by the one shared rule (absent,
-    # empty, blank, dot, root, repo root, inside `src`) *before* the evidence
-    # directory exists, so a rejected target cannot leave a directory that
-    # reads like a finished run.
-    if missing_target():
-        refuse('#1990 set CARGO_TARGET_DIR to a dedicated target directory')
-    refuse_unusable_target()
     output = claim_dir(args.output)
     env = dict(os.environ)
     for key in [ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'PDRS_MUTANT', 'LIVE_E2E_MUTANT']:
@@ -200,13 +222,25 @@ def main():
     try:
         with mutating_sources(ROOT, guarded) as originals:
             guarded_sha256 = {str(path.relative_to(ROOT)): hashlib.sha256(originals[path]).hexdigest() for path in guarded}
+            # #2468 r2 (review r6 concurrency#2/boundary#3): publish and
+            # restore every mutated source through `write_source_atomic` (a
+            # single rename, never a truncating in-place write), so a SIGKILL
+            # mid-write-back cannot leave an empty or half-written
+            # `handle_path.rs` that even `git checkout` cannot recover (#1903
+            # residue class). The mode is snapshotted from the source itself,
+            # so the new inode of the temp file does not become a mode-only
+            # `git diff` under `core.filemode=true`.
+            modes = {path: path.stat().st_mode & 0o7777
+                     for _, path, _, _, _, _ in mutations}
             for name, path, old, new, test, assertion in selected:
                 item = dict(name=name, test=test, assertion=assertion,
                             status='INVALID', reason='not run', compiled=False)
                 try:
                     if not args.compile_only and not passed(run(name + '-positive', env, test), test):
                         raise RuntimeError('positive bound test failed')
-                    path.write_text(originals[path].decode().replace(old, new, 1))
+                    write_source_atomic(ROOT, path,
+                                        originals[path].decode().replace(old, new, 1).encode(),
+                                        mode=modes[path])
                     if run(name + '-compile', env, test, compile_only=True).returncode:
                         raise RuntimeError('mutant did not compile; not a runtime kill')
                     item['compiled'] = True
@@ -221,7 +255,7 @@ def main():
                 except Exception as error:
                     item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(ROOT, path, originals[path], mode=modes[path])
                 try:
                     if not args.compile_only:
                         if not passed(run(name + '-restored', env, test), test):

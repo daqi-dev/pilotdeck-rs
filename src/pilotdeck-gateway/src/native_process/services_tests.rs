@@ -8,7 +8,8 @@
 //! diagnostics, stat-authoritative oversize gate and the EISDIR turn
 //! failure) plus the attach-followups-a follow-ups (#1458 pdf_size_estimate
 //! info, #1469 attachment_unsupported diagnostics, #1462 the Node EISDIR
-//! message, #1459/#1464 the lease-root/lease-path softening), the #1460
+//! message, #1459/#1464 the lease-root/lease-path softening and #1629 the
+//! path-level canonicalize softening), the #1460
 //! two-pass split (a direct-content attachment with a channelKey path is
 //! still registered; its path failures stay silent like the audio skip —
 //! including the open failure of an unopenable lease file),
@@ -18,7 +19,14 @@
 //! tail),
 //! and the #1320 fix-r1 F2/F3 settings-composition tests (the production
 //! stack binds no notification server; the settings store anchors at
-//! PILOT_HOME).
+//! PILOT_HOME),
+//! and the #2495 note-pass domain split (the hasInspectable accumulation
+//! sits before the lexical note dedup, and both the note lines and the
+//! accumulation key on the allowedReadFiles membership test instead of
+//! channel registration — note_dedup_*,
+//! dual_spelling_accumulates_inspectable_per_entry,
+//! unregistered_colliding_spelling_* and
+//! unregistered_non_member_inspectable_does_not_count).
 
 use super::services::{
     NativeSettingsOptions, attachment_identity_matches, canonical_upload_store,
@@ -345,18 +353,443 @@ fn symlinked_project_spelling_keeps_lease_attachments() {
         Some(JsValue::Array(files)) => files.clone(),
         _ => Vec::new(),
     };
-    // registered allowedReadFiles carry the post-open canonical spelling, not
-    // the client's (services.rs: `RegisteredAttachment.resolved`); under a
-    // symlinked project the two spellings differ, so the expectation is the
-    // physical one computed above.
+    // #1618 + #1446: allowedReadFiles carries the dual registration of TS
+    // `collectRegisteredAttachmentReadFiles` (composer :182-183) — the
+    // client's lexical spelling first, then the canonicalized realpath —
+    // and the note line prints the lexical one
+    // (`safeAllowedAttachmentPath`, composer :167-171). Under a symlinked
+    // project the two spellings differ, so both must appear.
     negative_assert!(
-        allowed == vec![JsValue::from(physical.as_str())],
-        "#1618 a lease attachment under a symlinked project must be registered under its canonical spelling, got: {allowed:?}"
+        allowed
+            == vec![
+                JsValue::from(logical.as_str()),
+                JsValue::from(physical.as_str()),
+            ],
+        "#1446 a lease attachment under a symlinked project must register both spellings, got: {allowed:?}"
+    );
+    negative_assert!(
+        note_block(&blocks).contains(&format!("- a.png: {logical}")),
+        "#1446 the note line must carry the client's lexical spelling, got: {}",
+        note_block(&blocks)
     );
     negative_assert!(
         !diagnostics_block(&blocks).contains("not found"),
         "#1618 an in-lease attachment must not get a not-found diagnostic, got: {}",
         diagnostics_block(&blocks)
+    );
+}
+
+#[test]
+fn dual_registration_carries_both_spellings() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #1446 — the resolved≠realpath golden (ts-probe/p2-dual-path.out.txt,
+    // real GatewayAttachmentTurnComposer on an intermediate-symlink
+    // fixture): `collectRegisteredAttachmentReadFiles` (composer :182-183)
+    // registers BOTH the lexical `resolve(path)` and the canonicalized
+    // realpath. Here the intermediate link sits inside the lease tree
+    // (`u1-link -> u1`), the counterpart of the project-level alias in the
+    // #1618 test above.
+    let leases = scratch.0.join(".tmp").join("chat-upload-leases");
+    std::fs::write(leases.join("u1").join("a.png"), [1u8, 2, 3, 4]).expect("#1446 lease file");
+    symlink("u1", leases.join("u1-link")).expect("#1446 lease dir link");
+    let via_link = leases
+        .join("u1-link")
+        .join("a.png")
+        .to_str()
+        .expect("#1446 link spelling UTF-8")
+        .to_owned();
+    let physical = leases
+        .join("u1")
+        .join("a.png")
+        .to_str()
+        .expect("#1446 physical spelling UTF-8")
+        .to_owned();
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&via_link, "image/png")],
+    )
+    .expect("#1446 an in-lease attachment through a link must compose");
+    let blocks = content_blocks(&result);
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed
+            == vec![
+                JsValue::from(via_link.as_str()),
+                JsValue::from(physical.as_str()),
+            ],
+        "#1446 the dual registration must carry the link spelling and the physical spelling"
+    );
+    negative_assert!(
+        note_block(&blocks).contains(&format!("- a.png: {via_link}")),
+        "#1446 the note line must carry the link spelling"
+    );
+    negative_assert!(
+        !note_block(&blocks).contains(&format!("- a.png: {physical}")),
+        "#1446 the note line must not carry the physical spelling"
+    );
+}
+
+#[test]
+fn dual_registration_dedups_the_set_across_spellings() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #1446 — the Set semantics: two attachments naming the same file by its
+    // two spellings add the same entries twice (TS `allowed` Set keeps
+    // [L, C]) while each spelling still gets its own note line (the TS
+    // `seen` dedup is on the lexical spelling, composer :102/:168).
+    let leases = scratch.0.join(".tmp").join("chat-upload-leases");
+    std::fs::write(leases.join("u1").join("a.png"), [1u8, 2, 3, 4]).expect("#1446 lease file");
+    symlink("u1", leases.join("u1-link")).expect("#1446 lease dir link");
+    let via_link = leases
+        .join("u1-link")
+        .join("a.png")
+        .to_str()
+        .expect("#1446 link spelling UTF-8")
+        .to_owned();
+    let physical = leases
+        .join("u1")
+        .join("a.png")
+        .to_str()
+        .expect("#1446 physical spelling UTF-8")
+        .to_owned();
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&via_link, "image/png"),
+            attachment(&physical, "image/png"),
+        ],
+    )
+    .expect("#1446 both spellings must compose");
+    let blocks = content_blocks(&result);
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed
+            == vec![
+                JsValue::from(via_link.as_str()),
+                JsValue::from(physical.as_str()),
+            ],
+        "#1446 the Set must keep one entry per spelling"
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- a.png: {via_link}"))
+            && note.contains(&format!("- a.png: {physical}")),
+        "#1446 each spelling must get its own note line"
+    );
+}
+
+/// #2495 — `application/vnd.openxmlformats-officedocument
+/// .wordprocessingml.document`: a binary-container extension, so the entry
+/// is NOT read_file-inspectable (composer :163).
+const DOCX_MIME: &str = "application/vnd.openxmlformats-officedocument.\
+                         wordprocessingml.document";
+
+#[test]
+fn note_dedup_keeps_second_entry_inspectable() {
+    let scratch = Scratch::new();
+    // #2495 — the same lexical spelling twice, the first entry not
+    // read_file-inspectable (.docx) and the second inspectable (mime
+    // text/plain): the note line dedups to the first entry (#1446,
+    // composer :105) but `hasInspectableAttachment` is a separate
+    // `attachments.some(...)` over the whole attachment list (composer
+    // :142-151), so the skipped second entry still selects the read_file
+    // guidance form (ts-probe `_tmp/20261026-issue-2495/probe/probe.out`
+    // scenario A).
+    let path = scratch.lease("same.docx");
+    std::fs::write(&path, b"body").expect("#2495 dedupe fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&path, DOCX_MIME),
+            attachment(&path, "text/plain"),
+        ],
+    )
+    .expect("#2495 duplicate attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.lines().filter(|line| line.starts_with("- ")).count() == 1,
+        "#2495 the duplicate spelling must keep exactly one note line, got: {note}"
+    );
+    negative_assert!(
+        note.contains(&format!("- same.docx: {path}")),
+        "#2495 the surviving note line must be the first entry's spelling, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        // Static message: the negative-control receipt protocol compares the
+        // runtime message byte-for-byte (#2495 fix-r2), so a bound assertion
+        // never interpolates diagnostics into its own identity.
+        "#2495 the deduped second entry's inspectable must still select the read_file form"
+    );
+}
+
+#[test]
+fn note_dedup_first_inspectable_order_control() {
+    let scratch = Scratch::new();
+    // #2495 order control (probe scenario A2): with the first entry
+    // inspectable the read_file form holds without the second entry —
+    // the accumulation is an OR, never a replacement.
+    let path = scratch.lease("order.docx");
+    std::fs::write(&path, b"body").expect("#2495 order fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&path, "text/plain"),
+            attachment(&path, DOCX_MIME),
+        ],
+    )
+    .expect("#2495 reversed duplicates compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.lines().filter(|line| line.starts_with("- ")).count() == 1,
+        "#2495 the reversed duplicate must keep exactly one note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the first entry's inspectable must select the read_file form, got: {note}"
+    );
+}
+
+#[test]
+fn note_dedup_both_non_inspectable_keeps_conversion_form() {
+    let scratch = Scratch::new();
+    // #2495 negative control (probe scenario C): both entries
+    // non-inspectable → the conversion form; the accumulation must not
+    // flip to true on its own.
+    let path = scratch.lease("none.docx");
+    std::fs::write(&path, b"body").expect("#2495 conversion fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&path, DOCX_MIME),
+            attachment(&path, "application/octet-stream"),
+        ],
+    )
+    .expect("#2495 non-inspectable duplicates compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. These registered files are not \
+             directly inspectable with read_file; ask for a supported export or convert \
+             them before inspection."
+        ),
+        "#2495 two non-inspectable entries must keep the conversion form"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn dual_spelling_accumulates_inspectable_per_entry() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #2495 — the double spelling with differing inspectable (probe
+    // scenario B): the link entry is not inspectable, the physical entry
+    // is. Each spelling keeps its own note line and its allowedReadFiles
+    // entry (#1446), and the physical entry's inspectable selects the
+    // read_file form — the note pass and the collection pass dedup
+    // independently of the hasInspectable accumulation.
+    let leases = scratch.0.join(".tmp").join("chat-upload-leases");
+    std::fs::write(leases.join("u1").join("b.docx"), b"body").expect("#2495 dual-spelling fixture");
+    symlink("u1", leases.join("u1-link")).expect("#2495 lease dir link");
+    let via_link = leases
+        .join("u1-link")
+        .join("b.docx")
+        .to_str()
+        .expect("#2495 link spelling UTF-8")
+        .to_owned();
+    let physical = leases
+        .join("u1")
+        .join("b.docx")
+        .to_str()
+        .expect("#2495 physical spelling UTF-8")
+        .to_owned();
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&via_link, DOCX_MIME),
+            attachment(&physical, "text/plain"),
+        ],
+    )
+    .expect("#2495 dual-spelling attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed
+            == vec![
+                JsValue::from(via_link.as_str()),
+                JsValue::from(physical.as_str()),
+            ],
+        "#2495 the dual spelling must register both spellings, got: {allowed:?}"
+    );
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- b.docx: {via_link}"))
+            && note.contains(&format!("- b.docx: {physical}")),
+        "#2495 each spelling must keep its own note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the physical entry's inspectable must select the read_file form, got: {note}"
+    );
+}
+
+#[test]
+fn unregistered_colliding_spelling_counts_for_guidance() {
+    let scratch = Scratch::new();
+    // #2495 — TS gates `hasInspectableAttachment` only on the
+    // allowedReadFiles membership test (composer :144), never on the
+    // entry's own registration: an uploaded (channelKey-less) entry whose
+    // spelling collides with a registered one still counts (probe
+    // scenario D). The note line is still deduped on the shared spelling.
+    let path = scratch.lease("collide.docx");
+    std::fs::write(&path, b"body").expect("#2495 collision fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&path, DOCX_MIME),
+            upload_attachment(&path, "text/plain"),
+        ],
+    )
+    .expect("#2495 colliding attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.lines().filter(|line| line.starts_with("- ")).count() == 1,
+        "#2495 the colliding spelling must keep exactly one note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the unregistered colliding entry's inspectable must still select the read_file form"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn unregistered_colliding_spelling_gets_note_line() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    // #2495 — the note lines use the same membership test (composer :103):
+    // an uploaded entry naming the registered attachment's realpath
+    // spelling gets its own line (probe scenario E).
+    let leases = scratch.0.join(".tmp").join("chat-upload-leases");
+    std::fs::write(leases.join("u1").join("e.docx"), b"body").expect("#2495 note-domain fixture");
+    symlink("u1", leases.join("e-link")).expect("#2495 lease dir link");
+    let via_link = leases
+        .join("e-link")
+        .join("e.docx")
+        .to_str()
+        .expect("#2495 link spelling UTF-8")
+        .to_owned();
+    let physical = leases
+        .join("u1")
+        .join("e.docx")
+        .to_str()
+        .expect("#2495 physical spelling UTF-8")
+        .to_owned();
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&via_link, DOCX_MIME),
+            upload_attachment(&physical, "text/plain"),
+        ],
+    )
+    .expect("#2495 note-domain attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- e.docx: {via_link}"))
+            && note.contains(&format!("- e.docx: {physical}")),
+        "#2495 the unregistered entry naming the registered realpath spelling must get its own note line"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. Use read_file with the exact path only \
+             for readable text, image, PDF, or notebook attachments; Office/archive/binary \
+             files need conversion before inspection."
+        ),
+        "#2495 the unregistered colliding entry's inspectable must select the read_file form, got: {note}"
+    );
+}
+
+#[test]
+fn unregistered_non_member_inspectable_does_not_count() {
+    let scratch = Scratch::new();
+    // #2495 fix-r1 (sibling review P2) — the inspectable-side dual of the
+    // #1469 note-line gate: `hasInspectableAttachment` keys on the
+    // allowedReadFiles membership test (composer :144), never on the
+    // entry's own registration or inspectability alone. The registered
+    // .docx is a member but not read_file-inspectable; the uploaded .pdf
+    // is inspectable but its own spelling is a member of nothing. Only a
+    // member's inspectable may flip the guidance, so the conversion form
+    // must hold — an accumulation hoisted above the membership gate
+    // (or keyed on registration) would take the read_file form instead.
+    let docx_path = scratch.lease("member.docx");
+    std::fs::write(&docx_path, b"PK\x03\x04office").expect("#2495 member fixture");
+    let pdf_path = scratch.lease("outsider.pdf");
+    std::fs::write(&pdf_path, b"%PDF-1.4").expect("#2495 outsider fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&docx_path, DOCX_MIME),
+            upload_attachment(&pdf_path, "application/pdf"),
+        ],
+    )
+    .expect("#2495 non-member attachments compose the turn");
+    let blocks = content_blocks(&result);
+    let note = note_block(&blocks);
+    negative_assert!(
+        note.contains(&format!("- member.docx: {docx_path}")),
+        "#2495 the registered member must keep its note line, got: {note}"
+    );
+    negative_assert!(
+        !note.contains(&format!("- outsider.pdf: {pdf_path}")),
+        "#2495 the non-member upload must not get a note line, got: {note}"
+    );
+    negative_assert!(
+        note.ends_with(
+            "Some attachments were not shown inline. These registered files are not \
+             directly inspectable with read_file; ask for a supported export or convert \
+             them before inspection."
+        ),
+        "#2495 a non-member inspectable must not flip the guidance to the read_file form"
     );
 }
 
@@ -740,10 +1173,7 @@ fn binary_extension_attachment_stays_path_reference() {
     let result = compose_attachment_turn(
         &scratch.0,
         &message("hello"),
-        &[attachment(
-            &path,
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )],
+        &[attachment(&path, DOCX_MIME)],
     )
     .expect("#1321 binary attachments compose the turn");
     let blocks = content_blocks(&result);
@@ -894,7 +1324,7 @@ fn binary_container_info_diagnostic_gating() {
     negative_assert!(
         note.contains(&format!("- chan.zip: {registered_path}"))
             && !note.contains(upload_path.as_str()),
-        "#1469 only the registered binary container keeps a note line, got: {note}"
+        "#1469 only the registered binary container keeps a note line"
     );
 }
 
@@ -1100,7 +1530,7 @@ fn note_name_cleaning_and_dedupe() {
     );
     negative_assert!(
         note.lines().filter(|line| line.starts_with("- ")).count() == 1,
-        "#1321 duplicate normalized paths must produce exactly one note line, got: {note}"
+        "#1321 duplicate normalized paths must produce exactly one note line"
     );
 }
 
@@ -2287,11 +2717,12 @@ fn direct_content_with_an_invalid_channel_key_path_stays_silent() {
 fn direct_content_with_an_eloop_path_stays_silent() {
     use std::os::unix::fs::symlink;
     let scratch = Scratch::new();
-    // #1460: a P2 internal error (an ELOOP canonicalize failure of the
-    // path itself under a valid root) is swallowed for a content-produced
-    // attachment exactly like the registration pass's own `catch {}`
-    // swallows its stat error — the turn must not fail over a path the
-    // resolver projection never sees.
+    // #1460/#1629: an ELOOP canonicalize failure of the path itself under
+    // a valid root (#1629: no longer a P2 internal error — it softens
+    // inside `lease_guard` like every other unresolvable path) is swallowed
+    // for a content-produced attachment exactly like the registration
+    // pass's own `catch {}` swallows its stat error — the turn must not
+    // fail over a path the resolver projection never sees.
     let link = scratch.lease("loop.png");
     symlink(Path::new(&link), Path::new(&link)).expect("#1460 symlink loop fixture");
     let entry = object([
@@ -2955,25 +3386,96 @@ fn unresolvable_lease_root_softens_to_not_found() {
 
 #[cfg(unix)]
 #[test]
-fn symlink_loop_lease_path_fails_the_turn() {
+fn symlink_loop_lease_path_softens_to_not_found_diagnostic() {
     use std::os::unix::fs::symlink;
     let scratch = Scratch::new();
-    // P2: only the ENOENT canonicalize failure softens into the not-found
-    // diagnostic; a symlink loop (ELOOP) is a hard turn failure.
+    // #1629: a symlink loop on the lease path itself — a canonicalize
+    // failure with a non-`NotFound` errno under a valid root — no longer
+    // fails the turn. The TS resolver's stat try/catch has no errno filter
+    // (AttachmentResolver.ts:188-201, Node probe
+    // `_tmp/20261026-issue-1629/probe/ts-stat-failures.mjs`), so the ELOOP
+    // softens exactly like the TTL cleanup race: no read, no registration,
+    // no inline.
     let link = scratch.lease("loop.png");
-    symlink(Path::new(&link), Path::new(&link)).expect("#1321 symlink loop fixture");
-    let result = compose_attachment_turn(
-        &scratch.0,
-        &message("hello"),
-        &[attachment(&link, "image/png")],
+    symlink(Path::new(&link), Path::new(&link)).expect("#1629 symlink loop fixture");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&link, "image/png")],
+        ),
+        "#1629 a symlink-loop lease path must not fail the turn",
     );
-    let Err(error) = result else {
-        panic!("#1321 P2: a symlink-loop lease path must fail the turn");
-    };
+    let blocks = content_blocks(&result);
+    // std's OS-error Display is `{strerror} (os error {errno})` on both
+    // Linux and macOS, but the ELOOP errno differs (40/62), so the pin
+    // stops before the number.
     negative_assert!(
-        error.message.contains("cannot be resolved"),
-        "#1321 P2: a non-ENOENT canonicalize failure must be a hard failure, got: {}",
-        error.message
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {link} (Too many levels of symbolic links (os error "
+        )),
+        "#1629 a symlink-loop lease path must soften to the not-found diagnostic, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1629 a symlink-loop lease path must never inline"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1629 a symlink-loop lease path must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1629 a symlink-loop lease path must never produce a note line"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn not_directory_lease_path_softens_to_not_found_diagnostic() {
+    let scratch = Scratch::new();
+    // #1629: the non-ELOOP spelling of a non-`NotFound` canonicalize
+    // failure — a regular file where a directory component is expected
+    // (ENOTDIR), the same error class the TS stat catch swallows. An EACCES
+    // fixture would need chmod 000, which does not fail under a root uid
+    // (the #1459 root-test precedent), so ENOTDIR — uid-independent and
+    // POSIX-mandated on both Unixes CI runs (Linux and macOS; an exotic
+    // mount reporting ENOENT here would still soften, only the pinned
+    // wording would differ) — carries the "any failure" claim.
+    std::fs::write(scratch.lease("plain.txt"), b"x").expect("#1629 regular-file fixture");
+    let path = scratch.lease("plain.txt/sub.png");
+    let result = crate::test_negative_receipt::expect_ok(
+        compose_attachment_turn(
+            &scratch.0,
+            &message("hello"),
+            &[attachment(&path, "image/png")],
+        ),
+        "#1629 an ENOTDIR lease path must not fail the turn",
+    );
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (Not a directory (os error "
+        )),
+        "#1629 an ENOTDIR lease path must soften to the not-found diagnostic, got: {}",
+        diagnostics_block(&blocks)
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1629 an ENOTDIR lease path must never inline"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1629 an ENOTDIR lease path must never register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).is_empty(),
+        "#1629 an ENOTDIR lease path must never produce a note line"
     );
 }
 
@@ -3344,4 +3846,309 @@ fn has_file_source(value: &JsValue) -> bool {
         }),
         _ => false,
     }
+}
+
+/// #1448 r5：limit+1 边界——恰好 limit 内联（`exact_limit_image_and_text_
+/// are_inlined` 已钉），恰好 limit+1 跳过进诊断，两侧互为对照。
+#[test]
+fn limit_plus_one_attachments_skip_to_diagnostics() {
+    let scratch = Scratch::new();
+    let image_path = scratch.lease("over.png");
+    std::fs::write(&image_path, vec![1u8; 5 * 1024 * 1024 + 1])
+        .expect("#1448 limit-plus-one image fixture");
+    let text_path = scratch.lease("over.txt");
+    std::fs::write(&text_path, vec![b'x'; 1_000_001]).expect("#1448 limit-plus-one text fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[
+            attachment(&image_path, "image/png"),
+            attachment(&text_path, "text/plain"),
+        ],
+    )
+    .expect("#1448 limit-plus-one attachments still compose the turn");
+    let blocks = content_blocks(&result);
+    let diagnostics = diagnostics_block(&blocks);
+    negative_assert!(
+        diagnostics.contains(&format!(
+            "Image {image_path} is 5242881 bytes (limit 5242880); skipped \
+             (PilotDeck does not resize, intentional_difference §4.5)."
+        )),
+        "#1448 a 5242881-byte image must be skipped with the exact size"
+    );
+    negative_assert!(
+        diagnostics.contains(&format!(
+            "Attachment {text_path} is 1000001 bytes (limit 1000000); skipped."
+        )),
+        "#1448 a 1000001-byte text attachment must be skipped with the exact size"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1448 a limit-plus-one image must not be inlined"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| !block_text(block).starts_with("<attachment path=")),
+        "#1448 a limit-plus-one text attachment must not be inlined"
+    );
+}
+
+/// #1448：manifest `bytes: 0`——真实零字节附件照常注册（note 行 +
+/// allowedReadFiles）并按 TS 包装内联空文本；`bytes` 声明不改变读到的
+/// 实际字节数（AttachmentResolver.ts:187-202 只信 stat）。
+#[test]
+fn zero_byte_text_attachment_registers_and_inlines_empty() {
+    let scratch = Scratch::new();
+    let path = scratch.lease("empty.txt");
+    std::fs::write(&path, b"").expect("#1448 zero-byte fixture");
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "text/plain")],
+    )
+    .expect("#1448 a zero-byte attachment composes the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 3,
+        "#1448 a zero-byte attachment must keep message, text and note blocks, got {}",
+        blocks.len()
+    );
+    negative_assert!(
+        block_text(&blocks[1]) == format!("<attachment path=\"{path}\">\n\n</attachment>"),
+        "#1448 a zero-byte text attachment must inline the empty TS wrapper"
+    );
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed == vec![JsValue::from(path.as_str())],
+        "#1448 a zero-byte attachment must register allowedReadFiles"
+    );
+    negative_assert!(
+        note_block(&blocks).contains(&format!("- empty.txt: {path}")),
+        "#1448 a zero-byte attachment must keep its note line"
+    );
+}
+
+/// #1448 fix-r2 收编行「无界读」的杀测试：fstat（权威超限门）之后、读之前
+/// 文件长过上限——有界读最多读回 limit+1 字节，读满即超限回填诊断；无界
+/// 读会把超出上限的字节整段内联。注入点 `BeforeRead`。
+#[test]
+fn grown_between_stat_and_read_hits_the_full_read_backstop() {
+    let scratch = Scratch::new();
+    let path = scratch.lease("grown.txt");
+    std::fs::write(&path, vec![b'x'; 1_000_000]).expect("#1448 exact-limit fixture");
+    let grown = std::path::PathBuf::from(&path);
+    let _hook = swap_test_hook::set(swap_test_hook::SwapWindow::BeforeRead, move |resolved| {
+        if resolved == grown {
+            std::fs::write(&grown, vec![b'x'; 1_000_005]).expect("#1448 grow the leaf");
+        }
+    });
+    let result = compose_attachment_turn(
+        &scratch.0,
+        &message("hello"),
+        &[attachment(&path, "text/plain")],
+    )
+    .expect("#1448 a grown read must not fail the turn");
+    let blocks = content_blocks(&result);
+    let diagnostics = diagnostics_block(&blocks);
+    negative_assert!(
+        diagnostics.contains(&format!(
+            "Attachment {path} is 1000001 bytes (limit 1000000); skipped."
+        )),
+        "#1448 a grown read must hit the full-read backstop and skip"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| !block_text(block).starts_with("<attachment path=")),
+        "#1448 a grown read must not inline over the cap"
+    );
+}
+
+/// #1448 fix-r2 收编行「content 删除」的杀测试：content 图片分支被删除
+/// （或反转）时该测试红。断言消息为静态串（负控回执按格式化后的全文匹配）。
+#[test]
+fn content_image_branch_emits_the_flat_block() {
+    let scratch = Scratch::new();
+    let image_content = object([
+        ("type", JsValue::from("image")),
+        (
+            "content",
+            JsValue::from(BASE64_STANDARD.encode("ABC").as_str()),
+        ),
+        ("mimeType", JsValue::from("image/png")),
+        ("bytes", JsValue::Number(3.0)),
+    ]);
+    let result = compose_attachment_turn(&scratch.0, &message("hello"), &[image_content])
+        .expect("#1448 a content image composes without any path");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 2,
+        "#1448 the content image branch must keep message and image blocks"
+    );
+    negative_assert!(
+        blocks[1].get("type") == Some(&"image".into())
+            && blocks[1].get("source") == Some(&"base64".into())
+            && blocks[1].get("data")
+                == Some(&JsValue::from(BASE64_STANDARD.encode("ABC").as_str()))
+            && blocks[1].get("mimeType") == Some(&JsValue::from("image/png")),
+        "#1448 the content image branch must emit the flat block"
+    );
+}
+
+/// #1448 端到端：经 `SubmitHostServices::prepare_attachment_turn`（trait →
+/// validate_profile → spawn_blocking → compose_attachment_turn）组合轮次，
+/// 正常租约附件全链（内联 + 双路注册 + note 行）。
+#[tokio::test]
+async fn prepare_attachment_turn_composes_the_turn_end_to_end() {
+    use crate::runtime::turn::submit_host::SubmitHostServices as _;
+    let (_fixture, requests) = std::panic::catch_unwind(super::management_tests::setup)
+        .expect("#1448 registry fixture setup");
+    let project = requests.options.project.clone();
+    let lease_dir = project.join(".tmp").join("chat-upload-leases").join("u1");
+    std::fs::create_dir_all(&lease_dir).expect("#1448 e2e lease fixture dir");
+    std::fs::write(lease_dir.join("a.png"), [1u8, 2, 3, 4]).expect("#1448 e2e lease file");
+    let path = lease_dir
+        .join("a.png")
+        .to_str()
+        .expect("#1448 e2e UTF-8")
+        .to_owned();
+    let services = super::services::Services {
+        options: requests.options.clone(),
+        project: requests.project.clone(),
+        env: requests.env.clone(),
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_| Ok(std::path::PathBuf::new()),
+                || Ok(Vec::new()),
+            ),
+        )),
+    };
+    let result = services
+        .prepare_attachment_turn(
+            &message("hello"),
+            vec![attachment(&path, "image/png")],
+            None,
+            None,
+        )
+        .await
+        .expect("#1448 prepare_attachment_turn must compose the turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        blocks.len() == 3,
+        "#1448 the e2e composition must keep message, image and note blocks, got {}",
+        blocks.len()
+    );
+    negative_assert!(
+        blocks[1].get("type") == Some(&"image".into())
+            && blocks[1].get("bytes") == Some(&JsValue::Number(4.0)),
+        "#1448 the e2e composition must inline the lease image"
+    );
+    let allowed = match result.get("allowedReadFiles") {
+        Some(JsValue::Array(files)) => files.clone(),
+        _ => Vec::new(),
+    };
+    negative_assert!(
+        allowed == vec![JsValue::from(path.as_str())],
+        "#1448 the e2e composition must register the lease path"
+    );
+    negative_assert!(
+        note_block(&blocks).contains(&format!("- a.png: {path}")),
+        "#1448 the e2e composition must keep the note line"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1448 e2e fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1448 e2e fixture project shutdown");
+}
+
+/// #1448 端到端边界：lease 根本身是指向项目内其它子树的 symlink——经
+/// `prepare_attachment_turn` 全链走 not-found 分支（canonical_home 逐组件
+/// 走查拒绝链根），不内联、不注册。
+#[cfg(unix)]
+#[tokio::test]
+async fn prepare_attachment_turn_refuses_a_linked_lease_root() {
+    use crate::runtime::turn::submit_host::SubmitHostServices as _;
+    use std::os::unix::fs::symlink;
+    let (_fixture, requests) = std::panic::catch_unwind(super::management_tests::setup)
+        .expect("#1448 registry fixture setup");
+    let project = requests.options.project.clone();
+    let lease_root = project.join(".tmp").join("chat-upload-leases");
+    std::fs::create_dir_all(&lease_root).expect("#1448 boundary lease root");
+    let elsewhere = project.join("elsewhere");
+    std::fs::create_dir_all(elsewhere.join("u1")).expect("#1448 boundary target dir");
+    std::fs::write(elsewhere.join("u1").join("linked.png"), [1u8, 2, 3, 4])
+        .expect("#1448 boundary target file");
+    std::fs::remove_dir_all(&lease_root).expect("#1448 drop the real lease root");
+    symlink(&elsewhere, &lease_root).expect("#1448 swap the lease root for a link");
+    let path = lease_root
+        .join("u1")
+        .join("linked.png")
+        .to_str()
+        .expect("#1448 boundary UTF-8")
+        .to_owned();
+    let services = super::services::Services {
+        options: requests.options.clone(),
+        project: requests.project.clone(),
+        env: requests.env.clone(),
+        recorders: Arc::default(),
+        owner: requests.owner.clone(),
+        snapshot_recorder: None,
+        upload_store: Arc::new(crate::upload::UploadStore::new(
+            crate::upload::UploadStoreOptions::new(
+                |_| Ok(std::path::PathBuf::new()),
+                || Ok(Vec::new()),
+            ),
+        )),
+    };
+    let result = services
+        .prepare_attachment_turn(
+            &message("hello"),
+            vec![attachment(&path, "image/png")],
+            None,
+            None,
+        )
+        .await
+        .expect("#1448 a linked lease root must not fail the e2e turn");
+    let blocks = content_blocks(&result);
+    negative_assert!(
+        diagnostics_block(&blocks).contains(&format!(
+            "Image attachment not found: {path} (attachment lease root is unavailable)."
+        )),
+        "#1448 the e2e turn must take the not-found branch for a linked lease root"
+    );
+    negative_assert!(
+        blocks
+            .iter()
+            .all(|block| block.get("type") != Some(&"image".into())),
+        "#1448 the e2e turn must never inline through a linked lease root"
+    );
+    negative_assert!(
+        result.get("allowedReadFiles").is_none(),
+        "#1448 the e2e turn must never register through a linked lease root"
+    );
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1448 boundary fixture owner shutdown");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1448 boundary fixture project shutdown");
 }

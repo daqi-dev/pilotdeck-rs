@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""#1458/#1459/#1462/#1464/#1468/#1469: every attach-followups-a mutation.
+"""#1458/#1459/#1462/#1464/#1468/#1469/#1629: every attach-followups-a mutation.
 
 Usage: negative_controls.py --check
        negative_controls.py [--compile-only] NEW_OUTPUT_DIR [mutation ...]
@@ -13,7 +13,9 @@ error arm, the (dev, inode) depth check it complements, the pre-open identity
 itself, the no-follow sampling of that identity (a link planted before the
 approved stat must not become the approved object), and the two legitimate
 homes — the upload-store root and the lease root — each with its own
-containment and leaf-link terms in the shared `canonical_home` guard.
+containment and leaf-link terms in the shared `canonical_home` guard. The two
+#1629 rows pin the last lease_guard softening: the path's own canonicalize
+failure (any errno, not just NotFound) must stay a not-found diagnostic.
 """
 import argparse
 import hashlib
@@ -31,7 +33,7 @@ TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/services_tests.rs'
 # two rows that mutate it directly point here.
 STORE = ROOT / 'src/pilotdeck-gateway/src/upload/mod.rs'
 sys.path.insert(0, str(FIXTURES))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import mutating_sources, run_owned, wait_for_slot, write_source_atomic
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
 
 mutations = [
@@ -95,6 +97,28 @@ mutations = [
             )),''',
      'native_process::services_tests::lease_symlink_escape_softens_to_not_found',
      '#1464 a lease symlink escape must not fail the turn'),
+    # #1629: the last path-inspection failure that could still reject the
+    # turn — the path's own canonicalize failing with a non-`NotFound` errno
+    # under a valid root (ELOOP/ENOTDIR/EACCES/…) — softened like every other
+    # branch: the TS resolver's stat try/catch has no errno filter, so any
+    # stat failure becomes a not-found diagnostic. The row restores the
+    # pre-#1629 hard failure; the ELOOP and ENOTDIR fixtures each bind it so
+    # both spellings of "any failure" are proven live (an ELOOP-only row
+    # would leave the ENOTDIR test unproven, and vice versa).
+    ('lease-path-hard-failure-restored', SERVICES,
+     '            Err(error) => Ok(LeaseGuard::Unresolved(error)),',
+     '''            Err(error) => Err(failure(format!(
+                "Attachment lease path cannot be resolved: {error}."
+            ))),''',
+     'native_process::services_tests::symlink_loop_lease_path_softens_to_not_found_diagnostic',
+     '#1629 a symlink-loop lease path must not fail the turn'),
+    ('lease-path-notdir-hard-failure-restored', SERVICES,
+     '            Err(error) => Ok(LeaseGuard::Unresolved(error)),',
+     '''            Err(error) => Err(failure(format!(
+                "Attachment lease path cannot be resolved: {error}."
+            ))),''',
+     'native_process::services_tests::not_directory_lease_path_softens_to_not_found_diagnostic',
+     '#1629 an ENOTDIR lease path must not fail the turn'),
     ('filter-info-inverted', SERVICES,
      '        DiagnosticSeverity::Info => !registered,',
      '        DiagnosticSeverity::Info => registered,',
@@ -206,12 +230,88 @@ mutations = [
     # the project becomes a lease home again and the lease-root test goes red.
     # The store rows above cannot cover it: they mutate the shared guard, which
     # this row proves is *reached* by the lease root too.
+    # #1446: the dual registration of TS `collectRegisteredAttachmentReadFiles`
+    # (composer :182-183) — the lexical spelling and the canonicalized realpath
+    # both enter allowedReadFiles, and the note line prints the lexical one
+    # (`safeAllowedAttachmentPath`, composer :167-171). Each term has its own
+    # row and its own test; the two-spelling rows cannot be satisfied by each
+    # other's test because each fixture asserts the exact array.
+    ('dual-registration-realpath-dropped', SERVICES,
+     '        for spelling in [&attachment.lexical, &attachment.resolved] {',
+     '        for spelling in [&attachment.lexical] {',
+     'native_process::services_tests::dual_registration_carries_both_spellings',
+     '#1446 the dual registration must carry the link spelling and the physical spelling'),
+    ('dual-registration-lexical-dropped', SERVICES,
+     '        for spelling in [&attachment.lexical, &attachment.resolved] {',
+     '        for spelling in [&attachment.resolved] {',
+     'native_process::services_tests::dual_registration_dedups_the_set_across_spellings',
+     '#1446 the Set must keep one entry per spelling'),
+    # #2495 re-anchored: the note pass now reads `entries` (the TS composer's
+    # membership domain) and normalizes the per-entry lexical spelling, so the
+    # row can no longer swap `attachment.lexical`/`attachment.resolved`. The
+    # same kill — the note line printing the physical spelling instead of the
+    # registered link spelling — is rebuilt as a canonicalize override on the
+    # per-entry lexical, the post-#2495 shape of that bug.
+    ('dual-registration-note-uses-realpath', SERVICES,
+     '        let normalized = lexical.to_string_lossy().into_owned();',
+     '''        let mut normalized = lexical.to_string_lossy().into_owned();
+        if let Ok(canonical) = fs::canonicalize(&lexical) {
+            normalized = canonical.to_string_lossy().into_owned();
+        }''',
+     'native_process::services_tests::dual_registration_carries_both_spellings',
+     '#1446 the note line must carry the link spelling'),
+    # #1448 fix-r2 收编三行（PR #1418 的负控产物不在本机，按
+    # be9cc9481 的改动语义在 #1448 重建；重建过程记录在 RESULT 异常小节）：
+    # 扁平图片块被改回嵌套形、content 图片分支被反转（删除）、有界读退化为
+    # 无界读——各自有独立杀测试，断言均为静态串（回执按格式化全文匹配）。
+    ('flat-image-block-nested-again', SERVICES,
+     '''    block.insert("source".into(), "base64".into());
+    block.insert("data".into(), JsValue::from(data));
+    block.insert("mimeType".into(), JsValue::from(mime));''',
+     '''    block.insert("source".into(), object([
+        ("type", "base64".into()),
+        ("media_type", JsValue::from(mime)),
+        ("data", JsValue::from(data)),
+    ]));''',
+     'native_process::services_tests::normal_lease_image_is_inlined_and_registered',
+     '#1321 flat image block must carry source/data/mimeType at the top level'),
+    ('image-content-branch-inverted', SERVICES,
+     '''        if entry.image_type
+            && let Some(content) = &entry.content
+            && !entry.mime.is_empty()
+        {''',
+     '''        if !entry.image_type
+            && let Some(content) = &entry.content
+            && !entry.mime.is_empty()
+        {''',
+     'native_process::services_tests::content_image_branch_emits_the_flat_block',
+     '#1448 the content image branch must keep message and image blocks'),
+    ('read-bound-dropped', SERVICES,
+     '''                let bytes = match read_bounded(&mut file, limit) {
+                    Ok(bytes) => bytes,''',
+     '''                let bytes = match {
+                    let mut all = Vec::new();
+                    std::io::Read::read_to_end(&mut file, &mut all).map(|_| all)
+                } {
+                    Ok(bytes) => bytes,''',
+     'native_process::services_tests::grown_between_stat_and_read_hits_the_full_read_backstop',
+     '#1448 a grown read must hit the full-read backstop and skip'),
+    # Review minimax boundary#1 / GLM sibling#1 (fix-r1): the row below was
+    # dropped from this list when the #1446 rows were added, leaving
+    # `lease_root_link_is_not_a_home` (#1468) with no kill row of its own —
+    # the `lease-root-hard-failure-restored` row above shares the call site
+    # but its own bound test is the #1459 ELOOP one, so a dead #1468 fixture
+    # would go unnoticed. The anchor is this row's own (the call site plus the
+    # comment line that follows it), so it never collides with the
+    # `lease-root-hard-failure-restored` anchor on the same source line.
     ('lease-root-link-accepted', SERVICES,
-     '    let lease_canon = crate::upload::canonical_home(&lease_lexical, project_dir, &project_canon);',
+     '''    let lease_canon = crate::upload::canonical_home(&lease_lexical, project_dir, &project_canon);
+    // #1468: the second legitimate home of a lease object.''',
      '''    let lease_canon = match fs::canonicalize(&lease_lexical) {
         Ok(resolved) if resolved.starts_with(&project_canon) => Some(resolved),
         _ => None,
-    };''',
+    };
+    // #1468: the second legitimate home of a lease object.''',
      'native_process::services_tests::lease_root_link_is_not_a_home',
      '#1468 a lease root that is a link into the project must not become a home'),
 ]
@@ -292,7 +392,12 @@ def main():
                 try:
                     if not args.compile_only and not passed(run(name + '-positive', env, test), test):
                         raise RuntimeError('positive bound test failed')
-                    path.write_text(originals[path].decode().replace(old, new, 1))
+                    # #2495 fix-r1 (concurrency review P2 same-family co-fix):
+                    # one atomic rename, never a truncating in-place write — a
+                    # SIGKILL mid-window must not leave a half-written source
+                    # (#1903, write_source_atomic).
+                    write_source_atomic(
+                        ROOT, path, originals[path].decode().replace(old, new, 1).encode())
                     if run(name + '-compile', env, test, compile_only=True).returncode:
                         raise RuntimeError('mutant did not compile; not a runtime kill')
                     item['compiled'] = True
@@ -307,7 +412,7 @@ def main():
                 except Exception as error:
                     item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(ROOT, path, originals[path])
                 try:
                     if not args.compile_only:
                         if not passed(run(name + '-restored', env, test), test):

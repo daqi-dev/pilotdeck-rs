@@ -1,7 +1,7 @@
 use super::{Options, assembly::Recorders};
 use crate::{
     config::Env,
-    metadata::{object, resolve_units, text_field},
+    metadata::{object, resolve_path, resolve_units, text_field},
     runtime::{
         context::compaction::js_truthy,
         project::{ProjectResources, ProjectRuntimeRegistry},
@@ -18,7 +18,7 @@ use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::collections::HashSet;
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write as IoWrite};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -117,28 +117,40 @@ struct AttachEntry {
 }
 
 /// A path attachment that resolved inside the lease root and opened as a
-/// regular file. allowedReadFiles and the path-note lines come from these,
-/// mirroring TS `collectRegisteredAttachmentReadFiles`
-/// (GatewayAttachmentTurnComposer.ts:173-193, `kind === "file"` only).
+/// regular file. allowedReadFiles comes from these, mirroring TS
+/// `collectRegisteredAttachmentReadFiles` (GatewayAttachmentTurnComposer.ts
+/// :173-193, `kind === "file"` only). #2495 — the note lines and the
+/// hasInspectable accumulation read the whole attachment list below, not
+/// this table: TS gates both only on the allowedReadFiles membership test
+/// (`safeAllowedAttachmentPath`, composer :103/:144), so a second entry
+/// with the same lexical spelling (or an unregistered entry colliding with
+/// a registered spelling) still contributes.
 struct RegisteredAttachment {
+    /// #1446 — the Node `path.resolve` spelling of the client-sent path
+    /// (`allowed.add(resolve(attachment.path))`, composer :182). This is
+    /// the allowedReadFiles lexical spelling; the #2495 note pass re-derives
+    /// the same spelling from `entries` through the same resolve
+    /// (`attachment_lexical` below — the two are equal by construction,
+    /// `safeAllowedAttachmentPath`, composer :167-171); a symlinked project
+    /// spelling or a mid-path link keeps it distinct from `resolved`.
+    lexical: PathBuf,
+    /// The canonicalized spelling (`allowed.add(resolve(await
+    /// port.realpath(attachment.path)))`, composer :183) — the containment
+    /// authority and the second allowedReadFiles entry.
     resolved: PathBuf,
-    /// Raw attachment name; the note cleans it (composer :108-109).
-    name: String,
-    /// `isReadFileInspectableAttachment` (composer :153-165) — the input the
-    /// diagnostics guidance branches on (:142-151).
-    inspectable: bool,
 }
 
 /// Outcome of the per-attachment lease guard.
 enum LeaseGuard {
-    /// The path canonicalizes under the canonical lease root; inlining and
-    /// allowedReadFiles use this resolved path, never the client spelling.
+    /// The path canonicalizes under the canonical lease root; inlining uses
+    /// this resolved path, and #1446 registers it beside the client's
+    /// lexical spelling in allowedReadFiles (composer :182-183).
     Resolved(PathBuf),
     /// The path is lexically inside the lease root but does not resolve
-    /// (missing file / dangling symlink — a lease TTL cleanup race): the
-    /// attachment becomes a TS-shaped not-found diagnostic instead of
-    /// failing the whole turn. A missing lease root (no uploads yet) takes
-    /// the same branch, never a panic.
+    /// (missing file / dangling symlink — a lease TTL cleanup race — or its
+    /// own canonicalize failing, #1629): the attachment becomes a TS-shaped
+    /// not-found diagnostic instead of failing the whole turn. A missing
+    /// lease root (no uploads yet) takes the same branch, never a panic.
     Unresolved(std::io::Error),
 }
 
@@ -153,9 +165,16 @@ enum LeaseGuard {
 /// root (missing, swapped outside the project, or its own canonicalize
 /// failing, P0-a/#1459) all soften into the TS-shaped not-found branch the
 /// same way a missing lease file (the TTL cleanup race, the TS stat ENOENT)
-/// does: the TS composer never rejects a whole turn over a path. Only a
-/// canonicalization failure of the path itself with a non-`NotFound` errno
-/// under a valid root (P2) still rejects the turn.
+/// does: the TS composer never rejects a whole turn over a path. #1629
+/// completes the set: a canonicalization failure of the path itself under a
+/// valid root (ELOOP, ENOTDIR, EACCES, …) softens the same way — the TS
+/// resolver's stat try/catch has no errno filter, so *any* stat failure
+/// becomes a not-found diagnostic (AttachmentResolver.ts:131-144, :188-201,
+/// :290-303) — and no path-inspection failure of this guard rejects the
+/// turn anymore. The `Err` half of the `Result` stays for the
+/// attach-followups-a negative controls, whose mutations restore each
+/// softened branch's pre-softening hard-failure shape (`Err(failure(..))`)
+/// as compiling runtime mutants; no production arm below returns it.
 fn lease_guard(
     path: &str,
     lexical_roots: &[PathBuf],
@@ -196,14 +215,11 @@ fn lease_guard(
                 std::io::ErrorKind::NotFound,
                 "attachment resolved outside the permitted lease directory",
             ))),
-            // P2: a missing file (lease TTL cleanup race) is the TS stat
-            // ENOENT — a not-found diagnostic, never a whole-turn failure.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(LeaseGuard::Unresolved(error))
-            }
-            Err(error) => Err(failure(format!(
-                "Attachment lease path cannot be resolved: {error}."
-            ))),
+            // #1321's TTL-cleanup race (the TS stat ENOENT) and #1629's
+            // last hard failure (any other canonicalize errno of the path
+            // itself — ELOOP, ENOTDIR, EACCES, …) soften identically: the
+            // TS resolver catches every stat failure, whatever its errno.
+            Err(error) => Ok(LeaseGuard::Unresolved(error)),
         },
     }
 }
@@ -526,6 +542,16 @@ fn cached_process_cwd() -> Option<PathBuf> {
     Some(cwd)
 }
 
+/// The Node `path.resolve` spelling of a client-sent attachment path —
+/// `allowed.add(resolve(attachment.path))`, composer :182. The registration
+/// pass and the #2495 note pass must derive the identical spelling for the
+/// membership test, so both call this one helper instead of re-spelling
+/// the resolve (a drift here silently drops note lines, not a compile
+/// error).
+fn attachment_lexical(cwd: &Path, entry: &AttachEntry) -> PathBuf {
+    resolve_path(cwd, Path::new(&entry.path))
+}
+
 /// TS AttachmentResolver.ts:171 — the file too-large diagnostic.
 fn file_too_large(path: &str, bytes: u64, limit: u64) -> String {
     format!("Attachment {path} is {bytes} bytes (limit {limit}); skipped.")
@@ -677,8 +703,10 @@ fn attachment_diagnostics_guidance(
              runtime is missing, run {FUNASR_INSTALL_COMMAND} and retry the tool in this session."
         );
     }
-    // :142-151 — no registered inspectable attachment left → the conversion
-    // form; otherwise the read_file-scoped form.
+    // :142-151 — no attachment with an allowedReadFiles spelling left
+    // inspectable → the conversion form; otherwise the read_file-scoped form
+    // (#2495: the accumulation is the caller's whole-list `some(...)`
+    // pass, never gated by the note dedup).
     if !has_inspectable {
         return "Some attachments were not shown inline. These registered files are not \
                 directly inspectable with read_file; ask for a supported export or \
@@ -897,16 +925,23 @@ pub(super) fn compose_attachment_turn(
                 if no_resolver {
                     continue;
                 }
-                // A lease TTL cleanup race becomes a TS-shaped not-found
-                // diagnostic, not a whole-turn failure.
+                // A lease TTL cleanup race, an unavailable root, a symlink
+                // escape, or a canonicalize failure of the path itself
+                // (#1629) all become the same TS-shaped not-found
+                // diagnostic, never a whole-turn failure.
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
             Err(rejected) => {
-                // #1464: the only remaining rejection is the P2 internal
-                // error (a non-NotFound canonicalize failure of the path
-                // itself under a valid root) — audio and a content-produced
-                // attachment stay silent.
+                // #1629: no `lease_guard` arm returns `Err` anymore — every
+                // path-inspection failure softens above (the TS resolver's
+                // stat try/catch turns any stat failure into a not-found
+                // diagnostic). The arm stays so the attach-followups-a
+                // negative controls can restore a softened branch's
+                // hard-failure shape as a compiling runtime mutation; if
+                // production ever reaches it, the old rejection semantics
+                // apply (audio and a content-produced attachment stay
+                // silent) rather than a silent fallthrough.
                 if no_resolver {
                     continue;
                 }
@@ -1118,13 +1153,22 @@ pub(super) fn compose_attachment_turn(
             continue;
         }
         // P1-f (gate boundary#1) — composer :181: only attachments with a
-        // truthy `metadata.channelKey` enter allowedReadFiles and the path
-        // note (uploaded lease attachments, bundle :57-62, never do).
+        // truthy `metadata.channelKey` enter allowedReadFiles (uploaded
+        // lease attachments, bundle :57-62, never do). #2495 — the note
+        // lines and the hasInspectable accumulation no longer key on this
+        // registration gate: they read the whole entry list through the
+        // allowedReadFiles membership test below.
         if metadata.is_file() && entry.channel_key {
+            // #1446 — composer :182-183 registers both spellings: the
+            // lexical `resolve(attachment.path)` and the canonicalized
+            // realpath. The path reaching here is always absolute (the
+            // lease guard's lexical pre-filter holds it against an absolute
+            // root), so the process cwd a TS `path.resolve` would consult
+            // never changes the result.
+            let lexical = attachment_lexical(&cached_process_cwd().unwrap_or_default(), entry);
             registered.push(RegisteredAttachment {
+                lexical,
                 resolved: resolved.clone(),
-                name: entry.name.clone(),
-                inspectable: is_read_file_inspectable(entry),
             });
         }
         // TS composer :230-233 — audio stays a registered path reference for
@@ -1211,6 +1255,8 @@ pub(super) fn compose_attachment_turn(
                     );
                     continue;
                 }
+                #[cfg(test)]
+                swap_test_hook::notify(swap_test_hook::SwapWindow::BeforeRead, &resolved);
                 let bytes = match read_bounded(&mut file, limit) {
                     Ok(bytes) => bytes,
                     // P1-e (codex, ts-probe/probe.out "P1-e composer dir-*"):
@@ -1289,28 +1335,72 @@ pub(super) fn compose_attachment_turn(
         }
     }
 
-    // TS composer :98-111 — the note lines come from registered paths,
-    // deduped by normalized path; allowedReadFiles holds the same resolved
-    // spellings (composer :167-171 `safeAllowedAttachmentPath`).
+    // TS composer :173-193 — `collectRegisteredAttachmentReadFiles`: the
+    // allowed list is the Set of both spellings per registered attachment
+    // (#1446). The note pass below and this collection dedup independently,
+    // so a duplicate lexical spelling with a different realpath still
+    // contributes its canonical entry.
+    let mut allowed: HashSet<PathBuf> = HashSet::new();
+    let mut allowed_paths: Vec<JsValue> = Vec::new();
+    for attachment in &registered {
+        for spelling in [&attachment.lexical, &attachment.resolved] {
+            if !allowed.insert(spelling.clone()) {
+                continue;
+            }
+            allowed_paths.push(JsValue::from(
+                spelling.to_string_lossy().into_owned().as_str(),
+            ));
+        }
+    }
+    // TS composer :98-111/:142-146 — the note lines and the hasInspectable
+    // accumulation both cover every attachment whose `resolve(path)`
+    // spelling is a member of allowedReadFiles (`safeAllowedAttachmentPath`,
+    // :103/:144): registered channel attachments, and an unregistered entry
+    // colliding with a registered spelling (ts-probe
+    // `_tmp/20261026-issue-2495/probe/probe.out` D/E). #2495 —
+    // `hasInspectableAttachment` is an `attachments.some(...)` over the whole
+    // list, never gated by the note dedup: a second entry with the same
+    // lexical spelling but a different inspectable still counts, while the
+    // note line itself is deduped on the lexical spelling to the first
+    // entry (`seen` on `normalized`, :105 — #1446).
+    //
+    // #2495 fix-r1 (boundary review) — an honest residual of the #1461 r3
+    // lazy cwd cache extends here: a *relative* entry path read while the
+    // cwd is cold-unreadable resolves against an empty cwd, so membership
+    // never holds and the entry silently loses its note line and its
+    // inspectable contribution, where TS `path.resolve` throws `uv_cwd`
+    // (ENOENT) on that same cold read — Node v22.22.0 measured,
+    // `_tmp/20261026-issue-2495/fix-r1/probe/cwd-deleted*.out`; a warm
+    // process keeps returning its cached spelling on both sides). See
+    // `cached_process_cwd` for the tracked followup (a crate-level cache
+    // seeded at gateway start, A7.4-TOOLBUDGET-CWD-001 area).
     let mut seen: HashSet<PathBuf> = HashSet::new();
     let mut note_lines: Vec<String> = Vec::new();
-    let mut allowed_paths: Vec<JsValue> = Vec::new();
     let mut has_inspectable = false;
-    for attachment in &registered {
-        if !seen.insert(attachment.resolved.clone()) {
+    // One cwd read for the whole pass — the cache is immutable after its
+    // seed (#1461 r2/r3), so a per-entry lock+clone would buy nothing.
+    let process_cwd = cached_process_cwd().unwrap_or_default();
+    for entry in &entries {
+        if entry.path.is_empty() {
             continue;
         }
-        let normalized = attachment.resolved.to_string_lossy().into_owned();
+        let lexical = attachment_lexical(&process_cwd, entry);
+        if !allowed.contains(&lexical) {
+            continue;
+        }
+        has_inspectable |= is_read_file_inspectable(entry);
+        if !seen.insert(lexical.clone()) {
+            continue;
+        }
+        let normalized = lexical.to_string_lossy().into_owned();
         // composer :108 — `normalized.split(/[\\/]/).pop() || "attachment"`.
         let fallback_name = normalized
             .split(['/', '\\'])
             .next_back()
             .filter(|segment| !segment.is_empty())
             .unwrap_or("attachment");
-        let name = clean_attachment_name(&attachment.name, fallback_name);
+        let name = clean_attachment_name(&entry.name, fallback_name);
         note_lines.push(format!("- {name}: {normalized}"));
-        allowed_paths.push(JsValue::from(normalized.as_str()));
-        has_inspectable |= attachment.inspectable;
     }
 
     // TS composer :114-122 — the guidance takes a diagnostics form when any
@@ -1405,7 +1495,21 @@ impl SubmitCwdService for Cwd {
 }
 impl SubmitHostServices for Services {
     fn workspace_id(&self, input: &JsValue) -> Result<Option<JsString>, SubmitError> {
-        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {
+        // #2562: the filter skips `undefined` *and* `null`, the same nullish
+        // read the request admission gate got in #2272 (requests.rs). The
+        // submit path's TS source is `workspaceIdResolver(input.projectKey)`
+        // (InProcessGateway.ts:954) and the local resolver is
+        // `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot,
+        // pilotHome)` (createLocalGateway.ts:1026-1028), so an explicit null is
+        // "not provided" and takes the configured-project fallback instead of
+        // the type error. Node v22.22.0 probes:
+        // `_tmp/20261026-issue-2562/ts-probe/probe-{resolver,submit}.out`.
+        // A non-string keeps the type error (the TS resolver chain throws on
+        // it too — `resolve(7)` is ERR_INVALID_ARG_TYPE).
+        if let Some(project) = input
+            .get("projectKey")
+            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))
+        {
             let project = project
                 .as_string()
                 .and_then(|s| s.to_utf8().ok())
@@ -1575,7 +1679,15 @@ impl SubmitHostServices for Services {
                         Err(e) => {
                             for lease in acquired.iter().rev() {
                                 if let Err(rel) = lease.release() {
-                                    eprintln!("native upload lease release on error: {rel}");
+                                    // #1850: `eprintln!` panics when stderr is
+                                    // unwritable, which would abort this
+                                    // blocking task mid-release. The whole
+                                    // loop is best-effort, so a dropped line
+                                    // must not cost the remaining leases.
+                                    let _ = writeln!(
+                                        std::io::stderr(),
+                                        "native upload lease release on error: {rel}"
+                                    );
                                 }
                             }
                             Err(e)
@@ -1602,7 +1714,14 @@ impl SubmitHostServices for Services {
                             for lease in leases.iter().rev() {
                                 // Best-effort: log failures but continue.
                                 if let Err(e) = lease.release() {
-                                    eprintln!("native upload lease release: {e}");
+                                    // #1850: same as the error path above —
+                                    // this runs detached from the submit
+                                    // call, where an `eprintln!` panic would
+                                    // silently kill the remaining releases.
+                                    let _ = writeln!(
+                                        std::io::stderr(),
+                                        "native upload lease release: {e}"
+                                    );
                                 }
                             }
                         })
@@ -1912,16 +2031,21 @@ pub(super) mod swap_test_hook {
     /// r2 — the approved stat must not follow a link planted here), after
     /// that sample but before `File::open` (#1468 — the open itself may then
     /// follow a swapped link), between `File::open` and the post-open
-    /// `canonicalize` containment revalidation (step 2), or between the
+    /// `canonicalize` containment revalidation (step 2), between the
     /// revalidation and the `(dev, inode)` path-stat/fstat comparison
-    /// (step 3). The #1468 multi-step sequence chains one swap per window,
-    /// so every window holds its own slot.
+    /// (step 3), or between the handle's own stat — the authoritative
+    /// oversize gate — and the bounded read (#1448: a file grown in that
+    /// window only stays capped because `read_bounded` returns at most
+    /// limit + 1 and the 读满 backstop fires). The #1468 multi-step
+    /// sequence chains one swap per window, so every window holds its own
+    /// slot.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum SwapWindow {
         BeforeApprovedStat,
         BeforeOpen,
         AfterOpen,
         AfterRevalidate,
+        BeforeRead,
     }
 
     type Hook = Box<dyn FnMut(&Path)>;

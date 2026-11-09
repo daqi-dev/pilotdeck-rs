@@ -9,6 +9,7 @@
 //! exactly those.
 use crate::channel::{
     feishu::{FeishuChannel, FeishuOptions, FeishuWebhookSlot, no_interaction},
+    loader::{ChannelLoaderMounts, LoadEnabledChannelsOptions, load_enabled_channels},
     protocol::{
         ChannelAdapter, ChannelError, ChannelKey, ChannelLog, ChannelStartDeps, ChannelState,
         ChannelStatus, CloseHost, ReconcileInput, ReconcileResult, StatusReporter, TurnGateway,
@@ -54,6 +55,74 @@ pub const IMPLEMENTED_BUNDLE_CHANNEL_KEYS: &[&str] = &["feishu", "weixin"];
 /// ordering is the #1328 pr2 follow-up noted in the plan.
 pub fn noop_close_host() -> CloseHost {
     Arc::new(|| Box::pin(async { Ok(()) }))
+}
+
+/// TS `consoleLogger` (`pilotdeckServer.ts:67-72`): the channel log every
+/// adapter's `start` receives — `info` to stdout, `warn` / `error` to stderr.
+/// Until #2301 only the feishu/weixin startup existed and the assembly left
+/// the log unset, so no channel line was observable; the loader-table keys
+/// make that visible (the `api-server: listening on …` / `sms: twilio not
+/// installed…` anchors the #1853 r1 probe recorded on the TS side).
+pub fn console_channel_log() -> ChannelLog {
+    Arc::new(|level: &str, message: &str| {
+        write_console_line(
+            level,
+            message,
+            &mut std::io::stdout(),
+            &mut std::io::stderr(),
+        )
+    })
+}
+
+/// `consoleLogger`'s one line over an explicit sink pair: `info` to the out
+/// sink, `warn` / `error` to the err sink. The production closure passes the
+/// real stdout/stderr; the routing and failing-sink controls drive this same
+/// entry (#2301 fix-r2 review P1 #5 — a control that only exercised the
+/// helper could not see the production closure regress).
+pub(crate) fn write_console_line(
+    level: &str,
+    message: &str,
+    out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) {
+    match level {
+        "info" => console_log_line(out, message),
+        _ => console_log_line(err, message),
+    }
+}
+
+/// One console line on an explicit sink. `console.log` / `console.error`
+/// never fail the channel lifecycle, while `println!` panics when the write
+/// fails (std behavior) — a closed stdout would abort an adapter's task after
+/// it saved its listener state, stranding the listener (#2301 fix-r1 review
+/// P0). The write error is dropped instead, like TS's best-effort console.
+pub(crate) fn console_log_line(sink: &mut dyn std::io::Write, message: &str) {
+    let _ = writeln!(sink, "{message}");
+}
+
+/// The production loader-table mounts (#2301): one per implemented loader
+/// key. Each channel module owns its own mount (the sms precedent);
+/// wecomCallback's constructor takes the shared interaction port here, and
+/// the `NoInteraction` default stays until the A7 boundary grows the respond
+/// calls (the feishu/bluebubbles precedent, `A8.3-CH-FEISHU-008` /
+/// `A8.3-CH-BLUEBUBBLES-002` / `A8.3-WECOM-CALLBACK-INTERACTION-001`).
+/// `production_mounts_cover_every_non_rejected_loader_key` keeps this closed
+/// against `CHANNEL_LOADER_KEYS`: a key that leaves the rejection table
+/// without a mount here would return to the silent skip #2301 removed.
+pub(crate) fn production_loader_mounts() -> ChannelLoaderMounts {
+    let mut mounts = ChannelLoaderMounts::default();
+    crate::channel::sms::register(&mut mounts);
+    crate::channel::bluebubbles::register(&mut mounts);
+    crate::channel::slack::register(&mut mounts);
+    crate::channel::api_server::register(&mut mounts);
+    crate::channel::webhook::register(&mut mounts);
+    mounts.register(
+        "wecomCallback",
+        crate::channel::wecom_callback::WeComCallbackChannel::constructor(
+            crate::channel::wecom_callback::no_interaction(),
+        ),
+    );
+    mounts
 }
 
 /// TS `ChannelAdapterBundleOptions.createWeixin` — the constructor seam the
@@ -109,20 +178,22 @@ pub struct NativeChannels {
     config: Arc<JsValue>,
 }
 
-/// The `ChannelStartDeps.turn_gateway` the feishu adapter is constructed with.
-/// It forwards to a [`SubmitterTurnGateway`] once the assembly publishes the
+/// The `ChannelStartDeps.turn_gateway` the whole channel server is
+/// constructed with (feishu was the first consumer, hence the name). It
+/// forwards to a [`SubmitterTurnGateway`] once the assembly publishes the
 /// native submitter; until then `submit` fails with the same
-/// "not started" shape as a missing gateway.
+/// "not started" shape as a missing gateway. Each request keeps its own
+/// channel identity: every adapter submits its `TurnRequest.channel_key`,
+/// and the gateway carries it through (#2301 fix-r1 — it used to overwrite
+/// the requester's key with this handle's construction-time feishu one).
 struct FeishuTurnGateway {
     submitter: OnceLock<Arc<TurnSubmitter>>,
-    channel_key: ChannelKey,
 }
 
 impl FeishuTurnGateway {
     fn new() -> Self {
         Self {
             submitter: OnceLock::new(),
-            channel_key: feishu_key(),
         }
     }
 
@@ -133,7 +204,7 @@ impl FeishuTurnGateway {
     fn inner(&self) -> Option<SubmitterTurnGateway> {
         self.submitter
             .get()
-            .map(|submitter| SubmitterTurnGateway::new(submitter.clone(), self.channel_key.clone()))
+            .map(|submitter| SubmitterTurnGateway::new(submitter.clone()))
     }
 }
 
@@ -259,6 +330,29 @@ impl NativeChannels {
     pub async fn hot_start_weixin(&self) -> Result<(), ChannelError> {
         let channel = self.make_weixin().await;
         self.server.hot_start_channel(channel).await
+    }
+
+    /// `ChannelAdapterBundle.createStartupAdapters`'s configured half (#2301):
+    /// `loadEnabledChannels(config.adapters)` over the production mounts —
+    /// the six implemented loader-table keys construct in table order, a
+    /// construction failure `console.error`s and continues (the
+    /// error-then-continue loop, `loadEnabledChannels.ts:132-136`), and no
+    /// options travel on this path: TS calls
+    /// `this.loadConfiguredChannels(config.adapters)` with no second
+    /// argument, so `pilotHome` stays `undefined` (only the matrix loader
+    /// reads it, and matrix is not implemented). The error port is the same
+    /// best-effort console write as the channel log: `assembly::start` calls
+    /// this synchronously before any channel starts, outside every
+    /// `catch_unwind`, so an `eprintln!` here (std panic on a failed write,
+    /// #2301 fix-r2 review P0 #2) would abort the startup of every already
+    /// constructed channel; TS's `console.error` never throws.
+    pub fn create_startup_configured(&self) -> Vec<Arc<dyn ChannelAdapter>> {
+        load_enabled_channels(
+            self.config.get("adapters"),
+            &LoadEnabledChannelsOptions { pilot_home: None },
+            &production_loader_mounts(),
+            &mut |message| console_log_line(&mut std::io::stderr(), &message),
+        )
     }
 
     /// ChannelAdapterBundle.makeFeishu: mapper from the persisted state,

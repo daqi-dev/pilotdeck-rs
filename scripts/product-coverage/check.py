@@ -29,6 +29,16 @@ def read(path):
     return json.loads(Path(path).read_text(), object_pairs_hook=unique)
 
 
+def split_lines(text):
+    # "\n"-only splitting: splitlines() would also break on U+2028/U+2029/
+    # U+0085/\x0b/\x0c (real case: channel/sms/mod.rs) and desynchronize
+    # evidence line numbers from editor numbering.
+    lines = text.split("\n")
+    if lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
 def enumeration(baseline):
     cmd = ["node", str(Path(__file__).with_name("enumerate.mjs")), str(baseline)]
     with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -57,7 +67,7 @@ def local_ref(ref):
         return False
     if not fragment and not line:
         return True
-    lines = path.read_text().splitlines()
+    lines = split_lines(path.read_text())
     if line and (not line.isdecimal() or not 1 <= int(line) <= len(lines)):
         return False
     if fragment:
@@ -68,6 +78,139 @@ def local_ref(ref):
     return True
 
 
+def literal_member(text):
+    return re.fullmatch(r'"[^"\\]*",?(?:\s*//.*)?', text.strip()) is not None
+
+
+def _code_line(line):
+    """The line with any trailing // comment removed and right-trimmed."""
+    return re.sub(r'//.*$', '', line).rstrip()
+
+
+def _declares_binding(code):
+    """A const/static table binding (the `'static` lifetime is not one)."""
+    return re.search(r"(?<!')(?:\bconst\b|\bstatic\b)", code) is not None
+
+
+def literal_table_lines(lines):
+    # 1-based line numbers inside Rust string-literal tables (e.g.
+    # UNMIGRATED_CHANNEL_KEYS): every member line plus the closing bracket
+    # line. Opening lines stay out — sidecar:* entries legitimately anchor
+    # a whole guarded block at its `for option in [` header. A table opens
+    # at a line that ends with '[' (after stripping a trailing // comment)
+    # and declares a const/static binding, or at a wrapped `&[`/`[`
+    # continuation whose previous non-empty, non-comment line ends the
+    # binding (`=`/`,`/`&`) and declares one (rustfmt wraps long openers —
+    # fix-r1 dropped that form, a coverage regression #2286 fix-r2 DS
+    # boundary P0; the comment-transparent lookback and the `=`/`,` tail
+    # are fix-r3, DS boundary P1/P2; the trailing `&` tail is fix-r4,
+    # codex r3 boundary P0 — `= &` ⏎ `[` must not fall to range-only);
+    # blank and //-comment lines inside are
+    # transparent (a comment added mid-table must not silently drop the
+    # whole table back to range-only — #2286 review P0); any other code
+    # line (block comments, attributes, escaped literals) aborts the
+    # block, keeping the members collected so far. Non-binding arrays
+    # (`let xs = [`, `for x in [`, `let xs: &'static [&str] = &[`) are not
+    # key tables and stay out entirely. A table that ends at the last line
+    # of the file still closes (the EOF table is a table).
+    inside = set()
+    index = 0
+    while index < len(lines):
+        code = _code_line(lines[index])
+        if not code.endswith("["):
+            index += 1
+            continue
+        if not _declares_binding(code):
+            qualifies = code.strip() in ('&[', '[')
+            look = index - 1
+            while qualifies and look >= 0:
+                stripped = lines[look].strip()
+                if not stripped or stripped.startswith("//"):
+                    look -= 1
+                    continue
+                break
+            # The previous non-empty, non-comment code line must be the tail
+            # of the binding itself (`=`, `,` inside one, or `= &` — the
+            # wrapped-opener split that leaves the `&` on the declaration
+            # line, codex r3 boundary P0: that form was recognized before
+            # fix-r3 and must not fall back to range-only): a closure body
+            # mentioning static (`LazyLock::new(|| {`) is not a key table
+            # (#2286 fix-r3, DS boundary P2#2). A // comment between the
+            # declaration and the wrapped &[ is transparent, same as inside
+            # the table (DS boundary P1 / sibling P2#2).
+            previous = _code_line(lines[look]) if look >= 0 else ""
+            if not (qualifies and previous.endswith(("=", ",", "&"))
+                    and _declares_binding(previous)):
+                index += 1
+                continue
+        members = []
+        end = index + 1
+        closed = False
+        while end < len(lines):
+            stripped = lines[end].strip()
+            if not stripped or stripped.startswith("//"):
+                end += 1
+                continue
+            if stripped.startswith("]"):
+                closed = True
+                end += 1
+                break
+            if literal_member(lines[end]):
+                members.append(end)
+                end += 1
+                continue
+            break
+        inside.update(member + 1 for member in members)
+        if closed:
+            inside.add(end)  # 1-based closing line
+        index = end if end > index else index + 1
+    return inside
+
+
+def key_literal_error(key, ref, tables=None):
+    # Strong anchor assertion for evidence pointing into a Rust string-
+    # literal table: the entry's own key (last ':'-separated segment of its
+    # id) must be the literal on the evidence line, so a stale line number
+    # after table edits (each entry pointing at the adjacent key, wecom at
+    # `];` — #2283/#2286) fails instead of passing range-only validation.
+    # Every other evidence form has no single mechanically checkable key
+    # literal (code bodies, match arms, doc headers, table-opening block
+    # anchors, non-bare key segments, literals with escapes) and stays
+    # range-only. `tables` optionally caches {path: (lines, table lines)}
+    # across one check() pass.
+    if not isinstance(key, str):
+        return None
+    if not isinstance(ref, str):
+        return None
+    file, _, fragment = ref.partition("#")
+    file, _, line = file.partition(":")
+    if fragment or not file.endswith(".rs") or not line.isdecimal():
+        return None
+    path = (ROOT / file).resolve()
+    if not path.is_relative_to(ROOT) or not path.is_file():
+        return None
+    if tables is None:
+        tables = {}
+    if path not in tables:
+        lines = split_lines(path.read_text())
+        tables[path] = (lines, literal_table_lines(lines))
+    lines, inside = tables[path]
+    number = int(line)
+    if number > len(lines) or number not in inside:
+        return None
+    token = key.rsplit(":", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        return None
+    # Compare against the literal stem: a member line legitimately carries
+    # a trailing // comment (literal_member admits it, so the line is in the
+    # table) — comparing the raw line would flag exactly that form
+    # (#2286 fix-r2, DS boundary P1). Keys never contain '/', so the strip
+    # cannot corrupt a real match.
+    if _code_line(lines[number - 1]).strip() not in {'"%s"' % token, '"%s",' % token}:
+        return "evidence key literal mismatch: " + key
+    return None
+
+
 def plan_ref(ref, *, acceptance=False):
     if not isinstance(ref, str):
         return False
@@ -76,7 +219,13 @@ def plan_ref(ref, *, acceptance=False):
     return allowed and file.endswith(".md") and local_ref(ref)
 
 
-def check(data, baseline):
+def check(data, baseline, tables=None):
+    # `tables` optionally seeds the {path: (lines, table lines)} cache
+    # key_literal_error shares across one pass, so callers holding a
+    # snapshot (the drift negative controls) can validate against the
+    # exact version they derived their line numbers from instead of a
+    # mid-test re-read (#2286 fix-r7, DS concurrency P2#2 — the fix-r3
+    # single-snapshot discipline extended to the check() path).
     errors = []
     refs = {}
     def valid_ref(ref):
@@ -108,6 +257,8 @@ def check(data, baseline):
         return errors + ["missing entries"]
     seen = set()
     used = set()
+    if tables is None:
+        tables = {}
     for row in rows:
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             errors.append("invalid entry")
@@ -127,6 +278,8 @@ def check(data, baseline):
                 errors.append("entry assigned to apparatus: " + key)
         if not isinstance(row.get("status"), str) or row["status"] not in STATUSES or not valid_ref(row.get("evidence")):
             errors.append("missing status/evidence: " + key)
+        elif (literal := key_literal_error(key, row.get("evidence"), tables)):
+            errors.append(literal)
         if key in expected and row.get("sources") != expected[key]["sources"]:
             errors.append("baseline source mismatch: " + key)
     errors.extend("missing entry: " + key for key in sorted(expected.keys() - seen))

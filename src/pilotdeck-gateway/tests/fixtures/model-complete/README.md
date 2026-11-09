@@ -170,6 +170,36 @@ python3 …/negative-controls.py --self-test-timeout  # 进程组回收实测
 python3 …/negative-controls.py --self-test-hold     # 供外部信号测试持住真实变异
 ```
 
-cargo 槽位在变异**之前**检查并有界等待；`ps` 被沙箱拒绝时回退到 `pgrep -x`
-的 cargo 入口名，两个探针都失败则拒绝变异（绝不把失败当 0）。子进程以独立
-进程组启动，超时或收到信号都先 SIGTERM 再 SIGKILL 整组并回收。
+cargo 槽位在变异**之前**检查并有界等待，计数口径与 scripts/cargo-slots.sh 对齐：
+单次 `ps -Aww -o pid=,ppid=,args=` 取样后按祖先链去重，同一棵进程树只在其根上计
+一次（`cargo clippy` 会派生 `cargo-clippy` 再派生 `cargo check`，按名逐数会把一个
+槽记成 2–3 个，#1566 项 1）。`ps` 被沙箱拒绝时回退到 `pgrep -x` 的 cargo 入口名——
+pgrep 拿不到 ppid，只能给下界：读数非零时立即拒绝变异（不等满槽位等待期），
+两个探针都失败同样拒绝变异（绝不把失败当 0）：ps 快照零可解析行判失败（fix-r1），
+且必须列得出调用进程自身、pgrep rc=0 必须带 pid 行、rc=1 不得带任何 stdout（含
+纯空白）或 stderr（fix-r2 + fix-r3，stderr 侧按原始串判空与 stdout 对称，#2516）。
+入口名含 CI 直调的 `cargo-nextest`（外部
+子命令：cargo 以 exec 取代自身，`cargo nextest run` 运行期没有名为 cargo 的进程
+可探，实测在案）；零只代表名单内入口不存在，且必须连续两轮全名单干净无匹配才
+放行——单轮里某个名字探过之后才启动的入口，此后无名字再探到，会把满槽读 0
+（#2516）；ps 路径匹配任意 `cargo-*` 首词，
+pgrep 回退只探名单内的名字（fix-r3）。两探针的输出都按 bytes 读入、本文件内解码，
+不经 universal newlines（`text=True` 会把字面 `\r` 折成 `\n` 撕行，撕出的
+`int int rest` 行可改写父表把满槽读 0）；解码后含除换行（行分隔符本身）外的任何
+控制字符即判探针失败（#2516：macOS 实测真 ps 把 argv 控制字节转义为 `^M`/`\012`，
+真样本不含控制字节，此判只拦包装器形态）。**已知残余（#2516 fix-r1 协调者仲裁
+2026-11-09，登记不修）**：换行本身仍被清点豁免——敌意 argv 携带字面 `\n` 同样可撕
+行，撕出的 `int int rest` 行改写父表（pid×ppid）把满槽读数掉 0 且无错误串（攻击复现
+与「按行判控制字符 == 整串清点」的 9331 样本穷举证明存主仓
+`_tmp/20261109-2516-fixr1-harvest/evidence/`，两件本机复跑在案）；表内健全性检查
+（ppid 环 / 重复 pid / 列序重排）均无法完备闭合（撕出片段字节全受控，总能拼成合法
+形态的行）。**前提：本探针信任本机 PATH，PATH 受控时整表清点均不在边界内**——
+两平台实测真 ps 通道不携带原始控制字节（macOS 全转义 `\n`→`\012`、`\r`→`^M`、
+`\t`→`\011`；cb8 Linux procps-ng 4.0.4 把 `\n` 替换为空格、其余控制字节替换为
+`?`，原始记录 `evidence/procps-bytes.out`），该残余仅在 PATH 前置假 ps 的威胁模型
+下可达，而该对手本可直接输出整张干净假表。真闭合需机制重设计（Linux 直读
+`/proc/<pid>/stat` 取内核态 ppid，绕开 ps 文本解析），见 #2609。每次 ps/pgrep 取样都有
+`NEGCTL_PROBE_TIMEOUT_SECONDS`（默认 30 s）上限，超时同样判探针失败
+（#2516 fix-r1：挂住的包装器必须让等待立刻拒绝变异，而不是无限占住变异窗口）。
+子进程以独立进程组启动，
+超时或收到信号都先 SIGTERM 再 SIGKILL 整组并回收。

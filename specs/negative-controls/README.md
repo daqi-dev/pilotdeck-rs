@@ -63,9 +63,13 @@
     共享 `mutant_switch.run` 后必须传 `receipts=True`——负控相子进程携带本轮回执
     配置，判杀只认被绑定断言写出的本轮 nonce 回执加具名 FAILED 行；setup 失败、
     诊断文本恰含锚点、回显 nonce 均判 INVALID（#889 replay 反例对迁移后入口重跑，
-    `_shared/test_mutant_switch.py` 的 `ReceiptProtocolTests`）。本 PR 五个旧入口中
+    `_shared/test_mutant_switch.py` 的 `ReceiptProtocolTests`）。#996-pr2 五个旧入口中
     仅 tool-budget-cwd 用回执判杀，已接回；其余四个旧入口为文本 classify，语义
-    不变。`--negative-controls` 把 `judge` 换成 prose 判杀（迁移丢回执的形状）后
+    不变。#996 批次三按旧基线逐夹具判定，不按新入口偏好：live-session 旧
+    `matrix_main` 表以回执判杀（基线 reason 为具名断言 + 本轮 nonce 回执），迁移后
+    传 `receipts=True`；live-recording 旧脚本走 legacy `run_cases`/classify 判杀
+    （基线 reason「bound test failed at its assertion」且无 `.receipts` 目录），不传
+    回执。`--negative-controls` 把 `judge` 换成 prose 判杀（迁移丢回执的形状）后
     replay 自测必须死在 `#996-pr3` 断言；把回执配置改为不下发后，真实回执判杀
     自测必须死在 `#996-pr3` 断言。
 
@@ -112,8 +116,13 @@
 `sdk-settings` · `settings-gateway` · `interaction-values` · `turn-submit-admission` ·
 `turn-runner/runner_negative.py` · `cli-parity-mock-gateway`，以及后批加入的
 `memory-gateway` · `snapshot-projection` · `regex-proto-budget`（#1456、#1265）与
-`sdk-mcp-session-tools`（#1433，`negative_selection` 契约 + `EXPECTED_NAMES` 静态名册）。
-**其余同族入口尚未迁移**，
+#297 r6 起的 `issue-297` · `issue-297-domain-fold`（迁移自原 main 形状，启动四拒
+全走 `refuse()`）与 `sdk-mcp-session-tools`（#1433，`negative_selection` 契约 +
+`EXPECTED_NAMES` 静态名册）、`mode-routing`（#1354 起同形自管）、`same-json-surfaces`
+（#2422 起自管，#2425/#2431 硬化：CLI 对齐为 `OUT [--memory] [NAME ...]` 后进
+`test_negative_optimize_guards.py` 三条拒跑矩阵）、`session-reservation-2391` ·
+`session-delete-2392`（#2391 fix-r1 起即按 `negative_selection` 契约落形：
+`EXPECTED_NAMES` + `claim_dir` + `verdict_exit`，`--check` 进 CI）。**其余同族入口尚未迁移**，
 由 #1666 按目录分批推进，名单是机器可检的：`tests/fixtures/test_negative_optimize_guards.py`
 的 `PENDING_BARE_ASSERTS` 登记每个仍含裸 `assert` 的 `*/negative_controls.py` 及理由，
 该表只减不增——新脚本带裸 `assert` 会让 CI 红，迁移一个就在同一次改动里删掉它的条目。
@@ -144,7 +153,9 @@
 | 42 | 全杀但基线不是 HEAD，只是非宿主证据（用到的脚本按自身规约） |
 
 分界判据是「有没有真的开始变异」：进 `mutating_sources` 之前返回的都算 2，进去之后被打断的算 1。
-被信号直接杀死（SIGINT 130 / SIGTERM 143 / SIGKILL 137）不在表内，看证据是否完整。
+被信号直接杀死（SIGKILL 137）不在表内，看证据是否完整；安装了取消处理器的已迁移脚本，
+守卫回写窗口外的取消退 2，落在共享守卫回写窗口内的取消先完成还原与复核再退
+128+signum（`negative_process.mutating_sources` 延迟信号契约，两处阶段不同码是刻意的）。
 这套分界不依赖 `assert`，所以 `-O` 下不变。已知的唯一例外是 `regex-proto-budget`（#1265）：
 它在 `claim_dir` 之后、第一个变异之前自己跑一遍 crate 的 compile_fail doctest 基线（CI 跑不了
 特性门测试），红了也以 2 拒跑、`OUT/doctests.log` 留档——这一次 2 带证据目录，是刻意的。
@@ -154,15 +165,19 @@
 （未设置 / 空串 / 纯空白走 `negative_selection.missing_target()`，dot / 根 / `src` 内走
 `negative_selection.refuse_unusable_target()` —— 后者不重列取值，直接问
 `negative_process.target_environment`，取值规则只有那一处）都返回 2；
-`TARGET_OPTIONAL` 登记的三个入口按模式各自豁免：`interaction-values` 与
+`TARGET_OPTIONAL` 登记的四个入口按模式各自豁免：`interaction-values` 与
 `turn-submit-admission` 只在**变量未设置**这一档豁免（按 #1166 用共享默认 target），
 空串与纯空白由各自的 `blank_target()` 前置守卫以 2 拒跑，dot / 文件系统或仓库根 /
 `src` 这类目标同样在领取证据目录之前以 2 拒跑——这两个入口是直接 `try:
 target_environment(...) except RuntimeError: refuse(...)`，效果等价于
 `refuse_unusable_target()`（同一份取值规则，只是没有包成谓词）；
-`cli-parity-mock-gateway` 不编译 Cargo，**四档全豁免**，由登记表守卫断言它没有任何
-target 读取；
-**树脏 / 领锁超时 / oracle 读不了**三条目前只有 `settings-gateway`（`entered` 旗标）实现，
+`cli-parity-mock-gateway` 与 `same-json-surfaces` 不编译 Cargo，**四档全豁免**，由登记表
+守卫断言它们没有任何 target 读取；
+**树脏 / 领锁超时 / oracle 读不了**三条，自管入口里 `settings-gateway`（`entered` 旗标）、
+两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）与
+`same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）已实现
+（`sdk-signals` 的相位路由 #1885 r8 与 `_negkit/contract.py` 的 `entered` 旗标也各自实现；
+本句枚举的是 `test_negative_optimize_guards.py` 登记面，非全集），
 其余脚本是未捕获异常 → 1，仍按「失败关闭」处理（不会假绿），登记在 #1666 的后续批次。
 宿主分诊时不要把这三种边当成已覆盖。
 另：已迁移脚本一律先跑完启动守卫再 `claim_dir`，所以「从未开跑」的拒跑不会留下证据目录
@@ -178,7 +193,7 @@ target 读取；
 这些都由 `test_negative_optimize_guards.py` 机检：不存在的变异名、`CARGO_TARGET_DIR` 不可用
 （未设置 / 空串 / 纯空白 / `.` 四档）、目录已存在三条矩阵覆盖全族。豁免按**模式**登记
 （`interaction-values` / `turn-submit-admission` 只豁免「未设置」，由
-`negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 不编译 Cargo，
-四档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
+`negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 与
+`same-json-surfaces` 不编译 Cargo，四档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
 AST 判；豁免多档的入口不得出现任何 target 读取形态），加个名字不能静默缩小矩阵。
 共享执行器的四分数值仍以 `tests/fixtures/README.md` 为准，不与本节互相替代。

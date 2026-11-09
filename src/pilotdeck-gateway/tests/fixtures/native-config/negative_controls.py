@@ -28,6 +28,17 @@ from negative_suite import Case, classify, invalidate_completed, passed, publish
 ROOT = Path(__file__).resolve().parents[5]
 CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
 SESSION_DIR = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/session_dir.rs'
+# #2272: the isolated-project admission source. The row below mutates it while
+# its bound assertion lives in the session directory's gate-order tests — the
+# #1864 read-side precedent (mutate the writer, assert on the reader) — so the
+# path joins SOURCE_TEXTS / LITERAL_ANCHORS below like LIVE and TOOLS did.
+REQUESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/requests.rs'
+# #2562: the submit path's projectKey gate (SubmitHostServices::workspace_id in
+# services.rs) — the same nullish read #2272 gave the admission source above.
+# SERVICES joins SOURCE_TEXTS as a mutation source; MANAGEMENT_TESTS joins it
+# to carry the pinned assertion literal in LITERAL_ANCHORS.
+SERVICES = ROOT / 'src/pilotdeck-gateway/src/native_process/services.rs'
+MANAGEMENT_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/management_tests.rs'
 # #1604: `require_text` / `trim_guard` — the guard the session directory now
 # delegates to. Two mutants below target it; the bound tests stay the
 # session-directory ones.
@@ -284,6 +295,75 @@ mutations = [
      '            .map_err(|_| RequestError::new("projectKey is required."))?;',
      DIR + 'close_project_sessions_surrogate_project_key_reaches_the_capability_gate',
      '#2083 the surrogate projectKey reaches the capability gate'),
+    # ── #2272: the admission filter skips `undefined` AND `null` (the TS
+    # nullish read `input.projectKey ?? fallback`, createLocalGateway.ts).
+    # Dropping the null arm restores the pre-#2272 shape where an explicit
+    # null was refused as an unserved project even with a valid sessionKey,
+    # so the session directory's null-cell gate-order expectations must die.
+    # The bound test fails first at its blank-key null cell, before the
+    # per-method valid-key cells that follow it.
+    ('admission-null-refused', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'resume_session_blank_key_gate_order',
+     '#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key'),
+    # ── #2562: the submit path's gate is the same nullish read (the TS submit
+    # source is `workspaceIdResolver(input.projectKey)` →
+    # `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot)`,
+    # probes `_tmp/20261026-issue-2562/ts-probe/`). Dropping the null arm
+    # restores the pre-#2562 shape where an explicit null was answered the
+    # `projectKey must be a valid path string.` type error instead of falling
+    # back to the configured project, so the recorder-on null cell must die.
+    ('submit-null-refused', SERVICES,
+     '        if let Some(project) = input\n'
+     '            .get("projectKey")\n'
+     '            .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))\n'
+     '        {',
+     '        if let Some(project) = input.get("projectKey").filter(|v| !v.is_undefined()) {',
+     'native_process::management_tests::submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided',
+     '#2562 explicit null is not an error with the recorder on'),
+    # ── #2564: the #2272 admission mutant re-bound to the close_project_sessions
+    # path — with the null arm dropped the admission refusal (isolated-project
+    # message) answers before the method's own `?.trim()` gate, so the null
+    # cell's domain-message assertion must die. Same mutant text as
+    # `admission-null-refused` above: one code point, four bound tests.
+    ('admission-null-refused-close-project', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'close_project_sessions_null_project_key_is_the_domain_error',
+     '#2564 a null projectKey keeps the domain message'),
+    # ── #2564 fix-r1 (harvest reviews: DS sibling#2 + anthropic boundary#2,
+    # two lineages hit the same gap): the same admission mutant re-bound to the
+    # list/new null cells. With the null arm dropped the admission refusal
+    # (isolated-project message) answers before each method's own nullish read,
+    # so the cell's `.expect` must die at its own message — without these rows
+    # the two cells were guarded only by their positive assertions.
+    ('admission-null-refused-list-sessions', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'list_sessions_null_project_key_lists_the_configured_project',
+     '#2564 a null projectKey lists the configured project'),
+    ('admission-null-refused-new-session', REQUESTS,
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !matches!(v, JsValue::Undefined | JsValue::Null))',
+     'params\n'
+     '                .get("projectKey")\n'
+     '                .filter(|v| !v.is_undefined())',
+     DIR + 'new_session_null_project_key_omits_the_project_prefix',
+     '#2564 a null projectKey generates a session key'),
     # ── #1864: the three selectors now have a reader. Each write site
     # (permission, thinking, output style), each compose-step read leg
     # (permission, thinking, style merge), the live adapter's per-turn source
@@ -395,6 +475,10 @@ mutations = [
 # Known softness: the presence test is a plain whole-file substring, so a pin
 # whose text also sits in a comment still reads as present. That only weakens
 # the warning, never turns a broken run green (the run itself is fail-closed).
+#
+# #2562 r0 + fix-r1: SERVICES / MANAGEMENT_TESTS joined the scanned files with
+# the rows above, so the counts moved to 50 rows / 40 literal-anchor entries;
+# the derived counts in the paragraph above describe the #2065 table as it was.
 LITERAL_ANCHORS = [
     (CONFIG, '#1457 session_model_set accepts the fixture selection'),
     (CONFIG, '#1457 session_model_clear succeeds'),
@@ -426,6 +510,12 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, '#1455 resume_session rejects the blank key'),
     (SESSION_DIR, '#1455 resume_session accepts the surrogate key'),
     (SESSION_DIR, '#2083 the surrogate projectKey reaches the capability gate'),
+    (SESSION_DIR, '#2272 a null projectKey falls back like a missing one, '
+                  'so the sessionKey gate answers the blank key'),
+    (SESSION_DIR, '#2564 a null projectKey keeps the domain message'),
+    (SESSION_DIR, '#2564 a null projectKey lists the configured project'),
+    (SESSION_DIR, '#2564 a null projectKey generates a session key'),
+    (MANAGEMENT_TESTS, '#2562 explicit null is not an error with the recorder on'),
     (LIVE_TESTS, "#1864 the stored mode reaches the live session's next turn"),
     (FACTORY_TESTS,
      '#1860 hydrate holds the transcript fence until the recorder is published'),
@@ -440,7 +530,8 @@ LITERAL_ANCHORS = [
 # not name a path outside this tuple (checked below) -- a pin the completeness
 # scan does not read would be a guard with a blind spot.
 SOURCE_TEXTS = (CONFIG, SESSION_DIR, METHODS_MOD, ASSEMBLY, LIVE, TOOLS, LIVE_TESTS,
-                REVIEW_TESTS, FACTORY, FACTORY_TESTS)
+                REVIEW_TESTS, FACTORY, FACTORY_TESTS, REQUESTS, SERVICES,
+                MANAGEMENT_TESTS)
 
 
 def _assertions(case):

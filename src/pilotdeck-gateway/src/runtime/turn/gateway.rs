@@ -21,11 +21,13 @@ use pilotdeck_protocol::{JsString, JsValue};
 use std::{
     collections::HashMap,
     future::Future,
+    panic::{AssertUnwindSafe, catch_unwind},
     pin::Pin,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
+    task::Poll,
     time::Duration,
 };
 use tokio::{
@@ -348,6 +350,13 @@ impl TurnGateway {
     /// plus [`INITIALIZATION_TEARDOWN_SLACK`], so a cleanup that legitimately
     /// runs to its own budget is never cut mid-poll by a shorter host bound.
     /// The refused-owner shutdown that runs before it is bounded separately.
+    /// A `teardown_budget` too large for the clock — `Duration::MAX`, or any
+    /// budget whose deadline `Instant::checked_add` overflows — is equivalent
+    /// to none (see `declared_cleanup_budget` for the #1949 waiver) and
+    /// explicitly waives #1746's no-hang guarantee: a cleanup that never
+    /// settles keeps this start blocked forever, with the coordinator and
+    /// interaction disposals and the failure report behind that unbounded
+    /// await.
     pub fn start_with_cleanup_budget(
         options: TurnReplayOptions,
         teardown_budget: Duration,
@@ -449,13 +458,30 @@ impl TurnGateway {
                     }
                     if crate::mutants::on("native-ws-error-skips-cleanup") && error.is_some() { return error.map_or(Ok(()), Err); }
                     // One failed job must not skip embedding-owned disposals.
-                    if !crate::mutants::on("native-ws-skip-host-cleanup") && let Some(cleanup) = cleanup && let Err(failure) = cleanup.await { error.get_or_insert(failure); }
+                    // #1942: the drain polls the same third-party cleanup the
+                    // failed-initialization teardown does, so a panic in it must
+                    // not skip the coordinator and interaction disposals below
+                    // either — the drain twin of the guard `dispose_initialization`
+                    // uses.
+                    if !crate::mutants::on("native-ws-skip-host-cleanup") && let Some(cleanup) = cleanup && let Err(failure) = caught_cleanup(cleanup, crate::mutants::on("native-ws-drain-cleanup-panic-uncaught")).await { error.get_or_insert(failure); }
                     error.map_or(Ok(()), Err)
                 };
                 // Preserve the original implicit-drop drain. Only an explicit
-                // embedding shutdown opts into a deadline.
-                let result = match budget {
-                    Some(budget) => tokio::time::timeout(budget, drain).await.unwrap_or_else(|_| Err("gateway host drain deadline exceeded".into())),
+                // embedding shutdown opts into a deadline; a bound too large
+                // for the clock, or within tokio's tick conversion of its
+                // ceiling, is the #1949 waiver — see `declared_cleanup_budget`
+                // and the tier decision `deadline_or_waiver` makes for both
+                // poll sites — so the drain is awaited without scheduling one.
+                // Tokio's own `timeout` saturates an overflowing budget into a
+                // far-future timer and panics on a near-full one just as
+                // `timeout_at` does — both register through the same unchecked
+                // tick conversion; the explicit spelling instead takes the
+                // waiver branch for both, matching `dispose_initialization`'s
+                // bound.
+                let result = match budget
+                    .and_then(|budget| deadline_or_waiver(tokio::time::Instant::now(), budget))
+                {
+                    Some(deadline) => tokio::time::timeout_at(deadline, drain).await.unwrap_or_else(|_| Err("gateway host drain deadline exceeded".into())),
                     None => drain.await,
                 };
                 running.abort_all();
@@ -656,13 +682,15 @@ impl HostedConnection {
 /// settles from turning a fast builder failure into a hung
 /// `start_with_cleanup`. The two synchronous disposals below always run.
 ///
-/// #1942: the two fixture-only switches below exist so this cleanup has a
+/// #1942: the three fixture-only switches below exist so this cleanup has a
 /// standing negative control, not just the positive
 /// `a_builder_error_disposes_the_coordinator_and_the_embedding_cleanup`:
 /// `native-ws-skip-initialization-cleanup` skips the whole teardown (the
-/// coordinator and its interactions are left live), and
+/// coordinator and its interactions are left live),
 /// `native-ws-skip-initialization-embedding-cleanup` skips only the embedding
-/// cleanup poll. Each is registered in the native-ws-entry roster
+/// cleanup poll, and `native-ws-initialization-cleanup-panic-uncaught` (see
+/// [`caught_cleanup`]) lets a panicking cleanup escape instead of being
+/// converted to an `Err`. Each is registered in the native-ws-entry roster
 /// (`tests/fixtures/native-ws-entry/negative_controls.py`) and must be killed
 /// by that test's own marker.
 async fn dispose_initialization(
@@ -684,8 +712,30 @@ async fn dispose_initialization(
             tokio::time::timeout_at(shutdown_deadline, services.submitter.owner.shutdown()).await;
     }
     if !skip_cleanup && let Some(cleanup) = cleanup {
-        let cleanup_deadline = tokio::time::Instant::now() + cleanup_bound;
-        let _ = tokio::time::timeout_at(cleanup_deadline, cleanup).await;
+        // #1949: a bound too large for the clock (an embedding's
+        // `Duration::MAX`, the idiomatic "no bound" a library caller can pass
+        // straight into the public `start_with_cleanup_budget`) must not
+        // overflow the deadline arithmetic. The std panic would kill the host
+        // thread and turn the declared deadline semantics into an opaque
+        // "gateway host initialization stopped" with the coordinator and its
+        // interactions left live. A deadline past every representable instant
+        // is equivalent to none, so the cleanup is awaited without one — the
+        // embedding that declared MAX explicitly waived #1746's no-hang
+        // guarantee, which only covers bounded budgets. A bound that fits but
+        // lands within tokio's tick conversion of the ceiling is the same
+        // waiver (`TICK_CONVERSION_HEADROOM`): registering it would panic,
+        // not saturate.
+        let uncaught = crate::mutants::on("native-ws-initialization-cleanup-panic-uncaught");
+        match deadline_or_waiver(tokio::time::Instant::now(), cleanup_bound) {
+            Some(cleanup_deadline) => {
+                let _ =
+                    tokio::time::timeout_at(cleanup_deadline, caught_cleanup(cleanup, uncaught))
+                        .await;
+            }
+            None => {
+                let _ = caught_cleanup(cleanup, uncaught).await;
+            }
+        }
     }
     if skip_teardown {
         return;
@@ -694,6 +744,36 @@ async fn dispose_initialization(
     if let Some(interactions) = interactions {
         interactions.dispose(&"gateway_disposed".into());
     }
+}
+
+/// #1942: the embedding cleanup is third-party code polled on the host
+/// thread, so a panic in it must not skip the coordinator and interaction
+/// disposals behind it — the same shape `runtime::replacement` gives its
+/// port calls. Every poll (not just the synchronous prefix) is caught, and a
+/// caught panic becomes an `Err` the callers already ignore, letting the
+/// teardown finish. Both poll sites use it — the failed-initialization
+/// teardown and the shutdown drain — and each call site reads its own
+/// fixture-only switch (`crate::mutants::on`) at exactly one compiled site,
+/// restoring the original unguarded poll at that site for the negative
+/// control: `native-ws-initialization-cleanup-panic-uncaught` and
+/// `native-ws-drain-cleanup-panic-uncaught`.
+fn caught_cleanup(
+    mut cleanup: Call<'static, Result<(), String>>,
+    uncaught: bool,
+) -> impl Future<Output = Result<(), String>> {
+    std::future::poll_fn(move |cx| {
+        match catch_unwind(AssertUnwindSafe(|| cleanup.as_mut().poll(cx))) {
+            Ok(poll) => poll,
+            Err(payload) => {
+                if uncaught {
+                    std::panic::resume_unwind(payload);
+                }
+                let message = crate::runtime::cleanup_task::panic_message(payload.as_ref())
+                    .unwrap_or("embedding cleanup panicked");
+                Poll::Ready(Err(message.to_owned()))
+            }
+        }
+    })
 }
 
 /// #1746: the two awaits of [`dispose_initialization`] do not share a clock,
@@ -731,11 +811,61 @@ const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_secs(5);
 #[cfg(test)]
 const INITIALIZATION_TEARDOWN_SLACK: Duration = Duration::from_millis(10);
 
+/// #1949: tokio turns a deadline into a timer tick by adding
+/// `Duration::from_nanos(999_999)` through the *unchecked* `Instant +
+/// Duration` at its `time/instant.rs:169` (tokio 1.48; the addition
+/// `TimeSource::deadline_to_tick` makes before reading the tick), so a
+/// deadline that fits the clock but sits within that addition of its ceiling
+/// panics on registration instead of saturating. Measured on this tree's
+/// tokio: `timeout_at` at the maximal fitting deadline panics
+/// "overflow when adding duration to instant", and a `timeout(budget, …)`
+/// call on a budget that fits but lands inside the same band panics there
+/// too (an earlier probe that showed the old call surviving at the maximal
+/// fitting budget was measuring the overflow tier: `timeout`'s own later
+/// clock read pushed that budget past the ceiling, taking the far-future
+/// branch). One second is far more than the nanoseconds tokio adds, so
+/// both poll sites that hand a deadline to `timeout_at` require this much
+/// room past it and treat anything closer to the ceiling as the same
+/// #1949 waiver. `pub(crate)`: the post-halt walk (`switch_wiring.rs`)
+/// filters its own shared deadline with the same slack instead of spelling
+/// the literal a second time (#2363 fix-r2).
+pub(crate) const TICK_CONVERSION_HEADROOM: Duration = Duration::from_secs(1);
+
+/// #1949: the tier decision both poll sites share — the deadline a budget
+/// would be awaited under, or `None` for the waiver (the waiver rule itself
+/// is [`declared_cleanup_budget`]'s to state, once). A budget too large for
+/// the clock overflows the first `checked_add`; one whose deadline still
+/// fits but lands within [`TICK_CONVERSION_HEADROOM`] of the clock's
+/// ceiling fails the second, because tokio converts a deadline into a
+/// timer tick through the same unchecked addition there — the panic the
+/// probe test measures. `now` is a parameter, not a read, so both callers
+/// pass their own clock and the deterministic tier test can pin the
+/// boundaries on one captured `now` (#2501: an e2e budget cannot — the site
+/// reads its own, later clock).
+fn deadline_or_waiver(now: tokio::time::Instant, budget: Duration) -> Option<tokio::time::Instant> {
+    now.checked_add(budget)
+        .filter(|deadline| deadline.checked_add(TICK_CONVERSION_HEADROOM).is_some())
+}
+
 /// The deadline a host actually gets out of an embedding-declared teardown
 /// budget: the budget plus [`INITIALIZATION_TEARDOWN_SLACK`].
 /// [`TurnGateway::start_with_cleanup_budget`] calls it on the way in and the
 /// bound test calls it too, so the slack is pinned by the one function both
 /// read instead of being copied into the test by hand (#1960).
+/// #1949, stated once here for both poll sites that turn a declared budget
+/// back into a deadline (`dispose_initialization`'s cleanup await and the
+/// shutdown drain): a budget too large for the clock — an embedding's
+/// `Duration::MAX`, which also saturates the slack addition above when it
+/// flows through here — overflows [`deadline_or_waiver`]'s first
+/// `checked_add`, and that overflow is the embedding's explicit waiver of the
+/// deadline: the await runs without one, equivalent to none, so the embedding
+/// that declared it opts out of #1746's no-hang guarantee, which covers
+/// bounded budgets only. A budget that still fits the clock but lands
+/// within [`TICK_CONVERSION_HEADROOM`] of its ceiling is the same explicit
+/// waiver: tokio converts a deadline to a timer tick through an unchecked
+/// addition a near-ceiling deadline overflows (a panic, not a saturation),
+/// so the site awaits without a deadline there too — [`deadline_or_waiver`]
+/// returns `None` for both tiers.
 fn declared_cleanup_budget(teardown_budget: Duration) -> Duration {
     teardown_budget.saturating_add(INITIALIZATION_TEARDOWN_SLACK)
 }

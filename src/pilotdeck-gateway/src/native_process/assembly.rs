@@ -62,6 +62,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+mod always_on;
+mod automation;
 mod cron;
 mod mcp;
 mod memory;
@@ -788,21 +790,7 @@ async fn start_assembly(
         let upload_store = Arc::new(crate::upload::UploadStore::new(
             crate::upload::UploadStoreOptions::new(
                 move |key: &pilotdeck_protocol::JsString| {
-                    // Shared helper `Unknown projectKey: <raw UTF-16>`
-                    // (UploadStore.ts:63, #865 frozen behavior): the other
-                    // 15+ call sites already report the exact UTF-16 units.
-                    let path = match key.to_utf8() {
-                        Ok(utf8) => std::path::PathBuf::from(utf8),
-                        Err(_) => return Err(crate::upload::unknown_project_key(key)),
-                    };
-                    // Accept both the canonical path and the logical path.
-                    let canonical = std::fs::canonicalize(&upload_project)
-                        .unwrap_or_else(|_| upload_project.clone());
-                    let requested = std::fs::canonicalize(&path).unwrap_or(path.clone());
-                    if requested != canonical && path != upload_project {
-                        return Err(crate::upload::unknown_project_key(key));
-                    }
-                    Ok(upload_project.clone())
+                    upload_resolve_project(&upload_project, key)
                 },
                 {
                     let p = options.project.clone();
@@ -832,18 +820,29 @@ async fn start_assembly(
     // #1746: exactly one teardown may run. The host polls this cleanup itself
     // when initialization fails — `start_with_cleanup_budget` below hands it
     // this embedding's `budget`, so the wait is never shorter than the timeout
-    // inside this closure — and the fallback below arms only when the host
-    // thread never started (runtime build or spawn failure), leaving the
-    // future dropped unpolled.
-    let cleanup_ran: Arc<std::sync::atomic::AtomicBool> = Arc::default();
-    let cleanup_fallback_ran = cleanup_ran.clone();
+    // inside this closure — and the fallback below makes up, per resource,
+    // whatever this closure never finished: whether the host thread never
+    // started (runtime build or spawn failure, the future dropped unpolled)
+    // or the inner budget expired mid-teardown (#1959).
+    //
+    // #1959: "one teardown" records *entry*, which is the wrong denomination
+    // for the fallback: a budget that expires mid-teardown (the channels
+    // close/flush stages never reaching factory or project) used to suppress
+    // the fallback too, so both leaked. The gate is now per resource — each
+    // flag flips when that disposal *completes* — and the fallback makes up
+    // exactly the resources the cleanup never finished, so a completed one is
+    // never disposed twice (#1746 r1's double-run fix, restated per resource).
+    let cleanup_entered: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let factory_disposed: Arc<std::sync::atomic::AtomicBool> = Arc::default();
+    let project_disposed: Arc<std::sync::atomic::AtomicBool> = Arc::default();
     let build_factory = factory.clone();
     let build_project = project.clone();
     // #1328 A8.3: the channel assembly (ChannelAdapterBundle weixin subset
     // on the #1327 ChannelServer). The same config snapshot drives the
     // `adapters.weixin.enabled` startup gate and the ChannelStartDeps config;
-    // #1326 takes the `cron` section off the same load.
-    let (channel_assembly, cron_section) = {
+    // #1326 takes the `cron` section off the same load; #2294 takes the
+    // `alwaysOn` section with it.
+    let (channel_assembly, cron_section, always_on_section) = {
         use crate::runtime::project::ConfigSource;
         let config = crate::runtime::project::NativeConfigSource::new(
             options.project.clone(),
@@ -892,6 +891,10 @@ async fn start_assembly(
         // #1326 A8 U8: the `cron:` section travels to the builder below, which
         // is the only place that constructs `CronManager`.
         let cron_section = config.get("cron").cloned();
+        // #2294: the `alwaysOn:` section travels with it — the automation
+        // bundle's `createAlwaysOn` gate reads the section itself (absent
+        // section, or no project with `enabled: true`, constructs nothing).
+        let always_on_section = config.get("alwaysOn").cloned();
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
                 pilot_home: options.home.clone(),
@@ -899,7 +902,11 @@ async fn start_assembly(
                 weixin: crate::channel::weixin::WeixinChannelOptions::default(),
                 weixin_maker: None,
                 feishu: crate::channel::feishu::FeishuOptions::default(),
-                log: None,
+                // #2301: TS `consoleLogger` (pilotdeckServer.ts:67-72) — the
+                // channel log the loader-table adapters' visible start lines
+                // (`api-server: listening on …`, `sms: twilio not installed…`)
+                // and the lifecycle core's startup lines go through.
+                log: Some(super::channels::console_channel_log()),
                 report_status: None,
                 close_host: None,
             },
@@ -916,25 +923,35 @@ async fn start_assembly(
         if let Some(slots) = &switch_slots {
             let _ = slots.channels.set(channel_assembly.clone());
         }
-        (channel_assembly, cron_section)
+        (channel_assembly, cron_section, always_on_section)
     };
     let build_channels = channel_assembly.clone();
     let cleanup_channels = channel_assembly.clone();
-    // #1326: the builder constructs the one `CronManager` on the gateway
-    // thread, but this cleanup closure is built before the builder runs —
-    // the shared slot carries the started manager's stop handle from the
-    // builder to the cleanup, which stops it before the channels (automation
-    // precedes closeServer, PilotDeckServerShutdownBundle.ts:33-37).
-    // #1353 A8.5-pr2: the slot now carries the shared idempotent stop handle
-    // rather than the bare manager — the switch machine's S1 stops the
-    // manager first, and the host teardown observes that stop instead of
-    // repeating it.
+    // #2294: the builder constructs and starts the one automation bundle (the
+    // one `CronManager` and the one `AlwaysOnManager` behind its providers) on
+    // the gateway thread, but this cleanup closure is built before the builder
+    // runs — the shared slot carries the started bundle from the builder to
+    // the cleanup, which stops it before the channels (automation precedes
+    // closeServer, PilotDeckServerShutdownBundle.ts:33-37).
+    let build_automation_slot: Arc<OnceLock<Arc<automation::ProjectAutomationBundle>>> =
+        Arc::default();
+    let cleanup_automation_slot = build_automation_slot.clone();
+    // #1353 A8.5-pr2: the switch machine's S1 face stops the bundle's cron
+    // manager through this shared handle (reading the abort rejections the
+    // recording gateway below records). The host teardown stops the whole
+    // bundle through the slot above; after a machine-driven stop the bundle's
+    // own cron stop repeats benignly — no active runs remain and the release
+    // pairs are idempotent — while always-on still stops there.
     let build_cron_slot: Arc<OnceLock<Arc<crate::switch::CronStopHandle>>> = match &switch_slots {
         Some(slots) => slots.cron.clone(),
         None => Arc::default(),
     };
-    let cleanup_cron_slot = build_cron_slot.clone();
     let budget = options.drain_budget;
+    // #1959: the fallback's own read of the per-resource completion flags —
+    // the cleanup closure below moves the originals.
+    let fallback_factory_disposed = factory_disposed.clone();
+    let fallback_project_disposed = project_disposed.clone();
+    let fallback_observer = cleanup_observer.clone();
     let host = TurnGateway::start_with_cleanup_budget(
         TurnReplayOptions::new(),
         // #1746: the failure path waits out this embedding's own drain budget
@@ -982,12 +999,25 @@ async fn start_assembly(
                 &options.project,
                 &env,
             )?;
-            // #1326 A8 U8: the one `CronManager::new` of the native process.
-            // `None` (no `cron:` section) keeps the unconfigured shape — the
-            // six names stay out of capabilities and every call answers the
-            // `requireCron` gate. A build failure fails the whole assembly
-            // through the same `project.dispose()` fallback below.
-            let cron = cron::build(cron_section.as_ref(), &options.home)?;
+            // #2294 A7.8: the one automation bundle of the native process —
+            // the port of `ProjectAutomationBundle`, which now constructs the
+            // one `CronManager` (the #1326 lane's manager behind the bundle's
+            // cron provider) and the one `AlwaysOnManager`. A factory failure
+            // fails the whole assembly through the same `project.dispose()`
+            // fallback below, with the factory's own `io::Error` verbatim.
+            let automation = Arc::new(automation::ProjectAutomationBundle::new(
+                automation::ProjectAutomationBundleOptions {
+                    config: automation::ProjectAutomationConfig {
+                        always_on: always_on_section
+                            .as_ref()
+                            .map(crate::runtime::always_on::AlwaysOnConfig::from_section),
+                        cron: cron_section.clone(),
+                    },
+                    pilot_home: options.home.clone(),
+                    make_always_on: always_on::native_factory(),
+                    make_cron: cron::native_factory(),
+                },
+            )?);
             // #1326: the cron port's own volatile fence. It must NOT be the
             // owner's `SessionAdmission`: `SessionAdmissionCronGateway` holds
             // its fence for the whole of `run_turn`, and that call ends in
@@ -1021,7 +1051,13 @@ async fn start_assembly(
                 // hot-start the weixin channel on request, after the same
                 // durable-state restore as a config-enabled start.
                 prepare_weixin_login: Some(build_channels.prepare_login_callback()),
-                cron: cron.clone(),
+                cron: automation.cron_manager(),
+                // #2294: TS `getInitialGatewayOptions` reads the generation's
+                // managers the same way (`generation.cron`,
+                // `generation.alwaysOn`); the composition face is the
+                // bundle's, so the `#1313` not_configured envelopes stay the
+                // answer exactly when no always-on provider was staged.
+                always_on: automation.always_on_manager(),
                 settings: settings.gateway,
                 session_overrides,
             });
@@ -1037,40 +1073,79 @@ async fn start_assembly(
                 )),
                 projector,
             });
-            // #1326: bind the live gateway port before `start()` — the
-            // manager's own bind gate enforces the order. `cron_admission` is
-            // the port's dedicated fence (see above, not the owner's), so a
-            // second concurrent cron trigger for one sessionKey is rejected
-            // while the turn's real admission still happens in the submit
-            // path; `start()` failing here fails the assembly through the
-            // `project.dispose()` fallback below.
-            if let Some(cron) = cron.as_ref() {
-                let body = Arc::new(cron::NativeCronGatewayBody::new(
-                    cron_owner.clone(),
-                    submitter.clone(),
-                    tokio::runtime::Handle::current(),
-                ));
+            // #2294: attach the live gateway facade and start the bundle.
+            // The whole start chain never awaits anything pending
+            // (`AlwaysOnManager::start` → the scheduler's sync spawn;
+            // `CronManager::start` is synchronous), so `now_or_never` drives
+            // it to completion inside the synchronous builder — which itself
+            // runs inside the host's `block_on`, where `Handle::block_on`
+            // would panic. A `None` means some start step unexpectedly
+            // yielded; failing assembly is the honest answer, never a
+            // deadlock. `update_subsystems` is the TS hot-reload publication
+            // (`setCronController` / `setAlwaysOnControl`); this embedding has
+            // no hot reload, so the consumer is a documented no-op. The
+            // bundle's own bind gate enforces the attach-before-start order.
+            {
+                use futures_util::FutureExt;
+                let busy_owner = cron_owner.clone();
+                let is_project_busy: automation::IsProjectBusy =
+                    Arc::new(move |project_key: &str| {
+                        busy_owner.has_active_user_turn(&JsString::from(project_key))
+                    });
                 // #1353 A7: the recording wrapper the switch machine's S1
                 // face reads. `CronManager::stop` aborts in-flight runs
                 // through the bound gateway and swallows every rejection
                 // (the `let _ =` in manager.rs stop), so the rejection has
                 // to be recorded where the face can report it. Delegation is
                 // behavior-preserving.
-                let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(Arc::new(
+                let cron_gateway = Arc::new(crate::switch::RecordingCronGateway::wrap(Arc::new(
                     crate::runtime::cron::SessionAdmissionCronGateway::new(
                         cron_admission.clone(),
-                        body,
+                        Arc::new(cron::NativeCronGatewayBody::new(
+                            cron_owner.clone(),
+                            submitter.clone(),
+                            tokio::runtime::Handle::current(),
+                        )),
                     ),
                 )));
-                cron.bind_agent_gateway(recording.clone())
-                    .map_err(cron::cron_io_error)?;
-                cron.start().map_err(cron::cron_io_error)?;
-                build_cron_slot
-                    .set(Arc::new(crate::switch::CronStopHandle::new(
-                        cron.clone(),
-                        recording.failures(),
-                    )))
-                    .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
+                automation.attach(automation::ProjectAutomationAttachment {
+                    agent_gateway: automation::ProjectAutomationAgentGateway {
+                        always_on: Arc::new(always_on::NativeAlwaysOnGatewayBody::new(
+                            cron_owner.clone(),
+                        )),
+                        cron: cron_gateway.clone(),
+                    },
+                    is_project_busy: Some(is_project_busy),
+                    update_subsystems: Arc::new(|_| ()),
+                })?;
+                match std::pin::pin!(automation.start()).now_or_never() {
+                    Some(result) => {
+                        // The started status is the bundle's own bookkeeping;
+                        // the assembly only needs the failure to cross.
+                        result.map_err(|error| std::io::Error::other(error.to_string()))?;
+                    }
+                    None => {
+                        return Err(std::io::Error::other(
+                            "automation start unexpectedly yielded inside the synchronous builder",
+                        ));
+                    }
+                }
+                build_automation_slot.set(automation.clone()).map_err(|_| {
+                    std::io::Error::other("automation bundle slot already occupied")
+                })?;
+                // #1353 A8.5-pr2: the machine's S1 face stops the bundle's
+                // cron manager through the shared handle, reading the abort
+                // rejections the recording wrapper above accumulated. Without
+                // a `cron:` section there is no manager and no handle — the
+                // S1 face is a no-op, exactly as before the bundle existed.
+                if let Some(cron) = automation.cron_manager() {
+                    build_cron_slot
+                        .set(Arc::new(crate::switch::CronStopHandle::new(
+                            cron,
+                            cron_gateway.failures(),
+                        )))
+                        .map_err(|_| std::io::Error::other("cron manager slot already occupied"))?;
+                }
             }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
             // every channel start receives) before any channel can construct.
@@ -1098,29 +1173,27 @@ async fn start_assembly(
             })
         },
         async move {
-            if cleanup_ran.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            if cleanup_entered.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 return Ok(());
             }
             // #1746: the host awaits this future on its own failure path before
             // reporting the error, so the deadline lives here; the shutdown
             // drain still bounds it by the embedding's shutdown budget.
             let teardown = async move {
-                // #1326 A8 U8: stop the cron manager first — automation precedes
-                // closeServer (PilotDeckServerShutdownBundle.ts:33-37). `stop()`
-                // aborts active cron runs through the bound gateway (the
-                // synchronous abort prefix) and releases task sessions; a stop
+                // #2294 A7.8: stop the automation bundle first — automation
+                // precedes closeServer (PilotDeckServerShutdownBundle.ts:33-37).
+                // The bundle's stop order is cron first, then always-on, so
+                // producer dependencies drain in reverse startup order; a stop
                 // failure is observed but never blocks the remaining teardown.
-                // #1353: through the shared handle — after a machine-driven
-                // stop this observes the earlier stop instead of repeating it.
-                let cron_stop = match cleanup_cron_slot.get() {
-                    Some(handle) => {
-                        cleanup_observer(
-                            "cron",
-                            handle
-                                .stop_once()
-                                .map_err(|error| String::from_utf16_lossy(error.message().units())),
-                        )
-                        .await
+                // #1353: the machine's S1 face may have stopped the bundle's
+                // cron manager earlier through the shared handle; the
+                // bundle's own cron stop then repeats benignly (no active
+                // runs remain, the release pairs are idempotent), and
+                // always-on still gets its stop here.
+                let automation_stop = match cleanup_automation_slot.get() {
+                    Some(automation) => {
+                        let outcome = automation.stop().await.map_err(|error| error.to_string());
+                        cleanup_observer("automation", outcome).await
                     }
                     None => Ok(()),
                 };
@@ -1139,23 +1212,30 @@ async fn start_assembly(
                 )
                 .await;
                 let channel_flush = cleanup_channels.flush().await;
-                let sessions = cleanup_observer(
-                    "session",
-                    cleanup_factory.dispose().await.map_err(|e| e.to_string()),
-                )
-                .await;
-                let project = cleanup_observer(
-                    "project",
-                    cleanup_project.dispose().await.map_err(|e| e.to_string()),
-                )
-                .await;
+                // #1959: the completion flags flip before the observers run, so
+                // an observer that stalls cannot un-complete a finished
+                // resource (and the fallback below will not re-run it).
+                let sessions = {
+                    let result = cleanup_factory.dispose().await.map_err(|e| e.to_string());
+                    factory_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    cleanup_observer("session", result).await
+                };
+                let project = {
+                    let result = cleanup_project.dispose().await.map_err(|e| e.to_string());
+                    project_disposed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    cleanup_observer("project", result).await
+                };
                 if let Err(error) = &project {
                     cleanup_diagnostic(error);
                 }
                 let mut outcome = sessions.and(project);
-                for failure in [cron_stop.err(), channel_stop.err(), channel_flush.err()]
-                    .into_iter()
-                    .flatten()
+                for failure in [
+                    automation_stop.err(),
+                    channel_stop.err(),
+                    channel_flush.err(),
+                ]
+                .into_iter()
+                .flatten()
                 {
                     outcome = outcome.and(Err(failure));
                 }
@@ -1170,7 +1250,11 @@ async fn start_assembly(
     match host {
         Ok(host) => {
             // #1328: start config-enabled channels (pilotdeckServer.ts:288-296)
-            // once the builder has published the gateway port.
+            // once the builder has published the gateway port. #2301: the
+            // configured half — `loadEnabledChannels(config.adapters)` — joins
+            // the loop after the bundle keys, in the TS startup order
+            // (feishu, weixin, qq, then `channels`;
+            // `ChannelAdapterBundle.createStartupAdapters`).
             let mut startup = Vec::new();
             if let Some(feishu) = channel_assembly.create_startup_feishu().await {
                 startup.push(feishu);
@@ -1178,6 +1262,7 @@ async fn start_assembly(
             if let Some(weixin) = channel_assembly.create_startup_weixin().await {
                 startup.push(weixin);
             }
+            startup.extend(channel_assembly.create_startup_configured());
             if !startup.is_empty() {
                 channel_assembly.server().start_channels(startup);
             }
@@ -1186,12 +1271,26 @@ async fn start_assembly(
         Err(error) => {
             // #1746: the host disposes the coordinator and polls the cleanup
             // above before reporting a builder failure. This fallback owns the
-            // project/factory teardown only when the host thread never started
-            // — running it twice would dispose the same families twice.
-            if !cleanup_fallback_ran.swap(true, std::sync::atomic::Ordering::SeqCst) {
+            // project/factory teardown the cleanup did not finish — #1959:
+            // per resource, not by entry. The host either never started (the
+            // future was dropped unpolled, both flags clear) or finished
+            // awaiting the cleanup, so the flags are final when read: a flag
+            // left clear means that disposal never completed — the host thread
+            // never started, or the inner budget cut the teardown mid-flight,
+            // which is exactly the case the makeup below exists for — and the
+            // fallback makes that resource up; a resource the cleanup
+            // completed is never disposed twice.
+            if !fallback_factory_disposed.swap(true, std::sync::atomic::Ordering::SeqCst) {
                 let _ = tokio::time::timeout(budget, async {
-                    let _ = factory.dispose().await;
-                    project.dispose().await
+                    let result = factory.dispose().await.map_err(|e| e.to_string());
+                    let _ = fallback_observer("session", result).await;
+                })
+                .await;
+            }
+            if !fallback_project_disposed.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                let _ = tokio::time::timeout(budget, async {
+                    let result = project.dispose().await.map_err(|e| e.to_string());
+                    let _ = fallback_observer("project", result).await;
                 })
                 .await;
             }
@@ -1416,6 +1515,34 @@ async fn validate_profile_inner(
     }
     Ok(())
 }
+/// U1 upload store `resolveProject`: the configured project only, accepted
+/// under either spelling — the canonical path or the logical one the process
+/// was configured with (the two differ when `--project` itself names a
+/// symlink; the upload record keeps the canonical spelling, the client may
+/// echo either). Any other key is `unknown_project_key` with the caller's raw
+/// UTF-16 (#1441: extracted from the wiring closure so the dual-spelling
+/// acceptance has a direct test).
+pub(super) fn upload_resolve_project(
+    upload_project: &std::path::Path,
+    key: &JsString,
+) -> std::result::Result<PathBuf, crate::upload::UploadError> {
+    // Shared helper `Unknown projectKey: <raw UTF-16>` (UploadStore.ts:63,
+    // #865 frozen behavior): the other 15+ call sites already report the
+    // exact UTF-16 units.
+    let path = match key.to_utf8() {
+        Ok(utf8) => PathBuf::from(utf8),
+        Err(_) => return Err(crate::upload::unknown_project_key(key)),
+    };
+    // Accept both the canonical path and the logical path.
+    let canonical =
+        std::fs::canonicalize(upload_project).unwrap_or_else(|_| upload_project.to_path_buf());
+    let requested = std::fs::canonicalize(&path).unwrap_or(path.clone());
+    if requested != canonical && path != upload_project {
+        return Err(crate::upload::unknown_project_key(key));
+    }
+    Ok(upload_project.to_path_buf())
+}
+
 pub fn env_object(env: &Env) -> JsObject {
     let mut result = JsObject::new();
     for (key, value) in env {
@@ -1470,4 +1597,53 @@ pub(super) fn project_registry(options: &Options, env: &Env) -> Arc<ProjectRunti
             .with_interaction(),
         })),
     ))
+}
+
+#[cfg(test)]
+mod resolve_project_tests {
+    use super::upload_resolve_project;
+    use pilotdeck_protocol::JsString;
+
+    /// #1441（探针 ts-probe/p4-resolve-project.out.txt）：resolveProject 收
+    /// 规范拼写与逻辑拼写两种（Rust 装配闭包的超集行为——TS registry 是
+    /// 词法等值匹配，差异如实记录在 RESULT），外来路径按原始 UTF-16 报
+    /// `Unknown projectKey: <原样>`。
+    #[test]
+    fn upload_resolve_project_accepts_both_spellings() {
+        let scratch =
+            std::env::temp_dir().join(format!("pdrs-1441-resolve-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(scratch.join("real")).expect("#1441 scratch dir");
+        let real = scratch
+            .join("real")
+            .canonicalize()
+            .expect("#1441 canonical");
+        let logical = scratch.join("alias");
+        std::os::unix::fs::symlink(&real, &logical).expect("#1441 alias symlink");
+        // 配置拼写 = 逻辑（经 symlink）
+        let configured = &logical;
+        for key in [&logical, &real] {
+            let resolved =
+                upload_resolve_project(configured, &JsString::from(key.to_string_lossy().as_ref()))
+                    .expect("#1441 both spellings must resolve");
+            assert_eq!(resolved, logical, "the registered spelling is returned");
+        }
+        // 外来路径：精确消息（原样回显）
+        let foreign = scratch.join("nowhere");
+        let error = upload_resolve_project(
+            configured,
+            &JsString::from(foreign.to_string_lossy().as_ref()),
+        )
+        .expect_err("#1441 a foreign key must be refused");
+        assert_eq!(
+            String::from_utf16_lossy(error.message.units()),
+            format!("Unknown projectKey: {}", foreign.to_string_lossy()),
+            "the refusal echoes the caller's spelling"
+        );
+        // 反向：配置拼写 = 规范时，逻辑拼写同样通过
+        let resolved =
+            upload_resolve_project(&real, &JsString::from(logical.to_string_lossy().as_ref()))
+                .expect("#1441 the logical spelling resolves against a canonical config");
+        assert_eq!(resolved, real);
+        std::fs::remove_dir_all(&scratch).ok();
+    }
 }

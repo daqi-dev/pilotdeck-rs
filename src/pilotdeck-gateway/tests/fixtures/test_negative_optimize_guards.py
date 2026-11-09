@@ -62,9 +62,33 @@ SCRIPTS = (
     # negative_selection (claim_dir + missing_target/refuse_unusable_target
     # + select + registered + verdict_exit).
     ('regex-proto-budget/negative_controls.py', (), ()),
+    # #297 r6 (DS r5 boundary P2 / MM r5 concurrency P2, both families): the
+    # two #297 entries complete the shared refusal contract (unknown or
+    # repeated name, roster drift, unusable target, existing output
+    # directory -> 2, never an uncaught traceback), so their startup
+    # matrix is machine-checked like the other migrated entries. r7 (DS r6
+    # sibling P2#3): this matrix exercises unknown-name / target modes /
+    # existing-dir only; the repeated-name and roster-drift refusals come
+    # from the shared select()/registered() helpers (their own unit tests
+    # in test_negative_selection.py), and guard_failed/signal exits stay
+    # code-review-verified -- #1657 tracks the entry-level test gap.
+    ('issue-297/negative_controls.py', (), ()),
+    ('issue-297-domain-fold/negative_controls.py', (), ()),
     # #1433 fix-r1: same entry shape after the migration to negative_selection
     # (review P1-1); its --check is also wired into CI.
     ('sdk-mcp-session-tools/negative_controls.py', (), ()),
+    # #1354: same entry shape from the start (registered + select + Case rows
+    # + claim_dir/missing_target/refuse_unusable_target + verdict_exit).
+    ('mode-routing/negative_controls.py', (), ()),
+    # #2425: same entry shape after the CLI alignment from ``--case NAME`` to
+    # positional names (select + claim_dir + registered + verdict_exit).
+    ('same-json-surfaces/negative_controls.py', (), ('-I',)),
+    # #2391 fix-r1: the two session-family entries born on the
+    # negative_selection contract (registered + refuse + claim_dir +
+    # missing_target/refuse_unusable_target + verdict_exit); their --check is
+    # also wired into CI.
+    ('session-reservation-2391/negative_controls.py', (), ()),
+    ('session-delete-2392/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
@@ -74,7 +98,8 @@ SCRIPTS = (
 # `negative_process.target_environment` default the shared tree target when the
 # variable is *absent* (#1166) -- a present-but-blank value is refused by their
 # own `blank_target()` guard, so only `missing` is exempt -- and
-# `cli-parity-mock-gateway` never compiles Cargo, so all four modes are moot.
+# `cli-parity-mock-gateway` and `same-json-surfaces` never compile Cargo, so all
+# four modes are moot for them.
 MODES = ('missing', 'empty', 'blank', 'dot')
 TARGET_OPTIONAL = {
     'interaction-values/negative_controls.py':
@@ -84,6 +109,8 @@ TARGET_OPTIONAL = {
         ('target_environment defaults the shared tree target when the variable is absent (#1166)',
          'target_environment(', ('missing',)),
     'cli-parity-mock-gateway/negative_controls.py':
+        ('never compiles Cargo, so it has no target guard', None, MODES),
+    'same-json-surfaces/negative_controls.py':
         ('never compiles Cargo, so it has no target guard', None, MODES),
 }
 
@@ -446,7 +473,7 @@ class UnknownControlIsRefused(unittest.TestCase):
 class BareAssertInventory(unittest.TestCase):
     """The class invariant has an explicit, shrink-only register (#1666).
 
-    The nineteen entries migrated so far (eighteen fixture directories;
+    The twenty-five entries migrated so far (twenty-four fixture directories;
     ``network-timing`` counts two scripts) are not the whole family. Rather than
     let a hand-written list look like a closed set, the remaining debt is named
     here: a file in ``scanned_entries()`` that is not in

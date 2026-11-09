@@ -143,6 +143,9 @@ fn explicit_options_and_environment() {
         // state; the isolated process must drop them, not inherit them.
         ("PILOTDECK_STORAGE_ROOT".into(), "outside".into()),
         ("PILOTDECK_SNAPSHOT_ROOT".into(), "outside".into()),
+        // #1354: the mode item is entry scope — this process already
+        // consumed it for its own routing.
+        ("PILOTDECK_GATEWAY_MODE".into(), "native".into()),
     ]);
     let env = options.environment(inherited);
     negative_assert_eq!(
@@ -167,6 +170,13 @@ fn explicit_options_and_environment() {
     ] {
         negative_assert!(!env.contains_key(key), "#1071 inherited authority removed");
     }
+    // #1354 entry-scope mode item not inherited: the routing switch must not
+    // sink into the native subtree's environment — a descendant re-executing
+    // the gateway would otherwise silently inherit a native routing.
+    negative_assert!(
+        !env.contains_key("PILOTDECK_GATEWAY_MODE"),
+        "#1354 entry-scope mode item not inherited"
+    );
     for key in [
         "PILOTDECK_MANAGED_CONFIG",
         "PILOTDECK_STORAGE_ROOT",
@@ -1071,6 +1081,401 @@ async fn production_listener_mounts_the_api_web_group() {
         .expect("#2354 listener task join")
         .expect("#2354 the production listener drains cleanly");
 }
+
+// The ledger's route ids for the group, in `gateway.http:<METHOD> <path>`
+// form; the five in-group probes below are built from these so the test
+// cannot drift from the ledger it claims to hold up (`:projectKey` is the
+// ledger's placeholder, `route_path` substitutes the encoded scratch
+// root). The 404/boundary probes — `/api/web/nope`, the unknown files
+// sub-path, the no-slash `/api/web` edge, the static lane — deliberately
+// bypass `route_path`: they assert the ledger-external behavior *around*
+// the group, not any registered route, so they carry no drift promise.
+const LIST: &str = "GET /api/web/projects";
+const DESCRIBE: &str = "GET /api/web/projects/:projectKey";
+const TREE: &str = "GET /api/web/projects/:projectKey/files/tree";
+const READ: &str = "GET /api/web/projects/:projectKey/files/read";
+const WRITE: &str = "POST /api/web/projects/:projectKey/files/write";
+const ROUTES: [&str; 5] = [LIST, DESCRIBE, TREE, READ, WRITE];
+// The ledger's `gateway.http:` ids that name fallback lanes, not routes:
+// they describe exactly the behavior the boundary probes assert (the
+// plain 404 lane and the static fallback), so they carry no
+// `<METHOD> <path>` shape on purpose — `enumerate.mjs` registers the
+// same two.
+const NON_ROUTE_LANES: [&str; 2] = ["<unmatched-404>", "static-fallback"];
+
+// The shape decision the ledger cross-check below makes per `gateway.http:`
+// id, extracted so a plain #[test] can pin every arm. fix-r3: `GET ` — a
+// method, the separator, and no path at all — once slipped through the
+// guard (`"".starts_with(' ')` is false) and the id then silently vanished
+// from `held_up` instead of dying, the opposite of the cross-check's
+// "dies here" promise.
+#[derive(Debug, PartialEq)]
+enum HttpLedgerId<'a> {
+    Route(&'a str),
+    NonRouteLane,
+    Malformed,
+}
+
+fn http_ledger_id_shape(route: &str) -> HttpLedgerId<'_> {
+    match route.split_once(' ') {
+        // A real route: a non-empty method, one separator, and a path that
+        // is neither empty (`GET `) nor a second separator's leading space
+        // (`GET  /x`) — both die in the Malformed arm.
+        Some((method, path))
+            if !method.is_empty() && !path.is_empty() && !path.starts_with(' ') =>
+        {
+            HttpLedgerId::Route(path)
+        }
+        _ if NON_ROUTE_LANES.contains(&route) => HttpLedgerId::NonRouteLane,
+        _ => HttpLedgerId::Malformed,
+    }
+}
+
+// fix-r3 pin: every malformed route-id shape — a tab separator, a double
+// space, a bare method, an empty path (`GET `), an empty method — lands in
+// the dying arm, never a silent skip out of the cross-check's `held_up`.
+#[test]
+fn malformed_http_ledger_route_ids_die_including_the_empty_path() {
+    for malformed in [
+        "GET\t/api/web/projects",
+        "GET  /api/web/projects",
+        "GET",
+        "GET ",
+        " /api/web/projects",
+    ] {
+        negative_assert_eq!(
+            http_ledger_id_shape(malformed),
+            HttpLedgerId::Malformed,
+            "#2395 malformed ledger route id must die, not vanish: {malformed:?}"
+        );
+    }
+    for lane in NON_ROUTE_LANES {
+        negative_assert_eq!(
+            http_ledger_id_shape(lane),
+            HttpLedgerId::NonRouteLane,
+            "#2395 the fallback lane keeps its shapeless skip: {lane}"
+        );
+    }
+    for route in ROUTES {
+        let (_, path) = route.split_once(' ').expect("#2395 route id shape");
+        negative_assert_eq!(
+            http_ledger_id_shape(route),
+            HttpLedgerId::Route(path),
+            "#2395 the probed route keeps its path: {route}"
+        );
+    }
+}
+
+/// #2395: the `/api/web` group's presentation on the production listener,
+/// held up per ledger entry (specs/product-coverage/entries.json, group
+/// A678 — five routes `partial-native`, evidence the `serve_with_body`
+/// mount): each of the five routes through the real accept loop with the
+/// production catalog over a registered project, the group's own JSON 404s
+/// (`/api/web/nope`, an unknown files sub-path) against the plain-text 404
+/// the lanes outside the group answer (`/api/web` without the trailing
+/// slash, and `/` for the static lane the production listener does not
+/// serve — `with_static_root` stays test-only), plus the 401 before any
+/// routing. The ledger half is machine-checked, not asserted in prose: the
+/// test reads entries.json and dies unless its `/api/web` routes are
+/// exactly the five probed (each still in group A678 at `partial-native`),
+/// and the probe URLs are built from the same route ids, so neither side
+/// can drift alone.
+#[tokio::test]
+async fn production_listener_presents_the_api_web_ledger_surface() {
+    use crate::runtime::{
+        connection::{Call, RequestError},
+        turn::gateway::{self, GatewayRequests},
+    };
+    use pilotdeck_protocol::JsString;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpStream,
+        sync::oneshot,
+        time::timeout,
+    };
+    struct NoRequests;
+    impl GatewayRequests for NoRequests {
+        fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
+            Box::pin(async { Ok(JsValue::Null) })
+        }
+        fn request(&self, _: JsString, _: JsValue) -> Call<'_, Result<JsValue, RequestError>> {
+            Box::pin(async { Ok(JsValue::Null) })
+        }
+    }
+    fn route_path(route: &str, encoded_root: &str) -> String {
+        let (_, path) = route.split_once(' ').expect("#2395 route id shape");
+        path.replace(":projectKey", encoded_root)
+    }
+    // The cross-check itself: the `gateway.http:` routes under `/api/web/`
+    // in specs/product-coverage/entries.json must be exactly these five,
+    // each still in group A678 at `partial-native`. A sixth route, a moved
+    // group or a status flip in the ledger dies here instead of silently
+    // outliving the probes.
+    let ledger: Value = serde_json::from_str(include_str!(
+        "../../../../specs/product-coverage/entries.json"
+    ))
+    .expect("#2395 ledger JSON");
+    let mut held_up = Vec::new();
+    for entry in ledger["entries"].as_array().expect("#2395 ledger entries") {
+        let id = entry["id"].as_str().expect("#2395 entry id").to_string();
+        let group = entry["group"]
+            .as_str()
+            .expect("#2395 entry group")
+            .to_string();
+        let status = entry["status"]
+            .as_str()
+            .expect("#2395 entry status")
+            .to_string();
+        let route = match id.strip_prefix("gateway.http:") {
+            Some(route) => route,
+            None => continue,
+        };
+        let path = match http_ledger_id_shape(route) {
+            HttpLedgerId::Route(path) => path,
+            HttpLedgerId::NonRouteLane => continue,
+            // Any other shape (a tab separator, a double space, a missing
+            // or empty path) must die here: `continue` would let the id
+            // vanish from `held_up` silently — the opposite of the "dies
+            // here" this cross-check promises.
+            HttpLedgerId::Malformed => panic!("#2395 malformed ledger route id: {id}"),
+        };
+        if path.starts_with("/api/web/") {
+            held_up.push((id, group, status));
+        }
+    }
+    held_up.sort();
+    let mut probed: Vec<(String, String, String)> = ROUTES
+        .iter()
+        .map(|route| {
+            (
+                format!("gateway.http:{route}"),
+                "A678".to_string(),
+                "partial-native".to_string(),
+            )
+        })
+        .collect();
+    probed.sort();
+    negative_assert_eq!(
+        held_up,
+        probed,
+        "#2395 the ledger's /api/web routes are exactly the five this test probes"
+    );
+    let scratch = Scratch::new();
+    // One registered project in the WS lane's home — the same marker shape
+    // `assembly::register_project` writes — with one file the tree/read/write
+    // probes address.
+    let project = scratch.0.join("project");
+    std::fs::write(project.join("hello.txt"), "#2395 probe file\n")
+        .expect("#2395 seed the project file");
+    let registry = scratch.0.join("home").join("projects").join("pdrs-2395");
+    std::fs::create_dir_all(&registry).expect("#2395 project registry directory");
+    std::fs::write(registry.join(".cwd"), project.to_string_lossy().as_bytes())
+        .expect("#2395 project marker");
+    let encoded_root = project.to_string_lossy().replace('/', "%2F");
+    let server = super::production_listener(
+        "127.0.0.1:0"
+            .parse()
+            .expect("#2395 production listen address"),
+        gateway::tests::native_ws_fixture(Arc::new(NoRequests)),
+        "fixture-token".into(),
+        Arc::new(|| None),
+        super::production_api_web("fixture-token".into(), scratch.0.join("home")),
+    )
+    .await
+    .expect("#2395 bind the production listener");
+    let address = server
+        .local_addr()
+        .expect("#2395 production listener address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        std::time::Duration::from_secs(10),
+    ));
+
+    // One request per connection; every lane here answers a chunked body, so
+    // the terminal chunk ends the capture (no EOF to wait for).
+    async fn exchange(address: std::net::SocketAddr, request: &str) -> String {
+        let mut stream = timeout(
+            std::time::Duration::from_secs(10),
+            TcpStream::connect(address),
+        )
+        .await
+        .expect("#2395 connect deadline")
+        .expect("#2395 connect to the production listener");
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .expect("#2395 write the probe request");
+        let mut response = Vec::new();
+        let mut buffer = [0u8; 8192];
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !response.ends_with(b"0\r\n\r\n") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "#2395 the production listener did not answer the probe"
+            );
+            let read = timeout(
+                std::time::Duration::from_millis(500),
+                stream.read(&mut buffer),
+            )
+            .await
+            .expect("#2395 response read deadline")
+            .expect("#2395 the production listener connection stays up");
+            assert!(
+                read > 0,
+                "#2395 the production listener closed before answering"
+            );
+            response.extend_from_slice(&buffer[..read]);
+        }
+        String::from_utf8_lossy(&response).into_owned()
+    }
+    let get = |path: String| {
+        format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n"
+        )
+    };
+
+    // The bearer check runs before any routing (#1348): an unauthorized GET
+    // is the 401, not a 404.
+    let unauthorized = exchange(
+        address,
+        &format!(
+            "GET {} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            route_path(LIST, &encoded_root)
+        ),
+    )
+    .await;
+    assert!(
+        unauthorized.starts_with("HTTP/1.1 401"),
+        "#2395 the group answers 401 before routing: {unauthorized:?}"
+    );
+    assert!(
+        unauthorized.contains("\"code\":\"unauthorized\""),
+        "#2395 the 401 body is the group's unauthorized JSON: {unauthorized:?}"
+    );
+
+    // Entry `GET /api/web/projects`: the native catalog lists the registered
+    // project through the production composition.
+    let listed = exchange(address, &get(route_path(LIST, &encoded_root))).await;
+    assert!(
+        listed.starts_with("HTTP/1.1 200"),
+        "#2395 the project list route serves the native catalog: {listed:?}"
+    );
+    assert!(
+        listed.contains("\"projects\":[") && listed.contains("\"projectKey\""),
+        "#2395 the project list reports the registered project: {listed:?}"
+    );
+
+    // Entry `GET /api/web/projects/:projectKey`.
+    let described = exchange(address, &get(route_path(DESCRIBE, &encoded_root))).await;
+    assert!(
+        described.starts_with("HTTP/1.1 200"),
+        "#2395 the describe route serves the native catalog: {described:?}"
+    );
+    assert!(
+        described.contains("\"fullPath\""),
+        "#2395 the describe route answers the project summary: {described:?}"
+    );
+
+    // Entry `GET /api/web/projects/:projectKey/files/tree`.
+    let tree = exchange(address, &get(route_path(TREE, &encoded_root))).await;
+    assert!(
+        tree.starts_with("HTTP/1.1 200") && tree.contains("hello.txt"),
+        "#2395 the tree route lists the project file: {tree:?}"
+    );
+
+    // Entry `GET /api/web/projects/:projectKey/files/read`.
+    let read = exchange(
+        address,
+        &get(format!(
+            "{}?path=hello.txt",
+            route_path(READ, &encoded_root)
+        )),
+    )
+    .await;
+    assert!(
+        read.starts_with("HTTP/1.1 200") && read.contains("2395 probe file"),
+        "#2395 the read route answers the file content: {read:?}"
+    );
+
+    // Entry `POST /api/web/projects/:projectKey/files/write`, read back on a
+    // second request like the golden's round-trip cells.
+    let body = r#"{"path":"written-2395.txt","content":"written by #2395"}"#;
+    let written = exchange(
+        address,
+        &format!(
+            "POST {} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            route_path(WRITE, &encoded_root),
+            body.len()
+        ),
+    )
+    .await;
+    assert!(
+        written.starts_with("HTTP/1.1 200") && written.contains("{\"ok\":true}"),
+        "#2395 the write route commits and answers ok:true: {written:?}"
+    );
+    let reread = exchange(
+        address,
+        &get(format!(
+            "{}?path=written-2395.txt",
+            route_path(READ, &encoded_root)
+        )),
+    )
+    .await;
+    assert!(
+        reread.starts_with("HTTP/1.1 200") && reread.contains("written by #2395"),
+        "#2395 the written file reads back: {reread:?}"
+    );
+
+    // The group's own 404 category: an unknown path inside `/api/web/`.
+    let no_route = exchange(address, &get("/api/web/nope".to_string())).await;
+    assert!(
+        no_route.starts_with("HTTP/1.1 404") && no_route.contains("\"code\":\"not_found\""),
+        "#2395 an unknown /api/web path answers the group JSON 404: {no_route:?}"
+    );
+    let no_sub = exchange(
+        address,
+        &get(format!("/api/web/projects/{encoded_root}/files/nope")),
+    )
+    .await;
+    assert!(
+        no_sub.starts_with("HTTP/1.1 404") && no_sub.contains("\"code\":\"not_found\""),
+        "#2395 an unknown files sub-path answers the group JSON 404: {no_sub:?}"
+    );
+
+    // The lane boundary: `/api/web` without the trailing slash never enters
+    // the group, so the native plain-text 404 answers, not the group JSON.
+    let boundary = exchange(address, &get("/api/web".to_string())).await;
+    assert!(
+        boundary.starts_with("HTTP/1.1 404") && boundary.contains("text/plain"),
+        "#2395 the no-slash boundary answers the native plain 404: {boundary:?}"
+    );
+    assert!(
+        !boundary.contains("application/json"),
+        "#2395 the no-slash boundary does not answer the group JSON: {boundary:?}"
+    );
+
+    // The static lane the production listener does not serve (`static_root`
+    // stays `None`): a UI-style path gets the native plain 404, never a file.
+    let static_lane = exchange(address, &get("/".to_string())).await;
+    assert!(
+        static_lane.starts_with("HTTP/1.1 404"),
+        "#2395 a static path answers 404 on the production listener: {static_lane:?}"
+    );
+    assert!(
+        !static_lane.contains("<"),
+        "#2395 the production listener serves no static or web-UI document: {static_lane:?}"
+    );
+
+    stop.send(()).expect("#2395 stop the production listener");
+    timeout(std::time::Duration::from_secs(10), task)
+        .await
+        .expect("#2395 listener stop deadline")
+        .expect("#2395 listener task join")
+        .expect("#2395 the production listener drains cleanly");
+}
 #[test]
 fn tool_policy_and_turn_environment() {
     let lsp = Arc::new(families::DefaultLsp::default());
@@ -1128,6 +1533,45 @@ fn tool_policy_and_turn_environment() {
             .is_err(),
         "#1071 invalid turn base refused"
     );
+}
+
+// #1354: the main entry's default routing switch as a formal config item.
+// Unset keeps the production default — proxy mode, #1303 option A — `proxy`
+// states it explicitly, `native` is the only other routing, and every other
+// value — the empty string and non-UTF-8 bytes included — fails closed, the
+// #1369 shape.
+#[test]
+fn gateway_mode_config_matrix() {
+    negative_assert!(
+        matches!(gateway_mode(None), Ok(false)),
+        "#1354 unset gateway mode keeps the proxy default (#1303 A)"
+    );
+    negative_assert_eq!(
+        gateway_mode(Some(std::ffi::OsStr::new("proxy"))).ok(),
+        Some(false),
+        "#1354 explicit proxy mode"
+    );
+    negative_assert_eq!(
+        gateway_mode(Some(std::ffi::OsStr::new("native"))).ok(),
+        Some(true),
+        "#1354 explicit native mode"
+    );
+    for value in [
+        "", " ", "PROXY", "Native", "native ", " native", "true", "1", "proxy\n",
+    ] {
+        negative_assert!(
+            gateway_mode(Some(std::ffi::OsStr::new(value))).is_err(),
+            "#1354 invalid gateway mode {value:?} rejected"
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        negative_assert!(
+            gateway_mode(Some(std::ffi::OsStr::from_bytes(b"native\xff"))).is_err(),
+            "#1354 non-UTF-8 gateway mode rejected"
+        );
+    }
 }
 
 // #1369: the controlled registry switch. Unset keeps the production default
@@ -1494,6 +1938,7 @@ async fn requests_registry_switch_gates_run_reads() {
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
             prepare_weixin_login: None,
             cron: None,
+            always_on: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
         };

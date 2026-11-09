@@ -757,7 +757,7 @@ async fn abort_after_project_budget_write_keeps_ledger_and_retry_conflicts() {
     let lines: Vec<_> = ledger.lines().collect();
     assert_eq!(lines.len(), 1, "the configured record is on disk");
     assert!(lines[0].contains("\"kind\":\"configured\""));
-    assert!(lines[0].contains("\"totalUsd\":5"));
+    assert!(lines[0].contains("\"totalUsd\":5,"));
 
     let error = registry
         .set_session_config(&"s".into(), &budget(6.0, None), None, None)

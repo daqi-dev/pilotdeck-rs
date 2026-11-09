@@ -1,6 +1,6 @@
 # #1145 P08：信号矩阵与 Rust 生命周期回放
 
-本包包含 TS 原件、来源验证和 96 格独立的 Rust CLI 进程回放。Rust 实现位于
+本包包含 TS 原件、来源验证和 100 格独立的 Rust CLI 进程回放。Rust 实现位于
 `src/sdk/{signals,turn,transport,output}.rs`。**仍不表示 P08 / #123 完成**：
 stdin 六格挂起，动态 UUID 仍按字面比较；
 #1151 已批准严格的业务行后 Node 尾段归一化及四格 4003 close reason 差异。
@@ -12,13 +12,15 @@ stdin 六格挂起，动态 UUID 仍按字面比较；
 
 ## 矩阵与原件
 
-`cases.json` 是 102 格的预注册输入：run/resume，各自覆盖两种信号、注册前的
+`cases.json` 是 106 格的预注册输入：run/resume，各自覆盖两种信号、注册前的
 control 前驱、stdin、query hello/resume/model 前驱的保持/释放/拒绝、
 abort 成功/拒绝/保持、同种与交叉重复信号、终态消费后取消、abort 与终态交错、
-正常/异常收尾。每格 12 秒观察上界；未退出只是观察事实，不能推断永不退出。
+正常/异常收尾；#1178 另加 `action: rst` 轴——server 对已发出的 abort_turn 直接
+RST query socket（不回复），覆盖 abort 在途时对端重启/断链。每格 12 秒观察
+上界；未退出只是观察事实，不能推断永不退出。
 TS hello/RPC 的默认超时也不同于宿主观察上限。
 
-`source.json` 保存 96 格真实 TS CLI 的真实 WebSocket 观测，另有 6 格 stdin
+`source.json` 保存 100 格真实 TS CLI 的真实 WebSocket 观测，另有 6 格 stdin
 缺口。原样 stdout/stderr、wire、客户端确认、退出与清理、初末文件树均保留；
 Node 版本固定 v22.22.0，TS 基线固定 cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85，
 实际加载的 source/dist 与探针哈希随采集保存。`oracle.json` 只作确定性提取，
@@ -28,6 +30,16 @@ stdin 缺口的原件单独保留在 `gap-source.json`：本宿主的 Node pipe 
 都未稳定建立等待 EOF，真实 `/dev/stdin` 读取出现 EAGAIN。readFile 调用钩子
 不能证明读成功；某次信号先于错误到达也不算覆盖。该采集线已挂起，前置于
 #123 / P09。旧观测用当时的 probe 哈希标识，只用于说明缺口；不作为有效消费格。
+
+#1178 的 RST 轴按 #1260 单格刷新同一协议增量入库：只重采四格 abort-rst，
+旧 96 格原件字节不动；唯一的数据面变更是为旧格补上 `milestones.rstApplied`
+这一由 trace 重算恒真（`action !== 'rst'`）的推导字段，合并脚本先逐格断言
+`input.action !== 'rst'` 再回填。probe 的 `server-rst` 用
+`socket._socket.resetAndDestroy()` 发真实 TCP RST，Rust 侧 mock 用
+SO_LINGER 0 关闭等效实现，两侧 close 都记 1006。四格实测：自然退出码 1、
+closes [(2,1006),(1,1005)]（query 先于 control，顺序因果稳定）、stdout 空、
+stderr 为业务行 `Gateway WebSocket closed.` + 完整 Node 尾段，按既有
+#1151/#1164 归一化后与 Rust 单行业务行相等，无需新差异登记。
 
 ## 客户端确认与资源边界
 
@@ -87,7 +99,7 @@ PDRS_BASELINE=/Users/da/ws/pilotdeck-rs/resources/PilotDeck \
 跑完再汇总 KILLED/SURVIVED/INVALID，并在每轮重验原件。它不修改产品源码、不使用
 影子 git、不绕过 HEAD 守卫，也不需要变异 Rust 编译。产品源码负控见下节。
 
-固定分母为 **62 个数据变异 + 11 个额外控制 = 73**：额外控制包括 cleanup、
+固定分母为 **64 个数据变异 + 11 个额外控制 = 75**：额外控制包括 cleanup、
 磁盘漂移、合法但错误的哈希、空/缩短变异表、空结果表，以及三个真实生成器入口
 漂移负控。入口负控在独占临时 fixture 目录运行正控→改坏→恢复正控；不复制 Git
 仓库、不改原件。所有项跑完再汇总；Rust 解析末行并核 total 与三种状态计数。
@@ -110,16 +122,19 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 仓内 `sigint_default.py` 恢复默认 SIGINT，包装 Python 使用 `-I -B` 避免运行目录缓存。
 默认包装位于本 fixture 目录，负控与 Rust 回放均使用它，不依赖宿主 `_tmp/`。
 
-96 个 `signal_cases::*` 测试因依赖固定端口、外部 TS checkout 和观察窗口而 ignored；
+100 个 `signal_cases::*` 测试因依赖固定端口、外部 TS checkout 和观察窗口而 ignored；
 默认本地金样守卫照常运行。六个 stdin 测试独立注明 #123/P09 缺口，强制运行会失败，
-不能作为成功格。下面命令必须恰好执行 **96** 个测试；0 个测试不构成验收。
+不能作为成功格。下面命令必须恰好执行 **100** 个测试；0 个测试不构成验收。
 每次使用新的绝对证据路径，保存原始 stdout/stderr、actual/comparison、连接 wire
 与完整初末树。TS stderr 仅按 `specs/cli-parity/normalization.md` §6/§7 剥精确启动前缀与完整业务行后异常尾段。
 关闭帧的 reason 只应用 `D1-SDK-WS-CLOSE-REASON-001` 的四格单字段例外。
 #1252 收集器始终保留原始到达次序；TS 数据契约还要求 closes 数组的 seq 严格递增。
-全局 seq 记录观察先后，不能为同时关闭的连接创造产品因果序。fix-r2 对全部 88 个
-多关闭格（62 个自然退出 / 26 个观察超时）在真实 TS 与 Rust 各重复十次，得到
-**41 STABLE-SAME / 16 STABLE-DIFF / 31 UNSTABLE**。只有实测 UNSTABLE 的 31 个完整 ID
+全局 seq 记录观察先后，不能为同时关闭的连接创造产品因果序。fix-r2 当时对全部
+88 个多关闭格（62 个自然退出 / 26 个观察超时）在真实 TS 与 Rust 各重复十次，
+得到 **41 STABLE-SAME / 16 STABLE-DIFF / 31 UNSTABLE**（#1178 后多关闭格共
+92：新增 4 个 abort-rst 格均为自然退出双关闭，query RST 先于 client finally
+的 control close，顺序因果稳定，按严格序比较并在两轮回放中均 PASS）。
+只有实测 UNSTABLE 的 31 个完整 ID
 按 `specs/gateway-parity/diffs/D1-SDK-WS-CLOSE-ORDER-001.md` 作序不敏感比较；排序只作用于
 比较副本，不去重，不剥实际字段。各条 connection/code/reason/cleanup、条数、重复和
 额外字段仍严格；所有 STABLE 格、单关闭格和未登记 ID 保持原比较。
@@ -149,6 +164,8 @@ cargo test --offline --manifest-path src/Cargo.toml -p pilotdeck-cli \
 未处理 rejection 仅按 `D1-SDK-SIGNAL-UNHANDLED-REJECTION-001` 的八个完整 ID
 接受各自固定的 Rust 单行错误，不匹配或推广 Node 堆栈形状；stdout、退出码、
 abort、连接、监听器和文件树继续严格比较。96 个有效观察格（不含另列的六个 stdin 缺口）在 phase4 登记为 94 PASS / 2 FAIL；
+#1178 又实测入库 4 格 abort-rst 并全部对齐（两轮 4/4 PASS，evidence 见
+`_tmp/20261026-issue-1178/replay-rst-{1,2}/`），现有效观察格共 100。
 #1252 首轮严格比较的 58 PASS / 38 FAIL 已按上述真实重复结果重新归因，不能沿用 phase4 历史结论。
 `{run,resume}--unknown-cleanup` 的动态 runId 继续按字面比较，该 2 格红已登记为
 `specs/gateway-parity/diffs/D1-SDK-SIGNAL-RUNID-LITERAL-001.md`（#2165 人拍 2：只覆盖
@@ -157,8 +174,21 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 按实测 TS 顺序修好（query 连接先于 control，hello-reject 为服务端 4003），修复后不再 FAIL。
 `signal_replay::comparison_tests::stable_query_before_control_cells_keep_concrete_order`
 逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
-该名单还与 source.json 里呈同一形状的格集合逐集合相等（防丢格、防新增同形格）；
+该名单还与 source.json 里呈同一形状的格集合逐集合相等（防丢格、防新增同形格；
+#1178 的 4 个 abort-rst 格同属该形状，已入名单，名单现 20 格；#2509 起名单长度由测试内
+`EXPECTED_STABLE_DIFF_COUNT = 20` 常量钉住——代码常量、模块级 `const STABLE_DIFF_CELLS:
+[(&str, u64); 20]` 类型字面、source.json 实测三角，防「数组与实测同步丢格」只剩 SHA 链一道防线；
+20 = 16 个 #1260 稳定不同序格 + 4 个 #1178 abort-rst 格，specs/cli-parity/normalization.md
+§7 同步钉住）；
 产品侧负控 `initialization-query-close-before-control` 把顺序改回旧写法点名用例即红。
+`rst_cells_keep_verified_original_shape` 离线钉住 4 格 abort-rst 原件形状（穷尽集合、
+input.signal/stage、status、naturalExit、cleanupExit、aborts、connections、activeAfterExit、
+stdout 逐字段字面断言；rstApplied milestone、归一化后 stderr、reset 在 query 连接上的
+trace 位置与 dispatched abort 的先后、reset 之后无 wire 事件；再以 `compare_surfaces`
+校验 TS→Rust 投影形态本身被比较器接受——closes 投影与 listener 折叠，非值钉。格序严格
+与不适用任何例外登记由上面的 stable 名单断言和 `approved_stderr_match_domain_is_exact`
+旁证钉住；20 格业务前缀 stderr 集与 stable 名单的同集合关系由
+`stderr_complete_node_tail_preserves_business_line` 机检钉住）。
 离线 `signal_replay::comparison_tests::*` 用真实原件覆盖边界与配对损坏输入，并验证 SIGINT 包装。
 `approved_stderr_match_domain_is_exact` 用 proc-macro2 读取匹配臂，严格核对独立八 ID 常量与差异条目；
 新增矩阵内独有字节第九臂、矩阵外第九臂、少一臂均须失败。批准 stderr 同时要求原件
@@ -170,7 +200,7 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 `grep -rl 28999 src/pilotdeck-cli src/pilotdeck-gateway/tests scripts` 现取：
 覆盖 `tests/common/`、fixtures 脚本与 `src/`，含仅引用不绑定者，宁多勿漏，
 不在此维护名单）——宿主先取 `/tmp/pdrs-parity.lock` 目录租约，再执行本文件任何
-绑 28999 的命令块（本节 96 格矩阵与下方 pending_abort 单测两处；取不到租约即
+绑 28999 的命令块（本节 100 格矩阵与下方 pending_abort 单测两处；取不到租约即
 退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件；锁的形态、
 回收与残留处置不自创，以 `scripts/cli-parity/README.md`「锁被保留时怎么解」节
 为正本（`owner.json` + guard 互斥，空目录不等于残留）。否则
@@ -199,18 +229,18 @@ python3 -I -B src/pilotdeck-cli/tests/fixtures/sdk-signals/sigint_default.py \
   python3 -I -B src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py NEW_NEGATIVE_DIR
 ```
 
-产品及比较边界负控固定 77 个变异：原有 41 个（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），#1260 新增 1 个产品关闭顺序变异 `initialization-query-close-before-control`（把初始化失败的关闭顺序改回 control 先关，绑定 `signal_cases::run_query_hello_hold_sigint`）、1 个 #1260 穷尽性变异 `stable-order-pin-broadened`（放宽 16 格形状谓词，绑定比较器用例的集合相等断言），新增 31 个精确名单项变异，以及
+产品及比较边界负控固定 79 个变异：原有 41 个（9 个既有产品变异、1 个 abort 期限变异、2 个 hello/request 期限变异、12 个既有比较/包装器变异、11 个八格 stderr 边界变异、2 个嵌套子测试变异、1 个注册差异账本漂移变异 `rejection-registered-difference-drift`（#1278）、3 个关闭顺序变异），#1260 新增 1 个产品关闭顺序变异 `initialization-query-close-before-control`（把初始化失败的关闭顺序改回 control 先关，绑定 `signal_cases::run_query_hello_hold_sigint`）、1 个 #1260 穷尽性变异 `stable-order-pin-broadened`（放宽 16 格形状谓词，绑定比较器用例的集合相等断言），新增 31 个精确名单项变异，#1178 新增 2 个：产品变异 `rst-abort-waits-for-reply`（把 turn.rs 流阶段 socket 错误带在途 abort 的映射改回 retain_query 等回复，12 秒观察内不退出，绑定 `signal_cases::run_abort_rst_sigint`）与 mock 保真变异 `rst-mock-never-resets`（signal_replay.rs 的 Action::Reset 改为 no-op，Rust 子进程不死亡、观察超时，同一绑定），以及
 范围扩大、未登记条目、非数组放行三个边界变异。每个名单项独立绑定
 `signal_replay::comparison_tests::all_multiclose_cells_follow_registered_order_semantics`
 与含完整格名的 `#1252 unordered close swap must pass: <ID>` 消息；其余完整绑定见脚本。
-该测试从 source 动态枚举全部 88 格，期望策略独立读取差异账本；逐格交换与字段损坏配对验证。
+该测试从 source 动态枚举全部 92 格（#1178 新增 4 个 abort-rst 格均为多关闭自然退出格），期望策略独立读取差异账本；逐格交换与字段损坏配对验证。
 `unordered_close_scope_equals_registration` 另核精确登记与固定分母，旧五格严格 / reason 集成测试仍保留。
 每项先正控、变异编译、负控、
 恢复、复跑正控，最后汇总全部结果。它使用共享 `mutating_sources/run_owned/wait_for_slot`，
 要求调用方设置 `CARGO_TARGET_DIR`，拒绝 dirty/new HEAD，不能绕过。尚未提交的新增
 源码须先由协调者提交，随后在宿主编译所有变异并执行全量；未执行项不能称 KILLED。
 
-`--check-anchors` 与兼容入口 `--check` 共用同一份 77 项目录校验。#1252 修复轮只调整下列绑定：
+`--check-anchors` 与兼容入口 `--check` 共用同一份 79 项目录校验。#1252 修复轮只调整下列绑定：
 
 | 变异体 | 完整测试名 | 专属失败消息 |
 |---|---|---|

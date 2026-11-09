@@ -349,6 +349,17 @@ impl InteractionTurn {
                 }
                 // Another owner may still be recording the terminal. Waiting
                 // for it here would cycle through HostClient's disposal wait.
+                // #996: shared-lease-exclusive-only fails the cleanup on a
+                // shared recorder lease instead of skipping it
+                // (live-recording/schemata.py). Off — the original skip.
+                if crate::mutants::on("shared-lease-exclusive-only")
+                    && Arc::strong_count(&owned.lease) > 1
+                {
+                    return Err(ModuleError::new(
+                        "shared recorder lease incorrectly blocks handler cleanup",
+                    )
+                    .into());
+                }
                 if let Ok(mut lease) = Arc::try_unwrap(owned.lease)
                     && let Err(error) = lease.release().await
                 {

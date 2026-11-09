@@ -925,14 +925,23 @@ async fn http10_close_delimited_response() {
     let cell = cell("http10");
     let (bytes, closed) = exchange(&cell.server, &cell.request, &cell.id, cell.half_close).await;
     let raw = latin1_string(&bytes);
+    let lower = raw.to_ascii_lowercase();
     assert!(
         raw.starts_with("HTTP/1.0 200 OK\r\n"),
         "#1349 pin http10: hyper answers with a 1.0 status line (Node's 1.1 line is the registered diff): {raw:?}"
     );
     assert!(
-        raw.contains("\r\nConnection: close\r\n")
-            && !raw.to_ascii_lowercase().contains("keep-alive"),
+        raw.contains("\r\nConnection: close\r\n") && !lower.contains("keep-alive"),
         "#1349 pin http10: the 1.0 response is close with no keep-alive like Node: {raw:?}"
+    );
+    // #1947 structural pin (ledger A8.3-CH-WEBHOOK-004-R2): this cell's reply
+    // is a streamed body — close-delimited already — so the lane's framing
+    // switch (`module-host-http10-framing-off`, bound to the value-body pin
+    // below) cannot kill this assertion; it pins the existing framing against
+    // drift.
+    assert!(
+        !lower.contains("\r\ncontent-length:"),
+        "#1947 pin http10: the 1.0 reply is close-delimited, no content-length: {raw:?}"
     );
     assert!(
         raw.ends_with(
@@ -943,6 +952,47 @@ async fn http10_close_delimited_response() {
     assert!(
         closed,
         "#1349 pin http10: the 1.0 response closes the connection like Node"
+    );
+}
+
+/// #1947: the `ok` cell is the one provider value body (a sized `Full` reply);
+/// on HTTP/1.0 Node's provider `res.end(body)` is close-delimited with no
+/// `content-length`, so after the #1947 framing fix the sized body must not
+/// leak hyper's `content-length` onto the 1.0 reply either. The recorded
+/// request is 1.1; the 1.0 twin keeps every other byte.
+#[tokio::test]
+async fn http10_value_body_is_close_delimited() {
+    let cell = cell("ok");
+    let mut request = cell.request.clone();
+    {
+        let line_end = request
+            .windows(2)
+            .position(|window| window == b"\r\n")
+            .expect("#1947 the ok cell request carries a request line");
+        request[line_end - "HTTP/1.1".len()..line_end].copy_from_slice(b"HTTP/1.0");
+    }
+    let (bytes, closed) = exchange(&cell.server, &request, "http10-value", false).await;
+    let raw = latin1_string(&bytes);
+    assert!(
+        raw.starts_with("HTTP/1.0 200 OK\r\n"),
+        "#1947 pin http10 value body: hyper answers with a 1.0 status line (Node's 1.1 line is the registered diff): {raw:?}"
+    );
+    assert!(
+        raw.contains("\r\nConnection: close\r\n")
+            && !raw.to_ascii_lowercase().contains("keep-alive"),
+        "#1947 pin http10 value body: the 1.0 response is close with no keep-alive like Node: {raw:?}"
+    );
+    assert!(
+        !raw.to_ascii_lowercase().contains("\r\ncontent-length:"),
+        "#1947 pin http10 value body: the 1.0 reply is close-delimited, no content-length: {raw:?}"
+    );
+    assert!(
+        raw.ends_with("{\"scenario\":\"ok\"}"),
+        "#1947 pin http10 value body: the value body runs to the connection end: {raw:?}"
+    );
+    assert!(
+        closed,
+        "#1947 pin http10 value body: the 1.0 response closes the connection like Node"
     );
 }
 

@@ -45,7 +45,7 @@ const CORS_EXPOSE: &str = "X-Hermes-Session-Id";
 pub(crate) struct ServerShared {
     pub host: String,
     pub port: f64,
-    pub api_key: String,
+    pub api_key: super::ApiKey,
     pub model_name: String,
     pub cors_origins: Vec<String>,
     pub gateway: Option<Arc<dyn super::super::protocol::TurnGateway>>,
@@ -661,13 +661,19 @@ fn normalize_content(content: Option<&JsValue>) -> JsString {
     }
 }
 
-fn bearer_matches(header: &str, api_key: &str) -> bool {
+/// `checkAuth`'s comparison limb: the key is the already-classified
+/// [`super::ApiKey`] — only its `Key` variant can ever match (`Never` throws
+/// inside `Buffer.from(this.apiKey)` in TS, so the catch answers 401 for
+/// every request).
+fn bearer_matches(header: &str, api_key: &super::ApiKey) -> bool {
+    let super::ApiKey::Key(key) = api_key else {
+        return false;
+    };
     let Some(token) = header.strip_prefix("Bearer ") else {
         return false;
     };
     let token = crate::metadata::js_trim(token);
     let token = token.as_bytes();
-    let key = api_key.as_bytes();
     if token.len() != key.len() {
         return false;
     }
@@ -686,7 +692,7 @@ async fn chat_completions(
     let session_header =
         crate::metadata::js_trim(&header_string(request.headers(), "x-hermes-session-id"))
             .to_owned();
-    if !shared.api_key.is_empty() && !bearer_matches(&authorization, &shared.api_key) {
+    if !shared.api_key.is_off() && !bearer_matches(&authorization, &shared.api_key) {
         return Ok(error_response(
             StatusCode::UNAUTHORIZED,
             "api_auth_failed",

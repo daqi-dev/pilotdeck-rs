@@ -227,7 +227,9 @@ impl Requests {
     }
 
     /// `createLocalGateway.deleteSession` → close live owner, delete transcript +
-    /// file history + tool results + subagents directories.
+    /// file history + tool results + subagents directories, then drop the
+    /// session's SDK registry rows (`clearSdkSessionState`,
+    /// createLocalGateway.ts:1160).
     async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {
         let key = require_session_key(params)?;
         let project_root: std::path::PathBuf = resolve_project(self, params)?.into();
@@ -288,6 +290,25 @@ impl Requests {
         })
         .await
         .map_err(|e| RequestError::new(e.to_string()))??;
+        // `registry.clearSdkSessionState(input.sessionKey)` — after every
+        // storage delete succeeded, exactly like the baseline. The native
+        // split (#2392): the MCP fields (server table, permission-mode
+        // overrides, generated permission rules, the shared session→project
+        // entry) live in `SdkMcpConfig`; `sdkThinkingOverrides` and
+        // `sdkSessionConfigs.outputStyle` (the TS clear deletes the whole
+        // config row, ProjectRuntimeRegistry.ts:776-786) live in
+        // `session_overrides`. The registry half of the TS clear (task-budget
+        // ledger, plugins, handler registrations) has no production instance
+        // in this process yet — see `clear_session_state`'s contract
+        // (runtime/sdk_session/registry.rs): it must be called **before**
+        // the MCP clear, because the MCP clear drops the shared projects
+        // entry its budget step reads. When that half is wired (#1839), it
+        // belongs above this line, never below it.
+        self.mcp
+            .config()
+            .clear_sdk_session_state(&JsValue::String(key.clone()));
+        self.session_overrides.clear_thinking(&key);
+        self.session_overrides.clear_output_style(&key);
         Ok(JsValue::Undefined)
     }
 
@@ -591,8 +612,8 @@ impl Requests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::negative_assert_eq;
     use crate::storage::recorder::Recorder;
+    use crate::{negative_assert, negative_assert_eq};
 
     /// #1457 fix-r2: a loaded session owns the transcript writer, so the rename
     /// append goes through its recorder instead of a second writer restored
@@ -855,16 +876,16 @@ mod tests {
     // #2090: request-level gate order for the session_dir family, measured on
     // both sides (`_tmp/20261107-issue-2090/`). Two gates can answer a bad or
     // absent key: the request-level isolated-project admission
-    // (`native_process/requests.rs:311-320`) and this family's
+    // (`native_process/requests.rs`) and this family's
     // `require_session_key` (`:180` / `:215` / `:232` / `:301`). Admission runs
     // before the method dispatch, so a `projectKey` the process does not serve
     // is answered as `gateway_request_failed` even when `sessionKey` is blank;
     // with the project admitted (or omitted, which falls back to the configured
-    // one) the missing or blank key answers `INVALID_SESSION_KEY`. An explicit
-    // `projectKey: null` counts as "not served" here — `requests.rs:311-320`
-    // only skips `undefined` — while TS reads null as nullish and falls back to
-    // its project root. That shape, and the resume/close divergence, are
-    // registered in
+    // one) the missing or blank key answers `INVALID_SESSION_KEY`. #2272: an
+    // explicit `projectKey: null` is "not provided" for that admission (the
+    // same nullish read TS gives it), so it falls back to the configured
+    // project exactly like an omitted key; the resume/close blank-key
+    // divergence stays registered in
     // `specs/gateway-parity/diffs/A7-W5-NATIVE-SESSION-CONFIG-CAPABILITY-001-R9.md`.
     const BLANK_KEY_MESSAGE: &str = "sessionKey is required.";
     const ISOLATED_PROJECT_MESSAGE: &str =
@@ -901,12 +922,31 @@ mod tests {
             );
         }
 
+        // (1b) #2272: an explicit `projectKey: null` is "not provided" for the
+        // admission too, so the fallback is the configured project and the
+        // family's sessionKey gate answers the blank key exactly as (1).
+        {
+            let params = object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]);
+            let error =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await
+                    .expect_err("#2272 the blank sessionKey is rejected under a null projectKey");
+            negative_assert_eq!(
+                error.code.as_str(),
+                "INVALID_SESSION_KEY",
+                "#2272 a null projectKey falls back like a missing one, so the sessionKey gate answers the blank key"
+            );
+            negative_assert_eq!(
+                key_message(&error),
+                BLANK_KEY_MESSAGE,
+                "#2272 the gate message matches the TS provider gate under a null projectKey"
+            );
+        }
+
         // (2) Project outside the configured one: request admission answers
         // before the method dispatch, so the first code is the admission one.
         // The valid-key control answering identically is what proves admission
-        // — not the key — decides here; the `null` cells are the registered
-        // shape where Rust and TS part ways (`projectKey: null` is nullish for
-        // TS, "not served" for this admission).
+        // — not the key — decides here.
         for (label, params) in [
             (
                 "blank key + unserved project",
@@ -920,17 +960,6 @@ mod tests {
                 object([
                     ("sessionKey", "pdrs-2090-control".into()),
                     ("projectKey", UNSERVED_PROJECT.into()),
-                ]),
-            ),
-            (
-                "blank key + null project",
-                object([("sessionKey", "   ".into()), ("projectKey", JsValue::Null)]),
-            ),
-            (
-                "valid key + null project",
-                object([
-                    ("sessionKey", "pdrs-2090-control".into()),
-                    ("projectKey", JsValue::Null),
                 ]),
             ),
         ] {
@@ -951,6 +980,71 @@ mod tests {
             );
         }
 
+        // (3) #2272: a valid sessionKey with `projectKey: null` runs the
+        // method on the configured project — the fallback the handler's
+        // `resolve_project` gives a nullish key. Rust has no
+        // unresolvable-fallback shape (the fallback is always the configured
+        // project, R9 difference 4), so this is TS scenario A only; resume's
+        // echo missing `projectKey` and close answering `undefined` are the
+        // registered R9 divergences, kept as they are.
+        {
+            let params = object([
+                ("sessionKey", "pdrs-2090-control".into()),
+                ("projectKey", JsValue::Null),
+            ]);
+            let result =
+                crate::runtime::turn::gateway::GatewayRequests::request(&r, method.into(), params)
+                    .await;
+            match method {
+                "resume_session" => {
+                    let value = result
+                        .expect("#2272 resume_session answers a valid key under a null projectKey");
+                    let echoed = value
+                        .get("sessionKey")
+                        .and_then(JsValue::as_string)
+                        .cloned()
+                        .expect(
+                            "#2272 resume_session echoes the sessionKey under a null projectKey",
+                        );
+                    negative_assert_eq!(
+                        String::from_utf16_lossy(echoed.units()),
+                        "pdrs-2090-control",
+                        "#2272 resume_session echoes the key it was given under a null projectKey"
+                    );
+                    negative_assert!(
+                        value.get("projectKey").is_none(),
+                        "#2272 resume_session keeps the registered R9 echo shape with no projectKey"
+                    );
+                }
+                "close_session" => {
+                    negative_assert!(
+                        matches!(result, Ok(JsValue::Undefined)),
+                        "#2272 close_session answers undefined for a valid key under a null projectKey"
+                    );
+                }
+                "delete_session" => {
+                    let error = result.expect_err(
+                        "#2272 delete_session looks for a valid key in the configured project under a null projectKey",
+                    );
+                    negative_assert_eq!(
+                        error.code.as_str(),
+                        "SESSION_NOT_FOUND",
+                        "#2272 delete_session answers SESSION_NOT_FOUND, not an admission refusal"
+                    );
+                }
+                "rename_session" | "tag_session" => {
+                    let value = result
+                        .expect("#2272 rename/tag answers a valid key under a null projectKey");
+                    negative_assert_eq!(
+                        value.get("updated").and_then(JsValue::as_bool),
+                        Some(true),
+                        "#2272 rename/tag reports updated:true on the configured project"
+                    );
+                }
+                _ => unreachable!("blank_key_gate_order called for an unknown method"),
+            }
+        }
+
         r.owner.shutdown().await.expect("#2090 shutdown");
         r.project.dispose().await.expect("#2090 dispose");
     }
@@ -968,6 +1062,178 @@ mod tests {
     #[tokio::test]
     async fn delete_session_blank_key_gate_order() {
         blank_key_gate_order("delete_session").await;
+    }
+
+    /// The session keys one `snapshot_state` table holds, as UTF-8 strings.
+    fn snapshot_table_keys(
+        config: &crate::runtime::mcp::sdk::SdkMcpConfig,
+        field: &str,
+    ) -> Vec<String> {
+        let rows = config
+            .snapshot_state()
+            .get(field)
+            .cloned()
+            .unwrap_or(JsValue::Undefined);
+        let JsValue::Array(ref rows) = rows else {
+            return Vec::new();
+        };
+        rows.iter()
+            .map(|row| match row {
+                JsValue::Array(parts) => parts
+                    .first()
+                    .and_then(JsValue::as_string)
+                    .map(|key| String::from_utf16_lossy(key.units()))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            })
+            .collect()
+    }
+
+    /// Seed the `clearSdkSessionState` halves this process owns for one key:
+    /// the MCP permission tables (an override row plus its generated rule,
+    /// exactly what `setMcpPermissionModeOverrideForSdk` leaves), the thinking
+    /// override, and the output-style selection (`sdkSessionConfigs`'s
+    /// `outputStyle` row, the other `session_overrides` half the TS clear
+    /// drops with the config row).
+    async fn seed_sdk_session_state(requests: &Requests, session: &str) {
+        let input = object([
+            ("sessionKey", session.into()),
+            ("serverName", "pdrs-2392-server".into()),
+            ("mode", "auto".into()),
+        ]);
+        requests
+            .mcp
+            .config()
+            .set_mcp_permission_mode_override(&input)
+            .await
+            .expect("#2392 the seeded permission override commits");
+        // The lease-acquired sync shape (the wiring layer calls this with
+        // `lease.rules().ask`, ProjectRuntimeRegistry.ts:305-308): generates
+        // the session's permission-rule row for the override just seeded.
+        requests
+            .mcp
+            .config()
+            .sync_permission_rules(&session.into(), &mut Vec::new());
+        requests
+            .session_overrides
+            .set_thinking(&session.into(), object([("enabled", JsValue::Bool(true))]));
+        requests
+            .session_overrides
+            .set_output_style(&session.into(), "pdrs-2392-style".into());
+        requests
+            .session_overrides
+            .set_permission_mode(&session.into(), "acceptEdits".into());
+    }
+
+    /// #2392: `deleteSession` ends with `clearSdkSessionState`
+    /// (createLocalGateway.ts:1160), so the deleted session's registry rows
+    /// must not outlive its files — the MCP tables, the thinking override,
+    /// and the output-style selection (the config row the TS clear drops
+    /// carries it, ProjectRuntimeRegistry.ts:779). The permission-mode
+    /// selection is the counter-scope: the TS clear never touches
+    /// `sessionOverrides`, so the native delete must keep it.
+    #[tokio::test]
+    async fn session_delete_clears_the_sdk_session_state() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let session: JsString = "a8-session".into();
+        seed_sdk_session_state(&requests, "a8-session").await;
+        let config = requests.mcp.config();
+        negative_assert!(
+            snapshot_table_keys(config, "overrides").contains(&"a8-session".to_string()),
+            "#2392 delete starts with a seeded MCP permission override"
+        );
+        negative_assert!(
+            snapshot_table_keys(config, "rules").contains(&"a8-session".to_string()),
+            "#2392 delete starts with a seeded generated permission rule"
+        );
+        negative_assert!(
+            requests.session_overrides.thinking(&session).is_some(),
+            "#2392 delete starts with a seeded thinking override"
+        );
+        negative_assert!(
+            requests.session_overrides.output_style(&session).is_some(),
+            "#2392 delete starts with a seeded output-style selection"
+        );
+
+        let result = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "delete_session".into(),
+            object([("sessionKey", "a8-session".into())]),
+        )
+        .await;
+        negative_assert!(
+            matches!(result, Ok(JsValue::Undefined)),
+            "#2392 delete_session answers undefined after deleting the transcript"
+        );
+        negative_assert!(
+            !snapshot_table_keys(config, "overrides").contains(&"a8-session".to_string()),
+            "#2392 delete drops the session's MCP permission overrides"
+        );
+        negative_assert!(
+            !snapshot_table_keys(config, "rules").contains(&"a8-session".to_string()),
+            "#2392 delete drops the session's generated permission rules"
+        );
+        negative_assert!(
+            requests.session_overrides.thinking(&session).is_none(),
+            "#2392 delete drops the session's thinking override"
+        );
+        negative_assert!(
+            requests.session_overrides.output_style(&session).is_none(),
+            "#2392 delete drops the session's output-style selection"
+        );
+        negative_assert_eq!(
+            requests
+                .session_overrides
+                .permission_mode(&session)
+                .map(|mode| String::from_utf16_lossy(mode.units())),
+            Some("acceptEdits".to_string()),
+            "#2392 delete keeps the permission-mode selection, which the TS clear does not touch"
+        );
+
+        requests.owner.shutdown().await.expect("#2392 shutdown");
+        requests.project.dispose().await.expect("#2392 dispose");
+    }
+
+    /// #2392: `clearSdkSessionState` runs only after every storage delete
+    /// succeeded (createLocalGateway.ts:1150-1160); `SESSION_NOT_FOUND`
+    /// leaves before any clear, so the seeded rows survive the refusal.
+    #[tokio::test]
+    async fn session_delete_not_found_keeps_the_sdk_session_state() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let session: JsString = "pdrs-2392-ghost".into();
+        seed_sdk_session_state(&requests, "pdrs-2392-ghost").await;
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "delete_session".into(),
+            object([("sessionKey", "pdrs-2392-ghost".into())]),
+        )
+        .await
+        .expect_err("#2392 delete_session refuses the session without a transcript");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_NOT_FOUND",
+            "#2392 the missing transcript answers SESSION_NOT_FOUND"
+        );
+        let config = requests.mcp.config();
+        negative_assert!(
+            snapshot_table_keys(config, "overrides").contains(&"pdrs-2392-ghost".to_string()),
+            "#2392 the refusal keeps the session's MCP permission overrides"
+        );
+        negative_assert!(
+            snapshot_table_keys(config, "rules").contains(&"pdrs-2392-ghost".to_string()),
+            "#2392 the refusal keeps the session's generated permission rules"
+        );
+        negative_assert!(
+            requests.session_overrides.thinking(&session).is_some(),
+            "#2392 the refusal keeps the session's thinking override"
+        );
+        negative_assert!(
+            requests.session_overrides.output_style(&session).is_some(),
+            "#2392 the refusal keeps the session's output-style selection"
+        );
+
+        requests.owner.shutdown().await.expect("#2392 shutdown");
+        requests.project.dispose().await.expect("#2392 dispose");
     }
 
     #[tokio::test]
@@ -1210,6 +1476,109 @@ mod tests {
                 panic!("#2083 the resume arm must answer the sessionKeys array, got {other:?}")
             }
         }
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    // #2564: request-level `projectKey: null` for the three family members
+    // whose subject key is the project itself. The admission gate reads the
+    // key nullish (#2272), so a null reaches each method's own read, and the
+    // TS baselines differ per method: `closeProjectSessions` gates with
+    // `!input.projectKey?.trim()` (InProcessGateway.ts:2037) so a null is the
+    // missing-key domain error; `listSessions` resolves
+    // `input.projectKey ?? fallbackProjectRoot` (ProjectRuntimeRegistry.ts:1542)
+    // so it lists the configured project; `newSession` reads
+    // `input.projectKey ? \`project=${…}:\` : ""` (InProcessGateway.ts:2029)
+    // so the null omits the prefix. Node v22.22.0 end-to-end probe:
+    // `_tmp/20261026-issue-2562/ts-probe/probe-submit.out`.
+    #[tokio::test]
+    async fn close_project_sessions_null_project_key_is_the_domain_error() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &r,
+            "close_project_sessions".into(),
+            object([("projectKey", JsValue::Null)]),
+        )
+        .await
+        .expect_err("#2564 a null projectKey is refused by the close_project_sessions gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "gateway_request_failed",
+            "#2564 a null projectKey keeps the domain code"
+        );
+        negative_assert_eq!(
+            key_message(&error),
+            "projectKey is required.",
+            "#2564 a null projectKey keeps the domain message"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    #[tokio::test]
+    async fn list_sessions_null_project_key_lists_the_configured_project() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let value = crate::runtime::turn::gateway::GatewayRequests::request(
+            &r,
+            "list_sessions".into(),
+            object([("projectKey", JsValue::Null)]),
+        )
+        .await
+        .expect("#2564 a null projectKey lists the configured project");
+        negative_assert!(
+            matches!(value.get("sessions"), Some(JsValue::Array(_))),
+            "#2564 a null projectKey falls back to the configured project's catalog"
+        );
+        r.owner.shutdown().await.expect("#1310 shutdown");
+        r.project.dispose().await.expect("#1310 dispose");
+    }
+
+    #[tokio::test]
+    async fn new_session_null_project_key_omits_the_project_prefix() {
+        let (_s, r) = std::panic::catch_unwind(crate::native_process::management_tests::setup)
+            .expect("#1310 fixture");
+        let key_of = |params| {
+            crate::runtime::turn::gateway::GatewayRequests::request(
+                &r,
+                "new_session".into(),
+                params,
+            )
+        };
+        let null_key = key_of(object([
+            ("channelKey", "pdrs-2564".into()),
+            ("projectKey", JsValue::Null),
+        ]))
+        .await
+        .expect("#2564 a null projectKey generates a session key")
+        .get("sessionKey")
+        .and_then(JsValue::as_string)
+        .cloned()
+        .expect("#2564 new_session answers a sessionKey");
+        negative_assert!(
+            String::from_utf16_lossy(null_key.units()).starts_with("pdrs-2564:s_"),
+            "#2564 a null projectKey omits the project= prefix"
+        );
+        // Control: a served string is truthy on both sides, so the prefix
+        // appears and the null above is proven to be the nullish read.
+        let served_key = key_of(object([
+            ("channelKey", "pdrs-2564".into()),
+            (
+                "projectKey",
+                JsValue::String(r.options.project.to_string_lossy().into_owned().into()),
+            ),
+        ]))
+        .await
+        .expect("#2564 the configured project string generates a session key")
+        .get("sessionKey")
+        .and_then(JsValue::as_string)
+        .cloned()
+        .expect("#2564 new_session answers a sessionKey for the served project");
+        negative_assert!(
+            String::from_utf16_lossy(served_key.units()).starts_with("pdrs-2564:project="),
+            "#2564 a served project string keeps the project= prefix"
+        );
         r.owner.shutdown().await.expect("#1310 shutdown");
         r.project.dispose().await.expect("#1310 dispose");
     }

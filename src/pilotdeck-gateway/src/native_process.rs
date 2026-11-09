@@ -1,5 +1,7 @@
 //! Explicit isolated process configuration and production gateway composition.
-//! The A4 entry never reads these options unless its first argument is `--native`.
+//! The A4 entry never reads these options unless its routing selects the
+//! native composition: the first argument `--native` (#1071) or the
+//! `PILOTDECK_GATEWAY_MODE` config item (#1354).
 use crate::{ProxyError, config::Env, host::modules::tool_context::TurnEnvironment};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -36,6 +38,10 @@ mod session_overrides;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
 #[cfg(test)]
 mod settings_tests;
+// #2363 item 6: crate-visible for the switch-side race test, which runs the
+// cron routing seam's own dispatch body against the S1 stop face.
+#[cfg(test)]
+pub(crate) use methods::dispatch_under_management_gate;
 mod switch_wiring;
 #[cfg(test)]
 mod switch_wiring_tests;
@@ -48,6 +54,12 @@ pub use tools::{
     SessionMcpRelease, SessionMcpTools, SessionMcpToolsOptions, enabled_session_mcp_servers,
     session_mcp_tools,
 };
+
+/// The fixed prefix of the switch machine's halt line: `run` prints
+/// `"{NATIVE_SWITCH_HALTED}: {error}"` when the machine halts, and the
+/// executable-level tests observe the child's stderr for the same prefix —
+/// one home for the spelling, shared by production and tests (#2511).
+pub const NATIVE_SWITCH_HALTED: &str = "native switch halted";
 
 /// Start the real serial host, bind WS, then drain on either supported signal.
 /// The listener never starts an upstream gateway/helper.
@@ -134,7 +146,7 @@ pub async fn run(options: Options) -> Result<(), ProxyError> {
             // the death march below still terminates the process (a
             // registered difference — the matrix's surviving-owner semantics
             // cannot outlive SIGTERM), but a halt never exits 0 (D1).
-            eprintln!("native switch halted: {error}");
+            eprintln!("{NATIVE_SWITCH_HALTED}: {error}");
             faces.finish_after_halt().await.map_err(|teardown| {
                 crate::ProxyError::from(format!("{error}; teardown: {teardown}"))
             })?;
@@ -212,6 +224,32 @@ pub struct Options {
 
 pub fn native_requested(first: Option<&std::ffi::OsStr>) -> bool {
     first == Some(std::ffi::OsStr::new("--native"))
+}
+
+/// #1354 A8.5-pr3: the main entry's default routing switch, formalized from
+/// #1071's explicit `--native` argument into a config item.
+/// `PILOTDECK_GATEWAY_MODE` names the startup mode: `proxy` (the default,
+/// #1303 option A — the Rust front with the TS upstream stays the rollback
+/// target through stage A) or `native`. Unset keeps the default; every other
+/// value — the empty string and non-UTF-8 bytes included — fails closed at
+/// startup, the same shape as `PILOTDECK_NATIVE_RUN_REGISTRY` (#1369), and
+/// the entry judges the item before the `--native` argument's routing, so the
+/// rejection holds even when that argument is present. The explicit `--native`
+/// argument wins over this config item, like the TS
+/// baseline's own `readStringFlag(argv, "--host") ?? env.PILOTDECK_GATEWAY_HOST`
+/// (src/cli/pilotdeck.ts:213): the per-invocation flag outranks the
+/// deployment default.
+pub fn gateway_mode(mode: Option<&std::ffi::OsStr>) -> Result<bool, ProxyError> {
+    match mode {
+        None => Ok(false),
+        Some(value) => match value.to_str() {
+            Some("proxy") => Ok(false),
+            Some("native") => Ok(true),
+            _ => {
+                Err("gateway mode (PILOTDECK_GATEWAY_MODE) must be exactly proxy or native.".into())
+            }
+        },
+    }
 }
 
 impl Options {
@@ -338,6 +376,10 @@ impl Options {
     /// When `--storage-root` was supplied it is injected as
     /// `PILOTDECK_STORAGE_ROOT` so the project's persistence stage builds a
     /// real snapshot provider; absent means snapshots remain disabled.
+    /// `PILOTDECK_GATEWAY_MODE` is entry scope (#1354): this process already
+    /// consumed it for its own routing, so it must not sink into the native
+    /// subtree's environment — a descendant that re-executes the gateway
+    /// would otherwise silently inherit a native routing it was never given.
     pub fn environment(&self, mut inherited: Env) -> Env {
         inherited.insert("HOME".into(), self.home.to_string_lossy().into_owned());
         inherited.insert(
@@ -345,6 +387,7 @@ impl Options {
             self.home.to_string_lossy().into_owned(),
         );
         inherited.remove("PILOTDECK_PROXY_UPSTREAM");
+        inherited.remove("PILOTDECK_GATEWAY_MODE");
         inherited.remove("PILOTDECK_CONFIG_PATH");
         inherited.remove("PILOTDECK_AGENT_LOOP_TCP_HOST");
         inherited.remove("PILOTDECK_AGENT_LOOP_TCP_PORT");

@@ -4,6 +4,12 @@
 //! gate. A barrier-aligned pair racing on the same store instance can
 //! therefore no longer both report success, and the cancel path can no
 //! longer delete the files behind a completion that was already reported.
+//!
+//! #2276: the rendezvous is the store's pre-mutate hook, fired between each
+//! caller's outside-`get()` snapshot and the gate, so "both callers passed
+//! the snapshot, neither entered the gate" is a scheduled fact instead of a
+//! scheduler coincidence. The rendezvous is deadline-bounded (fix-r1): a
+//! racer that never arrives turns the wait into a panic, not a hang.
 #[path = "common/scratch.rs"]
 mod scratch;
 
@@ -13,7 +19,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        Arc, Barrier,
+        Arc, Condvar, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     thread,
@@ -93,28 +99,94 @@ enum Op {
     Cancel,
 }
 
+/// #2276 review fix-r1: the rendezvous is bounded. The pre-fix shape used a
+/// plain `Barrier`, whose `wait()` never times out — a racer that returned
+/// or panicked before reaching the pre-mutate hook (its outside `get()`
+/// failed, say) left its partner blocked forever, turning a would-be red
+/// test into a hung test binary. The deadline below makes "the other racer
+/// never came" a panic instead. The cap is injectable (`Rendezvous::with_cap`)
+/// so the deadline arm itself has a cheap test (fix-r2, DS r2 boundary#1)
+/// instead of being a branch no suite ever executes.
+const RENDEZVOUS_CAP: Duration = Duration::from_secs(60);
+
+/// The #2276 rendezvous, with the hard deadline from `RENDEZVOUS_CAP`.
+struct Rendezvous {
+    arrived: Mutex<usize>,
+    both: Condvar,
+    cap: Duration,
+}
+
+impl Rendezvous {
+    fn with_cap(cap: Duration) -> Arc<Self> {
+        Arc::new(Self {
+            arrived: Mutex::new(0),
+            both: Condvar::new(),
+            cap,
+        })
+    }
+
+    fn new() -> Arc<Self> {
+        Self::with_cap(RENDEZVOUS_CAP)
+    }
+
+    /// Wait for the second party but never past the rendezvous cap.
+    fn meet(&self) {
+        let mut arrived = self.arrived.lock().unwrap();
+        *arrived += 1;
+        self.both.notify_all();
+        let deadline = Instant::now() + self.cap;
+        while *arrived < 2 {
+            let (guard, timeout) = self
+                .both
+                .wait_timeout(arrived, deadline.saturating_duration_since(Instant::now()))
+                .unwrap();
+            arrived = guard;
+            if timeout.timed_out() && *arrived < 2 {
+                // Read the count and drop the guard before panicking, so the
+                // mutex is not poisoned and the diagnostic survives (the
+                // partner's join would otherwise only see a PoisonError).
+                let count = *arrived;
+                let cap = self.cap;
+                drop(arrived);
+                panic!(
+                    "the racing pair never met: only {count} of 2 callers \
+                     reached the rendezvous within {cap:?}"
+                );
+            }
+        }
+    }
+}
+
 fn race_pair(
     store: &Arc<UploadStore>,
     id: &str,
     first: Op,
     second: Op,
 ) -> (Result<JsValue, UploadError>, Result<JsValue, UploadError>) {
-    let barrier = Arc::new(Barrier::new(2));
-    let spawn = |op: Op, store: Arc<UploadStore>, id: String, gate: Arc<Barrier>| {
-        thread::spawn(move || {
-            gate.wait();
-            match op {
-                Op::Complete => store.complete(&id),
-                Op::Cancel => store.cancel(&id),
-            }
+    // #2276: both callers rendezvous at the pre-mutate hook — after their
+    // outside-`get()` snapshots, before either touches the gate — so the
+    // interleaving window is deterministic, not a scheduler coincidence.
+    let rendezvous = Rendezvous::new();
+    let gate = rendezvous.clone();
+    store.set_pre_mutate_hook(Some(Arc::new(move || {
+        gate.meet();
+    })));
+    let spawn = |op: Op, store: Arc<UploadStore>, id: String| {
+        thread::spawn(move || match op {
+            Op::Complete => store.complete(&id),
+            Op::Cancel => store.cancel(&id),
         })
     };
-    let t_first = spawn(first, store.clone(), id.to_string(), barrier.clone());
-    let t_second = spawn(second, store.clone(), id.to_string(), barrier.clone());
-    (
+    let t_first = spawn(first, store.clone(), id.to_string());
+    let t_second = spawn(second, store.clone(), id.to_string());
+    let results = (
         t_first.join().expect("first thread panicked"),
         t_second.join().expect("second thread panicked"),
-    )
+    );
+    // Clear the rendezvous: a later sequential call on the same store must
+    // not block on a rendezvous nobody else is approaching.
+    store.set_pre_mutate_hook(None);
+    results
 }
 
 fn assert_exactly_one_ok(
@@ -132,10 +204,21 @@ fn assert_exactly_one_ok(
     );
 }
 
+/// #2276: the wall-clock cap may cut the loop short on a slow host, but it
+/// must never allow zero rounds — a pair that was never raced is no evidence
+/// at all, so an empty run is a red test, not a green one.
+fn assert_rounds_floor(ran: usize) {
+    assert!(
+        ran >= 1,
+        "WALL_CAP allowed zero rounds — the pair was never raced",
+    );
+}
+
 #[test]
 fn interleaved_complete_and_cancel_cannot_both_win() {
     let scratch = scratch::Scratch::new("1631-cc");
     let start = Instant::now();
+    let mut ran = 0usize;
     for round in 1..=ROUNDS {
         if start.elapsed() > WALL_CAP {
             break;
@@ -147,6 +230,7 @@ fn interleaved_complete_and_cancel_cannot_both_win() {
         let disk = disk_status(&f.task_dir);
         let file_exists = f.file.exists();
         assert_exactly_one_ok(round, &complete_res, &cancel_res);
+        ran += 1;
 
         match (&complete_res, &cancel_res) {
             (Ok(record), Err(e)) => {
@@ -181,12 +265,14 @@ fn interleaved_complete_and_cancel_cannot_both_win() {
             _ => unreachable!("exactly-one-Ok already asserted"),
         }
     }
+    assert_rounds_floor(ran);
 }
 
 #[test]
 fn interleaved_complete_and_complete_has_one_winner() {
     let scratch = scratch::Scratch::new("1631-cm");
     let start = Instant::now();
+    let mut ran = 0usize;
     for round in 1..=ROUNDS {
         if start.elapsed() > WALL_CAP {
             break;
@@ -197,6 +283,7 @@ fn interleaved_complete_and_complete_has_one_winner() {
         let (first, second) = race_pair(&f.store, &f.id, Op::Complete, Op::Complete);
         let disk = disk_status(&f.task_dir);
         assert_exactly_one_ok(round, &first, &second);
+        ran += 1;
 
         match (&first, &second) {
             (Ok(record), Err(e)) | (Err(e), Ok(record)) => {
@@ -215,4 +302,134 @@ fn interleaved_complete_and_complete_has_one_winner() {
             _ => unreachable!("exactly-one-Ok already asserted"),
         }
     }
+    assert_rounds_floor(ran);
+}
+
+/// #2275/#2276 on the integration face: a cancel×cancel pair both report
+/// `Ok`, but exactly one transition happens — one event, one metadata write —
+/// and the second winner is a settled no-op whose bytes on disk never move.
+/// The losing double-delete stays quiet (`remove_tree` treats a vanished
+/// directory as success), so the event stream and the stable bytes are the
+/// observable half of "no double delete".
+#[test]
+fn interleaved_cancel_and_cancel_wins_exactly_once() {
+    let scratch = scratch::Scratch::new("1631-cx");
+    let start = Instant::now();
+    let mut ran = 0usize;
+    for round in 1..=ROUNDS {
+        if start.elapsed() > WALL_CAP {
+            break;
+        }
+        let project = scratch.path().join(format!("r{round:03}"));
+        fs::create_dir_all(&project).unwrap();
+        let f = setup(&project);
+        let sub = f.store.subscribe(&f.id);
+        let (first, second) = race_pair(&f.store, &f.id, Op::Cancel, Op::Cancel);
+        ran += 1;
+        let first = first.expect("a cancel of an active upload is Ok");
+        let second = second.expect("a settled cancel is a no-op Ok, not a refusal");
+        assert_eq!(status_of(&first), "cancelled", "round {round}");
+        assert_eq!(status_of(&second), "cancelled", "round {round}");
+        assert_eq!(
+            disk_status(&f.task_dir),
+            "cancelled",
+            "round {round}: disk status"
+        );
+        assert!(
+            !f.file.exists() && !f.task_dir.join("files").exists(),
+            "round {round}: cancelled upload's bytes must be gone"
+        );
+        // Exactly one event: the winning transition emits; the settled
+        // no-op must not.
+        assert_eq!(
+            status_of(
+                &sub.receiver
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("round {round}: the winning cancel emits exactly one event")
+            ),
+            "cancelled",
+            "round {round}"
+        );
+        assert!(
+            sub.receiver.try_recv().is_err(),
+            "round {round}: the settled no-op must not emit a second event"
+        );
+        // The sequential third cancel is bytes-stable: same metadata bytes,
+        // no further event.
+        let metadata = f.task_dir.join("metadata.json");
+        let before = fs::read(&metadata).unwrap();
+        let third = f.store.cancel(&f.id).expect("a settled cancel stays Ok");
+        assert_eq!(status_of(&third), "cancelled", "round {round}");
+        assert_eq!(
+            fs::read(&metadata).unwrap(),
+            before,
+            "round {round}: a no-op cancel must not rewrite the metadata"
+        );
+        assert!(
+            sub.receiver.try_recv().is_err(),
+            "round {round}: a no-op cancel must not emit"
+        );
+    }
+    assert_rounds_floor(ran);
+}
+
+/// fix-r2 (DS r2 boundary#1): the deadline arm of the rendezvous is itself
+/// under test — a lone caller with a tiny cap must fail fast with the
+/// arrival-count diagnostic, not hang the binary until some external
+/// timeout. The three interleaved tests above always deliver both callers,
+/// so without this case the panic branch the fix-r1 guard added would be
+/// dead code in every suite.
+///
+/// fix-r3 (DS r3 boundary#1/sibling#1, after the `upload/tests.rs` #1889
+/// precedent): the test itself must not hang when that arm regresses — a
+/// bare `join()` would wait forever on an unbounded `meet()`, and neither
+/// nextest's `slow-timeout` (report-only) nor the `rust` job kills it, so
+/// the regression would surface as a whole-job timeout, not a named red.
+/// The caller runs under `catch_unwind` and reports through an mpsc whose
+/// `recv_timeout` is the watchdog; the elapsed bound also pins the
+/// injected 50ms cap as the one that reached the deadline (a regression to
+/// the 60s default fails the same watchdog first).
+#[test]
+fn rendezvous_deadline_panics_when_the_pair_never_meets() {
+    let rendezvous = Rendezvous::with_cap(Duration::from_millis(50));
+    let lone = rendezvous.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    thread::spawn(move || {
+        let verdict = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || lone.meet()));
+        let _ = tx.send(verdict);
+    });
+    let start = Instant::now();
+    let verdict = match rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(verdict) => verdict,
+        Err(_) => panic!(
+            "the rendezvous deadline must bound a lone caller — \
+             an unbounded wait hangs here instead of going red"
+        ),
+    };
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "the injected 50ms cap must be the one that reached the deadline"
+    );
+    let err = verdict.expect_err("a lone caller must hit the rendezvous deadline");
+    let msg = err
+        .downcast_ref::<String>()
+        .expect("panic payload is a formatted String");
+    assert!(
+        msg.contains("only 1 of 2 callers"),
+        "the diagnostic must report the arrival count, got: {msg}"
+    );
+    assert!(
+        msg.contains("50ms"),
+        "the diagnostic must name the injected cap, got: {msg}"
+    );
+    // The panicking caller drops its guard before panicking, so the mutex
+    // is not poisoned: a second `meet()` on the SAME rendezvous locks
+    // cleanly — it takes the lock, pushes the arrival count to 2 and
+    // returns without waiting (a poisoned lock would surface as a
+    // PoisonError panic here instead).
+    let paired = rendezvous;
+    let second = thread::spawn(move || paired.meet());
+    second
+        .join()
+        .expect("the uncontended lock after the deadline panic must not be poisoned");
 }

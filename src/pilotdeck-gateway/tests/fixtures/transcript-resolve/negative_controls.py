@@ -118,7 +118,7 @@ def main():
             content = original.decode()
             assert content.count(old) == 1, (name, 'anchor count', content.count(old))
             result, log = run(f'{name}-positive', test)
-            assert result.returncode == 0 and '1 passed; 0 failed' in log, 'positive did not run/pass'
+            assert result.returncode == 0 and ' 1 passed; 0 failed' in log, 'positive did not run/pass'
             changed = content.replace(old, new, 1)
             save(f'{name}.patch', ''.join(difflib.unified_diff(
                 content.splitlines(True), changed.splitlines(True), fromfile=str(source), tofile=str(source))))
@@ -131,7 +131,7 @@ def main():
         # Keep the clean rerun under the same tree guard used by every runner.
         with mutating_sources(root, [source]):
             result, restored = run(f'{name}-restored', test)
-        assert result.returncode == 0 and '1 passed; 0 failed' in restored, 'restored positive failed'
+        assert result.returncode == 0 and ' 1 passed; 0 failed' in restored, 'restored positive failed'
         summary.append({'name': name, 'killed': killed, 'sourceSha256': hashlib.sha256(original).hexdigest()})
         save(f'{name}.json', json.dumps(summary[-1], indent=2) + '\n')
         assert killed, f'{name}: no runtime assertion failure; compile/setup failure is not a kill'

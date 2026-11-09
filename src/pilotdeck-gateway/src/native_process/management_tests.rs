@@ -255,6 +255,7 @@ pub(super) fn setup() -> (Scratch, requests::Requests) {
             upload_gateway: Arc::new(crate::upload::gateway::UploadGateway::unavailable()),
             prepare_weixin_login: None,
             cron: None,
+            always_on: None,
             settings: requests::Requests::stub_settings(&owner),
             session_overrides: Arc::default(),
         }
@@ -1193,6 +1194,27 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
 /// arrays (#1761 paired state to state for that reason). #1352 removed the old
 /// `include_disabled_states` flag because its `false` branch compared the
 /// derived expectation against `contract` itself, which can never fail.
+///
+/// #1434 item 4: the anti-drift contract around the oracle-derived
+/// expectation, so "main wires a new capability" cannot silently pass or
+/// spuriously fail. Both directions fail loudly today:
+///
+/// - a **wired** capability the oracle does not record makes the exact-set
+///   comparisons red (`live ⊋ oracle-derived`) — the false-pass side;
+/// - an **oracle** name nothing wires or excuses makes them red the other way
+///   (`oracle-derived ⊋ live`) — the false-failure side, which is what forces
+///   `oracle.json` to be regenerated with the TS baseline rather than edited
+///   by hand;
+/// - a name present in `contract` but missing from the two disabled states
+///   fails this subset check, and
+///   `settings_capabilities_match_served_delegates` (#1869) pins the three
+///   states' sets equal, so the subset check cannot hide behind a diverged
+///   state either.
+///
+/// The old hand-kept expectation array (23 names at PR #1426, the shape that
+/// issue's item was written against) is gone — `expected_capabilities`
+/// derives from the oracle itself — which is what makes the equality checks
+/// the sync mechanism instead of a second list to keep in step.
 fn assert_ts_capability_subset(expected: &[&str]) {
     for state in ["emptyStorage", "missingStorage"] {
         let ts_capabilities = oracle_capabilities(state);
@@ -1370,10 +1392,14 @@ async fn settings_capabilities_match_served_delegates() {
     // added to or dropped from `METHODS` therefore changes this test instead of
     // silently escaping it (the count anchor pins the "six" claim the doc
     // comment and #1320 report).
-    let oracle: Value = serde_json::from_str(ORACLE).expect("#1320 TS capability oracle");
-    let ts_capabilities: Vec<&str> = oracle["contract"]["capabilities"]
-        .as_array()
-        .expect("#1320 TS capability array")
+    // #1869 item 4: the partition input used to be only the default
+    // `contract` state, while the claims it feeds ("TS publishes four of the
+    // six in every config state", the reloads unpublished in all of them)
+    // are stated over all three. Assert the premise instead of trusting it:
+    // a state that publishes a different settings capability set must fail
+    // here rather than silently escape the partition below (the empty-
+    // storage/missing-storage ORACLE mutants are its standing witnesses).
+    let ts_capabilities: Vec<&str> = oracle_capabilities("contract")
         .iter()
         .map(|capability| {
             capability
@@ -1381,6 +1407,24 @@ async fn settings_capabilities_match_served_delegates() {
                 .expect("#1320 TS capability entries are strings")
         })
         .collect();
+    for state in ["emptyStorage", "missingStorage"] {
+        let state_capabilities: Vec<&str> = oracle_capabilities(state)
+            .iter()
+            .map(|capability| {
+                capability
+                    .as_str()
+                    .expect("#1320 TS capability entries are strings")
+            })
+            .collect();
+        negative_assert!(
+            state_capabilities.len() == ts_capabilities.len()
+                && ts_capabilities
+                    .iter()
+                    .all(|capability| state_capabilities.contains(capability)),
+            "#1869 the {state} state must publish the same settings capability \
+             set as the default contract state: {state_capabilities:?} vs {ts_capabilities:?}"
+        );
+    }
     let methods = crate::runtime::settings::METHODS;
     negative_assert_eq!(
         methods.len(),
@@ -1934,6 +1978,150 @@ async fn submit_snapshot_wiring_matches_management_workspace_id() {
         .expect("#1431 registry dispose");
 }
 
+/// #1431 item 8, second half: the submit-side snapshot wiring end to end
+/// through the real assembly — `--storage-root` → `assembly::start` → a real
+/// `submit_turn` → the pre_user capture the production submit path itself
+/// drives → the manifest on disk under the registered workspace id →
+/// `snapshot_list` on the same booted host returns it. The wiring test above
+/// composes the `Services` literal by hand, so `snapshots()` returning `None`
+/// or the assembly forgetting to hand its recorder to `Services` left every
+/// existing test green while production turns silently landed no snapshot.
+#[tokio::test]
+async fn a_real_submit_turn_lands_its_snapshot_under_the_storage_root() {
+    let (_scratch, requests) = setup();
+    let storage = requests.options.home.join("storage");
+    std::fs::create_dir_all(&storage).expect("#1431 storage root");
+    let options = Options::parse(storage_root_args(
+        &requests,
+        storage.clone().into_os_string(),
+    ))
+    .expect("#1431 --storage-root parses");
+    let env = options.environment(crate::config::Env::new());
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#1431 dispose unused fixture owner");
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("#1431 dispose unused fixture registry");
+    let host = assembly::start(options.clone(), env)
+        .await
+        .expect("#1431 assembly::start with --storage-root");
+    let text = Arc::new(Text::default());
+    let connection = host.connect(text.clone(), "token".into(), "fixture".into());
+    connection
+        .receive(json!({"type":"hello","protocolVersion":pilotdeck_protocol::GATEWAY_PROTOCOL_VERSION,"token":"token","clientName":"web","clientVersion":"fixture"}).to_string())
+        .await
+        .expect("#1431 hello");
+    // A real turn. The fixture model URL refuses connections, so the turn
+    // fails — but the gateway's own preflight emits `input_accepted` before
+    // the model is reached, and that event is the production trigger of the
+    // pre_user capture (runtime/turn/submit.rs). A recorder wiring regression
+    // makes this turn land no snapshot at all, and the poll below fails
+    // instead of the turn's own failure.
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        connection.receive(
+            json!({"type":"request","id":"turn","method":"submit_turn","params":{"sessionKey":"session","runId":"run","message":"hello","channelKey":"test"}})
+                .to_string(),
+        ),
+    )
+    .await
+    .expect("#1431 the submit_turn response settles (the turn may fail, the response may not hang)")
+    .expect("#1431 submit_turn frame");
+    let snapshots = storage
+        .canonicalize()
+        .expect("#1431 canonical storage")
+        .join("workspaces/a8-main/sessions/session/snapshots");
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let manifests: Vec<std::path::PathBuf> = loop {
+        let found: Vec<_> = std::fs::read_dir(&snapshots)
+            .map(|entries| {
+                entries
+                    .filter_map(|entry| entry.ok())
+                    .map(|entry| entry.path().join("manifest.json"))
+                    .filter(|path| path.is_file())
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !found.is_empty() {
+            break found;
+        }
+        negative_assert!(
+            tokio::time::Instant::now() < deadline,
+            "#1431 a real submit turn must land its pre_user snapshot under the \
+             --storage-root: {} stays empty — the assembly-to-Services recorder \
+             wiring regressed",
+            snapshots.display()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    // The manifest the turn wrote names the turn's own ids, so a hand-planted
+    // manifest from another path cannot satisfy the poll above.
+    for manifest_path in &manifests {
+        let manifest: Value = serde_json::from_str(
+            &std::fs::read_to_string(manifest_path).expect("#1431 manifest bytes"),
+        )
+        .expect("#1431 manifest JSON");
+        negative_assert_eq!(
+            manifest["workspaceId"].as_str(),
+            Some("a8-main"),
+            "#1431 the turn's manifest records the registered workspace id"
+        );
+        negative_assert_eq!(
+            manifest["sessionId"].as_str(),
+            Some("session"),
+            "#1431 the turn's manifest records its own session key"
+        );
+        negative_assert_eq!(
+            manifest["runId"].as_str(),
+            Some("run"),
+            "#1431 the turn's manifest records its own run id"
+        );
+    }
+    // Reverse lookup through the management route of the same booted host.
+    connection
+        .receive(
+            json!({"type":"request","id":"list","method":"snapshot_list","params":{"projectKey": options.project.to_string_lossy()}}).to_string(),
+        )
+        .await
+        .expect("#1431 snapshot_list frame");
+    let listed = {
+        let frames = text.0.lock().expect("#1431 frames lock");
+        let response = frames
+            .iter()
+            .find(|frame| frame["id"] == "list")
+            .expect("#1431 snapshot_list response frame");
+        negative_assert_eq!(response["ok"], true, "#1431 snapshot_list succeeds");
+        response["result"].clone()
+    };
+    let listed_ids: Vec<&str> = listed["items"]
+        .as_array()
+        .expect("#1431 snapshot_list items array")
+        .iter()
+        .filter_map(|item| item["snapshotId"].as_str())
+        .collect();
+    for manifest_path in &manifests {
+        let manifest: Value = serde_json::from_str(
+            &std::fs::read_to_string(manifest_path).expect("#1431 manifest bytes"),
+        )
+        .expect("#1431 manifest JSON");
+        let snapshot_id = manifest["snapshotId"].as_str().expect("#1431 snapshot id");
+        negative_assert!(
+            listed_ids.contains(&snapshot_id),
+            "#1431 snapshot_list on the booted host returns the snapshot the real \
+             submit turn landed: {} not in {listed_ids:?}",
+            snapshot_id
+        );
+    }
+    host.shutdown(options.drain_budget)
+        .await
+        .expect("#1431 host shutdown after the end-to-end turn");
+}
+
 #[tokio::test]
 async fn snapshot_success_matches_ts() {
     let (scratch, requests) = setup();
@@ -2244,6 +2432,138 @@ async fn snapshot_workspace_id_prefers_registered_marker() {
         .shutdown()
         .await
         .expect("#1323 marker shutdown");
+}
+
+/// #2562: `Services::workspace_id`'s projectKey gate reads the key the way the
+/// TS submit path does — `InProcessGateway.ts:954` hands `input.projectKey` to
+/// `workspaceIdResolver` and the local resolver is
+/// `resolveProjectStorageId(requestedProjectKey ?? fallbackProjectRoot, pilotHome)`
+/// (createLocalGateway.ts:1026-1028), so an explicit `projectKey: null` is
+/// "not provided": it falls back to the configured project on both recorder
+/// states instead of the pre-#2562 `projectKey must be a valid path string.`
+/// error. Node v22.22.0 probes:
+/// `_tmp/20261026-issue-2562/ts-probe/probe-{resolver,submit}.out` (null
+/// behaves byte-identically to an omitted key end-to-end; a non-string 7
+/// throws ERR_INVALID_ARG_TYPE, so the two controls below pin that the
+/// nullish fix did not widen the gate for non-strings).
+#[tokio::test]
+async fn submit_workspace_id_treats_an_explicit_null_project_key_as_not_provided() {
+    use crate::runtime::turn::submit_host::SubmitHostServices as _;
+    let (scratch, requests) = setup();
+    let storage_root = scratch.0.join("snapshot-storage");
+    let recorder = std::sync::Arc::new(
+        crate::storage::ContentAddressedWorkspaceSnapshotRecorder::new(
+            crate::storage::WorkspaceSnapshotConfig {
+                root: storage_root.to_string_lossy().into_owned(),
+                snapshot_root: storage_root.to_string_lossy().into_owned(),
+            },
+        ),
+    );
+    let services = |recorder: Option<
+        std::sync::Arc<crate::storage::ContentAddressedWorkspaceSnapshotRecorder>,
+    >| {
+        super::services::Services {
+            options: requests.options.clone(),
+            project: requests.project.clone(),
+            env: requests.env.clone(),
+            recorders: std::sync::Arc::default(),
+            owner: crate::runtime::session::SessionOwner::new(
+                crate::runtime::session::SessionOwnerOptions::new(std::sync::Arc::new(
+                    SnapshotFactory,
+                )),
+            ),
+            snapshot_recorder: recorder,
+            upload_store: std::sync::Arc::new(crate::upload::UploadStore::new(
+                crate::upload::UploadStoreOptions::new(
+                    |_: &pilotdeck_protocol::JsString| {
+                        Err(crate::upload::UploadError::dialog(
+                            "PROJECT_NOT_FOUND",
+                            "unavailable in test",
+                        ))
+                    },
+                    || Ok(vec![]),
+                ),
+            )),
+        }
+    };
+    let null_input =
+        pilotdeck_protocol::parse_json(r#"{"projectKey":null}"#).expect("#2562 null input JSON");
+    let omitted_input = pilotdeck_protocol::parse_json("{}").expect("#2562 omitted input JSON");
+
+    // (1) Recorder on: the explicit null answers the configured project's id,
+    // exactly like an omitted key.
+    let on = services(Some(recorder));
+    let null_id = on
+        .workspace_id(&null_input)
+        .expect("#2562 explicit null is not an error with the recorder on")
+        .expect("#2562 explicit null answers an id with the recorder on")
+        .to_utf8()
+        .expect("#2562 the null-key id is UTF-8");
+    let omitted_id = on
+        .workspace_id(&omitted_input)
+        .expect("#2562 an omitted key is not an error with the recorder on")
+        .expect("#2562 an omitted key answers an id with the recorder on")
+        .to_utf8()
+        .expect("#2562 the omitted-key id is UTF-8");
+    negative_assert_eq!(
+        null_id,
+        omitted_id,
+        "#2562 a null projectKey falls back to the configured project like an omitted one"
+    );
+
+    // (2) Recorder off: the explicit null answers `None` like an omitted key.
+    let off = services(None);
+    let null_answer = off
+        .workspace_id(&null_input)
+        .expect("#2562 explicit null is not an error with the recorder off");
+    negative_assert!(
+        null_answer.is_none(),
+        "#2562 a null projectKey answers None with the recorder off"
+    );
+
+    // (3) Non-string control: the nullish fix must not admit a number — the
+    // gate still answers the type error both sides of the TS chain reject.
+    let seven_input =
+        pilotdeck_protocol::parse_json(r#"{"projectKey":7}"#).expect("#2562 seven input JSON");
+    let error = on
+        .workspace_id(&seven_input)
+        .expect_err("#2562 a non-string projectKey still fails the gate");
+    negative_assert_eq!(
+        error.code,
+        "gateway_submit_failed",
+        "#2562 a non-string projectKey keeps the submit-failure code"
+    );
+    negative_assert_eq!(
+        error.message,
+        "projectKey must be a valid path string.",
+        "#2562 a non-string projectKey keeps the type message"
+    );
+
+    // (4) Unserved string control: a foreign string is still refused, so the
+    // fallback in (1) is the configured project, not "anything goes".
+    let unserved_input = pilotdeck_protocol::parse_json(
+        &serde_json::json!({"projectKey": "/nonexistent/pdrs-2562"}).to_string(),
+    )
+    .expect("#2562 unserved input JSON");
+    let error = on
+        .workspace_id(&unserved_input)
+        .expect_err("#2562 an unserved project string is refused");
+    negative_assert_eq!(
+        error.code,
+        "CAPABILITY_UNAVAILABLE",
+        "#2562 an unserved project string keeps the isolated-project code"
+    );
+    negative_assert_eq!(
+        error.message,
+        "The isolated native process serves only its configured project.",
+        "#2562 an unserved project string keeps the isolated-project message"
+    );
+
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("#2562 test owner shutdown");
 }
 
 /// #1323 boundary P1: TS `/^-+|-+$/g` trims both ends of the legacy slug.

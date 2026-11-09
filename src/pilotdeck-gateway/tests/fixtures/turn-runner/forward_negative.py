@@ -13,6 +13,14 @@ base=root/'src/pilotdeck-gateway/src/runtime/turn'
 ANCHOR_COUNTS = {'status-nullish': 3, 'host-callback-cancel': 2, 'pump-cleanup': 2}
 # id, source, before, after, function scope, full test name, assertion anchor
 test_prefix = 'runtime::turn::live::stream_tests::forwarding::'
+# #1770 fix-r1: the gates shared-tail injection runs in all three cells
+# (reject/cancel/open), and each cell's own test must kill it on that cell's
+# #1770 assertion, so the one mutation is one row per bound test -- the
+# suite's multi-Case form (negative_suite case_labels gives every Case its
+# own evidence stem). The shared anchor text lives once, here.
+gates_prefix = 'runtime::turn::live::stream_tests::gates_tests::'
+gates_wait = '    timeout(Duration::from_secs(15), async {\n        while session\n            .state\n            .lock()\n            .expect("#855: pump gate setup/read/cleanup must succeed")\n            .active\n            .is_some()\n            || runtime.lease_count() != 0\n            || handler.disposed.load(Ordering::SeqCst) == 0\n        {\n            tokio::task::yield_now().await;\n        }\n    })\n    .await\n    .expect("#855: owned cleanup must release slot, lease and handler");'
+gates_compensate = gates_wait + '\n    let _ = crate::storage::TranscriptStore::append(\n        &*store,\n        &key,\n        &crate::metadata::object([\n            ("type", JsValue::String("turn_result".into())),\n            ("result", crate::metadata::object([("type", JsValue::String("error".into()))])),\n        ]),\n    );'
 cases = [
     ('cleanup-skip-lease', base / 'forward_tests.rs',
      '            || runtime.lease_count() != 0', '            || false',
@@ -182,13 +190,74 @@ cases = [
      '.io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &status)?))',
      '.io(move |r, s, t| {\n                let written = r.writer().record_agent_status_message(s, t, &status)?;\n                let _ = r.writer().record_turn_result(s, t, crate::metadata::object([("type", JsValue::String("error".into()))]));\n                Ok(written)\n            })',
      None, test_prefix + 'forward_status_drop', '#1219 [status-drop/cancel]: no out-of-order turn_result from the blocked worker'),
+    # #1770 item 4: bind the same ordering dimension to the cancel cell. The
+    # plain copy of status-drop-order is INVALID there: the status write
+    # succeeds, so the injected turn_result panics the blocking worker, io
+    # returns a JoinError, the catch replays the status write (attempts=2)
+    # and the case dies first on its replay assertion. Swallow the ordered
+    # panic instead — the report is still counted by OrderedStore before it
+    # panics — so the flow stays byte-identical and only the bound
+    # order_violations assertion can fail.
+    ('status-drop-order-cancel', base / 'runner.rs',
+     '.io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &status)?))',
+     '.io(move |r, s, t| {\n                let result = r.writer().record_agent_status_message(s, t, &status);\n                if result.is_ok() {\n                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {\n                        let _ = r.writer().record_turn_result(s, t, crate::metadata::object([("type", JsValue::String("error".into()))]));\n                    }));\n                }\n                result.map_err(RecorderError::from)\n            })',
+     None, test_prefix + 'forward_status_cancel', '#1219 [status-drop/cancel]: no out-of-order turn_result from the blocked worker'),
+    # #1770 item 2: give forward_real_status_write_error's two #1219
+    # assertions their own controls. Dropping the catch path's durable append
+    # must trip the completes assertion alone; events, error text and the
+    # attempt counter ride the unchanged status writes.
+    ('status-write-error-completes', base / 'runner.rs',
+     '        self.io(move |r, s, t| {\n            if crate::mutants::on("gates-skip-failure-complete") {\n                drop(written);\n                Ok(())\n            } else {\n                r.complete_turn(s, t, written)\n            }\n        })\n        .await?;',
+     '        self.io(move |r, s, t| {\n            let _ = (r, s, t, written);\n            Ok(())\n        })\n        .await?;',
+     None, test_prefix + 'forward_real_status_write_error', '#1219 [status-write-error]: the catch path still appends one durable turn_result'),
+    # #1770 item 2, ordering dimension: an out-of-order turn_result from the
+    # failing loop-status worker must be observable in this case too. Inject
+    # it only on the failing write and swallow OrderedStore's ordering panic,
+    # so the original error (events[5], attempts=2) and the catch's own
+    # durable completion stay intact and only order_violations moves.
+    ('status-write-error-order', base / 'runner.rs',
+     '.io(move |r, s, t| Ok(r.writer().record_agent_status_message(s, t, &status)?))',
+     '.io(move |r, s, t| {\n                let result = r.writer().record_agent_status_message(s, t, &status);\n                if result.is_err() {\n                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {\n                        let _ = r.writer().record_turn_result(s, t, crate::metadata::object([("type", JsValue::String("error".into()))]));\n                    }));\n                }\n                result.map_err(RecorderError::from)\n            })',
+     None, test_prefix + 'forward_real_status_write_error', '#1219 [status-write-error]: no out-of-order turn_result from the worker'),
+    # #1770 item 1: the post-cleanup durable re-check in the gates pump
+    # cells. A compensating turn_result appended after owned cleanup — the
+    # exact window the assertion guards — must trip the re-check alone.
+    # Inject it straight into the store right after the cleanup wait: an
+    # earlier draft wrapped the factory's handler and appended from its
+    # dispose, but the TurnScope drops when the execution future completes,
+    # before the terminal is even delivered to the consumer (delivery rides
+    # the pump's 500 ms tick), so the write raced the cell's in-band #1219
+    # snapshot and lost determinism (both a direct and a 200 ms-delayed
+    # variant fired the in-band assertion first; see neg-s1b/neg-s1c).
+    # Appending after the wait — cleanup already observed done — is
+    # deterministic on both sides: the in-band snapshot is long past, and
+    # the re-check is the next reader of the counter.
+    # #1770 fix-r1: all three cells run this shared tail, so all three
+    # bind it (reject/cancel/open, same injection, one row each); a
+    # compensating append introduced on any one path dies in that cell's
+    # own test on its own #1770 message.
+    ('gates-cleanup-compensates', base / 'gates_tests.rs',
+     gates_wait, gates_compensate,
+     None, gates_prefix + 'gates_pump_reject_never_starts_the_pump',
+     '#1770 [reject]: owned cleanup must not append a compensating turn_result'),
+    ('gates-cleanup-compensates', base / 'gates_tests.rs',
+     gates_wait, gates_compensate,
+     None, gates_prefix + 'gates_pump_cancel_never_starts_the_pump',
+     '#1770 [cancel]: owned cleanup must not append a compensating turn_result'),
+    ('gates-cleanup-compensates', base / 'gates_tests.rs',
+     gates_wait, gates_compensate,
+     None, gates_prefix + 'gates_pump_open_pins_the_start_order',
+     '#1770 [open]: owned cleanup must not append a compensating turn_result'),
 ]
 
 def audit():
     # #1890: bind every row to the file that declares its module and accept the
     # `case!` table form; the old `short in forward_tests.rs` scan had no
-    # module or level check at all.
-    modules = ((test_prefix, base / 'forward_tests.rs'),)
+    # module or level check at all. #1770: the gates row binds through the
+    # sibling gates_tests module (declared as a plain #[tokio::test] fn, which
+    # declares_test's fn form covers) instead of the forwarding table.
+    modules = ((test_prefix, base / 'forward_tests.rs'),
+               ('runtime::turn::live::stream_tests::gates_tests::', base / 'gates_tests.rs'))
     for name,path,old,new,scope,test,anchor in cases:
         mutate(path.read_text(),scope,[(old,new)])
         file, short = bind_module_file(test, modules)

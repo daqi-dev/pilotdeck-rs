@@ -9,7 +9,20 @@
 //! lock. Inside one instance, `complete` and `cancel` judge the record
 //! re-read within that per-id gate, so an interleaved complete/cancel pair
 //! on the same id can no longer both succeed, and a `completed` record's
-//! files survive that racing cancel (#1631). The guarantee is scoped to
+//! files survive that racing cancel (#1631) — when that in-gate re-read
+//! succeeds: a record the expiry sweep removed after the outside `get()`
+//! but before that re-read is refused with `UPLOAD_NOT_FOUND` instead of
+//! falling back to the outside snapshot (#2279). A sweep that lands
+//! between the re-read and the metadata write is outside this gate's
+//! scope — the record removals are not themselves gated, so `write` can
+//! still re-create a just-swept task directory (the same mutate-family
+//! rework as #1503, tracked as #2670). A verdict of "no change" — an
+//! already-settled no-op, or a refusal whose closure answers `false` —
+//! writes and emits nothing and leaves `updatedAt` alone, so those
+//! refusals cannot surface as a metadata-write failure instead of their
+//! semantic code (#2275); the manifest-mismatch refusal is a different
+//! shape: it settles the record with a `mark_failed` write on purpose and
+//! answers `true`. The guarantee is scoped to
 //! that pair: a `write_part` in flight does not judge status inside the
 //! gate, so it can still flip a record back to `uploading` after a cancel —
 //! the same-gate rework for `write_part`/`fail`/`remove_tree` is #1503.
@@ -96,6 +109,11 @@ pub struct UploadStore {
     creates: Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>,
     updates: Mutex<Updates>,
     listeners: Arc<Mutex<Listeners>>,
+    /// #2276/#2279 test rendezvous, installed through
+    /// [`Self::set_pre_mutate_hook`]: `complete` and `cancel` fire it between
+    /// their outside-`get` snapshot and the `mutate` gate. No production
+    /// caller sets one, and nothing else consults it.
+    pre_mutate_hook: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     #[cfg(test)]
     faults: Mutex<Vec<(String, i32)>>,
     /// Non-record outcomes of a tolerant sweep (skips, orphan reclaims), so
@@ -110,6 +128,7 @@ impl UploadStore {
             creates: Mutex::new(HashMap::new()),
             updates: Mutex::new(HashMap::new()),
             listeners: Arc::new(Mutex::new(Listeners::default())),
+            pre_mutate_hook: Mutex::new(None),
             #[cfg(test)]
             faults: Mutex::new(vec![]),
             #[cfg(test)]
@@ -268,7 +287,10 @@ impl UploadStore {
         // ids are ASCII (`safe_id`); a tampered record gets exactly Node's
         // replacement encoding here, never in a message.
         let client_path = String::from_utf16_lossy(client_file_id.units());
-        record = self.mutate(&record, |r| set(r, "status", text("uploading")))?;
+        record = self.mutate(&record, |r| {
+            set(r, "status", text("uploading"));
+            true
+        })?;
         let destination = task_dir(&record).join("files").join(&client_path);
         let result = (|| {
             let mut file = open_new(&destination)?;
@@ -344,6 +366,7 @@ impl UploadStore {
                 let mut attachments = array(r, "attachments").to_vec();
                 attachments.push(attachment.clone());
                 set(r, "attachments", JsValue::Array(attachments));
+                true
             })?;
             Ok(attachment)
         })();
@@ -374,11 +397,13 @@ impl UploadStore {
     /// closure already holds.
     pub fn complete(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
         let mut refusal: Option<UploadError> = None;
         let updated = self.mutate(&record, |r| {
             if !active(r) {
                 refusal = Some(invalid_state(r));
-                return;
+                return false;
             }
             if array(r, "manifest")
                 .iter()
@@ -391,6 +416,7 @@ impl UploadStore {
                 set(r, "status", text("completed"));
                 set(r, "uploadedBytes", value(r, "totalBytes"));
             }
+            true
         })?;
         match refusal {
             Some(e) => Err(e),
@@ -403,33 +429,108 @@ impl UploadStore {
     /// `completed` record's files survive a racing cancel. The `remove_tree`
     /// itself still runs after the gate (the module-doc pair scope and #1503
     /// cover what a concurrently in-flight `write_part` can interleave).
+    ///
+    /// #1850: that delete is the fourth removal point on the `chat-uploads`
+    /// tree, and unlike the sweeps it runs after the whole `mutate` rewrite —
+    /// a window wide enough to swap `.tmp` (or the task directory itself) for
+    /// a symlink, which `remove_tree` would follow out of the project. The
+    /// status transition is already durable at that point, so a refused
+    /// delete is logged and skipped, never a `cancel` error: the record is
+    /// cancelled either way, and the sweep's "rather not delete" trade-off
+    /// (A8-UPLOAD-CLEANUP-ROBUSTNESS-001) applies unchanged.
     pub fn cancel(&self, upload_id: &str) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
+        // #2276/#2279 test rendezvous (see `set_pre_mutate_hook`).
+        self.pre_mutate();
         let mut refusal: Option<UploadError> = None;
         let mut cancelled = false;
         let updated = self.mutate(&record, |r| {
             if active(r) {
                 set(r, "status", text("cancelled"));
                 cancelled = true;
+                true
             } else if status(r) == "completed" {
                 refusal = Some(UploadError::dialog(
                     "UPLOAD_ALREADY_COMPLETED",
                     "Completed uploads cannot be cancelled.",
                 ));
+                false
+            } else {
+                // #2275: cancelling a cancelled (or otherwise settled) upload
+                // is a no-op, not a change: nothing to write or emit.
+                false
             }
         })?;
         if let Some(e) = refusal {
             return Err(e);
         }
         if cancelled {
-            remove_tree(&task_dir(&updated).join("files"))?;
+            let project = PathBuf::from(string(&updated, "projectKey").unwrap_or_default());
+            let dir = task_dir(&updated).join("files");
+            let root_real = match plain_root(&project, "chat-uploads") {
+                PlainRoot::Plain(root) => root,
+                // The record was just read from this tree, so `Missing` means
+                // the whole task directory is gone: the same quiet no-op the
+                // bare `remove_tree` gave.
+                PlainRoot::Missing => return Ok(updated),
+                PlainRoot::Blocked => {
+                    self.log_cleanup(format!(
+                        "[uploads] cancel skipped {}: uploads root is not a plain directory",
+                        project.join(".tmp/chat-uploads").display()
+                    ));
+                    return Ok(updated);
+                }
+            };
+            // fix-r1 (minimax concurrency#2 arbitration): `inside_root` alone
+            // passes a linked `<id>` whose resolution stays inside the root —
+            // a deterministic alias onto another upload. The component walk
+            // `canonical_home` uses for the lease/store roots refuses every
+            // link component down to `files`; the residual between the walk
+            // and `remove_tree` is the instruction-level TOCTOU family the
+            // A8 ledger registers.
+            if canonical_home(&dir, &project, &root_real).is_none() {
+                self.log_cleanup(format!(
+                    "[uploads] cancel skipped {}: outside the uploads root or a linked task dir",
+                    dir.display()
+                ));
+                return Ok(updated);
+            }
+            remove_tree(&dir)?;
         }
         Ok(updated)
     }
 
     pub fn fail(&self, upload_id: &str, code: &str, message: &JsString) -> Result<UploadRecord> {
         let record = self.get(upload_id)?;
-        self.mutate(&record, |r| mark_failed(r, code, message))
+        self.mutate(&record, |r| {
+            mark_failed(r, code, message);
+            true
+        })
+    }
+
+    /// Test-only rendezvous (#2276/#2279): `complete` and `cancel` fire the
+    /// installed callback between their outside-`get` snapshot and the
+    /// `mutate` gate. The #1631 interleaved pair uses it to make "both
+    /// callers passed the snapshot, neither entered the gate" a scheduled
+    /// fact instead of a scheduler coincidence, and the #2279 interleave
+    /// uses it to run the expiry sweep exactly between the snapshot and the
+    /// in-gate re-read. It must be `pub` because those regressions live in
+    /// the `tests/upload_concurrency_1631.rs` integration target, which
+    /// compiles against the crate without `cfg(test)`. Nothing in production
+    /// installs a hook.
+    pub fn set_pre_mutate_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        *self.pre_mutate_hook.lock().unwrap() = hook;
+    }
+    /// Fire the rendezvous with the slot lock already released, so a callback
+    /// that re-enters the store (the #2279 sweep) cannot deadlock on itself.
+    fn pre_mutate(&self) {
+        // The guard is bound here and dropped at the semicolon: the hook runs
+        // with the lock released, so a rendezvous that blocks inside the hook
+        // cannot keep a second caller from ever reaching it.
+        let hook = self.pre_mutate_hook.lock().unwrap().clone();
+        if let Some(hook) = hook {
+            hook();
+        }
     }
 
     pub fn subscribe(&self, upload_id: &str) -> UploadSubscription {
@@ -781,15 +882,23 @@ impl UploadStore {
                 JsValue::Number(
                     number(r, "totalBytes").min(number(r, "uploadedBytes") + delta as f64),
                 ),
-            )
+            );
+            true
         })
     }
 
     /// Serialized per uploadId within this instance only (see module docs).
+    /// The closure reports whether the record actually changed (#2275): an
+    /// already-settled no-op, or a refusal whose closure answers `false`,
+    /// skips the write, the emit and the `updatedAt` stamp entirely — that
+    /// refusal reaches the caller without a metadata rewrite that could
+    /// fail and poison the gate behind a verdict that never needed the
+    /// disk in the first place. A refusal that settles the record instead
+    /// (the manifest-mismatch `mark_failed`) answers `true` and does write.
     fn mutate(
         &self,
         record: &UploadRecord,
-        change: impl FnOnce(&mut UploadRecord),
+        change: impl FnOnce(&mut UploadRecord) -> bool,
     ) -> Result<UploadRecord> {
         let id = string(record, "uploadId").unwrap_or_default();
         let gate = self
@@ -805,10 +914,20 @@ impl UploadStore {
         }
         let result: Result<UploadRecord> = (|| {
             let project = PathBuf::from(string(record, "projectKey").unwrap_or_default());
-            let mut current = self
-                .read_at(&project, &id)?
-                .unwrap_or_else(|| record.clone());
-            change(&mut current);
+            // #2279: the sweep (or any remover) can take the whole task
+            // directory between the caller's outside `get()` and this in-gate
+            // re-read. Falling back to the outside snapshot let `write`'s
+            // `make_dir` resurrect the directory and report a completion
+            // whose files the sweep had already removed, so a vanished record
+            // is refused instead. Like any in-gate failure the refusal stays
+            // cached in the queue, exactly as TS retains the rejected
+            // promise.
+            let mut current = self.read_at(&project, &id)?.ok_or_else(|| {
+                UploadError::dialog("UPLOAD_NOT_FOUND", format!("Unknown uploadId: {id}"))
+            })?;
+            if !change(&mut current) {
+                return Ok(current);
+            }
             set(
                 &mut current,
                 "updatedAt",
@@ -1033,6 +1152,7 @@ impl UploadStore {
             set(r, "status", text("expired"));
             set(r, "errorCode", text("ATTACHMENT_EXPIRED"));
             set(r, "errorMessage", text("Upload expired."));
+            true
         })
     }
     fn cleanup_expired_leases(&self, project: &Path) -> Result<()> {
@@ -1066,9 +1186,21 @@ impl UploadStore {
                 {
                     continue;
                 }
-                if !inside_root(&root_real, &dir) {
+                // fix-r1 (#2423 r1 评审 deepseek concurrency#1，实测坐实):
+                // containment-only `inside_root` passes a linked `<id>`
+                // whose resolution stays inside the root, and the entries
+                // it lists are then judged by the victim's own bytes — an
+                // alias onto an **active** lease dir makes every file
+                // inside it read as an expired orphan, destroying the live
+                // pin set without a race (probe:
+                // `_tmp/20261108-cb8-2423-arb/lease-alias-probe.out.txt`).
+                // The component walk the cancel delete point uses refuses
+                // every link below the root; the instruction gap between
+                // the walk and `remove_tree` is the same registered
+                // TOCTOU residual family.
+                if canonical_home(&dir, &root_real, &root_real).is_none() {
                     self.log_cleanup(format!(
-                        "[uploads] lease cleanup skipped {}: outside the leases root",
+                        "[uploads] lease cleanup skipped {}: outside the leases root or a linked lease dir",
                         dir.display()
                     ));
                     continue;

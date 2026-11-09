@@ -117,6 +117,19 @@ MUTATIONS = [
      '  "cases": [\n',
      '  "cases": [],\n  "disabledCases": [\n',
      GOLDEN, '#1343 oracle cases non-empty'),
+    # #2433: silencing the mount's serverUrl type guard lets a non-string
+    # `extra.serverUrl` construct (String()-coerced), so the loader records
+    # no console.error line and the channel enters the startup array — the
+    # TS constructor's `url.replace` throws instead and the key is skipped.
+    ('server-url-guard-silenced', source / 'mod.rs',
+     '            if let Some(value) = options\n'
+     '                .get("serverUrl")\n'
+     '                .filter(|value| !sms::nullish(value))\n',
+     '            if let Some(value) = options\n'
+     '                .get("serverUrl")\n'
+     '                .filter(|_| false)\n',
+     'bluebubbles::tests::loader_records_server_url_type_errors_and_continues',
+     '#2433 the loader records the serverUrl TypeError and skips the key (42)'),
 ]
 
 

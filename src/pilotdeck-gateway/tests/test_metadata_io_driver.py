@@ -606,11 +606,18 @@ class EnvironmentControls(unittest.TestCase):
                 jobs[owner], jobs[owner].replace(old, new, 1), 1), message))
 
         # 闸门 step 删掉 `shell: bash`：裸 run step 继承任何 defaults.run.shell。
+        # 锚串里的 timeout-minutes 值同源派生（评审 r2 sibling#1）：手抄的 5 是
+        # GATE_STEP_TIMEOUT_MINUTES['check 5 轮'] 的第二份拷贝，登记值合法变更后
+        # 锚串 count=0，本样本红在「unique anchor」、误导为锚点损坏。
+        check_minutes = self.retirement_gate_step_timeouts(issue='#1809')['check 5 轮']
+        check_anchor = ('      - name: check 5 轮\n        shell: bash\n'
+                         f'        timeout-minutes: {check_minutes}\n'
+                         '        run: |\n')
+        check_shell_removed = ('      - name: check 5 轮\n'
+                               f'        timeout-minutes: {check_minutes}\n'
+                               '        run: |\n')
         change_job('retirement-gate-shell-removed', 'retirement-outcome-parity',
-                   '      - name: check 5 轮\n        shell: bash\n'
-                   '        timeout-minutes: 5\n        run: |\n',
-                   '      - name: check 5 轮\n        timeout-minutes: 5\n'
-                   '        run: |\n',
+                   check_anchor, check_shell_removed,
                    '#1809 the retirement-outcome-parity run step pins `shell: bash` (parsed)')
         # 必需检查的聚合 Require step 换 shell 值：`/bin/true {0}` 把 exit 1 变 rc=0。
         change_job('require-scope-shell-swapped', 'check',
@@ -932,6 +939,47 @@ class EnvironmentControls(unittest.TestCase):
         self.check_ci_mutations(cases, 'test_pr_gate_wiring_is_pinned_by_parsed_yaml',
                                 '#1809', mutated='pr-gate.yml')
 
+    def _retirement_same_source_constants(self, print_statement, issue):
+        """subprocess 按 spec 加载 self_check.py 后求值 print_statement（同源读，
+        不跑 main）。预算常量与 gate step 上限共用这一条加载通道。
+
+        #2437：同族前言（self_check.py 的 LOCK_HOLDER / GUARD_PROBE / WRITE_PROBE
+        样板逐字同构）——`-I` 不等于 `-B`，未设 pycache_prefix 时
+        spec_from_file_location 会读 scripts/retirement-outcome-parity/__pycache__/
+        self_check.*.pyc；树里预置的 PEP 552 unchecked-hash pyc 被无条件采用、
+        不比对源码，兄弟侧的「同源推导」就被抽换的常量抽空（170 → 999 即红）。
+        前缀只服务于加载期；exec 成败都清（try/finally rmtree，评审 r1：
+        exec_module 抛异常 / 外层超时杀子进程时直线 rmtree 不可达）。
+        """
+        source = (Path(__file__).resolve().parents[3]
+                  / 'scripts/retirement-outcome-parity/self_check.py')
+        loader = (
+            'import importlib.util, json, shutil, sys, tempfile\n'
+            'try:\n'
+            "    sys.pycache_prefix = tempfile.mkdtemp(prefix='pdrs-retirement-pyc-')\n"
+            'except OSError:\n'
+            "    print('budget loader: cannot reserve a fresh pycache prefix', "
+            'file=sys.stderr)\n'
+            '    raise SystemExit(2)\n'
+            'sys.dont_write_bytecode = True\n'
+            'own = sys.pycache_prefix\n'
+            'spec = importlib.util.spec_from_file_location("self_check", '
+            f'{str(source)!r})\n'
+            'module = importlib.util.module_from_spec(spec)\n'
+            'try:\n'
+            '    spec.loader.exec_module(module)\n'
+            'finally:\n'
+            '    shutil.rmtree(own, ignore_errors=True)\n'
+            'module._assert_step_budget_coverage(module.retirement_budget_rows())\n'
+            + print_statement + '\n')
+        result = subprocess.run([sys.executable, '-I', '-c', loader],
+                                capture_output=True, text=True, timeout=120,
+                                check=False)
+        self.assertEqual(result.returncode, 0,
+                         f'{issue} cannot load the retirement constants from '
+                         f'self_check.py: {result.stderr.strip()[:400]}')
+        return json.loads(result.stdout)
+
     def retirement_budget_constants(self, issue='#1809'):
         """#1632 / #1692 §1 的推导范式：预算常量从装置源码**同源**读，不手抄第二份。
 
@@ -941,26 +989,18 @@ class EnvironmentControls(unittest.TestCase):
         RETIREMENT_JOB_TIMEOUT_MINUTES / INTERNAL_WORST_CASE_SECONDS /
         JOB_OVERHEAD_MARGIN_SECONDS 三个登记值。
         """
-        source = (Path(__file__).resolve().parents[3]
-                  / 'scripts/retirement-outcome-parity/self_check.py')
-        loader = (
-            'import importlib.util, json\n'
-            'spec = importlib.util.spec_from_file_location("self_check", '
-            f'{str(source)!r})\n'
-            'module = importlib.util.module_from_spec(spec)\n'
-            'spec.loader.exec_module(module)\n'
-            'module._assert_step_budget_coverage(module.retirement_budget_rows())\n'
+        return self._retirement_same_source_constants(
             'print(json.dumps([module.RETIREMENT_JOB_TIMEOUT_MINUTES, '
             'module.INTERNAL_WORST_CASE_SECONDS, '
-            'module.JOB_OVERHEAD_MARGIN_SECONDS]))\n')
-        result = subprocess.run([sys.executable, '-I', '-c', loader],
-                                capture_output=True, text=True, timeout=120,
-                                check=False)
-        self.assertEqual(result.returncode, 0,
-                         f'{issue} cannot load the retirement budget constants '
-                         f'from self_check.py: {result.stderr.strip()[:400]}')
-        minutes, internal, margin = json.loads(result.stdout)
-        return minutes, internal, margin
+            'module.JOB_OVERHEAD_MARGIN_SECONDS]))', issue)
+
+    def retirement_gate_step_timeouts(self, issue='#2451'):
+        """#2451：三个直跑 gate 的 step 级声明上限同源读
+        （`GATE_STEP_TIMEOUT_MINUTES`——负控值由装置从 `NEGCTL_TIMEOUT_SECONDS`
+        派生），兄弟侧不手抄第二份 5/5/30。
+        """
+        return self._retirement_same_source_constants(
+            'print(json.dumps(module.GATE_STEP_TIMEOUT_MINUTES))', issue)
 
     def test_retirement_job_bounds_its_wall_clock(self):
         # #1809 r11 P0：导出和遍历实际 job steps，包含三个直跑 gate、七项与
@@ -996,6 +1036,70 @@ class EnvironmentControls(unittest.TestCase):
                'internal worst case')
         self.check_ci_mutations(cases, 'test_retirement_job_bounds_its_wall_clock',
                                 '#1809')
+
+    def test_retirement_gate_steps_declare_step_timeouts(self):
+        # #2451：三个直跑 gate 的 step 级声明上限。r11 起外层 job 超时被
+        # test_retirement_job_bounds_its_wall_clock 钉住，但 step 声明值本身
+        # （5/5/30）此前没有兄弟侧守卫——改小让挂住的检查打不满内部超时（失败退
+        # 化成 step 硬杀），改大改变预算遍历的入算和。登记值同源读
+        # （GATE_STEP_TIMEOUT_MINUTES），不手抄第二份。
+        step_timeouts = self.retirement_gate_step_timeouts()
+        self.assertEqual(set(step_timeouts),
+                         {'emit 复算与金样逐字节比对', 'check 5 轮',
+                          '负控 N1–N17 全 KILLED'},
+                         '#2451 the three direct-run gate steps are registered '
+                         'with step timeouts')
+        body = self.ci_jobs('#1809')['retirement-outcome-parity']
+        for label, minutes in step_timeouts.items():
+            header = f'      - name: {label}\n'
+            self.assertEqual(body.count(header), 1,
+                             f'#2451 unique `{label}` step header')
+            start = body.index(header)
+            end = body.find('\n      - ', start)
+            block = body[start:end if end != -1 else len(body)]
+            self.assertIn(f'        timeout-minutes: {minutes}\n', block,
+                          f'#2451 the `{label}` step declares its registered '
+                          'timeout-minutes (same-source from self_check)')
+
+    def test_retirement_step_timeout_regressions_are_rejected(self):
+        # #2451：step 级声明上限的删 / 改。装置侧（self_check 的
+        # gate-step-timeout-* / negctl-step-timeout-* 样本）钉住「值被预算遍历
+        # 消费」；这里钉住「行还在且值同源」——两道守卫独立红，拆掉任何一道，
+        # 另一道仍红。emit 的 5 与 check 的 5 同值，锚串带 step 头区分。
+        step_timeouts = self.retirement_gate_step_timeouts()
+        emit_minutes = step_timeouts['emit 复算与金样逐字节比对']
+        negctl_minutes = step_timeouts['负控 N1–N17 全 KILLED']
+        emit_anchor = ('      - name: emit 复算与金样逐字节比对\n'
+                       '        shell: bash\n'
+                       f'        timeout-minutes: {emit_minutes}\n')
+        negctl_line = f'        timeout-minutes: {negctl_minutes}\n'
+        workflow = self.ci_workflow_fixture()
+        body = self.ci_jobs('#1809')['retirement-outcome-parity']
+        cases = []
+
+        def change(label, old, new, message):
+            self.assertEqual(body.count(old), 1, f'#2451 unique anchor: {label}')
+            cases.append((label, workflow.replace(body, body.replace(old, new, 1), 1),
+                          message))
+
+        change('emit-step-timeout-removed', emit_anchor,
+               emit_anchor.replace(f'        timeout-minutes: {emit_minutes}\n', '', 1),
+               '#2451 the `emit 复算与金样逐字节比对` step declares its registered '
+               'timeout-minutes (same-source from self_check)')
+        change('emit-step-timeout-changed', emit_anchor,
+               emit_anchor.replace(f'timeout-minutes: {emit_minutes}\n',
+                                   f'timeout-minutes: {emit_minutes - 1}\n', 1),
+               '#2451 the `emit 复算与金样逐字节比对` step declares its registered '
+               'timeout-minutes (same-source from self_check)')
+        change('negctl-step-timeout-removed', negctl_line, '',
+               '#2451 the `负控 N1–N17 全 KILLED` step declares its registered '
+               'timeout-minutes (same-source from self_check)')
+        change('negctl-step-timeout-changed', negctl_line,
+               f'        timeout-minutes: {negctl_minutes - 1}\n',
+               '#2451 the `负控 N1–N17 全 KILLED` step declares its registered '
+               'timeout-minutes (same-source from self_check)')
+        self.check_ci_mutations(
+            cases, 'test_retirement_gate_steps_declare_step_timeouts', '#2451')
 
     def test_ci_rejects_docs_only_gate_drift(self):
         workflow = self.ci_workflow_fixture()
@@ -1445,8 +1549,8 @@ class EnvironmentControls(unittest.TestCase):
             self.fail('#1632 the fixture must define a literal mutations table')
 
         pinned = rows(source)
-        self.assertEqual(len(pinned), 14,
-                         '#1632/#1476/#1313 fourteen mutations cover the wire-up')
+        self.assertEqual(len(pinned), 15,
+                         '#1632/#1476/#1313/#2302 fifteen mutations cover the wire-up')
         # 只钉行数等于允许「换掉一条真变异、行数不变」：名字逐一钉死（GLM r7 sibling P2），
         # 换成一条平凡可杀的变异同样会红。
         self.assertEqual([ast.literal_eval(row)[0] for row in pinned],
@@ -1461,15 +1565,16 @@ class EnvironmentControls(unittest.TestCase):
                           'always-on-apply-copies-abort-message',
                           'always-on-abort-skips-the-input-read',
                           'always-on-envelope-code-rewritten',
+                          'always-on-abort-drops-the-empty-string-echo',
                           'describe-advertises-always-on-apply',
                           'describe-drops-async-hook-result',
                           'describe-drops-delete-session'],
-                         '#1632/#1476/#1313 the fourteen mutations are exactly these, '
-                         'not merely fourteen rows')
+                         '#1632/#1476/#1313/#2302 the fifteen mutations are exactly these, '
+                         'not merely fifteen rows')
         dropped = ast.get_source_segment(source, pinned[0])
         mutant = source.replace(dropped + ',', '', 1)
         self.assertEqual(mutant.count(dropped), 0, '#1632 the mutant row really left the table')
-        self.assertEqual(len(rows(mutant)), 13,
+        self.assertEqual(len(rows(mutant)), 14,
                          '#1632 dropping a row must change the pinned count')
 
     def test_dispatch_case_table_cannot_shrink_silently(self):
@@ -3198,7 +3303,7 @@ class EnvironmentControls(unittest.TestCase):
     # 盲改一个哈希。下面每条负控都先证明 r7 那版口径（两种形态 + `sorted()` 位置盲）
     # 照绿，再证明闭集判红。
     SESSION_CONTROLS = 'fixtures/session-assembly-1316/negative_controls.py'
-    SESSION_CONTROLS_SHA256 = '8d4fafbbb603c9ecce0150e1a21b9563bea5489e8ee1a86604a4150961887b07'
+    SESSION_CONTROLS_SHA256 = 'c15b6c57553956b622b43ca1253a4f6c7cc3a276a1be877020d0108f751bfc6d'
     SESSION_CONTROLS_EXITS = r"""
 <module> | sys.exit() | sys.exit('no mutations defined: the negative control would pass without testing anything')
 acquire_slot | sys.exit() | sys.exit(f'slot timeout must be finite and positive: {timeout!r}')
@@ -4443,15 +4548,19 @@ self_check_controls_run | return | return problems
         # #1556 后的守卫多数是分行写的）：增删任意一条守卫、把某条守卫的码改掉，都必须红。
         guards = self.script_guards(script)
         self.assertEqual(Counter(int(code) for _, code in guards),
-                         Counter({3: 2, 4: 9, 64: 1, 69: 2}),
+                         Counter({3: 4, 4: 9, 64: 1, 69: 2}),
                          '#1632 every cargo-slots.sh guard: how many guards exit with which code')
         self.assertEqual({int(code) for _, code in guards}, used,
                          '#1692 §10 every raised non-zero code is a guarded failure, and '
                          'every guard exits with a code the script really raises')
+        # #2506 / #2516 fix-r3：四条取样守卫逐条钉死（取样失败 / 输出为空 / 零可解析行 /
+        # 缺调用者 pid），删任意一条都会让该形态回到「在跑 0 → 放行」。
         self.assertEqual([msg for msg, _ in guards if msg.startswith('cargo-slots: ps ')],
                          ['cargo-slots: ps 取样失败，无法判断名额（不按 0 放行）',
-                          'cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）'],
-                         '#1632 the two sampling guards keep their diagnostics, in order')
+                          'cargo-slots: ps 输出为空，无法判断名额（不按 0 放行）',
+                          'cargo-slots: ps 输出零可解析行，无法判断名额（不按 0 放行）',
+                          'cargo-slots: ps 快照缺调用者 pid，无法判断名额（不按 0 放行）'],
+                         '#1632 the sampling guards keep their diagnostics, in order')
         gates = {key.value: ast.literal_eval(value)
                  for key, value in zip(cases.keys, cases.values)}
         for name, code in codes.items():
@@ -4724,15 +4833,34 @@ self_check_controls_run | return | return problems
                                    'PDRS_CARGO_SLOTS_CACHE_DIR': str(Path(tmp)/'cache')})
 
     def assert_cargo_slots_fails_closed(self, script, tmp, label):
-        """取样不可用时必须 rc=3，且绝不打印「在跑 N」——打印了就是把空样本读成 0 放行。"""
-        for case, body in (('ps exits non-zero', '#!/bin/sh\nexit 1\n'),
-                           ('ps prints nothing', '#!/bin/sh\nexit 0\n'),
-                           # 残缺采样：先输出一行再非零退出。只有这一格能把「取样失败」
-                           # 那条守卫和「输出为空」那条分开——前两格都会被空输出守卫兜住。
-                           ('ps prints rows then fails',
-                            '#!/bin/sh\nprintf "  123 1 cargo\\n"\nexit 1\n')):
+        """取样不可用时必须 rc=3，且绝不打印「在跑 N」——打印了就是把空样本读成 0 放行。
+
+        #2506 / #2516 fix-r3：rc=3 之外还逐格钉**该格应有的守卫消息**。取样守卫从两条
+        变成四条（零可解析行 / 缺调用者 pid）后，只看 rc 的翻转变异体会被更深的守卫
+        兜住——守卫条件被翻掉、退出被包进子 shell 或整行被搬走，样本照样在更深一层
+        exit 3，rc 与「不按 0 放行」两格断言照绿。消息是哪条守卫开口的唯一可判差异：
+        真实脚本每格开口不变，变异体必落错消息。
+        """
+        for case, body, expected in (
+                ('ps exits non-zero', '#!/bin/sh\nexit 1\n', 'ps 取样失败'),
+                ('ps prints nothing', '#!/bin/sh\nexit 0\n', 'ps 输出为空'),
+                # 残缺采样：先输出一行再非零退出。只有这一格能把「取样失败」
+                # 那条守卫和「输出为空」那条分开——前两格都会被空输出守卫兜住。
+                ('ps prints rows then fails',
+                 '#!/bin/sh\nprintf "  123 1 cargo\\n"\nexit 1\n', 'ps 取样失败')):
             done = self.run_cargo_slots(script, tmp, body)
             self.assertEqual(done.returncode, 3, f'#1632 {label} / {case}: {done.stderr}')
+            self.assertIn(expected, done.stderr,
+                          f'#1632 {label} / {case} fails via its own guard, not a deeper one')
+            # 而且只允许这一条开口：exit 被包进子 shell / 守卫行被搬走的形态里，诊断
+            # 照发（子 shell 里 echo 不受 exit 影响），单看「消息在场」分不出来；其余
+            # 三条取样守卫的消息必须缺席，双消息即红。
+            for fragment in ('ps 取样失败', 'ps 输出为空', 'ps 输出零可解析行',
+                             'ps 快照缺调用者 pid'):
+                if fragment != expected:
+                    self.assertNotIn(fragment, done.stderr,
+                                     f'#1632 {label} / {case} leaks another sampling guard: '
+                                     f'{fragment}')
             self.assertIn('不按 0 放行', done.stderr, f'#1632 {label} / {case} explains itself')
             self.assertNotIn('在跑', done.stdout, f'#1632 {label} / {case} reports no slot count')
 
@@ -4767,6 +4895,92 @@ self_check_controls_run | return | return problems
                                        msg=f'#1632 the behaviour check must catch {label}'):
                     self.assert_cargo_slots_fails_closed(path, tmp, label)
                 print(f'#1632 slot-guard behaviour mutant {label}: KILLED', flush=True)
+
+    def test_cargo_slots_script_fails_closed_on_unparseable_or_callerless_sample(self):
+        # #2506 / #2516 fix-r3（fix-r1 评审 sibling P1 的 bash 半条，与 model-complete
+        # 探针 `slots_from_ps` 的 #1770 fix-r1/fix-r2 守卫对称）：「非空但零可解析行」
+        # 「有可解析行但表内缺调用者 pid」都必须按取样失败（rc=3）处理。旧 awk 对
+        # 不可解析输入照样 `print c+0`，ps 版本/格式漂移打出整表诊断（rc=0）时满槽会被
+        # 读成「有空位」（CLAUDE.md 每机并发上限被穿透）；一张不含本脚本自身 pid 的表
+        # 同样无法作证——真取样里本脚本必然在场。
+        script = Path(__file__).resolve().parents[3]/'scripts/cargo-slots.sh'
+        text = script.read_text()
+        with tempfile.TemporaryDirectory() as tmp:
+            for case, body, needle in (
+                    ('ps prints only diagnostics',
+                     '#!/bin/sh\necho "ps: unsupported output format"\nexit 0\n',
+                     '零可解析行'),
+                    # 有可解析行（一条真形态 cargo 树）但表里没有调用者 pid：旧实现照常给数。
+                    ('ps omits the caller pid',
+                     '#!/bin/sh\nprintf "  123 122 cargo build\\n"\nexit 0\n',
+                     '缺调用者 pid')):
+                done = self.run_cargo_slots(script, tmp, body)
+                self.assertEqual(done.returncode, 3, f'#2506 {case}: {done.stderr}')
+                self.assertIn(needle, done.stderr, f'#2506 {case} names its failure shape')
+                self.assertIn('不按 0 放行', done.stderr, f'#2506 {case} explains itself')
+                self.assertNotIn('在跑', done.stdout, f'#2506 {case} reports no slot count')
+            # 正桩：一张含调用者 pid、含一条真形态 cargo 树、含一条不可解析杂行的正常表
+            # 必须照常判名额（在跑 1 / 上限 4，杂行不计数）。两条新守卫只在快照无法作证
+            # 时才拦——条件翻转与「awk 不再校验行」的负控正是靠这一格杀。
+            # `os.getppid()` 即脚本 `$$`：命令替换的子进程由脚本 shell 直接 fork（实测
+            # outer.sh/fakeps 三次运行 ppid==$$），与 slot-probe-residual 夹具 FAKE_PS
+            # 的 {CALLER_PID} 同一依据。
+            good = self.run_cargo_slots(script, tmp, (
+                '#!/usr/bin/env python3\n'
+                'import os, sys\n'
+                'me = os.getppid()\n'
+                'rows = [f"{me} {me - 1} bash cargo-slots.sh",\n'
+                '        "  200 100 cargo build",\n'
+                '        " 100 50 zsh",\n'
+                '        "  50 1 launchd",\n'
+                '        "   1 0 launchd",\n'
+                '        "junk 100 cargo build"]\n'
+                'sys.stdout.write("".join(row + chr(10) for row in rows))\n'))
+            self.assertEqual(good.returncode, 0, f'#2506 healthy table: {good.stderr}')
+            self.assertIn('在跑 1 / 上限 4', good.stdout,
+                          '#2506 the healthy table counts one tree and ignores the junk row')
+
+            def healthy_table_verdict(script_path):
+                done = self.run_cargo_slots(script_path, tmp, (
+                    '#!/usr/bin/env python3\n'
+                    'import os, sys\n'
+                    'me = os.getppid()\n'
+                    'rows = [f"{me} {me - 1} bash cargo-slots.sh",\n'
+                    '        "  200 100 cargo build",\n'
+                    '        " 100 50 zsh",\n'
+                    '        "  50 1 launchd",\n'
+                    '        "   1 0 launchd",\n'
+                    '        "junk 100 cargo build"]\n'
+                    'sys.stdout.write("".join(row + chr(10) for row in rows))\n'))
+                self.assertEqual(done.returncode, 0,
+                                 f'#2506 the healthy table must pass: {done.stderr}')
+                self.assertIn('在跑 1 / 上限 4', done.stdout,
+                              '#2506 the healthy table counts one tree and ignores the junk row')
+
+            for label, mutant in (
+                    # 两条新守卫的 `||` 翻成 `&&`：健康表（parsed>0 且 me_seen=1）反而被拦，
+                    # 正桩必红。
+                    ('rows-guard-condition-flipped',
+                     text.replace('] || { echo "cargo-slots: ps 输出零可解析行',
+                                  '] && { echo "cargo-slots: ps 输出零可解析行', 1)),
+                    ('caller-guard-condition-flipped',
+                     text.replace('] || { echo "cargo-slots: ps 快照缺调用者 pid',
+                                  '] && { echo "cargo-slots: ps 快照缺调用者 pid', 1)),
+                    # awk 行校验删掉：杂行被当可解析行且其 exe 首词是 cargo，
+                    # 健康表数出第二棵树（在跑 2）。
+                    ('row-validation-dropped',
+                     text.replace('$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && NF >= 3',
+                                  '1', 1)),
+                    # 调用者行不再被标记：任何表都过不了 me_seen 守卫，正桩必红。
+                    ('caller-row-not-tracked',
+                     text.replace('if ($1 == me) me_seen=1', 'if ($1 == 0) me_seen=1', 1))):
+                self.assertNotEqual(mutant, text, f'#2506 the mutant really changed: {label}')
+                path = Path(tmp)/f'{label}.sh'
+                path.write_text(mutant)
+                with self.assertRaises(AssertionError,
+                                       msg=f'#2506 the healthy-table check must catch {label}'):
+                    healthy_table_verdict(path)
+                print(f'#2506 slot-guard behaviour mutant {label}: KILLED', flush=True)
 
     def test_nextest_keeps_workspace_doctests_and_failure_semantics(self):
         jobs = self.ci_jobs(issue='#922')

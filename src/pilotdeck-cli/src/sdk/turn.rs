@@ -342,6 +342,13 @@ async fn stream_turn(
         match incoming {
             QueryInput::Signal => {}
             QueryInput::Frame(Err(error)) => {
+                // #1178: with an abort in flight, the TS SDK's socket-close
+                // listener rejects both the pending abort and the stream queue
+                // with the same PilotDeckError, crashing the process with an
+                // unhandled rejection after the CLI prints its business line.
+                // Measured against the sdk-signals abort-rst axis (peer RSTs
+                // the query socket, abort never answered): same surfaces as
+                // the initialization-failure outcome below, so they share it.
                 return if abort_ids.is_empty() {
                     QueryOutcome::Retain(error)
                 } else {

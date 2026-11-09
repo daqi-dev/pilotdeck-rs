@@ -3185,13 +3185,19 @@ struct KeepAliveBody {
     inner: Full<Bytes>,
     timer: Arc<KeepAliveTimer>,
     finished: bool,
+    /// #1947: an HTTP/1.0 reply is close-delimited — Node's store form
+    /// (`response.end(buffer)`) carries no `content-length` on 1.0 — so hyper
+    /// must not learn the size. Everything else still delegates, like the
+    /// webhook lane's `Unsized` (#1684).
+    unknown_size: bool,
 }
 impl KeepAliveBody {
-    fn new(inner: Full<Bytes>, timer: Arc<KeepAliveTimer>) -> Self {
+    fn new(inner: Full<Bytes>, timer: Arc<KeepAliveTimer>, unknown_size: bool) -> Self {
         Self {
             inner,
             timer,
             finished: false,
+            unknown_size,
         }
     }
 }
@@ -3223,7 +3229,14 @@ impl Body for KeepAliveBody {
     }
 
     fn size_hint(&self) -> SizeHint {
-        self.inner.size_hint()
+        if self.unknown_size {
+            // #1947: an unknown size keeps hyper from writing
+            // `content-length` on the 1.0 close-delimited reply; the frames
+            // and the end-of-stream flag are unchanged.
+            SizeHint::default()
+        } else {
+            self.inner.size_hint()
+        }
     }
 }
 impl Drop for KeepAliveBody {
@@ -3410,9 +3423,17 @@ async fn start_gateway_user_dialog_store_http_server_with_limits(
                                 {
                                     timer.mark_unread_body_close();
                                 }
-                                Ok::<_, Infallible>(
-                                    response.map(|body| KeepAliveBody::new(body, timer)),
-                                )
+                                Ok::<_, Infallible>(response.map(|body| {
+                                    // #1947: a 1.0 reply is close-delimited
+                                    // (Node's `response.end` store form writes
+                                    // no `content-length` on 1.0), so the
+                                    // size stays unknown to hyper; 1.1 keeps
+                                    // its exact size and its
+                                    // `content-length`.
+                                    let unknown_size = version == Version::HTTP_10
+                                        && !crate::mutants::on("http-store-http10-framing-off");
+                                    KeepAliveBody::new(body, timer, unknown_size)
+                                }))
                             }
                         });
                         let mut builder = http1::Builder::new();

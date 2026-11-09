@@ -307,6 +307,161 @@ class WitnessTests(unittest.TestCase):
                 error = caught
             self.assertTrue(error is None, '#1140 the frozen wire checker accepts a real received row: ' + str(error))
 
+    def test_receive_poll_partial_frame_is_bounded(self):
+        # #2396 fix-r1: a frame that only partially arrives within the poll
+        # timeout must not fall back to blocking on the capture deadline —
+        # the half-frame stays buffered and completes on a later poll.
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        listener.listen(1)
+        listener.settimeout(10)
+        client_side = socket.create_connection(('127.0.0.1', port))
+        connection, _ = listener.accept()
+        with connection, client_side:
+            client = c.WireClient.__new__(c.WireClient)
+            payload = b'{"ok":1}'
+            frame = b'\x81' + bytes([len(payload)]) + payload
+            client.socket, client.buffer, client.rows = client_side, b'', []
+            client.deadline = time.monotonic() + 30
+            connection.sendall(frame[:1])
+            time.sleep(0.05)
+            started = time.monotonic()
+            self.assertTrue(client.receive_poll(0.2) is None,
+                            '#2396 a partial frame returns None within the poll cap')
+            self.assertTrue(time.monotonic() - started < 2,
+                            '#2396 the poll never blocks past its own cap')
+            self.assertTrue(client.buffer == frame[:1],
+                            '#2396 the partial bytes stay buffered')
+            connection.sendall(frame[1:])
+            value = client.receive_poll(5)
+            self.assertTrue(value == json.loads(payload),
+                            '#2396 the completed frame parses on the next poll')
+        listener.close()
+
+    def test_receive_poll_partial_payload_frame_resumes(self):
+        # #2396 fix-r2: a frame cut INSIDE the payload (its head already
+        # consumed from the buffer) must resume on the next poll — not
+        # re-parse payload bytes as a new frame head and desynchronize the
+        # stream (DS boundary/concurrency P1).
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        listener.listen(1)
+        listener.settimeout(10)
+        client_side = socket.create_connection(('127.0.0.1', port))
+        connection, _ = listener.accept()
+        with connection, client_side:
+            client = c.WireClient.__new__(c.WireClient)
+            payload = json.dumps({'text': 'x' * 300}).encode()  # > 125: extended
+            header = b'\x81\x7e' + len(payload).to_bytes(2, 'big')  # unmasked, 16-bit
+            frame = header + payload
+            client.socket, client.buffer, client.rows = client_side, b'', []
+            client.deadline = time.monotonic() + 30
+            connection.sendall(frame[:8])  # head + extra + first payload bytes
+            time.sleep(0.05)
+            self.assertTrue(client.receive_poll(0.2) is None,
+                            '#2396 a payload cut returns None within the poll cap')
+            connection.sendall(frame[8:])
+            value = client.receive_poll(5)
+            self.assertTrue(value == json.loads(payload),
+                            '#2396 the resumed frame parses exactly once, uncorrupted')
+            self.assertTrue(all(row['direction'] == 'receive' for row in client.rows)
+                            and len(client.rows) == 1,
+                            '#2396 exactly one receive row is recorded')
+        listener.close()
+
+    def test_receive_poll_partial_extra_frame_resumes(self):
+        # #2396 fix-r3: a frame cut INSIDE the extended-length field (its
+        # head consumed, only 1 of the 2 extra bytes arrived) must resume on
+        # the next poll — the `extra is None: return None` branch also keeps
+        # its consumed prefix, not just the payload cut (DS boundary P2 /
+        # sibling P2 — the r2 test only cut inside the payload).
+        listener = socket.socket()
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(('127.0.0.1', 0))
+        port = listener.getsockname()[1]
+        listener.listen(1)
+        listener.settimeout(10)
+        client_side = socket.create_connection(('127.0.0.1', port))
+        connection, _ = listener.accept()
+        with connection, client_side:
+            client = c.WireClient.__new__(c.WireClient)
+            payload = json.dumps({'text': 'y' * 300}).encode()  # > 125: extended
+            header = b'\x81\x7e' + len(payload).to_bytes(2, 'big')  # unmasked, 16-bit
+            frame = header + payload
+            client.socket, client.buffer, client.rows = client_side, b'', []
+            client.deadline = time.monotonic() + 30
+            connection.sendall(frame[:3])  # head + 1 of the 2 extra bytes
+            time.sleep(0.05)
+            self.assertTrue(client.receive_poll(0.2) is None,
+                            '#2396 an extra cut returns None within the poll cap')
+            connection.sendall(frame[3:])
+            value = client.receive_poll(5)
+            self.assertTrue(value == json.loads(payload),
+                            '#2396 the resumed frame parses exactly once, uncorrupted')
+            self.assertTrue(all(row['direction'] == 'receive' for row in client.rows)
+                            and len(client.rows) == 1
+                            and client.rows[0]['wireHex'] == frame.hex(),
+                            '#2396 exactly one receive row is recorded, wire-exact')
+        listener.close()
+
+    def test_read_observation_drops_foreign_frames(self):
+        # #2396 fix-r3: a foreign frame riding along in `received` (e.g. one
+        # left in the socket buffer by the previous case's turn) must not
+        # fail the whole read through the strict projection — the collector
+        # scores this request's own frames (DS sibling P1).
+        with tempfile.TemporaryDirectory(prefix='pdrs-2396-obs-') as tmp:
+            home = Path(tmp).resolve()
+            project = home / 'projects' / 'proj'
+            project.mkdir(parents=True)
+            (project / '.cwd').write_text(str(project))
+            (project / 'chats').mkdir()
+            (project / 'chats' / 'session-1.jsonl').write_text('')
+            own = [{'type': 'event', 'id': 'case-01', 'seq': 0, 'final': False,
+                    'event': {'type': 'model_request_started'}},
+                   {'type': 'event', 'id': 'case-01', 'seq': 1, 'final': True,
+                    'event': w.native.WS_TERMINAL_FALLBACK}]
+            received = [own[0],
+                        {'type': 'event', 'id': 'other-req', 'seq': 9, 'final': False,
+                         'event': {'type': 'model_request_started'}},
+                        own[1]]
+            observation = c.read_observation(home, str(project), 'session-1', 'run-01',
+                                             received, request_id='case-01')
+            self.assertTrue(observation['frames'] == [{'type': 'model_request_started'}],
+                            '#2396 the foreign frame is dropped, this request\'s '
+                            'yield frames are scored in seq order')
+            # #2396 fix-r4: only a well-formed foreign id is dropped.  A dict
+            # entry whose id is missing (or not a string) is not positively
+            # foreign — it still reaches the strict projection and fails
+            # closed there; the r3 predicate silently widened it away (DS
+            # concurrency P2#2).  The own frames stay complete (terminal
+            # included), so a drop would have scored a healthy observation.
+            malformed = [own[0],
+                         {'type': 'event', 'seq': 5, 'final': False,
+                          'event': {'type': 'model_request_started'}},
+                         own[1]]
+            with self.assertRaises(w.native.Incomplete, msg='#2396 an id-less dict '
+                                'frame fails the projection instead of being dropped'):
+                c.read_observation(home, str(project), 'session-1', 'run-01',
+                                   malformed, request_id='case-01')
+            # #2396 fix-r5, anthropic boundary P2 (empirically pinned): an
+            # empty-string or non-string id is not a well-formed foreign id
+            # either — the predicate keeps the frame and the projection
+            # fails closed on it, exactly like the id-less entry above.
+            for bad_id in ('', 123):
+                with self.assertRaises(w.native.Incomplete, msg='#2396 a '
+                                      + repr(bad_id) + ' id fails the '
+                                      'projection instead of being dropped'):
+                    c.read_observation(home, str(project), 'session-1', 'run-01',
+                                       [own[0],
+                                        {'type': 'event', 'id': bad_id, 'seq': 5,
+                                         'final': False,
+                                         'event': {'type': 'model_request_started'}},
+                                        own[1]], request_id='case-01')
+
     def test_recorder_rows_audit(self):
         # A real loopback WebSocket exchange: every observer row the frozen
         # audit consumes is produced by the real WireClient against a real
@@ -1409,8 +1564,12 @@ class WitnessTests(unittest.TestCase):
                         '#1140 an unanswered run key stays inapplicable with an empty record')
 
     def test_case_plan_and_ordering_variants(self):
-        # Legacy transport budgets remain stable while #1368 independently
-        # declares and gates the actual registry/phase/fault/order stimuli.
+        # #2396: the controlled loop (#1371) owns turn timing, so no case
+        # delays the provider any more. The two release-first orders keep the
+        # slow timer (their timer.clear edge needs an unfired timer); every
+        # timeout-first family — including after-complete and K-P, whose TS
+        # counterpart fires the timer by hand during a held return/outcome —
+        # uses the real 400 ms timer.
         manifest = c.session_manifest()
         variants = {case.split('/')[1] for case in manifest}
         self.assertTrue(set(c.SESSION_ORDERING_VARIANTS) <= variants,
@@ -1418,12 +1577,12 @@ class WitnessTests(unittest.TestCase):
         for case in manifest:
             plan = c.case_plan(case)
             transport = {key: plan[key] for key in ('timeoutMs', 'delay')}
-            if case.split('/')[1] in c.SESSION_ORDERING_VARIANTS:
+            if case.split('/')[1] in ('unknown-first', 'known-final-first'):
                 self.assertTrue(transport == {'timeoutMs': c.SESSION_ORDERING_TIMEOUT_MS, 'delay': 0.0},
-                                '#1368 legacy ordering transport budget: ' + case)
+                                '#2396 release-first transport budget: ' + case)
             else:
-                self.assertTrue(transport == {'timeoutMs': c.SESSION_TIMEOUT_MS, 'delay': c.SESSION_PROVIDER_DELAY},
-                                '#1368 legacy timeout transport budget: ' + case)
+                self.assertTrue(transport == {'timeoutMs': c.SESSION_TIMEOUT_MS, 'delay': 0.0},
+                                '#2396 real-timer transport budget: ' + case)
 
     def test_bind_contract_rejects_preregistered(self):
         # The mirror of the frozen loader's rejection: a contract that already

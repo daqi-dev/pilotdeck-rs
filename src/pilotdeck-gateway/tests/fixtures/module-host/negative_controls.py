@@ -2,11 +2,14 @@
 """#1349 compiled controls: compile every switch once, then run the selected
 positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
-mutates exactly one module_host transport gate and is killed by the replay
-cell that pins that gate's TS bytes: #1813 added the recording-field guard and
-#1696 the pad/budget guards. Run one sample in the
-authoring session; the coordinator runs the complete list after the patch is
-committed.
+mutates exactly one module_host transport gate and is killed by the binding
+its switches-table row names: a replay cell's one-line assertion, a component
+test's one-line assertion or a #1696 recording-guard unit test (#1813 added
+the recording-field guard and its switch binds that pair of component tests;
+#1947's module-host-http10-framing-off pins
+http10_value_body_is_close_delimited outside the replay_tests! table). Run
+one sample in the authoring session; the coordinator runs the complete list
+after the patch is committed.
 """
 import argparse
 import os
@@ -86,6 +89,11 @@ switches = [
     # rejected, not replayed without any length pin.
     ('module-host-oracle-unknown-budget-cell', ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs', 'recorded_unknown_budget_cell_is_rejected',
      '#1349 #1696 fails closed on a budget cell class with no length guard'),
+    # #1947: with the framing fix off, hyper knows the value body's size
+    # again and writes a `content-length` line on the 1.0 reply where Node
+    # is close-delimited, so the pinned value-body reply turns red.
+    ('module-host-http10-framing-off', SOURCE, 'http10_value_body_is_close_delimited',
+     "#1947 pin http10 value body: the 1.0 reply is close-delimited, no content-length"),
 ]
 GUARDED = [SOURCE, ROOT / 'src/pilotdeck-gateway/src/module_host/tests.rs',
     ROOT / 'src/pilotdeck-gateway/src/mutants.rs',

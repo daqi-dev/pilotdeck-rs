@@ -2542,6 +2542,12 @@ class SameJsonSurfaces(unittest.TestCase):
     the A19 scope gate and the per-case verdict consume, plus the native
     cleanup and prelaunch replay comparisons; chain-level behaviour stays in
     ``controls/session_domain.py``.
+
+    #2425/#2431 pins on the same-json fixture's own machinery: the atomic
+    publish/restore spelling and the pre-mutation terminate handlers (#2425),
+    and the startup-refusal contract — a guard that fails before the first
+    mutation is rc 2 with the claim directory withdrawn, never a red run
+    (#2431).
     """
 
     @classmethod
@@ -2753,13 +2759,143 @@ class SameJsonSurfaces(unittest.TestCase):
                             patch.object(module, 'run_owned', fake_run_owned), \
                             patch('sys.stdout', new_callable=io.StringIO), \
                             patch.object(sys, 'argv', [str(path), str(Path(folder) / 'out'), '--memory',
-                                                       '--case', 'memory-rehearsal-without-lock']):
+                                                       'memory-rehearsal-without-lock']):
                         module.main()
             finally:
                 if previous_target is None:
                     del os.environ['CARGO_TARGET_DIR']
             self.assertTrue(seen == [((module.root,), {'timeout': 900})]
                             and order[:1] == ['lock'] and 'child' in order, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_mutant_bytes_publish_in_one_rename(self):
+        # #2425: the guarded publish and the restore are one rename each
+        # (write_source_atomic, #1903); a truncating path.write_* leaves a
+        # half-file behind on SIGKILL.  Both call sites are pinned plus the
+        # absence of any truncating spelling, so the self-mutations
+        # (atomic-publish-reverted-to-truncating and the restore twin) turn
+        # this red either way.
+        marker = '#2425 mutant bytes are published in one atomic rename'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            source = path.read_bytes().decode()
+            self.assertTrue(source.count('write_source_atomic(root, path, changed.encode())') == 1
+                            and source.count('write_source_atomic(root, path, originals[path])') == 1
+                            and 'path.write_text(' not in source
+                            and 'path.write_bytes(' not in source, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_guarded_run_installs_terminate_handlers(self):
+        # #2425: the guarded branch installs terminate_cleanly on SIGTERM/
+        # SIGHUP/SIGQUIT before the first mutation, so an interrupted batch
+        # unwinds through the finally blocks and restores the tree instead of
+        # leaving a mutant behind under the parity lease.  The handler body
+        # is pinned too: installing a no-op or an unrelated handler would
+        # satisfy a call-site-only count.
+        marker = '#2425 the guarded run installs terminate handlers before mutating'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            source = path.read_bytes().decode()
+            self.assertTrue(source.count('            install_terminate_handlers()\n') == 1
+                            and source.count('signal.signal(signal.SIGTERM, terminate_cleanly)') == 1, marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_startup_refusal_is_rc2_memory_branch(self):
+        # #2431: a startup-phase failure (the tree lock becoming unavailable
+        # before the first mutation) must be a refusal, not a red run -- rc 2,
+        # the claimed directory withdrawn, no summary.json that reads like a
+        # finished run.  preflight is stubbed so the kill lands on the rc2
+        # semantics itself, not on anchor bookkeeping; the case never runs,
+        # the guard refuses before it.
+        import io
+        marker = '#2431 the memory branch refuses a startup failure with rc 2'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            with tempfile.TemporaryDirectory(prefix='pdrs-2431-rc2-') as folder:
+                out = Path(folder) / 'out'
+                spec = importlib.util.spec_from_file_location('samejson_rc2_memory', path)
+                module = importlib.util.module_from_spec(spec)
+                exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+
+                class refusing_lock:
+                    def __enter__(self):
+                        raise OSError('probe: tree lock unavailable')
+
+                    def __exit__(self, *_exc):
+                        return None
+
+                with patch.object(module, 'preflight', lambda: True), \
+                        patch.object(module, 'tree_lock', lambda *_a, **_k: refusing_lock()), \
+                        patch('sys.stdout', new_callable=io.StringIO), \
+                        patch('sys.stderr', new_callable=io.StringIO) as stderr, \
+                        patch.object(sys, 'argv', [str(path), str(out), '--memory',
+                                                   'memory-rehearsal-without-lock']):
+                    try:
+                        module.main()
+                        raised = None
+                    except SystemExit as exit_code:
+                        raised = exit_code
+                self.assertTrue(raised is not None and raised.code == 2
+                                and not out.exists()
+                                and not (out / 'summary.json').exists()
+                                and 'guard refused to start' in stderr.getvalue(), marker)
+        except (Exception, SystemExit) as error:
+            self.fail(marker + ': ' + repr(error))
+
+    def test_startup_refusal_is_rc2_guarded_branch(self):
+        # #2431: the guarded branch refuses the same way, for every exception
+        # class the startup phase can raise -- the scanner staging is a
+        # RuntimeError and a subprocess.TimeoutExpired shape, tree_lock an
+        # OSError (covered by the memory pin above).  The real terminate
+        # handlers run here, so their dispositions are saved and restored
+        # around main().
+        import io
+        import signal
+        marker = '#2431 the guarded branch refuses a startup failure with rc 2'
+        path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
+        try:
+            for probe in (RuntimeError('probe: scanner staging failed'),
+                          subprocess.TimeoutExpired('workspace scanner', 60)):
+                with self.subTest(probe=probe), \
+                        tempfile.TemporaryDirectory(prefix='pdrs-2431-rc2-') as folder:
+                    out = Path(folder) / 'out'
+                    spec = importlib.util.spec_from_file_location('samejson_rc2_guarded', path)
+                    module = importlib.util.module_from_spec(spec)
+                    exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+
+                    class refusing_guard:
+                        def __enter__(self):
+                            raise probe
+
+                        def __exit__(self, *_exc):
+                            return None
+
+                    names = [signal.SIGTERM] + [getattr(signal, name) for name in ('SIGHUP', 'SIGQUIT')
+                                                 if hasattr(signal, name)]
+                    saved = {name: signal.getsignal(name) for name in names}
+                    try:
+                        with patch.object(module, 'preflight', lambda: True), \
+                                patch.object(module, 'mutating_sources',
+                                             lambda *_a, **_k: refusing_guard()), \
+                                patch('sys.stdout', new_callable=io.StringIO), \
+                                patch('sys.stderr', new_callable=io.StringIO) as stderr, \
+                                patch.object(sys, 'argv', [str(path), str(out),
+                                                           'surfaces-frames-bare-not-equal']):
+                            try:
+                                module.main()
+                                raised = None
+                            except SystemExit as exit_code:
+                                raised = exit_code
+                    finally:
+                        for name, disposition in saved.items():
+                            signal.signal(name, disposition)
+                    self.assertTrue(raised is not None and raised.code == 2
+                                    and not out.exists()
+                                    and not (out / 'summary.json').exists()
+                                    and 'guard refused to start' in stderr.getvalue(), marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 

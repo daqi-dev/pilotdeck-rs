@@ -12,6 +12,10 @@ counts as a kill.
 shared tree lock is still held for the whole drill); the default mode writes
 mutated bytes under ``mutating_sources`` and therefore requires the candidate
 sources to equal HEAD -- run it from a committed tree, not this worktree.
+
+Selection is the sibling shape ``NEW_OUTPUT [NAME ...]`` (#2425): names are
+positional, so the refusal matrix in ``test_negative_optimize_guards.py``
+can drive this entry like every migrated one.
 """
 import sys
 if not sys.flags.isolated:
@@ -23,15 +27,16 @@ import json
 from pathlib import Path
 import re
 import signal
+import time
 import unittest
 from unittest.mock import patch
 
 root = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import (SourceBaselineError, defer_signal_exit,
-                              mutating_sources, run_owned, tree_lock,
-                              write_source_atomic)
-from negative_selection import claim_dir, refuse, registered, verdict_exit
+from negative_process import (KILL_TIMEOUT, SourceBaselineError,
+                              defer_signal_exit, mutating_sources, run_owned,
+                              tree_lock, write_source_atomic)
+from negative_selection import claim_dir, refuse, registered, select, verdict_exit
 
 session = root / 'scripts/gateway-parity/session_domain.py'
 native = root / 'scripts/gateway-parity/native_evidence.py'
@@ -40,6 +45,41 @@ test_safety = root / 'scripts/gateway-parity/test_safety.py'
 # parity lease, and negative_process._parity_mutation_lock refuses to load
 # that lease from anything but guarded common.py bytes (#166).
 common = root / 'scripts/gateway-parity/common.py'
+
+# #2425 (DS concurrency #2): the guarded window holds the shared parity lease
+# (/tmp/pdrs-parity.lock) while product bytes are mutated, and common.MAX_AGE
+# is the age at which another apparatus may take that lease over -- fe-parity
+# is a bare mkdir taker, so it would read mutated bytes.  Without a whole-run
+# deadline the worst case is the whole table times 3 bound commands each
+# charged ``timeout + twice the kill grace`` -- the 10 cases the r2 review
+# counted already summed to exactly MAX_AGE, and the table has since grown to
+# 15.  The budget bounds the window below that age instead: it is checked
+# before every case and a spent budget marks the rest INVALID (never KILLED,
+# never silently skipped), so the run fails closed instead of outliving the
+# lease.
+LEASE_BUDGET_SECONDS = 1800
+RUN_TIMEOUT_SECONDS = 60
+# Imported rather than restated: the reserve below is only correct while this
+# number equals the upstream kill grace, and a copy drifts silently (mirror of
+# session-domain-cleanup's MiniMax boundary r14 P2-2).
+KILL_GRACE_SECONDS = KILL_TIMEOUT
+# What the reserve has to absorb besides the per-run worst case: the
+# ``mutating_sources`` exit-side restore and byte verification, and the
+# parity lease release, all fast but charged so the last case cannot start
+# at the very edge of the budget.
+TAIL_OVERHEAD_SECONDS = 20
+
+
+def lease_budget_left(started, now):
+    """Seconds the case loop may still spend before the reserved tail.
+
+    One whole case stays reserved: the one about to start runs up to three
+    bound commands (positive, mutant, restored), each charged at its real
+    worst case ``timeout + 2 * kill grace`` (negative_process._collect pays
+    the grace twice: communicate, then wait).
+    """
+    reserve = 3 * (RUN_TIMEOUT_SECONDS + 2 * KILL_GRACE_SECONDS) + TAIL_OVERHEAD_SECONDS
+    return LEASE_BUDGET_SECONDS - (now - started) - reserve
 
 # (name, file, old bytes, new bytes, bound test).  The old bytes are the
 # post-#2039 spelling, so an anchor that no longer matches is drift, not a
@@ -86,6 +126,36 @@ cases = [
      '                started = True\n                for row in selected:\n                    one(row)\n        else:',
      '        if memory:\n            for row in selected:\n                one(row)\n        else:',
      'test_memory_rehearsal_holds_tree_lock'),
+    # #2431: the startup-refusal contract (rc 2 + withdrawn claim directory)
+    # had no committed regression pin; without these self-mutations a later
+    # narrowing of the guard's except clause or an early ``started = True``
+    # would not turn anything red.  The anchored bytes are split like the row
+    # above so the table literal never contains its own anchor contiguously
+    # (otherwise preflight counts 2 and refuses the whole run).
+    ('startup-refusal-narrowed-exception', Path(__file__).resolve(),
+     '    except Exception as error:\n        if not ' + 'started:',
+     '    except (SourceBaselineError, TimeoutError) as error:\n        if not ' + 'started:',
+     'test_startup_refusal_is_rc2_memory_branch'),
+    ('startup-flag-flipped-before-the-guard', Path(__file__).resolve(),
+     '    started = False\n    ' + 'try:',
+     '    started = True\n    ' + 'try:',
+     'test_startup_refusal_is_rc2_guarded_branch'),
+    # #2425: the guarded publish/restore and the terminate handlers are
+    # reliability debt without a self-mutation that reverts them -- a later
+    # ``path.write_text`` or a dropped ``install_terminate_handlers()`` call
+    # would not turn anything red either.  Same split rule as above.
+    ('atomic-publish-reverted-to-truncating', Path(__file__).resolve(),
+     '                write_source_atomic(root, path, changed.' + 'encode())',
+     '                path.write_' + 'text(changed)',
+     'test_mutant_bytes_publish_in_one_rename'),
+    ('atomic-restore-reverted-to-truncating', Path(__file__).resolve(),
+     '                write_source_atomic(root, path, original' + 's[path])',
+     '                path.write_' + 'bytes(originals[path])',
+     'test_mutant_bytes_publish_in_one_rename'),
+    ('terminate-handlers-uninstalled', Path(__file__).resolve(),
+     '            install_terminate_' + 'handlers()\n',
+     '',
+     'test_guarded_run_installs_terminate_handlers'),
 ]
 
 # Static roster (#1666): the denominator of this run is a literal in the
@@ -100,7 +170,12 @@ EXPECTED_NAMES = ('surfaces-frames-bare-not-equal',
                   'receipt-tracer-exit-bare-equal',
                   'ws-profile-opcode-rsv-bare-equal',
                   'session-profile-connections-bare-equal',
-                  'memory-rehearsal-without-lock')
+                  'memory-rehearsal-without-lock',
+                  'startup-refusal-narrowed-exception',
+                  'startup-flag-flipped-before-the-guard',
+                  'atomic-publish-reverted-to-truncating',
+                  'atomic-restore-reverted-to-truncating',
+                  'terminate-handlers-uninstalled')
 
 messages = {
     'surfaces-frames-bare-not-equal': '#2039 boolean drift must surface on frames',
@@ -113,6 +188,11 @@ messages = {
     'ws-profile-opcode-rsv-bare-equal': '#2039 ws profile opcode boolean drift is rejected',
     'session-profile-connections-bare-equal': '#2039 session profile connections boolean drift is rejected',
     'memory-rehearsal-without-lock': '#2039 same-json memory rehearsal holds the source tree lock',
+    'startup-refusal-narrowed-exception': '#2431 the memory branch refuses a startup failure with rc 2',
+    'startup-flag-flipped-before-the-guard': '#2431 the guarded branch refuses a startup failure with rc 2',
+    'atomic-publish-reverted-to-truncating': '#2425 mutant bytes are published in one atomic rename',
+    'atomic-restore-reverted-to-truncating': '#2425 mutant bytes are published in one atomic rename',
+    'terminate-handlers-uninstalled': '#2425 the guarded run installs terminate handlers before mutating',
 }
 
 
@@ -192,6 +272,34 @@ def install_terminate_handlers():
         signal.signal(signal.SIGQUIT, terminate_cleanly)
 
 
+def load_pristine_common():
+    """Import common.py by explicit path for the constants it publishes.
+
+    ``MAX_AGE`` must come from the bytes the guard itself verifies, not a
+    restated copy that drifts silently (mirror of session-domain-cleanup's
+    ``load_pristine_common``); the guarded run re-checks these bytes against
+    HEAD before the first mutation, and this loader runs before any write.
+    """
+    spec = importlib.util.spec_from_file_location('same_json_pristine_common', common)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def require_lease_budget_below_max_age():
+    """Refuse (rc 2, no evidence directory) when the budget can outlive MAX_AGE.
+
+    An explicit refusal, not an ``assert``: ``python3 -O`` would strip the
+    guard and leave only the comment (session-domain-cleanup, GLM
+    concurrency r11 P3-4 / MiniMax boundary r11 P3-5).
+    """
+    pristine = load_pristine_common()
+    if not (LEASE_BUDGET_SECONDS + TAIL_OVERHEAD_SECONDS < pristine.MAX_AGE):
+        refuse('lease budget ' + str(LEASE_BUDGET_SECONDS) + 's + tail overhead '
+               + str(TAIL_OVERHEAD_SECONDS) + 's must stay below common.MAX_AGE '
+               + str(pristine.MAX_AGE) + 's')
+
+
 def main():
     if sys.argv[1:2] == ['--memory-run']:
         return memory_run(sys.argv[2])
@@ -201,20 +309,26 @@ def main():
         refuse('case roster drifted from the static inventory: ' + repr(error))
     if not preflight():
         return 2
+    # Before the evidence directory is claimed: a drifted budget invariant is
+    # "never started", like every other startup refusal (#2425).
+    require_lease_budget_below_max_age()
     if sys.argv[1:] == ['--check-anchors']:
         return 0
     arguments = sys.argv[1:]
     memory = '--memory' in arguments
     arguments = [a for a in arguments if a != '--memory']
-    if len(arguments) not in (1, 3) or (len(arguments) == 3 and arguments[1] != '--case'):
-        refuse('usage: negative_controls.py NEW_OUTPUT [--memory] [--case NAME] | --check-anchors')
-    selected = cases if len(arguments) == 1 else [row for row in cases if row[0] == arguments[2]]
-    if not selected:
-        refuse('unknown mutation: ' + arguments[2])
+    if not arguments:
+        refuse('usage: negative_controls.py NEW_OUTPUT [--memory] [NAME ...] | --check-anchors')
+    try:
+        selected = select(cases, arguments[1:], always=())
+    except Exception as error:
+        refuse(str(error))
     out = claim_dir(arguments[0])
     results = []
     def run(label, command):
-        value = run_owned(command, cwd=root, env=None, timeout=60)
+        # The same constant the reserve is charged at, so a call-site timeout
+        # edit cannot drift past what lease_budget_left reserved (#2425).
+        value = run_owned(command, cwd=root, env=None, timeout=RUN_TIMEOUT_SECONDS)
         (out / (label + '.log')).write_text(value.stdout + value.stderr)
         return value
     def one(row, restore=False):
@@ -282,11 +396,29 @@ def main():
         else:
             # The fixture guards its own bytes too: the memory-rehearsal case
             # mutates this file, so it must be snapshotted for restore.
+            # lock_timeout bounds the acquire wait by the same budget the loop
+            # below enforces, so the guard itself cannot outlive the lease
+            # window it is about to hold (#2425, DS concurrency #2).
             install_terminate_handlers()
             with mutating_sources(root, [session, native, common,
-                                         Path(__file__).resolve()]) as originals:
+                                         Path(__file__).resolve()],
+                                  lock_timeout=LEASE_BUDGET_SECONDS) as originals:
                 started = True
+                # The clock starts when the lease is held, not when main()
+                # started: the budget bounds how long this apparatus can be
+                # the one a takeover waits out (common.MAX_AGE).
+                clock = time.monotonic()
                 for row in selected:
+                    if lease_budget_left(clock, time.monotonic()) <= 0:
+                        # Never a kill, never silently skipped: the case is
+                        # INVALID and the run fails closed (rc 1), with the
+                        # sources restored and the lease released inside the
+                        # reserved tail.
+                        results.append({'name': row[0], 'status': 'INVALID',
+                                        'reason': 'batch spent the ' + str(LEASE_BUDGET_SECONDS)
+                                                  + 's parity lease budget before this case; re-run '
+                                                  + row[0] + ' by name'})
+                        continue
                     one(row, True)
     except Exception as error:
         if not started:

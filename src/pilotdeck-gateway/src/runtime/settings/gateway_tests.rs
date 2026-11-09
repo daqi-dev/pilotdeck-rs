@@ -261,9 +261,11 @@ async fn settings_dispatch_and_native_family_share_one_method_list() {
 }
 
 /// The update closure's capture listener is detached `finally`-style,
-/// including when the future is dropped at the reload await point (the WS
-/// layer drops in-flight requests on disconnect) — the plain return-path
-/// unsubscribe missed that window.
+/// including when the future is dropped at the reload await point (a client
+/// disconnect alone does not drop it — the WS layer retains and drains
+/// request jobs; it is the host's own teardown that aborts a draining job
+/// past its budget, see `runtime/settings/gateway.rs`) — the plain
+/// return-path unsubscribe missed that window.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn update_settings_detaches_the_capture_listener_when_dropped_mid_reload() {
     let harness = harness(&[]);

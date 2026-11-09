@@ -25,6 +25,14 @@ mod test_skip_line;
 // tests stopped using it (#1401 item 5).
 #[path = "common/scratch.rs"]
 mod test_scratch;
+// The one shared `VALID_HOME_CONFIG` encoding (#2510 item 2): this file's
+// own third copy is gone; only its needle-pinned advertisement spellings
+// stay local (frozen `native-entry-authority` binding, see that module's
+// header for why they cannot migrate).
+#[allow(dead_code)]
+#[path = "common/native_entry.rs"]
+mod native_entry;
+use native_entry::VALID_HOME_CONFIG;
 // Real binaries, isolated state, Node observer and local-only provider.
 use std::{path::PathBuf, process::Command};
 #[test]
@@ -434,11 +442,6 @@ where
 async fn observe_child_stderr(stderr: tokio::process::ChildStderr) -> (Vec<u8>, bool) {
     read_advertisement(stderr, CHILD_SILENCE_LIMIT, CHILD_OBSERVATION_BUDGET).await
 }
-
-// One complete valid profile for both child tests: with the entry gate or the
-// scrub displaced the child must not fail on anything else, so the
-// observations stay about the call site alone.
-const VALID_HOME_CONFIG: &str = "schemaVersion: 1\nagent:\n  model: test/test\nmodel:\n  providers:\n    test:\n      protocol: openai\n      url: http://127.0.0.1:1\n      apiKey: test-only\n      models:\n        test: {}\n";
 
 // #1401 item 5: these tests bring their own scratch root so every failure
 // point carries the #1261 message instead of the shared helper's plain

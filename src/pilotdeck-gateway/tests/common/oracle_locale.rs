@@ -378,13 +378,14 @@ pub(crate) async fn replay_locale_contract(child_test: &str, suite: &str) {
         if success {
             assert!(output.status.success(), "{MSG}: {suite}/{id}: {log}");
             assert!(
-                log.contains("1 passed; 0 failed") && log.contains(&format!("{child_test} ... ok")),
+                log.contains(" 1 passed; 0 failed")
+                    && log.contains(&format!("{child_test} ... ok")),
                 "{MSG}: {suite}/{id}: {log}"
             );
         } else {
             if output.status.success() {
                 assert!(
-                    log.contains("1 passed; 0 failed")
+                    log.contains(" 1 passed; 0 failed")
                         && log.contains(&format!("{child_test} ... ok")),
                     "{MSG}: malformed child success: {suite}/{id}: {log}"
                 );

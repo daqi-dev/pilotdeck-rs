@@ -464,24 +464,7 @@ pub(super) fn retained_cycle(
             return true;
         }
     }
-    for name in [
-        "telegram",
-        "discord",
-        "slack",
-        "matrix",
-        "mattermost",
-        "signal",
-        "whatsapp",
-        "bluebubbles",
-        "dingtalk",
-        "wecom",
-        "wecomCallback",
-        "email",
-        "sms",
-        "homeassistant",
-        "apiServer",
-        "webhook",
-    ] {
+    for name in super::snapshot::PLATFORM_SNAPSHOT_KEYS {
         if let Some(extra) = at(g, &["adapters", name, "extra"]).filter(|v| object(g, v))
             && cycle(g, extra, false)
         {

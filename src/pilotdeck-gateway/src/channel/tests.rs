@@ -1235,13 +1235,14 @@ async fn stop_prefix_can_reenter_close() {
 // is nothing to construct or log through.
 const UNMIGRATED_REJECTION_PHRASE: &str = crate::channel::loader::UNMIGRATED_REASON;
 /// The eight keys #1302 B keeps in Rust (outside `UNMIGRATED_CHANNEL_KEYS`);
-/// `reject_unmigrated_channels` must leave them alone. This is *not* a
-/// "fully assembled" list: `weixin` is built by the native assembly, `feishu`
-/// is refused by `reject_unimplemented_bundle_channels` until #1329, the
-/// four loader-table keys have no production assembly call yet (#1302 B),
-/// `bluebubbles` joined via #1343's `register` mount (like `sms`), and
-/// `slack` (#1344) has only the test-driven `register` mount — production
-/// assembly wiring is a registered diff (A8.3-CH-SLACK-001).
+/// `reject_unmigrated_channels` must leave them alone. #2301 closed the
+/// transition: the six loader-table keys construct at startup through
+/// `native_process::channels::production_loader_mounts`
+/// (`load_enabled_channels` now has its production caller), `weixin` /
+/// `feishu` through the bundle constructors — so every key here is built,
+/// not merely tolerated. The name stays `unmigrated_subset_channels_stay_loadable`
+/// (the 13 `A8.3-CHANNEL-*-001` entries cite it by name); the terminal
+/// reading is "an implemented key must not be rejected".
 const SUBSET_CHANNEL_KEYS: [&str; 8] = [
     "weixin",
     "feishu",
@@ -1399,6 +1400,13 @@ fn strict_true_channel_keys_are_exactly_qq_and_wecom() {
     );
 }
 
+// #1386 pin, re-judged terminal by #2301: during the transition this pinned
+// "the subset keys stay loadable" against the silent skip the
+// `A8.3-CHANNEL-LOADER-SUBSET-001` entry registered. The wiring landed, so
+// the same cells now pin the permanent invariant underneath it — every key
+// here is implemented and constructed at startup, which is exactly why the
+// rejection gate must leave it alone. The name is kept (the 13
+// `A8.3-CHANNEL-*-001` entries cite it as their contrast control).
 #[test]
 fn unmigrated_subset_channels_stay_loadable() {
     for key in SUBSET_CHANNEL_KEYS {
@@ -1535,37 +1543,33 @@ fn unmigrated_rejection_order_is_deterministic() {
     );
 }
 
-// #1853: the fail-closed key-set trichotomy over the channel tables. Every
-// `CHANNEL_LOADER_KEYS` entry must be exactly one of: an unmigrated rejection
-// key (`UNMIGRATED_CHANNEL_KEYS`), a loader-subset key whose implementation
-// module has landed (#1333 apiServer, #1334 webhook, #1336 wecomCallback,
-// #1339 sms, #1343 bluebubbles) while the loader-family assembly wiring is
-// still pending (`load_enabled_channels` has no production call, #1763 §1;
-// #2301 is the terminal unit), or a native-mount key whose transition gap has
-// its own registered diff entry (#1344 slack — `A8.3-CH-SLACK-001`; until
-// production wiring lands there, slack behaves like the silent group too). A
-// key in none of the groups is
-// silently skipped by the native assembly today — not rejected, not
-// constructed, no TS fallback — which is the transition difference
-// `A8.3-CHANNEL-LOADER-SUBSET-001` registers. The silent group is pinned as
-// data on purpose: deriving it as the set difference would absorb any future
-// loader-table key into the skip and keep this test green.
+// #1853 → #2301: the fail-closed key-set partition over the channel tables,
+// terminal state. Every `CHANNEL_LOADER_KEYS` entry must be exactly one of:
+// an unmigrated rejection key (`UNMIGRATED_CHANNEL_KEYS` — enabling refuses
+// startup), or an implemented loader-mount key — a module that has landed
+// (#1333 apiServer, #1334 webhook, #1336 wecomCallback, #1339 sms, #1343
+// bluebubbles, #1344 slack) *and* is wired into the production assembly
+// (`native_process::channels::production_loader_mounts`, #2301). The two
+// transition groups the #1853 r2 trichotomy kept apart (silent-subset vs
+// native-mount) merge here now that `load_enabled_channels` has its
+// production caller; the rename records that flip without relaxing any
+// fail-closed cell. A key in neither group is silently skipped by the native
+// assembly — not rejected, not constructed, no TS fallback — which is the
+// failure mode `A8.3-CHANNEL-LOADER-SUBSET-001` registered and #2301 closed.
+// The implemented group is pinned as data on purpose: deriving it as the set
+// difference would absorb any future loader-table key into the skip and keep
+// this test green.
 #[test]
-fn loader_keys_partition_rejected_and_silent_subset() {
-    // The silent-skip group as of this entry (decision A, 2026-11-08).
-    const SILENT_SUBSET_KEYS: [&str; 5] = [
+fn loader_keys_partition_rejected_and_implemented() {
+    // The implemented loader-mount group as of #2301 (terminal wiring).
+    const IMPLEMENTED_LOADER_KEYS: [&str; 6] = [
+        "slack",
+        "bluebubbles",
         "wecomCallback",
         "sms",
         "apiServer",
         "webhook",
-        "bluebubbles",
     ];
-    // The native loader-mount group after #1344: the loader key whose
-    // transition gap has its own registered diff entry (`A8.3-CH-SLACK-001`).
-    // Production assembly wiring is pending there too, so until it lands slack
-    // behaves like the silent group — its classification lives in that entry,
-    // not this one.
-    const NATIVE_MOUNT_KEYS: [&str; 1] = ["slack"];
     let rejected: Vec<&str> = CHANNEL_LOADER_KEYS
         .iter()
         .copied()
@@ -1576,44 +1580,45 @@ fn loader_keys_partition_rejected_and_silent_subset() {
         9,
         "#1853 nine loader keys sit in the unmigrated rejection table"
     );
-    // Covering: every loader key belongs to exactly one of the three groups.
+    // Covering: every loader key belongs to exactly one of the two groups.
     // This is the fail-closed cell — a key added to `CHANNEL_LOADER_KEYS`
-    // without joining a group lands here, not inside a silent set
-    // difference that would absorb it.
+    // without joining a group lands here, not inside a set difference that
+    // would absorb it.
     let mut unassigned = Vec::new();
     for key in CHANNEL_LOADER_KEYS {
-        if !UNMIGRATED_CHANNEL_KEYS.contains(&key)
-            && !SILENT_SUBSET_KEYS.contains(&key)
-            && !NATIVE_MOUNT_KEYS.contains(&key)
-        {
+        if !UNMIGRATED_CHANNEL_KEYS.contains(&key) && !IMPLEMENTED_LOADER_KEYS.contains(&key) {
             unassigned.push(key);
         }
     }
     crate::negative_assert!(
         unassigned.is_empty(),
-        "#1853 every loader key is rejected, silent-subset, or native-mount"
+        "#2301 every loader key is rejected or implemented"
     );
-    // Reverse closure for the silent group (the cell above only constrains
-    // loader-table keys): every silent entry must itself be a loader key, and
-    // the group must be exactly `SUBSET_CHANNEL_KEYS` minus the two bundle
-    // keys minus the native mount — the module-level whitelist and this local
-    // pin cannot drift apart in either direction.
-    for key in SILENT_SUBSET_KEYS {
+    // Reverse closure for the implemented group (the cell above only
+    // constrains loader-table keys): every implemented entry must itself be
+    // outside the rejection table, a loader key, and a `SUBSET_CHANNEL_KEYS`
+    // member — the module-level whitelist and this local pin cannot drift
+    // apart in either direction, and the disjointness is asserted on the
+    // tables themselves because both "not refused" behavior cells would pass
+    // for a key sitting in both pinned groups.
+    for key in IMPLEMENTED_LOADER_KEYS {
+        crate::negative_assert!(
+            !UNMIGRATED_CHANNEL_KEYS.contains(&key),
+            "#2301 every implemented loader key is outside the rejection table"
+        );
         crate::negative_assert!(
             CHANNEL_LOADER_KEYS.contains(&key),
-            "#1853 every silent-subset key is a loader-table key"
+            "#2301 every implemented loader key is a loader-table key"
         );
         crate::negative_assert!(
             SUBSET_CHANNEL_KEYS.contains(&key),
-            "#1853 every silent-subset key is in the module subset whitelist"
+            "#2301 every implemented loader key is in the module subset whitelist"
         );
     }
     for key in SUBSET_CHANNEL_KEYS {
         crate::negative_assert!(
-            SILENT_SUBSET_KEYS.contains(&key)
-                || BUNDLE_CHANNEL_KEYS.contains(&key)
-                || NATIVE_MOUNT_KEYS.contains(&key),
-            "#1853 every module subset key is silent-subset, bundle, or native-mount"
+            IMPLEMENTED_LOADER_KEYS.contains(&key) || BUNDLE_CHANNEL_KEYS.contains(&key),
+            "#2301 every module subset key is implemented or a bundle key"
         );
     }
     // Reverse closure: a rejection-table entry that is neither a loader key
@@ -1640,56 +1645,25 @@ fn loader_keys_partition_rejected_and_silent_subset() {
     // suites in `native_process::channels_tests`:
     // - rejected: enabling refuses, naming the key (also
     //   `startup_refuses_every_unmigrated_channel`);
-    // - silent-subset: not refused today — #1853 过渡差异，终态见 #2301（also
-    //   `unmigrated_subset_channels_stay_loadable`）;
-    // - native-mount: the loader mount loads the key (`slack` in
-    //   `loader_mount_builds_slack_channel`);
-    // - implemented: constructed at startup (`weixin` in
-    //   `startup_gate_requires_strict_boolean_true`, `feishu` in
-    //   `startup_builds_the_enabled_feishu_channel`).
+    // - implemented: not refused, outside the bundle table, and constructed
+    //   at startup through the production mounts (also
+    //   `unmigrated_subset_channels_stay_loadable`, the
+    //   `loader_mount_builds_*_channel` family, and
+    //   `native_process::channels_tests::production_mounts_cover_every_
+    //   non_rejected_loader_key` / `startup_builds_the_enabled_loader_
+    //   channels`).
     for key in &rejected {
         assert_rejects_unmigrated(key);
     }
-    for key in SILENT_SUBSET_KEYS {
+    for key in IMPLEMENTED_LOADER_KEYS {
         let adapters = enabled_adapters(&[key]);
         crate::negative_assert!(
             reject_unmigrated_channels(Some(&adapters)).is_ok(),
-            "#1853 silent-subset key is not refused by the unmigrated gate"
+            "#2301 implemented loader key is not refused by the unmigrated gate"
         );
         crate::negative_assert!(
             !BUNDLE_CHANNEL_KEYS.contains(&key),
-            "#1853 silent-subset key is not a bundle key"
-        );
-        // Disjoint from the native-mount group: behavior cells cannot catch a
-        // key sitting in both pinned groups (both "not refused" cells pass), so
-        // the disjointness is asserted on the tables themselves.
-        crate::negative_assert!(
-            !NATIVE_MOUNT_KEYS.contains(&key),
-            "#1853 silent-subset key is not a native-mount key"
-        );
-    }
-    // The native-mount cell: outside the rejection table, loadable through the
-    // loader mount, and outside the bundle table.
-    for key in NATIVE_MOUNT_KEYS {
-        let adapters = enabled_adapters(&[key]);
-        crate::negative_assert!(
-            reject_unmigrated_channels(Some(&adapters)).is_ok(),
-            "#1853 native-mount key is not refused by the unmigrated gate"
-        );
-        crate::negative_assert!(
-            SUBSET_CHANNEL_KEYS.contains(&key),
-            "#1853 native-mount key is in the module subset whitelist"
-        );
-        // Membership closure, symmetric with the silent group: the covering
-        // cell only iterates `CHANNEL_LOADER_KEYS`, so a native key dropped
-        // from the loader table would otherwise keep this test green.
-        crate::negative_assert!(
-            CHANNEL_LOADER_KEYS.contains(&key),
-            "#1853 native-mount key is a loader-table key"
-        );
-        crate::negative_assert!(
-            !SILENT_SUBSET_KEYS.contains(&key),
-            "#1853 native-mount key is not a silent-subset key"
+            "#2301 implemented loader key is not a bundle key"
         );
     }
 }

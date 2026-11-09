@@ -655,7 +655,7 @@ async fn stop_returns_at_the_drain_bound_when_a_connection_outlives_it() {
     // outlived ones — not all three — are the aborted.
     let recorded = std::mem::take(&mut *warns.lock().expect("#2026 warnings mutex"));
     assert!(
-        recorded.len() == 1 && recorded[0].contains("2 in-flight connection(s) aborted"),
+        recorded.len() == 1 && recorded[0].contains("; 2 in-flight connection(s) aborted"),
         "#2026 the truncation warn counts only the connections still in the \
          set at the bound (the naturally retired one must not be counted), \
          saw {recorded:?}"

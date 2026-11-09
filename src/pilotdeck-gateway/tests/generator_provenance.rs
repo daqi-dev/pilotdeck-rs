@@ -699,7 +699,7 @@ fn regeneration_layout_rejects_missing_ambiguous_and_symlink_outputs() {
     assert!(
         read("fixture")
             .expect_err("#280 multiple outputs must fail")
-            .contains("found 2"),
+            .ends_with("found 2"),
         "#280 ambiguous oracle diagnostic"
     );
     fs::remove_file(root.join("oracle.json")).expect("#280 remove owned direct output");

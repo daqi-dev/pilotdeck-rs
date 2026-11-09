@@ -21,6 +21,7 @@ from negative_process import target_environment
 from negative_suite import invalidate_completed, publish_summary
 
 source = root / 'scripts/native-witness/stimulus_plan.py'
+driver = root / 'scripts/native-witness/stimulus_driver.py'
 collector = root / 'scripts/native-witness/collect.py'
 fixture = Path(__file__).with_name('test_plan.py')
 measurement = Path(__file__).with_name('verify_measurement.py')
@@ -92,6 +93,14 @@ cases = [
     ('memory-e2e-claims-compiled', e2e_runner, "        status, reason, compiled = 'INVALID', '', False\n        try:", "        status, reason, compiled = 'INVALID', '', True\n        try:", 'test_memory_runners_do_not_compile_tree'),
     ('empty-before-wrong-error-counted', measurement, "if str(error) != '#1368 missing required order edges: ' + target['name']:", 'if False:', 'test_measurement_empty_order_controls'),
     ('memory-rehearsal-without-lock', runner, '        if args.memory:\n            with tree_' + 'lock(root, timeout=900):\n                for row in selected:\n                    one(row)\n        else:', '        if args.memory:\n            for row in selected:\n                one(row)\n        else:', 'test_memory_rehearsal_holds_tree_lock'),
+    # #2396 adapter mutants: the attestation seam and the choreography notes
+    # the new AdapterTests pin with markers.
+    ('adapter-registry-closure-skipped', source, "        else:\n            if receipt != 'off':\n                absent.append('closure receipt (native run registry off)')", "        else:\n            if False:\n                absent.append('closure receipt (native run registry off)')", 'AdapterTests.test_adapter_registry_closure_requires_product_receipt'),
+    ('adapter-cross-case-accepted', source, "        inputs, waits = _loop(evidence, 'input', plan_id), _loop(evidence, 'wait', plan_id)", "        inputs, waits = _loop(evidence, 'input', None), _loop(evidence, 'wait', None)", 'AdapterTests.test_adapter_cross_case_receipts_do_not_attest'),
+    ('adapter-missing-not-precise', source, "            missing.append(target['name'] + ': ' + '; '.join(absent))", "            missing.append(target['name'] + ': ')", 'AdapterTests.test_adapter_precise_missing_per_target'),
+    ('adapter-witness-loses-target', source, "            witnesses.append({'target': target['name'], 'evidence': found})", "            witnesses.append({'target': '', 'evidence': found})", 'AdapterTests.test_driver_slow_status_choreography'),
+    ('driver-kp-release-order-unpinned', driver, "        state['notes']['returnReleaseAfterFinal'] = bool(\n            returns and state.get('finalAt') is not None\n            and returns[0]['monotonic'] >= state['finalAt'])", "        state['notes']['returnReleaseAfterFinal'] = bool(\n            returns and state.get('finalAt') is not None\n            and returns[0]['monotonic'] < state['finalAt'])", 'AdapterTests.test_driver_known_final_pending_release'),
+    ('driver-arms-special-case-broken', driver, "        key = 'error:turn_timeout' if (append == 'turn_timeout'\n                                       and variant.get('failStatus') == 'turn_timeout') \\", "        key = 'error:turn_timeout' if (append == 'turn_timeout'\n                                       and variant.get('failStatus') in ('turn_timeout', 'gateway_submit_failed')) \\", 'AdapterTests.test_storage_arms_match_the_arming_table'),
 ]
 messages = {
     'missing-cell': '#1368 all 72 inputs match TS preregistration',
@@ -131,7 +140,18 @@ messages = {
     'memory-e2e-claims-compiled': '#1368 memory runners never launch cargo or claim a mutated build',
     'empty-before-wrong-error-counted': '#1368 empty-before data controls cover every ordered measurement',
     'memory-rehearsal-without-lock': '#1398 stimulus-plan memory rehearsal holds the source tree lock',
+    'adapter-registry-closure-skipped': '#2396 no-registry closure is the product receipt, never file absence alone',
+    'adapter-cross-case-accepted': '#2396 receipts keyed to another plan never witness this case',
+    'adapter-missing-not-precise': '#2396 a target without its raw receipts keeps the row NOT_RUN with a precise missing',
+    'adapter-witness-loses-target': '#2396 slowStatus: block gates the outcome release, FIFO then release precedes final',
+    'driver-kp-release-order-unpinned': '#2396 K-P: known outcome first, return held, released only after the final frame',
+    'driver-arms-special-case-broken': '#2396 per-case arms follow plan section 6, one barrier-or-fault per site',
 }
+
+
+def full_test(test):
+    """Bound test name with its class; #2396 added the AdapterTests family."""
+    return test if test.startswith(('PlanTests.', 'AdapterTests.')) else 'PlanTests.' + test
 
 
 def preflight():
@@ -159,8 +179,9 @@ def classify(result, test, marker):
     log = result.stdout + result.stderr
     if passed(result):
         return 'SURVIVED'
-    if (result.returncode == 1 and re.search(r'^FAIL: ' + re.escape(test)
-            + r' \((?:__main__|bound_tests)\.PlanTests\.' + re.escape(test) + r'\)', log, re.M)
+    short = re.escape(full_test(test).split('.')[-1])
+    if (result.returncode == 1 and re.search(r'^FAIL: ' + short
+            + r' \((?:__main__|bound_tests)\.(?:PlanTests|AdapterTests)\.' + short + r'\)', log, re.M)
             and re.search(r'^AssertionError:[^\n]*' + re.escape(marker), log, re.M)
             and re.search(r'^Ran 1 test in ', log, re.M) and 'FAILED (failures=' in log):
         return 'KILLED'
@@ -185,7 +206,7 @@ def memory_run(name):
         spec = importlib.util.spec_from_file_location('bound_tests', fixture)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        suite = unittest.defaultTestLoader.loadTestsFromName('PlanTests.' + test, module)
+        suite = unittest.defaultTestLoader.loadTestsFromName(full_test(test), module)
         result = unittest.TextTestRunner(verbosity=2).run(suite)
     return 0 if result.wasSuccessful() else 1
 
@@ -218,7 +239,7 @@ def main():
 
     def run(label, test, mutant=None):
         command = ([sys.executable, '-I', __file__, '--memory-run', mutant] if mutant else
-                   [sys.executable, '-I', str(fixture), 'PlanTests.' + test])
+                   [sys.executable, '-I', str(fixture), full_test(test)])
         result = run_owned(command, cwd=root, env=env, timeout=30)
         (out / (label + '.log')).write_text(result.stdout + result.stderr)
         return result
@@ -260,7 +281,7 @@ def main():
         except Exception as error:
             status, reason = 'INVALID', reason + '; restore: ' + str(error)
         results.append({'name': name, 'status': status, 'compiled': compiled, 'reason': reason,
-                        'test': 'PlanTests.' + test, 'marker': messages[name],
+                        'test': full_test(test), 'marker': messages[name],
                         'mode': 'memory-only' if args.memory else 'guarded-source'})
 
     try:
@@ -269,7 +290,7 @@ def main():
                 for row in selected:
                     one(row)
         else:
-            paths = [source, collector, fixture, measurement, runner, e2e_runner, r11,
+            paths = [source, driver, collector, fixture, measurement, runner, e2e_runner, r11,
                      Path(__file__).with_name('preregistration.mjs'),
                      root / 'src/pilotdeck-gateway/tests/native_stimulus_plan.rs']
             with mutating_sources(root, paths) as originals:

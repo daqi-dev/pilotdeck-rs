@@ -15,10 +15,25 @@ Recovery protocol (concurrency P2):
   (or to an unknown value). `--recover` restores only a value that matches the
   recorded mutation; unknown edits are never overwritten.
 - The cargo slot check runs *before* the mutation, waits a bounded time, and
-  uses the same process-name criterion as scripts/cargo-slots.sh. `ps` is the
-  primary probe; when the sandbox denies `ps`, `pgrep -x` for the known cargo
-  entry points is the fallback, and a failure of both probes is fatal (never
-  treated as zero).
+  counts cargo process *trees* the way scripts/cargo-slots.sh does: one
+  `ps -Aww -o pid=,ppid=,args=` sample, then only processes whose whole
+  ancestor chain holds no cargo (#1566 item 1 -- counting every first-word
+  match double counts, since `cargo clippy` spawns `cargo-clippy` which in
+  turn spawns `cargo check`: three matches, one slot). When the sandbox
+  denies `ps`, the `pgrep -x` fallback cannot see ppid, so a nonzero
+  reading only bounds the count from below and refuses immediately instead
+  of waiting out the slot deadline; zero is released only after the whole
+  name table read a clean no-match on two consecutive sweeps (#2516 item
+  2 -- one sweep cannot see an entry point that started after the sweep
+  had already probed its name). Both probes capture bytes and decode them
+  here, and any control character in a sample is a probe failure (#2516
+  item 3: universal newlines would fold a literal \r into \n and tear one
+  row into two). A failure of both probes is fatal (never treated as zero).
+  Registered residual (#2516 fix-r1 arbitration, 2026-11-09): the \n exemption
+  above is a registered residual, not a closed invariant -- this probe trusts
+  the local PATH, and with PATH attacker-controlled no whole-table census is
+  in scope (a torn fragment can spell a lawful row). See the "已知残余"
+  section of this fixture's README and follow-up #2609.
 - Every in-place run also enters `negative_process.mutating_sources`: it takes
   the shared `.negative-source.lock` and refuses to start unless the whole
   gateway product tree matches HEAD, so a residue from any SIGKILLed control
@@ -73,6 +88,10 @@ LIB_RESPONSE_DRAIN_TEST = "runtime::model::http::tests::complete_response_text_o
 
 CARGO_CAP = int(os.environ.get("NEGCTL_CARGO_CAP") or os.environ.get("PDRS_CARGO_SLOTS") or "4")  # #1287：宿主按主机配置名额
 SLOT_WAIT_SECONDS = float(os.environ.get("NEGCTL_SLOT_WAIT_SECONDS", "1800"))
+# #2516 fix-r1 (P2-a 1): each ps/pgrep sample is bounded. A hung wrapper (or a
+# ps wedged behind a sandbox) must surface as a probe failure inside the wait
+# loop, not hold the mutation window open for as long as the OS lets it.
+PROBE_TIMEOUT_SECONDS = float(os.environ.get("NEGCTL_PROBE_TIMEOUT_SECONDS", "30"))
 TEST_TIMEOUT = float(os.environ.get("NEGCTL_TEST_TIMEOUT", "600"))
 TERM_GRACE = float(os.environ.get("NEGCTL_TERM_GRACE", "10"))
 SIGNAL_GRACE = float(os.environ.get("NEGCTL_SIGNAL_GRACE", "5"))
@@ -85,6 +104,18 @@ STATE_DIR = Path(
 )
 STATE_FILE = STATE_DIR / "state.json"
 ORIGINAL_FILE = STATE_DIR / "original.http.rs"
+
+# #2516 item 3: every C0 control byte except \n (the ps row separator) plus
+# DEL. A probe sample carrying any of these is a probe failure, never a
+# zero count: with bytes captured and decoded in this file (never through
+# universal newlines), \n is the only character that may lawfully break a
+# row, and a \r in the wild means a wrapper spoke, not that the table is
+# empty. Real macOS ps escapes argv control bytes (^M / \012), so a genuine
+# sample carries none of these. The \n exemption is a registered residual
+# (#2516 fix-r1 arbitration), not a closed invariant: this probe trusts the
+# local PATH, and with PATH attacker-controlled no whole-table census is in
+# scope. See this fixture's README ("已知残余") and follow-up #2609.
+CONTROL_CHARACTERS = r"[\x00-\x09\x0b-\x1f\x7f]"
 
 CONTROLS = [
     (
@@ -722,23 +753,155 @@ def install_signal_handlers() -> None:
 
 
 def slots_from_ps() -> tuple[int | None, str]:
-    """Same criterion as scripts/cargo-slots.sh: first command word is cargo."""
+    """Count cargo process trees, the criterion scripts/cargo-slots.sh uses.
+
+    One `ps -Aww -o pid=,ppid=,args=` sample (the wide single snapshot avoids
+    counts torn between two samples), then a process counts only when no cargo
+    appears anywhere in its ancestor chain: each tree is counted once, at its
+    root. The walk follows the whole chain rather than only the direct parent
+    to cover cargo -> rustc -> build-script -> cargo (a build.rs spawning
+    cargo) with non-cargo processes in between. Matching the first command
+    word alone -- what the old docstring claimed was "the same criterion" --
+    double counts: `cargo clippy` spawns `cargo-clippy`, which spawns
+    `cargo check`, three matches for one slot (#1566 item 1). Rows split on
+    "\n" only, never splitlines(): a U+2028 inside some args must stay one
+    row, or it would tear into a second parseable row that can rewrite the
+    parent map (#1770 fix-r3).
+
+    The sample is captured as bytes and decoded here, never through
+    universal newlines: text=True wraps the pipe in io.TextIOWrapper with
+    newline=None, which folds a literal \r into \n and tears one row into
+    two, and the torn tail can pose as a parseable "int int rest" row that
+    overwrites the parent map (#2516 item 3; a wrapper ps printing one \r
+    is enough -- the real macOS ps escapes argv control bytes as ^M / \\012,
+    so a genuine sample carries none). Every other control character in
+    the decoded sample fails the probe the same way instead of becoming a
+    zero count: bytes the row parser cannot fully account for must never
+    release a mutation. \n itself is exempt because it is the row separator --
+    a registered residual, not a closed invariant (#2516 fix-r1 arbitration):
+    this probe trusts the local PATH, and with PATH attacker-controlled no
+    whole-table census is in scope (a torn fragment can spell a lawful row);
+    see this fixture's README ("已知残余") and follow-up #2609;
+    invalid UTF-8 stays in the args column as surrogates, which can spell
+    neither a pid nor a cargo name.
+
+    A stdout that is nonempty yet has zero parseable rows is a probe failure,
+    never a zero count: a sandbox/wrapper printing diagnostics with rc=0 (or
+    a ps that ignored the -o format but still exited 0) must not be read as
+    "no cargo" (#1770 fix-r1). One forged `int int rest` row clears that
+    guard, so a second invariant holds: this process is alive while ps runs,
+    a genuine full sample therefore always lists the caller's own pid, and a
+    table that parsed yet lacks it is a probe failure too (#1770 fix-r2).
+    """
     try:
-        result = subprocess.run(["ps", "-axo", "command="], capture_output=True, text=True)
+        result = subprocess.run(
+            ["ps", "-Aww", "-o", "pid=,ppid=,args="], capture_output=True,
+            timeout=PROBE_TIMEOUT_SECONDS,
+        )
     except OSError as error:
         return None, f"ps failed: {error}"
+    except subprocess.TimeoutExpired:
+        # #2516 fix-r1 (P2-a 1): a sample that never comes back is a probe
+        # failure, never a count -- reading 0 here would release a mutation
+        # beside a full quota with nobody even looking.
+        return None, f"ps timed out after {PROBE_TIMEOUT_SECONDS}s"
     if result.returncode != 0:
-        return None, f"ps exit {result.returncode}: {result.stderr.strip()}"
+        return None, (
+            f"ps exit {result.returncode}: "
+            f"{result.stderr.decode('utf-8', 'replace').strip()}"
+        )
+    stdout = result.stdout.decode("utf-8", "surrogateescape")
+    if not stdout.strip():
+        return None, "ps output empty"
+    if re.search(CONTROL_CHARACTERS, stdout):
+        # #2516 item 3: a control byte here (a \r most plausibly) means the
+        # row structure is not what the parser assumes -- under text=True
+        # that \r would already have torn a row and forged a parent-map
+        # entry. Fail closed, never read the sample as a zero count.
+        return None, "ps output contains control characters"
+    parent: dict[int, int] = {}
+    cargo_pids: set[int] = set()
+    parsed = 0
+    # split("\n"), not splitlines(): a U+2028 (or \x0b/\x0c/\x85) inside a
+    # process's args must keep it one row -- splitlines() would tear the args
+    # column into a second parseable "int int rest" row, letting a crafted
+    # command line overwrite the parent map (e.g. reparent a live cargo onto
+    # itself) and read a full slot as free. Same invariant as the pgrep rc=0
+    # row parser below (#1770 fix-r3 -- the review's deferred P3, taken as
+    # the 1-line follow-along it permitted, with form T as its control).
+    for line in stdout.split("\n"):
+        fields = line.split(None, 2)
+        if len(fields) < 3 or not fields[0].isdigit() or not fields[1].isdigit():
+            continue
+        parsed += 1
+        pid, ppid = int(fields[0]), int(fields[1])
+        parent[pid] = ppid
+        words = fields[2].split()
+        if words and re.fullmatch(r"(?:.*/)?cargo(?:-[a-z]+)?", words[0]):
+            cargo_pids.add(pid)
+    if not parsed:
+        # #1770 fix-r1: a nonempty stdout with zero parseable rows is a probe
+        # failure, not "no cargo" -- reading it as count=0 would release a
+        # mutation beside a full slot quota, so fail closed like every other
+        # probe failure (fall back / refuse, never treat as zero).
+        return None, "ps output had no parseable rows"
+    if os.getpid() not in parent:
+        # #1770 fix-r2: this process survives the whole ps run, so a real full
+        # sample always contains its own row. A table that parsed without the
+        # caller pid is not a ps sample (e.g. one forged "int int rest"
+        # diagnostic row), and reading it as count=0 would again release a
+        # mutation beside a full quota -- fail closed, never treat as zero.
+        return None, "ps output lacks caller pid"
     count = 0
-    for line in result.stdout.splitlines():
-        parts = line.split()
-        if parts and re.fullmatch(r"(?:.*/)?cargo(?:-[a-z]+)?", parts[0]):
+    for pid in cargo_pids:
+        ancestor = parent.get(pid)
+        # 4096 hops matches cargo-slots.sh: enough for any real chain, while
+        # still terminating a torn snapshot whose parent map contains a cycle.
+        hops = 0
+        while ancestor is not None and ancestor not in cargo_pids and hops < 4096:
+            ancestor = parent.get(ancestor)
+            hops += 1
+        if ancestor not in cargo_pids:
             count += 1
     return count, ""
 
 
 def slots_from_pgrep() -> tuple[int | None, str]:
-    """Fallback when `ps` is denied: count known cargo entry-point names."""
+    """Fallback when `ps` is denied: a lower bound, never a count.
+
+    `pgrep -x` cannot report ppid, so the ancestor dedup above is impossible
+    here: a per-name tally counts one tree's `cargo`, `cargo-clippy` and
+    `cargo check` separately. Without parentage the honest reading is "at
+    least one cargo tree is alive" whenever any known entry point exists, so
+    that is what this probe returns; `wait_for_slot` refuses to release a
+    mutation on it (#1566 item 1).
+
+    rc=0 without a pid row, or rc=1 (pgrep's "no match" code) with stdout
+    or stderr, is a probe failure rather than a reading: a wrapper that
+    swallows or injects output must not be read as "no entry point alive"
+    (#1770 fix-r2, fix-r3 for the whitespace-only stdout and stderr shapes;
+    #2516 item 1 made the stderr gate read the raw string, symmetric with
+    the stdout gate, so whitespace-only stderr is "someone spoke" too).
+    Zero means the whole name table read a clean no-match on two
+    consecutive sweeps (#2516 item 2): each sweep probes every listed name
+    once, and the second sweep closes the single-sweep gap where an entry
+    point that started after the first sweep had already passed its name is
+    never probed again. What stays outside even two sweeps is a name that
+    both appears and vanishes between them (it no longer holds a slot) or
+    starts after the second sweep's probe of its name -- the same snapshot
+    window the single ps sample above has. Output is captured as bytes and
+    decoded here, with any control character failing the probe, for the
+    same reason as the ps sample (#2516 item 3). The list is this repo's
+    cargo entry points: the built-in hot subcommands plus cargo-nextest
+    (CI's test entry, .github/workflows/ci.yml). That last one is not
+    built-in: cargo replaces itself (exec) with an external subcommand, so
+    during `cargo nextest run` no process named `cargo` survives for the
+    other names to find -- nextest must be listed by its own name (#1770
+    fix-r3, measured on cb8: the exec chain keeps one pid from wrapper to
+    cargo-nextest, with no cargo row as its parent). The scope still
+    differs from the ps path above, which matches any `cargo-*` first
+    word; an unlisted external subcommand would be missed here.
+    """
     names = [
         "cargo",
         "cargo-clippy",
@@ -749,18 +912,67 @@ def slots_from_pgrep() -> tuple[int | None, str]:
         "cargo-run",
         "cargo-bench",
         "cargo-doc",
+        # #1770 fix-r3: external subcommand, CI's test entry. Not in the
+        # built-in list above: cargo exec's it in place (measured), so during
+        # `cargo nextest run` no `cargo` process exists for the built-in
+        # names to find -- without this row the pgrep fallback would read a
+        # full slot as 0 and release a mutation.
+        "cargo-nextest",
     ]
-    total = 0
-    for name in names:
-        try:
-            result = subprocess.run(["pgrep", "-x", name], capture_output=True, text=True)
-        except OSError as error:
-            return None, f"pgrep -x {name} failed: {error}"
-        if result.returncode == 0:
-            total += len([line for line in result.stdout.splitlines() if line.strip()])
-        elif result.returncode != 1:
-            return None, f"pgrep -x {name} exit {result.returncode}: {result.stderr.strip()}"
-    return total, ""
+    for _sweep in (1, 2):
+        alive = False
+        for name in names:
+            try:
+                result = subprocess.run(
+                    ["pgrep", "-x", name], capture_output=True,
+                    timeout=PROBE_TIMEOUT_SECONDS,
+                )
+            except OSError as error:
+                return None, f"pgrep -x {name} failed: {error}"
+            except subprocess.TimeoutExpired:
+                # #2516 fix-r1 (P2-a 1): same fail-closed reading as the ps
+                # sample above -- a hang is a probe failure, never a zero.
+                return None, f"pgrep -x {name} timed out after {PROBE_TIMEOUT_SECONDS}s"
+            stdout = result.stdout.decode("utf-8", "surrogateescape")
+            stderr = result.stderr.decode("utf-8", "surrogateescape")
+            if re.search(CONTROL_CHARACTERS, stdout) or re.search(CONTROL_CHARACTERS, stderr):
+                # #2516 item 3: same fail-closed reading as the ps sample --
+                # control bytes the row/pid parser cannot account for must
+                # never be read as a clean no-match.
+                return None, f"pgrep -x {name} output contains control characters"
+            if result.returncode == 0:
+                # split("\n"), not splitlines(): a U+2028 inside a forged row must
+                # keep it one unparseable line (fail closed), not two pid rows.
+                if any(re.fullmatch(r"\d+", line.strip()) for line in stdout.split("\n")):
+                    alive = True
+                else:
+                    # #1770 fix-r2: rc=0 means pgrep matched, so its stdout must
+                    # hold pid rows; a wrapper swallowing stdout yet passing rc=0
+                    # through is a probe failure, never "no cargo" -> 0.
+                    return None, f"pgrep -x {name} rc=0 without a pid row"
+            elif result.returncode == 1:
+                # #1770 fix-r2: rc=1 is pgrep's "no match", which prints
+                # nothing; stdout here means a wrapper spoke instead of
+                # pgrep, so the probe failed rather than observed an absence.
+                # fix-r3: the raw stdout, not strip()ed -- pgrep prints nothing
+                # at all on a clean no-match, so even whitespace-only output is
+                # "someone spoke" (strip() folded it back into the empty string
+                # pgrep never produces, and split("\n") above already keeps a
+                # U+2028 forged row one line for the same reason).
+                if stdout:
+                    return None, f"pgrep -x {name} exit 1 with stdout: {stdout!r}"
+                # fix-r3 + #2516 item 1: same reading for stderr, now on the
+                # raw string like the stdout gate above -- a wrapper that
+                # refuses to run pgrep, diagnoses on stderr (even
+                # whitespace-only) and exits 1 is a probe failure too,
+                # never a clean no-match sweep -> 0.
+                if stderr:
+                    return None, f"pgrep -x {name} exit 1 with stderr: {stderr!r}"
+            else:
+                return None, f"pgrep -x {name} exit {result.returncode}: {stderr.strip()}"
+        if alive:
+            return 1, ""
+    return 0, ""
 
 
 def cargo_slots() -> tuple[int, str, str]:
@@ -796,6 +1008,23 @@ def wait_for_slot() -> None:
     deadline = time.monotonic() + SLOT_WAIT_SECONDS
     while True:
         count, source, note = cargo_slots()
+        # #1566 item 1: a nonzero reading from the pgrep fallback is only a
+        # lower bound -- the true tree count needs ppid, which pgrep cannot
+        # give. It can neither rise to "full" (so the wait below would end)
+        # nor be trusted as "free", so refuse immediately instead of holding
+        # the mutated source for SLOT_WAIT_SECONDS on an unknowable number.
+        # Zero is exact here (no entry point alive means no tree), so only
+        # the nonzero bound refuses; since #1770 fix-r2 zero can only come
+        # from clean whole-table sweeps, never from a failed probe, and
+        # #2516 requires two of them back to back before it releases.
+        if source == "pgrep":
+            if count == 0:
+                print(f"negctl: cargo slot free: 0/{CARGO_CAP} (probe=pgrep, no cargo entry point alive, {note})")
+                return
+            raise SystemExit(
+                "negctl: ps denied and the pgrep fallback can only bound the cargo "
+                f"count from below (>={count}); refusing to mutate"
+            )
         if count < CARGO_CAP:
             print(f"negctl: cargo slot free: {count}/{CARGO_CAP} (probe={source}, {note})")
             return

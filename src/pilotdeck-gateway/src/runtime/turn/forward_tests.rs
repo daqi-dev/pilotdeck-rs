@@ -62,7 +62,10 @@ fn clean(value: &mut JsValue) {
         *event = JsValue::Object(out);
     }
 }
-struct OrderedStore(Arc<RecordingStore>, Arc<Handler>);
+// #1770: the violation counter belongs to the ordering wrapper, not the
+// recording store it delegates to -- the four RecordingStore constructions
+// that never pass through this type would carry a dead field.
+struct OrderedStore(Arc<RecordingStore>, Arc<Handler>, Arc<AtomicUsize>);
 impl TranscriptStore for OrderedStore {
     fn append(&self, key: &TranscriptKey, entry: &JsValue) -> StoreResult<()> {
         if entry.get("type") == Some(&"turn_result".into()) {
@@ -70,7 +73,7 @@ impl TranscriptStore for OrderedStore {
             // panic there lands in a JoinHandle nobody awaits, so record the
             // ordering violation where the owning test can see it (#1219).
             if self.1.disposed.load(Ordering::SeqCst) != 1 {
-                self.0.order_violations.fetch_add(1, Ordering::SeqCst);
+                self.2.fetch_add(1, Ordering::SeqCst);
             }
             assert_eq!(
                 self.1.disposed.load(Ordering::SeqCst),
@@ -143,6 +146,7 @@ struct Fixture {
     root: std::path::PathBuf,
     key: TranscriptKey,
     store: Arc<RecordingStore>,
+    order_violations: Arc<AtomicUsize>,
     registry: Arc<ProjectRuntimeRegistry>,
     session: Arc<Mutex<SessionState>>,
     turn: LiveTurnStream,
@@ -172,15 +176,19 @@ impl Fixture {
             kind,
             fail: usize::from(!kind.is_empty() && row.get("noFail") != Some(&JsValue::Bool(true))),
             completes: AtomicUsize::new(0),
-            order_violations: AtomicUsize::new(0),
             attempts: AtomicUsize::new(0),
             gate: Mutex::new(None),
         });
+        let order_violations = Arc::new(AtomicUsize::new(0));
         let (inner, mut handler, rx) = buffered_handler(1);
         Arc::get_mut(&mut handler)
             .expect("#741h forward fixture invariant")
             .callback_cancel = Some(Cancellation::default());
-        let checked = Arc::new(OrderedStore(store.clone(), inner.clone()));
+        let checked = Arc::new(OrderedStore(
+            store.clone(),
+            inner.clone(),
+            order_violations.clone(),
+        ));
         let writer = Recorder::new(checked, key.clone()).writer().clone();
         let ids = AtomicUsize::new(0);
         *writer
@@ -315,6 +323,7 @@ impl Fixture {
             root,
             key,
             store,
+            order_violations,
             registry,
             session,
             turn,
@@ -572,6 +581,56 @@ async fn forward_completed() {
     );
 }
 
+// #1770 item 3: `status_pending` and `forward_status_fail_drop` replay the
+// same blocked-writer choreography -- a fixture whose first status write
+// parks on the store gate, the warm-up reads, then dropping the pending
+// read that holds the gate entry. Only the fault knob (`no_fail`) and the
+// invariant tag differ, so one helper keeps the #1219 R2 pairing from
+// drifting apart again; `tag` keeps every message byte-identical.
+async fn blocked_status_writer(tag: &str, no_fail: bool) -> (Fixture, std::sync::mpsc::Sender<()>) {
+    let invariant = format!("{tag} forward fixture invariant");
+    let assertion = format!("{tag} forward assertion");
+    let mut row = rows()
+        .into_iter()
+        .find(|r| r.get("name") == Some(&"status_explicit".into()))
+        .expect(&invariant)
+        .as_object()
+        .expect(&invariant)
+        .clone();
+    row.insert("fault".into(), "agent_status_message".into());
+    if no_fail {
+        row.insert("noFail".into(), JsValue::Bool(true));
+    }
+    let mut f = Fixture::new(&JsValue::Object(row));
+    let (entered, mut entry) = oneshot::channel();
+    let (release, wait) = std::sync::mpsc::channel();
+    *f.store.gate.lock().expect(&invariant) = Some((entered, wait));
+    for expected in ["turn_started", "input_accepted", "user_prompt_submitted"] {
+        assert_eq!(
+            next(&mut f.turn)
+                .await
+                .expect(&invariant)
+                .expect(&invariant)
+                .get("type"),
+            Some(&expected.into()),
+            "{}",
+            assertion
+        );
+    }
+    let mut pending = f.turn.next();
+    let gate_entry = format!("{tag} status writer must enter gate");
+    // The fixture's own gate wait is 10 seconds, so entry must be allowed at
+    // least that long: a tighter bound turns a loaded host into an
+    // undiagnosable "{tag} status writer must enter gate" failure (#1219
+    // review P2).
+    timeout(Duration::from_secs(15), async {
+        tokio::select! {result=&mut pending=>panic!("{tag} status escaped gate: {result:?}"), entered=&mut entry=>entered.expect(&invariant)}
+    })
+    .await
+    .expect(&gate_entry);
+    drop(pending);
+    (f, release)
+}
 async fn status_pending(drop_owner: bool) {
     let name = if drop_owner {
         "status_drop"
@@ -590,41 +649,7 @@ async fn status_pending(drop_owner: bool) {
         Some(&JsValue::Bool(false)),
         "#741h forward assertion"
     );
-    let mut row = rows()
-        .into_iter()
-        .find(|r| r.get("name") == Some(&"status_explicit".into()))
-        .expect("#741h forward fixture invariant")
-        .as_object()
-        .expect("#741h forward fixture invariant")
-        .clone();
-    row.insert("fault".into(), "agent_status_message".into());
-    row.insert("noFail".into(), JsValue::Bool(true));
-    let mut f = Fixture::new(&JsValue::Object(row));
-    let (entered, mut entry) = oneshot::channel();
-    let (release, wait) = std::sync::mpsc::channel();
-    *f.store
-        .gate
-        .lock()
-        .expect("#741h forward fixture invariant") = Some((entered, wait));
-    for expected in ["turn_started", "input_accepted", "user_prompt_submitted"] {
-        assert_eq!(
-            next(&mut f.turn)
-                .await
-                .expect("#741h forward fixture invariant")
-                .expect("#741h forward fixture invariant")
-                .get("type"),
-            Some(&expected.into()),
-            "#741h forward assertion"
-        );
-    }
-    let mut pending = f.turn.next();
-    // Same fixture gate as `forward_status_fail_drop`, whose own wait is 10
-    // seconds: a tighter bound turns a loaded host into an undiagnosable
-    // "#741h status writer must enter gate" failure (#1219 review P2).
-    timeout(Duration::from_secs(15), async {
-        tokio::select! {result=&mut pending=>panic!("#741h status escaped gate: {result:?}"), entered=&mut entry=>entered.expect("#741h forward fixture invariant")}
-    }).await.expect("#741h status writer must enter gate");
-    drop(pending);
+    let (mut f, release) = blocked_status_writer("#741h", true).await;
     for _ in 0..2 {
         let mut pending = f.turn.next();
         assert_recording_pending(pending.as_mut(), "#741h status predecessor still pending");
@@ -767,7 +792,7 @@ async fn status_pending(drop_owner: bool) {
         "#1219 [status-drop/cancel]: durable turn_result count follows the consumer"
     );
     assert_eq!(
-        f.store.order_violations.load(Ordering::SeqCst),
+        f.order_violations.load(Ordering::SeqCst),
         0,
         "#1219 [status-drop/cancel]: no out-of-order turn_result from the blocked worker"
     );
@@ -788,43 +813,8 @@ async fn forward_status_drop() {
 // that write is in flight rather than after it resolved.
 #[tokio::test]
 async fn forward_status_fail_drop() {
-    let mut row = rows()
-        .into_iter()
-        .find(|r| r.get("name") == Some(&"status_explicit".into()))
-        .expect("#1219 forward fixture invariant")
-        .as_object()
-        .expect("#1219 forward fixture invariant")
-        .clone();
-    // No `noFail`: the first status append returns the I/O error.
-    row.insert("fault".into(), "agent_status_message".into());
-    let mut f = Fixture::new(&JsValue::Object(row));
-    let (entered, mut entry) = oneshot::channel();
-    let (release, wait) = std::sync::mpsc::channel();
-    *f.store
-        .gate
-        .lock()
-        .expect("#1219 forward fixture invariant") = Some((entered, wait));
-    for expected in ["turn_started", "input_accepted", "user_prompt_submitted"] {
-        assert_eq!(
-            next(&mut f.turn)
-                .await
-                .expect("#1219 forward fixture invariant")
-                .expect("#1219 forward fixture invariant")
-                .get("type"),
-            Some(&expected.into()),
-            "#1219 forward assertion"
-        );
-    }
-    let mut pending = f.turn.next();
-    // The fixture's own gate wait is 10 seconds, so entry must be allowed at
-    // least that long; a tighter bound turns a loaded host into an
-    // undiagnosable "#1219 status writer must enter gate" failure.
-    timeout(Duration::from_secs(15), async {
-        tokio::select! {result=&mut pending=>panic!("#1219 status escaped gate: {result:?}"), entered=&mut entry=>entered.expect("#1219 forward fixture invariant")}
-    })
-    .await
-    .expect("#1219 status writer must enter gate");
-    drop(pending);
+    // No `noFail` in the helper: the first status append returns the I/O error.
+    let (mut f, release) = blocked_status_writer("#1219", false).await;
     let runtime = f
         .registry
         .resolve(None)
@@ -871,7 +861,7 @@ async fn forward_status_fail_drop() {
         "#1219 [status-fail-drop]: no durable turn_result without a consumer"
     );
     assert_eq!(
-        f.store.order_violations.load(Ordering::SeqCst),
+        f.order_violations.load(Ordering::SeqCst),
         0,
         "#1219 [status-fail-drop]: no out-of-order turn_result from the failed worker"
     );
@@ -1084,14 +1074,18 @@ async fn forward_real_status_write_error() {
         kind: "agent_status_message",
         fail: 1,
         completes: AtomicUsize::new(0),
-        order_violations: AtomicUsize::new(0),
         attempts: AtomicUsize::new(0),
         gate: Mutex::new(None),
     });
+    let order_violations = Arc::new(AtomicUsize::new(0));
     let inner = Arc::new(Handler::default());
     let (mut session, children) = session_tracking_children("live-normal", inner.clone()).await;
     session.recorder = Arc::new(Recorder::new(
-        Arc::new(OrderedStore(store.clone(), inner.clone())),
+        Arc::new(OrderedStore(
+            store.clone(),
+            inner.clone(),
+            order_violations.clone(),
+        )),
         key,
     ));
     let mut turn = session
@@ -1179,7 +1173,7 @@ async fn forward_real_status_write_error() {
     // blocking worker must be observable here too, not only in the dedicated
     // failure case.
     assert_eq!(
-        store.order_violations.load(Ordering::SeqCst),
+        order_violations.load(Ordering::SeqCst),
         0,
         "#1219 [status-write-error]: no out-of-order turn_result from the worker"
     );

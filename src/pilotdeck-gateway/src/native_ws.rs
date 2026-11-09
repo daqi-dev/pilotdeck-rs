@@ -253,6 +253,7 @@ impl NativeWsServer {
             accept_error: None,
             drained: None,
             finished: None,
+            finish_started: false,
         }));
         // The steady-state loop: accept until `stop`, then drain the
         // connections. `drained()` observes its completion through the
@@ -309,6 +310,13 @@ struct PhasedInner {
     /// Once-only `finish()`: the death-march path after a halted machine
     /// calls it a second time and must observe the recorded result.
     finished: Option<Result<(), String>>,
+    /// #2363: the in-progress marker that makes once-only hold for a
+    /// cancelled first run too. `finish()` runs holding the inner mutex,
+    /// so a caller that acquires the lock and finds this set without a
+    /// recorded verdict knows the earlier run was dropped mid-body (the
+    /// owner backstop cancelling the S4 face), not that it is still
+    /// running — a running finish holds the lock this caller waited on.
+    finish_started: bool,
 }
 
 impl PhasedInner {
@@ -355,7 +363,18 @@ impl PhasedInner {
                                 serve_socket(socket, host, token, version, input, http, grid_anchor, stop_http, stop_observed, close_notice)
                                 .await
                             {
-                                eprintln!("native WS connection: {error}");
+                                // #2434: a best-effort console line, like TS's
+                                // `console.error` — an `eprintln!` here panics
+                                // when the write fails (std behavior); the
+                                // JoinSet contains it (the `join_next` branch
+                                // drops the JoinError), so the blast radius
+                                // is the dead connection task and the lost
+                                // diagnostic line, while TS's `console.error`
+                                // loses neither the line nor the handler.
+                                crate::native_process::channels::console_log_line(
+                                    &mut std::io::stderr(),
+                                    &format!("native WS connection: {error}"),
+                                );
                             }
                             if crate::mutants::on("ws-caps-connection-leak") {
                                 std::mem::forget(_permit);
@@ -366,7 +385,13 @@ impl PhasedInner {
                     }
                     Err(error) if matches!(error.kind(), std::io::ErrorKind::InvalidInput | std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported) => break Some(error),
                     Err(error) => {
-                        eprintln!("native WS accept: {error}");
+                        // #2434: same best-effort shape as the connection
+                        // line above — a failed stderr write must not panic
+                        // the accept loop.
+                        crate::native_process::channels::console_log_line(
+                            &mut std::io::stderr(),
+                            &format!("native WS accept: {error}"),
+                        );
                         tokio::select! {
                             _ = &mut stop => break None,
                             _ = tokio::time::sleep(Duration::from_millis(100)) => {}
@@ -406,6 +431,26 @@ impl PhasedInner {
         if let Some(result) = self.finished.clone() {
             return result.map_err(ProxyError::from);
         }
+        if self.finish_started && !crate::mutants::on("native-ws-finish-rerun") {
+            // `native-ws-finish-rerun` (negative control, #2363): the
+            // in-progress marker deleted, so the revisit re-runs the whole
+            // half — another round of close frames, aborts and shutdowns.
+            // The marker set without a recorded verdict means the earlier
+            // finish() was cancelled mid-body (see the field's doc): S4 must
+            // not re-run. The interrupted verdict is recorded, so every
+            // later caller observes the same result.
+            // #2363 fix-r2: the cancelled run may have been dropped before
+            // it reached the shutdown request below (a drop inside the
+            // close-notice window never got there), which would leave the
+            // host teardown to `StopHost::drop` — a request nothing awaits.
+            // Re-issue it here: synchronous and idempotent, a no-op when
+            // the cancelled run already sent it.
+            self.host.request_shutdown(self.drain_budget);
+            let result = Err("native WS owner finish was interrupted".to_owned());
+            self.finished = Some(result.clone());
+            return result.map_err(ProxyError::from);
+        }
+        self.finish_started = true;
         // A5: the drain boundary notice — every surviving WS connection gets
         // an explicit close(1001, "server switching") and stops dispatching
         // new requests, before the strong abort takes them. Switch path
@@ -422,17 +467,37 @@ impl PhasedInner {
         }
         // Aborting transport waiters never cancels business jobs on the serial
         // host. Its shutdown cancels owned turns and waits for finally fences.
+        // #2363 fix-r2: the shutdown request goes out here, before the abort
+        // join's first await — a first finish() dropped inside the join (an
+        // un-abortable connection parked there) or inside `host.shutdown`
+        // would otherwise leave the teardown request to `StopHost::drop`,
+        // which nothing awaits. Synchronous and idempotent (`send_if_modified`
+        // keeps the first budget), so the `host.shutdown` below just awaits
+        // the drain it already started — the graceful close-notice window
+        // above has already closed by this point, so nothing observes the
+        // earlier request.
+        self.host.request_shutdown(self.drain_budget);
         if crate::mutants::on("native-ws-handshake-leak") {
             self.connections.detach_all();
         } else {
             self.connections.abort_all();
             while self.connections.join_next().await.is_some() {}
         }
-        self.host
-            .shutdown(self.drain_budget)
-            .await
-            .map_err(std::io::Error::other)?;
-        let result = if !self.drained.unwrap_or(false)
+        // #2363: the shutdown's own error folds into the verdict below — an
+        // early `?` return would skip the `finished` write, so a revisit (the
+        // death march after a halted machine) would re-run the whole half.
+        let shutdown = self.host.shutdown(self.drain_budget).await;
+        // `native-ws-finish-error-escape` (negative control, #2363): the
+        // pre-fix early escape restored — the shutdown error returns before
+        // the verdict is recorded.
+        if crate::mutants::on("native-ws-finish-error-escape")
+            && let Err(error) = shutdown
+        {
+            return Err(std::io::Error::other(error).into());
+        }
+        let result = if let Some(error) = shutdown.err().map(|error| error.to_string()) {
+            Err(error)
+        } else if !self.drained.unwrap_or(false)
             && !crate::mutants::on("native-ws-drain-false-success")
         {
             Err("native WS drain deadline exceeded".to_owned())
@@ -509,7 +574,9 @@ impl PhasedRun {
     }
 
     /// S4's WS half: close notice, abort, host shutdown, error reporting.
-    /// Idempotent — a second call observes the recorded result.
+    /// Idempotent — a second call observes the recorded result, and a first
+    /// call that was cancelled mid-run (the owner backstop dropping the S4
+    /// face) leaves its own recorded verdict instead of a re-run (#2363).
     pub async fn finish(&self) -> Result<(), ProxyError> {
         let mut guard = self.inner.lock().await;
         guard.finish().await

@@ -1023,3 +1023,47 @@ fn loader_mount_builds_bluebubbles_channel() {
     );
     assert_eq!(channels[0].channel_key().to_string(), "bluebubbles");
 }
+
+/// #2433, loader level: a present non-nullish non-string `extra.serverUrl`
+/// makes the TS constructor throw `TypeError: url.replace is not a function`
+/// (`normalizeBaseUrl`'s `url.replace`), so `loadEnabledChannels` records
+/// exactly one console.error line for the key and continues — the channel
+/// never enters the returned array. Falsy non-strings throw too (`??` keeps
+/// them; Node v22.22.0 probes in `_tmp/20261026-issue-p2batch-f/s5-probe/`);
+/// the string shape keeps constructing (the sibling test above pins that).
+#[test]
+fn loader_records_server_url_type_errors_and_continues() {
+    for shape in ["42", "0", "false", r#"{"host": 1}"#] {
+        let mut mounts = crate::channel::loader::ChannelLoaderMounts::default();
+        register(&mut mounts);
+        let server_url: Value = serde_json::from_str(shape).expect("#2433 serverUrl shape parses");
+        let raw = json!({
+            "bluebubbles": {
+                "enabled": true,
+                "token": "tok-1",
+                "extra": {"serverUrl": server_url},
+            },
+            "telegram": {"enabled": false},
+        });
+        let adapters = parse_json(&raw.to_string()).expect("#2433 loader fixture adapters parse");
+        let mut errors = Vec::new();
+        let channels = crate::channel::loader::load_enabled_channels(
+            Some(&adapters),
+            &crate::channel::loader::LoadEnabledChannelsOptions { pilot_home: None },
+            &mounts,
+            &mut |message| errors.push(message),
+        );
+        crate::negative_assert_eq!(
+            errors,
+            vec![
+                "[adapters] Failed to load channel \"bluebubbles\": TypeError: url.replace is not a function"
+                    .to_owned()
+            ],
+            "#2433 the loader records the serverUrl TypeError and skips the key ({shape})"
+        );
+        crate::negative_assert!(
+            channels.is_empty(),
+            "#2433 the failed key constructs no channel ({shape})"
+        );
+    }
+}

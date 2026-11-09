@@ -5,11 +5,17 @@ compilation and nonce receipts.
 No source replacement: use the shared tree lock + working-tree SHA contract.
 Caller supplies CARGO_TARGET_DIR; all selected rows run before the summary exit.
 
-The four rows cover the machine's own contract on the matrix §四 failure
+The thirteen rows cover the machine's own contract on the matrix §四 failure
 semantics — the A2 halt branch, the A8 gate release point, the DC-1/A3 cap
-clause of the shared timeout predicate — and the production wiring's A10 flush
-precondition. Each row's anchor is the receipt-emitting assertion inside the
-named test, so only that assertion's panic can kill its mutant.
+clause of the shared timeout predicate — the production wiring's A10 flush
+precondition, and the nine #2363 follow-ups: the halt walk's close-timeout
+branch, the backstop spelling's own cap clause, the A6 management gate at
+the cron routing seam (the closed check, the dispatch's read half and the
+S1 face's drain), the halt walk's owner-finish timeout branch, the S4
+half's once-only verdict (the error-path early escape and the cancelled
+run's re-run), and the management gate registry's repeat-lookup reuse.
+Each row's anchor is the receipt-emitting assertion inside
+the named test, so only that assertion's panic can kill its mutant.
 """
 import argparse
 import json
@@ -29,8 +35,12 @@ MACHINE = ROOT / 'src/pilotdeck-gateway/src/switch.rs'
 MACHINE_TESTS = ROOT / 'src/pilotdeck-gateway/src/switch_tests.rs'
 WIRING = ROOT / 'src/pilotdeck-gateway/src/native_process/switch_wiring.rs'
 WIRING_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/switch_wiring_tests.rs'
+NATIVE_WS = ROOT / 'src/pilotdeck-gateway/src/native_ws.rs'
+CRON = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/cron.rs'
+CRON_TESTS = ROOT / 'src/pilotdeck-gateway/src/native_process/assembly/cron/cron_wiring_tests.rs'
 MACHINE_PREFIX = 'switch_tests::'
 WIRING_PREFIX = 'native_process::switch_wiring_tests::'
+CRON_PREFIX = 'native_process::assembly::cron::cron_wiring_tests::'
 
 switches = [
     # A2: the halt branch in `SwitchMachine::bounded` deleted — the face's
@@ -54,6 +64,59 @@ switches = [
     ('switch-flush-before-drain', WIRING,
      WIRING_PREFIX + 'the_flush_face_rejects_until_the_entries_have_drained',
      '#1353 A10: flush rejects before the entry drain completed'),
+    # #2363 item 1: the halt walk's close-timeout branch — the failure report
+    # for a hung channel stop deleted, so the bound is exceeded silently.
+    ('switch-halt-close-swallowed', WIRING,
+     WIRING_PREFIX + 'a_hung_channel_stop_exceeds_the_halt_close_bound',
+     '#2363 the hung channel stop is reported as exceeding the halt close bound'),
+    # #2363 item 2: the backstop spelling's own cap clause deleted — the
+    # shared spelling's mutant never covered this copy, so an over-cap value
+    # passes as a bounded backstop.
+    ('switch-backstop-unbounded-timeout', MACHINE,
+     MACHINE_PREFIX + 'backstop_timeout_predicate_rejects_unbounded_values',
+     '#2363 the backstop spelling rejects the uncapped value'),
+    # #2363 item 7: the A6 gate at the cron routing seam — the
+    # `cron_management_closed` check bypassed, so the stopped manager keeps
+    # serving the six management methods (the TS baseline's D5 shape).
+    ('switch-cron-management-open', CRON,
+     CRON_PREFIX + 'a_stopped_manager_rejects_the_six_management_methods',
+     '#2363 every management method answers the closed-gate rejection'),
+    # #2363 item 6, stop half: the S1 face's drain skipped — the write half
+    # of the management gate never waits for the in-flight dispatch, so the
+    # face reports Ok while the automation-side request is still running.
+    ('switch-cron-stop-no-drain', MACHINE,
+     MACHINE_PREFIX + 'the_stop_face_drains_an_in_flight_management_dispatch',
+     '#2363 the stop face waits for the in-flight dispatch'),
+    # #2363 item 6, dispatch half: the read half not held across the
+    # dispatch body — the stop face's drain has nothing to wait for, so the
+    # dispatch runs on past the stop (the pre-item-6 check-then-act window).
+    ('switch-cron-dispatch-ungated', CRON,
+     MACHINE_PREFIX + 'the_stop_face_drains_an_in_flight_management_dispatch',
+     '#2363 the stop face waits for the in-flight dispatch'),
+    # #2363 item 6, registry: the lookup's find discarded — every lookup
+    # mints and registers a fresh gate, so the same live manager's second
+    # lookup answers a different gate (the reuse contract's red shape).
+    ('switch-cron-gate-registry-lookup', MACHINE,
+     MACHINE_PREFIX + 'the_management_gate_registry_forgets_dead_managers',
+     '#2363 the lookup reuses the registered gate'),
+    # #2363 item 4: the halt walk's owner-finish timeout branch — the failure
+    # report for a hung S4 half deleted, so the bound is exceeded silently
+    # and the process exit is kept alive by the hang.
+    ('switch-halt-owner-swallowed', WIRING,
+     WIRING_PREFIX + 'a_hung_host_teardown_exceeds_the_halt_owner_bound',
+     '#2363 the hung owner finish is reported as exceeding the halt owner bound'),
+    # #2363 item 5, error path: the pre-fix early escape restored — the host
+    # shutdown error returns before the verdict is recorded, so the revisit
+    # sees the interrupted marker instead of the recorded failure.
+    ('native-ws-finish-error-escape', NATIVE_WS,
+     WIRING_PREFIX + 'an_erroring_owner_finish_is_recorded_for_the_revisit',
+     '#2363 the revisit observes the recorded host shutdown failure'),
+    # #2363 item 5, drop path: the in-progress marker deleted, so a revisit
+    # after a cancelled first run re-runs the whole S4 half — another round
+    # of close frames, aborts and host shutdowns.
+    ('native-ws-finish-rerun', NATIVE_WS,
+     WIRING_PREFIX + 'an_interrupted_owner_finish_is_not_rerun_by_the_revisit',
+     '#2363 the interrupted owner finish is reported, not re-run'),
 ]
 
 
@@ -67,7 +130,8 @@ def main():
     preflight([dict(name=n, path=p, test=t, anchor=a) for n, p, t, a in switches])
     # One list feeds both the binding and the file reads: a row cannot bind
     # one module and audit another (the #1890 rule).
-    modules = ((MACHINE_PREFIX, MACHINE_TESTS), (WIRING_PREFIX, WIRING_TESTS))
+    modules = ((MACHINE_PREFIX, MACHINE_TESTS), (WIRING_PREFIX, WIRING_TESTS),
+               (CRON_PREFIX, CRON_TESTS))
     sources = {path: path.read_text() for _, path in modules}
     for _, _, test, assertion in switches:
         file, short = bind_module_file(test, modules)
@@ -89,7 +153,7 @@ def main():
     for key in ('PDRS_MUTANT', ReceiptRun.ENV, ReceiptRun.PARENT_ENV, 'CARGO_TERM_QUIET'):
         env.pop(key, None)
     guarded = [
-        MACHINE, MACHINE_TESTS, WIRING, WIRING_TESTS,
+        MACHINE, MACHINE_TESTS, WIRING, WIRING_TESTS, NATIVE_WS, CRON, CRON_TESTS,
         ROOT / 'src/pilotdeck-gateway/src/lib.rs',
         ROOT / 'src/pilotdeck-gateway/src/native_process.rs',
         ROOT / 'src/pilotdeck-gateway/src/mutants.rs',

@@ -1530,6 +1530,46 @@ static SUBREAPER_ADOPTIONS: Mutex<Option<(Option<Pid>, usize)>> = Mutex::new(Non
 #[cfg(target_os = "linux")]
 static SCAN_WINDOW: Mutex<()> = Mutex::new(());
 
+/// #2154 (probe OOM window): a guard that kills a whole probe process group.
+/// The zombie-leader probes are the only tests that deliberately park a
+/// descendant in the poison state — a zombie leader with a live thread group
+/// and an EACCES fd directory — and the probe's `os.fork()`-to-`print(pid)`
+/// span is exactly where an OOM-killed probe used to strand it: the test
+/// panicked on the empty pid line, nothing killed the group, and the poison
+/// outlived the released [`SCAN_WINDOW`] for as long as the surviving thread
+/// slept. Both probes now run in their own process group (`process_group(0)`)
+/// and take this guard before reading anything from them, so every exit path
+/// — a passing run, an expect that fails, or a panic unwinding through the
+/// test — kills the group. Rust drops locals in reverse declaration order,
+/// and the guard is declared after the window lock, so on the unwind path the
+/// group kill lands *before* the window is released. That is the whole
+/// guarantee on the unwind path — the kill is issued, not confirmed: SIGKILL
+/// is asynchronous, and a panicking thread must not sit waiting for a group
+/// to die (#2142 fix-r1, concurrency r1 #4, correcting this comment's
+/// earlier "never meets" claim). The passing path closes the gap the unwind
+/// cannot, and the two probes close it differently (#2142 fix-r2, sibling r2
+/// #2, correcting fix-r1's "both probes wait for the group's death"): the
+/// EOF probe waits for the whole group's death before it drops the window,
+/// so what a concurrent scan may meet there is only a group still dying
+/// inside its own settle window; the leader probe waits only for the *hero's*
+/// thread group — the poison state — and then drops this guard while the
+/// probe leader (the python parent, single-threaded, parked in its own
+/// `os.waitpid`) is still alive, so the kill lands on a running process, not
+/// a corpse: what a concurrent scan may meet there is a process still
+/// exiting, never the poison state — the same residue the scan's fail-closed
+/// verdicts already absorb. The healthy path
+/// keeps killing the probe's child by its own pid first (`KillOnDrop` in the
+/// leader test); this guard is the backstop, not the primary kill.
+#[cfg(target_os = "linux")]
+struct KillProbeGroupOnDrop(Pid);
+
+#[cfg(target_os = "linux")]
+impl Drop for KillProbeGroupOnDrop {
+    fn drop(&mut self) {
+        let _ = rustix::process::kill_process_group(self.0, Signal::KILL);
+    }
+}
+
 /// Become a child subreaper (Linux): orphaned descendants — the stranger,
 /// whose parent helper dies before it does — are reparented to this process
 /// instead of PID 1, so the test is their reaper (#1155 r3 review P2-2).
@@ -1833,12 +1873,22 @@ impl BlindSource {
 /// once per grace round — without this, one hidden holder would cost
 /// N × `BLIND_SOURCE_SETTLE` inside a scan whose duration the callers bound,
 /// and the enumeration would classify the same pid twice (once per failed
-/// descriptor, once when `fds_of` reports the source). A memo cannot grow
-/// stale in a way that loosens the scan: under the assumptions of one scan —
-/// no new holder of the pipe can appear, the same pid-reuse caveat
-/// [`descended_from_this_process`] already carries — a source never becomes
-/// live again (`Terminal`/`Vanished` are final, `Unrelated` cannot become a
-/// descendant), and a cached `Related` is the fail-closed verdict.
+/// descriptor, once when `fds_of` reports the source).
+///
+/// #2154: what the memo freezes is the verdict of that pid's *first* settle
+/// window — a snapshot at settle-timeout, not a live classification, and the
+/// cache is safe on exactly one side. The skip verdicts are final: under the
+/// assumptions of one scan — no new holder of the pipe can appear, the same
+/// pid-reuse caveat [`descended_from_this_process`] already carries — a
+/// `Terminal`/`Vanished` source cannot become live again and an `Unrelated`
+/// one cannot become a descendant. A cached `Related` is the opposite side:
+/// it can only be *stricter* than a fresh verdict, never looser — the source
+/// it froze may since have settled into `Terminal`, and the memo keeps
+/// failing closed on it instead of skipping it. Re-settling a cached
+/// `Related` per lookup would spend up to another `BLIND_SOURCE_SETTLE`
+/// each time (the very N × settle this memo bounds) only to turn some
+/// fail-closed verdicts into skips — the one direction this cache must
+/// never move.
 ///
 /// It is a per-scan, single-threaded cache (r3 review, concurrency P2): one
 /// instance lives on the scan's stack and is never shared or reused, so its
@@ -1853,7 +1903,8 @@ struct BlindSources {
 
 #[cfg(target_os = "linux")]
 impl BlindSources {
-    /// The classification of `pid`, decided once per scan.
+    /// The classification of `pid`, decided once per scan: the verdict its
+    /// first lookup settled on, frozen for the rest of this scan.
     fn of(&mut self, pid: &str) -> BlindSource {
         *self
             .seen
@@ -1934,6 +1985,27 @@ fn thread_group_is_dead(pid: &str) -> bool {
     seen != 0
 }
 
+/// #2142 (#1409 r3 simplify review): the one definition of "this state means
+/// the source is terminal" — `Z`/`X` alone proves nothing (a zombie leader
+/// with a live thread group still shares its fd table, see
+/// [`thread_group_is_dead`]), only a dead thread group behind the state does.
+/// [`blind_source`] and [`settles_into_a_terminal_source`] both end here, so
+/// the enumeration's first check and the settle re-check cannot disagree on
+/// the same pid — the two used to write the criterion out twice, and the
+/// negative controls anchored only the enumeration's copy. #2142 fix-r1
+/// (boundary r1 #4): the production sweep (`src/test_process.rs`, #2138) has
+/// its own `terminal_state` — same shape, separate crate boundary — so this is
+/// the one definition *here*, and the two copies change together or not at
+/// all. #2142 fix-r2 (sibling r2 #2): "together" is machine-checked on both
+/// sides now — each copy's body is a negative-control anchor
+/// (`terminal-state-hardcoded-false` here,
+/// `terminal-state-production-hardcoded-false` there), and each crate's unit
+/// test pins the Terminal verdict of both entries on one dead pid.
+#[cfg(target_os = "linux")]
+fn terminal_state(pid: &str, state: char) -> bool {
+    matches!(state, 'Z' | 'X') && thread_group_is_dead(pid)
+}
+
 /// #1409: classify a source whose `/proc` reads failed, for the scan's
 /// "may this be skipped" decision.
 #[cfg(target_os = "linux")]
@@ -1949,8 +2021,9 @@ fn blind_source(pid: &str) -> BlindSource {
         return BlindSource::Related;
     };
     // A zombie leader with a live group has not released its descriptors, so
-    // "terminal" is the whole group being dead, not one task reporting `Z`.
-    if matches!(state, 'Z' | 'X') && thread_group_is_dead(pid) {
+    // "terminal" is the whole group being dead, not one task reporting `Z`
+    // (#2142: one criterion, shared with the settle re-check).
+    if terminal_state(pid, state) {
         return BlindSource::Terminal;
     }
     if descended_from_this_process(pid) {
@@ -1974,14 +2047,15 @@ const BLIND_SOURCE_SETTLE: Duration = Duration::from_millis(50);
 /// #1409: re-read a related source's state until it either proves terminal —
 /// a dead thread group, a dead task, or gone — or the settle window runs out,
 /// in which case it is still an unknown and the scan fails closed on it. A
-/// zombie leader alone is not terminal: see [`thread_group_is_dead`].
+/// zombie leader alone is not terminal: the verdict is [`terminal_state`]'s,
+/// the one definition the enumeration's first check also uses (#2142).
 #[cfg(target_os = "linux")]
 fn settles_into_a_terminal_source(pid: &str) -> BlindSource {
     let deadline = Instant::now() + BLIND_SOURCE_SETTLE;
     loop {
         match fs::read_to_string(format!("/proc/{pid}/stat")) {
             Ok(stat) => match stat_fields(&stat) {
-                Some(('Z' | 'X', _)) if thread_group_is_dead(pid) => {
+                Some((state, _)) if terminal_state(pid, state) => {
                     return BlindSource::Terminal;
                 }
                 Some(_) => {}
@@ -2187,7 +2261,16 @@ fn the_stat_fields_are_read_after_the_last_parenthesis() {
 /// #1409: the classification that decides whether a failed `/proc` read may
 /// be passed over. This process is always related — its own descriptors are
 /// what the scan reads first — init cannot descend from this test process,
-/// and a reaped child is gone.
+/// and a reaped child is gone. #2142: this test also walks the settle entry —
+/// `blind_source` of this very process passes the enumeration's first check
+/// as non-terminal and descends into [`settles_into_a_terminal_source`] — so
+/// it is where the Terminal side of the shared [`terminal_state`] criterion
+/// is pinned, through both entries on one dead pid: a killed, un-reaped group
+/// with no live task must read `Terminal` from the enumeration's first check
+/// and from the settle re-check alike. One assert holds both verdicts, so a
+/// criterion that drifts — or is hardcoded away — shows both halves flipping
+/// in the failure payload, not only the fail-open side the zombie-leader
+/// mutants pin on their probe.
 #[cfg(target_os = "linux")]
 #[test]
 fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
@@ -2220,6 +2303,40 @@ fn an_unreadable_source_is_skipped_only_when_it_cannot_hold_the_pipe() {
         BlindSource::Vanished,
         "#1409 a reaped process is gone and holds nothing"
     );
+    // #2142: the Terminal verdict of the shared criterion, through both
+    // entries, on one pid. The probe is killed but not reaped, so it is still
+    // in `/proc` as an all-`Z` group — terminal for the enumeration's first
+    // check (inside `blind_source`) and for the settle re-check (called
+    // directly, the entry a related-but-alive source reaches when the first
+    // check does not fire). Both calls are one expression, so the mutant that
+    // hardcodes the criterion away fails with both verdicts in its payload.
+    let mut dead = process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("#2142 spawn the dead-group probe");
+    let dead_pid = dead.id().to_string();
+    dead.kill().expect("#2142 kill the dead-group probe");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let stat = fs::read_to_string(format!("/proc/{dead_pid}/stat")).unwrap_or_default();
+        if matches!(stat_fields(&stat), Some(('Z', _))) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "#2142 the dead-group probe must become a zombie, not stay {stat:?}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(
+        (
+            blind_source(&dead_pid),
+            settles_into_a_terminal_source(&dead_pid)
+        ),
+        (BlindSource::Terminal, BlindSource::Terminal),
+        "#2142 a dead thread group must be terminal through both the enumeration and the settle"
+    );
+    let _ = dead.wait().expect("#2142 reap the dead-group probe");
 }
 
 /// #1409 r2 review (concurrency): a `Z` state is the leader's, not the
@@ -2259,6 +2376,186 @@ fn a_zombie_leader_alone_does_not_close_its_groups_descriptors() {
     let _ = child.wait();
 }
 
+/// #2142 fix-r2 (boundary r2 #1 / MM boundary r2 #1 / simplify r2 #2): the
+/// survivor's hold cap — the one number every probe budget below is derived
+/// against, injected into both probe scripts so the two cannot drift apart.
+/// The margin itself is a compile-time fact, not prose: the pid line's own
+/// budget plus the receipt, zombie and kill-window budgets must all fit
+/// inside the hold cap, or the kill-removed mutant can be outwaited by the
+/// front path's own clocks on a slow host — the failure fix-r1 structured
+/// away, whose last unbounded wait (the pid-line read itself) this round
+/// closes with `PROBE_LINE_BUDGET`.
+#[cfg(target_os = "linux")]
+const PROBE_HOLD_SECS: u64 = 30;
+
+/// #2142 fix-r2: the front-path budgets of the two probe tests — every wait
+/// fails red inside its own budget before it can silently overrun. The
+/// leader test's chain is the shorter one (no receipt wait), so the margin
+/// assert below covers both.
+#[cfg(target_os = "linux")]
+const PROBE_LINE_BUDGET: Duration = Duration::from_secs(4);
+
+#[cfg(target_os = "linux")]
+const PROBE_RECEIPT_BUDGET: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "linux")]
+const PROBE_ZOMBIE_BUDGET: Duration = Duration::from_secs(10);
+
+#[cfg(target_os = "linux")]
+const PROBE_KILL_WINDOW: Duration = Duration::from_secs(5);
+
+/// How long a timeout branch waits for its own explicit kill to land before
+/// it escalates — the kill's confirmation, so the window is released only
+/// behind a group that is provably dying, the same order the healthy path
+/// keeps.
+#[cfg(target_os = "linux")]
+const PROBE_DEATH_CONFIRM: Duration = Duration::from_secs(1);
+
+/// #2142 fix-r3 (concurrency P1, two reviewers): the confirmation escalates
+/// once — a first SIGKILL that has not landed within [`PROBE_DEATH_CONFIRM`]
+/// gets a second kill and this named window before the branch gives up and
+/// panics, so the panic never releases the window over a group that was only
+/// presumed dying (the fix-r2 shape dropped the verdict on the floor with
+/// `let _ =`, which is the gap this closes).
+#[cfg(target_os = "linux")]
+const PROBE_DEATH_RETRY_WINDOW: Duration = Duration::from_secs(3);
+
+/// The kill margin as a machine-checked fact (#2142 fix-r2, boundary r2 #1 /
+/// MM boundary r2 #1): the EOF test's whole front path — pid line + receipt +
+/// zombie + kill window — must fit inside the survivor's hold cap, or the
+/// kill-removed mutant stops being provably killable on a slow host. `Duration`
+/// addition is not const, so the budgets are compared as seconds.
+#[cfg(target_os = "linux")]
+const _: () = assert!(
+    PROBE_LINE_BUDGET.as_secs()
+        + PROBE_RECEIPT_BUDGET.as_secs()
+        + PROBE_ZOMBIE_BUDGET.as_secs()
+        + PROBE_KILL_WINDOW.as_secs()
+        < PROBE_HOLD_SECS
+);
+
+/// #2142 fix-r2 (boundary r2 #1 / MM boundary r2 #1): one line from a probe's
+/// piped stdout, read on a worker thread with its own budget — `read_line`
+/// has no deadline of its own, and leaving it unbounded in front of the
+/// receipt/zombie/kill budgets would let a slow host eat the kill margin from
+/// ahead (the hold thread's 30s clock starts at the fork, the budget sums
+/// only at the read). The reader is detached on purpose: a budget overrun
+/// panics while the read is still parked, and the pipe's write end is the
+/// probe's own lifetime (parent exit plus the child's first-act close), so
+/// the thread cannot outlive the probe it serves.
+#[cfg(target_os = "linux")]
+fn read_probe_line(stdout: process::ChildStdout, budget: Duration) -> (usize, String) {
+    use std::io::BufRead;
+    let (line_tx, line_rx) = mpsc::channel();
+    thread::Builder::new()
+        .name("#2142 probe pid line".into())
+        .spawn(move || {
+            let mut stdout = io::BufReader::new(stdout);
+            let mut line = String::new();
+            let _ = line_tx.send(stdout.read_line(&mut line).map(|read| (read, line)));
+        })
+        .expect("#2142 spawn the probe pid-line reader");
+    match line_rx.recv_timeout(budget) {
+        Ok(Ok(line)) => line,
+        Ok(Err(error)) => panic!("#2142 reading the probe's pid line failed: {error}"),
+        Err(_) => panic!(
+            "#2142 the probe's pid line must arrive within its own {}s budget",
+            budget.as_secs()
+        ),
+    }
+}
+
+/// #2142 fix-r2 (simplify r2 #3 / MM simplify r2 #4): the one wait both probe
+/// tests share — the group behind `pid` is gone from `/proc` (already reaped)
+/// or entirely `Z`/`X`, within `budget`, at a 5 ms cadence. Returns whether
+/// it settled in time; the caller owns the failure action, so the
+/// mutant-bound killpg line stays inside [`confirm_probe_group_death`], a
+/// different line from the guard's Drop the `probe-group-kill-removed` mutant
+/// removes. #2142 fix-r3 (concurrency #1): the wait fails closed — a `/proc`
+/// read that is anything but "no entry" (see [`metadata_failure_is_gone`])
+/// counts as alive, so a restricted procfs cannot hide a live group behind a
+/// read error and still deliver a confirmed death, the fail-open shape that
+/// could have false-PASSED the kill-removed mutant.
+#[cfg(target_os = "linux")]
+fn group_is_gone_within(pid: &str, budget: Duration) -> bool {
+    let deadline = Instant::now() + budget;
+    loop {
+        let gone = match fs::metadata(format!("/proc/{pid}")) {
+            // The usual exit: reaped, and gone from the tree.
+            Err(error) if metadata_failure_is_gone(&error) => true,
+            // Anything else unreadable is an unknown — alive for a wait
+            // whose whole job is proving death.
+            Err(_) => false,
+            Ok(_) => thread_group_is_dead(pid),
+        };
+        if gone {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// #2142 fix-r3 (concurrency #1): what a failed `/proc/<pid>` metadata read
+/// means for the group-is-gone wait — only a vanished entry is a
+/// disappearance. Any other failure (a restricted procfs answers EACCES for
+/// a live hero) leaves the group's state unknown, which the wait must count
+/// as alive: the same fail-closed side [`blind_source`] keeps for unreadable
+/// sources. Pinned by its own unit test — a healthy host's `/proc` never
+/// answers the error side for a descendant, the same reason
+/// [`an_unreadable_link_is_a_release_only_when_its_holder_is_gone`] pins the
+/// link rule instead of forcing a real unreadable link.
+#[cfg(target_os = "linux")]
+fn metadata_failure_is_gone(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::NotFound
+}
+
+/// #2142 fix-r3 (concurrency P1, two reviewers): the timeout branch's kill
+/// confirmation, made a real assertion. The fix-r2 shape dropped the verdict
+/// (`let _ = group_is_gone_within(..)`), so a group that outlived its own
+/// SIGKILL — a D-state task past the confirm budget — still saw the branch
+/// panic release the window over it. Now a false first confirm escalates
+/// once, a second kill and [`PROBE_DEATH_RETRY_WINDOW`], and only a group
+/// that stays live through both fails the assert; a confirmed death returns
+/// to the caller, whose own panic is the failure the branch exists for.
+#[cfg(target_os = "linux")]
+fn confirm_probe_group_death(group: Pid, hero: &str) {
+    rustix::process::kill_process_group(group, Signal::KILL).ok();
+    if group_is_gone_within(hero, PROBE_DEATH_CONFIRM) {
+        return;
+    }
+    rustix::process::kill_process_group(group, Signal::KILL).ok();
+    assert!(
+        group_is_gone_within(hero, PROBE_DEATH_RETRY_WINDOW),
+        "#2142 the timeout branch must not panic over a group whose death it could not confirm"
+    );
+}
+
+/// #2142 fix-r2 (concurrency r2 #1 / boundary r2 #3): collect the probe's
+/// orphaned hero when a concurrent stranger guard's child-subreaper lease has
+/// parked it on this process — in the bounded shape of the file's other
+/// waits (`EXITED | NOHANG` with its own deadline, never a blocking waitid:
+/// a recycled pid must not make this test wait on, or consume the exit state
+/// of, somebody else's child). ECHILD means init owns the hero and has
+/// already collected it. Either way this is reaping, not asserting, so no
+/// outcome fails the test.
+#[cfg(target_os = "linux")]
+fn reap_probe_orphan(hero: i32) {
+    let pid = Pid::from_raw(hero).expect("#2142 the probe hero's pid must be valid");
+    let deadline = Instant::now() + PROBE_DEATH_CONFIRM;
+    while Instant::now() < deadline {
+        match rustix::process::waitid(
+            rustix::process::WaitId::Pid(pid),
+            rustix::process::WaitIdOptions::EXITED | rustix::process::WaitIdOptions::NOHANG,
+        ) {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+
 /// #1409 r2 review (concurrency): a zombie thread-group leader whose group
 /// still has a live thread has *not* released the group's descriptors. The
 /// kernel reports `Z` for the leader, answers EACCES on the group's fd
@@ -2272,21 +2569,37 @@ fn a_zombie_leader_alone_does_not_close_its_groups_descriptors() {
 /// r3 review (concurrency P1): the probe deliberately holds a descendant in
 /// the state every scan must fail closed on, for about one settle window.
 /// [`SCAN_WINDOW`] keeps a concurrent scan out of that window — otherwise this
-/// test would make unrelated healthy tests flake.
+/// test would make unrelated healthy tests flake. #2154: the probe runs in
+/// its own process group with [`KillProbeGroupOnDrop`] taken before the
+/// first read, and its child closes the inherited stdout copy as its first
+/// act, so a probe that dies between its `os.fork()` and the pid line
+/// delivers EOF at the death — not held off until the surviving thread
+/// exits — and the panic on the empty pid line unwinds through the group
+/// kill, before the window is released. #2142 fix-r1 (boundary r1 #1,
+/// measured): without that close the read would block on the child's copy
+/// for the survivor's full 30s while holding the scan window — far past the
+/// `RETURN_GRACE` the publication callers allow — and the panic the guard
+/// exists for would never happen (`_tmp/20261026-issue-2142/fix-r1/
+/// oom-eof-probe-ab.log`).
 #[cfg(target_os = "linux")]
 #[test]
 fn a_live_group_behind_a_zombie_leader_is_not_terminal() {
     let _scan_window = SCAN_WINDOW
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    const PROBE: &str = r#"
+    // #2142 fix-r2 (simplify r2 #2): the survivor's hold cap is one constant
+    // shared with the EOF probe below, injected here — two handwritten `30`s
+    // could drift until one of them ate the kill margin the budgets protect.
+    let probe_script = format!(
+        r#"
 import ctypes, os, threading, time
 read_end, write_end = os.pipe()
 pid = os.fork()
 if pid == 0:
+    os.close(1)
     def hold():
         os.write(write_end, b"x")
-        time.sleep(30)
+        time.sleep({hold})
     threading.Thread(target=hold, daemon=False).start()
     time.sleep(0.2)
     ctypes.CDLL("libc.so.6", use_errno=True).pthread_exit(None)
@@ -2294,7 +2607,9 @@ if pid == 0:
 os.close(write_end)
 print(pid, flush=True)
 os.waitpid(pid, 0)
-"#;
+"#,
+        hold = PROBE_HOLD_SECS
+    );
     // Kill the probe's child on the way out, so neither the panic path nor a
     // passing run leaves a stray sleeper behind.
     struct KillOnDrop(Pid);
@@ -2307,31 +2622,35 @@ os.waitpid(pid, 0)
     let mut probe = process::Command::new("python3")
         .arg("-I")
         .arg("-c")
-        .arg(PROBE)
+        .arg(&probe_script)
         .stdout(process::Stdio::piped())
+        .process_group(0)
         .spawn()
         .expect("#1409 spawn the zombie-leader probe");
-    let mut pid_line = String::new();
-    {
-        use std::io::BufRead;
-        let mut stdout = io::BufReader::new(
-            probe
-                .stdout
-                .take()
-                .expect("#1409 take the zombie-leader probe's stdout"),
-        );
-        stdout
-            .read_line(&mut pid_line)
-            .expect("#1409 read the zombie-leader probe's child pid");
-    }
-    let hero = pid_line.trim().to_owned();
-    let hero_raw: i32 = hero
+    // #2154: the guard is taken before the first read of the probe — the span
+    // between the probe's `os.fork()` and its `print(pid)` is where an
+    // OOM-killed probe strands the poison state, and a panic on the empty pid
+    // line unwinds through this drop (the group kill) before it releases the
+    // scan window above.
+    let group = Pid::from_raw(probe.id() as i32)
+        .expect("#1409 the zombie-leader probe's pid must be valid");
+    let _probe_group = KillProbeGroupOnDrop(group);
+    let (_read, pid_line) = read_probe_line(
+        probe
+            .stdout
+            .take()
+            .expect("#1409 take the zombie-leader probe's stdout"),
+        PROBE_LINE_BUDGET,
+    );
+    let hero_raw: i32 = pid_line
+        .trim()
         .parse()
         .expect("#1409 the zombie-leader probe must print a numeric child pid");
+    let hero = hero_raw.to_string();
     let kill_on_drop = KillOnDrop(
         Pid::from_raw(hero_raw).expect("#1409 the probe's child pid must be a valid pid"),
     );
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + PROBE_ZOMBIE_BUDGET;
     loop {
         let stat = fs::read_to_string(format!("/proc/{hero}/stat")).unwrap_or_default();
         if matches!(stat_fields(&stat), Some(('Z', _))) {
@@ -2354,17 +2673,184 @@ os.waitpid(pid, 0)
     // that settles into `Terminal` only after its own deadline. The wait also
     // proves the guard's kill landed. The probe's own `waitpid` reaps the
     // child as soon as it dies, so "gone from /proc" is the usual exit — a
-    // vanished entry cannot be a source at all.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while fs::metadata(format!("/proc/{hero}")).is_ok() && !thread_group_is_dead(&hero) {
+    // vanished entry cannot be a source at all. The timeout branch kills the
+    // group explicitly and confirms the kill before it panics (#2142 fix-r2,
+    // sibling r2 #3 / concurrency r2 #2 — the same shape the EOF test's
+    // window has kept since fix-r1; fix-r3, concurrency P1, made the
+    // confirmation an asserted escalation instead of a dropped verdict), so
+    // no exit releases the window over a live group.
+    if !group_is_gone_within(&hero, PROBE_KILL_WINDOW) {
+        confirm_probe_group_death(group, &hero);
+        panic!("#1409 the probe's thread group must die by the guard's kill");
+    }
+    // #2142 fix-r1 (concurrency r1 #2; comment corrected in fix-r2, sibling r2
+    // #3 / concurrency r2 #2): drop the group guard while the probe leader —
+    // the python parent, whose own pid is the pgid — is still alive (blocked
+    // in its `os.waitpid`, or just woken from it): a pgid cannot be recycled
+    // while its leader lives, so the kill can never land on an unrelated
+    // group that reused the id. The parent's `os.waitpid` is also what
+    // usually reaps the hero, whichever exit the wait above took; when the
+    // kill reaches it first, the hero is reparented and the bounded
+    // `reap_probe_orphan` below collects it whenever it lands on this
+    // process. Group first, window last, the same order the unwind takes.
+    drop(_probe_group);
+    drop(_scan_window);
+    let _ = probe.wait().expect("#1409 reap the zombie-leader probe");
+    reap_probe_orphan(hero_raw);
+}
+
+/// #2154 (probe OOM window): the zombie-leader probe killed between its
+/// `os.fork()` and printing the child's pid is the stranding shape — the read
+/// sees EOF where a pid should be, the expect on the parse panics, and before
+/// the group guard that panic unwound with nothing owning the probe's child:
+/// the poison state (zombie leader, live thread group, EACCES fd directory)
+/// outlived both the test and the released [`SCAN_WINDOW`] for as long as the
+/// surviving thread slept. This test simulates exactly that path — the probe
+/// parent exits without printing, and the forked child closes stdout
+/// (otherwise EOF waits on the child's inherited copy) and parks itself in
+/// the poison state, publishing its pid to a receipt instead of the pipe —
+/// and asserts the guard's kill takes the whole group with it: poison may not
+/// outlive the probe. The surviving thread sleeps for `PROBE_HOLD_SECS` —
+/// the same cap the real leader probe's survivor sleeps — and that is what
+/// makes the kill-detection margin structural (#2142 fix-r1, concurrency r1
+/// #1 / boundary r1 #2; fix-r2 closed the last gap, boundary r2 #1 / MM
+/// boundary r2 #1): every stretch of path ahead of the kill window is
+/// bounded by its own assert (4s for the pid line — read on a worker
+/// thread, the one wait `read_line` gives no deadline of its own — 10s for
+/// the receipt, 10s for the zombie, 5s for the window = 29s), each budget
+/// failing red before it can silently overrun, and the sum is a
+/// compile-time fact (`PROBE_HOLD_SECS` and the margin assert beside it),
+/// so the kill-removed mutant cannot be outwaited by the front loops' own
+/// clocks — where a 10s hold left the verdict to host speed. The timeout
+/// branch additionally kills the group explicitly and confirms the kill
+/// before it panics — an asserted escalation since #2142 fix-r3 (concurrency
+/// P1: one more kill and a named retry window when the first confirm has not
+/// landed, so a group that outlives its own SIGKILL fails the assert instead
+/// of seeing the panic release the window over it) — so even the mutant
+/// leaves no residue past its failure and never releases the window over a
+/// live group.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_probe_that_dies_before_the_pid_line_takes_its_group_with_it() {
+    let _scan_window = SCAN_WINDOW
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let scratch = Scratch::new("zombie-leader-eof");
+    let receipt = scratch.path().join("child.pid");
+    // #2142 fix-r2: the hold cap is the shared `PROBE_HOLD_SECS` (no second
+    // handwritten 30 to drift), and the child publishes its pid through a
+    // staging name and one rename (MM concurrency r2 #4) — the test polls the
+    // receipt "exists means readable", and a created-but-empty receipt could
+    // parse a half-written pid and watch the wrong group.
+    let probe_script = format!(
+        r#"
+import ctypes, os, sys, threading, time
+receipt = sys.argv[1]
+pid = os.fork()
+if pid == 0:
+    os.close(1)
+    def hold():
+        time.sleep({hold})
+    threading.Thread(target=hold, daemon=False).start()
+    time.sleep(0.2)
+    staged = receipt + ".staging"
+    with open(staged, "w") as out:
+        out.write(str(os.getpid()))
+    os.rename(staged, receipt)
+    ctypes.CDLL("libc.so.6", use_errno=True).pthread_exit(None)
+    os._exit(9)
+os._exit(9)
+"#,
+        hold = PROBE_HOLD_SECS
+    );
+    let mut probe = process::Command::new("python3")
+        .arg("-I")
+        .arg("-c")
+        .arg(&probe_script)
+        .arg(&receipt)
+        .stdout(process::Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .expect("#2154 spawn the EOF probe");
+    let group = Pid::from_raw(probe.id() as i32).expect("#2154 the EOF probe's pid must be valid");
+    let _probe_group = KillProbeGroupOnDrop(group);
+    // #2142 fix-r2 (boundary r2 #1 / MM boundary r2 #1): the pid line is read
+    // on a worker thread with its own budget — this read used to be the one
+    // unbounded wait ahead of the 10/10/5 budgets, leaving the kill margin
+    // at the hold cap's mercy.
+    let (read, pid_line) = read_probe_line(
+        probe
+            .stdout
+            .take()
+            .expect("#2154 take the EOF probe's stdout"),
+        PROBE_LINE_BUDGET,
+    );
+    assert_eq!(
+        read, 0,
+        "#2154 the probe died before the pid line, so the read is an EOF, not {pid_line:?}"
+    );
+    // The child publishes its pid to the receipt — the pid line it never got
+    // to write. The receipt replaces nothing about the pipe: the panic path
+    // under repair had no pid at all, and this is only how the test learns
+    // which pid was stranded.
+    let deadline = Instant::now() + PROBE_RECEIPT_BUDGET;
+    let hero_raw = loop {
+        if let Some(pid) = fs::read_to_string(&receipt)
+            .ok()
+            .and_then(|text| text.trim().parse::<i32>().ok())
+        {
+            break pid;
+        }
         assert!(
             Instant::now() < deadline,
-            "#1409 the probe's thread group must die by the guard's kill"
+            "#2154 the stranded child must publish its pid to {receipt:?}"
+        );
+        thread::sleep(Duration::from_millis(5));
+    };
+    let hero = hero_raw.to_string();
+    let deadline = Instant::now() + PROBE_ZOMBIE_BUDGET;
+    loop {
+        let stat = fs::read_to_string(format!("/proc/{hero}/stat")).unwrap_or_default();
+        if matches!(stat_fields(&stat), Some(('Z', _))) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "#2154 the stranded leader must become a zombie, not stay {stat:?}"
         );
         thread::sleep(Duration::from_millis(5));
     }
+    // The guard's kill is what ends the poison state; without it the group
+    // lives for the hold thread's full 30s. The drop order here mirrors the
+    // unwind's: group first, window last — and the window is released only
+    // behind a group that is provably dying: the timeout branch kills
+    // explicitly, confirms the kill inside its own bound, and only then
+    // panics (#2142 fix-r2, concurrency r2 #2 — the panic's unwind releases
+    // the window, so it must not overtake the kill it just issued; fix-r3,
+    // concurrency P1, made that confirmation an asserted escalation — a
+    // second kill and a named retry window — rather than a dropped verdict).
+    drop(_probe_group);
+    if !group_is_gone_within(&hero, PROBE_KILL_WINDOW) {
+        // #2142 fix-r1 (concurrency r1 #1 / boundary r1 #2): the mutant's
+        // on-disk residue is bounded right here — the failure alone would
+        // leave the poison group alive for the hold thread's full 30s — and
+        // the kill lives in `confirm_probe_group_death`, whose line still
+        // reads differently from the guard's Drop line the mutant removes
+        // (`group` and `.ok()`, not `self.0` and `let _ =`), so the
+        // negative-control anchor stays unique.
+        confirm_probe_group_death(group, &hero);
+        panic!("#2154 the poison group must not outlive the guard's kill");
+    }
     drop(_scan_window);
-    let _ = probe.wait().expect("#1409 reap the zombie-leader probe");
+    let _ = probe.wait().expect("#2154 reap the EOF probe");
+    // #2142 fix-r1 (concurrency r1 #3; fix-r2 bounded it, MM concurrency r2
+    // #1 / boundary r2 #3): the probe parent never waits for its child, so
+    // the hero lands on whoever holds the child-subreaper flag — a concurrent
+    // stranger guard's lease parks it on this process, and the file's rule is
+    // that every guard reaps its own. Collect it when it is ours, in the
+    // bounded `NOHANG` shape every other wait here keeps; ECHILD means init
+    // owns it and has already collected it.
+    reap_probe_orphan(hero_raw);
 }
 
 /// #1409: the one rule the three `read_link` sites share, pinned on its own —
@@ -2403,6 +2889,31 @@ fn an_unreadable_link_is_a_release_only_when_its_holder_is_gone() {
             &mut BlindSources::default()
         ),
         "#1409 an unreadable link behind a holder that does not exist is a release"
+    );
+}
+
+/// #2142 fix-r3 (concurrency #1): the error side of the group-is-gone wait,
+/// pinned the same way the link rule above is — a healthy host's `/proc`
+/// never answers the error side for a descendant, so the classification is
+/// the testable seam. Only a vanished entry is a disappearance: a procfs
+/// that hides the hero behind EACCES (hidepid, a restricted container) must
+/// leave the group counted as alive, or the wait confirms a death it never
+/// observed — the fail-open that could have false-PASSED the kill-removed
+/// mutant.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_proc_read_error_means_gone_only_when_the_entry_is_absent() {
+    assert!(
+        metadata_failure_is_gone(&io::Error::from(io::ErrorKind::NotFound)),
+        "#2142 a vanished /proc entry is the one read error that means the group is gone"
+    );
+    assert!(
+        !metadata_failure_is_gone(&io::Error::from_raw_os_error(13)),
+        "#2142 an unreadable /proc entry means the group's state is unknown, never gone"
+    );
+    assert!(
+        !metadata_failure_is_gone(&io::Error::from_raw_os_error(5)),
+        "#2142 an I/O error reading /proc means the group's state is unknown, never gone"
     );
 }
 
