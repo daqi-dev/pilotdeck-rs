@@ -14,7 +14,7 @@
 | `per-session-replace-lost` | per-session 工具 `has ? replace : register`（:140） | 同上 | `#1433 a per-session MCP tool replaces the same-name builtin` |
 | `release-order-swapped` | 释放序 per-session → shared（组合序的逆） | `…::session_mcp_release_stops_per_session_before_shared` | `#1433 release order: per-session MCP before shared MCP` |
 | `per-session-limit-off` | `size >= max` 超限跳过（SessionMcpRuntimeBundle.ts:70） | `…::session_mcp_tools_respects_the_per_session_limit` | `#1433 the limit skips the per-session server` |
-| `per-session-limit-truncated` | 小数上限按 f64 比较、不截断为 usize（SessionMcpRuntimeBundle.ts:70；TS 不取整经 fix-r1 真 dist 探针实测，oracle 分数 cell 待 #2445） | `…::session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit` | `#1433 a 2.5 cap still admits the third per-session runtime` |
+| `per-session-limit-truncated` | 小数上限按 f64 比较、不截断为 usize（SessionMcpRuntimeBundle.ts:70；TS 不取整经 fix-r1 真 dist 探针实测，oracle 分数 cell 已由 #2445 落地：2.5 / 0.5→1 两格） | `…::session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit` | `#1433 a 2.5 cap still admits the third per-session runtime` |
 | `start-failure-propagated` | 启动失败降级为诊断（:147） | `…::session_mcp_tools_degrades_per_session_start_failures` | `#1433 composition survives the start failure` |
 | `turn-registry-drops-mcp` | 组合工具进 turn 注册表（#1433 原始缺陷） | `…::native_turn_registry_carries_the_session_mcp_tools` | `#1433 the turn registry carries the session MCP tool` |
 | `composition-reads-no-servers` | 组合读 enabled 表（生产读面） | `tests/sdk_mcp_session_tools.rs::discovery_composes_shared_and_per_session_tools` | `#1433 the shared lease tool is discovered` |

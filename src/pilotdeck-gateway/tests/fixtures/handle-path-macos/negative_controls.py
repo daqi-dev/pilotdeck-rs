@@ -28,7 +28,8 @@ ROOT = Path(__file__).resolve().parents[5]
 FIXTURES = Path(__file__).resolve().parents[1]
 HANDLE_PATH = ROOT / 'src/pilotdeck-gateway/src/handle_path.rs'
 sys.path.insert(0, str(FIXTURES))
-from negative_process import mutating_sources, run_owned, wait_for_slot
+from negative_process import (mutating_sources, run_owned, wait_for_slot,
+                              write_source_atomic)
 from negative_selection import (claim_dir, missing_target, refuse,
                                 refuse_unusable_target, registered, verdict_exit)
 from negative_suite import ReceiptRun, invalidate_completed, judge, passed
@@ -209,13 +210,25 @@ def main():
     try:
         with mutating_sources(ROOT, guarded) as originals:
             guarded_sha256 = {str(path.relative_to(ROOT)): hashlib.sha256(originals[path]).hexdigest() for path in guarded}
+            # #2468 r2 (review r6 concurrency#2/boundary#3): publish and
+            # restore every mutated source through `write_source_atomic` (a
+            # single rename, never a truncating in-place write), so a SIGKILL
+            # mid-write-back cannot leave an empty or half-written
+            # `handle_path.rs` that even `git checkout` cannot recover (#1903
+            # residue class). The mode is snapshotted from the source itself,
+            # so the new inode of the temp file does not become a mode-only
+            # `git diff` under `core.filemode=true`.
+            modes = {path: path.stat().st_mode & 0o7777
+                     for _, path, _, _, _, _ in mutations}
             for name, path, old, new, test, assertion in selected:
                 item = dict(name=name, test=test, assertion=assertion,
                             status='INVALID', reason='not run', compiled=False)
                 try:
                     if not args.compile_only and not passed(run(name + '-positive', env, test), test):
                         raise RuntimeError('positive bound test failed')
-                    path.write_text(originals[path].decode().replace(old, new, 1))
+                    write_source_atomic(ROOT, path,
+                                        originals[path].decode().replace(old, new, 1).encode(),
+                                        mode=modes[path])
                     if run(name + '-compile', env, test, compile_only=True).returncode:
                         raise RuntimeError('mutant did not compile; not a runtime kill')
                     item['compiled'] = True
@@ -230,7 +243,7 @@ def main():
                 except Exception as error:
                     item.update(status='INVALID', reason=f'{type(error).__name__}: {error}')
                 finally:
-                    path.write_bytes(originals[path])
+                    write_source_atomic(ROOT, path, originals[path], mode=modes[path])
                 try:
                     if not args.compile_only:
                         if not passed(run(name + '-restored', env, test), test):
