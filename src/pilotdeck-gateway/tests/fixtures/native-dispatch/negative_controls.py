@@ -113,7 +113,7 @@ def main():
                     changed = mutate(case, originals[case.path].decode())
                     if not compile_only and not passed(run(case.mutation + '-positive', args), case.test):
                         raise RuntimeError('#1305 positive control failed')
-                    case.path.write_text(changed)
+                    write_source_atomic(ROOT, case.path, changed.encode())
                     compiled = run(case.mutation + '-compile', ['--no-run'])
                     row['compiled'] = compiled.returncode == 0
                     if not row['compiled']:
