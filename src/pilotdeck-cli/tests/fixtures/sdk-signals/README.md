@@ -176,8 +176,8 @@ abort、连接、监听器和文件树继续严格比较。96 个有效观察格
 逐格钉住这 16 格的 `(2, 1006|4003)` / `(1, 1005)` 具体先后，并断言反序必被比较器拒绝；
 该名单还与 source.json 里呈同一形状的格集合逐集合相等（防丢格、防新增同形格；
 #1178 的 4 个 abort-rst 格同属该形状，已入名单，名单现 20 格；#2509 起名单长度由测试内
-`EXPECTED_STABLE_DIFF_COUNT = 20` 常量钉住——代码常量、数组字面 `let cells: [(&str,
-u64); 20]`、source.json 实测三角，防「数组与实测同步丢格」只剩 SHA 链一道防线；
+`EXPECTED_STABLE_DIFF_COUNT = 20` 常量钉住——代码常量、模块级 `const STABLE_DIFF_CELLS:
+[(&str, u64); 20]` 类型字面、source.json 实测三角，防「数组与实测同步丢格」只剩 SHA 链一道防线；
 20 = 16 个 #1260 稳定不同序格 + 4 个 #1178 abort-rst 格，specs/cli-parity/normalization.md
 §7 同步钉住）；
 产品侧负控 `initialization-query-close-before-control` 把顺序改回旧写法点名用例即红。

@@ -2327,9 +2327,9 @@ mod comparison_tests {
         }
     }
 
-    /// #1178: pin the four abort-rst originals through the shared comparator,
-    /// in the same shape as the close-order pin: the TS original against its
-    /// The comparator call in this test is a projection-shape pin, not a
+    /// #1178: pin the four abort-rst originals through the shared comparator
+    /// (the TS original against its Rust projection). The comparator call in
+    /// this test is a projection-shape pin, not a
     /// value pin: its `actual` side is derived from the same original, so
     /// the value surfaces (input.signal/stage, status, naturalExit,
     /// cleanupExit, aborts, connections, activeAfterExit, stdout) keep their
@@ -2400,10 +2400,12 @@ mod comparison_tests {
                 json!({"code":1,"signal":null,"cleanup":false}),
                 "#1178 RST natural exit: {id}"
             );
+            // Indexing a missing key also yields `Value::Null`, so pin the
+            // key's presence explicitly: the original records `cleanupExit: null`.
             assert_eq!(
-                expected["cleanupExit"],
-                Value::Null,
-                "#1178 RST cleanup exit: {id}"
+                expected.get("cleanupExit"),
+                Some(&Value::Null),
+                "#1178 RST cleanup exit is recorded null: {id}"
             );
             assert_eq!(expected["aborts"], json!(1), "#1178 RST abort count: {id}");
             assert_eq!(
