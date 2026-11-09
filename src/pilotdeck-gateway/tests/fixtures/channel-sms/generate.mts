@@ -32,7 +32,7 @@ const sourceSha256 = await baselineSourceHashes(baseline, sources);
 const require = createRequire(join(baseline, 'package.json'));
 const { transformSync } = createRequire(require.resolve('tsx'))('esbuild');
 
-const EXPECTED_CASE_COUNT = 57;
+const EXPECTED_CASE_COUNT = 59;
 // #1901: the stalled-body cell can only end at Node's default `requestTimeout`
 // (300 s), whose 408 lands on the 30 s connections-checker grid — worst case
 // just under 330 s. The generator runs every case twice, so this cell alone
@@ -238,6 +238,10 @@ const REQUEST = (
   // implicit; the HTTP/1.0 cell records it explicitly instead of hardcoding
   // 1.1 and silently recording a different client than it claims.
   version: string = 'HTTP/1.1',
+  // #2152: every pre-existing step carried a Host line; the missing-Host
+  // cell records its absence explicitly instead of silently recording a
+  // client the step never describes.
+  omitHost = false,
 ) => {
   const bytes = typeof body === 'string' ? body : body.repeat.repeat(body.count);
   // `truncate` keeps the full Content-Length but sends fewer bytes, so the
@@ -248,8 +252,9 @@ const REQUEST = (
   // carries; the 1.0 cell spells its own `Connection: keep-alive`, so the
   // response is what must decide the close.
   const connection = 'Connection' in headers ? '' : 'Connection: close\r\n';
+  const host = omitHost ? '' : 'Host: 127.0.0.1\r\n';
   return (
-    `${method} ${path} ${version}\r\nHost: 127.0.0.1\r\n${connection}` +
+    `${method} ${path} ${version}\r\n${host}${connection}` +
     Object.entries(headers).map(([key, value]) => `${key}: ${value}\r\n`).join('') +
     `Content-Length: ${Buffer.byteLength(bytes)}\r\n\r\n${wire}`
   );
@@ -928,6 +933,34 @@ scenario({
   ],
   turn: { events: [textDelta('1.0 reply')] },
 });
+scenario({
+  // #2152: `FROB` is outside Node's `http.METHODS`, so llhttp rejects it at
+  // the method token before any handler runs: the bare parser 400 (no Date,
+  // zero body bytes), not the route guard's 404. The step records the method
+  // verbatim; the Rust replay's `build_raw` reads it fail-closed, so the cell
+  // cannot silently degrade to a served method.
+  name: 'unknown-method', port: port(57),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({ body: '', headers: {}, method: 'FROB', path: '/sms/incoming' }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
+scenario({
+  // #2152: an HTTP/1.1 request with no `Host` header. `_http_server.js`
+  // rejects it before any handler runs: a 400 that carries a Date and a
+  // chunked empty body, unlike the bare parser 400 above. The step records
+  // `omitHost: true`; a Host line would turn the cell into an admitted 200.
+  name: 'missing-host', port: port(58),
+  extra: { accountSid: 'AC1', authToken: 'tok', phoneNumber: '+15550000' }, steps: [
+    request({
+      body: 'From=%2B15550001&Body=hostless',
+      headers: FORM, method: 'POST', path: '/sms/incoming', omitHost: true,
+    }),
+    settle(), stop(),
+  ],
+  turn: { events: [textDelta('never')] },
+});
 assert.equal(definitions.length, EXPECTED_CASE_COUNT, '#1339 generator case count');
 
 // ---------------------------------------------------------------------------
@@ -966,7 +999,7 @@ async function run(definition: Definition) {
     for (const step of steps) {
       switch (step.op) {
         case 'request': {
-          const raw = REQUEST(step.body, step.headers, step.method, step.path, step.truncate ?? 0, step.version);
+          const raw = REQUEST(step.body, step.headers, step.method, step.path, step.truncate ?? 0, step.version, step.omitHost === true);
           record.responses.push(step.stall === true
             // #1901: only the server's own deadline can finish this request.
             ? await stalledRequest(definition.port, raw, STALLED_PROBE_DEADLINE_MS)

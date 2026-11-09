@@ -983,6 +983,83 @@ async fn loopback_server(
     (server, url.to_string(), port)
 }
 
+/// #2152: the missing-Host cell replays over a raw socket — the `hyper`
+/// client above pins its own `Host` header onto every request, and the cell
+/// exists to send none. Returns the (status, content-type, body) the hyper
+/// path would have compared, so both paths share one assertion.
+async fn raw_hostless_exchange(port: u16, request: &[u8]) -> (u16, Option<String>, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("#2152 connect for the hostless replay");
+    stream
+        .write_all(request)
+        .await
+        .expect("#2152 write the hostless request");
+    // The rejection carries `Connection: close`, so the server ends the read.
+    let mut raw = Vec::new();
+    stream
+        .read_to_end(&mut raw)
+        .await
+        .expect("#2152 the hostless response must close the connection");
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .expect("#2152 the hostless response carries a header end");
+    let status = head
+        .split("\r\n")
+        .next()
+        .and_then(|line| line.split(' ').nth(1))
+        .and_then(|code| code.parse().ok())
+        .expect("#2152 the hostless response carries a status code");
+    let header_lines: Vec<&str> = head
+        .split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .collect();
+    let content_type = header_lines.iter().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case("content-type")
+            .then(|| value.trim().to_string())
+    });
+    let chunked = header_lines.iter().any(|line| {
+        line.split_once(':').is_some_and(|(name, value)| {
+            name.trim().eq_ignore_ascii_case("transfer-encoding")
+                && value.trim().to_ascii_lowercase().contains("chunked")
+        })
+    });
+    let body = if chunked {
+        dechunk(body)
+    } else {
+        body.to_string()
+    };
+    (status, content_type, body)
+}
+
+/// Strip HTTP/1.1 chunk framing (the hostless 400 answers with the empty
+/// chunk `0\r\n\r\n`; a general strip keeps the assertion honest if that ever
+/// changes).
+fn dechunk(mut body: &str) -> String {
+    let mut out = String::new();
+    while let Some(line_end) = body.find("\r\n") {
+        let Ok(size) = usize::from_str_radix(body[..line_end].trim(), 16) else {
+            break;
+        };
+        body = &body[line_end + 2..];
+        if size == 0 {
+            break;
+        }
+        let take = size.min(body.len());
+        out.push_str(&body[..take]);
+        body = &body[take..];
+        if let Some(rest) = body.strip_prefix("\r\n") {
+            body = rest;
+        }
+    }
+    out
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn socket_requests_match_typescript_framing() {
     let oracle = oracle();
@@ -996,6 +1073,17 @@ async fn socket_requests_match_typescript_framing() {
         let name = case["name"].as_str().unwrap();
         let request = &case["request"];
         let path = request["path"].as_str().unwrap();
+        // #2152: absence is the normal request (a `Host` is sent); only a
+        // recorded boolean may suppress it — the api-server lane's `setHost`
+        // rule. Anything else is fixture drift that would otherwise replay a
+        // differently-framed request.
+        let set_host = match request.get("setHost") {
+            None => true,
+            Some(Value::Bool(set_host)) => *set_host,
+            Some(other) => {
+                panic!("#2152 request `setHost` must be a boolean, found {other:?} ({name})")
+            }
+        };
         let mut builder = hyper::Request::builder()
             .method(request["method"].as_str().unwrap())
             .uri(format!("http://127.0.0.1:{port}{path}"));
@@ -1015,20 +1103,37 @@ async fn socket_requests_match_typescript_framing() {
                 .map(|body| body.as_bytes().to_vec())
                 .unwrap_or_default()
         };
-        let request = builder.body(Full::new(Bytes::from(body))).expect("request");
-        let response = client
-            .request(request)
-            .await
-            .unwrap_or_else(|error| panic!("{name}: {error}"));
-        let status = response.status().as_u16();
-        let content_type = response
-            .headers()
-            .get(hyper::header::CONTENT_TYPE)
-            .map(|value| value.to_str().unwrap().to_string());
-        let body = http_body_util::BodyExt::collect(response.into_body())
-            .await
-            .unwrap()
-            .to_bytes();
+        let (status, content_type, wire_body) = if set_host {
+            let request = builder.body(Full::new(Bytes::from(body))).expect("request");
+            let response = client
+                .request(request)
+                .await
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            let status = response.status().as_u16();
+            let content_type = response
+                .headers()
+                .get(hyper::header::CONTENT_TYPE)
+                .map(|value| value.to_str().unwrap().to_string());
+            let wire_body = http_body_util::BodyExt::collect(response.into_body())
+                .await
+                .unwrap()
+                .to_bytes();
+            (status, content_type, wire_body.to_vec())
+        } else {
+            // The recorded method and path on a hand-built request line: the
+            // hyper client would add its own `Host`, which is exactly the
+            // header this cell must not carry.
+            let mut raw = format!(
+                "{} {} HTTP/1.1\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+                request["method"].as_str().unwrap(),
+                path,
+                body.len()
+            )
+            .into_bytes();
+            raw.extend_from_slice(&body);
+            let (status, content_type, body) = raw_hostless_exchange(port, &raw).await;
+            (status, content_type, body.into_bytes())
+        };
         assert_eq!(
             status,
             case["response"]["status"].as_u64().unwrap() as u16,
@@ -1040,13 +1145,44 @@ async fn socket_requests_match_typescript_framing() {
             "{name}: content type"
         );
         assert_eq!(
-            body.as_ref(),
+            wire_body.as_slice(),
             case["response"]["body"].as_str().unwrap().as_bytes(),
             "{name}: body"
         );
     }
     server.close().await;
     let _ = std::fs::remove_dir_all(&directory);
+}
+
+/// #2152: the two parser-admission cells carry a knob the generator uses and
+/// the replay must not silently degrade, the api-server lane's rule: if the
+/// `unknown-method` cell ever records a served method, or `missing-host`
+/// loses its `setHost: false`, the replay would compare a routed answer
+/// against its own 400 and the gate could be removed unnoticed.
+#[test]
+fn socket_requests_pin_their_parser_admission_knobs() {
+    let oracle = oracle();
+    let cases = oracle["socketRequests"].as_array().unwrap();
+    let unknown = cases
+        .iter()
+        .find(|case| case["name"].as_str() == Some("unknown-method"))
+        .expect("#2152 the socketRequests carry the unknown-method cell");
+    assert_eq!(
+        unknown["request"]["method"].as_str(),
+        Some("FROB"),
+        "#2152 the unknown-method cell must record a token outside Node's \
+         `http.METHODS`, or the replay compares a routed answer"
+    );
+    let missing = cases
+        .iter()
+        .find(|case| case["name"].as_str() == Some("missing-host"))
+        .expect("#2152 the socketRequests carry the missing-host cell");
+    assert_eq!(
+        missing["request"]["setHost"].as_bool(),
+        Some(false),
+        "#2152 the missing-host cell must record `setHost: false`, or the \
+         replay sends a Host header"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1136,7 +1272,7 @@ fn fixture_provenance_is_pinned() {
         ("clientResponses", 69),
         ("clientBodyFailures", 6),
         ("handlerCases", 111),
-        ("socketRequests", 18),
+        ("socketRequests", 20),
         ("flow", 16),
         ("constructors", 29),
         ("handlerConstruction", 7),

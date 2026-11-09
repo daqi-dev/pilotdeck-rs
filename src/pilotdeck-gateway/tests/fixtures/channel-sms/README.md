@@ -47,7 +47,19 @@ a lost finalize times out the cell. `body-read-timeout` (#1901)
 declares `Content-Length: 64`, sends 8 bytes and keeps the write side
 open, so only Node's default `requestTimeout` (300 s) can end it: the
 baseline answers the 51-byte `408 Request Timeout` + `Connection: close`.
-That cell costs ~300 s per run, and every case runs twice. The `port-busy-preflight` case has no replay
+That cell costs ~300 s per run, and every case runs twice. The two
+parser-admission cells (#2152) send `FROB /sms/incoming` (a token outside
+Node's `http.METHODS`, recorded verbatim in the step's `method`) and an
+HTTP/1.1 request whose step records `omitHost: true` (no `Host:` line on the
+wire — a Host would turn the cell into an admitted 200): llhttp's bare
+parser 400 and `_http_server.js`'s headless 400 respectively, both before
+the route guard could answer its 404. The `unknown-method` /
+`missing-host` wire pins in `tests.rs` hold the shape the oracle cell cannot
+see (the bare 400's exact head and body — `Connection: close`, hyper's
+registered `content-length: 0`, zero body bytes — compared through
+`normalize_wire`, which drops this lane's registered date/header-case
+residuals; the headless 400's own `Date`, chunked framing and absent
+`content-length`). The `port-busy-preflight` case has no replay
 cell of its own: the Rust harness holds its port busy in
 `port_busy_preflight_fails_fast`, and a second cell would race that hold
 in the parallel test suite. `expected` records, per case:
@@ -95,9 +107,9 @@ the crate re-runs this and requires byte-identical output.
 
 ## Negative controls
 
-`negative_controls.py` runs the channel's 73 `#996` compile-time switches
-(`crate::mutants::on("sms-…")`; 26 → 73, `#1984`, `#1957` and `#1913` added
-the last three — the `switches` table is the truth source) through the shared
+`negative_controls.py` runs the channel's 74 `#996` compile-time switches
+(`crate::mutants::on("sms-…")`; 26 → 74, `#1984`, `#1957`, `#1913` and
+`#2152` added the last four — the `switches` table is the truth source) through the shared
 `_shared/mutant_switch` executor: one precompile, then per switch a
 positive run, the mutated kill run (bound oracle cell + assertion) and
 a restored re-run. `mutating_sources` cannot run pre-commit (new files
@@ -110,7 +122,7 @@ python3 -I negative_controls.py <new-output-dir> # full run, exit != 0
                                                  # unless all KILLED
 ```
 
-#1729：`negative_controls.py` 现有 **73** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1，`#1984` 加 `sms-oracle-boundary-unregistered`，`#1957` 加 `sms-oracle-signed-signature-header`，`#1913` 加 `sms-oracle-recorded-version`），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
+#1729：`negative_controls.py` 现有 **74** 个开关（以 `switches` 表为准；#1729 当时 69，`#1901` 加 1，`#1984` 加 `sms-oracle-boundary-unregistered`，`#1957` 加 `sms-oracle-signed-signature-header`，`#1913` 加 `sms-oracle-recorded-version`，`#2152` 加 `sms-oracle-recorded-omit-host`），新增 39 个录制字段/预算保护（#1813 另加 1 个 `sms-oracle-null-sentinel`，`#1790` 另加 3 个 permission 跨 await 标志守卫）。每项先编译开关分支，再对普通断言运行正控、变异、复原；错型诊断包含 #1339、字段和实际值。
 
 #1813：当时 **66** 个开关（`#1790` 后为 69）。`wait-sends.count` / `wait-rpcs.count` 改为必填（缺席即失败：TS 侧 `length >= undefined` 永不满足、3 s 超时，Rust 侧过去按 0 读成空操作，同一输入两端结论相反）；`turn` / `permissionError` / `permissionGate` / `permissionDelivered` / `sendBlockAt` / `sendError` 的 `null` 哨兵统一走 `recorded_present`（生成器对前五个写 `?? null`、对 `permissionDelivered` 写 `?? true`，读取端一律把显式 `null` 当缺席，手改 oracle 不会让某一个字段的口径漂移）。
 

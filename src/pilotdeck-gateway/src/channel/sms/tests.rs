@@ -18,7 +18,7 @@ use super::super::loader::{
 use crate::channel::protocol::{ChannelLog, ChannelStartDeps};
 
 const ORACLE: &str = include_str!("../../../tests/fixtures/channel-sms/oracle.json");
-const EXPECTED_CASE_COUNT: usize = 57;
+const EXPECTED_CASE_COUNT: usize = 59;
 /// The fixed mapper uuid the generator injects, so `/new` session keys match.
 const MAPPER_UUID: &str = "aaaaaaaa-1111-2222-3333-444444444444";
 
@@ -1334,6 +1334,46 @@ fn recorded_half_close_panics_on_wrong_type() {
     recorded_half_close(&json!({"halfClose": []}));
 }
 
+/// #2152: `step.omitHost === true` (generate.mts builds the request line
+/// without a Host when the flag is set) — an explicit null is falsy there, so
+/// it is absence here rather than a type drift, exactly like `halfClose`.
+fn recorded_omit_host_checked(value: &Value) -> Result<Option<bool>, String> {
+    recorded_checked(
+        recorded_present(value, "omitHost"),
+        "omitHost",
+        "a boolean",
+        Value::as_bool,
+        false,
+        crate::mutants::on("sms-oracle-recorded-omit-host"),
+    )
+}
+
+fn recorded_omit_host(value: &Value) -> Option<bool> {
+    recorded_omit_host_checked(value).unwrap_or_else(|error| panic!("{error}"))
+}
+
+#[test]
+fn recorded_omit_host_rejects_wrong_type() {
+    crate::negative_assert!(
+        recorded_omit_host_checked(&json!({"omitHost": []})).is_err(),
+        "#2152 rejects omitHost type drift"
+    );
+}
+
+#[test]
+fn recorded_omit_host_null_is_absence() {
+    crate::negative_assert!(
+        recorded_omit_host_checked(&json!({"omitHost": null})).is_ok_and(|value| value.is_none()),
+        "#2152 null omitHost is absence"
+    );
+}
+
+#[test]
+#[should_panic(expected = "#1339 omitHost must be a boolean")]
+fn recorded_omit_host_panics_on_wrong_type() {
+    recorded_omit_host(&json!({"omitHost": []}));
+}
+
 fn recorded_log_level_checked(value: &Value) -> Result<Option<&str>, String> {
     recorded_checked(
         value.get("level"),
@@ -1865,8 +1905,17 @@ fn build_raw(step: &Value) -> Vec<u8> {
     } else {
         "Connection: close\r\n"
     };
+    // #2152: the missing-Host cell records `omitHost: true`, so the replay
+    // writes no `Host:` line — sending one would turn the parser-rejection
+    // cell into an admitted request, the same fail-closed rule `setHost`
+    // carries on the api-server lane.
+    let host = if recorded_omit_host(step).unwrap_or(false) {
+        ""
+    } else {
+        "Host: 127.0.0.1\r\n"
+    };
     let mut raw = format!(
-        "{} {} {}\r\nHost: 127.0.0.1\r\n{connection}",
+        "{} {} {}\r\n{host}{connection}",
         recorded_method(step).unwrap_or("POST"),
         recorded_path(step).unwrap_or("/sms/incoming"),
         recorded_version(step).unwrap_or("HTTP/1.1"),
@@ -3506,6 +3555,11 @@ replay_cases! {
     // close, so a lost finalize (the socket stays open waiting out the
     // keep-alive) times out at the `bounded` 5 s probe deadline.
     "http10" => http10,
+    // #2152: the parser-admission cells — the oracle records llhttp's bare
+    // 400 for `FROB` and `_http_server.js`'s headless 400, both before the
+    // route guard could answer its 404.
+    "unknown-method" => unknown_method,
+    "missing-host" => missing_host,
 }
 
 /// #1913: an HTTP/1.0 request — even one asking for `Connection: keep-alive`
@@ -3751,6 +3805,171 @@ async fn http10_not_found_keeps_the_close_delimited_framing() {
     assert_eq!(
         body, "Not Found",
         "#2257 pin http10 404: the static Not Found body closes the response"
+    );
+}
+
+/// Start the channel of one recorded case on the pin's own port and return
+/// the stoppable handle, so the two #2152 wire pins below read the raw bytes
+/// the oracle cell cannot express (it records only status/content-type/body).
+async fn pin_channel(
+    case: &Value,
+    port: u16,
+) -> std::sync::Arc<dyn crate::channel::protocol::ChannelHandle> {
+    ensure_replay_port_free(port).await;
+    let mut extra = recorded_extra(case).cloned().unwrap_or_else(|| json!({}));
+    extra["webhookPort"] = json!(port);
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&extra)),
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+        request_timeout: None,
+    });
+    channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+            turn_gateway: None,
+        })
+        .await
+        .expect("#2152 start for the parser-admission pin")
+}
+
+/// One recorded case's first request step, rebuilt as wire bytes.
+fn pin_request(case: &Value) -> Vec<u8> {
+    let steps = recorded_steps(case).expect("#1339 steps validated array");
+    build_raw(
+        steps
+            .first()
+            .expect("#2152 the parser-admission case carries one request step"),
+    )
+}
+
+/// The comparison basis for the bare parser 400's wire bytes (#2152): Node's
+/// llhttp rejection carries `Connection: close` and zero body bytes and no
+/// `Date`; hyper registers `content-length: 0` for the empty sized body — the
+/// same A8.4-NATIVE-HTTP-001 transport diff the webhook and api-server lanes
+/// pin for their own admission cells. Compared through [`normalize_wire`],
+/// like the 408 constant above: the sms lane's bare builder writes lowercase
+/// header names and hyper's implicit `date`, the two presentation residuals
+/// this lane registers for the 408 (A8.3-CH-SMS-002 / -010), so on this lane
+/// only the framing below — `content-length: 0` over an empty sized body —
+/// separates the bare 400 from the headless 400's chunked `Date`-carrying
+/// shape.
+const PARSER_BAD_REQUEST_400: &[u8] =
+    b"HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+
+/// #2152: `FROB` never reaches the route guard — llhttp rejects the method
+/// token before any handler runs, so the wire answer is the bare parser 400,
+/// not the guard's 404 (`plain_response(404, "Not Found")`). The oracle cell
+/// compares only status/content-type/body, so this pin holds the exact head
+/// and body it cannot see, normalized only for the two registered
+/// presentation dimensions (see [`PARSER_BAD_REQUEST_400`]).
+#[tokio::test]
+async fn unknown_method_is_the_bare_parser_400() {
+    // #2257 fix-r4: the free gap above the wecom-callback golden replay
+    // segment (18900–18921); 18922–18923 are the http10 pins.
+    const PORT: u16 = 18924;
+    let case = case_by_name("unknown-method");
+    let request = pin_request(&case);
+    assert!(
+        request.starts_with(b"FROB /sms/incoming HTTP/1.1\r\n"),
+        "#2152 pin unknown-method: the oracle step stays an FROB request — a cell \
+         degraded to a served method would compare 200 == 200 and the gate could \
+         be removed unnoticed: {request:?}"
+    );
+    let handle = pin_channel(&case, PORT).await;
+    let raw = bounded(
+        "unknown-method pin response",
+        raw_until_close(PORT, &request),
+    )
+    .await;
+    settle().await;
+    bounded("unknown-method pin cleanup stop", handle.stop("cleanup"))
+        .await
+        .expect("#2152 unknown-method pin cleanup stop");
+
+    assert!(
+        raw.starts_with(b"HTTP/1.1 400 Bad Request\r\n"),
+        "#2152 pin unknown-method: llhttp's bare 400, not a routed answer: {raw:?}"
+    );
+    crate::negative_assert_eq!(
+        normalize_wire(&raw),
+        normalize_wire(PARSER_BAD_REQUEST_400),
+        "#2152 pin unknown-method: the bare parser 400's exact head and body — \
+         `Connection: close`, hyper's registered `content-length: 0`, zero body \
+         bytes, nothing else on the wire. A change here must update the ledger, \
+         not pass: {raw:?}"
+    );
+}
+
+/// #2152: an HTTP/1.1 request without a `Host` header is rejected by
+/// `_http_server.js` before any handler runs. Unlike the bare parser 400
+/// above, this one carries its own `Date` and a chunked empty body (Node's
+/// `missingHeaderStatusLine` shape, mirrored by `headless_bad_request`
+/// writing the header itself); the pin holds both, plus the absent
+/// `content-length`, so the two rejections cannot drift into one another.
+/// The bare 400's wire also shows a `date` on this lane — hyper's implicit
+/// one over Node's dateless bytes, the registered presentation residual
+/// [`normalize_wire`] drops — so the `Date` here pins the headless 400's own
+/// header, not a lane-wide presence.
+#[tokio::test]
+async fn missing_host_is_the_headless_parser_400() {
+    const PORT: u16 = 18925;
+    let case = case_by_name("missing-host");
+    let request = pin_request(&case);
+    let request_head = String::from_utf8_lossy(&request);
+    let request_head = request_head
+        .split("\r\n\r\n")
+        .next()
+        .expect("#2152 pin missing-host: the request carries a header end");
+    assert!(
+        request_head
+            .split("\r\n")
+            .skip(1)
+            .all(|line| !line.to_ascii_lowercase().starts_with("host:")),
+        "#2152 pin missing-host: the oracle step stays a Host-less request — sending \
+         one would turn the cell into an admitted 200: {request:?}"
+    );
+    let handle = pin_channel(&case, PORT).await;
+    let raw = bounded("missing-host pin response", raw_until_close(PORT, &request)).await;
+    settle().await;
+    bounded("missing-host pin cleanup stop", handle.stop("cleanup"))
+        .await
+        .expect("#2152 missing-host pin cleanup stop");
+
+    assert!(
+        raw.starts_with(b"HTTP/1.1 400 Bad Request\r\n"),
+        "#2152 pin missing-host: the headless 400, not a routed answer: {raw:?}"
+    );
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .expect("#2152 pin missing-host: the response carries a header end");
+    assert!(
+        head_has_header_named(head, "date"),
+        "#2152 pin missing-host: the headless 400 carries its own Date (Node's \
+         missingHostResponse writes one; the bare 400's wire date on this lane \
+         is hyper's implicit residual, dropped by normalize_wire): {raw:?}"
+    );
+    assert!(
+        head_has_header_named(head, "connection"),
+        "#2152 pin missing-host: the rejection closes the connection: {raw:?}"
+    );
+    assert!(
+        head_has_header_named(head, "transfer-encoding"),
+        "#2152 pin missing-host: the empty body is chunked, Node's own framing: {raw:?}"
+    );
+    assert!(
+        !head_has_header_named(head, "content-length"),
+        "#2152 pin missing-host: a chunked rejection carries no content-length: {raw:?}"
+    );
+    assert_eq!(
+        body, "0\r\n\r\n",
+        "#2152 pin missing-host: the chunked empty body terminator"
     );
 }
 
