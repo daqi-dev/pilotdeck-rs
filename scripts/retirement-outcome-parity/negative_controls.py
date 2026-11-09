@@ -1315,6 +1315,13 @@ def run_positive(positive, out_root, oracle):
     return record
 
 
+# 判决词表只此一份（r3 sibling#2）：fold / tally / 期望 counts 共用同一常量。
+# 此前三处各写一份字面量——只给 fold 侧加值而漏改 tally / 期望键集，词表外判决
+# 不进任何计数键，回到 #2378 的空真形态。
+NEGATIVE_VERDICTS = ('KILLED', 'SURVIVED', 'INVALID')
+POSITIVE_VERDICTS = ('HELD', 'BROKEN', 'INVALID')
+
+
 def fold_verdict(record, vocabulary):
     """#2378：词表外判决一律记 INVALID，不静默丢弃。
 
@@ -1471,18 +1478,19 @@ def run_locked(args, out_root):
 
         # 词表外判决先折叠成 INVALID（#2378），再计数：不折叠的话这类判决不进任何
         # 键，SURVIVED/INVALID 双 0 空真判 PASS。
-        records = [fold_verdict(record, ('KILLED', 'SURVIVED', 'INVALID'))
+        records = [fold_verdict(record, NEGATIVE_VERDICTS)
                    for record in records]
-        positive_records = [fold_verdict(record, ('HELD', 'BROKEN', 'INVALID'))
+        positive_records = [fold_verdict(record, POSITIVE_VERDICTS)
                             for record in positive_records]
-        counts = tally(records, ('KILLED', 'SURVIVED', 'INVALID'))
-        positive_counts = tally(positive_records, ('HELD', 'BROKEN', 'INVALID'))
+        counts = tally(records, NEGATIVE_VERDICTS)
+        positive_counts = tally(positive_records, POSITIVE_VERDICTS)
         # #2378：三张 counts 断言为期望值——名册 + 折叠之后 KILLED/HELD 必须恰好
         # 等于名册条数，SURVIVED / INVALID / BROKEN 必须为 0。这不再是「两个零」的
         # 空真式判定：任何一侧缺一条（未跑 / 未记 / 词表外）都让 counts 不等。
-        expected_counts = {'KILLED': EXPECTED_CONTROLS, 'SURVIVED': 0, 'INVALID': 0}
-        expected_positive_counts = {'HELD': EXPECTED_POSITIVES, 'BROKEN': 0,
-                                    'INVALID': 0}
+        expected_counts = dict.fromkeys(NEGATIVE_VERDICTS, 0)
+        expected_counts['KILLED'] = EXPECTED_CONTROLS
+        expected_positive_counts = dict.fromkeys(POSITIVE_VERDICTS, 0)
+        expected_positive_counts['HELD'] = EXPECTED_POSITIVES
         summary = {'status': 'PASS' if counts == expected_counts
                    and positive_counts == expected_positive_counts else 'FAIL',
                    'controls': records, 'positives': positive_records,

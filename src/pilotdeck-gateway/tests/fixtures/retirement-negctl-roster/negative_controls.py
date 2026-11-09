@@ -17,13 +17,32 @@ suite guards must be at HEAD, because ``mutating_sources`` byte-compares the
 targets against HEAD and refuses a dirty tree.
 """
 import json
+import signal
 import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from negative_process import mutating_sources
+from negative_process import defer_signal_exit, mutating_sources
 from negative_selection import claim_dir, refuse, registered, select, verdict_exit
+
+
+def terminate_cleanly(signum, _frame):
+    """Unwind on SIGTERM/SIGHUP/SIGQUIT so the finally blocks restore the
+    sources; the default disposition would leave a mutant in the tree and
+    every later fixture refusing to run (r3 concurrency#1, mirror of
+    same-json-surfaces' form)."""
+    if defer_signal_exit(signum):
+        return
+    raise SystemExit(128 + signum)
+
+
+def install_terminate_handlers():
+    signal.signal(signal.SIGTERM, terminate_cleanly)
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, terminate_cleanly)
+    if hasattr(signal, 'SIGQUIT'):
+        signal.signal(signal.SIGQUIT, terminate_cleanly)
 
 # 一轮全量负控（preflight + 17 负控 + 0 正控，每个都是 python3 -I 子进程）的
 # 外层上限，对齐 self_check 的 NEGCTL_TIMEOUT_SECONDS 语义（内部最坏和的封顶）。
@@ -95,8 +114,13 @@ def judge(name, rc, log, summary_text):
         side = ('assembled positive ids' if name == 'roster-extra-pc1'
                 else 'assembled control ids')
         if (rc == 2 and side in log and 'do not match the registered roster' in log
-                and named in log):
+                and named in log and not summary_text):
             return 'KILLED', '#2378 roster refusal fired (rc=2, no summary published)'
+        if summary_text:
+            # 「拒绝＝不留下看起来像跑完的证据」是判杀契约的一半（r3 boundary#1）：
+            # 守卫若挪到 summary 写盘之后仍 rc=2 打同一行原文，这里必须红。
+            return 'SURVIVED', (f'roster refusal published a summary anyway '
+                                f'(refusal must leave no evidence of a run)')
         return 'SURVIVED', (f'expected rc=2 with the #2378 roster refusal naming '
                             f'{named}, got rc={rc}')
     # verdict-out-of-vocabulary：17 条全折叠 INVALID → 整字典不等 → FAIL rc=1。
@@ -117,6 +141,7 @@ def judge(name, rc, log, summary_text):
 
 
 rows = []
+install_terminate_handlers()
 with mutating_sources(root, sorted({path for _name, path, _old, _new in run_rows
                                     if path is not None})) as snapshots:
     # 锚点过期必须报错退出，绝不记成 SURVIVED：变异前先核每个锚在当前源里恰一次。
