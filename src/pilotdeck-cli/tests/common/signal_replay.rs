@@ -1297,7 +1297,7 @@ mod comparison_tests {
         assert_eq!(
             (normalized, retained),
             (20, 8),
-            "#1145 observed business-prefixed and unprefixed denominator"
+            "#2509 observed business-prefixed (20 = 16 pre-#1178 + 4 abort-rst) and unprefixed (8) denominator"
         );
     }
 
@@ -2185,6 +2185,15 @@ mod comparison_tests {
     /// order-strict the same way.
     #[test]
     fn stable_query_before_control_cells_keep_concrete_order() {
+        // #2509: the declared list length gets its own constant, so the array
+        // literal, the constant, and the measured source.json set form a
+        // triangle: a list that loses a cell in lockstep with source.json
+        // (the array and the measured set shrinking together) can no longer
+        // pass on internal consistency alone. The type keeps the literal 20
+        // on purpose -- using the constant there would collapse the triangle
+        // and deaden the assert below. 20 = 16 measured #1260 stable-diff
+        // cells + 4 #1178 abort-rst cells.
+        const EXPECTED_STABLE_DIFF_COUNT: usize = 20;
         let source: Value =
             serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
                 .expect("#1260 stable order original JSON");
@@ -2211,6 +2220,11 @@ mod comparison_tests {
             ("resume--abort-rst-sigint", 1006),
             ("resume--abort-rst-sigterm", 1006),
         ];
+        assert_eq!(
+            cells.len(),
+            EXPECTED_STABLE_DIFF_COUNT,
+            "#2509 stable-diff list length is pinned by its own constant"
+        );
         let unique: BTreeSet<_> = cells.iter().map(|(id, _)| *id).collect();
         assert_eq!(unique.len(), cells.len(), "#1260 unique stable-diff IDs");
         // Exhaustiveness: across all 100 captures the "query (2) closes first,
