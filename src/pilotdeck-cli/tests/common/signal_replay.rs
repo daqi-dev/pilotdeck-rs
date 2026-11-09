@@ -2291,21 +2291,28 @@ mod comparison_tests {
         }
     }
 
-    /// #1178: pin the four abort-rst originals. Every surface asserted here is
-    /// TS-measured, including that these cells need neither an approved stderr
-    /// exception nor an unordered-close registration: the business-prefixed Node
-    /// tail normalizes to the single business line, and the query RST close
-    /// causally precedes the client's own control close.
+    /// #1178: pin the four abort-rst originals through the shared comparator,
+    /// in the same shape as the close-order pin: the TS original against its
+    /// Rust-normalized projection (close rows, listener removal, business
+    /// stderr), so every surface `compare_surfaces` compares -- including the
+    /// runtime trees the hand-written assertions used to miss (#2500) --
+    /// stays covered when the comparator grows. Only what the comparator
+    /// cannot express stays hand-written: the rstApplied milestone, the
+    /// reset's trace position on the query connection behind the dispatched
+    /// abort RPC, no wire event after the reset, and the business-prefixed
+    /// Node tail normalizing to the single business line. Strict close order
+    /// and the exception-free stderr domain for these cells stay pinned by
+    /// the stable-order list and the approved match-domain tests.
     #[test]
     fn rst_cells_keep_verified_original_shape() {
         let source: Value =
             serde_json::from_slice(include_bytes!("../fixtures/sdk-signals/source.json"))
                 .expect("#1178 RST original JSON");
-        let cells: [(&str, &str); 4] = [
-            ("run--abort-rst-sigint", "SIGINT"),
-            ("run--abort-rst-sigterm", "SIGTERM"),
-            ("resume--abort-rst-sigint", "SIGINT"),
-            ("resume--abort-rst-sigterm", "SIGTERM"),
+        let cells: [&str; 4] = [
+            "run--abort-rst-sigint",
+            "run--abort-rst-sigterm",
+            "resume--abort-rst-sigint",
+            "resume--abort-rst-sigterm",
         ];
         // Exhaustiveness: the RST axis is exactly these four measured cells.
         let measured: BTreeSet<&str> = source["captures"]
@@ -2315,59 +2322,18 @@ mod comparison_tests {
             .filter(|row| row["input"]["action"] == "rst")
             .map(|row| row["input"]["id"].as_str().expect("#1178 RST cell id"))
             .collect();
-        let unique: BTreeSet<&str> = cells.iter().map(|(id, _)| *id).collect();
+        let unique: BTreeSet<&str> = cells.iter().copied().collect();
         assert_eq!(
             measured, unique,
             "#1178 RST axis is exactly the measured cells"
         );
-        for (id, signal) in cells {
+        for id in cells {
             let expected = source["captures"]
                 .as_array()
                 .expect("#1178 RST captures")
                 .iter()
                 .find(|row| row["input"]["id"] == id)
                 .unwrap_or_else(|| panic!("#1178 unique RST original: {id}"));
-            assert_eq!(
-                expected["input"]["signal"],
-                json!(signal),
-                "#1178 RST signal: {id}"
-            );
-            assert_eq!(
-                expected["input"]["stage"],
-                json!("stream"),
-                "#1178 RST stage: {id}"
-            );
-            assert_eq!(
-                expected["status"],
-                json!("OBSERVED_EXIT"),
-                "#1178 RST status: {id}"
-            );
-            assert_eq!(
-                expected["naturalExit"],
-                json!({"code":1,"signal":null,"cleanup":false}),
-                "#1178 RST natural exit: {id}"
-            );
-            assert_eq!(
-                expected["cleanupExit"],
-                Value::Null,
-                "#1178 RST cleanup exit: {id}"
-            );
-            assert_eq!(expected["aborts"], json!(1), "#1178 RST abort count: {id}");
-            assert_eq!(
-                expected["connections"],
-                json!(2),
-                "#1178 RST connections: {id}"
-            );
-            assert_eq!(
-                expected["activeAfterExit"],
-                json!(0),
-                "#1178 RST no lingering socket: {id}"
-            );
-            assert_eq!(
-                expected["stdout"],
-                json!(""),
-                "#1178 RST stdout empty: {id}"
-            );
             assert_eq!(
                 expected["milestones"]["rstApplied"],
                 json!(true),
@@ -2377,26 +2343,6 @@ mod comparison_tests {
             assert!(
                 stderr_matches(raw, b"Gateway WebSocket closed.\n"),
                 "#1178 RST business-prefixed Node tail normalizes to the business line: {id}"
-            );
-            assert!(
-                approved_signal_stderr(id).is_none(),
-                "#1178 RST cells take no approved stderr exception: {id}"
-            );
-            assert!(
-                !UNORDERED_CLOSE_CASES.contains(&id),
-                "#1178 RST close order stays strict: {id}"
-            );
-            let closes = expected["closes"].as_array().expect("#1178 RST closes");
-            assert_eq!(closes.len(), 2, "#1178 RST close pair: {id}");
-            assert_eq!(
-                (
-                    closes[0]["connection"].as_u64(),
-                    closes[0]["code"].as_u64(),
-                    closes[1]["connection"].as_u64(),
-                    closes[1]["code"].as_u64(),
-                ),
-                (Some(2), Some(1006), Some(1), Some(1005)),
-                "#1178 RST query RST close precedes the control close: {id}"
             );
             let trace = expected["trace"].as_array().expect("#1178 RST trace");
             let rst = trace
@@ -2417,6 +2363,57 @@ mod comparison_tests {
                 trace[rst]["connection"],
                 json!(2),
                 "#1178 RST resets the query connection: {id}"
+            );
+            assert!(
+                trace[rst + 1..]
+                    .iter()
+                    .all(|event| event["kind"] != "wire-receive" && event["kind"] != "wire-send"),
+                "#1178 no wire event after the server RST: {id}"
+            );
+            // #2500: the full-surface pin. The projection applies the same
+            // TS-to-Rust normalization as the close-order pin: close rows keep
+            // only the compared fields (these cells take no reason exception),
+            // and the TS listener-removal observation collapses to the Rust
+            // hook form. What the comparator compares -- now including the
+            // initial/final runtime trees -- is checked in one call instead
+            // of hand-written field assertions.
+            let mut actual = expected.clone();
+            let closes = expected["closes"].as_array().expect("#1178 RST closes");
+            assert_eq!(closes.len(), 2, "#1178 RST close pair: {id}");
+            actual["closes"] = json!(
+                closes
+                    .iter()
+                    .map(|row| {
+                        json!({"connection":row["connection"],"code":row["code"],
+                    "reason":row["reason"],"cleanup":row["cleanup"]})
+                    })
+                    .collect::<Vec<_>>()
+            );
+            let removed = expected["hooks"]
+                .as_array()
+                .expect("#1178 RST hooks")
+                .iter()
+                .any(|row| {
+                    row["hook"]["kind"] == "listener-removed"
+                        && row["hook"]["listeners"]["SIGINT"] == 0
+                        && row["hook"]["listeners"]["SIGTERM"] == 0
+                });
+            actual["hooks"] = if removed {
+                json!([{"kind":"listeners-removed"}])
+            } else {
+                json!([])
+            };
+            let stdout = expected["stdout"].as_str().expect("#1178 RST stdout");
+            assert!(
+                compare_surfaces(
+                    id,
+                    expected,
+                    &actual,
+                    stdout.as_bytes(),
+                    ts_stderr(raw).as_bytes()
+                )
+                .is_empty(),
+                "#1178 RST original passes every compared surface: {id}"
             );
         }
     }
