@@ -8,11 +8,26 @@ use std::{
     sync::{Arc, Mutex, OnceLock, Weak},
 };
 
+pub const STATUS_STARTING: &str = "starting";
+pub const STATUS_CONNECTED: &str = "connected";
+pub const STATUS_WAITING_FOR_LOGIN: &str = "waiting_for_login";
+pub const STATUS_EXPIRED: &str = "expired";
+pub const STATUS_FAILED: &str = "failed";
+pub const STATUS_STOPPED: &str = "stopped";
+
+pub const MSG_STARTING: &str = "weixin: starting in background";
+pub const MSG_CONNECTED: &str = "weixin: connected";
+pub const MSG_WAITING_FOR_LOGIN: &str = "微信等待扫码登录";
+pub const MSG_EXPIRED: &str = "微信登录已过期，请重新扫码登录";
+pub const MSG_FAILED: &str = "weixin: QR login failed";
+pub const MSG_STOPPED: &str = "weixin: stopped";
+
 #[derive(Clone)]
 pub(super) struct Storage {
     pub home: PathBuf,
     mapper_save: Arc<Mutex<Option<Arc<dyn Fn(Value) + Send + Sync>>>>,
 }
+
 impl Storage {
     pub fn new(home: PathBuf) -> Self {
         Self {
@@ -20,24 +35,56 @@ impl Storage {
             mapper_save: Arc::new(Mutex::new(None)),
         }
     }
+
     pub fn set_debounced_mapper_save(&self, saver: Arc<dyn Fn(Value) + Send + Sync>) {
         *self.mapper_save.lock().unwrap() = Some(saver);
     }
-    pub fn credentials(&self) -> Result<Option<Value>> {
-        let Some(value) = read_checked(&self.home.join("weixin-credentials.json"))? else {
-            return Ok(None);
-        };
+
+    /// TS WeixinChannel.ts:978-988 loadCredentials():
+    /// Returns None if the credentials file does not exist, is corrupted JSON,
+    /// or is missing required fields (baseUrl, botToken, accountId).
+    pub fn load_credentials(&self) -> Option<Value> {
+        let path = self.home.join("weixin-credentials.json");
+        let bytes = fs::read(&path).ok()?;
+        let value: Value = serde_json::from_slice(&bytes).ok()?;
         if ["baseUrl", "botToken", "accountId"]
             .iter()
             .all(|k| text(&value, k).is_some())
         {
-            Ok(Some(value))
+            Some(value)
         } else {
-            Err(failure(
-                "Invalid Weixin credentials file; original retained",
-            ))
+            None
         }
     }
+
+    /// Aligns with TS loadCredentials(): returns Ok(None) instead of Err when
+    /// the file is missing, corrupt JSON, or missing required fields, allowing
+    /// channel startup to smoothly proceed to QR login.
+    pub fn credentials(&self) -> Result<Option<Value>> {
+        Ok(self.load_credentials())
+    }
+
+    /// TS WeixinChannel.ts:990-997 saveCredentials():
+    /// Persists baseUrl, botToken, accountId, and optional cursor to weixin-credentials.json
+    /// with 0o600 permissions, creating parent directories if needed.
+    pub fn save_credentials(&self, creds: &Value) -> Result<()> {
+        let owner = self.credential_owner();
+        let _guard = owner.lock().unwrap();
+        self.save_credentials_locked(creds)
+    }
+
+    fn save_credentials_locked(&self, creds: &Value) -> Result<()> {
+        let mut to_save = json!({
+            "baseUrl": creds.get("baseUrl").and_then(Value::as_str).unwrap_or(""),
+            "botToken": creds.get("botToken").and_then(Value::as_str).unwrap_or(""),
+            "accountId": creds.get("accountId").and_then(Value::as_str).unwrap_or(""),
+        });
+        if let Some(cursor) = creds.get("cursor").and_then(Value::as_str) {
+            to_save["cursor"] = cursor.into();
+        }
+        write(&self.home.join("weixin-credentials.json"), &to_save)
+    }
+
     pub fn save_login(&self, value: Value) -> Result<Value> {
         let owner = self.credential_owner();
         let _guard = owner.lock().unwrap();
@@ -45,9 +92,23 @@ impl Storage {
         if let Some(current) = self.credentials()? {
             return Ok(current);
         }
-        write(&self.home.join("weixin-credentials.json"), &value)?;
+        self.save_credentials_locked(&value)?;
         Ok(value)
     }
+
+    /// TS WeixinChannel.ts:1000-1007 saveCursor():
+    /// Updates cursor in stored credentials and persists to disk.
+    pub fn save_cursor(&self, cursor: &str) -> Result<Option<Value>> {
+        let owner = self.credential_owner();
+        let _guard = owner.lock().unwrap();
+        let Some(mut current) = self.credentials()? else {
+            return Ok(None);
+        };
+        current["cursor"] = cursor.into();
+        self.save_credentials_locked(&current)?;
+        Ok(Some(current))
+    }
+
     pub fn advance_cursor(&self, expected: &Value, cursor: &str) -> Result<Option<Value>> {
         let owner = self.credential_owner();
         let _guard = owner.lock().unwrap();
@@ -58,9 +119,10 @@ impl Storage {
             return Ok(None);
         }
         current["cursor"] = cursor.into();
-        write(&self.home.join("weixin-credentials.json"), &current)?;
+        self.save_credentials_locked(&current)?;
         Ok(Some(current))
     }
+
     // shortcut: external CLI writers do not share this native lock; stop native
     // polling before handing off credentials, until every writer uses one owner.
     fn credential_owner(&self) -> Arc<Mutex<()>> {
@@ -75,12 +137,14 @@ impl Storage {
         owners.insert(key, Arc::downgrade(&owner));
         owner
     }
+
     pub fn load_mapper(&self) -> Result<Value> {
         let mapper = read_checked(&self.home.join("channels/weixin.state.json"))?
             .unwrap_or_else(|| json!({"activeByChatId":{},"projectByChatId":{}}));
         validate_mapper(&mapper)?;
         Ok(mapper)
     }
+
     pub fn save_mapper(&self, mapper: &Value) -> Result<()> {
         validate_mapper(mapper)?;
         if let Some(save) = self.mapper_save.lock().unwrap().clone() {
@@ -89,6 +153,15 @@ impl Storage {
         }
         write(&self.home.join("channels/weixin.state.json"), mapper)
     }
+
+    /// TS WeixinChannel.ts:341-347 reportStatus():
+    /// Reports runtime state to channels/runtime-status.json
+    /// State types: "starting", "connected", "waiting_for_login", "expired", "failed", "stopped"
+    /// Details: { accountId?: string, error?: string, qrUrl?: string }
+    pub fn report_status(&self, state: &str, message: &str, details: Value) -> Result<()> {
+        self.status(state, message, details)
+    }
+
     pub fn status(&self, state: &str, message: &str, details: Value) -> Result<()> {
         let path = self.home.join("channels/runtime-status.json");
         let mut snapshot = read(&path)
@@ -98,11 +171,19 @@ impl Storage {
             snapshot["channels"] = json!({});
         }
         let now = timestamp();
-        let mut channel =
-            json!({"channelKey":"weixin","state":state,"updatedAt":now,"message":message});
+        let mut channel = json!({
+            "channelKey": "weixin",
+            "state": state,
+            "updatedAt": now,
+        });
+        if !message.is_empty() {
+            channel["message"] = message.into();
+        }
         if let Some(details) = details.as_object() {
             for (key, value) in details {
-                channel[key] = value.clone();
+                if !value.is_null() {
+                    channel[key] = value.clone();
+                }
             }
         }
         snapshot["updatedAt"] = now.into();
@@ -110,15 +191,18 @@ impl Storage {
         write(&path, &snapshot)
     }
 }
+
 pub(super) fn text<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
     value
         .get(key)
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
 }
+
 fn read(path: &Path) -> Option<Value> {
     serde_json::from_slice(&fs::read(path).ok()?).ok()
 }
+
 pub(super) fn write(path: &Path, value: &Value) -> Result<()> {
     let operation = || -> std::io::Result<()> {
         use std::io::Write;
@@ -152,9 +236,11 @@ pub(super) fn same_login(a: &Value, b: &Value) -> bool {
         .iter()
         .all(|k| a.get(k) == b.get(k))
 }
+
 pub(super) fn same_generation(a: &Value, b: &Value) -> bool {
     same_login(a, b) && a.get("cursor") == b.get("cursor")
 }
+
 fn validate_mapper(mapper: &Value) -> Result<()> {
     if !mapper.is_object()
         || !mapper.get("activeByChatId").is_some_and(Value::is_object)
@@ -166,6 +252,7 @@ fn validate_mapper(mapper: &Value) -> Result<()> {
     }
     Ok(())
 }
+
 pub(super) fn read_checked(path: &Path) -> Result<Option<Value>> {
     match fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
@@ -173,5 +260,224 @@ pub(super) fn read_checked(path: &Path) -> Result<Option<Value>> {
             .map_err(|_| failure("Invalid Weixin state JSON; original retained")),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(_) => Err(failure("Cannot read Weixin state; original retained")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestHome(PathBuf);
+    impl TestHome {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("test-storage-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+    impl Drop for TestHome {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn test_credentials_returns_none_when_file_not_found() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        assert_eq!(store.credentials().unwrap(), None);
+        assert_eq!(store.load_credentials(), None);
+    }
+
+    #[test]
+    fn test_credentials_returns_none_on_corrupt_json() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        fs::write(home.0.join("weixin-credentials.json"), b"{\ninvalid json :(").unwrap();
+        // TS: catch error and return null to trigger QR flow
+        assert_eq!(store.credentials().unwrap(), None);
+        assert_eq!(store.load_credentials(), None);
+    }
+
+    #[test]
+    fn test_credentials_returns_none_when_required_fields_missing_or_empty() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+
+        // Missing accountId
+        let no_account = json!({"baseUrl": "https://ilink.example.com", "botToken": "token123"});
+        fs::write(home.0.join("weixin-credentials.json"), no_account.to_string()).unwrap();
+        assert_eq!(store.credentials().unwrap(), None);
+        assert_eq!(store.load_credentials(), None);
+
+        // Missing baseUrl
+        let no_base = json!({"botToken": "token123", "accountId": "acc456"});
+        fs::write(home.0.join("weixin-credentials.json"), no_base.to_string()).unwrap();
+        assert_eq!(store.credentials().unwrap(), None);
+        assert_eq!(store.load_credentials(), None);
+
+        // Missing botToken
+        let no_token = json!({"baseUrl": "https://ilink.example.com", "accountId": "acc456"});
+        fs::write(home.0.join("weixin-credentials.json"), no_token.to_string()).unwrap();
+        assert_eq!(store.credentials().unwrap(), None);
+        assert_eq!(store.load_credentials(), None);
+
+        // Empty string in accountId
+        let empty_account = json!({"baseUrl": "https://ilink.example.com", "botToken": "token123", "accountId": ""});
+        fs::write(home.0.join("weixin-credentials.json"), empty_account.to_string()).unwrap();
+        assert_eq!(store.credentials().unwrap(), None);
+        assert_eq!(store.load_credentials(), None);
+    }
+
+    #[test]
+    fn test_credentials_loads_valid_credentials() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        let valid = json!({
+            "baseUrl": "https://ilink.example.com",
+            "botToken": "token123",
+            "accountId": "acc456",
+            "cursor": "cur_001"
+        });
+        fs::write(home.0.join("weixin-credentials.json"), valid.to_string()).unwrap();
+        let loaded = store.credentials().unwrap().expect("should be Some");
+        assert_eq!(loaded["baseUrl"], "https://ilink.example.com");
+        assert_eq!(loaded["botToken"], "token123");
+        assert_eq!(loaded["accountId"], "acc456");
+        assert_eq!(loaded["cursor"], "cur_001");
+        assert_eq!(store.load_credentials().unwrap(), loaded);
+    }
+
+    #[test]
+    fn test_save_credentials_persists_to_disk() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        let creds = json!({
+            "baseUrl": "https://ilink.example.com",
+            "botToken": "token-xyz",
+            "accountId": "acc-xyz",
+            "cursor": "initial-cur"
+        });
+        store.save_credentials(&creds).unwrap();
+
+        let path = home.0.join("weixin-credentials.json");
+        assert!(path.exists());
+        let on_disk: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(on_disk["baseUrl"], "https://ilink.example.com");
+        assert_eq!(on_disk["botToken"], "token-xyz");
+        assert_eq!(on_disk["accountId"], "acc-xyz");
+        assert_eq!(on_disk["cursor"], "initial-cur");
+    }
+
+    #[test]
+    fn test_save_cursor_updates_existing_credentials() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        let initial = json!({
+            "baseUrl": "https://ilink.example.com",
+            "botToken": "tok",
+            "accountId": "acc",
+            "cursor": "c1"
+        });
+        store.save_credentials(&initial).unwrap();
+
+        let updated = store.save_cursor("c2").unwrap().expect("should return updated");
+        assert_eq!(updated["cursor"], "c2");
+
+        let reloaded = store.credentials().unwrap().unwrap();
+        assert_eq!(reloaded["cursor"], "c2");
+        assert_eq!(reloaded["baseUrl"], "https://ilink.example.com");
+        assert_eq!(reloaded["botToken"], "tok");
+        assert_eq!(reloaded["accountId"], "acc");
+    }
+
+    #[test]
+    fn test_save_cursor_returns_none_when_no_credentials() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        assert_eq!(store.save_cursor("c1").unwrap(), None);
+    }
+
+    #[test]
+    fn test_report_status_aligns_with_ts() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+
+        // Test connected status
+        store
+            .report_status(
+                STATUS_CONNECTED,
+                MSG_CONNECTED,
+                json!({"accountId": "test-account"}),
+            )
+            .unwrap();
+
+        let status_path = home.0.join("channels/runtime-status.json");
+        assert!(status_path.exists());
+        let status_json: Value = serde_json::from_slice(&fs::read(&status_path).unwrap()).unwrap();
+
+        assert!(status_json["updatedAt"].is_string());
+        let weixin = &status_json["channels"]["weixin"];
+        assert_eq!(weixin["channelKey"], "weixin");
+        assert_eq!(weixin["state"], "connected");
+        assert_eq!(weixin["message"], "weixin: connected");
+        assert_eq!(weixin["accountId"], "test-account");
+
+        // Test waiting_for_login with qrUrl
+        store
+            .report_status(
+                STATUS_WAITING_FOR_LOGIN,
+                MSG_WAITING_FOR_LOGIN,
+                json!({"qrUrl": "https://login.weixin.qq.com/qrcode/123"}),
+            )
+            .unwrap();
+        let status_json2: Value = serde_json::from_slice(&fs::read(&status_path).unwrap()).unwrap();
+        let weixin2 = &status_json2["channels"]["weixin"];
+        assert_eq!(weixin2["state"], "waiting_for_login");
+        assert_eq!(weixin2["message"], "微信等待扫码登录");
+        assert_eq!(weixin2["qrUrl"], "https://login.weixin.qq.com/qrcode/123");
+
+        // Test failed with error
+        store
+            .report_status(
+                STATUS_FAILED,
+                MSG_FAILED,
+                json!({"error": "network timeout"}),
+            )
+            .unwrap();
+        let status_json3: Value = serde_json::from_slice(&fs::read(&status_path).unwrap()).unwrap();
+        let weixin3 = &status_json3["channels"]["weixin"];
+        assert_eq!(weixin3["state"], "failed");
+        assert_eq!(weixin3["message"], "weixin: QR login failed");
+        assert_eq!(weixin3["error"], "network timeout");
+
+        // Test stopped
+        store.report_status(STATUS_STOPPED, MSG_STOPPED, json!({})).unwrap();
+        let status_json4: Value = serde_json::from_slice(&fs::read(&status_path).unwrap()).unwrap();
+        let weixin4 = &status_json4["channels"]["weixin"];
+        assert_eq!(weixin4["state"], "stopped");
+        assert_eq!(weixin4["message"], "weixin: stopped");
+
+        // Test expired
+        store.report_status(STATUS_EXPIRED, MSG_EXPIRED, json!({})).unwrap();
+        let status_json5: Value = serde_json::from_slice(&fs::read(&status_path).unwrap()).unwrap();
+        let weixin5 = &status_json5["channels"]["weixin"];
+        assert_eq!(weixin5["state"], "expired");
+        assert_eq!(weixin5["message"], "微信登录已过期，请重新扫码登录");
+    }
+
+    #[test]
+    fn test_advance_cursor_generation_check() {
+        let home = TestHome::new();
+        let store = Storage::new(home.0.clone());
+        let a = json!({"baseUrl": "https://ilink.example.com", "botToken": "b", "accountId": "a"});
+        store.save_credentials(&a).unwrap();
+
+        // Advance cursor succeeds when expected generation matches
+        let advanced = store.advance_cursor(&a, "cur-2").unwrap().unwrap();
+        assert_eq!(advanced["cursor"], "cur-2");
+
+        // Advance cursor fails with None when expected generation does not match (cursor mismatch)
+        assert_eq!(store.advance_cursor(&a, "cur-3").unwrap(), None);
     }
 }

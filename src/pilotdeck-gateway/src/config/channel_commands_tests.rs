@@ -280,4 +280,9 @@ async fn status_reports_the_node_runtime_version_contract() {
         .expect("node runtime is required by the TS host");
     assert!(status.contains("\nNode: v"), "status={status:?}");
     assert!(!status.contains("\nRust:"), "status={status:?}");
+    assert!(status.starts_with("📊 PilotDeck Status\n\n"));
+    assert!(status.contains("分支: "));
+    assert!(status.contains("提交: "));
+    assert!(status.contains("运行时间: "));
+    assert!(status.contains("平台: "));
 }
