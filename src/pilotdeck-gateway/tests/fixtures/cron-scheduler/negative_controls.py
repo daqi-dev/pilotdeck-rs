@@ -6,9 +6,10 @@ Usage: negative_controls.py --check
 Commit the tests and this script first. CARGO_TARGET_DIR is caller-owned.
 Every selected row is reported, including anchor/build/source-guard failures.
 `--check` proves each mutation anchor is unique and that the README manifest
-hand-copies (mutation count, Rows list, bound test names) still equal this
-file's sources; it cannot prove the row's assertion string ever reaches a
-panic payload, so a full run is the only proof that a row can go KILLED.
+hand-copies (mutation count, Rows list, gold-cell counts, bound test names)
+still equal this file's sources; it cannot prove the row's assertion string
+ever reaches a panic payload, so a full run is the only proof that a row can
+go KILLED.
 
 Rows bind one mutation to one lib test (run with `--exact`); the kill evidence
 is that test's own panic payload carrying its `#2295` message. Four rows bind
@@ -49,7 +50,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import mutating_sources, run_owned, wait_for_slot
-from negative_suite import Case, classify, passed
+from negative_suite import Case, classify, declares_test, passed
 
 root = Path(__file__).resolve().parents[5]
 scheduler = root / 'src/pilotdeck-gateway/src/runtime/cron/scheduler.rs'
@@ -265,10 +266,11 @@ readme = Path(__file__).with_name('README.md')
 def check_manifest():
     """Every hand-copied number must equal the artifact it describes.
 
-    The README's mutation count and `Rows:` list, and the `--exact` test name
-    of each mutation, are hand-maintained copies of this file's `mutations`
-    table and of `scheduler_tests.rs`. A copy that drifts is invisible until
-    the row it names is deleted, so `--check` derives them from the sources.
+    The README's mutation count and `Rows:` list, its gold-cell counts, and
+    the `--exact` test name of each mutation, are hand-maintained copies of
+    this file's `mutations` table, of `oracle.json`, and of
+    `scheduler_tests.rs`. A copy that drifts is invisible until the row it
+    names is deleted, so `--check` derives them from the sources.
     """
     errors = []
     # The count lives in the negative_controls.py bullet of this README's
@@ -291,11 +293,24 @@ def check_manifest():
     expected_rows = [row[0] for row in mutations]
     if listed != expected_rows:
         errors.append(f"README: Rows list {listed} != mutations {expected_rows}")
+    # The gold-cell count is another hand copy: the README file bullet says
+    # `oracle.json — N 格金样` and the sh-block comment says `含 N 格字节比对`;
+    # oracle.json's cells are the artifact both copies describe.
+    cells = len(json.loads(oracle.read_text())['cells'])
+    for pattern, where in ((r'`oracle\.json` — (\d+) 格金样', 'file list'),
+                           (r'含 (\d+) 格字节比对', 'replay comment')):
+        match = re.search(pattern, text)
+        if not match:
+            errors.append(f'README: no gold-cell count row ({where})')
+        elif int(match.group(1)) != cells:
+            errors.append(f'README: gold cells at {where} say {match.group(1)}, oracle has {cells}')
+    # declares_test (negative_suite, #2064 r10) blanks comments and string
+    # literals before matching, so a binding that only a comment carrier
+    # satisfies is rejected instead of passing --check hollowly.
     scheduler_test_source = tests.read_text()
     for row in mutations:
         ident = row[4].rsplit('::', 1)[-1]
-        if not re.search(rf'\bfn {re.escape(ident)}\(', scheduler_test_source) \
-                and not re.search(rf'^\s+{re.escape(ident)} => "', scheduler_test_source, re.M):
+        if not declares_test(scheduler_test_source, ident):
             errors.append(f'{row[0]}: bound test {ident} is not defined in scheduler_tests.rs')
     return errors
 

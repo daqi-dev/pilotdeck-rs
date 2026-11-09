@@ -92,9 +92,11 @@ env -u LC_ALL -u LC_MESSAGES LANG=en_US.UTF-8 PDRS_BASELINE=<baseline> \
   src/pilotdeck-gateway/tests/fixtures/cron-scheduler/probe.mts <out-dir>
 ```
 
-`--check` 除锚点唯一性外还机检三件手工副本（#2409）：本 README 的变异计数
+`--check` 除锚点唯一性外还机检四件手工副本（#2409）：本 README 的变异计数
 与 Rows 清单须与 `negative_controls.py` 的 `mutations` 表逐项一致（顺序
-一致），每条变异绑定的测试名须在 `scheduler_tests.rs` 中确实定义。
+一致），「N 格金样」计数（文件清单 bullet 与 ```sh 块注释两处）须与
+`oracle.json` 的 cells 数一致，每条变异绑定的测试名须在 `scheduler_tests.rs`
+中确实定义（经 `negative_suite.declares_test` 抹注释与字符串后匹配）。
 Rows: `stop-not-wired`, `re-register-clobbers-stop`, `tick-panic-kills-thread`,
 `panic-unregister-gone`, `poke-no-reschedule`, `tick-not-rescheduled`,
 `start-arms-nothing`, `isdue-inverted`, `delay-skipped`, `fire-not-spawned`,
