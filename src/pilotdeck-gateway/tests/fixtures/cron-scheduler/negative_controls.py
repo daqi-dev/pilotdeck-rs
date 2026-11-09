@@ -7,9 +7,9 @@ Commit the tests and this script first. CARGO_TARGET_DIR is caller-owned.
 Every selected row is reported, including anchor/build/source-guard failures.
 `--check` proves each mutation anchor is unique and that the README manifest
 hand-copies (mutation count, Rows list, gold-cell counts, bound test names)
-still equal this file's sources; it cannot prove the row's assertion string
-ever reaches a panic payload, so a full run is the only proof that a row can
-go KILLED.
+still equal this file's `mutations` table, `oracle.json`, and
+`scheduler_tests.rs`; it cannot prove the row's assertion string ever reaches
+a panic payload, so a full run is the only proof that a row can go KILLED.
 
 Rows bind one mutation to one lib test (run with `--exact`); the kill evidence
 is that test's own panic payload carrying its `#2295` message. Four rows bind
@@ -299,11 +299,13 @@ def check_manifest():
     cells = len(json.loads(oracle.read_text())['cells'])
     for pattern, where in ((r'`oracle\.json` — (\d+) 格金样', 'file list'),
                            (r'含 (\d+) 格字节比对', 'replay comment')):
-        match = re.search(pattern, text)
-        if not match:
+        found = re.findall(pattern, text)
+        if not found:
             errors.append(f'README: no gold-cell count row ({where})')
-        elif int(match.group(1)) != cells:
-            errors.append(f'README: gold cells at {where} say {match.group(1)}, oracle has {cells}')
+        elif len(found) != 1:
+            errors.append(f'README: expected exactly one gold-cell count row ({where}), found {len(found)}')
+        elif int(found[0]) != cells:
+            errors.append(f'README: gold cells at {where} say {found[0]}, oracle has {cells}')
     # declares_test (negative_suite, #2064 r10) blanks comments and string
     # literals before matching, so a binding that only a comment carrier
     # satisfies is rejected instead of passing --check hollowly.
