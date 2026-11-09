@@ -69,7 +69,13 @@ fn env_lookup(env: &Option<Env>, name: &str) -> Option<JsString> {
     env.as_ref()?(name)
 }
 
-/// `String(value)` for a present, non-nullish option value.
+/// A present, non-nullish option value folded to its string form. The TS
+/// constructor's `password` limb is `options.password ?? env ?? ""` with no
+/// `String()` (BlueBubblesChannel.ts:52-55 — only `serverUrl` goes through
+/// `normalizeBaseUrl`, whose `url.replace` throws on a non-string; see the
+/// #2433 guard in `register`), so a non-string password passes through the
+/// TS constructor and is coerced where it is used; this fold mirrors that
+/// accept-instead-of-throw shape rather than refusing the value.
 fn option_js_string(object: &JsObject, name: &str) -> Option<JsString> {
     match object.get(name) {
         Some(value) if !sms::nullish(value) => Some(sms::js_string_of(value)),

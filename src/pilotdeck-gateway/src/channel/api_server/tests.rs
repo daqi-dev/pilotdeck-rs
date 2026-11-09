@@ -5,7 +5,7 @@
 //! home is touched. Wire requests are raw HTTP/1.1 so the target the TS
 //! generator sent (`//host/health`, `/v1/../health`) is reproduced verbatim.
 use super::*;
-use pilotdeck_protocol::{JsString, JsValue};
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
@@ -2948,6 +2948,15 @@ fn bearer_chat(token: Option<&str>) -> ReqSpec {
 /// Each classification is pinned: a number never matches any Bearer, `false`
 /// is `Off` like TS's `!this.apiKey` gate, and an array compares as its
 /// `Buffer.from` bytes (`[104, 105]` is `"hi"`).
+///
+/// Reachability note (review r1, arbitrated against the TS source): this
+/// seam is the loader's option/`extra` mount, where a non-nullish
+/// non-string genuinely reaches `ApiKey::of`. A non-string **platform**
+/// `apiKey` never gets here — the TS snapshot layer folds it first
+/// (`parsePlatformAdapter` reads it with `stringField`, `parseGatewayConfig`
+/// :102-112, which keeps only strings) and Rust's `platform()` mirrors that
+/// with `as_string()`; that snapshot-side fold is pinned in
+/// `config/tests.rs::snapshot_folds_a_non_string_platform_api_key_like_string_field`.
 #[tokio::test]
 async fn non_string_api_keys_never_fold_to_unset() {
     let turn_gateway = || {
@@ -3027,6 +3036,166 @@ async fn non_string_api_keys_never_fold_to_unset() {
         "#2428 an array apiKey only matches its Buffer.from bytes"
     );
     array
+        .handle
+        .stop("test")
+        .await
+        .expect("#2428 api_server stop");
+}
+
+/// #2428 review r1: the classification table pinned at the seam — the
+/// server-level test above exercises only `7`/`false`/`[104, 105]`, leaving
+/// the falsy numbers, `true`, objects, the empty array and `Buffer.from`'s
+/// ToUint8 boundaries unpinned. Every row follows the Node v22.22.0 probes
+/// in `_tmp/20261026-issue-p2batch-f/s4-probe/api-key-buffer-gates.raw`:
+/// `Buffer.from(42)`/`(true)`/`({})` throw (the 401 `Never` limb), the
+/// empty array is truthy (`![]` is false) and classifies as an empty `Key`,
+/// and `[256, 257, -1, 1.7, -1.7, "65", "a", null]` maps through ToUint8
+/// to `[0, 1, 255, 1, 255, 65, 0, 0]`.
+#[test]
+fn api_key_classification_pins_the_checkauth_table() {
+    let of = |value: &JsValue| ApiKey::of(value);
+    // The `??`-kept falsy values `!this.apiKey` opens the gate for.
+    crate::negative_assert_eq!(
+        of(&JsValue::Undefined),
+        ApiKey::Off,
+        "#2428 an undefined apiKey is Off"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Null),
+        ApiKey::Off,
+        "#2428 a null apiKey is Off"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Bool(false)),
+        ApiKey::Off,
+        "#2428 a false apiKey is Off"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::String(JsString::from(""))),
+        ApiKey::Off,
+        "#2428 an empty-string apiKey is Off"
+    );
+    // A falsy number apiKey is Off — `!0`, `!(-0)` and `!NaN` are all true.
+    crate::negative_assert_eq!(
+        of(&JsValue::Number(0.0)),
+        ApiKey::Off,
+        "#2428 a falsy number apiKey is Off"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Number(-0.0)),
+        ApiKey::Off,
+        "#2428 a falsy number apiKey is Off (-0)"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Number(f64::NAN)),
+        ApiKey::Off,
+        "#2428 a falsy number apiKey is Off (NaN)"
+    );
+    // Truthy values `Buffer.from` refuses — every request answers 401.
+    crate::negative_assert_eq!(
+        of(&JsValue::Bool(true)),
+        ApiKey::Never,
+        "#2428 a boolean apiKey is Never"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Number(7.0)),
+        ApiKey::Never,
+        "#2428 a truthy number apiKey is Never"
+    );
+    crate::negative_assert_eq!(
+        of(&JsValue::Object(JsObject::new())),
+        ApiKey::Never,
+        "#2428 an object apiKey is Never"
+    );
+    // A truthy string is its UTF-8 bytes.
+    crate::negative_assert_eq!(
+        of(&JsValue::String(JsString::from("hi"))),
+        ApiKey::Key(b"hi".to_vec()),
+        "#2428 a string apiKey is its UTF-8 bytes"
+    );
+    // The empty array is truthy (`![]` is false) but holds zero bytes.
+    crate::negative_assert_eq!(
+        of(&JsValue::Array(vec![])),
+        ApiKey::Key(vec![]),
+        "#2428 an empty array apiKey is an empty Key"
+    );
+    // `Buffer.from(array)`'s per-element ToUint8: NaN/±Infinity are 0,
+    // fractions truncate toward zero, negatives and out-of-range values
+    // wrap modulo 256, strings go through ToNumber first.
+    crate::negative_assert_eq!(
+        of(&JsValue::Array(vec![
+            JsValue::Number(256.0),
+            JsValue::Number(257.0),
+            JsValue::Number(-1.0),
+            JsValue::Number(1.7),
+            JsValue::Number(-1.7),
+            JsValue::String(JsString::from("65")),
+            JsValue::String(JsString::from("a")),
+            JsValue::Null,
+        ])),
+        ApiKey::Key(vec![0, 1, 255, 1, 255, 65, 0, 0]),
+        "#2428 an array apiKey wraps elements modulo 256"
+    );
+    // The boundary rows on the converter itself, so the wrap cannot drift
+    // with the classification still pinned only at ASCII values.
+    crate::negative_assert_eq!(to_uint8(256.0), 0, "#2428 ToUint8 wraps 256 to 0");
+    crate::negative_assert_eq!(to_uint8(257.0), 1, "#2428 ToUint8 wraps 257 to 1");
+    crate::negative_assert_eq!(to_uint8(-1.0), 255, "#2428 ToUint8 wraps -1 to 255");
+    crate::negative_assert_eq!(to_uint8(1.7), 1, "#2428 ToUint8 truncates 1.7 to 1");
+    crate::negative_assert_eq!(to_uint8(-1.7), 255, "#2428 ToUint8 wraps -1.7 to 255");
+    crate::negative_assert_eq!(to_uint8(0.5), 0, "#2428 ToUint8 truncates 0.5 to 0");
+    crate::negative_assert_eq!(to_uint8(f64::NAN), 0, "#2428 ToUint8 maps NaN to 0");
+    crate::negative_assert_eq!(
+        to_uint8(f64::INFINITY),
+        0,
+        "#2428 ToUint8 maps Infinity to 0"
+    );
+    crate::negative_assert_eq!(
+        to_uint8(f64::NEG_INFINITY),
+        0,
+        "#2428 ToUint8 maps -Infinity to 0"
+    );
+}
+
+/// #2428 review r1: the empty array is truthy (`![]` is false, so checkAuth's
+/// gate stays closed) but holds zero bytes — its only possible Bearer match
+/// is the empty token (`timingSafeEqual(empty, empty)` is true, Node v22.22.0
+/// probe). A raw `Bearer ` (trailing space) never reaches that comparison on
+/// either side — Node's and hyper's parsers both trim trailing OWS, so the
+/// header arrives as `Bearer` and the prefix check fails — which is why the
+/// empty-token limb is pinned by the classification table
+/// (`ApiKey::Key(vec![])`) rather than a wire cell. The wire-level pin is
+/// the closed gate: unlike `Off` (which answers 200 to the no-Bearer
+/// request), an empty array apiKey must answer 401 to every request.
+#[tokio::test]
+async fn empty_array_api_key_keeps_the_gate_closed() {
+    let turn_gateway = || {
+        Some(gateway_from(
+            &json!({"gateway": {"turns": [{"events": []}]}}),
+            None,
+            Arc::new(AtomicBool::new(false)),
+        ) as Arc<dyn TurnGateway>)
+    };
+    let empty = start(
+        ApiServerOptions {
+            port: Some(JsValue::Number(0.0)),
+            api_key: Some(JsValue::Array(vec![])),
+            ..ApiServerOptions::default()
+        },
+        turn_gateway(),
+    )
+    .await;
+    crate::negative_assert_eq!(
+        exchange(empty.addr, &bearer_chat(None)).await.status,
+        Some(401),
+        "#2428 an empty array apiKey keeps the gate closed for a request without the Bearer key"
+    );
+    crate::negative_assert_eq!(
+        exchange(empty.addr, &bearer_chat(Some("x"))).await.status,
+        Some(401),
+        "#2428 an empty array apiKey rejects a non-empty Bearer token"
+    );
+    empty
         .handle
         .stop("test")
         .await

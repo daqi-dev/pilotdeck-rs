@@ -85,17 +85,35 @@ pub struct WeComCallbackOptions {
 impl WeComCallbackOptions {
     /// `new WeComCallbackChannel(options)` field extraction.
     pub fn from_object(options: &JsObject, qyapi: &str) -> Self {
+        let mut values: [String; STRING_FIELDS.len()] = std::array::from_fn(|_| String::new());
+        for (index, (name, env)) in STRING_FIELDS.iter().enumerate() {
+            values[index] = config_string(options, name, env);
+        }
+        let [corp_id, agent_id, secret, token, encoding_aes_key] = values;
         Self {
-            corp_id: config_string(options, "corpId", "WECOM_CORP_ID"),
-            agent_id: config_string(options, "agentId", "WECOM_AGENT_ID"),
-            secret: config_string(options, "secret", "WECOM_CB_SECRET"),
-            token: config_string(options, "token", "WECOM_CB_TOKEN"),
-            encoding_aes_key: config_string(options, "encodingAesKey", "WECOM_ENCODING_AES_KEY"),
+            corp_id,
+            agent_id,
+            secret,
+            token,
+            encoding_aes_key,
             port: config_port(options),
             qyapi: qyapi.to_owned(),
         }
     }
 }
+
+/// The TS constructor's `String(options.<name> ?? env ?? "").trim()` fields
+/// in TS field order (WeComCallbackChannel.ts:100-104, before the port).
+/// One list serves both halves of the mirror — `from_object`'s coercion and
+/// #2432's constructor guard — so a sixth string field cannot be added to
+/// one half and missed by the other.
+const STRING_FIELDS: [(&str, &str); 5] = [
+    ("corpId", "WECOM_CORP_ID"),
+    ("agentId", "WECOM_AGENT_ID"),
+    ("secret", "WECOM_CB_SECRET"),
+    ("token", "WECOM_CB_TOKEN"),
+    ("encodingAesKey", "WECOM_ENCODING_AES_KEY"),
+];
 
 fn nullish(value: Option<&JsValue>) -> bool {
     matches!(value, None | Some(JsValue::Undefined) | Some(JsValue::Null))
@@ -855,10 +873,11 @@ impl WeComCallbackChannel {
     /// a value whose `String()` throws surfaces the same way — the guard walks
     /// the same `validate_coercion` the port's `Number()` shares, so an own
     /// `toString`, a prototype-carried one, a null-terminating chain and a
-    /// too-deep array join all report the TS error text.
+    /// too-deep array join all report the TS error text. The field list is
+    /// [`STRING_FIELDS`], the same one `from_object` coerces.
     pub fn constructor(interaction: Arc<dyn InteractionPort>) -> ChannelAdapterConstructor {
         Arc::new(move |options: &JsObject| {
-            for field in ["corpId", "agentId", "secret", "token", "encodingAesKey"] {
+            for (field, _) in STRING_FIELDS {
                 if let Some(value) = options.get(field).filter(|value| !nullish(Some(value)))
                     && let Err(error) = crate::js_value::string_coercible_checked(value)
                 {
