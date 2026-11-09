@@ -31,6 +31,7 @@ sys.dont_write_bytecode = True
 import argparse
 import importlib.util
 import json
+import re
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -58,13 +59,55 @@ run_controls, DEFAULT_SOURCE = _controls.run_controls, _controls.DEFAULT_SOURCE
 check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 
 
+# #2245: the conclusion sentence alone let a record pass while its table still
+# carried an un-disposed P0/P1/P2 row. A handling cell closes a finding only
+# when it names a closure and is not still pending; anything else stays open.
+_NEGATED_LEVELS = re.compile(r'无\s*P[012](?:\s*/\s*P[012])*')
+_CLOSED_HANDLING = ('修', '解决', '关闭', '拒', '保留', '无需', '完成',
+                    'done', 'fixed', 'resolved', 'closed', 'wontfix')
+_PENDING_HANDLING = ('待', '未', '暂', 'todo', 'tbd', 'wip', 'pending')
+
+
+def _open_review_rows(text):
+    """Review-table rows whose P0/P1/P2 finding the 处理 cell leaves open (#2245).
+
+    Returns those rows, or None when the record has no readable 结论/处理
+    table: unverifiable is not clean. Lines come from the shared LF-only
+    splitter, so a U+2028 inside a cell cannot hide half of a finding.
+    """
+    header, open_rows = None, []
+    for line in G.jsonl_lines(text):
+        stripped = line.strip()
+        if not stripped.startswith('|'):
+            continue
+        cells = [cell.strip() for cell in stripped.strip('|').split('|')]
+        if all(not cell.strip('-:') for cell in cells):
+            continue  # |---|---| delimiter, not a review round
+        if header is None:
+            if '结论' not in cells or '处理' not in cells:
+                return None
+            header = cells
+            finding_at, handling_at = header.index('结论'), header.index('处理')
+            continue
+        finding = _NEGATED_LEVELS.sub('', cells[finding_at] if finding_at < len(cells) else '')
+        handling = (cells[handling_at] if handling_at < len(cells) else '').replace('*', '').lower()
+        if any(level in finding.lower() for level in ('p0', 'p1', 'p2')) and (
+                not any(closed in handling for closed in _CLOSED_HANDLING)
+                or any(pending in handling for pending in _PENDING_HANDLING)):
+            open_rows.append(cells)
+    return None if header is None else open_rows
+
+
 def independent_review():
-    """独立审查记录存在且结论为「无 P0/P1/P2」才算过（docs/reviews/001_ruler-recheck.md）。"""
+    """独立审查记录存在、表内 P0/P1/P2 行均已处置、结论为「无 P0/P1/P2」才算过（#2245）。"""
     record = G.WORKTREE / 'docs/reviews/001_ruler-recheck.md'
     try:
-        return '结论：**无 P0/P1/P2。**' in record.read_text(encoding='utf-8')
+        text = record.read_text(encoding='utf-8')
     except OSError:
         return False
+    if '结论：**无 P0/P1/P2。**' not in text:
+        return False
+    return _open_review_rows(text) == []
 
 
 def check_self_comparison(path):
