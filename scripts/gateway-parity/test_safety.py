@@ -3918,13 +3918,18 @@ class RetirementScoring(unittest.TestCase):
         # _tmp/20261109-p2batch-d7-harvest/probe-garbage-shapes.py):
         # census is guarded on both faces (any non-dict / non-list-rows shape
         # reads unobserved); connections and listeners read unobserved for
-        # non-dict shapes, and listeners additionally tolerates non-list
-        # rows (the listeners face only judges loopbackOnly).  The one
-        # unregistered crash family — connections rows non-list (e.g.
-        # {'rows': 5}) still raises TypeError/AttributeError out of the
-        # report face — is pre-existing behavior outside this PR's two
-        # registered criteria and is real-round unreachable; it is documented
-        # here rather than pinned, so a future hardening is free to fix it.
+        # non-dict shapes — for listeners, the observation holds
+        # {'pid','addresses','loopbackOnly'} (no rows), so the FAIL /
+        # TS_HOST NOT_APPLICABLE below is the dropped pid leaving the
+        # control unestablished, not any rows tolerance.  The unregistered
+        # crash family — element-level garbage still raises out of the
+        # report face (connections rows non-list or with non-dict elements
+        # e.g. {'rows': 5} / {'rows': [1]}; census rows elements non-dict or
+        # missing pid e.g. {'rows': [5]} / {'rows': [{}]}; census declared
+        # non-iterable) — is pre-existing behavior outside this PR's two
+        # registered criteria and is real-round unreachable; it is
+        # documented here rather than pinned, so a future hardening is free
+        # to fix it.
         expected = ['submit_turn', 'run_get']
         census = self._stream_ok_round_row()['census']
         cases = (  # (tag, key, value, hostAudit face, its status, control class)
@@ -3977,43 +3982,76 @@ class RetirementScoring(unittest.TestCase):
                          '#44 processAudit must carry the failing round audit')
 
     def test_round_face_cleanup_require_keeps_the_shared_predicate(self):
-        # #2519 (p2batch-d7 boundary #2, coord2 a档): the round face's CLEANUP
-        # require is the only gate that rejects an unproven round (the report
-        # face's cleanupAudit does not feed the total verdict), and #44 pins
-        # only the report consumer.  The pins bind to the executed bytes
-        # (`_apparatus_source`, the same bytes #166 verified — a disk swap
-        # after load cannot forge a green), and locate each call site inside
-        # its owning function as an ast node, so commenting the require out,
-        # moving it into a dead helper, or reflowing lines cannot keep a green
-        # run.  Counts pin the twins' call sites the same way their dynamic
-        # pins pin their semantics: `_cleanup_stopped` is called exactly
-        # twice (round-face require, report-face all()), `_census_unobserved`
-        # exactly twice (verdict guard, controls rows derivation), and each
-        # predicate keeps its single defining read.  (ast.parse precedent:
-        # test_safety.py:1940-1990; #2425 count-pin precedent: :2670-2702.)
+        # #2519 (p2batch-d7 boundary #2, coord2 a档; ds3 boundary#2 加固):
+        # the round face's CLEANUP require is the only gate that rejects an
+        # unproven round (the report face's cleanupAudit does not feed the
+        # total verdict), and #44 pins only the report consumer.  The pins
+        # bind to the executed bytes (`_apparatus_source`, the same bytes
+        # #166 verified — a disk swap after load cannot forge a green), and
+        # locate each call site among its owning function's own statements
+        # (nested defs do not count — a dead inner helper is a different
+        # scope) as an ast node whose first argument is the shared
+        # `row['audit']` subscript, so commenting the require out,
+        # reflowing lines, feeding the predicate a literal instead of the
+        # round's audit, or parking the call in a dead helper (module-level
+        # or nested) cannot keep a green run; the report face's argument is
+        # pinned dynamically by #44 (allStopped: False must flip
+        # cleanupAudit).  Counts pin the twins' call sites the same way
+        # their dynamic pins pin their semantics: `_cleanup_stopped` is
+        # called exactly twice (round-face require, report-face all()),
+        # `_census_unobserved` exactly twice (verdict guard, controls rows
+        # derivation), and each predicate keeps its single defining read.
+        # (ast.parse precedent: test_safety.py:1940-1990; #2425 count-pin
+        # precedent: :2670-2702.)
         import ast
         marker = '#2519 the round face reads the shared cleanup predicate'
         source = self.session._apparatus_source.decode()
         tree = ast.parse(source)
-        functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+        functions = {n.name: n for n in tree.body
+                     if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        assert '_retirement_round' in functions and '_retirement_report' in functions
 
         def calls(node, name):
             return [c for c in ast.walk(node)
                     if isinstance(c, ast.Call) and isinstance(c.func, ast.Name) and c.func.id == name]
 
-        # Round face: inside _retirement_round, require(_cleanup_stopped(...), ...).
-        round_face = any(isinstance(c.args[0], ast.Call) and c.args[0].func.id == '_cleanup_stopped'
-                         for c in calls(functions['_retirement_round'], 'require')
-                         if isinstance(c.args[0], ast.Call) and isinstance(c.args[0].func, ast.Name))
-        # Report face: inside _retirement_report, all(_cleanup_stopped(...) for ...).
+        def own_calls(func, name):
+            # Only the function's own statements: do not descend into nested
+            # defs/lambdas — a call parked in a dead inner helper belongs to
+            # that inner scope and must not satisfy this pin.
+            found, stack = [], list(ast.iter_child_nodes(func))
+            while stack:
+                node = stack.pop()
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    continue
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name:
+                    found.append(node)
+                stack.extend(ast.iter_child_nodes(node))
+            return found
+
+        def audit_subscript(node):
+            # `row['audit']` — the round's own audit, not a forged literal.
+            return (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name)
+                    and node.value.id == 'row' and isinstance(node.slice, ast.Constant)
+                    and node.slice.value == 'audit')
+
+        # Round face: in _retirement_round's own body, require(_cleanup_stopped(row['audit']), ...).
+        round_face = any(
+            isinstance(c.args[0], ast.Call) and isinstance(c.args[0].func, ast.Name)
+            and c.args[0].func.id == '_cleanup_stopped' and c.args[0].args
+            and audit_subscript(c.args[0].args[0])
+            for c in own_calls(functions['_retirement_round'], 'require') if c.args)
+        # Report face: in _retirement_report's own body, all(_cleanup_stopped(...) for ...).
         report_face = any(isinstance(arg, ast.GeneratorExp) and calls(arg, '_cleanup_stopped')
-                          for c in calls(functions['_retirement_report'], 'all') for arg in c.args)
+                          for c in own_calls(functions['_retirement_report'], 'all') for arg in c.args)
         self.assertTrue(
             round_face and report_face
             and len(calls(tree, '_cleanup_stopped')) == 2  # exactly the two call sites above
             and len(calls(tree, '_census_unobserved')) == 2  # verdict guard + controls rows
             and source.count("if _census_unobserved(census):") == 1
             and source.count("census_rows = [] if _census_unobserved(census) else census['rows']") == 1
+            and source.count('return not isinstance(census, dict) '
+                             'or not isinstance(census.get(\'rows\'), list)') == 1
             and source.count("return bool(audit['allStopped'])") == 1,
             marker)
 
