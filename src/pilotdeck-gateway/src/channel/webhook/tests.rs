@@ -2153,6 +2153,11 @@ async fn content_length_zero_stays_scoped_to_the_registered_rejection() {
     .clone();
     let channel = WebhookChannel::new(WebhookChannelOptions {
         routes: Some(routes),
+        // #2153 fix-r1 (review r1): a temporary port, like every other
+        // listener in this file — `..Default::default()` would bind the
+        // channel's DEFAULT_PORT (8643), which has no ownership and fails
+        // loudly under a concurrent test run.
+        port: Some(0.0),
         ..Default::default()
     });
     channel
@@ -2229,6 +2234,41 @@ fn only_the_registered_step_masks_a_content_length_zero() {
         normalize(bare, true),
         normalize(ts_shaped, true),
         "#2153 the registered unknown-method exemption still masks hyper's content-length: 0"
+    );
+}
+
+/// #2153 fix-r1 (review r1): the exemption picks its step by label, and
+/// labels are not unique across the oracle — `first` / `repeat` already
+/// repeat across cases. This guard pins that `unknown-method` occurs in
+/// exactly one step of the whole oracle, so a future case reusing the label
+/// cannot silently inherit the bare-400 exemption; it fails here instead.
+#[test]
+fn unknown_method_is_the_label_of_exactly_one_oracle_step() {
+    let value = oracle();
+    let hits = value["cases"]
+        .as_array()
+        .expect("#1334 oracle cases array")
+        .iter()
+        .filter_map(|case| {
+            let name = case["name"].as_str().expect("#1334 oracle case name");
+            let steps = recorded_steps_checked(case)
+                .expect("#1334 oracle steps checked")
+                .expect("#1334 oracle steps");
+            Some(
+                steps
+                    .iter()
+                    .filter(|step| step["label"].as_str() == Some("unknown-method"))
+                    .map(move |_| name),
+            )
+        })
+        .flatten()
+        .collect::<Vec<&str>>();
+    assert_eq!(
+        hits,
+        vec!["health-and-routing"],
+        "#2153 the unknown-method label belongs to exactly the health-and-routing \
+         case's bare parser-level 400 — any other case reusing the label must \
+         fail here rather than inherit the content-length exemption"
     );
 }
 
