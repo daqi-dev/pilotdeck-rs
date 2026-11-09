@@ -494,12 +494,17 @@ pub(crate) fn cron_management_gate(manager: &Arc<CronManager>) -> Arc<CronManage
         .unwrap_or_else(|e| e.into_inner());
     // Sweep the dead keys first — that is what keeps the registry from
     // owning the managers' lifetimes: an entry only survives while its
-    // manager is alive somewhere else.
+    // manager is alive somewhere else, and a dead entry lingers at most
+    // until the next lookup reclaims it (per dead manager at most one
+    // entry — its weak key and the gate it holds).
     gates.retain(|(held, _)| held.strong_count() > 0);
-    if let Some((_, gate)) = gates.iter().find(|(held, _)| {
-        held.upgrade()
-            .is_some_and(|held| Arc::ptr_eq(&held, manager))
-    }) {
+    // Compare by pointer, never by upgrading the entry's key: an upgrade
+    // would lend the entry a fleeting strong reference for the length of
+    // the comparison, so a concurrent test asserting the manager's death
+    // (after dropping its own references) could observe it alive — the
+    // same window a lookup could race a concurrent drop through.
+    let key = Arc::downgrade(manager);
+    if let Some((_, gate)) = gates.iter().find(|(held, _)| Weak::ptr_eq(held, &key)) {
         return gate.clone();
     }
     let gate = Arc::new(CronManagementGate {
