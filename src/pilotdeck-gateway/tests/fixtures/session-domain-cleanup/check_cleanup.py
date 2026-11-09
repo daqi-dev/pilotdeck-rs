@@ -1126,6 +1126,18 @@ def _folded_string_fold(node, budget):
                   and isinstance(part.value, ast.Constant)
                   and isinstance(part.value.value, (str, int))):
                 parts.append(str(part.value.value))
+            elif (isinstance(part, ast.FormattedValue)
+                  and part.format_spec is not None
+                  and isinstance(part.value, ast.Constant)
+                  and isinstance(part.value.value, (str, int))):
+                # fix-r16 (anthropic boundary#2 r15 P2, probe-verified —
+                # fix-r16-audit/probe-r16-p0.out B): a conversion with a
+                # format spec on a constant value is still a constant
+                # expression — ``f'{"statusxx":.6}'`` is ``'status'`` at
+                # runtime — but this fold does not interpret specs, and a
+                # refusal certifies nothing about absence.  It stops the
+                # fold as the sentinel instead of the fail-open None.
+                return _FOLD_STRING_UNRESOLVED
             else:
                 return None
         return ''.join(parts)
@@ -1138,6 +1150,24 @@ def _folded_string_fold(node, budget):
         # collapsing the stop back into the same fail-open None).
         if (left is _FOLD_STRING_UNRESOLVED
                 or right is _FOLD_STRING_UNRESOLVED):
+            return _FOLD_STRING_UNRESOLVED
+        # fix-r16 (anthropic boundary#1 r15 P0, probe-verified —
+        # fix-r16-audit/probe-r16-p0.out A/A2/A3/A4/A5): an unresolvable
+        # operand under ``%`` certifies nothing about the result.  The
+        # r15 rule kept Add/Mult's exact-bound rejections as a plain None,
+        # which is sound only while the oversized result is consumed
+        # directly; under ``%`` the oversized point just moves one level
+        # down.  A precision conversion truncates the right operand
+        # (``'%.6s' % ('sta' + 'tus' + 'x' * 999995)`` is ``'status'`` at
+        # runtime), a zero-padded precision spec keeps the format string
+        # oversized while the conversion stays short (the left operand),
+        # and a constant tuple right feeds precision-0 conversions that
+        # emit nothing — every one of them a fully constant expression
+        # whose refusal used to read as negative evidence.  Any operand
+        # the fold cannot resolve leaves the ``%`` result unconstrained,
+        # so the fold stops as the sentinel — the same fail-closed
+        # polarity as budget exhaustion and the r15 size refusal.
+        if isinstance(node.op, ast.Mod) and (left is None or right is None):
             return _FOLD_STRING_UNRESOLVED
         if isinstance(node.op, ast.Add) and left is not None and right is not None:
             # fix-r6 (DS sibling r5 P2-2): the concat fold had no cap, so a
@@ -1184,7 +1214,10 @@ def _folded_string_fold(node, budget):
             # fold as the sentinel — the same fail-closed polarity as budget
             # exhaustion.  The Add/Mult size rejections keep their plain None:
             # their bounds are exact, so the result is provably too long to
-            # equal any status word.
+            # equal any status word — *consumed directly*.  fix-r16: under an
+            # outer ``%`` that None is escalated back to the sentinel (the
+            # Mod entry guard above); truncation makes "too long" carry no
+            # information about the formatted result.
             if len(left) + len(specs) * max(len(right), width) > _FOLD_MAX_ITEMS:
                 return _FOLD_STRING_UNRESOLVED
             # fix-r13 (DS sibling#2 r12 P2): the format result is charged
@@ -8304,6 +8337,69 @@ def _aggregation_audit_impl():
         failures.append('#892 aggregation-audit: a precision-truncated status '
                         'value escaped enumeration behind the format size '
                         'refusal (#1652)')
+    # #1652 fix-r16 (anthropic boundary#1 r15 P0 + boundary#2 r15 P2,
+    # probe-verified — fix-r16-audit/probe-r16-p0.out A/A2/A3/A4/A5/B):
+    # an unresolvable operand under ``%`` must stop the fold as the
+    # sentinel — the r15 rule kept Add/Mult's exact-bound rejections as a
+    # plain None, sound only while the oversized result is consumed
+    # directly; under ``%`` the oversized point just moves one level down
+    # (one-over Add/Mult on the right, a zero-padded precision spec that
+    # keeps the format oversized while the conversion stays short on the
+    # left, a constant tuple feeding precision-0 conversions, and a
+    # JoinedStr conversion with a format spec).
+    _fsr2_shapes = [
+        "'%.6s' % ('sta' + 'tus' + 'x' * 999995)",
+        "'%.4s' % ('PA' + 'SS' + 'x' * 999997)",
+        "'%.6s' % ('status' * 166667)",
+        "('st' + '%.' + '0' * 999996 + '4s') % 'atusxy'",
+        "'%.0s%.6s' % ('', 'statusxy')",
+        'f\'{"statusxx":.6}\'',
+    ]
+    if any(_folded_string(ast.parse(shape, mode='eval').body)
+           is not _FOLD_STRING_UNRESOLVED for shape in _fsr2_shapes):
+        failures.append('#892 aggregation-audit: an unresolvable % operand '
+                        'read as negative status evidence instead of '
+                        'stopping the fold (#1652)')
+    # End-to-end: every write below has a runtime key or value that is
+    # exactly the status word, so each rogue must be enumerated (one scan,
+    # one function per shape).
+    _fsr2_writes = [
+        "    report['%.6s' % ('sta' + 'tus' + 'x' * 999995)] = 'PASS'",
+        "    report['sta' + 'tus'] = "
+        "'%.4s' % ('PA' + 'SS' + 'x' * 999997)",
+        "    report['%.6s' % ('status' * 166667)] = 'PASS'",
+        "    report[('st' + '%.' + '0' * 999996 + '4s') % 'atusxy']"
+        " = 'PASS'",
+        "    report['%.0s%.6s' % ('', 'statusxy')] = 'PASS'",
+        "    report[f'{\"statusxx\":.6}'] = 'PASS'",
+    ]
+    _fsr2_lines = ['report = {}', '']
+    for _i, _write in enumerate(_fsr2_writes):
+        _fsr2_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr2_found, _fsr2_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr2_lines)), 'fix-r16-self-check.py')
+    for _i in range(len(_fsr2_writes)):
+        if ('fix-r16-self-check.py', f'rogue{_i}') not in _fsr2_found:
+            failures.append('#892 aggregation-audit: an unconstrained-% '
+                            'status write escaped enumeration '
+                            f'(rogue{_i}) (#1652)')
+            break
+    # #1652 fix-r16 (DS sibling#2 r15 P2): _nested_slot_fail_closed keeps
+    # the bare ``in`` on purpose — a stopped fold (the sentinel) must NOT
+    # exempt a nested status slot there; False is the flagging, safe
+    # direction (the helper docstring says exactly this).  A later tidying
+    # pass that swaps the bare ``in`` for _folded_status_hit would turn a
+    # stopped fold into an exemption — fail-open — and no existing pin went
+    # red under that mutant; this one does.
+    _pol_cell = [0]
+    try:
+        _AUDIT_PASS_BUDGET = _pol_cell
+        _pol_slot = ast.parse("'sta' + 'tus'", mode='eval').body
+        if _nested_slot_fail_closed(_pol_slot, {}):
+            failures.append('#892 aggregation-audit: a stopped fold exempted '
+                            'a nested status slot (#1652)')
+    finally:
+        _AUDIT_PASS_BUDGET = None
     # #1652 fix-r12 (DS concurrency#2 r11 P2, probe-verified —
     # fix-r12-audit/probe-r12-p1.out B): the BoolOp value fold is lazy —
     # a settling operand ends the fold, so a zero-size pile behind it is

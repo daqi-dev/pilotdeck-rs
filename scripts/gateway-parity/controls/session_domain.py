@@ -1579,8 +1579,13 @@ def main():
     # FAIL family — a memory blow-up inside a control case must land in
     # verdict.json as a FAIL, not crash the harness with a raw traceback
     # (same rationale as session_domain.py fix-r6).
+    # fix-r16 (DS sibling#1 = concurrency#1 r15 P2, two roles, family
+    # completion): RecursionError joins the same family — the reference
+    # wrapper (session_domain.py fix-r5, fix-r6) carries both, and
+    # check_case deep-copies external --source artifacts, so a deeply
+    # nested one overflows into the traceback policy the same way.
     except (ValueError, OSError, KeyError, TypeError, StopIteration,
-            subprocess.SubprocessError, MemoryError) as error:
+            subprocess.SubprocessError, MemoryError, RecursionError) as error:
         result = {'status': 'FAIL', 'rule': getattr(error, 'rule', 'CONTROL_EXECUTION'), 'detail': str(error)}
     else:
         result = {'status': 'PASS', 'rule': None}

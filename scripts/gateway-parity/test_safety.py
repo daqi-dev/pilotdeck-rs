@@ -1999,6 +1999,13 @@ class ApparatusInputs(unittest.TestCase):
         self.assertIn('MemoryError', recorded,
                       'fix-r15: a control-case MemoryError must be recorded as '
                       'a FAIL verdict, not the traceback policy')
+        # fix-r16 (DS sibling#1 = concurrency#1 r15 P2, two roles): the
+        # reference wrapper (session_domain.py fix-r5/fix-r6) carries both
+        # resource-exhaustion members, so the control handler's revert mutant
+        # (dropping either one) goes red on this source-reading pin.
+        self.assertIn('RecursionError', recorded,
+                      'fix-r16: a control-case RecursionError must be recorded '
+                      'as a FAIL verdict, not the traceback policy')
 
     def test_cli_main_is_only_the_one_guard_call(self):
         # The guard's single implementation is only useful if no entry keeps a
