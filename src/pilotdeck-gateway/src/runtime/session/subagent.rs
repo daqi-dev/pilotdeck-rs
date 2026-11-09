@@ -23,8 +23,8 @@ use crate::{
     },
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Project the public SDK agent definitions/settings into the child runtime contract.
 #[cfg(test)]
@@ -749,6 +749,7 @@ impl NativeSubagentPort {
         let session = Arc::new(session);
         let mut guard = ChildGuard {
             session: Some(session.clone()),
+            executor: tokio::runtime::Handle::current(),
             live: child_live.clone(),
             port: self.clone(),
             subagent_id: request.subagent_id.clone(),
@@ -844,9 +845,7 @@ impl NativeSubagentPort {
             (Ok(value), Ok(())) => Ok(value),
             (Err(error), _) | (_, Err(error)) => Err(error),
         };
-        if started.elapsed()
-            >= crate::runtime::network::node_timer_duration(request.timeout_ms)
-        {
+        if started.elapsed() >= crate::runtime::network::node_timer_duration(request.timeout_ms) {
             result = Err(ToolError::failed(format!(
                 "Subagent timed out after {}ms.",
                 crate::js_value::number_string(request.timeout_ms)
@@ -1135,7 +1134,13 @@ impl super::sidecar_session::SidecarSpawner for NativeSpawner {
     }
 }
 
-struct DefinitionMcp(Option<Arc<dyn crate::runtime::mcp::runtime::McpRuntimePort>>);
+struct DefinitionMcp {
+    // An owned runtime always travels with its construction-time executor.
+    runtime: Option<(
+        Arc<dyn crate::runtime::mcp::runtime::McpRuntimePort>,
+        tokio::runtime::Handle,
+    )>,
+}
 impl DefinitionMcp {
     async fn open(definition: &Definition, registry: &ToolRegistry) -> Result<Self, ToolError> {
         use crate::runtime::mcp::{
@@ -1199,11 +1204,13 @@ impl DefinitionMcp {
             }
         }
         if specs.is_empty() {
-            return Ok(Self(None));
+            return Ok(Self { runtime: None });
         }
         let runtime: Arc<dyn McpRuntimePort> =
             Arc::new(McpRuntime::new(specs, McpRuntimeOptions::default()));
-        let mut owned = Self(Some(runtime.clone()));
+        let mut owned = Self {
+            runtime: Some((runtime.clone(), tokio::runtime::Handle::current())),
+        };
         let attached = async {
             runtime.start().await.map_err(failed)?;
             for tool in create_mcp_tool_definitions_from_runtime(
@@ -1230,31 +1237,39 @@ impl DefinitionMcp {
         }
         .await;
         if let Err(error) = attached {
-            let _ = owned.dispose().await;
+            if let Err(cleanup) = owned.dispose().await {
+                use std::io::Write;
+                let _ = writeln!(
+                    std::io::stderr().lock(),
+                    "DefinitionMcp startup cleanup failed: {cleanup:?}"
+                );
+            }
             return Err(error);
         }
         Ok(owned)
     }
     async fn dispose(&mut self) -> Result<(), ToolError> {
-        match self.0.take() {
-            Some(runtime) => runtime.stop().await.map_err(failed),
+        match self.runtime.take() {
+            Some((runtime, _)) => runtime.stop().await.map_err(failed),
             None => Ok(()),
         }
     }
 }
 impl Drop for DefinitionMcp {
     fn drop(&mut self) {
-        if let Some(runtime) = self.0.take()
-            && let Ok(handle) = tokio::runtime::Handle::try_current()
-        {
-            handle.spawn(async move {
-                let _ = runtime.stop().await;
-            });
+        if let Some((runtime, executor)) = self.runtime.take() {
+            drop(crate::runtime::manager::session_mcp::spawn_drop_cleanup(
+                executor,
+                "DefinitionMcp",
+                async move { runtime.stop().await },
+            ));
         }
     }
 }
 struct ChildGuard {
-    session: Option<Arc<SidecarSession>>,
+    session: Option<Arc<dyn LiveSession>>,
+    // Captured with the child; Drop may run on a plain parent thread.
+    executor: tokio::runtime::Handle,
     live: Option<Arc<LiveSessionState>>,
     port: NativeSubagentPort,
     subagent_id: JsString,
@@ -1269,19 +1284,28 @@ struct ChildGuard {
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         if let Some(session) = self.session.take() {
-            let _ = session.abort(&"subagent_parent_dropped".into());
-            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                let live = self.live.clone();
-                let port = self.port.clone();
-                let id = self.subagent_id.clone();
-                let kind = self.subagent_type.clone();
-                let record_completion = self.started_recorded && !self.completed_recorded;
-                let emit_completion = self.event_started && !self.event_completed;
-                let stop_lifecycle = self.lifecycle_started && !self.lifecycle_stopped;
-                runtime.spawn(async move {
-                    let _ = session.dispose().await;
+            let mut failures = Vec::new();
+            if let Err(error) = session.abort(&"subagent_parent_dropped".into()) {
+                failures.push(format!("abort: {error}"));
+            }
+            let live = self.live.clone();
+            let port = self.port.clone();
+            let id = self.subagent_id.clone();
+            let kind = self.subagent_type.clone();
+            let record_completion = self.started_recorded && !self.completed_recorded;
+            let emit_completion = self.event_started && !self.event_completed;
+            let stop_lifecycle = self.lifecycle_started && !self.lifecycle_stopped;
+            drop(crate::runtime::manager::session_mcp::spawn_drop_cleanup(
+                self.executor.clone(),
+                "ChildGuard",
+                async move {
+                    if let Err(error) = session.dispose().await {
+                        failures.push(format!("session dispose: {error}"));
+                    }
                     if let Some(live) = live {
-                        let _ = live.dispose();
+                        if let Err(error) = live.dispose() {
+                            failures.push(format!("live dispose: {error}"));
+                        }
                     }
                     let writer = port
                         .live
@@ -1289,7 +1313,7 @@ impl Drop for ChildGuard {
                         .map(|s| s.recorder.writer())
                         .or_else(|| port.services.as_ref().map(|s| &s.writer));
                     if let Some(writer) = writer.filter(|_| record_completion) {
-                        let _ = writer.record_session_event(
+                        if let Err(error) = writer.record_session_event(
                             &value_string(&port.input, "sessionId"),
                             &value_string(&port.input, "turnId"),
                             object_fields([
@@ -1305,11 +1329,13 @@ impl Drop for ChildGuard {
                                 ("durationMs", JsValue::Number(0.0)),
                                 ("errored", JsValue::Bool(true)),
                             ]),
-                        );
+                        ) {
+                            failures.push(format!("completion record: {error}"));
+                        }
                     }
                     if stop_lifecycle {
                         let config = port.config();
-                        let _ = lifecycle::Handler::new(
+                        if let Err(error) = lifecycle::Handler::new(
                             port.lifecycle.clone(),
                             lifecycle::Binding {
                                 session_id: value_string(&port.input, "sessionId"),
@@ -1338,10 +1364,13 @@ impl Drop for ChildGuard {
                                 ),
                             ]),
                         )]))
-                        .await;
+                        .await
+                        {
+                            failures.push(format!("stop lifecycle: {error}"));
+                        }
                     }
                     if emit_completion {
-                        let _ = port.events.emit(object_fields([
+                        if let Err(error) = port.events.emit(object_fields([
                             ("type", "subagent_completed".into()),
                             (
                                 "sessionId",
@@ -1356,10 +1385,19 @@ impl Drop for ChildGuard {
                             ("success", JsValue::Bool(false)),
                             ("aborted", JsValue::Bool(true)),
                             ("durationMs", JsValue::Number(0.0)),
-                        ]));
+                        ])) {
+                            failures.push(format!("completion event: {error}"));
+                        }
                     }
-                });
-            }
+                    if failures.is_empty() {
+                        Ok(())
+                    } else {
+                        Err(crate::runtime::project::RuntimeError::new(
+                            failures.join("; "),
+                        ))
+                    }
+                },
+            ));
         }
     }
 }
@@ -1857,6 +1895,171 @@ fn with_signal(
             goal: host.goal.clone(),
             plan_directory: None,
         }),
+    }
+}
+
+#[cfg(test)]
+mod drop_tests {
+    use super::*;
+    use crate::runtime::mcp::{
+        client::{McpCallOptions, McpClientError},
+        protocol::McpToolSpec,
+        runtime::{
+            McpClientStatusEntry, McpFuture, McpRuntime, McpRuntimeOptions, McpRuntimePort,
+            McpRuntimeServerInfo, McpToolCallResult, SessionMcpRuntime,
+        },
+    };
+    use crate::runtime::project::{DisposeFuture, RuntimeError};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    };
+
+    struct StopProbe {
+        stopped: mpsc::Sender<()>,
+        runtime: McpRuntime,
+    }
+    impl SessionMcpRuntime for StopProbe {
+        fn stop(&self) -> McpFuture<'_, Result<(), RuntimeError>> {
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                self.stopped.send(()).unwrap();
+                Ok(())
+            })
+        }
+    }
+    impl McpRuntimePort for StopProbe {
+        fn start(&self) -> McpFuture<'_, Result<Vec<McpClientStatusEntry>, RuntimeError>> {
+            McpRuntimePort::start(&self.runtime)
+        }
+        fn list_all_tools(&self) -> McpFuture<'_, Result<Vec<McpToolSpec>, RuntimeError>> {
+            McpRuntimePort::list_all_tools(&self.runtime)
+        }
+        fn server_info(&self, id: &str) -> Option<McpRuntimeServerInfo> {
+            self.runtime.server_info(id)
+        }
+        fn call_tool<'a>(
+            &'a self,
+            id: &'a str,
+            name: &'a JsString,
+            input: &'a JsValue,
+            options: McpCallOptions,
+        ) -> McpFuture<'a, Result<McpToolCallResult, McpClientError>> {
+            McpRuntimePort::call_tool(&self.runtime, id, name, input, options)
+        }
+    }
+
+    #[test]
+    fn definition_mcp_drop_without_current_runtime_stops() {
+        let executor = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let (stopped, observed) = mpsc::channel();
+        let owned = DefinitionMcp {
+            runtime: Some((
+                Arc::new(StopProbe {
+                    stopped,
+                    runtime: McpRuntime::new(Vec::new(), McpRuntimeOptions::default()),
+                }),
+                executor.handle().clone(),
+            )),
+        };
+        std::thread::spawn(move || {
+            assert!(tokio::runtime::Handle::try_current().is_err());
+            drop(owned);
+        })
+        .join()
+        .unwrap();
+        observed.recv_timeout(Duration::from_secs(2)).unwrap();
+    }
+
+    struct ChildProbe {
+        aborted: Arc<AtomicUsize>,
+        disposed: mpsc::Sender<()>,
+        fail: bool,
+    }
+    impl LiveSession for ChildProbe {
+        fn snapshot(&self) -> JsValue {
+            JsValue::Null
+        }
+        fn abort(&self, reason: &JsString) -> Result<(), RuntimeError> {
+            assert!(reason.equals_str("subagent_parent_dropped"));
+            self.aborted.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async move {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                self.disposed.send(()).unwrap();
+                if self.fail {
+                    Err(RuntimeError::new("child dispose probe error"))
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    #[test]
+    fn child_guard_drop_without_current_runtime_disposes_and_emits_even_on_error() {
+        let executor = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        for fail in [false, true] {
+            let aborted = Arc::new(AtomicUsize::new(0));
+            let (disposed, observed) = mpsc::channel();
+            let (event, emitted) = mpsc::channel();
+            let events = Arc::new(module_host::EventBuffer::streaming(Arc::new(
+                move |value| {
+                    event.send(value).unwrap();
+                    Ok(())
+                },
+            )));
+            let port = NativeSubagentPort::new(
+                JsValue::Undefined,
+                object([("sessionId", "parent".into()), ("turnId", "turn".into())]),
+                ToolRegistry::default(),
+                events,
+                None,
+                None,
+                None,
+                None,
+                crate::runtime::hooks::LifecycleRuntime::null(),
+            );
+            let guard = ChildGuard {
+                session: Some(Arc::new(ChildProbe {
+                    aborted: aborted.clone(),
+                    disposed,
+                    fail,
+                })),
+                executor: executor.handle().clone(),
+                live: None,
+                port,
+                subagent_id: "child".into(),
+                subagent_type: "worker".into(),
+                started_recorded: false,
+                lifecycle_started: false,
+                event_started: true,
+                completed_recorded: false,
+                lifecycle_stopped: false,
+                event_completed: false,
+            };
+            std::thread::spawn(move || {
+                assert!(tokio::runtime::Handle::try_current().is_err());
+                drop(guard);
+            })
+            .join()
+            .unwrap();
+            observed.recv_timeout(Duration::from_secs(2)).unwrap();
+            let event = emitted.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(event.get("type"), Some(&"subagent_completed".into()));
+            assert_eq!(event.get("subagentId"), Some(&"child".into()));
+            assert_eq!(aborted.load(Ordering::SeqCst), 1);
+        }
     }
 }
 
