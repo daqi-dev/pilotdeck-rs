@@ -637,6 +637,7 @@ async fn deliver_outbox_queues_every_failed_chunk() {
     assert!(receipt["complete"].as_bool().unwrap_or(false) == false);
 }
 
+#[tokio::test]
 async fn production_weixin_cron_invalid_credentials_returns_ok_false_not_err() {
     let server = server(false).await;
     let home = std::env::temp_dir().join(format!("pdrs-wx-bad-cred-{}", uuid::Uuid::new_v4()));
