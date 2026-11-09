@@ -39,22 +39,23 @@ pub fn production_wecom_webhook(
     })
 }
 
-fn wecom_options(home: &Path, cwd: &Path) -> super::wecom::WeComOptions {
-    let env = super::Env::from([(
+fn snapshot_env(home: &Path) -> super::Env {
+    super::Env::from([(
         "PILOT_HOME".into(),
         home.to_string_lossy().into_owned(),
-    )]);
+    )])
+}
+
+fn wecom_webhook_crypto(home: &Path, cwd: &Path) -> crate::application::WecomWebhookCrypto {
+    let env = snapshot_env(home);
     crate::config::load_snapshot(home, cwd, &env, None, 1.0, "1970-01-01T00:00:00.000Z")
         .ok()
-        .and_then(|snapshot| crate::application::wecom_options(&snapshot, &env, home))
+        .map(|snapshot| crate::application::wecom_webhook_crypto(&snapshot, &env))
         .unwrap_or_default()
 }
 
 fn feishu_options(home: &Path, cwd: &Path) -> super::feishu::FeishuOptions {
-    let env = super::Env::from([(
-        "PILOT_HOME".into(),
-        home.to_string_lossy().into_owned(),
-    )]);
+    let env = snapshot_env(home);
     crate::config::load_snapshot(home, cwd, &env, None, 1.0, "1970-01-01T00:00:00.000Z")
         .ok()
         .and_then(|snapshot| crate::application::feishu_options(&snapshot, home))
@@ -111,12 +112,32 @@ async fn handle_channel_webhook(
             ),
         }));
     }
-    if channel_key == "wecom"
-        && !verify_wecom_webhook_signature(&request, &value, home, cwd)
-    {
+    if channel_key == "wecom" {
+        let crypto = wecom_webhook_crypto(home, cwd);
+        if !verify_wecom_webhook_signature(&request, &value, &crypto) {
+            return Ok(Some(webhook_json(
+                StatusCode::FORBIDDEN,
+                serde_json::json!({"error":{"code":"signature","message":"msg_signature verification failed"}}),
+            )));
+        }
+        let value = match decrypt_wecom_webhook_body(&value, &crypto) {
+            Ok(value) => value,
+            Err(_) => {
+                return Ok(Some(webhook_json(
+                    StatusCode::FORBIDDEN,
+                    serde_json::json!({"error":{"code":"signature","message":"msg_signature verification failed"}}),
+                )));
+            }
+        };
+        let Some(text) = extract_inbound_text(&value) else {
+            return Ok(Some(webhook_json(
+                StatusCode::OK,
+                serde_json::json!({ "ok": true }),
+            )));
+        };
         return Ok(Some(webhook_json(
-            StatusCode::FORBIDDEN,
-            serde_json::json!({"error":{"code":"signature","message":"msg_signature verification failed"}}),
+            StatusCode::OK,
+            route_input_webhook_body(home, cwd, channel_key, &text),
         )));
     }
     let Some(text) = extract_inbound_text(&value) else {
@@ -174,31 +195,62 @@ fn wecom_encrypt_material(value: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// When the callback query carries `msg_signature`, verify against the encrypted
-/// payload using the configured bot secret (same contract as WeComCallbackChannel).
 fn verify_wecom_webhook_signature(
     request: &Request<String>,
     value: &Value,
-    home: &Path,
-    cwd: &Path,
+    crypto: &crate::application::WecomWebhookCrypto,
 ) -> bool {
     let msg_signature = query_param(request, "msg_signature");
     let timestamp = query_param(request, "timestamp");
     let nonce = query_param(request, "nonce");
-    if msg_signature.is_empty() && timestamp.is_empty() && nonce.is_empty() {
-        return true;
-    }
     if msg_signature.is_empty() || timestamp.is_empty() || nonce.is_empty() {
         return false;
     }
     let Some(encrypt) = wecom_encrypt_material(value) else {
         return false;
     };
-    let token = wecom_options(home, cwd).bot_secret;
-    if token.trim().is_empty() {
+    let token = crypto.token.trim();
+    if token.is_empty() {
         return false;
     }
-    super::wecom_callback::crypto::signature(&token, &timestamp, &nonce, &encrypt) == msg_signature
+    super::wecom_callback::crypto::signature(token, &timestamp, &nonce, &encrypt) == msg_signature
+}
+
+fn decrypt_wecom_webhook_body(
+    value: &Value,
+    crypto: &crate::application::WecomWebhookCrypto,
+) -> Result<Value, ()> {
+    let Some(encrypt) = wecom_encrypt_material(value) else {
+        return Ok(value.clone());
+    };
+    let key = crypto.encoding_aes_key.trim();
+    if key.is_empty() {
+        return Err(());
+    }
+    let plain = super::wecom_callback::crypto::decrypt(key, &encrypt, crypto.corp_id.trim())
+        .map_err(|_| ())?;
+    Ok(wecom_inbound_from_plaintext(&plain))
+}
+
+fn wecom_inbound_from_plaintext(plain: &str) -> Value {
+    if plain.trim_start().starts_with('<') {
+        let content = wecom_xml_tag(plain, "Content").unwrap_or_default();
+        let chat = wecom_xml_tag(plain, "FromUserName").unwrap_or_default();
+        serde_json::json!({ "chatId": chat, "text": content })
+    } else {
+        serde_json::from_str(plain).unwrap_or_else(|_| serde_json::json!({ "text": plain }))
+    }
+}
+
+fn wecom_xml_tag(xml: &str, tag: &str) -> Option<String> {
+    let re = regex::Regex::new(&format!(
+        r"(?i)<{tag}><!\[CDATA\[([\s\S]*?)\]\]></{tag}>|<{tag}>([^<]*)</{tag}>"
+    ))
+    .ok()?;
+    let matched = re.captures(xml)?;
+    Some(
+        crate::metadata::js_trim(matched.get(1).or_else(|| matched.get(2))?.as_str()).into(),
+    )
 }
 
 fn extract_inbound_text(value: &Value) -> Option<String> {
@@ -264,7 +316,8 @@ mod tests {
 
     const FEISHU_CONFIG: &str = "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {deterministic: {}}\nadapters:\n  feishu:\n    enabled: true\n    verifyToken: vt-hook\n";
 
-    const WECOM_CONFIG: &str = "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {deterministic: {}}\nadapters:\n  wecom:\n    enabled: true\n    extra:\n      secret: wecom-signing-token\n";
+    const WECOM_KEY: &str = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU";
+    const WECOM_CONFIG: &str = "schemaVersion: 1\nagent: {model: parity/deterministic}\nmodel:\n  providers:\n    parity:\n      protocol: openai\n      url: http://127.0.0.1:1/v1\n      apiKey: mock-only\n      models: {deterministic: {}}\nadapters:\n  wecom:\n    enabled: true\n    token: wecom-signing-token\n    extra:\n      encodingAesKey: YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU\n      corpId: corp\n";
 
     fn installed_root(yaml: &str) -> (
         std::path::PathBuf,
@@ -354,8 +407,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wecom_webhook_production_route_input_slash_command() {
-        let (root, _owner) = installed_root(CONFIG);
+    async fn wecom_webhook_rejects_missing_signature_query() {
+        let (root, _owner) = installed_root(WECOM_CONFIG);
         let callback = production_wecom_webhook(root.clone(), root.clone(), "hook-secret".into());
         let request = hyper::Request::builder()
             .method("POST")
@@ -364,10 +417,7 @@ mod tests {
             .body(r#"{"chatId":"c1","text":"/update check"}"#.into())
             .unwrap();
         let response = callback(request).await.unwrap().expect("handled");
-        let body = response.into_body().collect().await.unwrap().to_bytes();
-        let json: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(json["routeInput"], "production_route_input");
-        assert_eq!(json["handled"], true);
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -375,14 +425,18 @@ mod tests {
     async fn wecom_webhook_rejects_bad_msg_signature() {
         let (root, _owner) = installed_root(WECOM_CONFIG);
         let callback = production_wecom_webhook(root.clone(), root.clone(), "hook-secret".into());
-        let encrypt = "cipher-payload";
+        let encrypt = super::super::wecom_callback::crypto::encrypt(
+            WECOM_KEY,
+            "/update check",
+            "corp",
+        );
         let request = hyper::Request::builder()
             .method("POST")
             .uri(format!(
                 "/wecom/webhook?msg_signature=bad&timestamp=123&nonce=nonce"
             ))
             .header(header::AUTHORIZATION, bearer("hook-secret"))
-            .body(format!(r#"{{"encrypt":"{encrypt}","chatId":"c1","text":"/update check"}}"#).into())
+            .body(format!(r#"{{"encrypt":"{encrypt}"}}"#).into())
             .unwrap();
         let response = callback(request).await.unwrap().expect("handled");
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
@@ -390,23 +444,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wecom_webhook_accepts_valid_msg_signature() {
+    async fn wecom_webhook_accepts_valid_msg_signature_and_decrypts_payload() {
         use super::super::wecom_callback::crypto;
         let (root, _owner) = installed_root(WECOM_CONFIG);
         let callback = production_wecom_webhook(root.clone(), root.clone(), "hook-secret".into());
-        let encrypt = "cipher-payload";
-        let signature =
-            crypto::signature("wecom-signing-token", "123", "nonce", encrypt);
+        let xml = format!(
+            "<xml><MsgType><![CDATA[text]]></MsgType><FromUserName><![CDATA[c1]]></FromUserName><Content><![CDATA[/update check]]></Content></xml>"
+        );
+        let encrypt = crypto::encrypt(WECOM_KEY, &xml, "corp");
+        let signature = crypto::signature("wecom-signing-token", "123", "nonce", &encrypt);
         let request = hyper::Request::builder()
             .method("POST")
             .uri(format!(
                 "/wecom/webhook?msg_signature={signature}&timestamp=123&nonce=nonce"
             ))
             .header(header::AUTHORIZATION, bearer("hook-secret"))
-            .body(format!(r#"{{"encrypt":"{encrypt}","chatId":"c1","text":"/update check"}}"#).into())
+            .body(format!(r#"{{"encrypt":"{encrypt}"}}"#).into())
             .unwrap();
         let response = callback(request).await.unwrap().expect("handled");
         assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["routeInput"], "production_route_input");
+        assert_eq!(json["handled"], true);
         let _ = std::fs::remove_dir_all(root);
     }
 }

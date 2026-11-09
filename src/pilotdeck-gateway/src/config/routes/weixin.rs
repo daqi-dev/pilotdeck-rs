@@ -1,3 +1,4 @@
+mod attachments;
 mod http;
 mod inbox;
 pub use inbox::WeixinInbox;

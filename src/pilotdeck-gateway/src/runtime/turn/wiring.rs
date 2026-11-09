@@ -1395,11 +1395,11 @@ impl LiveSession for ContinuationChildSession {
         options.insert("turnId".into(), JsValue::String(turn.turn_id.clone()));
         let input =
             continuation_queued_execution_input(&self.input_template.lock().unwrap(), &turn.input)?;
+        let stream = self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))?;
         self.live
             .recorder
             .start_queued_turn(&self.live.session_key, &next.turn_id, &next.item_id)
             .map_err(|error| RuntimeError::new(error.to_string()))?;
-        let stream = self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))?;
         let mut queued = self.queued.lock().unwrap();
         if queued
             .front()

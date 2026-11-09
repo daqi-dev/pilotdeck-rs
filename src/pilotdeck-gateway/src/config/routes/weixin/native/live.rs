@@ -210,11 +210,26 @@ impl LiveOwner {
         let Some(chat_id) = text(message, "from_user_id") else {
             return Ok(());
         };
-        let Some((input, attachments)) =
+        let Some((input, mut attachments)) =
             crate::config::routes::weixin::native::weixin_inbound_text_and_attachments(message)
         else {
             return Ok(());
         };
+        if !attachments.is_empty() {
+            let message_id = message
+                .get("message_id")
+                .or_else(|| message.get("client_id"))
+                .and_then(Value::as_str)
+                .filter(|id| !id.is_empty())
+                .unwrap_or(id);
+            super::super::attachments::materialize_inbound(
+                &self.storage.home,
+                chat_id,
+                message_id,
+                &mut attachments,
+            )
+            .await?;
+        }
         let chat = self.chat(chat_id);
         if let Some(context) = text(message, "context_token").filter(|context| !context.is_empty()) {
             chat.lock().await.context = Some(context.into());
@@ -327,7 +342,7 @@ impl LiveOwner {
             input
         };
         let prompt = if prompt.is_empty() && !attachments.is_empty() {
-            "[WeChat attachment]".to_owned()
+            "请查看我发送的附件。".to_owned()
         } else {
             prompt
         };
@@ -636,6 +651,21 @@ impl ChannelEventSink for LiveSink<'_> {
                         self.text.lock().unwrap().push_str(text);
                     }
                     None
+                }
+                Some("assistant_attachment") => {
+                    let Some(context) = state.context.clone() else {
+                        return Ok(());
+                    };
+                    drop(state);
+                    let _ = super::super::attachments::send_outbound(
+                        &self.owner.http,
+                        self.credentials,
+                        self.chat,
+                        &context,
+                        &event["attachment"],
+                    )
+                    .await;
+                    return Ok(());
                 }
                 Some("error") => event["message"].as_str().map(str::to_owned),
                 _ => None,

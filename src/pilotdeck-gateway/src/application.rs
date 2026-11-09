@@ -426,6 +426,52 @@ pub(crate) fn wecom_callback_options(
     }
     Some(options)
 }
+
+#[derive(Clone, Default)]
+pub(crate) struct WecomWebhookCrypto {
+    pub token: String,
+    pub encoding_aes_key: String,
+    pub corp_id: String,
+}
+
+/// Signing and decrypt material for the production WeCom webhook
+/// (`channel_webhook.rs`), aligned with WeComCallbackChannel callback options.
+pub(crate) fn wecom_webhook_crypto(
+    snapshot: &pilotdeck_protocol::JsValue,
+    env: &crate::config::Env,
+) -> WecomWebhookCrypto {
+    if let Some(options) = wecom_callback_options(snapshot, env) {
+        return WecomWebhookCrypto {
+            token: options.token,
+            encoding_aes_key: options.encoding_aes_key,
+            corp_id: options.corp_id,
+        };
+    }
+    let Some(config) = enabled_adapter(snapshot, "wecom") else {
+        return WecomWebhookCrypto::default();
+    };
+    let extra = config.get("extra");
+    let extra_text = |snake: &str, camel: &str, variable: &str| {
+        channel_text(extra.and_then(|v| v.get(snake)))
+            .or_else(|| channel_text(extra.and_then(|v| v.get(camel))))
+            .or_else(|| env.get(variable).cloned())
+            .unwrap_or_default()
+    };
+    let mut token = channel_text(config.get("token")).unwrap_or_default();
+    if token.is_empty() {
+        token = extra_text("token", "token", "WECOM_WEBHOOK_TOKEN");
+    }
+    WecomWebhookCrypto {
+        token,
+        encoding_aes_key: extra_text(
+            "encoding_aes_key",
+            "encodingAesKey",
+            "WECOM_ENCODING_AES_KEY",
+        ),
+        corp_id: extra_text("corp_id", "corpId", "WECOM_CORP_ID"),
+    }
+}
+
 pub(crate) fn dingtalk_options(
     snapshot: &pilotdeck_protocol::JsValue,
     env: &crate::config::Env,

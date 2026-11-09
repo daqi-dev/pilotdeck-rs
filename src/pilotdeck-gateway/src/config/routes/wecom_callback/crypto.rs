@@ -33,7 +33,7 @@ fn decode_base64(text: &str) -> Result<Vec<u8>> {
         .decode(normalized)
         .map_err(|_| failure("Invalid WeCom base64"))
 }
-pub(super) fn decrypt(key: &str, encrypted: &str, corp: &str) -> Result<String> {
+pub(crate) fn decrypt(key: &str, encrypted: &str, corp: &str) -> Result<String> {
     let key = decode_base64(&format!("{key}="))?;
     if key.len() != 32 {
         return Err(failure("encodingAesKey must decode to 32 bytes"));
@@ -72,7 +72,7 @@ pub(super) fn decrypt(key: &str, encrypted: &str, corp: &str) -> Result<String> 
     Ok(String::from_utf8_lossy(&raw[20..end]).into_owned())
 }
 #[cfg(test)]
-pub(super) fn encrypt(key: &str, text: &str, corp: &str) -> String {
+pub(crate) fn encrypt(key: &str, text: &str, corp: &str) -> String {
     use aes::cipher::BlockEncrypt;
     let key = decode_base64(key).unwrap();
     let mut bytes = b"0123456789abcdef".to_vec();

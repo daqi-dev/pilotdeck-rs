@@ -103,11 +103,8 @@ impl LiveSession for BoundSession {
         &self,
         turn: &SessionQueuedTurn,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-        // TS `AgentSession.submitQueuedTurn`: peek, validate, commit
-        // `turn_started` with `inboxItemId`, drop the item, then run the turn.
-        // The claim and the dequeue are one transition: leaving the item
-        // behind after `turn_started` was durable made a restart replay drop
-        // it while memory still held it.
+        // TS `AgentSession.submitQueuedTurn`: peek, validate, submit, then commit
+        // `turn_started` with `inboxItemId` and drop the in-memory head.
         let next = {
             let queued = self.queued.lock().unwrap();
             queued
@@ -124,12 +121,11 @@ impl LiveSession for BoundSession {
         options.insert("turnId".into(), JsValue::String(turn.turn_id.clone()));
         let input =
             queued_execution_input(self.input_template.lock().unwrap().as_ref(), &turn.input)?;
+        let stream = self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))?;
         self.state
             .recorder
             .start_queued_turn(&self.state.session_key, &next.turn_id, &next.item_id)
             .map_err(runtime_error)?;
-        // The durable claim is written; retire the in-memory head in the same
-        // step so replay and memory agree even if submission fails below.
         {
             let mut queued = self.queued.lock().unwrap();
             if queued
@@ -139,7 +135,6 @@ impl LiveSession for BoundSession {
                 queued.pop_front();
             }
         }
-        let stream = self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))?;
         Ok(stream)
     }
     fn discard_queued_turns(&self, reason: &str) -> RuntimeResult {
@@ -613,12 +608,9 @@ mod tests {
         Ok(())
     }
 
-    /// A turn whose `turn_started` was committed but whose submission then
-    /// failed must not be resurrected by replay and must not stay queued: the
-    /// durable claim and the in-memory dequeue are one transition, matching
-    /// TS `AgentSession.submitQueuedTurn` (startTurn then markStarted).
+    /// Submission failure must keep the queued turn and avoid `turn_started`.
     #[tokio::test]
-    async fn claimed_queued_turn_leaves_the_queue_even_if_submit_fails()
+    async fn failed_submit_keeps_queued_turn_without_turn_started()
     -> Result<(), Box<dyn std::error::Error>> {
         struct Active;
         impl LiveSession for Active {
@@ -679,14 +671,13 @@ mod tests {
         };
         session.enqueue_queued_turn(&turn).map_err(runtime_error)?;
         let error = match session.submit_queued_turn(&turn) {
-            Ok(_) => panic!("submission must fail after the claim"),
+            Ok(_) => panic!("submission must fail"),
             Err(error) => error,
         };
         assert!(!error.to_string().is_empty(), "{error}");
-        // The claim was durable, so the item is no longer pending anywhere.
-        assert!(session.pending_queued_turns().unwrap().is_empty());
-        // Replay agrees with memory: the claim retired the queued item.
-        // Re-read the same store `bind` restores from.
+        let pending = session.pending_queued_turns().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].item_id, turn.item_id);
         let adapter = AsyncTranscriptAdapter::new(
             Arc::new(crate::storage::JsonlTranscriptStore::new()),
             Arc::new(|key| key.pilot_home.join("chats")),
@@ -701,10 +692,12 @@ mod tests {
             .map_err(runtime_error)?
             .read_transcript(None)
             .map_err(runtime_error)?;
-        let restored = SessionQueuedTurn::restore(&transcript.entries).map_err(runtime_error)?;
         assert!(
-            restored.iter().all(|entry| entry.item_id != turn.item_id),
-            "replay must not resurrect a claimed turn: {restored:?}"
+            transcript
+                .entries
+                .iter()
+                .all(|entry| entry.get("type") != Some(&JsValue::from("turn_started"))),
+            "submit failure must not write turn_started"
         );
         if root.exists() {
             std::fs::remove_dir_all(root).unwrap();
