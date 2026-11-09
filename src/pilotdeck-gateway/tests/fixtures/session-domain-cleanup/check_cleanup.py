@@ -1699,12 +1699,18 @@ def _iter_literal_elements(node):
     #1953 fix-r1 round 7 (GLM sibling r3 P2): the wrapper names live in one
     constant now -- this decoder and :func:`_container_callee` had drifted
     (``sorted``/``next`` missing here, ``set``/``frozenset`` missing there).
+
+    #1953 fix-r1 round 41 (GLM r40 sibling P2, probe 2026-11-09): the
+    callee goes through the walrus unwrapper too -- ``for h in (_i :=
+    iter)((md,)):`` iterates the same literal the plain spelling does.
     """
-    if (isinstance(node, ast.Call) and len(node.args) == 1
-            and not node.keywords and isinstance(node.args[0], (ast.Tuple, ast.List))
-            and isinstance(node.func, ast.Name)
-            and node.func.id in _CONTAINER_WRAPPERS):
-        return node.args[0].elts
+    if isinstance(node, ast.Call):
+        callee = _callee_expr(node)
+        if (len(node.args) == 1 and not node.keywords
+                and isinstance(node.args[0], (ast.Tuple, ast.List))
+                and isinstance(callee, ast.Name)
+                and callee.id in _CONTAINER_WRAPPERS):
+            return node.args[0].elts
     return []
 
 
@@ -1719,6 +1725,75 @@ def _shadowed_parameters(scope):
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         return set(_argument_names(scope.args))
     return set()
+
+
+def _free_name_loads(node):
+    """Names *node* reads that nothing inside it binds (#1953 fix-r1 r41).
+
+    #1953 fix-r1 round 41 (codex r40 C-P0-9, probe 2026-11-09): the wrapper
+    sever test subtracted a flat ``bound_here`` (every non-Load name plus
+    every nested scope's parameters) from a flat ``loads`` set, so a
+    nested ``lambda hs: None`` cancelled the *outer* reads of the same
+    spelling -- ``iter = lambda hs: ((lambda hs: None), (h for h in
+    hs))[1]`` read as "touches nothing free" and severed the container
+    walk, hiding a real write.  Free names are computed per scope: a name
+    bound in a nested lambda/def/comprehension shadows only within that
+    subtree, so its reads stay free here.  The walk errs *free* -- a name
+    that may be free keeps the descent (over-report beats a hidden
+    write); the expression levels run on an explicit stack, so a deep
+    ``BinOp`` body cannot recurse the audit down.
+    """
+    if isinstance(node, ast.Name):
+        return {node.id} if isinstance(node.ctx, ast.Load) else set()
+    if isinstance(node, (ast.Lambda, ast.FunctionDef,
+                         ast.AsyncFunctionDef)):
+        bound = _shadowed_parameters(node)
+        inner = ([node.body] if isinstance(node, ast.Lambda)
+                 else list(node.body) + list(node.decorator_list)
+                 + list(node.args.defaults)
+                 + [item for item in node.args.kw_defaults
+                    if item is not None])
+        free = set()
+        for child in inner:
+            free |= _free_name_loads(child)
+        return free - bound
+    if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp,
+                         ast.DictComp)):
+        bound = {name for generator in node.generators
+                 for name in _target_names(generator.target)}
+        free = set()
+        if isinstance(node, ast.DictComp):
+            free |= _free_name_loads(node.key)
+            free |= _free_name_loads(node.value)
+        else:
+            free |= _free_name_loads(node.elt)
+        for generator in node.generators:
+            free |= _free_name_loads(generator.iter)
+            for condition in generator.ifs:
+                free |= _free_name_loads(condition)
+        return free - bound
+    if isinstance(node, ast.ClassDef):
+        free = set()
+        for child in (list(node.bases) + list(node.keywords)
+                      + list(node.decorator_list) + list(node.body)):
+            free |= _free_name_loads(child)
+        return free
+    free = set()
+    stack = list(ast.iter_child_nodes(node))
+    while stack:
+        child = stack.pop()
+        if isinstance(child, (ast.Lambda, ast.FunctionDef,
+                              ast.AsyncFunctionDef, ast.ClassDef,
+                              ast.ListComp, ast.SetComp, ast.DictComp,
+                              ast.GeneratorExp)):
+            free |= _free_name_loads(child)
+            continue
+        if isinstance(child, ast.Name):
+            if isinstance(child.ctx, ast.Load):
+                free.add(child.id)
+            continue
+        stack.extend(ast.iter_child_nodes(child))
+    return free
 
 
 def _bound_literal_elements(node, simple, seen=None, shadowed=()):
@@ -2172,8 +2247,8 @@ class _KindTable(dict):
     import_refused = ()
 
 
-def _import_value_capable(value, kinds):
-    """Whether *value* may denote the import builtin (r40).
+def _import_value_capable(value, kinds, factory=None, seen=frozenset()):
+    """Whether *value* may denote the import builtin (r40, r41).
 
     ``None`` is an import event -- the builtin itself in force.  A name,
     attribute, subscript or call result may be the builtin through a path
@@ -2184,10 +2259,48 @@ def _import_value_capable(value, kinds):
     trade-off: delegation through an unknown global is not statically
     knowable, and the alternative keeps every false report the claim is
     about).  A literal or display provably is not the builtin.
+
+    #1953 fix-r1 round 41 (codex r40 C-P0-2 / C-P0-4 / C-P1-2, probe
+    2026-11-09): the capable-value shapes were one bin short.  A walrus
+    unwraps to its value; a tuple/list/set/dict literal (the unpack
+    spellings ``imp, = (__import__,)``) and an ``IfExp``/``BoolOp`` are
+    capable when any branch is; a lambda body delegating through a known
+    ``builtins`` module (``b.__import__(name)``) or directly returning a
+    module (``lambda name: sys``) is capable; and a call of a module-scope
+    factory whose returns are all provably clean is *not* capable -- the
+    conservative ``Call -> True`` kept reporting ``sys.modules`` writes a
+    private-dict factory never makes.  *factory* answers "the return-value
+    nodes of this module-scope def, or ``None`` when unresolvable"; the
+    *seen* set breaks factory cycles.
     """
     if value is None:
         return True
-    if isinstance(value, (ast.Name, ast.Attribute, ast.Subscript, ast.Call)):
+    if isinstance(value, ast.NamedExpr):
+        return _import_value_capable(value.value, kinds, factory, seen)
+    if isinstance(value, (ast.Name, ast.Attribute, ast.Subscript)):
+        return True
+    if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+        return any(_import_value_capable(element, kinds, factory, seen)
+                   for element in value.elts)
+    if isinstance(value, ast.Dict):
+        return any(_import_value_capable(part, kinds, factory, seen)
+                   for part in list(value.keys) + list(value.values)
+                   if part is not None)
+    if isinstance(value, ast.IfExp):
+        return (_import_value_capable(value.body, kinds, factory, seen)
+                or _import_value_capable(value.orelse, kinds, factory, seen))
+    if isinstance(value, ast.BoolOp):
+        return any(_import_value_capable(item, kinds, factory, seen)
+                   for item in value.values)
+    if isinstance(value, ast.Call):
+        callee = value.func
+        if (isinstance(callee, ast.Name) and factory is not None
+                and callee.id not in seen):
+            returns = factory(callee.id)
+            if returns is not None:
+                return any(_import_value_capable(item, kinds, factory,
+                                                 seen | {callee.id})
+                           for item in returns)
         return True
     if isinstance(value, (ast.Lambda, ast.FunctionDef,
                           ast.AsyncFunctionDef)):
@@ -2198,12 +2311,34 @@ def _import_value_capable(value, kinds):
                 return True
             if {'fn:__import__', 'fn:import_module'} & set(kinds.get(one, ())):
                 return True
+        # #1953 fix-r1 round 41 (codex r40 C-P0-4): delegation the loads test
+        # cannot see -- ``lambda name: b.__import__(name)`` reads only
+        # ``b``, which the kinds table knows as the builtins module, and
+        # the attribute is the builtin itself.  The literal ``builtins``
+        # spelling rides along (a module body always has it, the same
+        # standing ``__builtins__`` has in the kinds pass).
+        for node in ast.walk(value):
+            if (isinstance(node, ast.Attribute)
+                    and node.attr in ('__import__', 'import_module')
+                    and isinstance(node.value, ast.Name)
+                    and ('builtins' in set(kinds.get(node.value.id, ()))
+                         or node.value.id == 'builtins')):
+                return True
+        # ... and a body that *is* a known module hands it straight back:
+        # ``lambda name: sys`` called with any argument returns ``sys``.
+        bodies = ([value.body] if isinstance(value, ast.Lambda)
+                  else [node.value for node in ast.walk(value)
+                        if isinstance(node, ast.Return) and node.value])
+        for body in bodies:
+            if (isinstance(body, ast.Name)
+                    and {'sys', 'builtins'} & set(kinds.get(body.id, ()))):
+                return True
         return False
     return False
 
 
 def _import_alias_events(tree):
-    """Module-scope import-capability events for a name (r40).
+    """Module-scope import-capability events for a name (r40, r41).
 
     ``name -> [((line, col), conditional, loops, value)]`` -- an import of
     the builtin itself records ``None``; an assignment records its value
@@ -2213,6 +2348,23 @@ def _import_alias_events(tree):
     call?) needs its own table.  Class bodies and nested scopes are
     skipped: a ``global`` write there is invisible here, which keeps the
     answer live (report direction).
+
+    #1953 fix-r1 round 41 (codex r40 C-P0-1 / C-P0-3, GLM r40 sibling +
+    #concurrency P1 and boundary P0#1, probe 2026-11-09): the walk was a
+    #per-child recursion -- a module-level thousand-term ``BinOp`` in an
+    #``if`` test or a bare ``Expr`` crashed the whole audit
+    #(``RecursionError``, a clean file reads as failed), and its blind
+    #spots hid real writes: ``Assign``/``AnnAssign`` values (the RHS walrus
+    #``_ = (imp := __import__)('sys')`` restoring the builtin never
+    #registered), ``While`` tests (``while (imp := __import__) and False:``)
+    #and ``def``/``class`` name bindings (a later ``def imp`` rebind read
+    #as "still the import", a false report).  An explicit stack now walks
+    #everything at module scope except nested scope bodies, values
+    #included; ``def``/``class`` *names* register as events (a class is
+    #provably not the import; a ``def`` is judged by its body like any
+    #lambda).  A ``While`` test walks with the loop's id -- the test
+    #re-runs after every body iteration, so a binding written in the body
+    #reaches a call in the test through the same back-edge the body has.
     """
     marks = _flow_marks(tree.body)
     events = {}
@@ -2222,32 +2374,42 @@ def _import_alias_events(tree):
         events.setdefault(name, []).append(
             ((node.lineno, node.col_offset), conditional, loops, value))
 
-    def walk(node, loops):
+    stack = [(child, ()) for child in reversed(tree.body)]
+    while stack:
+        node, loops = stack.pop()
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.Lambda, ast.ClassDef)):
-            return
-        if isinstance(node, ast.For):
+                             ast.ClassDef)):
+            # The scope body is invisible here, but its *name* is a module
+            # binding like any other: register it, value = the definition.
+            conditional, loops_here = marks.get(id(node), (True, loops))
+            add(node.name, node, conditional, loops_here, node)
+            continue
+        if isinstance(node, (ast.For, ast.AsyncFor)):
             inner = loops + (id(node),)
-            walk(node.iter, loops)
-            for child in node.body:
-                walk(child, inner)
-            for child in node.orelse:
-                walk(child, inner)
-            return
+            for child in reversed(node.body + node.orelse):
+                stack.append((child, inner))
+            stack.append((node.iter, loops))
+            continue
         if isinstance(node, ast.While):
             inner = loops + (id(node),)
-            for child in node.body:
-                walk(child, inner)
-            for child in node.orelse:
-                walk(child, loops)
-            return
+            for child in reversed(node.body):
+                stack.append((child, inner))
+            for child in reversed(node.orelse):
+                stack.append((child, loops))
+            stack.append((node.test, inner))
+            continue
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             conditional, loops_here = marks.get(id(node), (True, loops))
             if isinstance(node, ast.ImportFrom):
                 if any(alias.name == '*' for alias in node.names):
                     if not _star_is_builtins(node):
-                        stars.append((node.lineno, node.col_offset))
-                    return
+                        # #1953 fix-r1 round 41 (codex r40 C-P0-5): the star
+                        # carries its loops, so a call inside the same loop
+                        # can see it through the back-edge; the dead filter
+                        # in ``live`` can drop it.
+                        stars.append(((node.lineno, node.col_offset),
+                                      loops_here))
+                    continue
                 for alias in node.names:
                     if (getattr(node, 'level', 0) == 0
                             and node.module in ('builtins', 'importlib')
@@ -2255,38 +2417,35 @@ def _import_alias_events(tree):
                                                'import_module')):
                         add(alias.asname or alias.name, node, conditional,
                             loops_here, None)
-            return
+            continue
         if isinstance(node, ast.Assign):
+            conditional, loops_here = marks.get(id(node), (True, loops))
             for target in node.targets:
                 for name in _target_names(target):
-                    conditional, loops_here = marks.get(
-                        id(node), (True, loops))
                     add(name, node, conditional, loops_here, node.value)
-            for child in node.targets:
-                for sub in ast.iter_child_nodes(child):
-                    walk(sub, loops)
-            return
+            # The RHS is module scope too (r41): its walrus rebinds the very
+            # names the refusal question is about.
+            stack.append((node.value, loops))
+            for target in node.targets:
+                for sub in ast.iter_child_nodes(target):
+                    stack.append((sub, loops))
+            continue
         if isinstance(node, ast.AnnAssign) and node.value is not None:
             conditional, loops_here = marks.get(id(node), (True, loops))
             for name in _target_names(node.target):
                 add(name, node, conditional, loops_here, node.value)
-            return
+            stack.append((node.value, loops))
+            stack.append((node.target, loops))
+            continue
         if isinstance(node, ast.NamedExpr):
             conditional, loops_here = marks.get(id(node), (True, loops))
             for name in _target_names(node.target):
                 add(name, node, conditional, loops_here, node.value)
-            return
-        if isinstance(node, ast.stmt):
-            # Compound bodies (``if``/``try``/``with``) carry the same scope,
-            # so the walk must keep descending through their statements.
-            for child in ast.iter_child_nodes(node):
-                walk(child, loops)
-            return
-        for child in ast.iter_child_nodes(node):
-            walk(child, loops)
+            stack.append((node.value, loops))
+            continue
+        for child in reversed(list(ast.iter_child_nodes(node))):
+            stack.append((child, loops))
 
-    for child in tree.body:
-        walk(child, ())
     return events, stars
 
 
@@ -2302,17 +2461,51 @@ def _import_refused_calls(tree, kinds):
     candidates are all the values the call may see; the import stays live
     (decodable) when any of them is capable -- the mirror of
     :func:`_head_shadowed`, read in the "still the builtin" direction.
-    An unknown-module star anywhere before the call may re-export the
-    name, so it keeps every call live.
+
+    #1953 fix-r1 round 41 (codex r40 C-P0-5 / C-P1-1, GLM r40 boundary
+    #P2#2): the star rule is an uncertain *event*, not a blanket "any star
+    #before the call".  A star the call can still see -- by position, or
+    #through a shared loop back-edge -- re-exports the name and keeps the
+    #call live, *unless* a certain rebinding after the star (and before
+    #the call) overrides it, and a dead star (``if False: from m import
+    #*``) contributes nothing at all.  A call with a module-scope factory
+    #callee also resolves through the factory's returns (codex C-P1-2):
+    #every return provably clean -> the call is refused.
     """
     events, stars = _import_alias_events(tree)
     dead = tuple(_dead_line_ranges(tree))
     refused = set()
 
+    def factory_returns(name):
+        """Return-value nodes of a module-scope ``def`` *name*, or ``None``.
+
+        Only when the def is the spelling's single binding event; any other
+        import/assignment/walrus on the name keeps the answer unknown (the
+        conservative ``Call -> capable`` stands).
+        """
+        items = events.get(name, ())
+        if len(items) != 1:
+            return None
+        target = items[0][3]
+        if not isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return None
+        returns = []
+        stack = list(target.body)
+        while stack:
+            node = stack.pop()
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                 ast.Lambda, ast.ClassDef)):
+                continue
+            if isinstance(node, ast.Return):
+                if node.value is not None:
+                    returns.append(node.value)
+                continue
+            stack.extend(ast.iter_child_nodes(node))
+        # A def with no ``return`` at all evaluates to ``None`` -- as clean
+        # as a literal, never the import.
+        return returns or [ast.Constant(value=None)]
+
     def live(name, position, loops):
-        for star in stars:
-            if star <= position:
-                return True
         entries = [item for item in events.get(name, ())
                    if ((item[0] <= position)
                        or (loops and item[2] and set(item[2]) & set(loops)))
@@ -2320,18 +2513,39 @@ def _import_refused_calls(tree, kinds):
                                                     dead))]
         if not entries:
             return True
-        chosen_index = -1
-        for index, item in enumerate(entries):
+        # #1953 fix-r1 round 41: the chosen binding is the latest *certain*
+        # one by position (the event list order is walk order, not source
+        # order, once the walk became a stack).
+        chosen = None
+        for item in entries:
             if not item[1] and item[0] <= position:
-                chosen_index = index
-        if chosen_index < 0:
+                if chosen is None or item[0] > chosen[0]:
+                    chosen = item
+        if chosen is None:
             return True
-        candidates = [item for index, item in enumerate(entries)
-                     if index == chosen_index
-                     or (item[1] and index > chosen_index)
-                     or (loops and item[2] and set(item[2]) & set(loops))]
+        candidates = [item for item in entries
+                      if item is chosen
+                      or (item[1] and item[0] > chosen[0])
+                      or (loops and item[2] and set(item[2]) & set(loops))]
         for item in candidates:
-            if _import_value_capable(item[3], kinds):
+            if _import_value_capable(item[3], kinds, factory_returns):
+                return True
+        for star_pos, star_loops in stars:
+            if dead and _dead_shadowed(star_pos, position, dead):
+                continue
+            if not (star_pos <= position
+                    or (loops and star_loops
+                        and set(star_loops) & set(loops))):
+                continue
+            # A certain rebinding written after the star (and before the
+            # call, or through the same back-edge) overrides whatever the
+            # star re-exported.
+            superseded = any(
+                not item[1] and item[0] > star_pos
+                and (item[0] <= position
+                     or (loops and item[2] and set(item[2]) & set(loops)))
+                for item in entries)
+            if not superseded:
                 return True
         return False
 
@@ -2900,6 +3114,59 @@ def _container_callee(func, wrapper_fresh=None):
                 and isinstance(callee.value, ast.Name)):
             return callee.value.id
     return None
+
+
+_MUTATING_DISPLAY_ATTRS = frozenset((
+    'reverse', 'sort', 'pop', 'popitem', 'insert', 'append', 'appendleft',
+    'popleft', 'extend', 'extendleft', 'remove', 'clear', 'update',
+    'setdefault', 'add', 'discard', '__setitem__', '__delitem__',
+))
+
+
+def _display_mutated_between(scope, name, binding_pos, use_pos):
+    """True when a statement between the display binding and the use mutates it.
+
+    #1953 fix-r1 round 41 (codex r40 C-P0-8, probe 2026-11-09): a constant
+    subscript path is only honest while the display still holds the
+    elements it was built with.  ``items = [lambda, hs[0]];
+    items.reverse(); items[0](...)`` calls ``hs[0]`` at run time while the
+    path keeps answering "the clean lambda" -- a hidden write.  Any
+    in-place method call on the display name (``reverse``/``sort``/
+    ``pop``/``insert``/``append``/``update``/...), a subscript assignment
+    and a ``del`` of one of its elements, anywhere between the certain
+    binding and the use, makes the selection decline.  Statements inside
+    nested scopes count too: a closure can mutate the very list the
+    selection is about, and missing it would hide a real write.
+    """
+    for statement in ast.walk(scope):
+        if not isinstance(statement, ast.stmt):
+            continue
+        position = (getattr(statement, 'lineno', 0),
+                    getattr(statement, 'col_offset', 0))
+        if not binding_pos < position < use_pos:
+            continue
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Call):
+                callee = _callee_expr(node)
+                if (isinstance(callee, ast.Attribute)
+                        and callee.attr in _MUTATING_DISPLAY_ATTRS
+                        and isinstance(callee.value, ast.Name)
+                        and callee.value.id == name):
+                    return True
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign,
+                                 ast.Delete)):
+                targets = (node.targets if isinstance(
+                    node, (ast.Assign, ast.Delete)) else [node.target])
+                for target in targets:
+                    for sub in ast.walk(target):
+                        if not isinstance(sub, ast.Subscript):
+                            continue
+                        base = sub.value
+                        while isinstance(base, ast.Subscript):
+                            base = base.value
+                        if (isinstance(base, ast.Name) and base.id == name):
+                            return True
+    return False
 
 
 def _unbounded_write(node, kinds):
@@ -4187,19 +4454,27 @@ def _handle_use(node, tracked, scope_bound, aliases, read_only=False):
             stack.append((node.value, read_only))
             continue
         if isinstance(node, ast.Compare):
-            stack.append((node.left, True))
-            stack.extend((item, True) for item in node.comparators)
+            # #1953 fix-r1 round 41 (GLM r40 boundary P3#5): push the
+            # operands reversed so the visit order is the recursive one
+            # the docstring promises -- left first, comparators left to
+            # right.  Same node set as before, so the boolean answer is
+            # unchanged; only which walrus aliases a short-circuit hit
+            # has already registered can differ, and every caller discards
+            # the aliases on a hit.
+            stack.extend((item, True)
+                         for item in reversed([node.left]
+                                              + list(node.comparators)))
             continue
         if isinstance(node, ast.BoolOp):
-            stack.extend((item, True) for item in node.values)
+            stack.extend((item, True) for item in reversed(node.values))
             continue
         if isinstance(node, ast.UnaryOp):
             stack.append((node.operand, True))
             continue
         if isinstance(node, ast.IfExp):
-            stack.append((node.test, True))
-            stack.append((node.body, read_only))
-            stack.append((node.orelse, read_only))
+            stack.extend(((node.orelse, read_only),
+                          (node.body, read_only),
+                          (node.test, True)))
             continue
         if isinstance(node, ast.Expr):
             stack.append((node.value, read_only))
@@ -4993,23 +5268,34 @@ def _receiver_attribute_writes(tree, receivers, shared):
         ``g = [h for h in hs]; g[0]('common', <stub>)`` hands the same handles
         out of ``g`` that ``hs`` holds; ``hs`` is not a literal, its roots live
         in the alias table (GLM sibling r3 P2).
+
+        #1953 fix-r1 round 41 (GLM r40 sibling P2, probe 2026-11-09): a
+        ``DictComp`` carries handles in its *keys* too -- ``d = {h: None
+        for h in hs}; for f in d: f(...)`` iterates the same handles -- so
+        the key is a relay candidate like the value.
         """
         if _emptied_comprehension(node):
             return []
-        element = node.value if isinstance(node, ast.DictComp) else node.elt
-        if not isinstance(element, ast.Name):
-            return []
+        if isinstance(node, ast.DictComp):
+            elements = [node.key, node.value]
+        else:
+            elements = [node.elt]
         found = []
-        for generator in node.generators:
-            if element.id not in set(_target_names(generator.target)):
+        for element in elements:
+            if not isinstance(element, ast.Name):
                 continue
-            name = _container_base(generator.iter, _wrapper_fresh(scope))
-            if name is None:
-                continue
-            for level in _chain(scope):
-                if (level, name) in handle_containers:
-                    found.extend(handle_containers[(level, name)])
-                    break
+            for generator in node.generators:
+                if element.id not in set(_target_names(generator.target)):
+                    continue
+                name = _container_base(generator.iter, _wrapper_fresh(scope))
+                if name is None:
+                    continue
+                for level in _chain(scope):
+                    if (level, name) in handle_containers:
+                        for root in handle_containers[(level, name)]:
+                            if root not in found:
+                                found.append(root)
+                        break
         return found
 
     def namespace_dict_roots(node, scope):
@@ -5037,11 +5323,17 @@ def _receiver_attribute_writes(tree, receivers, shared):
         # ``k = '__dict__'; md.__getattribute__(k)['common'] = <stub>`` is the
         # same mapping, and an attribute name we cannot prove to be a pure read
         # is exactly the case r35 already fails closed on.
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr == '__getattribute__' and node.args):
-            spelling = _constant_string(node.args[0], None)
-            if spelling is None or spelling == '__dict__':
-                return receiver_roots(node.func.value, scope)
+        if isinstance(node, ast.Call):
+            callee = _callee_expr(node)
+            if (isinstance(callee, ast.Attribute)
+                    and callee.attr == '__getattribute__' and node.args):
+                # #1953 fix-r1 round 41 (GLM r40 sibling P2, probe
+                # 2026-11-09): the callee may sit behind a walrus (``(_g :=
+                # md.__getattribute__)('__dict__')``) -- read it through
+                # the shared unwrapper like its ``getattr`` siblings.
+                spelling = _constant_string(node.args[0], None)
+                if spelling is None or spelling == '__dict__':
+                    return receiver_roots(callee.value, scope)
         if isinstance(node, ast.Name):
             return _lookup(dict_roots, node.id, scope)
         return set()
@@ -5394,17 +5686,14 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 # (comprehension targets, walrus targets, nested function
                 # parameters) are not free; the enclosing lambda's own
                 # parameters are, which subsumes the r39 param test.
-                loads = {n.id for n in ast.walk(value.body)
-                         if isinstance(n, ast.Name)
-                         and isinstance(n.ctx, ast.Load)}
-                bound_here = {n.id for n in ast.walk(value.body)
-                              if isinstance(n, ast.Name)
-                              and not isinstance(n.ctx, ast.Load)}
-                for child in ast.walk(value.body):
-                    if isinstance(child, (ast.FunctionDef,
-                                          ast.AsyncFunctionDef, ast.Lambda)):
-                        bound_here |= _shadowed_parameters(child)
-                if loads - bound_here:
+                # #1953 fix-r1 round 41 (codex r40 C-P0-9, probe
+                # 2026-11-09): the flat loads-minus-bound-here arithmetic
+                # let a *nested* scope's parameter cancel the outer reads
+                # of the same spelling (``lambda hs: ((lambda hs: None),
+                # (h for h in hs))[1]`` read as touching nothing free and
+                # severed the walk).  The per-scope computation lives in
+                # :func:`_free_name_loads`.
+                if _free_name_loads(value.body):
                     # A free name may hand the container back: descend.
                     return False
                 return True
@@ -5502,11 +5791,19 @@ def _receiver_attribute_writes(tree, receivers, shared):
         The container answer is position-aware -- :func:`_carries_at`
         resolves the binding in force at the element, so a stale or cleanly
         rebound container contributes nothing (codex r39 C-P1-1).
+
+        #1953 fix-r1 round 41 (codex r40 C-P0-10, probe 2026-11-09): a
+        comprehension element (``items = ([h for h in hs],)``) is a display
+        element like any other -- it relays the handles the comprehension
+        carries, so ``items[0][0](...)`` reaches the container.
         """
         if isinstance(element, ast.Starred):
             element = element.value
         if isinstance(element, (ast.Tuple, ast.List, ast.Set, ast.Dict)):
             return _display_taken_roots(element, scope)
+        if isinstance(element, (ast.ListComp, ast.SetComp, ast.DictComp,
+                               ast.GeneratorExp)):
+            return _relay_handle_roots(element, scope)
         if isinstance(element, ast.Name):
             if not _carries_at(element.id, scope, element):
                 return []
@@ -5524,7 +5821,10 @@ def _receiver_attribute_writes(tree, receivers, shared):
     def _display_taken_roots(value, scope):
         """Roots a display's elements take out of tracked containers (r40)."""
         if isinstance(value, ast.Dict):
-            parts = list(value.keys) + list(value.values)
+            # A ``**`` merge entry has a ``None`` key; it carries its values,
+            # not a key element (#1953 fix-r1 round 41, codex r40 C-P0-7).
+            parts = [part for part in list(value.keys) + list(value.values)
+                     if part is not None]
         elif isinstance(value, (ast.Tuple, ast.List, ast.Set)):
             parts = list(value.elts)
         else:
@@ -5542,6 +5842,16 @@ def _receiver_attribute_writes(tree, receivers, shared):
         ``None`` when any hop is not a constant position, out of range, or
         ambiguous (duplicate dict key, a ``Starred`` element, a slice) --
         the caller then falls back to the whole display's roots.
+
+        #1953 fix-r1 round 41 (codex r40 C-P0-6 / C-P0-7, probe
+        2026-11-09): two shapes made the constant path lie.  A ``Starred``
+        element *before* the selected index shifts every index after it
+        (``items = (*hs, lambda); items[1](...)`` calls ``hs[1]`` at run
+        time, not the lambda), and a dict display with any non-constant
+        key -- a ``**`` merge or a dynamic name -- may override the
+        selected key at run time (``{'k': lambda, **{'k': handle}}``).
+        Both return ``None`` so the caller keeps the conservative
+        whole-display roots.
         """
         for sl in reversed(slices):
             if value is None:
@@ -5549,6 +5859,8 @@ def _receiver_attribute_writes(tree, receivers, shared):
             if isinstance(value, ast.Dict):
                 if not (isinstance(sl, ast.Constant)
                         and isinstance(sl.value, (str, bytes, int, float))):
+                    return None
+                if any(not isinstance(k, ast.Constant) for k in value.keys):
                     return None
                 matches = [v for k, v in zip(value.keys, value.values)
                            if isinstance(k, ast.Constant) and k.value == sl.value]
@@ -5563,6 +5875,9 @@ def _receiver_attribute_writes(tree, receivers, shared):
                     return None
                 index = sl.value if sl.value >= 0 else sl.value + len(value.elts)
                 if not 0 <= index < len(value.elts):
+                    return None
+                if any(isinstance(value.elts[i], ast.Starred)
+                       for i in range(index)):
                     return None
                 element = value.elts[index]
                 if isinstance(element, ast.Starred):
@@ -5581,6 +5896,13 @@ def _receiver_attribute_writes(tree, receivers, shared):
         unique, certainly-executed display binding with a constant path
         answers; anything else returns ``None`` and the caller keeps the
         conservative whole-display roots.
+
+        #1953 fix-r1 round 41 (codex r40 C-P0-8, probe 2026-11-09): a
+        statement between the certain binding and the use that *mutates*
+        the display -- ``items.reverse()`` / ``.pop()`` / ``.insert()`` /
+        ``items[0] = ...`` / ``del items[0]`` -- makes the constant path
+        stale, so the selection must decline and the caller fall back to
+        the whole-display roots (over-report beats a hidden write).
         """
         if not isinstance(callee, ast.Subscript):
             return None
@@ -5609,6 +5931,8 @@ def _receiver_attribute_writes(tree, receivers, shared):
             return None
         slots, parents = _block_slots(scope)
         if not _certain_before(slots, parents, last[0], use):
+            return None
+        if _display_mutated_between(scope, node.id, latest, limit):
             return None
         element = _select_display_path(last[0], slices)
         if element is None:
@@ -10956,7 +11280,11 @@ def _partial_bound_arguments(node, bindings, depth=0, seen=None):
             found = got
         return found
     if isinstance(node, ast.Call):
-        callee = node.func
+        # #1953 fix-r1 round 41 (codex r40 C-P0-12, probe 2026-11-09): the
+        # partial callee may sit behind a walrus (``(_p :=
+        # functools.partial)(setattr, report, 'status')``); the raw
+        # ``node.func`` read made the pre-bound arguments vanish.
+        callee = _callee_expr(node)
         is_partial = ((isinstance(callee, ast.Name) and callee.id == 'partial')
                       or (isinstance(callee, ast.Attribute) and callee.attr == 'partial')
                       or _resolved_write_helper(callee, bindings, depth + 1) == 'partial')
@@ -11201,7 +11529,12 @@ def _call_written_values(call, bindings=None):
     P1-1).
     """
     written = []
-    func = call.func
+    # #1953 fix-r1 round 41 (codex r40 C-P0-11, probe 2026-11-09): the callee
+    # may sit behind a walrus (``(_s := setattr)(report, 'status',
+    # 'PASS')``) -- read it through the shared unwrapper like every other
+    # call table, or the write the battery twins cover for the plain
+    # spelling stays invisible here.
+    func = _callee_expr(call)
     helper = _resolved_write_helper(func, bindings)
     if helper in ('setattr', 'setitem'):
         # Bound form: ``obj.__setitem__('status', value)`` /
@@ -15627,6 +15960,204 @@ def aggregation_audit():
     if _import_exit_aliases(_m40_relative_exit.body):
         failures.append('#1953 aggregation-audit: detector self-test read a '
                         'relative import as the sys exit alias (round 40)')
+    # #1953 fix-r1 round 41 (codex r40 C-P0-1 / GLM r40 concurrency P1): the
+    # round-40 event walk recursed per child, and the round-40 crash guard
+    # only reached an Assign -- a module-level deep expression in an ``if``
+    # test or a bare ``Expr`` crashed ``_object_kinds``.
+    for _m41_node, _m41_label in (
+            (ast.parse("md = 1\nif " + " + ".join(["md"] * 1100)
+                       + ":\n    pass\n"), "an if test"),
+            (ast.parse("md = 1\n_" + " + ".join(["md"] * 1100) + "\n"),
+             "a bare expression")):
+        try:
+            _object_kinds(_m41_node)
+        except RecursionError:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'let a deep module-level expression in '
+                            + _m41_label + ' crash the kinds walk (round 41)')
+    # #1953 fix-r1 round 41 (codex r40 C-P0-2): the capability test read only
+    # bare names, so the builtin behind a tuple unpack, an if expression or a
+    # boolean operator was judged incapable and the real write went invisible.
+    for _m41_kind, _m41_value in (
+            ("a tuple unpack", "imp, = (__import__,)\n"),
+            ("an if expression", "imp = __import__ if True else None\n"),
+            ("a boolean operator", "imp = __import__ or None\n")):
+        _m41_capable = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n" + _m41_value +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if '_guard' not in _sys_modules_write_values(_m41_capable):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'refused an import alias restored through '
+                            + _m41_kind + ' (round 41)')
+    # #1953 fix-r1 round 41 (codex r40 C-P0-3 / C-P0-4; GLM r40 boundary
+    # P0-1 / P2-2 / P2-3): the module-scope event walk skipped assignment
+    # right-hand sides and while tests and never registered def/class names,
+    # and the capability test declined attribute delegation and thunks
+    # returning the module -- each hid a real ``sys.modules`` write behind a
+    # refused alias decode.
+    for _m41_kind, _m41_src in (
+            ("an assignment right-hand walrus",
+             "imp = lambda name: None\n"
+             "_ = (imp := __import__)('sys')\n"),
+            ("a while-test walrus",
+             "imp = lambda name: None\n"
+             "flag = True\n"
+             "while (imp := __import__) and False:\n"
+             "    pass\n"),
+            ("a builtins delegation",
+             "import builtins as b\n"
+             "imp = lambda name: b.__import__(name)\n"),
+            ("a module-returning thunk",
+             "imp = lambda name: sys\n")):
+        _m41_events = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n" + _m41_src +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if '_guard' not in _sys_modules_write_values(_m41_events):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'dropped a real import behind ' + _m41_kind
+                            + ' (round 41)')
+    # #1953 fix-r1 round 41 (codex r40 C-P0-5 / GLM r40 boundary P2-2): a
+    # star import behind the call inside a loop is live on the back edge --
+    # the second iteration sees the star's re-export.
+    _m41_loop_star = ast.parse(
+        "import sys\n"
+        "from builtins import __import__ as imp\n"
+        "imp = lambda name: None\n"
+        "flag = True\n"
+        "while flag:\n"
+        "    s = imp('sys')\n"
+        "    from loopstar import *\n"
+        "    flag = False\n"
+        "s.modules['_guard'] = object()\n"
+        "_guard = sys.modules.get('_guard')\n")
+    if '_guard' not in _sys_modules_write_values(_m41_loop_star):
+        failures.append('#1953 aggregation-audit: detector self-test dropped '
+                        'a real import behind a star back edge (round 41)')
+    # #1953 fix-r1 round 41 (codex r40 C-P0-3c / C-P1-1 / C-P1-2): the same
+    # event family over-reported -- a def rebind, a dead or superseded star
+    # and a factory over a clean lambda each kept reporting an import the
+    # module never makes.
+    for _m41_kind, _m41_src in (
+            ("a module-scope def rebind",
+             "def imp(name):\n    return None\n"),
+            ("a dead star",
+             "imp = lambda name: None\n"
+             "if False:\n    from exported import *\n"),
+            ("a star superseded by a certain rebind",
+             "from exported import *\n"
+             "imp = lambda name: None\n"),
+            ("a factory over a clean lambda",
+             "from types import SimpleNamespace\n"
+             "def _factory():\n"
+             "    return lambda name: SimpleNamespace(modules={})\n"
+             "imp = _factory()\n")):
+        _m41_refused = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n" + _m41_src +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if '_guard' in _sys_modules_write_values(_m41_refused):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'kept reporting an import behind ' + _m41_kind
+                            + ' (round 41)')
+    # #1953 fix-r1 round 41 (codex r40 C-P0-6..C-P0-8 / C-P0-10; GLM r40
+    # sibling P2): the display selection path took a constant index at face
+    # value -- a Starred element shifts it, a ``**`` merge or a dynamic key
+    # overrides it -- and mutations between the take-out and the call
+    # (``reverse`` / ``pop``) moved the handle; a comprehension element and
+    # a dictcomp key each hid the receiver from the relay.
+    for _m41_kind, _m41_src in (
+            ("a starred shift of the selected index",
+             "    _items = (*_hs, lambda *a: None)\n"
+             "    _items[1]('common', object())\n"),
+            ("a dict merge override",
+             "    _items = {'k': lambda *a: None, **{'k': _hs[0]}}\n"
+             "    _items['k']('common', object())\n"),
+            ("a dynamic key override",
+             "    _k2 = 'k'\n"
+             "    _items = {'k': lambda *a: None, _k2: _hs[0]}\n"
+             "    _items['k']('common', object())\n"),
+            ("a reverse mutation between take-out and call",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _items.reverse()\n"
+             "    _items[0]('common', object())\n"),
+            ("a pop mutation between take-out and call",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _items.pop()\n"
+             "    _items[0]('common', object())\n"),
+            ("a comprehension display element",
+             "    _items = ([_h for _h in _hs],)\n"
+             "    _items[0][0]('common', object())\n"),
+            ("a dictcomp key relay",
+             "    _d = {_h: None for _h in _hs}\n"
+             "    for _h in _d:\n"
+             "        pass\n"
+             "    _f2 = _h\n"
+             "    _f2('common', object())\n")):
+        _m41_display = ast.parse(
+            "def _m41a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m41_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m41_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m41_kind
+                            + ' (round 41)')
+    # #1953 fix-r1 round 41 (GLM r40 sibling P2): the iter-literal and
+    # ``__getattribute__`` reads took their callee before the walrus unwrap.
+    _m41_iter_walrus = ast.parse(
+        "def _m41b(report):\n"
+        "    for _h in (_i := iter)((md,)):\n"
+        "        _h.common = object()\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' not in _withdrawn_receivers(_m41_iter_walrus):
+        failures.append('#1953 aggregation-audit: detector self-test lost a '
+                        'receiver behind a walrus iter callee (round 41)')
+    _m41_getattribute_walrus = ast.parse(
+        "def _m41c(report):\n"
+        "    (_g := md.__getattribute__)('__dict__')['common'] = object()\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' not in _withdrawn_receivers(_m41_getattribute_walrus):
+        failures.append('#1953 aggregation-audit: detector self-test lost a '
+                        'receiver behind a walrus getattribute callee '
+                        '(round 41)')
+    # #1953 fix-r1 round 41 (codex r40 C-P0-9): the wrapper sever test
+    # counted loads against the lambda's own bindings, so a wrapper whose
+    # only free name is the container was severed.
+    _m41_free_wrapper = ast.parse(
+        "def _m41d(report):\n"
+        "    _n = '__setattr__'\n"
+        "    _hs = [getattr(md, _k) for _k in (_n,)]\n"
+        "    iter = lambda _hs: ((lambda _hs: None), "
+        "(_h for _h in _hs))[1]\n"
+        "    _h = next(iter(_hs))\n"
+        "    _h('common', object())\n"
+        "    return md.common.aggregate_status(report)\n")
+    if 'md' not in _withdrawn_receivers(_m41_free_wrapper):
+        failures.append('#1953 aggregation-audit: detector self-test severed '
+                        'the walk at a wrapper whose only free name is the '
+                        'container (round 41)')
+    # #1953 fix-r1 round 41 (codex r40 C-P0-11 / C-P0-12): the status-write
+    # decoders read their callee before the walrus unwrap, so a walrus
+    # ``setattr`` or ``functools.partial`` callee lost the write.
+    for _m41_kind, _m41_call_src in (
+            ("setattr", "(_s := setattr)(r, 'status', 'PASS')"),
+            ("partial", "(_p := functools.partial)(setattr, r, 'status')"
+             "('PASS')")):
+        _m41_written = _call_written_values(
+            ast.parse(_m41_call_src).body[0].value)
+        if [getattr(_v, 'value', None)
+                for _v in (_m41_written or [])] != ['PASS']:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a status write behind a walrus '
+                            + _m41_kind + ' callee (round 41)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"

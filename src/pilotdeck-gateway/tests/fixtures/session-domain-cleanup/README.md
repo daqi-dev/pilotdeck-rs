@@ -2145,7 +2145,7 @@ module alias table its own import-style entry.
 The import family: an aliased `__import__` **re-bound to the bare head**
 replaced the alias' kind set instead of unioning it (C-P0-6) -- kinds now
 accumulate across the module's bindings; the module name rides the `name=`
-**keyword** and any of the first two positional slots (C-P0-7); and a
+**keyword** and the first positional slot (C-P0-7); and a
 *certain* rebind to a **private-dict lambda** kept the import kind forever
 (C-P1-3, the r39 regression) -- `_import_refused_calls` builds a dedicated
 module-scope event table (imports of the builtin itself record `None`;
@@ -2187,3 +2187,64 @@ declared r39 fail-closed trade-off and is unchanged.
 | **A walrus unbound setitem callee writes** (false PASS guard): `(_g := dict.__setitem__)(sys.modules, '_guard', object())` -- only `_mapping_method_call`'s own callee unwrap carries this spelling, so the row red-proves that fix site alone. | `... lost an unbound setitem write behind a walrus callee (round 40)` |
 | **A walrus getattr spelling hands the handle** (false PASS guard): `(_g := getattr)(md, '__setattr__')`. | `... lost a handle behind a walrus getattr spelling (round 40)` |
 | **A relative import is not `sys.exit`** (false FAIL guard): `from .sys import exit as bail` -- no exit alias. | `... read a relative import as the sys exit alias (round 40)` |
+
+### Closed by `fix-r1` round 41 (codex r40 C-P0-1..C-P0-12 / C-P1-1 / C-P1-2; GLM r40 boundary P0-1 / P2-2 / P2-3, concurrency P1, sibling P2; probe 2026-11-09)
+
+The import family was rebuilt around one module-scope event walk.  The
+round-40 walk still recursed per child, and its crash guard only reached an
+`Assign` -- a **module-level deep expression in an `if` test or a bare
+`Expr`** crashed the whole kinds computation (codex C-P0-1 / GLM concurrency
+P1) -- the walk is an explicit stack now (declared as the round-40 trade-off
+closure).  The walk also skipped **assignment right-hand sides, `while`
+tests and `def`/`class` name events** (codex C-P0-3 / GLM boundary P0-1):
+an RHS or while-test walrus that restores the builtin alias, and a rebind
+through a module-scope `def` name, were all invisible -- values, tests and
+def/class names are events now, and a `class` event is provably not the
+import while a `def` is judged by its body.  The **capability test** read
+only bare names, so the builtin behind a **tuple unpack, an `if` expression
+or a boolean operator** (C-P0-2), behind a **`builtins.__import__`
+delegation** or a thunk **returning the module itself** (C-P0-4) was judged
+incapable and the real `sys.modules` write went invisible -- the value walk
+descends containers and conditionals, attribute delegation onto a
+`builtins`-kinded base counts, and a lambda/def whose returns provably name
+`sys`/`builtins` counts.  A **factory call** over a def whose every return
+is provably clean no longer over-reports (C-P1-2).  Star semantics moved into
+`live()` proper: a star **behind the call inside a loop** is live on the
+back edge (C-P0-5 / GLM boundary P2-2), a **dead** star (dead-shadowed or in
+a dead branch) restores nothing, and a star **superseded by a later certain
+rebind** drops out of force (C-P1-1) -- both r40 false reports the battery
+pins.  The chosen binding is **position-based** now (the stack walk's event
+order is not source order).
+
+The display family: a **Starred element before the selected index** shifts
+it, and a `**` merge or a **dynamic dict key** can override the selected
+key (C-P0-6 / C-P0-7) -- both make the selection path give up (fail-closed,
+the receiver withdraws); a **mutating call between the take-out and the
+call** (`reverse`, `pop`, subscript writes; `_display_mutated_between`)
+invalidates the cached selection (C-P0-8); a **comprehension element**
+relays through `_relay_handle_roots` (C-P0-10) and a **dictcomp key** is a
+taken root like any other (GLM sibling P2).  The wrapper sever test is a
+**free-name analysis** -- `_free_name_loads` computes per-scope free names,
+so a wrapper whose only free name is the container keeps the walk alive
+while everything its own scopes bind stays shadowed (C-P0-9).  The
+iter-literal and `__getattribute__` reads take their callee through the
+walrus unwrap (GLM sibling P2), as do the status-write decoders
+`_call_written_values` and `_partial_bound_arguments` -- a walrus `setattr`
+or `functools.partial` callee no longer loses the `status` write
+(C-P0-11 / C-P0-12).
+
+| Shape | Self-test |
+|---|---|
+| **A deep module-level expression does not crash the kinds walk** (crash guard): a 1100-term sum in an `if` test and a bare `Expr`. | `... let a deep module-level expression in an if test / a bare expression crash the kinds walk (round 41)` |
+| **A container or conditional value keeps the alias capable** (false PASS guard): `imp, = (__import__,)`, `imp = __import__ if True else None`, `imp = __import__ or None` -- the module write decodes. | `... refused an import alias restored through a tuple unpack / an if expression / a boolean operator (round 41)` |
+| **An assignment right-hand or while-test walrus restores the alias** (false PASS guard): `_ = (imp := __import__)('sys')`, `while (imp := __import__) and False:` then `s = imp('sys')`. | `... dropped a real import behind an assignment right-hand walrus / a while-test walrus (round 41)` |
+| **Delegation and module-returning thunks stay capable** (false PASS guard): `imp = lambda name: b.__import__(name)`, `imp = lambda name: sys`. | `... dropped a real import behind a builtins delegation / a module-returning thunk (round 41)` |
+| **A star behind the call in a loop is live on the back edge** (false PASS guard): `while flag: s = imp('sys'); from loopstar import *`. | `... dropped a real import behind a star back edge (round 41)` |
+| **A def rebind, a dead star, a superseded star and a factory do not report** (false FAIL guard): `def imp(name): return None`; `if False: from exported import *`; `from exported import *` then `imp = lambda`; `imp = _factory()` over clean returns -- no module write. | `... kept reporting an import behind a module-scope def rebind / a dead star / a star superseded by a certain rebind / a factory over a clean lambda (round 41)` |
+| **A starred shift moves the selected index** (false PASS guard): `items = (*hs, lambda *a: None); items[1](...)` -- withdraw. | `... lost a receiver behind a starred shift of the selected index (round 41)` |
+| **A `**` merge or dynamic key overrides the selection** (false PASS guard): `items = {'k': lambda, **{'k': hs[0]}}`, `items = {'k': lambda, k2: hs[0]}` -- withdraw. | `... lost a receiver behind a dict merge override / a dynamic key override (round 41)` |
+| **A mutation between take-out and call invalidates the selection** (false PASS guard): `items.reverse()` / `items.pop()` then `items[0](...)` -- withdraw. | `... lost a receiver behind a reverse mutation / a pop mutation between take-out and call (round 41)` |
+| **A comprehension element and a dictcomp key relay** (false PASS guard): `items = ([h for h in hs],); items[0][0](...)`; `d = {h: None for h in hs}` iterated -- withdraw. | `... lost a receiver behind a comprehension display element / a dictcomp key relay (round 41)` |
+| **A walrus iter or `__getattribute__` callee hands the receiver** (false PASS guard): `for h in (_i := iter)((md,)): h.common = x`; `(_g := md.__getattribute__)('__dict__')`. | `... lost a receiver behind a walrus iter callee / a walrus getattribute callee (round 41)` |
+| **A wrapper whose only free name is the container still carries** (false PASS guard): `iter = lambda x: ((lambda x: None), (h for h in x))[1]` -- the receiver must withdraw. | `... severed the walk at a wrapper whose only free name is the container (round 41)` |
+| **A walrus setattr or partial callee writes the status** (false PASS guard): `(_s := setattr)(r, 'status', 'PASS')`; `(_p := functools.partial)(setattr, r, 'status')('PASS')` -- the write decodes. | `... lost a status write behind a walrus setattr callee / a walrus partial callee (round 41)` |
