@@ -23,6 +23,13 @@ struct Requests {
     entered: Notify,
     release: Notify,
     after_entered: Option<Arc<Semaphore>>,
+    /// #2391: park the next non-submit `request` body at `release`, publishing
+    /// `request_entered` before and `request_done` after — the probe the
+    /// disconnect experiment needs (the request body's own completion,
+    /// observable without a socket to deliver the response on).
+    hold_request: AtomicBool,
+    request_entered: Notify,
+    request_done: Notify,
 }
 impl GatewayRequests for Requests {
     fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
@@ -58,7 +65,19 @@ impl GatewayRequests for Requests {
         })
     }
     fn request(&self, _: JsString, _: JsValue) -> Call<'_, Result<JsValue, RequestError>> {
-        Box::pin(async { Err(RequestError::new("#749 unexpected method")) })
+        Box::pin(async move {
+            if self.hold_request.swap(false, Ordering::SeqCst) {
+                // Register before publishing entered: notify_waiters keeps no
+                // permit for a Notified created after the release broadcast.
+                let released = self.release.notified();
+                tokio::pin!(released);
+                released.as_mut().enable();
+                self.request_entered.notify_one();
+                released.await;
+                self.request_done.notify_waiters();
+            }
+            Ok(crate::metadata::object([]))
+        })
     }
 }
 
@@ -819,6 +838,49 @@ async fn pending_request_and_disconnect() {
         .expect("#749 pending server join");
         crate::test_negative_receipt::expect_ok(result, "#749 disconnect drains pending submit");
     }
+}
+
+/// #2391: settle the two conflicting statements about what the WS layer does
+/// to an in-flight request when its client disconnects — `runtime/settings/
+/// gateway.rs` claimed "the WS layer drops in-flight requests on disconnect",
+/// while the connection contract (`runtime/connection/mod.rs`: drive the
+/// returned future to completion, retain and drain request tasks) and this
+/// transport's retain+drain loops say the job survives. The request body
+/// parks at the fixture gate, the client disconnects, and the body must still
+/// finish: the job is host-owned, not socket-owned, so its transcript-write
+/// reservation (or any other body-held state) is released by the body's own
+/// exit, not by the socket's.
+#[tokio::test]
+async fn disconnect_leaves_in_flight_request_running_to_completion() {
+    let requests = Arc::new(Requests {
+        hold_request: AtomicBool::new(true),
+        ..Requests::default()
+    });
+    let (address, stop, task) = start(requests.clone(), DEADLINE).await;
+    let mut client = Client::connect(address).await;
+    client.hello().await;
+    client.json().await;
+    client
+        .send(json!({"type":"request","id":"held","method":"probe","params":{}}))
+        .await;
+    timeout(DEADLINE, requests.request_entered.notified())
+        .await
+        .expect("#2391 request body entered its await");
+    // Disconnect the client mid-request: close the write side and drop the
+    // socket, so the transport sees EOF rather than a graceful WS close.
+    client.socket.shutdown().await.expect("#2391 client FIN");
+    drop(client);
+    // The job is parked inside the request body. Register the done-waiter
+    // before opening the gate — notify_waiters keeps no permit for a future
+    // registered after the broadcast.
+    let done = requests.request_done.notified();
+    tokio::pin!(done);
+    done.as_mut().enable();
+    requests.release.notify_waiters();
+    timeout(DEADLINE, &mut done)
+        .await
+        .expect("#2391 the disconnected request still runs to completion");
+    finish(stop, task).await;
 }
 #[tokio::test]
 async fn stop_accepting_drains_existing() {

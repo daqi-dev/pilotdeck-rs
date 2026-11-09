@@ -311,9 +311,13 @@ impl SettingsGateway {
         // `try { await configStore.reload("sdk-update-settings") } finally
         // { unsubscribe() }`: the listener is detached when the reload
         // settles, when it fails, and when the future is dropped at the
-        // await point (the WS layer drops in-flight requests on disconnect;
-        // `Subscription` has no `Drop` of its own). Same guard shape as
-        // `RefreshBundle::reload_config`'s capture.
+        // await point. A client disconnect does *not* drop it — the native
+        // WS layer retains request jobs and drains them (#2391 measured a
+        // disconnected request still runs to completion on the host) — but
+        // the host's own shutdown aborts a draining job past its budget,
+        // and the connection contract only asks embedders to drive these
+        // futures to completion. `Subscription` has no `Drop` of its own.
+        // Same guard shape as `RefreshBundle::reload_config`'s capture.
         struct Capture(Option<Subscription>);
         impl Drop for Capture {
             fn drop(&mut self) {

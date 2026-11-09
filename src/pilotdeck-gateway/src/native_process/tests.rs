@@ -1081,6 +1081,253 @@ async fn production_listener_mounts_the_api_web_group() {
         .expect("#2354 listener task join")
         .expect("#2354 the production listener drains cleanly");
 }
+
+/// #2395: the `/api/web` group's presentation on the production listener,
+/// held up per ledger entry (specs/product-coverage/entries.json, group
+/// A678 — five routes `partial-native`, evidence the `serve_with_body`
+/// mount): each of the five routes through the real accept loop with the
+/// production catalog over a registered project, the group's own JSON 404s
+/// (`/api/web/nope`, an unknown files sub-path) against the plain-text 404
+/// the lanes outside the group answer (`/api/web` without the trailing
+/// slash, and `/` for the static lane the production listener does not
+/// serve — `with_static_root` stays test-only), plus the 401 before any
+/// routing.
+#[tokio::test]
+async fn production_listener_presents_the_api_web_ledger_surface() {
+    use crate::runtime::{
+        connection::{Call, RequestError},
+        turn::gateway::{self, GatewayRequests},
+    };
+    use pilotdeck_protocol::JsString;
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpStream,
+        sync::oneshot,
+        time::timeout,
+    };
+    struct NoRequests;
+    impl GatewayRequests for NoRequests {
+        fn describe_server(&self) -> Call<'_, Result<JsValue, RequestError>> {
+            Box::pin(async { Ok(JsValue::Null) })
+        }
+        fn request(&self, _: JsString, _: JsValue) -> Call<'_, Result<JsValue, RequestError>> {
+            Box::pin(async { Ok(JsValue::Null) })
+        }
+    }
+    let scratch = Scratch::new();
+    // One registered project in the WS lane's home — the same marker shape
+    // `assembly::register_project` writes — with one file the tree/read/write
+    // probes address.
+    let project = scratch.0.join("project");
+    std::fs::write(project.join("hello.txt"), "#2395 probe file\n")
+        .expect("#2395 seed the project file");
+    let registry = scratch.0.join("home").join("projects").join("pdrs-2395");
+    std::fs::create_dir_all(&registry).expect("#2395 project registry directory");
+    std::fs::write(registry.join(".cwd"), project.to_string_lossy().as_bytes())
+        .expect("#2395 project marker");
+    let encoded_root = project.to_string_lossy().replace('/', "%2F");
+    let server = super::production_listener(
+        "127.0.0.1:0"
+            .parse()
+            .expect("#2395 production listen address"),
+        gateway::tests::native_ws_fixture(Arc::new(NoRequests)),
+        "fixture-token".into(),
+        Arc::new(|| None),
+        super::production_api_web("fixture-token".into(), scratch.0.join("home")),
+    )
+    .await
+    .expect("#2395 bind the production listener");
+    let address = server
+        .local_addr()
+        .expect("#2395 production listener address");
+    let (stop, stopped) = oneshot::channel();
+    let task = tokio::spawn(server.run(
+        async {
+            let _ = stopped.await;
+        },
+        std::time::Duration::from_secs(10),
+    ));
+
+    // One request per connection; every lane here answers a chunked body, so
+    // the terminal chunk ends the capture (no EOF to wait for).
+    async fn exchange(address: std::net::SocketAddr, request: &str) -> String {
+        let mut stream = timeout(
+            std::time::Duration::from_secs(10),
+            TcpStream::connect(address),
+        )
+        .await
+        .expect("#2395 connect deadline")
+        .expect("#2395 connect to the production listener");
+        stream
+            .write_all(request.as_bytes())
+            .await
+            .expect("#2395 write the probe request");
+        let mut response = Vec::new();
+        let mut buffer = [0u8; 8192];
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !response.ends_with(b"0\r\n\r\n") {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "#2395 the production listener did not answer the probe"
+            );
+            let read = timeout(
+                std::time::Duration::from_millis(500),
+                stream.read(&mut buffer),
+            )
+            .await
+            .expect("#2395 response read deadline")
+            .expect("#2395 the production listener connection stays up");
+            assert!(
+                read > 0,
+                "#2395 the production listener closed before answering"
+            );
+            response.extend_from_slice(&buffer[..read]);
+        }
+        String::from_utf8_lossy(&response).into_owned()
+    }
+    let get = |path: String| {
+        format!(
+            "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\n\r\n"
+        )
+    };
+
+    // The bearer check runs before any routing (#1348): an unauthorized GET
+    // is the 401, not a 404.
+    let unauthorized = exchange(
+        address,
+        "GET /api/web/projects HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+    )
+    .await;
+    assert!(
+        unauthorized.starts_with("HTTP/1.1 401"),
+        "#2395 the group answers 401 before routing: {unauthorized:?}"
+    );
+    assert!(
+        unauthorized.contains("\"code\":\"unauthorized\""),
+        "#2395 the 401 body is the group's unauthorized JSON: {unauthorized:?}"
+    );
+
+    // Entry `GET /api/web/projects`: the native catalog lists the registered
+    // project through the production composition.
+    let listed = exchange(address, &get("/api/web/projects".to_string())).await;
+    assert!(
+        listed.starts_with("HTTP/1.1 200"),
+        "#2395 the project list route serves the native catalog: {listed:?}"
+    );
+    assert!(
+        listed.contains("\"projects\":[") && listed.contains("\"projectKey\""),
+        "#2395 the project list reports the registered project: {listed:?}"
+    );
+
+    // Entry `GET /api/web/projects/:projectKey`.
+    let described = exchange(address, &get(format!("/api/web/projects/{encoded_root}"))).await;
+    assert!(
+        described.starts_with("HTTP/1.1 200"),
+        "#2395 the describe route serves the native catalog: {described:?}"
+    );
+    assert!(
+        described.contains("\"fullPath\""),
+        "#2395 the describe route answers the project summary: {described:?}"
+    );
+
+    // Entry `GET /api/web/projects/:projectKey/files/tree`.
+    let tree = exchange(
+        address,
+        &get(format!("/api/web/projects/{encoded_root}/files/tree")),
+    )
+    .await;
+    assert!(
+        tree.starts_with("HTTP/1.1 200") && tree.contains("hello.txt"),
+        "#2395 the tree route lists the project file: {tree:?}"
+    );
+
+    // Entry `GET /api/web/projects/:projectKey/files/read`.
+    let read = exchange(
+        address,
+        &get(format!(
+            "/api/web/projects/{encoded_root}/files/read?path=hello.txt"
+        )),
+    )
+    .await;
+    assert!(
+        read.starts_with("HTTP/1.1 200") && read.contains("2395 probe file"),
+        "#2395 the read route answers the file content: {read:?}"
+    );
+
+    // Entry `POST /api/web/projects/:projectKey/files/write`, read back on a
+    // second request like the golden's round-trip cells.
+    let body = r#"{"path":"written-2395.txt","content":"written by #2395"}"#;
+    let written = exchange(
+        address,
+        &format!(
+            "POST /api/web/projects/{encoded_root}/files/write HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer fixture-token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        ),
+    )
+    .await;
+    assert!(
+        written.starts_with("HTTP/1.1 200") && written.contains("{\"ok\":true}"),
+        "#2395 the write route commits and answers ok:true: {written:?}"
+    );
+    let reread = exchange(
+        address,
+        &get(format!(
+            "/api/web/projects/{encoded_root}/files/read?path=written-2395.txt"
+        )),
+    )
+    .await;
+    assert!(
+        reread.starts_with("HTTP/1.1 200") && reread.contains("written by #2395"),
+        "#2395 the written file reads back: {reread:?}"
+    );
+
+    // The group's own 404 category: an unknown path inside `/api/web/`.
+    let no_route = exchange(address, &get("/api/web/nope".to_string())).await;
+    assert!(
+        no_route.starts_with("HTTP/1.1 404") && no_route.contains("\"code\":\"not_found\""),
+        "#2395 an unknown /api/web path answers the group JSON 404: {no_route:?}"
+    );
+    let no_sub = exchange(
+        address,
+        &get(format!("/api/web/projects/{encoded_root}/files/nope")),
+    )
+    .await;
+    assert!(
+        no_sub.starts_with("HTTP/1.1 404") && no_sub.contains("\"code\":\"not_found\""),
+        "#2395 an unknown files sub-path answers the group JSON 404: {no_sub:?}"
+    );
+
+    // The lane boundary: `/api/web` without the trailing slash never enters
+    // the group, so the native plain-text 404 answers, not the group JSON.
+    let boundary = exchange(address, &get("/api/web".to_string())).await;
+    assert!(
+        boundary.starts_with("HTTP/1.1 404") && boundary.contains("text/plain"),
+        "#2395 the no-slash boundary answers the native plain 404: {boundary:?}"
+    );
+    assert!(
+        !boundary.contains("application/json"),
+        "#2395 the no-slash boundary does not answer the group JSON: {boundary:?}"
+    );
+
+    // The static lane the production listener does not serve (`static_root`
+    // stays `None`): a UI-style path gets the native plain 404, never a file.
+    let static_lane = exchange(address, &get("/".to_string())).await;
+    assert!(
+        static_lane.starts_with("HTTP/1.1 404"),
+        "#2395 a static path answers 404 on the production listener: {static_lane:?}"
+    );
+    assert!(
+        !static_lane.contains("<"),
+        "#2395 the production listener serves no static or web-UI document: {static_lane:?}"
+    );
+
+    stop.send(()).expect("#2395 stop the production listener");
+    timeout(std::time::Duration::from_secs(10), task)
+        .await
+        .expect("#2395 listener stop deadline")
+        .expect("#2395 listener task join")
+        .expect("#2395 the production listener drains cleanly");
+}
 #[test]
 fn tool_policy_and_turn_environment() {
     let lsp = Arc::new(families::DefaultLsp::default());
