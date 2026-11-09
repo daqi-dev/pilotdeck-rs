@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 273 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 195 blind only, 3 with unresolvable shapes only, 75 in both; 1441 keys: 402 bare-filename joins and 1039 shared-helper import keys.
+# 268 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 193 blind only, 3 with unresolvable shapes only, 72 in both; 1408 keys: 397 bare-filename joins and 1011 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -250,8 +250,6 @@ KNOWN_BLIND = {
     'live-e2e-tmpdir/negative_controls.py': '6 keys',
     'live-e2e/negative_controls.py': '6 keys + 4 unresolvable',
     'live-history/negative.py': '1 key',
-    'live-recording/negative.py': '11 keys',
-    'live-session/negative_controls.py': '6 keys + 1 unresolvable',
     'locale-adaptive/negative_controls.py': '7 keys',
     'locale-contract/negative_controls.py': '6 keys',
     'locked-storage/negative_controls.py': '6 keys',
@@ -346,7 +344,6 @@ KNOWN_BLIND = {
     'sdk-signals-close-order-pin/negative_controls.py': '6 keys + 2 unresolvable',
     'sdk-signals/negative_controls.py': '6 keys',
     'sdk-terminal/negative_controls.py': '8 keys + 2 unresolvable',
-    'session-abort-contract/negative.py': '6 keys + 3 unresolvable',
     'session-admission/negative.py': '5 keys + 1 unresolvable',
     'session-adopt/switch_negative.py': '7 keys',
     'session-assembly-1316/negative_controls.py': '4 keys + 2 unresolvable',
@@ -363,9 +360,6 @@ KNOWN_BLIND = {
     'session-factory/negative_controls.py': '16 keys + 2 unresolvable',
     'session-factory/projection-cache/negative_controls.py': '8 keys + 6 unresolvable',
     'session-lease/negative.py': '3 keys',
-    'session-owner-hooks/negative.py': '1 key',
-    'session-owner/negative.py': '5 keys + 2 unresolvable',
-    'session-owner/negative_close_shutdown.py': '6 keys',
     'settings-gateway/negative_controls.py': '5 keys + 1 unresolvable',
     'settings/negative_controls.py': '2 keys',
     'shared-runner-failclosed/negative_controls.py': '2 keys',
@@ -374,6 +368,7 @@ KNOWN_BLIND = {
     'skills-external/negative_controls_949.py': '6 keys',
     'skills-tree-files/negative.py': '2 keys + 2 unresolvable',
     'skills/negative_controls.py': '3 keys',
+    'slot-probe-residual/negative-controls.py': '2 keys',
     'sms-stringify-depth/negative_controls.py': '4 keys + 2 unresolvable',
     'spill-isolation/negative_controls.py': '3 keys',
     'stats-cwd/negative_controls.py': '9 keys',
@@ -1882,6 +1877,48 @@ def _is_relative_path_literal(value):
     return len(segments) > 1 and all(segment not in ('', '.', '..') for segment in segments)
 
 
+def _resolves_to_string_constant(node, constants, seen=()):
+    """Whether ``node`` statically resolves to a string constant."""
+    if isinstance(node, ast.Constant):
+        return isinstance(node.value, str)
+    if isinstance(node, ast.Name):
+        if node.id in seen or node.id not in constants:
+            return False
+        return _resolves_to_string_constant(constants[node.id], constants,
+                                            seen + (node.id,))
+    return False
+
+
+def _slices_a_string_constant(node, constants, seen=()):
+    """Whether ``node`` reads a *substring* of a spelled string constant.
+
+    ``WORD = 'src/pilotdeck-gateway/src'`` then ``Path(WORD[:3]) / …`` builds a
+    repository path out of a prefix the contiguous text no longer carries:
+    the discovery key exists only inside the string constant, so the join is
+    as unresolvable as any other opaque head (r31, review P0). A *constant
+    index* reads exactly one display character (``WORD[0]`` in a counter
+    f-string) and stays silent. Every slice — constant bounds or not — may
+    spell a directory, and a slice that is statically one character
+    (``WORD[0:1]``) is reported too: fail-closed, one extra report beats a
+    hole (the split that r30 introduced when it stopped treating the string
+    itself as the container). An f-string interpolating such a slice is the
+    same build.
+    """
+    if isinstance(node, ast.Subscript):
+        return (isinstance(node.slice, ast.Slice)
+                and _resolves_to_string_constant(node.value, constants))
+    if isinstance(node, ast.Name):
+        if node.id in seen or node.id not in constants:
+            return False
+        return _slices_a_string_constant(constants[node.id], constants,
+                                         seen + (node.id,))
+    if isinstance(node, ast.JoinedStr):
+        return any(isinstance(part, ast.FormattedValue)
+                   and _slices_a_string_constant(part.value, constants)
+                   for part in node.values)
+    return False
+
+
 def _element_holds_a_path_literal(node, constants, seen):
     """Whether an *element* of a container spells a relative path literal.
 
@@ -2000,7 +2037,7 @@ def _indexes_a_path_container(node, constants):
     return False
 
 
-def _leading_path_piece(node):
+def _leading_path_piece(node, aliases=None):
     """The piece a path chain builds from, without its ``/``-joined tail.
 
     ``Path(D[name]) / 'a' / 'lib.rs'``, ``os.path.join(D[name], 'a', 'x.rs')``
@@ -2026,8 +2063,18 @@ def _leading_path_piece(node):
             # Keyword arguments do not change the receiver — excluding them
             # let ``Path(D[name]).with_suffix(suffix='')`` fall through to the
             # generic call branch and read the empty-string tail instead
-            # (r30, review P0).
-            node = node.func.value
+            # (r30, review P0). But the receiver resolves through the import
+            # map to a *module* — ``os.path.realpath(D[name], strict=False)``
+            # — is a module *function*: the path sits in its first argument,
+            # and descending into the ``os.path`` module object let that
+            # dynamic head pass silently (r31, review P0).
+            receiver = node.func.value
+            spelling = _dotted_spelling(receiver)
+            if (spelling is not None and aliases
+                    and spelling.partition('.')[0] in aliases and node.args):
+                node = node.args[0]
+            else:
+                node = receiver
         elif isinstance(node, ast.Call) and node.args:
             node = node.args[0]
         elif isinstance(node, ast.Attribute):
@@ -3499,10 +3546,17 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             ambiguous = ambiguous_names(node)
             if ambiguous:
                 report_ambiguous(ambiguous[0], expression)
-            elif (repo_rooted(node) or opaque_join_segment(node)):
+            elif (repo_rooted(node) or opaque_join_segment(node)
+                  or _slices_a_string_constant(
+                      _leading_path_piece(node, aliases), constants)):
+                # A head built from a *substring* of a spelled constant —
+                # ``Path(WORD[:3]) / …`` with ``WORD = 'src/pilotdeck-
+                # gateway/src'`` — leaves the discovery key nowhere in the
+                # file text either, so it reports exactly like the other
+                # opaque heads (r31, review P0).
                 report_unresolvable(expression)
-            elif (_single_component_directory(_leading_path_piece(node),
-                                              constants)
+            elif (_single_component_directory(
+                      _leading_path_piece(node, aliases), constants)
                   and not _join_resets_to_absolute(node, constants, aliases)):
                 # ``Path(D[name]) / 'a' / 'lib.rs'`` with ``D = {'one': 'src'}``:
                 # no segment resolves, no argument is opaque on its own, yet
@@ -3675,7 +3729,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                     if not ((_segments(target, constants, self_path) is not None
                              and _is_repo_rooted(target, constants))
                             or _indexes_a_path_container(target, constants)
-                            or _single_component_directory(target, constants)):
+                            or _single_component_directory(target, constants)
+                            or _slices_a_string_constant(target, constants)):
                         continue
                     if (isinstance(following, ast.Constant)
                             and isinstance(following.value, str)
@@ -3693,7 +3748,8 @@ def bare_concat_keys(tree, table, root=FIXTURES):
                             break
             if joined and (repo_rooted(node)
                            or _indexes_a_path_container(node, constants)
-                           or _single_component_directory(node, constants)):
+                           or _single_component_directory(node, constants)
+                           or _slices_a_string_constant(node, constants)):
                 problems.append('unsupported f-string path of a repository path '
                                 f'(use ``/`` joins): {ast.unparse(node)}')
             self.generic_visit(node)
@@ -8080,6 +8136,141 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 and 'unresolvable repository path' in problem
                 for problem in problems), problems)
 
+    def test_a_string_slice_head_is_an_unresolvable_repository_path(self):
+        """``Path(WORD[:3]) / …`` builds a repository path from a substring.
+
+        A slice of a spelled constant may read a real directory prefix the
+        contiguous text no longer carries, so the join is as opaque as any
+        other dynamic head; r30's split of element and container positions
+        stopped treating the string itself as a container and let this head
+        pass silently (r31, review P0 — the same fix's new shape, human
+        ruling 11:41: slices fail closed). A *constant index* reads one
+        display character and keeps its silence.
+        """
+        sliced = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return Path(WORD[:3]) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(sliced, 'example/negative_controls.py')
+        self.assertTrue(
+            any("Path(WORD[:3]) / 'pilotdeck-gateway'" in problem
+                and 'unresolvable repository path' in problem
+                for problem in problems), problems)
+        sliced_fstring = (
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return f'{WORD[:3]}/{name}'\n"
+        )
+        problems = violations(sliced_fstring, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unsupported f-string path' in problem
+                and "f'{WORD[:3]}/{name}'" in problem
+                for problem in problems), problems)
+        # A slice with constant bounds is still a substring — statically
+        # one character or not, it fails closed rather than measuring.
+        constant_bounds = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return Path(WORD[0:3]) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(constant_bounds, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+        # The constant-index display readings keep their silence, in both
+        # the join and the f-string spellings.
+        indexed = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return Path(WORD[0]) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        self.assertEqual(violations(indexed, 'example/negative_controls.py'),
+                         [])
+        dynamic_index = (
+            "from pathlib import Path\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "WORD = 'src/pilotdeck-gateway/src'\n"
+            "def row(name):\n"
+            "    return Path(WORD[name]) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        self.assertEqual(violations(dynamic_index,
+                                    'example/negative_controls.py'), [])
+
+    def test_a_module_function_with_keyword_arguments_reads_its_first_argument(self):
+        """``os.path.realpath(D[name], strict=False)`` builds from the argument.
+
+        The receiver ``os.path`` is a module, so the call is a module
+        *function*: the path sits in the first argument. r30 read the
+        receiver unconditionally and let the dynamic head pass silently
+        (r31, review P0 — human ruling 11:41: dispatch on the resolved
+        ``func.value``). The instance-method spellings keep reading their
+        receiver, keywords or not.
+        """
+        module_function = (
+            "from pathlib import Path\n"
+            "import os\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(os.path.realpath(D[name], strict=False)) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(module_function, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                and 'realpath(D[name], strict=False)' in problem
+                for problem in problems), problems)
+        # Without the keyword the module-function reading is the same — r30
+        # dropped this report along with the keyworded shape.
+        bare_module_function = (
+            "from pathlib import Path\n"
+            "import os\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return os.path.realpath(D[name]) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(bare_module_function,
+                              'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+        # An import alias resolves to the same module, so the dispatch sees
+        # through it; the receiver spellings stay on the receiver.
+        aliased = (
+            "from pathlib import Path\n"
+            "import os as fs\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return fs.path.realpath(D[name], strict=False) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(aliased, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unresolvable repository path' in problem
+                for problem in problems), problems)
+        # The r30 instance-method reports must not regress.
+        instance_method = (
+            "from pathlib import Path\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(D[name]).resolve(strict=True) / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(instance_method, 'example/negative_controls.py')
+        self.assertTrue(
+            any("Path(D[name]).resolve(strict=True) / 'pilotdeck-gateway'"
+                in problem
+                and 'unresolvable repository path' in problem
+                for problem in problems), problems)
+
     def test_a_runtime_parents_index_behind_a_method_call_is_reported(self):
         """``parents[int(0)].joinpath('..')`` hides the depth behind a call.
 
@@ -8321,6 +8512,18 @@ class DiscoveryAnchorTests(unittest.TestCase):
             '        def test_a(self):\n            pass\n'
         )
         self.assertEqual(_duplicate_test_names(finally_adds), {'T': ['test_a']})
+        # ``finally`` always runs *after* the body, so a name defined once in
+        # each region really lands twice in one pass — the regions add, they
+        # do not take a maximum (r30 review P2, pinned after the ruling).
+        body_and_finally = (
+            'class T(unittest.TestCase):\n'
+            '    try:\n'
+            '        def test_a(self):\n            pass\n'
+            '    finally:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(body_and_finally),
+                         {'T': ['test_a']})
 
     def test_try_star_handlers_can_all_run_and_do_collide(self):
         """An exception group fans one pass out through several ``except*``.
