@@ -2299,7 +2299,8 @@ def _boolop_result_candidates(node):
     return values[-1:]
 
 
-def _import_value_capable(value, kinds, factory=None, seen=frozenset()):
+def _import_value_capable(value, kinds, factory=None, seen=frozenset(),
+                          classes=None):
     """Whether *value* may denote the import builtin (r40, r41, r42).
 
     ``None`` is an import event -- the builtin itself in force.  A name,
@@ -2340,9 +2341,13 @@ def _import_value_capable(value, kinds, factory=None, seen=frozenset()):
     #builtin); and a class is judged by its ``__new__`` (``class imp:
     #def __new__(cls, name): return sys`` hands the module back), with a
     #decorator or ``metaclass`` keeping the conservative capable answer.
+    #*classes* answers "the module-scope ``class`` definition bound to this
+    #name, or ``None``" so a plain-Name base can be judged through its own
+    #``__new__`` instead of blanket-capable (r43).
     """
     stack = [(value, seen)]
     visited = set()
+    pushed_classes = set()
     while stack:
         value, path = stack.pop()
         if value is None:
@@ -2388,10 +2393,41 @@ def _import_value_capable(value, kinds, factory=None, seen=frozenset()):
                     continue
             return True
         if isinstance(value, ast.ClassDef):
-            if value.decorator_list or any(keyword.arg == 'metaclass'
-                                           for keyword in value.keywords):
+            # #1953 fix-r1 round 43 (GLM r42 boundary#3, probe 2026-11-10):
+            # an inherited ``__new__`` builds just as well as an own one --
+            # ``class _B: def __new__(cls, name): return sys`` with ``class
+            # imp(_B): pass`` answered *not* import-capable while the run
+            # imported through the inherited method (a false PASS), and an
+            # ``__new__ = staticmethod(<builder>)`` assignment spells the
+            # same method without a def.  A decorator or ``metaclass`` keeps
+            # the conservative capable answer.  A base resolves only when it
+            # is a plain module-scope name whose single class definition
+            # nothing rebinds -- then the parent is judged through its own
+            # ``__new__`` (an inherited clean builder stays clean instead of
+            # blanket-reporting); any other base spelling -- attribute,
+            # call, subscript, star, or an unresolvable name -- joins the
+            # decorator as the same unknown.  ``pushed_classes`` breaks
+            # ``class A(B) / class B(A)`` cycles: each definition is queued
+            # once, no matter how many children name it.
+            if (value.decorator_list
+                    or any(keyword.arg == 'metaclass'
+                           for keyword in value.keywords)):
                 return True
+            for base in value.bases:
+                if not isinstance(base, ast.Name) or classes is None:
+                    return True
+                parent = classes(base.id)
+                if parent is None:
+                    return True
+                if id(parent) not in pushed_classes:
+                    pushed_classes.add(id(parent))
+                    stack.append((parent, path))
             for node in ast.walk(value):
+                if (isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name)
+                                and target.id == '__new__'
+                                for target in node.targets)):
+                    return True
                 if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
                         and node.name == '__new__'):
                     stack.append((node, path))
@@ -2502,24 +2538,42 @@ def _name_rebound_beyond(tree, name, skip):
     can write it any time.  Each refuses the resolution -- the
     conservative capable answer stands, which can only over-report.
     """
+    # #1953 fix-r1 round 43 (anthropic r42 boundary#1 + GLM r42 sibling#8,
+    # probe 2026-11-10): the import and def rebind checks read the whole tree
+    # with ``ast.walk``, which pierces nested scopes -- a *helper's own*
+    # ``from x import factory`` or ``def factory():`` (a local binding that
+    # never touches the module-level name) refused the resolution, so a
+    # legitimate factory lost its refused-call standing (a false report).
+    # Both move into the module-level walk below, which skips nested scope
+    # bodies; the ``global`` declaration keeps the whole-tree read, because a
+    # nested ``global name`` really can write the module-level binding.
     for node in ast.walk(tree):
         if isinstance(node, ast.Global) and name in node.names:
-            return True
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                if alias.name == '*' or (alias.asname or alias.name) == name:
-                    return True
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                            ast.ClassDef)) and node.name == name \
-                and node is not skip:
             return True
     stack = list(reversed(tree.body))
     while stack:
         node = stack.pop()
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                if alias.name == '*' or (alias.asname or alias.name) == name:
+                    return True
+            continue
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
-                             ast.ClassDef, ast.Lambda)):
+                            ast.ClassDef)):
+            if node.name == name and node is not skip:
+                return True
             stack.extend(_definition_header_nodes(node))
             continue
+        if isinstance(node, ast.Lambda):
+            stack.extend(_definition_header_nodes(node))
+            continue
+        # #1953 fix-r1 round 43 (GLM r42 sibling#8): ``factory += x`` rebinds
+        # the name too -- the object fails the operation at run time, but the
+        # rebind family stays closed for completeness.
+        if (isinstance(node, ast.AugAssign)
+                and isinstance(node.target, ast.Name)
+                and node.target.id == name):
+            return True
         if isinstance(node, (ast.For, ast.AsyncFor)):
             if name in _target_names(node.target):
                 return True
@@ -2761,6 +2815,31 @@ def _import_refused_calls(tree, kinds):
         # as a literal, never the import.
         return returns or [ast.Constant(value=None)]
 
+    def class_node(name):
+        """The module-scope ``class`` *name* definition, or ``None``.
+
+        #1953 fix-r1 round 43 (GLM r42 boundary#3, probe 2026-11-10): the
+        same single-event, not-rebound guards ``factory_returns`` carries.
+        A decorator replaces the class object with its wrapper, a
+        ``metaclass`` builds the object through unknown code, and any later
+        rebinding means the base name the call reads is not this definition
+        -- each keeps the resolution ``None`` so the class stays the
+        conservative unknown.
+        """
+        items = events.get(name, ())
+        if len(items) != 1:
+            return None
+        target = items[0][3]
+        if not isinstance(target, ast.ClassDef):
+            return None
+        if target.decorator_list:
+            return None
+        if any(keyword.arg == 'metaclass' for keyword in target.keywords):
+            return None
+        if _name_rebound_beyond(tree, name, target):
+            return None
+        return target
+
     def live(name, position, loops):
         entries = [item for item in events.get(name, ())
                    if ((item[0] <= position)
@@ -2784,7 +2863,8 @@ def _import_refused_calls(tree, kinds):
                       or (item[1] and item[0] > chosen[0])
                       or (loops and item[2] and set(item[2]) & set(loops))]
         for item in candidates:
-            if _import_value_capable(item[3], kinds, factory_returns):
+            if _import_value_capable(item[3], kinds, factory_returns,
+                                     classes=class_node):
                 return True
         for star_pos, star_loops in stars:
             if dead and _dead_shadowed(star_pos, position, dead):
@@ -3429,18 +3509,69 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
     #of the selection path and the literal display length the caller
     #hands in (*binding_value*, *slices*); anything not statically
     #priceable stays a mutation.
+
+    #1953 fix-r1 round 43 (GLM r42 boundary#1/boundary#2/sibling#4, probe
+    #2026-11-10): a negative literal subscript parses as
+    ``UnaryOp(USub, Constant)`` -- never a ``Constant`` -- so ``items[-1]``
+    never reached a priceable ``leading`` and the constant path declined on
+    *every* negative shape: the review's claimed hidden write was
+    unreachable, and the real defect was its mirror, the false report on a
+    clean bare ``items[-1](...)`` (probe b1g).  The unary slice now prices as
+    a *trailing* anchor, and ``append``/``extend``/``del items[k]`` join
+    ``pop``/``insert`` in the priced family -- each asks whether the
+    selection still addresses the same element, anchored at the display's
+    front for a positive subscript and at its tail for a negative one.
+    A call to a mutating closure through an alias (``_m = _mutate; _m()``)
+    is a call *to it* and convicts.
     """
     # The first constant hop of the selection path and the literal display
-    # length, when both are statically known.
+    # length, when both are statically known.  A negative literal subscript
+    # spells ``UnaryOp(USub, Constant)`` (probe 2026-11-10), so the trailing
+    # anchor reads the unary form -- ``items[-1]`` anchors at the last
+    # element, ``items[-2]`` one before it.
     leading = None
-    if (slices and isinstance(slices[-1], ast.Constant)
-            and isinstance(slices[-1].value, (int, str, bytes, float))
-            and not isinstance(slices[-1].value, bool)):
-        leading = slices[-1].value
+    trailing = None
+    if slices:
+        sl = slices[-1]
+        if (isinstance(sl, ast.Constant)
+                and isinstance(sl.value, (int, str, bytes, float))
+                and not isinstance(sl.value, bool)):
+            leading = sl.value
+        elif (isinstance(sl, ast.UnaryOp)
+                and isinstance(sl.op, ast.USub)
+                and isinstance(sl.operand, ast.Constant)
+                and isinstance(sl.operand.value, int)
+                and not isinstance(sl.operand.value, bool)):
+            trailing = sl.operand.value
     literal_len = None
     if isinstance(binding_value, (ast.Tuple, ast.List)):
         literal_len = len(binding_value.elts)
     display_is_dict = isinstance(binding_value, ast.Dict)
+
+    def priced_moves(removal, index):
+        """Whether the priced selection still addresses the same element
+        after removing (``removal``) at -- or inserting at -- ``index``
+        (already normalized against the literal length; ``None`` is the
+        display's tail position).
+
+        A positive ``leading`` anchors at the front: indices below it never
+        move.  A ``trailing`` count anchors ``trailing`` slots from the
+        end: a removal at or past the anchor takes the slot the selection
+        reads, an insertion past it does the same, and anything before it
+        shifts the tail along with the anchor.
+        """
+        if trailing is not None:
+            if literal_len is None or not 1 <= trailing <= literal_len:
+                return True
+            anchor = literal_len - trailing
+            if index is None:
+                index = literal_len - 1 if removal else literal_len
+            return index >= anchor if removal else index > anchor
+        if not isinstance(leading, int) or literal_len is None:
+            return True
+        if index is None:
+            index = literal_len - 1 if removal else literal_len
+        return leading >= index
 
     # Aliases of the display name anywhere in the scope (a fixpoint, so
     # chains launder too): a mutation through one is a mutation.
@@ -3464,26 +3595,43 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                 and callee.attr in _MUTATING_DISPLAY_ATTRS):
             return False
         if isinstance(callee.value, ast.Name) and callee.value.id in names:
-            if callee.attr in ('pop', 'insert') and not display_is_dict:
+            if (callee.attr in ('pop', 'insert', 'append', 'extend')
+                    and not display_is_dict):
+                # #1953 fix-r1 round 43 (GLM r42 sibling#4 + the b1 probe
+                # family): ``append``/``extend`` only grow the tail and
+                # ``pop()`` only shrinks it, so each prices against the
+                # selection's anchor like ``pop(k)``/``insert(k, v)`` do; the
+                # index argument may spell its sign as a unary literal the
+                # same way the selection slice does, and anything not
+                # statically priceable stays a mutation.
+                def literal_index(first):
+                    if (isinstance(first, ast.Constant)
+                            and isinstance(first.value, int)
+                            and not isinstance(first.value, bool)):
+                        return first.value
+                    if (isinstance(first, ast.UnaryOp)
+                            and isinstance(first.op, ast.USub)
+                            and isinstance(first.operand, ast.Constant)
+                            and isinstance(first.operand.value, int)
+                            and not isinstance(first.operand.value, bool)):
+                        return -first.operand.value
+                    return None
+                if callee.attr in ('append', 'extend'):
+                    return priced_moves(False, None)
                 first = call.args[0] if call.args else None
                 if first is None:
                     # ``pop()`` removes the last element: only a selection
                     # at the very end of a literal display moves.
-                    if literal_len is None or not isinstance(leading, int):
+                    return priced_moves(True, None)
+                index = literal_index(first)
+                if index is None:
+                    return True
+                if index < 0:
+                    if literal_len is None:
                         return True
-                    return leading >= literal_len - 1
-                if (isinstance(first, ast.Constant)
-                        and isinstance(first.value, int)
-                        and not isinstance(first.value, bool)
-                        and isinstance(leading, int)):
-                    index = first.value
-                    if index < 0:
-                        if literal_len is None:
-                            return True
-                        index += literal_len
-                    # removing/inserting at k shifts indices >= k
-                    return leading >= index
-                return True
+                    index += literal_len
+                # removing/inserting at k shifts indices >= k
+                return priced_moves(callee.attr == 'pop', index)
             if callee.attr == 'pop' and display_is_dict:
                 first = call.args[0] if call.args else None
                 if (isinstance(first, ast.Constant)
@@ -3526,6 +3674,24 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                         and mutates_display(_callee_expr(inner), inner)):
                     mutators.add(statement.targets[0].id)
                     break
+    # #1953 fix-r1 round 43 (GLM r42 boundary#2, probe 2026-11-10): a
+    # mutating closure called through an alias -- ``_m = _mutate; _m()`` --
+    # is a call *to it*, and the contract convicts on any call to the
+    # mutator, so the alias gets the same assignment-transitive closure the
+    # display names got above.
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(scope):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)):
+                value = node.value
+                while isinstance(value, ast.NamedExpr):
+                    value = value.value
+                if (isinstance(value, ast.Name) and value.id in mutators
+                        and node.targets[0].id not in mutators):
+                    mutators.add(node.targets[0].id)
+                    changed = True
 
     for statement in ast.walk(scope):
         if not isinstance(statement, ast.stmt):
@@ -3561,6 +3727,37 @@ def _display_mutated_between(scope, name, binding_pos, use_pos,
                 targets = (node.targets if isinstance(
                     node, (ast.Assign, ast.Delete)) else [node.target])
                 for target in targets:
+                    # #1953 fix-r1 round 43 (GLM r42 sibling#4c, probe
+                    # 2026-11-10): a whole-target literal ``del items[k]``
+                    # prices like ``pop(k)`` -- the removal only matters when
+                    # the selection's anchor sits at or past it.  Any other
+                    # deletion spelling (an element write, a nested target)
+                    # stays a mutation.
+                    if (isinstance(node, ast.Delete)
+                            and isinstance(target, ast.Subscript)
+                            and isinstance(target.value, ast.Name)
+                            and target.value.id in names
+                            and not display_is_dict
+                            and isinstance(binding_value,
+                                           (ast.Tuple, ast.List))):
+                        index = None
+                        sl = target.slice
+                        if (isinstance(sl, ast.Constant)
+                                and isinstance(sl.value, int)
+                                and not isinstance(sl.value, bool)):
+                            index = sl.value
+                        elif (isinstance(sl, ast.UnaryOp)
+                                and isinstance(sl.op, ast.USub)
+                                and isinstance(sl.operand, ast.Constant)
+                                and isinstance(sl.operand.value, int)
+                                and not isinstance(sl.operand.value, bool)):
+                            index = -sl.operand.value
+                        if index is not None:
+                            if index < 0:
+                                index += len(binding_value.elts)
+                            if not priced_moves(True, index):
+                                continue
+                            return True
                     for sub in ast.walk(target):
                         if not isinstance(sub, ast.Subscript):
                             continue
@@ -6285,11 +6482,27 @@ def _receiver_attribute_writes(tree, receivers, shared):
                 value = matches[0]
                 continue
             if isinstance(value, (ast.Tuple, ast.List, ast.Set)):
-                if not (isinstance(sl, ast.Constant)
+                # #1953 fix-r1 round 43 (GLM r42 boundary#1 probe,
+                # 2026-11-10): a negative literal subscript parses as
+                # ``UnaryOp(USub, Constant)``, so the constant test below
+                # never saw one and every negative selection declined the
+                # path; the unary spelling now normalizes the same way the
+                # (hand-built) negative ``Constant`` branch always meant to.
+                index = None
+                if (isinstance(sl, ast.Constant)
                         and isinstance(sl.value, int)
                         and not isinstance(sl.value, bool)):
+                    index = sl.value
+                elif (isinstance(sl, ast.UnaryOp)
+                        and isinstance(sl.op, ast.USub)
+                        and isinstance(sl.operand, ast.Constant)
+                        and isinstance(sl.operand.value, int)
+                        and not isinstance(sl.operand.value, bool)):
+                    index = -sl.operand.value
+                if index is None:
                     return None
-                index = sl.value if sl.value >= 0 else sl.value + len(value.elts)
+                if index < 0:
+                    index += len(value.elts)
                 if not 0 <= index < len(value.elts):
                     return None
                 if any(isinstance(value.elts[i], ast.Starred)
@@ -6763,13 +6976,15 @@ def _receiver_attribute_writes(tree, receivers, shared):
                                         (node.lineno, node.col_offset),
                                         items[-1][4], node.subject))
             elif isinstance(node, ast.stmt):
-                names, value = _local_bound_names(node)
-                for name in names:
+                # #1953 fix-r1 round 43 (GLM r42 sibling#3): a projected
+                # unpack hands the resolver the *element* the name really
+                # holds, not the whole tuple.
+                for name, bound in _local_bound_values(node).items():
                     items = add(name, node, None, False)
-                    if value is not None:
+                    if bound is not None:
                         pending.append((items, len(items) - 1,
                                         (node.lineno, node.col_offset),
-                                        items[-1][4], value))
+                                        items[-1][4], bound))
             elif isinstance(node, ast.NamedExpr):
                 for name in _target_names(node.target):
                     items = add(name, node, None, False)
@@ -7089,6 +7304,26 @@ def _dict_binding_keys(name, tree):
     """
     keys = set()
     seen = False
+    # #1953 fix-r1 round 43 (GLM r42 sibling#5, probe 2026-11-10): the bound
+    # ``d.update(...)`` spelling reads unbounded, but an alias receiver
+    # (``e = d; e.update(...)``) and the unbound ``dict.update(d, ...)`` /
+    # ``dict.__setitem__(d, k, v)`` / ``operator.setitem(d, k, v)`` spellings
+    # name the same mapping -- the literal binding's keys are no longer the
+    # whole story, so each reads unbounded too.
+    receivers = {name}
+    changed = True
+    while changed:
+        changed = False
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                    and isinstance(node.targets[0], ast.Name)):
+                value = node.value
+                while isinstance(value, ast.NamedExpr):
+                    value = value.value
+                if (isinstance(value, ast.Name) and value.id in receivers
+                        and node.targets[0].id not in receivers):
+                    receivers.add(node.targets[0].id)
+                    changed = True
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             targets = node.targets
@@ -7104,11 +7339,21 @@ def _dict_binding_keys(name, tree):
             if not isinstance(callee, ast.Attribute):
                 continue
             if (isinstance(callee.value, ast.Name)
-                    and callee.value.id == name
+                    and callee.value.id in receivers
                     and callee.attr in ('update', 'setdefault', 'pop',
                                         'popitem', 'clear', '__setitem__',
                                         '__delitem__')):
                 return None
+            if (isinstance(callee.value, ast.Name)
+                    and ((callee.value.id == 'dict'
+                          and callee.attr in ('update', 'setdefault', 'pop',
+                                             'popitem', 'clear',
+                                             '__setitem__', '__delitem__'))
+                         or (callee.value.id == 'operator'
+                             and callee.attr in ('setitem', 'delitem')))):
+                first = node.args[0] if node.args else None
+                if isinstance(first, ast.Name) and first.id in receivers:
+                    return None
             continue
         else:
             continue
@@ -7121,7 +7366,7 @@ def _dict_binding_keys(name, tree):
                 seen = True
             elif (isinstance(target, ast.Subscript)
                   and isinstance(target.value, ast.Name)
-                  and target.value.id == name):
+                  and target.value.id in receivers):
                 return None
     return keys if seen else None
 
@@ -7256,7 +7501,12 @@ def _withdrawn_receivers(tree, rel=None, shared=None):
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        func = node.func
+        # #1953 fix-r1 round 43 (GLM r42 sibling#2, probe 2026-11-10): the
+        # callee may sit behind a walrus (``(_g := md.common.
+        # aggregate_status)(report)``) -- unwrap through
+        # ``_callee_expr`` like the r34 callee family, so the receiver
+        # still lands in the withdrawal set.
+        func = _callee_expr(node)
         if not (isinstance(func, ast.Attribute) and func.attr == 'aggregate_status'):
             continue
         base = func.value
@@ -7560,6 +7810,34 @@ def _local_bound_names(node):
         return [alias.asname or alias.name.split('.')[0]
                 for alias in node.names], None
     return [], None
+
+
+def _local_bound_values(node):
+    """``{name: value}`` a statement binds, one entry per name (r43).
+
+    #1953 fix-r1 round 43 (GLM r42 sibling#3, probe 2026-11-10): the three
+    write-helper event tables ask *which* helper a rebinding denotes, and a
+    tuple unpack handed the resolver the whole tuple -- ``from builtins
+    import setattr as w; spare, w = (clean, setattr)`` left ``w``'s event
+    unresolved (a tuple is not a name), so the later ``w(report, 'status',
+    'PASS')`` was judged helper-less while the run wrote the slot (a false
+    PASS, the same projection the r41 import walk already reads).  Each name
+    in a projected unpack gets its matching element; an unprojectable shape
+    (``Starred``, length mismatch, non-name element) keeps the conservative
+    whole-tuple value the round-42 walk registered, and ``None`` values keep
+    the round-42 ``no pending event`` reading.
+    """
+    names, value = _local_bound_names(node)
+    if not names:
+        return {}
+    values = {name: value for name in names}
+    if value is not None and isinstance(node, ast.Assign):
+        for target in node.targets:
+            if isinstance(target, (ast.Tuple, ast.List)):
+                pairs = _project_unpack_targets(target, value)
+                if pairs is not None:
+                    values.update(pairs)
+    return values
 
 
 def _function_shared_names(function, shared=None, rel=None, loaders=frozenset(),
@@ -8073,10 +8351,21 @@ def _flow_marks(statements):
             marks[id(statement)] = (conditional, loops)
             inner = (loops + (id(statement),) if isinstance(
                 statement, (ast.For, ast.AsyncFor, ast.While)) else loops)
-            stack = [(child, conditional)
+            # #1953 fix-r1 round 43 (GLM r42 sibling#1, probe 2026-11-10): a
+            # ``while`` test re-evaluates on every back edge -- its subtree
+            # carries the loop id like the body does (the C-P0-3 semantics
+            # the r42 import walks already carry), because a walrus in the
+            # test is in force at every later position of the same test.  The
+            # ``for`` iterable evaluates once *before* the loop starts and
+            # keeps the outer loops (C-P1-3c), so only the ``while`` test is
+            # seeded with ``inner``.  The stack threads the per-subtree loop
+            # context as a third entry.
+            stack = [(child, conditional,
+                      inner if (isinstance(statement, ast.While)
+                               and child is statement.test) else loops)
                      for child in ast.iter_child_nodes(statement)]
             while stack:
-                node, certainty = stack.pop()
+                node, certainty, ctx = stack.pop()
                 if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef,
                                      ast.ClassDef, ast.Lambda, ast.stmt)):
                     # A nested scope's body runs on its own terms; its
@@ -8084,12 +8373,12 @@ def _flow_marks(statements):
                     # the round-14 behaviour.
                     continue
                 if isinstance(node, ast.BoolOp):
-                    marks[id(node)] = (certainty, loops)
+                    marks[id(node)] = (certainty, ctx)
                     is_and = isinstance(node.op, ast.And)
                     running = certainty
                     pushes = []
                     for value in node.values:
-                        pushes.append((value, running))
+                        pushes.append((value, running, ctx))
                         truth = _static_truth(value)
                         if truth is None or is_and != truth:
                             # Unknown operand, or one that stops the chain:
@@ -8098,9 +8387,9 @@ def _flow_marks(statements):
                     stack.extend(reversed(pushes))
                     continue
                 if isinstance(node, ast.IfExp):
-                    marks[id(node)] = (certainty, loops)
+                    marks[id(node)] = (certainty, ctx)
                     truth = _static_truth(node.test)
-                    stack.append((node.test, certainty))
+                    stack.append((node.test, certainty, ctx))
                     # #1953 fix-r1 round 38 (codex r37 P0-6, GLM boundary
                     # P0-1): only the arm the literal test settles may keep
                     # the parent certainty.  The r37 spelling read "is not
@@ -8108,13 +8397,13 @@ def _flow_marks(statements):
                     # keep both arms certain -- ``... if flag else ...``
                     # runs each arm conditionally, in both directions.
                     stack.append((node.body,
-                                  certainty if truth is True else True))
+                                  certainty if truth is True else True, ctx))
                     stack.append((node.orelse,
-                                  certainty if truth is False else True))
+                                  certainty if truth is False else True, ctx))
                     continue
                 if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp,
                                      ast.GeneratorExp)):
-                    marks[id(node)] = (certainty, loops)
+                    marks[id(node)] = (certainty, ctx)
                     # #1953 fix-r1 round 38 (GLM r37 sibling P2-4): the
                     # first iterable runs whenever the expression does, but
                     # every later part -- the target, the later iterables,
@@ -8143,16 +8432,16 @@ def _flow_marks(statements):
                         if index:
                             pushes.append((generator.iter,
                                            certainty if certain_items
-                                           else True))
+                                           else True, ctx))
                         else:
-                            pushes.append((generator.iter, certainty))
+                            pushes.append((generator.iter, certainty, ctx))
                         nonempty = _static_nonempty(generator.iter)
                         runs = (certainty
                                 if certain_items and nonempty is True
                                 else True)
-                        pushes.append((generator.target, runs))
+                        pushes.append((generator.target, runs, ctx))
                         for if_clause in generator.ifs:
-                            pushes.append((if_clause, runs))
+                            pushes.append((if_clause, runs, ctx))
                             if _static_truth(if_clause) is not True:
                                 runs = True
                         elt_runs = runs
@@ -8161,15 +8450,25 @@ def _flow_marks(statements):
                                             _static_truth(clause) is not True
                                             for clause in generator.ifs))
                     if isinstance(node, ast.DictComp):
-                        pushes.append((node.key, elt_runs))
-                        pushes.append((node.value, elt_runs))
+                        pushes.append((node.key, elt_runs, ctx))
+                        pushes.append((node.value, elt_runs, ctx))
                     else:
-                        pushes.append((node.elt, elt_runs))
+                        pushes.append((node.elt, elt_runs, ctx))
                     stack.extend(reversed(pushes))
                     continue
-                marks[id(node)] = (certainty, loops)
-                stack.extend((child, certainty)
+                marks[id(node)] = (certainty, ctx)
+                stack.extend((child, certainty, ctx)
                              for child in ast.iter_child_nodes(node))
+            if isinstance(statement, (ast.For, ast.AsyncFor, ast.While)):
+                # #1953 fix-r1 round 43 (GLM r42 sibling#1): the ``else``
+                # block runs once after the loop ends -- no back edge reaches
+                # it (the C-P1-3a semantics the r42 import walks carry), so
+                # only the body re-runs.
+                if statement.body:
+                    visit(statement.body, True, inner)
+                if statement.orelse:
+                    visit(statement.orelse, True, loops)
+                continue
             for inner_block in _statement_blocks(statement):
                 visit(inner_block, True, inner)
 
@@ -8364,11 +8663,33 @@ def _module_call_positions(tree, direct=None):
                     ((node.lineno, node.col_offset), loops))
                 if direct is not None and node.func is func:
                     direct.add(id(func))
-        inner = loops
-        if isinstance(node, (ast.For, ast.AsyncFor, ast.While)):
+        # #1953 fix-r1 round 43 (GLM r42 sibling#1, probe 2026-11-10): the
+        # children of a loop statement are not one context.  The body
+        # re-runs on every back edge and carries the loop id; the ``for``
+        # iterable evaluates once *before* the first iteration and the
+        # ``else`` block once *after* the loop ends, so neither sees the
+        # body's back edge (the C-P1-3c semantics the r42 import walks
+        # carry); the ``while`` test re-evaluates on every back edge and
+        # carries the loop id (C-P0-3).
+        if isinstance(node, (ast.For, ast.AsyncFor)):
             inner = loops + (id(node),)
+            for child in reversed(node.orelse):
+                stack.append((child, loops))
+            for child in reversed(node.body):
+                stack.append((child, inner))
+            stack.append((node.target, loops))
+            stack.append((node.iter, loops))
+            continue
+        if isinstance(node, ast.While):
+            inner = loops + (id(node),)
+            for child in reversed(node.orelse):
+                stack.append((child, loops))
+            for child in reversed(node.body):
+                stack.append((child, inner))
+            stack.append((node.test, inner))
+            continue
         for child in reversed(list(ast.iter_child_nodes(node))):
-            stack.append((child, inner))
+            stack.append((child, loops))
     return found
 
 
@@ -9916,9 +10237,13 @@ def _module_binding_events(tree):
                                     (node.lineno, node.col_offset),
                                     items[-1][4], node.subject))
         elif isinstance(node, ast.stmt):
-            names, value = _local_bound_names(node)
-            pairs = dict(_alias_pairs(node)) if value is not None else {}
-            for name in names:
+            # #1953 fix-r1 round 43 (GLM r42 sibling#3): a projected unpack
+            # hands the resolver the element; the builtins-copy source keeps
+            # its round-26 plain-alias reading.
+            bound = _local_bound_values(node)
+            pairs = dict(_alias_pairs(node)) if any(
+                value is not None for value in bound.values()) else {}
+            for name, value in bound.items():
                 items = add(name, node, None, False)
                 if value is not None:
                     pending.append((items, len(items) - 1,
@@ -10131,14 +10456,17 @@ def _imported_write_aliases(function, outer_imports=None):
                                     (node.lineno, node.col_offset), loops,
                                     node.subject))
         elif isinstance(node, ast.stmt):
-            names, value = _local_bound_names(node)
             # #1953 fix-r1 round 29 (codex r27 P0-1): the module-scope builder
             # hands the resolver the *plain source name*, this one still handed
             # the AST node, so a function-local ``import builtins as bi;
             # bi = bi`` lost the module reading (the write disappeared).  Both
             # callers now share ``_alias_pairs``.
-            pairs = dict(_alias_pairs(node)) if value is not None else {}
-            for name in names:
+            # #1953 fix-r1 round 43 (GLM r42 sibling#3): a projected unpack
+            # hands the resolver the element the name really holds.
+            bound = _local_bound_values(node)
+            pairs = dict(_alias_pairs(node)) if any(
+                value is not None for value in bound.values()) else {}
+            for name, value in bound.items():
                 items = add(name, (node.lineno, node.col_offset), None,
                             conditional, loops, certain=False)
                 if value is not None:
@@ -10696,7 +11024,11 @@ def _is_system_exit_raise(node, aliases=None):
     through ``_exit_target`` like the call family (GLM boundary r16 P0-1).
     """
     exc = node.exc
-    callee = exc.func if isinstance(exc, ast.Call) else exc
+    # #1953 fix-r1 round 43 (GLM r42 sibling#6, probe 2026-11-10): the raise
+    # target may sit behind a walrus (``raise (_e := SystemExit)(0)``) --
+    # unwrap through ``_callee_expr`` like the r34 callee family, so the
+    # marker keeps the spelling.
+    callee = _callee_expr(exc) if isinstance(exc, ast.Call) else exc
     return _exit_target(callee, aliases) == 'builtins.SystemExit'
 
 
@@ -12499,8 +12831,15 @@ def aggregation_markers(function, module=None, rel=None, aliases=None,
             value = node.value
             if _returned_summary_dicts(value) or _returned_summary_names(value, bound):
                 markers.add('return-report-status')
-            if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name)
-                    and value.func.id == 'int' and _status_literals(value)):
+            # #1953 fix-r1 round 43 (anthropic r42 sibling#1, probe
+            # 2026-11-10): the ``int`` callee may sit behind a walrus
+            # (``return (_i := int)('PASS')``) -- unwrap through
+            # ``_callee_expr`` like the r34 callee family, so the marker
+            # keeps the spelling.
+            int_callee = (_callee_expr(value)
+                          if isinstance(value, ast.Call) else None)
+            if (isinstance(int_callee, ast.Name)
+                    and int_callee.id == 'int' and _status_literals(value)):
                 markers.add('return-int-status')
             if (isinstance(value, ast.Subscript) and isinstance(value.value, ast.Call)
                     and _is_shared_call(value.value, shared, rebound)):
@@ -16760,8 +17099,8 @@ def aggregation_audit():
             _m42_loop, _object_kinds_pass(_m42_loop, ()))
         for _m42_call in (node for node in ast.walk(_m42_loop)
                           if isinstance(node, ast.Call)
-                          and isinstance(node.func, ast.Name)
-                          and node.func.id == 'imp'):
+                          and isinstance(_callee_expr(node), ast.Name)
+                          and _callee_expr(node).id == 'imp'):
             if id(_m42_call) not in _m42_refusals:
                 failures.append('#1953 aggregation-audit: detector '
                                 'self-test kept an in-loop call live behind '
@@ -16913,6 +17252,311 @@ def aggregation_audit():
         failures.append('#1953 aggregation-audit: detector self-test let a '
                        'deep if-expression crash the capability test '
                        '(round 42)')
+    # #1953 fix-r1 round 43 (GLM r42 boundary#3, probe 2026-11-10): the class
+    # capability ignored an inherited ``__new__`` -- a base-resolvable class
+    # is judged through its own method now, so an inherited module-returning
+    # builder (one level or through a middle class) and an assigned
+    # ``__new__ = staticmethod(<builder>)`` spelling are the import, while
+    # an unresolvable or rebound base keeps the conservative standing.
+    for _m43_kind, _m43_src in (
+            ("an inherited __new__ returning the module",
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return sys\n"
+             "class imp(_B):\n"
+             "    pass\n"),
+            ("a two-level inherited __new__ returning the module",
+             "class _Top:\n"
+             "    def __new__(cls, name):\n"
+             "        return sys\n"
+             "class _Mid(_Top):\n"
+             "    pass\n"
+             "class imp(_Mid):\n"
+             "    pass\n"),
+            ("an assigned __new__ builder",
+             "class imp:\n"
+             "    __new__ = staticmethod(lambda cls, name: sys)\n"),
+            ("an unresolvable imported base",
+             "from types import SimpleNamespace as _B\n"
+             "class imp(_B):\n"
+             "    pass\n"),
+            ("a base name rebound after its class",
+             "from types import SimpleNamespace\n"
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "_B = dict\n"
+             "class imp(_B):\n"
+             "    pass\n")):
+        _m43_written = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n" + _m43_src +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if '_guard' not in _sys_modules_write_values(_m43_written):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'dropped the import standing behind ' + _m43_kind
+                            + ' (round 43)')
+    # #1953 fix-r1 round 43 (GLM r42 boundary#3 tail): the same family over-
+    # reported -- an inherited *clean* builder and a base-resolvable chain
+    # with no ``__new__`` anywhere (including a self-referential
+    # ``class _A(_B) / class _B(_A)`` cycle the guard must terminate on) are
+    # not the import, and a nested-only ``from x import factory`` never
+    # rebinds the module-level factory (anthropic r42 boundary#1), so the
+    # factory's provably clean returns keep the call refused.
+    for _m43_kind, _m43_src in (
+            ("an inherited clean __new__",
+             "from types import SimpleNamespace\n"
+             "class _B:\n"
+             "    def __new__(cls, name):\n"
+             "        return SimpleNamespace(modules={})\n"
+             "class imp(_B):\n"
+             "    pass\n"),
+            ("a self-referential base cycle",
+             "class imp(_A):\n"
+             "    pass\n"
+             "class _A(_B):\n"
+             "    pass\n"
+             "class _B(_A):\n"
+             "    pass\n"),
+            ("a nested-only import of the factory name",
+             "from types import SimpleNamespace\n"
+             "def factory(*args):\n"
+             "    return lambda name: SimpleNamespace(modules={})\n"
+             "def helper():\n"
+             "    from functools import partial as factory\n"
+             "    return factory\n"
+             "imp = factory(__import__)\n")):
+        _m43_refused = ast.parse(
+            "import sys\n"
+            "from builtins import __import__ as imp\n" + _m43_src +
+            "s = imp('sys')\n"
+            "s.modules['_guard'] = object()\n"
+            "_guard = sys.modules.get('_guard')\n")
+        if '_guard' in _sys_modules_write_values(_m43_refused):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'kept reporting an import behind ' + _m43_kind
+                            + ' (round 43)')
+    # #1953 fix-r1 round 43 (GLM r42 boundary#1..#2 / sibling#4, probe
+    # 2026-11-10): the display path priced only the positive-index family --
+    # a ``pop()`` or ``del`` of the tail element and an ``insert`` past the
+    # tail each move the handle into an ``items[-1]`` read (the trailing
+    # selection is anchored to the end), and the mutators alias fixpoint
+    # missed the alias call of the mutating closure.
+    for _m43_kind, _m43_src in (
+            ("a pop() moving the handle into a trailing selection",
+             "    _items = [lambda *a: None, _hs[0], lambda *a: None]\n"
+             "    _items.pop()\n"
+             "    _items[-1]('common', object())\n"),
+            ("an insert past the tail into a trailing selection",
+             "    _items = [lambda *a: None, _hs[0], lambda *a: None]\n"
+             "    _items.insert(3, _hs[0])\n"
+             "    _items[-1]('common', object())\n"),
+            ("a del moving the handle into a trailing selection",
+             "    _items = [lambda *a: None, _hs[0], lambda *a: None]\n"
+             "    del _items[2]\n"
+             "    _items[-1]('common', object())\n"),
+            ("an alias call of a mutating closure",
+             "    def _mutate():\n"
+             "        _items.reverse()\n"
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _m = _mutate\n"
+             "    _m()\n"
+             "    _items[0]('common', object())\n")):
+        _m43_display = ast.parse(
+            "def _m43a(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m43_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' not in _withdrawn_receivers(_m43_display):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m43_kind
+                            + ' (round 43)')
+    # #1953 fix-r1 round 43 (GLM r42 boundary#1 tail / sibling#4 tail, probe
+    # 2026-11-10): the same pricing over-withdrew -- a head ``pop``/``insert``
+    # before a trailing selection, a bare trailing selection over a clean
+    # element, a negative-argument ``pop`` of the handle, an ``append`` /
+    # ``extend`` / ``del`` that cannot move a leading selection, and an alias
+    # call of a no-op closure each kept reporting a receiver the run never
+    # withdrew through.
+    for _m43_kind, _m43_src in (
+            ("a head pop before a trailing selection",
+             "    _items = [lambda *a: None, _hs[0], lambda *a: None]\n"
+             "    _items.pop(0)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a head insert before a trailing selection",
+             "    _items = [lambda *a: None, _hs[0], lambda *a: None]\n"
+             "    _items.insert(0, None)\n"
+             "    _items[-1]('common', object())\n"),
+            ("a bare trailing selection",
+             "    _items = [lambda *a: None, _hs[0], lambda *a: None]\n"
+             "    _items[-1]('common', object())\n"),
+            ("a negative-argument pop of the handle",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _items.pop(-1)\n"
+             "    _items[0]('common', object())\n"),
+            ("an append after a leading selection",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _items.append(None)\n"
+             "    _items[0]('common', object())\n"),
+            ("an extend after a leading selection",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _items.extend([None])\n"
+             "    _items[0]('common', object())\n"),
+            ("a del of the handle before a leading selection",
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    del _items[1]\n"
+             "    _items[0]('common', object())\n"),
+            ("an alias call of a no-op closure",
+             "    def _noop():\n"
+             "        pass\n"
+             "    _items = [lambda *a: None, _hs[0]]\n"
+             "    _m = _noop\n"
+             "    _m()\n"
+             "    _items[0]('common', object())\n")):
+        _m43_clean = ast.parse(
+            "def _m43b(report):\n"
+            "    _n = '__setattr__'\n"
+            "    _hs = [getattr(md, _k) for _k in (_n,)]\n" + _m43_src +
+            "    return md.common.aggregate_status(report)\n")
+        if 'md' in _withdrawn_receivers(_m43_clean):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'withdrew a clean receiver behind ' + _m43_kind
+                            + ' (round 43)')
+    # #1953 fix-r1 round 43 (GLM r42 sibling#1, probe 2026-11-10): the loop
+    # context of a ``while`` test is the back edge -- the test re-evaluates
+    # after every body iteration, so a binding written in the test or the
+    # body reaches an earlier-position call in the test on the next
+    # evaluation, while the ``else`` block runs once after the loop ends and
+    # keeps the outer loops.
+    _m43_loop_tree = ast.parse(
+        "def _f():\n"
+        "    w = None\n"
+        "    _n = 0\n"
+        "    while w(1) or (w := setattr):\n"
+        "        _n += 1\n"
+        "        if _n >= 2:\n"
+        "            break\n"
+        "    else:\n"
+        "        _q = 1\n")
+    _m43_marks = _flow_marks(_m43_loop_tree.body[0].body)
+    _m43_wh = _m43_loop_tree.body[0].body[2]
+    for _m43_node, _m43_want, _m43_where in (
+            (_m43_wh.test.values[0], True, 'the while-test call subtree'),
+            (_m43_wh.test.values[1], True, 'the while-test walrus'),
+            (_m43_wh.body[0], True, 'the while body'),
+            (_m43_wh.orelse[0], False, 'the while else block')):
+        if (id(_m43_wh) in _m43_marks[id(_m43_node)][1]) != _m43_want:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            + ('lost' if _m43_want else 'leaked')
+                            + ' the while loop context of ' + _m43_where
+                            + ' (round 43)')
+    # ... and the same semantics in the module call positions: the ``for``
+    # iterable evaluates once before the first iteration and the ``else``
+    # blocks once after the loop ends (outer loops), the bodies and the
+    # ``while`` test re-run on the back edge (inner loops).
+    _m43_calls_tree = ast.parse(
+        "while _w43t(1):\n"
+        "    _w43b(2)\n"
+        "else:\n"
+        "    _w43e(3)\n"
+        "for _i in _f43i(4):\n"
+        "    _f43b(5)\n"
+        "else:\n"
+        "    _f43e(6)\n")
+    _m43_positions = _module_call_positions(_m43_calls_tree)
+    for _m43_name, _m43_want in (
+            ('_w43t', id(_m43_calls_tree.body[0])),
+            ('_w43b', id(_m43_calls_tree.body[0])),
+            ('_w43e', None),
+            ('_f43i', None),
+            ('_f43b', id(_m43_calls_tree.body[1])),
+            ('_f43e', None)):
+        _m43_loops = ((_m43_positions.get(_m43_name)
+                       or ((None, ()),))[0][1])
+        _m43_ok = ((_m43_want in _m43_loops) if _m43_want is not None
+                   else not _m43_loops)
+        if not _m43_ok:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            + ('lost' if _m43_want is not None else 'leaked')
+                            + ' the loop context of the ' + _m43_name
+                            + ' call (round 43)')
+    # #1953 fix-r1 round 43 (GLM r42 sibling#2, probe 2026-11-10): the
+    # receiver scan read the callee bare -- ``(_g := md.common.
+    # aggregate_status)(report)`` dropped its receiver.
+    for _m43_kind, _m43_src in (
+            ("a walrus callee on a module-scope stub receiver",
+             "from types import SimpleNamespace\n"
+             "md = SimpleNamespace()\n"
+             "def _f(report):\n"
+             "    (_g := md.common.aggregate_status)(report)\n"
+             "    return report\n"),):
+        if 'md' not in _withdrawn_receivers(ast.parse(_m43_src)):
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost a receiver behind ' + _m43_kind
+                            + ' (round 43)')
+    # #1953 fix-r1 round 43 (GLM r42 sibling#3, probe 2026-11-10): the
+    # write-helper event tables handed the whole unpack tuple to the
+    # per-name helper -- ``spare, w = (clean, setattr)`` left ``w`` without
+    # its helper and the write dropped its marker; the mirror unpack onto
+    # a clean callee must not grow one.
+    for _m43_kind, _m43_src, _m43_want in (
+            ("an unpack rebinding onto the write helper",
+             "from builtins import setattr as w\n"
+             "clean = lambda *a: None\n"
+             "spare, w = (clean, setattr)\n"
+             "def f(report):\n"
+             "    w(report, 'status', 'PASS')\n", True),
+            ("an unpack rebinding onto a clean callee",
+             "from builtins import setattr as w\n"
+             "clean = lambda *a: None\n"
+             "spare, w = (setattr, clean)\n"
+             "def f(report):\n"
+             "    w(report, 'status', 'PASS')\n", False)):
+        _m43_found, _ = scan_aggregation_tree(ast.parse(_m43_src),
+                                              '<self-test-43>')
+        _m43_markers = set()
+        for _m43_pair in _m43_found.values():
+            _m43_markers.update(_m43_pair[0])
+        if ('write-status' in _m43_markers) != _m43_want:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            + ('lost the write-status marker behind '
+                               if _m43_want else
+                               'kept the write-status marker behind ')
+                            + _m43_kind + ' (round 43)')
+    # #1953 fix-r1 round 43 (GLM r42 sibling#5, probe 2026-11-10): the
+    # dict-key bound followed only the direct spelling -- an aliased receiver
+    # and the unbound ``dict.update`` / ``dict.__setitem__`` spellings kept
+    # the keys bounded after a real write.
+    for _m43_kind, _m43_src in (
+            ("an aliased receiver update",
+             "d = {'status': None}\ne = d\ne.update({'common': 1})\n"),
+            ("an unbound dict.update receiver",
+             "d = {'status': None}\ndict.update(d, {'common': 1})\n"),
+            ("an unbound dict.__setitem__ receiver",
+             "d = {'status': None}\ndict.__setitem__(d, 'common', 1)\n")):
+        if _dict_binding_keys('d', ast.parse(_m43_src)) is not None:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'kept dict keys bounded behind ' + _m43_kind
+                            + ' (round 43)')
+    # #1953 fix-r1 round 43 (GLM r42 sibling#6, anthropic r42 sibling#1,
+    # probe 2026-11-10): the exit-raise and the return-int marker checks
+    # read the callee bare -- a walrus callee dropped each marker.
+    for _m43_kind, _m43_src, _m43_marker in (
+            ("exit", "import sys\ndef f():\n"
+             "    raise (_e := SystemExit)(0)\n", 'raise-exit-status'),
+            ("int", "import sys\ndef f():\n"
+             "    return (_i := int)('PASS')\n", 'return-int-status')):
+        _m43_found, _ = scan_aggregation_tree(ast.parse(_m43_src),
+                                              '<self-test-43>')
+        _m43_markers = set()
+        for _m43_pair in _m43_found.values():
+            _m43_markers.update(_m43_pair[0])
+        if _m43_marker not in _m43_markers:
+            failures.append('#1953 aggregation-audit: detector self-test '
+                            'lost the ' + _m43_marker + ' marker behind a '
+                            'walrus ' + _m43_kind + ' callee (round 43)')
     for _label, _source, _want in (
             ("a handle certainly overwritten in a finally block",
              "def _w42_use():\n"
