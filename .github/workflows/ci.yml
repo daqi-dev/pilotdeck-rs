@@ -232,6 +232,55 @@ jobs:
         with:
           # 变异前要按 git show HEAD:<path> 证明源码未被改动
           fetch-depth: 0
+      # 盲区⑤ fix-r1（#2780 MM P1-2）：同款 runner 镜像漂移守卫复制进本 job——
+      # 本 job 同样 runs-on ubuntu-24.04、装同一 rust 工具链跑同一批 cargo 测试
+      # （上限 150 min），镜像漂移时 KILLED/SURVIVED 结论可能被翻转，负控必须在
+      # 镜像与 rust job 一致的前提下才有判别力。脚本与 rust job 的守卫逐字相同
+      # （期望值同在 expected 变量单点）。
+      - name: runner 镜像漂移守卫（#2762）
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="24.04"
+          os_release=/etc/os-release
+          actual=""
+          if [ -r "$os_release" ]; then
+            . "$os_release"
+            actual="${VERSION_ID:-}"
+          fi
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::runner 镜像漂移：实际 OS 版本=\"${actual:-<读不到>}\"，钉定=\"$expected\"（#2762：全仓稳定红先查 runner 镜像，别逐个测试倒查）" >&2
+            exit 1
+          fi
+          echo "runner 镜像守卫通过：OS 版本 $actual == 钉定 $expected"
+          # 非注释行不得出现漂移标签（整行注释放行——文件头的 #2762 事故记录保留）。
+          # needle 用拼接写法，避免守卫自身的文本命中自己。
+          # fix-r1 P1-1（#2780 MM）：先核目标可读，grep 退出码显式三分——
+          # rc=1（无命中）才是通过，rc>=2（文件级错误）fail-closed，绝不哑炮放行。
+          needle='ubuntu''-latest'
+          guard_target=.github/workflows/ci.yml
+          if [ ! -r "$guard_target" ]; then
+            echo "::error::反向断言目标 $guard_target 不可读，fail-closed（#2780 P1-1：断言不许哑炮放行）" >&2
+            exit 1
+          fi
+          rc=0
+          raw="$(grep -nF -- "$needle" "$guard_target")" || rc=$?
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+            echo "::error::grep 检查 $guard_target 异常退出 rc=$rc，fail-closed（#2780 P1-1）" >&2
+            exit 1
+          fi
+          # 只过滤内存文本（非文件），rc=1（全被当注释剥掉）即通过。
+          hits=""
+          if [ -n "$raw" ]; then
+            hits="$(printf '%s\n' "$raw" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+          fi
+          if [ -n "$hits" ]; then
+            echo "::error::ci.yml 非注释内容出现漂移标签 \"$needle\"（#2762：runs-on 必须钉 ubuntu-24.04）" >&2
+            printf '%s\n' "$hits" >&2
+            exit 1
+          fi
+          echo "ci.yml 漂移标签反向断言通过：非注释行无 $needle"
       - name: 锁定工具链
         shell: bash
         run: rustup show active-toolchain
@@ -478,9 +527,25 @@ jobs:
           echo "runner 镜像守卫通过：OS 版本 $actual == 钉定 $expected"
           # 非注释行不得出现漂移标签（整行注释放行——文件头的 #2762 事故记录保留）。
           # needle 用拼接写法，避免守卫自身的文本命中自己。
+          # fix-r1 P1-1（#2780 MM）：先核目标可读，grep 退出码显式三分——
+          # rc=1（无命中）才是通过，rc>=2（文件级错误）fail-closed，绝不哑炮放行。
           needle='ubuntu''-latest'
-          hits="$(grep -nF -- "$needle" .github/workflows/ci.yml \
-                  | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+          guard_target=.github/workflows/ci.yml
+          if [ ! -r "$guard_target" ]; then
+            echo "::error::反向断言目标 $guard_target 不可读，fail-closed（#2780 P1-1：断言不许哑炮放行）" >&2
+            exit 1
+          fi
+          rc=0
+          raw="$(grep -nF -- "$needle" "$guard_target")" || rc=$?
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+            echo "::error::grep 检查 $guard_target 异常退出 rc=$rc，fail-closed（#2780 P1-1）" >&2
+            exit 1
+          fi
+          # 只过滤内存文本（非文件），rc=1（全被当注释剥掉）即通过。
+          hits=""
+          if [ -n "$raw" ]; then
+            hits="$(printf '%s\n' "$raw" | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+          fi
           if [ -n "$hits" ]; then
             echo "::error::ci.yml 非注释内容出现漂移标签 \"$needle\"（#2762：runs-on 必须钉 ubuntu-24.04）" >&2
             printf '%s\n' "$hits" >&2
