@@ -43,8 +43,9 @@ impl ToolDefinition for ExecuteCodeTool {
     fn fields(&self) -> &JsObject {
         &self.fields
     }
-    fn is_read_only(&self, input: &JsValue) -> Result<JsValue, HostError> {
-        Ok(JsValue::Bool(is_read_only(input)))
+    fn is_read_only(&self, _input: &JsValue) -> Result<JsValue, HostError> {
+        // Arbitrary Python cannot be proven read-only by source scanning.
+        Ok(JsValue::Bool(false))
     }
     fn is_concurrency_safe(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
@@ -121,176 +122,6 @@ fn issue(path: &str, message: &str) -> JsObject {
         ("code", string("invalid_schema")),
         ("message", string(message)),
     ])
-}
-
-fn is_read_only(input: &JsValue) -> bool {
-    let Some(code) = input.get("code").and_then(JsValue::as_string).map(text) else {
-        return false;
-    };
-    if code.trim().is_empty() {
-        return false;
-    }
-    // TS `isExecuteCodeReadOnly`: no write-capable helper call and only
-    // read-only string-literal bash calls. Names are matched after stripping
-    // comments and string bodies, so prose cannot vouch for a program.
-    let searchable = strip_python_comments_and_strings(&code);
-    if ["write_file", "edit_file"]
-        .iter()
-        .any(|name| function_call_offsets(&searchable, name).next().is_some())
-    {
-        return false;
-    }
-    if !read_only_bash_calls_only(&code, &searchable) {
-        return false;
-    }
-    // Named helpers are not the only effect channel: the script runs
-    // unconfined Python, so an import of os/shutil/subprocess/pathlib or a
-    // builtin open() reaches the filesystem without naming a write helper.
-    // Those programs are effectful even though TS would call them read-only,
-    // because TS routes every effect through the helper RPC it can judge.
-    // Calls are matched as `name (`, while the module references below are
-    // plain attribute access (`os.remove`, `subprocess.run`) with no call form.
-    const EFFECT_CALLS: [&str; 2] = ["open", "eval"];
-    const EFFECT_MODULES: [&str; 8] = [
-        "os.",
-        "shutil.",
-        "subprocess.",
-        "pathlib.",
-        "socket.",
-        "urllib.",
-        "requests.",
-        "__import__",
-    ];
-    !EFFECT_CALLS
-        .iter()
-        .any(|name| function_call_offsets(&searchable, name).next().is_some())
-        && !EFFECT_MODULES
-            .iter()
-            .any(|name| searchable.contains(name))
-}
-
-fn read_only_bash_calls_only(code: &str, searchable: &str) -> bool {
-    for offset in function_call_offsets(searchable, "bash") {
-        let Some(command) = read_first_python_string_argument(code, offset) else {
-            return false;
-        };
-        if !super::bash::is_read_only_shell_command(&command) {
-            return false;
-        }
-    }
-    true
-}
-
-fn function_call_offsets<'a>(
-    searchable: &'a str,
-    name: &'a str,
-) -> impl Iterator<Item = usize> + 'a {
-    searchable
-        .match_indices(name)
-        .filter_map(move |(start, _)| {
-            let left_boundary = start == 0
-                || !searchable[..start]
-                    .chars()
-                    .next_back()
-                    .is_some_and(|character| character == '_' || character.is_alphanumeric());
-            if !left_boundary {
-                return None;
-            }
-            let mut offset = start + name.len();
-            while searchable[offset..]
-                .chars()
-                .next()
-                .is_some_and(char::is_whitespace)
-            {
-                offset += searchable[offset..].chars().next().unwrap().len_utf8();
-            }
-            searchable[offset..].starts_with('(').then_some(offset + 1)
-        })
-}
-
-fn read_first_python_string_argument(code: &str, byte_offset: usize) -> Option<String> {
-    let rest = code.get(byte_offset..)?;
-    let trimmed = rest.trim_start_matches(char::is_whitespace);
-    let quote = trimmed.chars().next()?;
-    if !matches!(quote, '\'' | '"') {
-        return None;
-    }
-    let delimiter = if trimmed.starts_with(&quote.to_string().repeat(3)) {
-        quote.to_string().repeat(3)
-    } else {
-        quote.to_string()
-    };
-    let mut output = String::new();
-    let mut index = delimiter.len();
-    while index < trimmed.len() {
-        let rest = &trimmed[index..];
-        if rest.starts_with(&delimiter) {
-            return Some(output);
-        }
-        let character = rest.chars().next()?;
-        if character == '\\' {
-            let escaped = rest[character.len_utf8()..].chars().next()?;
-            output.push(match escaped {
-                'n' => '\n',
-                't' => '\t',
-                other => other,
-            });
-            index += character.len_utf8() + escaped.len_utf8();
-        } else {
-            output.push(character);
-            index += character.len_utf8();
-        }
-    }
-    None
-}
-
-fn strip_python_comments_and_strings(code: &str) -> String {
-    let chars: Vec<char> = code.chars().collect();
-    let mut output = String::with_capacity(chars.len());
-    let mut index = 0;
-    while index < chars.len() {
-        if chars[index] == '#' {
-            while index < chars.len() && chars[index] != '\n' {
-                output.extend(std::iter::repeat_n(' ', chars[index].len_utf8()));
-                index += 1;
-            }
-        } else if matches!(chars[index], '\'' | '"') {
-            let quote = chars[index];
-            let triple =
-                chars.get(index + 1) == Some(&quote) && chars.get(index + 2) == Some(&quote);
-            let width = if triple { 3 } else { 1 };
-            output.extend(std::iter::repeat_n(' ', width));
-            index += width;
-            while index < chars.len() {
-                if chars[index] == '\\' {
-                    output.push(' ');
-                    if index + 1 < chars.len() {
-                        output.push(' ');
-                    }
-                    index += 2;
-                } else if chars[index] == quote
-                    && (!triple
-                        || (chars.get(index + 1) == Some(&quote)
-                            && chars.get(index + 2) == Some(&quote)))
-                {
-                    output.extend(std::iter::repeat_n(' ', width));
-                    index += width;
-                    break;
-                } else {
-                    if chars[index] == '\n' {
-                        output.push('\n');
-                    } else {
-                        output.extend(std::iter::repeat_n(' ', chars[index].len_utf8()));
-                    }
-                    index += 1;
-                }
-            }
-        } else {
-            output.push(chars[index]);
-            index += 1;
-        }
-    }
-    output
 }
 
 struct ExecutionWorkspace(PathBuf);
@@ -533,44 +364,135 @@ mod tests {
         assert_eq!(validate(&input).unwrap().len(), 3);
     }
 
+    const PYTHON_INPUTS: &[&str] = &[
+        "from os import remove",
+        "import os as o",
+        "import os\nos .remove('x')",
+        r#"exec("import os")"#,
+        "open('x', 'w').write('x')",
+        "eval('1 + 1')",
+        "import os\nos.remove('x')",
+        "import shutil\nshutil.rmtree('x')",
+        "import subprocess\nsubprocess.run(['rm', 'x'])",
+        "__import__('os').remove('x')",
+        "print(sum(range(10)))",
+        "print('hello')",
+        "# write_file(x)\nprint('edit_file(x)')",
+        "write_file('a', 'b')",
+        "bash('git status')",
+        "bash('rm file')",
+        "bash(command)",
+        "print('中文')\nbash ( 'git status' )",
+        "",
+        "  ",
+    ];
+
     #[test]
-    fn read_only_probe_ignores_comments_and_strings() {
-        let input = JsValue::Object(object([(
-            "code",
-            string("# write_file(x)\nprint('edit_file(x)')"),
-        )]));
-        assert!(is_read_only(&input));
-        let input = JsValue::Object(object([("code", string("write_file('a', 'b')"))]));
-        assert!(!is_read_only(&input));
-        let input = JsValue::Object(object([("code", string("bash('git status')"))]));
-        assert!(is_read_only(&input));
-        let input = JsValue::Object(object([("code", string("bash('rm file')"))]));
-        assert!(!is_read_only(&input));
-        let input = JsValue::Object(object([("code", string("bash(command)"))]));
-        assert!(!is_read_only(&input));
-        let input = JsValue::Object(object([(
-            "code",
-            string("print('中文')\nbash ( 'git status' )"),
-        )]));
-        assert!(is_read_only(&input));
+    fn read_only_probe_always_returns_false_for_python() {
+        let tool = ExecuteCodeTool::new();
+        for code in PYTHON_INPUTS {
+            let input = JsValue::Object(object([("code", string(*code))]));
+            assert_eq!(
+                ToolDefinition::is_read_only(&tool, &input).unwrap(),
+                JsValue::Bool(false),
+                "{code:?} must not be read-only"
+            );
+        }
     }
 
-    /// `open('x', 'w').write('x')` names no write helper, so matching only
-    /// `write_file(` / `edit_file(` would let an arbitrary program run as a
-    /// read in plan and default modes. Effect channels must fail the probe.
     #[test]
-    fn arbitrary_python_effects_are_not_read_only() {
-        for code in [
-            "open('x', 'w').write('x')",
-            "import os\nos.remove('x')",
-            "import shutil\nshutil.rmtree('x')",
-            "import subprocess\nsubprocess.run(['rm', 'x'])",
-            "__import__('os').remove('x')",
+    fn read_only_probe_rejects_non_string_and_missing_code() {
+        let tool = ExecuteCodeTool::new();
+        for input in [
+            JsValue::Undefined,
+            JsValue::Null,
+            JsValue::Bool(true),
+            JsValue::Number(1.0),
+            string("print('hello')"),
+            JsValue::Array(Vec::new()),
+            JsValue::Object(JsObject::new()),
         ] {
-            let input = JsValue::Object(object([("code", string(code))]));
-            assert!(!is_read_only(&input), "{code} must not be read-only");
+            assert_eq!(
+                ToolDefinition::is_read_only(&tool, &input).unwrap(),
+                JsValue::Bool(false)
+            );
+            let input = JsValue::Object(object([("code", input)]));
+            assert_eq!(
+                ToolDefinition::is_read_only(&tool, &input).unwrap(),
+                JsValue::Bool(false)
+            );
         }
-        let input = JsValue::Object(object([("code", string("print(sum(range(10)))"))]));
-        assert!(is_read_only(&input));
+    }
+
+    // Delegate to the real tool predicate, as the runtime permission adapter does.
+    struct PermissionAdapter(ExecuteCodeTool);
+
+    impl crate::runtime::permission::PermissionTool for PermissionAdapter {
+        fn name(&self) -> &pilotdeck_protocol::JsString {
+            self.0.fields().get("name").unwrap().as_string().unwrap()
+        }
+
+        fn kind(&self) -> Option<&pilotdeck_protocol::JsString> {
+            self.0.fields().get("kind").and_then(JsValue::as_string)
+        }
+
+        fn is_read_only(&self, input: &JsValue) -> Result<JsValue, HostError> {
+            ToolDefinition::is_read_only(&self.0, input)
+        }
+    }
+
+    #[tokio::test]
+    async fn plan_mode_denies_execute_code() {
+        use crate::runtime::permission::{self, DefaultPermissionContextOptions};
+
+        let tool = PermissionAdapter(ExecuteCodeTool::new());
+        for can_prompt in [false, true] {
+            let context = permission::create_default_permission_context(
+                DefaultPermissionContextOptions {
+                    cwd: "/ws/project".into(),
+                    mode: Some("plan".into()),
+                    can_prompt: Some(can_prompt),
+                    ..Default::default()
+                },
+            );
+            for code in PYTHON_INPUTS {
+                let input = JsValue::Object(object([("code", string(*code))]));
+                let decision = permission::decide(&context, &tool, &input, &"call-1".into())
+                    .await
+                    .expect("permission decision");
+                assert_eq!(
+                    decision.get("type"),
+                    Some(&string("deny")),
+                    "plan mode must deny {code:?}, can_prompt={can_prompt}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn default_mode_requires_permission_for_execute_code() {
+        use crate::runtime::permission::{self, DefaultPermissionContextOptions};
+
+        let tool = PermissionAdapter(ExecuteCodeTool::new());
+        for (can_prompt, expected) in [(true, "ask"), (false, "deny")] {
+            let context = permission::create_default_permission_context(
+                DefaultPermissionContextOptions {
+                    cwd: "/ws/project".into(),
+                    can_prompt: Some(can_prompt),
+                    ..Default::default()
+                },
+            );
+            for code in PYTHON_INPUTS {
+                let input = JsValue::Object(object([("code", string(*code))]));
+                let decision = permission::decide(&context, &tool, &input, &"call-1".into())
+                    .await
+                    .expect("permission decision");
+                assert_eq!(
+                    decision.get("type"),
+                    Some(&string(expected)),
+                    "default mode must require permission for {code:?}"
+                );
+            }
+        }
     }
 }
