@@ -3629,12 +3629,16 @@ async fn raw_until_close(port: u16, request: &[u8]) -> Vec<u8> {
 /// #2257 fix-r2: shared response-head scan for the http10 pins — `true` when
 /// any header line carries `name` (case-insensitive: hyper's bare
 /// `http1::Builder` writes lowercase, Node writes Title-Case). Extracted from
-/// the two inline scans in `http10_request_closes_the_connection`.
+/// the two inline scans in `http10_request_closes_the_connection`; the scan
+/// stops at the blank line so a header-looking body cannot match.
 fn head_has_header_named(head: &str, name: &str) -> bool {
-    head.split("\r\n").skip(1).any(|line| {
-        line.split_once(':')
-            .is_some_and(|(header, _)| header.trim().eq_ignore_ascii_case(name))
-    })
+    head.split("\r\n")
+        .skip(1)
+        .take_while(|line| !line.is_empty())
+        .any(|line| {
+            line.split_once(':')
+                .is_some_and(|(header, _)| header.trim().eq_ignore_ascii_case(name))
+        })
 }
 
 /// #2257 fix-r2: positive control for the absence assertions above — the
@@ -3643,7 +3647,8 @@ fn head_has_header_named(head: &str, name: &str) -> bool {
 /// through a broken scan.
 #[test]
 fn head_has_header_named_detects_a_present_header() {
-    let node_shape = "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nDate: now\r\nConnection: close\r\n\r\n";
+    let node_shape =
+        "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nDate: now\r\nConnection: close\r\n\r\n";
     assert!(
         head_has_header_named(node_shape, "connection")
             && head_has_header_named(node_shape, "CONNECTION")
