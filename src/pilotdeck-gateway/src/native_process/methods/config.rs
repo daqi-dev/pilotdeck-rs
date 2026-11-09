@@ -252,7 +252,15 @@ impl Requests {
         owner: Option<&JsString>,
     ) -> Result<JsValue, RequestError> {
         let project_key = resolve_project(self, params)?;
+        // #1872: TS consults `hasActiveTurn` on the request spelling only,
+        // where a blank key matches no session — the request falls through
+        // to the port write's sessionKey gate and answers
+        // `INVALID_SESSION_KEY`. The owner an alias folds onto is gated here
+        // as the registered divergence, but only for a key that passes that
+        // same gate: `""` folds onto the `session` transcript, so the
+        // owner side could otherwise answer this busy code first.
         if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
+            && trimmed_string_is_non_empty(key)
             && (self.owner.has_active_turn(key)
                 || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))
         {
@@ -1493,6 +1501,51 @@ mod tests {
         teardown(&r).await;
     }
 
+    /// #1872: a blank `sessionKey` must answer the sessionKey gate, not the
+    /// owner-side busy code. `""` folds onto the `session` transcript
+    /// (`sanitize_session_id`'s empty fallback), so a session registered
+    /// under that spelling with a live turn would otherwise meet the
+    /// owner-side gate first — while TS consults `hasActiveTurn` on the
+    /// request spelling only, matches nothing, and answers
+    /// `INVALID_SESSION_KEY` at the port write.
+    #[tokio::test]
+    async fn session_model_set_blank_key_answers_the_session_key_gate() {
+        let (_scratch, r) = setup_fixture();
+        let _recorder = register_recorder(&r, "session");
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&"session".into(), &run)
+            .expect("#1872 the folding session holds a live turn");
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#1872 a blank key answers the sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1872 the blank key is a sessionKey error"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#1872 the blank key keeps the gate message"
+        );
+        negative_assert!(
+            r.owner.has_active_turn(&"session".into()),
+            "#1872 the folding session's turn survives the blank request"
+        );
+        r.owner
+            .end_turn(&"session".into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
     /// #1872: the clear twin of the alias busy gate.
     #[tokio::test]
     async fn session_model_clear_rejects_active_turn_on_alias_owner() {
@@ -1596,6 +1649,70 @@ mod tests {
         teardown(&r).await;
     }
 
+    /// #1872: the clear twin of the window test — while the request parks on
+    /// the transcript fence, the owner's own key and the request spelling
+    /// must both sit in the replacement coordinator's reservation table
+    /// (the table submit preflight consults), and both must be gone once it
+    /// finishes. Without the owner-side reservation the clear's
+    /// check→append→close window reopens on the owner's key exactly like
+    /// set's.
+    #[tokio::test]
+    async fn session_model_clear_holds_the_owner_reservation_through_the_write() {
+        let (_scratch, r) = setup_fixture();
+        let _recorder = register_recorder(&r, "win-clear/session");
+        let fence_path = transcript_locks::session_transcript_path(
+            &r.options.home,
+            &r.options.project,
+            &"win-clear/session".into(),
+        );
+        let fence = transcript_locks::acquire(&fence_path)
+            .await
+            .expect("#1872 the clear-side fence acquires");
+        let request = {
+            let r = r.clone();
+            tokio::spawn(async move {
+                r.session_config_request(
+                    "session_model_clear".into(),
+                    object([("sessionKey", "win-clear-session".into())]),
+                )
+                .await
+            })
+        };
+        let owner: JsString = "win-clear/session".into();
+        let alias: JsString = "win-clear-session".into();
+        let mut reserved = false;
+        for _ in 0..400 {
+            if r.replacement.has_transcript_write_reservation(&owner)
+                && r.replacement.has_transcript_write_reservation(&alias)
+            {
+                reserved = true;
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        negative_assert_eq!(
+            reserved,
+            true,
+            "#1872 the clear-side owner and alias reservations are held while the write is parked"
+        );
+        drop(fence);
+        request
+            .await
+            .expect("#1872 the clear request task joins")
+            .expect("#1872 the alias model clear succeeds");
+        negative_assert_eq!(
+            r.replacement.has_transcript_write_reservation(&owner),
+            false,
+            "#1872 the clear-side owner reservation is released after the request"
+        );
+        negative_assert_eq!(
+            r.replacement.has_transcript_write_reservation(&alias),
+            false,
+            "#1872 the clear-side alias reservation is released after the request"
+        );
+        teardown(&r).await;
+    }
+
     /// #1874: the model-set cold path answers the same retryable busy error
     /// the rename and status callers give when a session holds the writer
     /// lease — the consolidated three-segment protocol's third segment. No
@@ -1668,6 +1785,46 @@ mod tests {
             String::from_utf16_lossy(error.message.units()).contains("the session writer closed"),
             "#1874 the closed-writer error names the session writer, got {}",
             String::from_utf16_lossy(error.message.units())
+        );
+        teardown(&r).await;
+    }
+
+    /// #1873: the model-set cold path surfaces a broken ledger lock as the
+    /// storage error it is. The pre-#1873 `try_writer_lease` folded it into
+    /// the retryable busy answer, which a model-set request would then relay
+    /// as a session that never drains; the same separation the status
+    /// caller got covers this caller through the shared three-segment
+    /// protocol.
+    #[tokio::test]
+    async fn model_set_cold_write_surfaces_a_broken_lock_file_as_an_error() {
+        let (_scratch, r) = setup_fixture();
+        let transcript_path = transcript_locks::session_transcript_path(
+            &r.options.home,
+            &r.options.project,
+            &"bl/session".into(),
+        );
+        let mut lock = std::ffi::OsString::from(transcript_path.as_os_str());
+        lock.push(".lock");
+        std::fs::create_dir(std::path::PathBuf::from(&lock))
+            .expect("#1873 the broken ledger lock is in place");
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "bl-session".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#1873 the model-set append surfaces the storage failure");
+        negative_assert!(
+            error.code.as_str() != "SESSION_WRITER_BUSY",
+            "#1873 the model-set storage failure is never the retryable busy code"
+        );
+        negative_assert!(
+            error_text(&error).contains("Could not open session ledger lock"),
+            "#1873 the model-set storage error names the ledger lock, got {}",
+            error_text(&error)
         );
         teardown(&r).await;
     }
@@ -1750,6 +1907,108 @@ mod tests {
         reloaded
             .restore()
             .expect("#1872 the transcript chain still loads after the alias write");
+        teardown(&r).await;
+    }
+
+    /// #1872: the fallback arm of `close_model_selection_owner` — the owner
+    /// is first seen by the append itself, published while the request was
+    /// in flight, so the wrapper holds no reservation for it. A turn admitted
+    /// on it must surface as the retryable SESSION_BUSY rather than being
+    /// aborted, and the take-one reservation the arm takes must be released
+    /// again on that exit.
+    #[tokio::test]
+    async fn close_model_selection_owner_reports_busy_for_an_owner_seen_by_the_append() {
+        let (_scratch, r) = setup_fixture();
+        let owner: JsString = "fb/session".into();
+        let context = SessionContext {
+            session_key: owner.clone(),
+            project_key: Some(r.options.project.to_string_lossy().into_owned().into()),
+            channel_key: "test".into(),
+            allowed_tools: None,
+            disallowed_tools: None,
+        };
+        let _handle = r
+            .owner
+            .get_or_create(context)
+            .await
+            .expect("#1872 the append-time owner session is created");
+        let _recorder = register_recorder(&r, "fb/session");
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&owner, &run)
+            .expect("#1872 the append-time owner holds a live turn");
+        let error = r
+            .close_model_selection_owner(
+                Some(&owner),
+                None,
+                &"fb-session".into(),
+                "change the session model",
+                "Cannot change the model during an active turn.",
+            )
+            .await
+            .expect_err("#1872 the fallback reports the admitted turn as busy");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_BUSY",
+            "#1872 the fallback busy code"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "Cannot change the model during an active turn.",
+            "#1872 the fallback busy message"
+        );
+        negative_assert!(
+            r.owner.has_active_turn(&owner),
+            "#1872 the fallback does not abort the admitted turn"
+        );
+        negative_assert_eq!(
+            r.replacement.has_transcript_write_reservation(&owner),
+            false,
+            "#1872 the fallback releases its reservation on the busy path"
+        );
+        r.owner.end_turn(&owner, Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #1872: the same fallback arm with no admitted turn closes the owner
+    /// the append first saw, and releases the reservation it took for the
+    /// window.
+    #[tokio::test]
+    async fn close_model_selection_owner_closes_an_owner_seen_by_the_append() {
+        let (_scratch, r) = setup_fixture();
+        let owner: JsString = "fc/session".into();
+        let context = SessionContext {
+            session_key: owner.clone(),
+            project_key: Some(r.options.project.to_string_lossy().into_owned().into()),
+            channel_key: "test".into(),
+            allowed_tools: None,
+            disallowed_tools: None,
+        };
+        let _handle = r
+            .owner
+            .get_or_create(context)
+            .await
+            .expect("#1872 the append-time owner session is created");
+        let _recorder = register_recorder(&r, "fc/session");
+        r.close_model_selection_owner(
+            Some(&owner),
+            None,
+            &"fc-session".into(),
+            "change the session model",
+            "Cannot change the model during an active turn.",
+        )
+        .await
+        .expect("#1872 the fallback closes the append-time owner");
+        negative_assert!(
+            r.owner.current_handle(&owner).is_none(),
+            "#1872 the fallback closes the owner spelling the append first saw"
+        );
+        negative_assert_eq!(
+            r.replacement.has_transcript_write_reservation(&owner),
+            false,
+            "#1872 the fallback releases its reservation after the close"
+        );
         teardown(&r).await;
     }
 

@@ -863,6 +863,56 @@ mod tests {
         );
     }
 
+    /// #1873: the rename cold path answers the same storage-error separation
+    /// the status caller got — a broken ledger lock is never the retryable
+    /// busy answer for a rename either. The `#1873` `try_writer_lease`
+    /// `Result` split reaches this caller through the shared
+    /// `append_metadata_with_lease` protocol.
+    #[tokio::test]
+    async fn rename_cold_write_surfaces_a_broken_lock_file_as_an_error() {
+        let (_scratch, requests) = crate::native_process::management_tests::setup();
+        let home = requests.options.home.clone();
+        let project = requests.options.project.clone();
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(move |k: &ProjectKey| {
+                crate::session_chat_dir(&home, &k.project_root, &k.project_root.to_string_lossy())
+            }),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project.clone(),
+                pilot_home: requests.options.home.clone(),
+                session_id: "d6/session".into(),
+                now: None,
+            })
+            .expect("#1873 the rename transcript storage opens");
+        let mut lock = std::ffi::OsString::from(storage.transcript_path.as_os_str());
+        lock.push(".lock");
+        std::fs::create_dir(std::path::PathBuf::from(&lock))
+            .expect("#1873 the rename broken ledger lock is in place");
+        let error = crate::runtime::turn::gateway::GatewayRequests::request(
+            &requests,
+            "rename_session".into(),
+            crate::metadata::object([
+                ("sessionKey", "d6-session".into()),
+                ("value", "broken-lock-rename".into()),
+            ]),
+        )
+        .await
+        .expect_err("#1873 the rename append surfaces the storage failure");
+        negative_assert!(
+            error.code.as_str() != "SESSION_WRITER_BUSY",
+            "#1873 the rename storage failure is never the retryable busy code"
+        );
+        negative_assert!(
+            String::from_utf16_lossy(error.message.units())
+                .contains("Could not open session ledger lock"),
+            "#1873 the rename storage error names the ledger lock, got {}",
+            String::from_utf16_lossy(error.message.units())
+        );
+    }
+
     /// #1874: a recorder whose writer already closed must surface the close
     /// as an error, not answer `updated: true` with nothing on disk. The live
     /// closure's checked append is what makes the closed writer visible; the
