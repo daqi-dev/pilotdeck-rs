@@ -20,6 +20,6 @@
 
 收尾差异：TS `TextWebSocketConnection` 对裸客户端 FIN 不 resume（服务端 socket 悬挂、`server.close()` 不返回），因此 101 格捕获结束后由探针补一次真 ws 客户端的 masked close 握手等 FIN——记录字节在静默窗结束时冻结，握手不影响金样；这是装置收尾语义，不是被测行为。
 
-Rust 侧复放：`native_ws::tests::upgrade_budget_boundary_matches_ts` 对 native WS 监听重放全部格，归一化（date 掩码、头名小写、丢弃 hyper 隐式 `content-length: 0`、chunk 尺寸小写——已登记传输差异）后逐格比对，另核 closed 标志。再生成守卫 `regenerates_budget_fixture_identically`（`#[ignore]`）以 PATH 上 v22.22.0 的 node 逐字节再生比对。
+Rust 侧复放：`native_ws::tests::upgrade_budget_boundary_matches_ts` 对 native WS 监听重放全部格，归一化（date 掩码、头名小写、丢弃 hyper 隐式 `content-length: 0`——仅 `parser_admission` 登记的 431 格，其余格逐字比（#2153）、chunk 尺寸小写——已登记传输差异）后逐格比对，另核 closed 标志。再生成守卫 `regenerates_budget_fixture_identically`（`#[ignore]`）以 PATH 上 v22.22.0 的 node 逐字节再生比对。
 
 oracle 的 `sourceSha256` 由 `baselineSourceHashes` 展开为入口文件的 import 闭包哈希；本 fixture 平台无关（无静态根、无文件系统相关格），macOS/Linux 记录与再生均一致。

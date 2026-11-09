@@ -775,10 +775,24 @@ fn parser_admission_cells_cover_exactly_the_oracle_431s() {
 }
 
 /// #2153: the raw-pin anchors, standalone literals the native-ws-entry
-/// negative-control table's audit can quote (the pin messages interpolate
-/// the cell id around them).
+/// negative-control table's audit can quote and the receipt protocol
+/// records verbatim (`negative_receipt.rs` matches the recorded assertion
+/// by exact equality, so an interpolated message never matches the table's
+/// literal anchor — fix-r2, review r2).
 const PIN_REGISTERED_431: &str = "#2153 pin: the registered 431 carries content-length: 0";
 const PIN_SERVED_NO_LENGTH: &str = "#2153 pin: the served cell carries no content-length at all";
+
+/// #2153 fix-r2 (review r2): record the anchor constant itself as the
+/// receipt's assertion — the same record-literal-then-panic-with-detail
+/// shape as `negative_receipt.rs`'s `expect_*` helpers — and keep the cell
+/// id and raw bytes in the panic text for the human reader. Both directions
+/// fail here on the wire bytes (the 101 cell's inserted `content-length: 0`
+/// is on the wire under the pinned hyper), so a verbatim receipt makes the
+/// table's two product rows KILLED without touching their bindings.
+fn pin_failure(assertion: &str, id: &str, raw: &str) -> ! {
+    crate::test_negative_receipt::record_failure(assertion);
+    panic!("{assertion} ({id}): {raw:?}");
+}
 
 /// #2153: the `content-length: 0` exemption `fn parser_admission` grants the
 /// 431 cells is the only one, so the raw bytes have to be pinned in both
@@ -813,15 +827,11 @@ async fn budget_content_length_zero_stays_scoped_to_the_registered_431s() {
         let _ = socket.shutdown().await;
         let lower = raw.to_ascii_lowercase();
         if served_431 {
-            negative_assert!(
-                lower.contains("\r\ncontent-length: 0\r\n"),
-                "{PIN_REGISTERED_431} ({id}): {raw:?}"
-            );
-        } else {
-            negative_assert!(
-                !lower.contains("\r\ncontent-length:"),
-                "{PIN_SERVED_NO_LENGTH} ({id}): {raw:?}"
-            );
+            if !lower.contains("\r\ncontent-length: 0\r\n") {
+                pin_failure(PIN_REGISTERED_431, id, &raw);
+            }
+        } else if lower.contains("\r\ncontent-length:") {
+            pin_failure(PIN_SERVED_NO_LENGTH, id, &raw);
         }
     }
     finish(stop, task).await;

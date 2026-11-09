@@ -4,7 +4,7 @@ positive, negative and restored cases with negative_suite verdicts. No source
 rewriting, no alternate HEAD and no second target directory. Every switch
 mutates exactly one api-web route, file-service gate or #2354 dispatch seam
 and is killed by the replay cell or boundary probe that pins that gate
-(10 switches). Run one sample in the authoring session; the coordinator runs
+(14 switches). Run one sample in the authoring session; the coordinator runs
 the complete list after the patch is committed.
 """
 import argparse
