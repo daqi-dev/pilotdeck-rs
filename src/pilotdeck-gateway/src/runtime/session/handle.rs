@@ -463,13 +463,16 @@ impl LiveSessionHandle {
         input: JsValue,
         options: JsValue,
     ) -> Result<SessionSubmission, RuntimeError> {
-        let _admission = self.0.admission.lock().unwrap();
-        let queued = self.0.queued.lock().unwrap();
-        if !queued.pending.is_empty() || queued.pump_running {
-            return Err(RuntimeError::new("Agent handle already has a queued turn."));
-        }
-        drop(queued);
-        let activity = self.begin_activity()?;
+        let activity = {
+            let _admission = self.0.admission.lock().unwrap();
+            let queued = self.0.queued.lock().unwrap();
+            if !queued.pending.is_empty() || queued.pump_running {
+                return Err(RuntimeError::new("Agent handle already has a queued turn."));
+            }
+            drop(queued);
+            // The activity flag reserves this admission until the stream ends.
+            self.begin_activity()?
+        };
         let stream = self.0.session.submit(input, options)?;
         Ok(SessionSubmission {
             stream,
@@ -557,7 +560,7 @@ impl LiveSessionHandle {
     async fn run_queued_pump(&self) -> RuntimeResult {
         loop {
             let mut changed = self.0.changed.subscribe();
-            let started = {
+            let reserved = {
                 let _admission = self.0.admission.lock().unwrap();
                 let mut progress = self.0.progress.lock().unwrap();
                 if progress.state != HandleState::Active {
@@ -572,40 +575,28 @@ impl LiveSessionHandle {
                     progress.maintenance = false;
                     progress.cancelled = None;
                     drop(progress);
-                    let activity = HandleActivity(self.clone());
-                    match self.0.session.submit_queued_turn(&turn) {
-                        Ok(stream) => {
-                            // `submit_queued_turn` already popped the session
-                            // queue; drop the matching handle copy under the
-                            // same admission lock so a failed submit keeps both.
-                            let mut queued = self.0.queued.lock().unwrap();
-                            if queued
-                                .pending
-                                .front()
-                                .is_some_and(|head| {
-                                    head.item_id == turn.item_id && head.turn_id == turn.turn_id
-                                })
-                            {
-                                queued.pending.pop_front();
-                            }
-                            drop(queued);
-                            Some(Ok(SessionSubmission {
-                                stream,
-                                _activity: Some(activity),
-                            }))
-                        }
-                        Err(error) => {
-                            drop(activity);
-                            Some(Err(error))
-                        }
-                    }
+                    Some((turn, HandleActivity(self.clone())))
                 }
             };
-            let Some(started) = started else {
+            let Some((turn, activity)) = reserved else {
                 let _ = changed.changed().await;
                 continue;
             };
-            let mut submission = started?;
+            let stream = self.0.session.submit_queued_turn(&turn)?;
+            {
+                // Commit the handle queue only after successful submission.
+                let _admission = self.0.admission.lock().unwrap();
+                let mut queued = self.0.queued.lock().unwrap();
+                if queued.pending.front().is_some_and(|head| {
+                    head.item_id == turn.item_id && head.turn_id == turn.turn_id
+                }) {
+                    queued.pending.pop_front();
+                }
+            }
+            let mut submission = SessionSubmission {
+                stream,
+                _activity: Some(activity),
+            };
             while submission.next().await?.is_some() {}
         }
     }
@@ -955,8 +946,269 @@ mod tests {
     use pilotdeck_protocol::{JsValue, parse_json};
     use std::sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     };
+
+    struct SubmitSession {
+        entered: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
+        gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        calls: AtomicUsize,
+        active_calls: AtomicUsize,
+        max_active_calls: AtomicUsize,
+        queued_calls: AtomicUsize,
+    }
+
+    impl SubmitSession {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                entered: Mutex::default(),
+                gate: Mutex::default(),
+                calls: AtomicUsize::new(0),
+                active_calls: AtomicUsize::new(0),
+                max_active_calls: AtomicUsize::new(0),
+                queued_calls: AtomicUsize::new(0),
+            })
+        }
+    }
+
+    struct SubmitTurn(bool);
+    impl LiveTurn for SubmitTurn {
+        fn next(&mut self) -> SessionNext<'_> {
+            Box::pin(async move {
+                if self.0 {
+                    Err(RuntimeError::new("fixture stream failed"))
+                } else {
+                    Ok(None)
+                }
+            })
+        }
+    }
+
+    impl LiveSession for SubmitSession {
+        fn submit(&self, input: JsValue, _: JsValue) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let active = self.active_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active_calls.fetch_max(active, Ordering::SeqCst);
+            if let Some(entered) = self.entered.lock().unwrap().take() {
+                let _ = entered.send(());
+            }
+            let gate = self.gate.lock().unwrap().take();
+            if let Some(gate) = gate {
+                gate.recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+            }
+            self.active_calls.fetch_sub(1, Ordering::SeqCst);
+            if input == JsValue::from("fail") {
+                return Err(RuntimeError::new("fixture submit failed"));
+            }
+            Ok(Box::new(SubmitTurn(input == JsValue::from("stream-error"))))
+        }
+        fn enqueue_queued_turn(&self, _: &SessionQueuedTurn) -> RuntimeResult {
+            Ok(())
+        }
+        fn submit_queued_turn(
+            &self,
+            turn: &SessionQueuedTurn,
+        ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
+            self.queued_calls.fetch_add(1, Ordering::SeqCst);
+            self.submit(turn.input.clone(), turn.submit_options.clone())
+        }
+        fn snapshot(&self) -> JsValue {
+            JsValue::Null
+        }
+        fn abort(&self, _: &JsString) -> RuntimeResult {
+            Ok(())
+        }
+        fn dispose(&self) -> DisposeFuture<'_> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn queued_fixture() -> SessionQueuedTurn {
+        SessionQueuedTurn {
+            item_id: "item".into(),
+            turn_id: "turn".into(),
+            input: JsValue::Null,
+            submit_options: JsValue::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn concurrent_submit_rejects_without_holding_admission_during_host_call() {
+        let session = SubmitSession::new();
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        *session.entered.lock().unwrap() = Some(entered);
+        *session.gate.lock().unwrap() = Some(gate);
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        let first = {
+            let handle = handle.clone();
+            tokio::task::spawn_blocking(move || handle.submit(JsValue::Null, JsValue::Null))
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(3), started)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            handle.0.admission.try_lock().is_ok(),
+            "host submit retained admission lock"
+        );
+        let second = {
+            let handle = handle.clone();
+            tokio::task::spawn_blocking(move || handle.submit(JsValue::Null, JsValue::Null))
+        };
+        let second = tokio::time::timeout(std::time::Duration::from_secs(2), second)
+            .await
+            .unwrap()
+            .unwrap();
+        let Err(error) = second else {
+            panic!("concurrent submit was admitted")
+        };
+        assert!(error.to_string().contains("active turn"));
+        assert_eq!(session.calls.load(Ordering::SeqCst), 1);
+        handle.enqueue_queued_turn(queued_fixture()).unwrap();
+        // The pump can acquire admission while submit builds, but must wait.
+        let mut pump = Box::pin(handle.run_queued_pump());
+        std::future::poll_fn(|cx| {
+            assert!(pump.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        drop(pump);
+        release.send(()).unwrap();
+        let submission = first.await.unwrap().unwrap();
+        assert_eq!(session.queued_calls.load(Ordering::SeqCst), 0);
+        drop(submission);
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let mut changed = handle.0.changed.subscribe();
+            loop {
+                let finished = {
+                    let queued = handle.0.queued.lock().unwrap();
+                    queued.pending.is_empty() && !queued.pump_running
+                };
+                if finished {
+                    break;
+                }
+                changed.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(session.queued_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(session.max_active_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_pending_queue_and_running_pump() {
+        let session = SubmitSession::new();
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        let activity = handle.begin_activity().unwrap();
+        handle.enqueue_queued_turn(queued_fixture()).unwrap();
+        let Err(error) = handle.submit(JsValue::Null, JsValue::Null) else {
+            panic!("queued turn was bypassed")
+        };
+        assert!(error.to_string().contains("queued turn"));
+        assert_eq!(session.calls.load(Ordering::SeqCst), 0);
+        drop(activity);
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let mut changed = handle.0.changed.subscribe();
+            loop {
+                if !handle.0.queued.lock().unwrap().pump_running {
+                    break;
+                }
+                changed.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        handle.0.queued.lock().unwrap().pump_running = true;
+        assert!(handle.submit(JsValue::Null, JsValue::Null).is_err());
+        handle.0.queued.lock().unwrap().pump_running = false;
+    }
+
+    #[tokio::test]
+    async fn submit_reservation_releases_on_failure_stream_end_error_and_drop() {
+        let session = SubmitSession::new();
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        assert!(handle.submit("fail".into(), JsValue::Null).is_err());
+        assert_eq!(handle.in_flight_for_test(), 0);
+        let mut submission = handle.submit(JsValue::Null, JsValue::Null).unwrap();
+        assert!(handle.submit(JsValue::Null, JsValue::Null).is_err());
+        assert_eq!(submission.next().await.unwrap(), None);
+        assert_eq!(handle.in_flight_for_test(), 0);
+        let mut submission = handle.submit("stream-error".into(), JsValue::Null).unwrap();
+        assert!(submission.next().await.is_err());
+        assert_eq!(handle.in_flight_for_test(), 0);
+        drop(handle.submit(JsValue::Null, JsValue::Null).unwrap());
+        assert_eq!(handle.in_flight_for_test(), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn queued_submit_releases_admission_and_serializes_followups() {
+        let session = SubmitSession::new();
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, gate) = std::sync::mpsc::channel();
+        *session.entered.lock().unwrap() = Some(entered);
+        *session.gate.lock().unwrap() = Some(gate);
+        let handle = LiveSessionHandle::new(session.clone(), None);
+        handle.enqueue_queued_turn(queued_fixture()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), started)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            handle.0.admission.try_lock().is_ok(),
+            "queued submit retained admission lock"
+        );
+        assert!(handle.submit(JsValue::Null, JsValue::Null).is_err());
+        let mut next = queued_fixture();
+        next.item_id = "next-item".into();
+        next.turn_id = "next-turn".into();
+        handle.enqueue_queued_turn(next).unwrap();
+        assert_eq!(session.queued_calls.load(Ordering::SeqCst), 1);
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let mut changed = handle.0.changed.subscribe();
+            loop {
+                let finished = {
+                    let queued = handle.0.queued.lock().unwrap();
+                    queued.pending.is_empty() && !queued.pump_running
+                };
+                if finished {
+                    break;
+                }
+                changed.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(session.queued_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(session.max_active_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn failed_queued_submit_keeps_head_and_releases_reservation() {
+        let session = SubmitSession::new();
+        let handle = LiveSessionHandle::new(session, None);
+        let mut turn = queued_fixture();
+        turn.input = "fail".into();
+        handle.enqueue_queued_turn(turn.clone()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            let mut changed = handle.0.changed.subscribe();
+            loop {
+                if !handle.0.queued.lock().unwrap().pump_running {
+                    break;
+                }
+                changed.changed().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(handle.in_flight_for_test(), 0);
+        let queued = handle.0.queued.lock().unwrap();
+        assert_eq!(queued.pending.front(), Some(&turn));
+        assert!(queued.pump_blocked);
+    }
 
     struct MemSession {
         aborted: Mutex<Vec<String>>,
@@ -1246,9 +1498,7 @@ mod tests {
         // Construction captures the executor, so build on a runtime thread
         // and exercise the enqueue from a plain thread with no reactor.
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        let handle = runtime.block_on(async {
-            LiveSessionHandle::new(MemSession::new(), None)
-        });
+        let handle = runtime.block_on(async { LiveSessionHandle::new(MemSession::new(), None) });
         let turn = SessionQueuedTurn {
             item_id: "item".into(),
             turn_id: "turn".into(),
