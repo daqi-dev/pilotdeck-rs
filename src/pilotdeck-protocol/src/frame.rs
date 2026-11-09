@@ -1,6 +1,8 @@
 //! Retain the original wire, including nonminimal lengths, FIN/RSV and mask key.
 use bytes::{Bytes, BytesMut};
 
+pub const MAX_CLIENT_HEADER_BYTES: usize = 14;
+pub const MAX_SERVER_HEADER_BYTES: usize = 10;
 const MAX_SAFE_INTEGER: u64 = (1 << 53) - 1;
 
 #[derive(Debug)]

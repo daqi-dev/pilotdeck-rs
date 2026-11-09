@@ -209,3 +209,5 @@ fn register_sigxfsz() -> Result<tokio::signal::unix::Signal, String> {
     tokio::signal::unix::signal(tokio::signal::unix::SignalKind::from_raw(libc::SIGXFSZ))
         .map_err(|error| format!("tokio signal registration failed: {error}"))
 }
+pub mod application;
+pub mod web_cli;
