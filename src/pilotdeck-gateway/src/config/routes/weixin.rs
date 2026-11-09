@@ -1,5 +1,6 @@
 mod attachments;
 mod http;
+mod media;
 mod inbox;
 pub use inbox::WeixinInbox;
 mod native;

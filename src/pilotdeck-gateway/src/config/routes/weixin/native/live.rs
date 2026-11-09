@@ -657,15 +657,31 @@ impl ChannelEventSink for LiveSink<'_> {
                         return Ok(());
                     };
                     drop(state);
-                    let _ = super::super::attachments::send_outbound(
+                    let attachment = event["attachment"].clone();
+                    match super::super::attachments::send_outbound(
                         &self.owner.http,
                         self.credentials,
                         self.chat,
                         &context,
-                        &event["attachment"],
+                        &attachment,
                     )
-                    .await;
-                    return Ok(());
+                    .await
+                    {
+                        Ok(true) => return Ok(()),
+                        Ok(false) => {
+                            eprintln!("weixin: attachment send failed: missing content");
+                        }
+                        Err(error) => {
+                            eprintln!("weixin: attachment send failed: {}", error.message);
+                        }
+                    }
+                    let fallback =
+                        super::super::attachments::format_attachment_fallback(&attachment);
+                    return self
+                        .owner
+                        .reply(self.credentials, self.chat, &fallback)
+                        .await
+                        .map(|_| ());
                 }
                 Some("error") => event["message"].as_str().map(str::to_owned),
                 _ => None,

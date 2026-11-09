@@ -3276,3 +3276,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - 企微 webhook：query 缺参拒绝 · `token` 验签 · 解密 `encrypt` 后路由；微信附件下载落盘 + 出站上传；`turn_started` 改到 `submit_inner` 成功之后。
 - **全量 lib** 4260/0；证据 `pdrs-ext/…/r13/最终报告.md`，`r13/logs/lib-full-r13.log`；已提交，未 push。
+
+### 2026-11-10 pdrs-daqi-b-channels r14（Grok merge-delta 微信 P1 + TS）
+
+- 微信附件 SSRF/路径穿越修复；`cdn_url`+媒体解密+加密 CDN 上传；出站失败记日志并 fallback。
+- **全量 lib** 4265/0；证据 `pdrs-ext/…/r14/最终报告.md`，`r14/logs/lib-full-r14.log`；已提交，未 push。

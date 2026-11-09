@@ -735,6 +735,31 @@ fn weixin_inbound_message_type(message: &Value) -> bool {
     message.get("message_type").and_then(Value::as_i64) == Some(1)
 }
 
+fn push_weixin_attachment(attachments: &mut Vec<Value>, kind: &str, media_owner: &Value) {
+    let name = media_owner
+        .get("file_name")
+        .or_else(|| media_owner.get("filename"))
+        .and_then(Value::as_str)
+        .unwrap_or(if kind == "image" { "image" } else { "file" });
+    let mut attachment = json!({
+        "type": kind,
+        "name": name,
+    });
+    if let Some(url) = super::media::weixin_media_download_url(media_owner) {
+        attachment["url"] = url.into();
+    }
+    let mut metadata = json!({ "weixinMediaOwner": media_owner.clone() });
+    if let Some(file_id) = media_owner
+        .get("file_id")
+        .or_else(|| media_owner.get("fileId"))
+        .and_then(Value::as_str)
+    {
+        metadata["fileId"] = file_id.into();
+    }
+    attachment["metadata"] = metadata;
+    attachments.push(attachment);
+}
+
 pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(String, Vec<Value>)> {
     if message.get("message_type").and_then(Value::as_i64)? != 1 {
         return None;
@@ -755,56 +780,12 @@ pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(St
             }
             Some(2) => {
                 if let Some(image) = item.get("image_item") {
-                    let mut attachment = json!({
-                        "type": "image",
-                        "name": image
-                            .get("file_name")
-                            .or_else(|| image.get("filename"))
-                            .and_then(Value::as_str)
-                            .unwrap_or("image"),
-                    });
-                    if let Some(url) = image
-                        .get("url")
-                        .or_else(|| image.get("cos_url"))
-                        .and_then(Value::as_str)
-                    {
-                        attachment["url"] = url.into();
-                    }
-                    if let Some(file_id) = image
-                        .get("file_id")
-                        .or_else(|| image.get("fileId"))
-                        .and_then(Value::as_str)
-                    {
-                        attachment["metadata"] = json!({ "fileId": file_id });
-                    }
-                    attachments.push(attachment);
+                    push_weixin_attachment(&mut attachments, "image", image);
                 }
             }
             Some(3) => {
                 if let Some(file) = item.get("file_item") {
-                    let mut attachment = json!({
-                        "type": "file",
-                        "name": file
-                            .get("file_name")
-                            .or_else(|| file.get("filename"))
-                            .and_then(Value::as_str)
-                            .unwrap_or("file"),
-                    });
-                    if let Some(url) = file
-                        .get("url")
-                        .or_else(|| file.get("cos_url"))
-                        .and_then(Value::as_str)
-                    {
-                        attachment["url"] = url.into();
-                    }
-                    if let Some(file_id) = file
-                        .get("file_id")
-                        .or_else(|| file.get("fileId"))
-                        .and_then(Value::as_str)
-                    {
-                        attachment["metadata"] = json!({ "fileId": file_id });
-                    }
-                    attachments.push(attachment);
+                    push_weixin_attachment(&mut attachments, "file", file);
                 }
             }
             _ => {}
@@ -894,6 +875,28 @@ mod inbound_tests {
         assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0]["url"], "https://cdn.example/doc.pdf");
         assert_eq!(attachments[0]["metadata"]["fileId"], "fid-1");
+    }
+
+    #[test]
+    fn prefers_cdn_url_and_keeps_media_owner_for_decrypt() {
+        let (_, attachments) = super::weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "item_list": [{
+                "type": 2,
+                "image_item": {
+                    "file_name": "photo.png",
+                    "cdn_url": "https://cdn.example/cdn.png",
+                    "url": "https://cdn.example/url.png",
+                    "aeskey": "0123456789abcdef0123456789abcdef"
+                }
+            }]
+        }))
+        .unwrap();
+        assert_eq!(attachments[0]["url"], "https://cdn.example/cdn.png");
+        assert_eq!(
+            attachments[0]["metadata"]["weixinMediaOwner"]["aeskey"],
+            "0123456789abcdef0123456789abcdef"
+        );
     }
 
     #[test]
