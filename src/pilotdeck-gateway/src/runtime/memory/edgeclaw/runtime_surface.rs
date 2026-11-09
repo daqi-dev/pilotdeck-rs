@@ -9,6 +9,7 @@
 //! keep working, while every method delegates to the daqi implementation that
 //! already owns the behaviour.
 use super::{
+    file_memory::FileMemoryClock,
     messages::CaptureStrategy,
     owner::NativeProjectMemoryOwner,
     provider::{EdgeClawMemoryProvider, EdgeClawMemoryProviderOptions},
@@ -17,7 +18,8 @@ use super::{
 };
 use crate::runtime::context::memory::MemoryResolver;
 use crate::runtime::memory::{
-    MemoryFuture, MemoryMaintenanceService, MemoryManagementService, MemoryProviderError,
+    MemoryDisposeFn, MemoryFuture, MemoryMaintenanceService, MemoryManagementService,
+    MemoryProviderError, MemoryProviderFactoryFn, NativeProjectMemoryProvider,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -278,7 +280,7 @@ pub fn stage_native_from_snapshot(
         snapshot,
         Some(pilot_home.as_ref().to_path_buf()),
     );
-    let options = options.map_err(|error| MemoryProviderError::new(error.to_string()))?;
+    let mut options = options.map_err(|error| MemoryProviderError::new(error.to_string()))?;
     // daqi resolves the memory model from `snapshot.config.memory.model` /
     // `snapshot.config.agent.model.id` inside the factory (`resolve_memory_llm`)
     // and drives the extractor through `ModelHttpTransport`. B instead passes a

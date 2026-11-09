@@ -451,6 +451,28 @@ impl BackgroundTaskRuntime {
         runtime
     }
 
+
+    /// B dc123d18 `open_persistent`: reopen the task list from disk so a
+    /// restarted gateway keeps detached tasks and their full output. daqi
+    /// already restores snapshots inside `new` whenever a snapshot store is
+    /// present, so this only assembles the two durable ports.
+    pub fn open_persistent(
+        project_root: &std::path::Path,
+    ) -> Result<Self, BackgroundTaskError> {
+        let dir = project_root.join(".pilotdeck").join("background-tasks");
+        let store = crate::runtime::background_snapshot::JsonFileBackgroundTaskSnapshotStore::new(
+            dir.join("state.json"),
+        )
+        .map_err(|error| BackgroundTaskError {
+            name: "BackgroundTaskSnapshotRecoveryError",
+            message: JsString::from(error.to_string()),
+        })?;
+        Ok(Self::new(BackgroundTaskRuntimeOptions {
+            disk_spill_dir: Some(dir),
+            snapshot_store: Some(std::sync::Arc::new(store)),
+            ..Default::default()
+        }))
+    }
     fn find(&self, task_id: &JsString, access: TaskAccess<'_>) -> Option<Arc<Entry>> {
         let state = self.inner.state.lock().unwrap();
         let (_, entry) = state.entries.iter().find(|(id, _)| id == task_id)?;

@@ -12,8 +12,10 @@ pub mod edgeclaw;
 pub mod gateway;
 pub mod maintenance;
 pub mod routes;
+pub mod scheduler;
 mod session_maintenance;
 pub use maintenance::{ProjectMemoryMaintenanceController, ProjectMemoryMaintenanceRuntime};
+pub use scheduler::{DefaultWebMemoryMaintenanceService, WebMemoryScheduler};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 pub use session_maintenance::{DiagnosticCallback, GenerationScopedMaintenanceCoordinator};
 use std::{

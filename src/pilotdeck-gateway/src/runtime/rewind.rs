@@ -43,8 +43,9 @@ pub fn rewind_files(input: RewindFilesInput<'_>) -> JsValue {
     rewind_files_exact(input, &message_id)
 }
 
-/// The RPC id remains raw UTF-16. `input.user_message_id` is only the legacy
-/// UTF-8 entry point's field and is superseded by `message_id` here.
+/// B dc123d18 RPC entry: the `userMessageId` from the wire stays raw UTF-16.
+/// `input.user_message_id` is only the legacy UTF-8 field and is superseded by
+/// `message_id` here, so a lone surrogate id still matches its checkpoint.
 fn rewind_files_exact(input: RewindFilesInput<'_>, message_id: &JsString) -> JsValue {
     match run(input, message_id) {
         Ok(result) => JsValue::Object(result),
@@ -71,7 +72,7 @@ fn run(input: RewindFilesInput<'_>, message_id: &JsString) -> Result<JsObject, S
     }
     // FileHistoryStore has an existing UTF-8 id API. For this operation's
     // temporary replay only, encode every raw UTF-16 id into an injective
-    // ASCII representation. Do not change live replay or persisted entries.
+    // ASCII representation. Live replay and persisted entries stay untouched.
     for (snapshot, entry) in snapshots.iter_mut().zip(snapshot_rows(&read.entries)) {
         snapshot.message_id = string_field(entry, "messageId").map(message_token);
     }
@@ -80,15 +81,10 @@ fn run(input: RewindFilesInput<'_>, message_id: &JsString) -> Result<JsObject, S
         .iter()
         .any(|snapshot| snapshot.message_id.as_deref() == Some(&message_token))
     {
-        let mut message = JsString::from("No snapshot for messageId ")
-            .units()
-            .to_vec();
+        let mut message = JsString::from("No snapshot for messageId ").units().to_vec();
         message.extend_from_slice(message_id.units());
         let mut result = failure("");
-        result.insert(
-            "error".into(),
-            JsValue::String(JsString::from_utf16(message)),
-        );
+        result.insert("error".into(), JsValue::String(JsString::from_utf16(message)));
         return Ok(result);
     }
     let mut options = FileHistoryOptions::new(storage.file_history_dir.clone());
@@ -129,6 +125,26 @@ fn run(input: RewindFilesInput<'_>, message_id: &JsString) -> Result<JsObject, S
     Ok(result)
 }
 
+/// Injective ASCII encoding of a raw UTF-16 id, so the existing UTF-8
+/// `FileHistoryStore` id API can address it without losing lone surrogates.
+fn message_token(message: &JsString) -> String {
+    use std::fmt::Write;
+    let mut token = String::with_capacity(message.units().len() * 4);
+    for unit in message.units() {
+        write!(&mut token, "{unit:04x}").expect("writing into String");
+    }
+    token
+}
+
+fn snapshot_rows(entries: &[JsValue]) -> Vec<&JsValue> {
+    entries
+        .iter()
+        .filter(|entry| {
+            entry.get("type").and_then(JsValue::as_string)
+                .is_some_and(|kind| kind.equals_str("file_snapshot_recorded"))
+        })
+        .collect()
+}
 fn failure(message: &str) -> JsObject {
     let mut result = JsObject::new();
     result.insert("canRewind".into(), JsValue::Bool(false));
@@ -193,28 +209,16 @@ fn strings(values: Vec<String>) -> JsValue {
 /// `Object.entries`, i.e. the transcript JSON object's own key order.
 pub(crate) fn snapshot_entries(entries: &[JsValue]) -> Result<Vec<SnapshotRecordedEntry>, String> {
     let mut snapshots = Vec::new();
-    for entry in snapshot_rows(entries) {
-        snapshots.push(snapshot_entry(entry)?);
-    }
-    Ok(snapshots)
-}
-
-fn snapshot_rows(entries: &[JsValue]) -> impl Iterator<Item = &JsValue> {
-    entries.iter().filter(|entry| {
-        entry
+    for entry in entries {
+        if entry
             .get("type")
             .and_then(JsValue::as_string)
-            .is_some_and(|kind| kind.equals_str("file_snapshot_recorded"))
-    })
-}
-
-fn message_token(message: &JsString) -> String {
-    use std::fmt::Write;
-    let mut token = String::with_capacity(message.units().len() * 4);
-    for unit in message.units() {
-        write!(&mut token, "{unit:04x}").expect("writing into String");
+            .is_some_and(|kind| text(kind) == "file_snapshot_recorded")
+        {
+            snapshots.push(snapshot_entry(entry)?);
+        }
     }
-    token
+    Ok(snapshots)
 }
 
 fn snapshot_entry(entry: &JsValue) -> Result<SnapshotRecordedEntry, String> {
@@ -356,7 +360,9 @@ fn string_field<'a>(value: &'a JsValue, name: &str) -> Option<&'a JsString> {
     value.get(name).and_then(JsValue::as_string)
 }
 
-/// Path-facing UTF-16 to text. Rewind lookup ids use `message_token` instead.
+/// UTF-16 to text. Property names and message ids are valid UTF-8 in every
+/// transcript the TS writer can produce; replacement decoding keeps a corrupt
+/// entry from aborting the request.
 fn text(value: &JsString) -> String {
     value
         .to_utf8()
@@ -369,106 +375,4 @@ fn epoch_ms(value: &JsString) -> Option<i64> {
         Ok(Some(ms)) if ms.is_finite() => Some(ms as i64),
         _ => None,
     }
-}
-
-pub async fn handle(
-    services: &crate::GatewayServices,
-    params: &JsValue,
-) -> Result<JsValue, crate::runtime::connection::RequestError> {
-    use crate::{
-        metadata::{Metadata, NativeFiles, resolve, text_field},
-        runtime::connection::RequestError,
-    };
-    use std::sync::Arc;
-    let required = |key: &str, code: &str, message: &str| -> Result<JsString, RequestError> {
-        if matches!(params, JsValue::Null | JsValue::Undefined) {
-            let kind = if params.is_undefined() {
-                "undefined"
-            } else {
-                "null"
-            };
-            return Err(RequestError::new(format!(
-                "Cannot read properties of {kind} (reading '{key}')"
-            )));
-        }
-        if params
-            .get(key)
-            .is_some_and(|v| !matches!(v, JsValue::String(_) | JsValue::Null | JsValue::Undefined))
-        {
-            return Err(RequestError::new(format!(
-                "input.{key}?.trim is not a function"
-            )));
-        }
-        params
-            .get(key)
-            .and_then(JsValue::as_string)
-            .filter(|v| !crate::metadata::js_trim(&String::from_utf16_lossy(v.units())).is_empty())
-            .cloned()
-            .ok_or_else(|| {
-                let mut error = RequestError::new(message);
-                error.code = code.to_owned();
-                error
-            })
-    };
-    let session = required(
-        "sessionKey",
-        "INVALID_SESSION_KEY",
-        "sessionKey is required.",
-    )?;
-    let message = required(
-        "userMessageId",
-        "INVALID_MESSAGE_ID",
-        "userMessageId is required.",
-    )?;
-    if !services.admission.begin_maintenance(&session) {
-        let mut error = RequestError::new("Cannot rewind files while a turn is active.");
-        error.code = "SESSION_BUSY".into();
-        return Err(error);
-    }
-    struct Reservation<'a>(&'a crate::runtime::session::SessionAdmission, JsString);
-    impl Drop for Reservation<'_> {
-        fn drop(&mut self) {
-            self.0.end_maintenance(&self.1);
-        }
-    }
-    let _reservation = Reservation(&services.admission, session.clone());
-    if services.home.as_os_str().is_empty() {
-        return Err(RequestError::new(
-            "Local gateway requires an explicit PILOT_HOME.",
-        ));
-    }
-    let project = resolve(
-        &services.cwd,
-        &text_field(params, "projectKey")
-            .unwrap_or_else(|| services.cwd.to_string_lossy().into_owned()),
-    );
-    let adapter = AsyncTranscriptAdapter::new(
-        Arc::new(crate::storage::JsonlTranscriptStore::new()),
-        Arc::new(|key| {
-            Metadata {
-                home: key.pilot_home.clone(),
-                cwd: key.project_root.clone(),
-                files: NativeFiles,
-            }
-            .chat_dir(&key.project_root.to_string_lossy())
-        }),
-    );
-    Ok(rewind_files_exact(
-        RewindFilesInput {
-            adapter: &adapter,
-            project_root: &project,
-            pilot_home: &services.home,
-            session_key: &session,
-            // The RPC entry point passes its exact identity separately.
-            user_message_id: "",
-            dry_run: params.get("dryRun").is_some_and(|value| match value {
-                JsValue::Undefined | JsValue::Null | JsValue::Bool(false) => false,
-                JsValue::Number(n) => *n != 0.0 && !n.is_nan(),
-                JsValue::String(s) => !s.is_empty(),
-                _ => true,
-            }),
-            now: None,
-        },
-        &message,
-    ))
 }

@@ -15,9 +15,9 @@
 //! and file export APIs, plus workspace/global file-store wiring. Repository
 //! snapshot capture, dream rollback and root swaps live in [`storage::snapshots`].
 //! Retrieval, extraction and heartbeat belong to the remaining work packages.
-pub mod model;
 pub mod dream;
 pub mod file_memory;
+pub mod model;
 pub mod heartbeat;
 pub mod llm;
 pub mod messages;
@@ -48,8 +48,12 @@ pub mod factory;
 mod owner;
 pub use owner::{NativeProjectMemoryOwner, create_project_owner};
 
-/// The management surface uses the same native repository as extraction/storage.
+/// The management surface uses the same native repository as extraction and
+/// storage. B dc123d18 keeps this beside the file stores; daqi had the same
+/// three operations behind `MemoryManagementService` on the service only, so
+/// the channel's data-dir path had no direct handle.
 pub struct DiskMemoryManagement(EdgeClawFileStores);
+
 impl DiskMemoryManagement {
     pub fn open(
         project: &std::path::Path,
@@ -83,16 +87,21 @@ impl DiskMemoryManagement {
         Ok(Self(store))
     }
 }
+
 fn management_error(error: FileMemoryError) -> super::MemoryProviderError {
     super::MemoryProviderError::new(error.to_string())
 }
+
 impl super::MemoryManagementService for DiskMemoryManagement {
-    fn list(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<pilotdeck_protocol::JsValue>, super::MemoryProviderError> {
+    fn list(&self, limit: usize)
+    -> Result<Vec<pilotdeck_protocol::JsValue>, super::MemoryProviderError> {
+        // daqi's store takes a JsObject query and answers a JsValue; wrap the
+        // limit so the same scope/filter/UTF-16 semantics apply.
         let mut options = pilotdeck_protocol::JsObject::new();
-        options.insert("limit".into(), pilotdeck_protocol::JsValue::Number(limit as f64));
+        options.insert(
+            "limit".into(),
+            pilotdeck_protocol::JsValue::Number(limit as f64),
+        );
         let value = self.0.list_memory_entries(&options).map_err(management_error)?;
         match &value {
             pilotdeck_protocol::JsValue::Array(items) => Ok(items.clone()),
@@ -101,6 +110,7 @@ impl super::MemoryManagementService for DiskMemoryManagement {
             )),
         }
     }
+
     fn clear(&self, scope: &str) -> Result<(), super::MemoryProviderError> {
         if scope == "all_memory" {
             self.0.clear_all_memory_data()
@@ -110,6 +120,7 @@ impl super::MemoryManagementService for DiskMemoryManagement {
         .map(|_| ())
         .map_err(management_error)
     }
+
     fn clear_session(
         &self,
         session: &pilotdeck_protocol::JsString,

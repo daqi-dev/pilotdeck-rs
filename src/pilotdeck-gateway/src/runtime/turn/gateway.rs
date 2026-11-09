@@ -35,6 +35,10 @@ use tokio::{
 
 type Callback = Arc<dyn Fn() + Send + Sync>;
 type Job = Pin<Box<dyn Future<Output = ()> + Send>>;
+/// B dc123d18 automation sink: receives each projected turn event and may
+/// refuse it, which aborts the automation turn.
+pub type AutomationEventSink =
+    Arc<dyn Fn(&JsValue) -> Result<(), crate::runtime::connection::RequestError> + Send + Sync>;
 type Deadlines = Arc<Mutex<HashMap<JsString, u64>>>;
 type AutomationEventSink = Arc<dyn Fn(&JsValue) -> Result<(), RequestError> + Send + Sync>;
 
@@ -416,6 +420,139 @@ impl TurnGateway {
         });
     }
     /// Explicitly stop the serial host, cancel owned turns and await cleanup.
+
+    /// Automation shares the foreground owner and drains its completion fence,
+    /// like B dc123d18. daqi keeps its explicit drain budget on `shutdown`;
+    /// this adds the automation trio without dropping that guarantee.
+    pub async fn automation_turn(
+        &self,
+        input: JsValue,
+        on_event: AutomationEventSink,
+    ) -> Result<Vec<JsValue>, RequestError> {
+        let gateway = self.gateway.clone();
+        self.call(async move {
+            let session = input
+                .get("sessionKey")
+                .and_then(JsValue::as_string)
+                .cloned()
+                .unwrap_or_default();
+            let run = input.get("runId").and_then(JsValue::as_string).cloned();
+            let project_key = input
+                .get("projectKey")
+                .and_then(JsValue::as_string)
+                .cloned();
+            let mut submission = gateway.0.submitter.submit(input);
+            let mut events = Vec::new();
+            let mut failure = None;
+            while let Some(event) = submission.next().await.map_err(|e| {
+                let mut error = RequestError::new(e.message);
+                error.code = e.code;
+                error
+            })? {
+                if failure.is_none()
+                    && let Err(error) = on_event(&event)
+                {
+                    gateway
+                        .0
+                        .submitter
+                        .owner
+                        .start_gateway_abort(
+                            &session,
+                            run.as_ref(),
+                            Some(&"automation_event_write_failed".into()),
+                        )
+                        .map_err(|e| RequestError::new(e.message))?;
+                    failure = Some(error);
+                }
+                events.push(event);
+            }
+            if !events.iter().any(|event| {
+                event
+                    .get("type")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|kind| {
+                        kind.equals_str("turn_completed") || kind.equals_str("error")
+                    })
+            }) && let (Some(registry), Some(run_id)) = (&gateway.0.submitter.registry, run)
+            {
+                let reference = crate::storage::RunRef {
+                    session_key: session.clone(),
+                    project_key,
+                    run_id,
+                };
+                let durable = registry
+                    .events(&reference)
+                    .await
+                    .map_err(|error| RequestError::new(error.to_string()))?;
+                // A timeout closes foreground live delivery before its durable
+                // tail; automation still consumes that tail.
+                for event in durable.into_iter().filter(|event| {
+                    event
+                        .get("code")
+                        .and_then(JsValue::as_string)
+                        .is_some_and(|code| code.equals_str("turn_timeout"))
+                }) {
+                    if failure.is_none()
+                        && let Err(error) = on_event(&event)
+                    {
+                        failure = Some(error);
+                    }
+                    events.push(event);
+                }
+            }
+            if events.iter().any(|event| {
+                event
+                    .get("code")
+                    .and_then(JsValue::as_string)
+                    .is_some_and(|code| code.equals_str("turn_timeout"))
+            }) {
+                // Foreground publication closes early on timeout; automation
+                // must also join the queued session eviction.
+                gateway
+                    .0
+                    .submitter
+                    .owner
+                    .close(&session)
+                    .await
+                    .map_err(|e| RequestError::new(e.message))?;
+            }
+            failure.map_or(Ok(events), Err)
+        })
+        .await?
+    }
+
+    pub async fn automation_abort(
+        &self,
+        session: JsString,
+        run: JsString,
+        reason: JsString,
+    ) -> Result<(), RequestError> {
+        let gateway = self.gateway.clone();
+        self.call(async move {
+            gateway
+                .0
+                .submitter
+                .owner
+                .abort_turn(&session, Some(&run), Some(&reason))
+                .await
+                .map_err(|e| RequestError::new(e.message))
+        })
+        .await?
+    }
+
+    pub async fn automation_close(&self, session: JsString) -> Result<(), RequestError> {
+        let gateway = self.gateway.clone();
+        self.call(async move {
+            gateway
+                .0
+                .submitter
+                .owner
+                .close(&session)
+                .await
+                .map_err(|e| RequestError::new(e.message))
+        })
+        .await?
+    }
     pub async fn shutdown(&self, budget: Duration) -> Result<(), String> {
         self.request_shutdown(budget);
         self.stopped().await
