@@ -2540,12 +2540,17 @@ async fn connection_error_lines_survive_a_failed_stderr() {
     // Positive receipt — success alone is not evidence the probe case ran: a
     // renamed test makes the `--exact` filter match nothing and libtest still
     // exits 0 with no marker (the vacuous-pass shape `skills_migrate` records
-    // for its own rerun), so both assertions below would hold on a child that
-    // executed nothing. Only the child's libtest receipt proves the case ran.
+    // for its own rerun), so a loose contains-check would hold on a child that
+    // executed nothing. The shared exact-receipt criterion — one `running 1
+    // test` banner, the whole per-test line, and the one-test summary — is
+    // what proves the case ran (the child body writes only stderr and the
+    // reached file, so the single-threaded layout cannot splice the line).
     negative_assert!(
-        console.contains(
-            "test native_ws::tests::connection_error_lines_survive_a_failed_stderr ... ok"
-        ) && console.contains("test result: ok. 1 passed; 0 failed;"),
+        crate::test_exact_receipt::single_pass(
+            &status,
+            "native_ws::tests::connection_error_lines_survive_a_failed_stderr",
+            &console,
+        ),
         "#2434 the child's libtest receipt proves the probe case ran\n{console}"
     );
     // The child leaves a reached marker once the invalid upgrade has been

@@ -562,14 +562,15 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
     // fails on the same marker as the cell comparison it stands in for.
     let context = format!("case {}", case["name"].as_str().expect("#1336 case name"));
 
-    for name in [
-        "WECOM_CORP_ID",
-        "WECOM_AGENT_ID",
-        "WECOM_CB_SECRET",
-        "WECOM_CB_TOKEN",
-        "WECOM_ENCODING_AES_KEY",
-        "WECOM_CB_PORT",
-    ] {
+    // The env guard and the fixture→options mapping both derive from the same
+    // `STRING_FIELDS` the constructor guard uses: a sixth string field joins
+    // one list, not three (the replay must then unset its env and forward its
+    // fixture value or the cell stops being driven).
+    for name in super::STRING_FIELDS
+        .iter()
+        .map(|(_, env)| *env)
+        .chain(["WECOM_CB_PORT"])
+    {
         assert!(
             std::env::var_os(name).is_none(),
             "#1336 replay requires {name} to be unset"
@@ -578,7 +579,7 @@ async fn replay(case: &Value, qyapi: &Arc<Qyapi>) -> Value {
 
     let config = case["config"].as_object().expect("#1336 case config");
     let mut options = JsObject::new();
-    for key in ["corpId", "agentId", "secret", "token", "encodingAesKey"] {
+    for key in super::STRING_FIELDS.map(|(name, _env)| name) {
         if let Some(value) = config.get(key) {
             options.insert(
                 key.into(),

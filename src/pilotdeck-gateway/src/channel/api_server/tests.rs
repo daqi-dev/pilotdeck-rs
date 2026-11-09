@@ -3164,7 +3164,9 @@ fn api_key_classification_pins_the_checkauth_table() {
 /// either side — Node's and hyper's parsers both trim trailing OWS, so the
 /// header arrives as `Bearer` and the prefix check fails — which is why the
 /// empty-token limb is pinned by the classification table
-/// (`ApiKey::Key(vec![])`) rather than a wire cell. The wire-level pin is
+/// (`ApiKey::Key(vec![])`). The empty-token wire cell below pins that trim
+/// end-to-end in this suite (r2 boundary): the raw header carries the
+/// trailing space, the parsed value must not. The remaining wire-level pin is
 /// the closed gate: unlike `Off` (which answers 200 to the no-Bearer
 /// request), an empty array apiKey must answer 401 to every request.
 #[tokio::test]
@@ -3194,6 +3196,15 @@ async fn empty_array_api_key_keeps_the_gate_closed() {
         exchange(empty.addr, &bearer_chat(Some("x"))).await.status,
         Some(401),
         "#2428 an empty array apiKey rejects a non-empty Bearer token"
+    );
+    // The raw header is `Bearer ` with the trailing space; both Node and
+    // hyper trim trailing OWS, so the parsed value must arrive as `Bearer`
+    // and the empty-token limb stays unreachable over the wire (r2 boundary:
+    // pin the trim in this suite, not only in #1349's other channel).
+    crate::negative_assert_eq!(
+        exchange(empty.addr, &bearer_chat(Some(""))).await.status,
+        Some(401),
+        "#2428 a trailing-space Bearer header is trimmed to no token and rejected"
     );
     empty
         .handle
