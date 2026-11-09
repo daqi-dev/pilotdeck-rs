@@ -1418,7 +1418,24 @@ def _spelling_hit(node, words):
     # (fix-r20: also its BinOp-operand and uncertainty branches).
     if _conditional_status_word(node, words):
         return True
-    return any(isinstance(n, ast.Constant) and n.value in words for n in ast.walk(node))
+    return _walk_word_hit(node, words)
+
+
+def _walk_word_hit(node, words, skip_top_call=False):
+    """The walk fallback every spelling consumer shares (fix-r22).
+
+    fix-r22 (DS simplify#1 r21 P2): the write path hand-mirrored the same
+    three-step rule _spelling_hit had just been given (fix-r20), differing
+    only in that its fallback refuses a *top-level* Call arm (a proven
+    callee keeps its own arm below) — exactly the copy that let each new
+    wrapper family miss one side first.  The step is structural now; the
+    ``isinstance(n.value, str)`` guard is safe for every caller because
+    ``words`` is always a tuple of strings.
+    """
+    if skip_top_call and isinstance(node, ast.Call):
+        return False
+    return any(isinstance(n, ast.Constant) and isinstance(n.value, str)
+               and n.value in words for n in ast.walk(node))
 
 
 def _status_literals(node):
@@ -5248,18 +5265,27 @@ def _exit_uncertain(node):
     empty set upward: the presence-scan consumers (``_calls_aggregate``
     and friends, whose docstrings read [] as "certifies nothing") would
     LOSE the surviving arms' detection on the same shapes — only the
-    two consumers that must not trust a partial set (the fold's
-    single-string contract and the write-policy scan) consult this.
+    consumers that must not trust a partial set (the fold's single-string
+    contract, the write-policy scan, and — fix-r22 — the four
+    violation-judgement consumers) consult this.
     """
     if isinstance(node, ast.IfExp):
         if _test_is_runtime(node.test):
             return any(_exit_uncertain(sub)
                        for sub in (node.body, node.orelse))
-        # A resolvable constant test returns the taken arm's own arm set
-        # directly (no flattening), so a deeper [] already surfaces to the
-        # callers' ``not arms`` paths; only the unresolvable test is a
-        # dropped branch here.
-        return _literal_test_value(node.test) is _LITERAL_TEST_UNRESOLVED
+        taken = _literal_test_value(node.test)
+        if taken is _LITERAL_TEST_UNRESOLVED:
+            return True
+        # fix-r22 (DS boundary#1 r21 P0, probe-verified — fix-r22-audit/
+        # probe-r22-arb.out A1/A3 + probe-r22-e2e.out E1): _exit_arms
+        # flattens INTO the taken arm of a resolvable constant test
+        # (``_exit_arms(node.body if taken else node.orelse)``), so the
+        # companion walk must follow the same arm.  Returning False for
+        # the mere resolvability of THIS test left a partial arm set
+        # (['x'] when the taken arm's deeper test is unresolvable)
+        # reading as the complete answer under a constant shell — the
+        # r19/r20 escapes reopened one layer up.
+        return _exit_uncertain(node.body if taken else node.orelse)
     if isinstance(node, ast.BoolOp):
         for sub in node.values:
             if _test_is_runtime(sub):
@@ -5388,9 +5414,11 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
         # words ('PA'/'SS' fragments miss).
         if _conditional_status_word(arm, _CLEAN_STATUS_LITERALS):
             return True
-        if not isinstance(arm, ast.Call) and any(
-                isinstance(n, ast.Constant) and isinstance(n.value, str)
-                and n.value in _CLEAN_STATUS_LITERALS for n in ast.walk(arm)):
+        # fix-r22 (DS simplify#1 r21 P2): the walk fallback is the same
+        # structural step _spelling_hit performs, with one difference — a
+        # top-level Call arm keeps its own arm below (a proven callee stays
+        # legal), so the shared step takes the refusal as a flag.
+        if _walk_word_hit(arm, _CLEAN_STATUS_LITERALS, skip_top_call=True):
             # A clean word that survives beside a runtime operand --
             # ``'PASS' + suffix`` -- is the same inline verdict the plain
             # literal is; the return path's ``_status_literals`` already read
@@ -5836,6 +5864,17 @@ def _helper_exits_zero(target, lookup, seen, aliases=None):
             # runtime, so the empty arm set fails closed here too.
             if not _exit_arms(item.value):
                 return True
+            # fix-r22 (DS sibling#1 r21 P1, probe-verified — fix-r22-audit/
+            # probe-r22-arb.out B1/B3): flattening can also drop one arm
+            # while the survivor keeps the set non-empty (``return 1 if
+            # flag else (0 if (1.0 is 1.0) else 2)`` arms [1] at runtime
+            # flag=False) — a PARTIAL set certifies no more than the empty
+            # one, so the companion walk is consulted before the arms.
+            try:
+                if _exit_uncertain(item.value):
+                    return True
+            except RecursionError:
+                return True
             if _constant_exit_zero(item.value) or any(
                     _constant_exit_zero(arm) for arm in _exit_arms(item.value)):
                 return True
@@ -6061,9 +6100,19 @@ def _exit_provenance(argument, bindings, function, module, point,
     no arm, and for this presence scan that is "an inline-code path cannot
     be ruled out" — ``sys.exit(0 if 1.0 is 1.0 else 1)`` takes the zero arm
     at runtime, so the empty arm set fails closed here too.
+    fix-r22 (DS sibling#1 r21 P1, probe-verified — fix-r22-audit/
+    probe-r22-arb.out B2): a partial arm set certifies no more than the
+    empty one — ``sys.exit(1 if flag else (0 if (1.0 is 1.0) else 2))``
+    arms [1] while runtime flag=False exits 0 — so the companion walk is
+    consulted before the arms.
     """
     arms = _exit_arms(argument)
     if not arms:
+        return True
+    try:
+        if _exit_uncertain(argument):
+            return True
+    except RecursionError:
         return True
     for arm in arms:
         if _calls_aggregate(arm):
@@ -6171,6 +6220,16 @@ def _exit_name_violation(name, bindings, function=None, module=None,
             # presence-scan consumers fix-r6 already guards.
             arms = _exit_arms(value)
             if not arms or any(_constant_exit_zero(arm) for arm in arms):
+                return 'conditional'
+            # fix-r22 (DS sibling#1 r21 P1, probe-verified — fix-r22-audit/
+            # probe-r22-arb.out B1): the arms above are only the SURVIVORS
+            # of flattening; ``code = 1 if flag else (0 if (1.0 is 1.0)
+            # else 2)`` hands [1] here while runtime flag=False binds 0 —
+            # a partial set may not read as the complete answer.
+            try:
+                if _exit_uncertain(value):
+                    return 'conditional'
+            except RecursionError:
                 return 'conditional'
         if _constant_exit_zero(value):
             if function is not None:
@@ -6909,8 +6968,16 @@ def unshared_status_slots(function, point=None, module=None, rel=None,
             # inline status/exit path cannot be ruled out" — ``return 'PASS'
             # if 1.0 is 1.0 else report`` takes the status arm at runtime,
             # so the empty arm set fails closed here too.
+            # fix-r22 (DS sibling#1 r21 P1): a PARTIAL arm set certifies no
+            # more — the return element ``1 if flag else (0 if (1.0 is 1.0)
+            # else 2)`` survives flattening as [1] — so the companion walk
+            # is consulted before the arms.
+            try:
+                element_uncertain = _exit_uncertain(element)
+            except RecursionError:
+                element_uncertain = True
             element_arms = _exit_arms(element)
-            if not element_arms:
+            if not element_arms or element_uncertain:
                 violations.append(
                     f'inline status/exit (unresolvable arm test) '
                     f'{ast.unparse(element)[:60]} at line {node.lineno}')
@@ -7301,7 +7368,13 @@ def _aggregation_audit_impl():
         # the stack is a per-file fail-closed line, not an audit collapse
         # (probe-r21-p0.out: depth-5000 ternaries parse fine today, so
         # this arm is defense in depth for other shapes/interpreters).
-        except (OSError, SyntaxError, UnicodeError, RecursionError) as error:
+        # fix-r22 (DS concurrency#1 r21, probe-verified — fix-r22-audit/
+        # probe-r22-arb.out D1/D2 + probe-r22-e2e.out E3): the parser's
+        # stack overflow for ~60k unary chains reports as MemoryError
+        # ("Parser stack overflowed"), which RecursionError does not
+        # cover — it joins the tuple so the same per-file line answers.
+        except (OSError, SyntaxError, UnicodeError, RecursionError,
+                MemoryError) as error:
             failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
                             f'{rel}: {type(error).__name__}: {error}')
             continue
@@ -7320,63 +7393,80 @@ def _aggregation_audit_impl():
         # unbudgeted while the end-of-loop pin stays green.  The cell is
         # therefore bound to its own handle and re-verified by identity at
         # the end of the iteration.
-        _audit_file_cell = [_AUDIT_PASS_WORK_CAP]
-        _AUDIT_PASS_BUDGET = _audit_file_cell
-        audit_pass_files += 1
-        for node in ast.walk(tree):
-            if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    and node.name == 'aggregate_status'
-                    and rel != 'scripts/gateway-parity/common.py'):
-                failures.append(f'#892 aggregation-audit: {rel} defines its own '
-                                'aggregate_status; only common.py may implement it')
-        # Module-level defs only: a nested ``def`` of the same name must not
-        # shadow the helper a registered point actually delegates to (MiniMax
-        # boundary P1-2); nested helpers are judged by ``_nested_def_exits_zero``.
-        # #892 r26: "module level" means every block that runs at import time,
-        # not just ``tree.body`` -- a helper defined inside ``if``/``try`` is
-        # exactly the shape the binding graph now descends into, and the two
-        # scans have to agree (GLM sibling r25 #6).
-        modules[rel] = {node.name: node for node in _module_level_defs(tree)
-                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
-        # #892 r21: the proven-source registry is only as good as its names --
-        # a typo or a renamed helper would withdraw trust on a shape the healthy
-        # tree actually uses, so every entry is asserted against its file.
-        module_names = set(modules[rel]) | _module_imported_names(tree)
-        for _proven_rel, helper in PROVEN_SHARED_SOURCES:
-            if _proven_rel == rel and helper not in module_names:
-                failures.append(f'#892 aggregation-audit: proven shared source '
-                                f'{rel}:{helper} is neither defined nor imported there')
-        aliases_by_rel[rel] = _module_exit_aliases(tree)
-        trusted_by_rel[rel] = _module_shared_names(tree, rel)
-        loaders_by_rel[rel] = _loader_names(tree, rel)
-        proven_by_rel[rel] = _proven_source_names(tree)
-        poisoned_by_rel[rel] = _withdrawn_receivers(
-            tree, rel, trusted_by_rel[rel])
-        lost = sorted(_SHARED_MODULES - trusted_by_rel[rel])
-        if lost:
-            # One file may not bind the shared aggregator to anything but the
-            # apparatus loader: with the spelling trusted, a stub served as the
-            # shared map (GLM boundary r19 P1-1); with the spelling withdrawn
-            # silently, the same function would simply stop being enumerated.
-            # Either way the file is not auditable, so it fails closed here.
-            failures.append(f'#892 aggregation-audit: {rel} rebinds the shared '
-                            f'aggregator module {lost}; only the apparatus loader '
-                            'may bind it')
-        scanned, duplicates = scan_aggregation_tree(tree, rel)
-        for duplicate in duplicates:
-            failures.append(f'#892 aggregation-audit: duplicate aggregation point '
-                            f'name {duplicate[0]}:{duplicate[1]}')
-        found.update(scanned)
-        # fix-r14 (DS boundary#2 r13 P2): the scan only *spends* the cell
-        # (decrements), never replaces it, so the very list armed above must
-        # still be the active one here; a None value on either line of the
-        # activation is caught by the identity, a non-list handle by the
-        # isinstance.
-        if (_AUDIT_PASS_BUDGET is not _audit_file_cell
-                or not isinstance(_audit_file_cell, list)):
-            failures.append(f'#892 aggregation-audit: {rel} was scanned '
-                            'without its audit-pass fold budget armed '
-                            '(#1652)')
+        # fix-r22 (DS concurrency#2/sibling#2 r21, probe-verified —
+        # fix-r22-audit/probe-r22-arb.out C1/C2 + probe-r22-e2e.out E2):
+        # the RecursionError boundary r21 added covers the parse
+        # point, the two write-path walks and the registered-point
+        # loop, but NOT this per-file scan stage — a deep no-paren
+        # chain in a *return* position blew scan_aggregation_tree
+        # (aggregation_markers -> _returned_summary_dicts, ~1 frame
+        # per level) past the parse guard into the 10251 catch-all,
+        # collapsing the whole audit into one control_failure line.
+        # The same fail-closed per-file line answers here; the
+        # remaining files and every other point keep their verdicts.
+        try:
+            _audit_file_cell = [_AUDIT_PASS_WORK_CAP]
+            _AUDIT_PASS_BUDGET = _audit_file_cell
+            audit_pass_files += 1
+            for node in ast.walk(tree):
+                if (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and node.name == 'aggregate_status'
+                        and rel != 'scripts/gateway-parity/common.py'):
+                    failures.append(f'#892 aggregation-audit: {rel} defines its own '
+                                    'aggregate_status; only common.py may implement it')
+            # Module-level defs only: a nested ``def`` of the same name must not
+            # shadow the helper a registered point actually delegates to (MiniMax
+            # boundary P1-2); nested helpers are judged by ``_nested_def_exits_zero``.
+            # #892 r26: "module level" means every block that runs at import time,
+            # not just ``tree.body`` -- a helper defined inside ``if``/``try`` is
+            # exactly the shape the binding graph now descends into, and the two
+            # scans have to agree (GLM sibling r25 #6).
+            modules[rel] = {node.name: node for node in _module_level_defs(tree)
+                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+            # #892 r21: the proven-source registry is only as good as its names --
+            # a typo or a renamed helper would withdraw trust on a shape the healthy
+            # tree actually uses, so every entry is asserted against its file.
+            module_names = set(modules[rel]) | _module_imported_names(tree)
+            for _proven_rel, helper in PROVEN_SHARED_SOURCES:
+                if _proven_rel == rel and helper not in module_names:
+                    failures.append(f'#892 aggregation-audit: proven shared source '
+                                    f'{rel}:{helper} is neither defined nor imported there')
+            aliases_by_rel[rel] = _module_exit_aliases(tree)
+            trusted_by_rel[rel] = _module_shared_names(tree, rel)
+            loaders_by_rel[rel] = _loader_names(tree, rel)
+            proven_by_rel[rel] = _proven_source_names(tree)
+            poisoned_by_rel[rel] = _withdrawn_receivers(
+                tree, rel, trusted_by_rel[rel])
+            lost = sorted(_SHARED_MODULES - trusted_by_rel[rel])
+            if lost:
+                # One file may not bind the shared aggregator to anything but the
+                # apparatus loader: with the spelling trusted, a stub served as the
+                # shared map (GLM boundary r19 P1-1); with the spelling withdrawn
+                # silently, the same function would simply stop being enumerated.
+                # Either way the file is not auditable, so it fails closed here.
+                failures.append(f'#892 aggregation-audit: {rel} rebinds the shared '
+                                f'aggregator module {lost}; only the apparatus loader '
+                                'may bind it')
+            scanned, duplicates = scan_aggregation_tree(tree, rel)
+            for duplicate in duplicates:
+                failures.append(f'#892 aggregation-audit: duplicate aggregation point '
+                                f'name {duplicate[0]}:{duplicate[1]}')
+            found.update(scanned)
+            # fix-r14 (DS boundary#2 r13 P2): the scan only *spends* the cell
+            # (decrements), never replaces it, so the very list armed above must
+            # still be the active one here; a None value on either line of the
+            # activation is caught by the identity, a non-list handle by the
+            # isinstance.
+            if (_AUDIT_PASS_BUDGET is not _audit_file_cell
+                    or not isinstance(_audit_file_cell, list)):
+                failures.append(f'#892 aggregation-audit: {rel} was scanned '
+                                'without its audit-pass fold budget armed '
+                                '(#1652)')
+        except (RecursionError, MemoryError) as error:
+            failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
+                            f'{rel} (scan stage): '
+                            f'{type(error).__name__}: {error}')
+            continue
 
     # fix-r13 (DS sibling#1 + concurrency#1 r12 P1, both roles independently,
     # probe-verified — fix-r13-audit/probe-r13-p1.out A): the registered-point
@@ -7409,7 +7499,12 @@ def _aggregation_audit_impl():
         try:
             definition_tree = ast.parse(
                 definition_path.read_text(encoding='utf-8'))
-        except (OSError, SyntaxError, UnicodeError) as error:
+        # fix-r22 (DS sibling#3 r21 P2 + concurrency#1 r21): the second
+        # parse point in this function was left behind when the first
+        # gained RecursionError (fix-r21) and MemoryError (fix-r22) —
+        # same shapes, same risk, same per-definition fail-closed line.
+        except (OSError, SyntaxError, UnicodeError, RecursionError,
+                MemoryError) as error:
             failures.append(f'#892 aggregation-audit: cannot scan proven '
                             f'definition {definition_rel}: '
                             f'{type(error).__name__}: {error}')
@@ -9052,6 +9147,21 @@ def _aggregation_audit_impl():
     # walk) — both must answer True (fail-closed, the flagging direction),
     # never raise.
     for _fsr6_depth in (600, 1200):
+        # fix-r22 (DS concurrency#3 r21 P2, arbitration probe-verified —
+        # fix-r22-audit/probe-r22-fsr6.out): the arms stay 'PASS' — a
+        # walk that COMPLETES (an interpreter whose recursionlimit is
+        # high enough) then answers the same True the guard does, so
+        # M1/M2 mutants survive in that environment; the reviewer's
+        # suggested 'FAIL' arms (outside _CLEAN_STATUS_LITERALS) would
+        # separate the outcomes but make the HEALTHY tree read "legal"
+        # there — a false red, measured under setrecursionlimit(20000):
+        # 'PASS' arms -> True, 'FAIL' arms -> False.  The surviving
+        # mutant is harmless in exactly that environment: with the walk
+        # finishing, the completed verdict is the correct one and the
+        # guard is never needed; a depth that blows only at the audit's
+        # deeper call stack is still caught by the scan-stage and
+        # points-loop boundaries (fix-r22).  The trade-off is registered,
+        # not hidden.
         _fsr6_chain = "'FAIL'"
         for _i in range(_fsr6_depth - 1):
             _fsr6_chain = f"'PASS' if md else {_fsr6_chain}"
@@ -9066,6 +9176,116 @@ def _aggregation_audit_impl():
             failures.append('#892 aggregation-audit: a too-deep conditional '
                             f'write (depth {_fsr6_depth}) crashed the write '
                             'path instead of failing closed (#1652)')
+    # #1652 fix-r22 (DS boundary#1 P0 + sibling#1 P1, probe-verified —
+    # fix-r22-audit/probe-r22-arb.out A1/A3/B1/B2/B3 + probe-r22-e2e.out
+    # E1): a resolvable-constant OUTER test hid the r19/r20 partial-arm
+    # escapes one layer up — _exit_arms flattened into the taken arm while
+    # _exit_uncertain answered False for the mere resolvability of the
+    # test, so ['x'] read as the complete answer and a rogue status write
+    # under a constant shell passed the whole audit clean.  The companion
+    # walk now follows the taken arm, and the four violation consumers
+    # that read a partial arm set as the complete answer consult it too.
+    _fsr7_shell = ("('x' if flag else (('sta' + 'tus') if (1.0 is 1.0)"
+                  " else 'y')) if 1 else 'z'")
+    _fsr7_shell_value = ("('x' if flag else (('PA' + 'SS') if (1.0 is 1.0)"
+                         " else 'y')) if 1 else 'z'")
+    # The negatives carry NO uncertainty — a constant shell around a plain
+    # runtime conditional of ordinary words.  (A shell around an
+    # uncertain inner arm stays a hit by the fail-closed polarity
+    # _fsr5b_uncertain_hits pins; the shell may not flip that either.)
+    _fsr7_shell_plain = "('x' if flag else 'y') if 1 else 'z'"
+    if not _status_key(ast.parse(_fsr7_shell, mode='eval').body):
+        failures.append('#892 aggregation-audit: a constant-shell '
+                        'conditional status key was not read as a '
+                        'status key (#1652)')
+    if not _status_literals(ast.parse(_fsr7_shell_value,
+                                      mode='eval').body):
+        failures.append('#892 aggregation-audit: a constant-shell '
+                        'conditional status value was not read as a '
+                        'status literal (#1652)')
+    if not _assigns_clean_status(
+            ast.parse(_fsr7_shell_value, mode='eval').body, {}):
+        failures.append('#892 aggregation-audit: a constant-shell '
+                        'conditional clean write read as legal on the '
+                        'write path (#1652)')
+    if _status_key(ast.parse(_fsr7_shell_plain, mode='eval').body):
+        failures.append('#892 aggregation-audit: a constant-shell '
+                        'non-status conditional key was over-collected '
+                        '(#1652)')
+    if _assigns_clean_status(
+            ast.parse(_fsr7_shell_plain, mode='eval').body, {}):
+        failures.append('#892 aggregation-audit: a constant-shell '
+                        'non-status conditional write was over-collected '
+                        'on the write path (#1652)')
+    _fsr7_rogues = [
+        f'    report[{_fsr7_shell}] = "PASS"',
+        f'    report["status"] = {_fsr7_shell_value}',
+    ]
+    _fsr7_lines = ['report = {}', 'flag = False', '']
+    for _i, _write in enumerate(_fsr7_rogues):
+        _fsr7_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr7_lines += ['def rogue2(rows):',
+                   f'    report[{_fsr7_shell_plain}] = "PASS"',
+                   '    return 0', '']
+    _fsr7_found, _fsr7_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr7_lines)), 'fix-r22-self-check.py')
+    for _i in range(len(_fsr7_rogues)):
+        if ('fix-r22-self-check.py', f'rogue{_i}') not in _fsr7_found:
+            failures.append('#892 aggregation-audit: a constant-shell '
+                            f'conditional status write escaped enumeration '
+                            f'(rogue{_i}) (#1652)')
+            break
+    if ('fix-r22-self-check.py', 'rogue2') in _fsr7_found:
+        failures.append('#892 aggregation-audit: a constant-shell '
+                        'non-status conditional was enumerated as a '
+                        'status write (over-collection regression, '
+                        'rogue2) (#1652)')
+    # The unwired-consumer faces (DS sibling#1 r21 P1): each of the four
+    # violation consumers must refuse to read a PARTIAL arm set as the
+    # complete answer — the dropped arm carries the runtime leak.
+    _fsr7_partial = '1 if flag else (0 if (1.0 is 1.0) else 2)'
+    if not _exit_provenance(ast.parse(_fsr7_partial, mode='eval').body,
+                            {}, None, None, None):
+        failures.append('#892 aggregation-audit: a partial-arm exit-call '
+                        'argument read as proven-clean (#1652)')
+    if _exit_provenance(ast.parse('1 if flag else 7', mode='eval').body,
+                        {}, None, None, None):
+        failures.append('#892 aggregation-audit: a plain conditional '
+                        'exit-call argument was over-collected (#1652)')
+    _fsr7_inner = ast.parse(
+        'def _fsr7_inner(rows):\n'
+        f'    return {_fsr7_partial}\n').body[0]
+    if not _helper_exits_zero(_fsr7_inner, {}, set()):
+        failures.append('#892 aggregation-audit: a partial-arm nested '
+                        'helper return read as not exiting zero (#1652)')
+    _fsr7_relay = ast.parse(
+        'def _fsr7_relay(rows):\n'
+        '    report = {}\n'
+        '    report["status"] = common.aggregate_status(rows)[0]\n'
+        f'    code = {_fsr7_partial}\n'
+        '    sys.exit(code)\n').body[0]
+    _fsr7_slots = unshared_status_slots(
+        _fsr7_relay, ('fix-r22-self-check.py', '_fsr7_relay'))
+    if not any('inline exit code' in slot for slot in _fsr7_slots):
+        failures.append('#892 aggregation-audit: a partial-arm exit '
+                        'relay through a local name read as proven-clean '
+                        '(#1652)')
+    _fsr7_return = ast.parse(
+        'def _fsr7_return(rows):\n'
+        '    report = {}\n'
+        '    report["status"] = common.aggregate_status(rows)[0]\n'
+        f'    return ({_fsr7_partial}, report)\n').body[0]
+    _fsr7_return_slots = unshared_status_slots(
+        _fsr7_return, ('fix-r22-self-check.py', '_fsr7_return'))
+    if not any('unresolvable arm test' in slot
+               for slot in _fsr7_return_slots):
+        failures.append('#892 aggregation-audit: a partial-arm return '
+                        'element read as proven-clean (#1652)')
+    # The scan-stage RecursionError boundary (DS concurrency#2 r21) has
+    # no always-on face: a real scanned file cannot carry a 1200-deep
+    # return chain, so its kill coverage is the mutneg-r22 injection
+    # (the e2e-recursion-before shape at the scan stage), the same
+    # treatment the r21 points-loop guard received.
     # #1652 fix-r16 (DS sibling#2 r15 P2): _nested_slot_fail_closed keeps
     # the bare ``in`` on purpose — a stopped fold (the sentinel) must NOT
     # exempt a nested status slot there; False is the flagging, safe
