@@ -30,15 +30,40 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 
 ## 锁被保留时怎么解
 
-本节只讲锁的**回收与残留处置**，不含取锁形态。持锁形态决定会不会被自动接管：
-带接管逻辑的装置在锁龄超 `MAX_AGE = 2400 s` 后按 `expired` 接管**没有**
-`cleanupPending` 的锁——活 owner 也会被接管（判据只看锁龄与 pid，无心跳，见
-`scripts/parity/round.py:313` 的注释），因此接近或超过 2400 s 的持锁须发布
-`cleanupPending: true`（对齐 `scripts/parity/round.py` / `scripts/gateway-parity/common.py` /
-`scripts/native-witness/collect.py` 三装置的 `owner.json` 形态：pid / timestamp /
-token / cleanupPending），短块（<2280 s，与本批装置 2280 s 硬截止同口径）不受此约束。
-引用本节作「锁正本」的各 fixture README（如 sdk-signals 的 28999 串行前置段）自行
-写明取锁形态，本节不代写。
+本节是共享锁 `/tmp/pdrs-parity.lock` 的**唯一正本**：取锁/释放形态、回收与残留处置都在
+这里，各 fixture README（如 sdk-signals 的 28999 串行前置段）与 fe-parity 等协调者
+配方引用本节，不自创、不复写。持锁形态决定会不会被自动接管：带接管逻辑的装置在锁龄超
+2400 s（gateway 系 `MAX_AGE`（`common.py` `:27`）/ parity 系 `LOCK_MAX_AGE`
+（`round.py` `:74`））后按 `expired` 接管**没有** `cleanupPending` 的锁——活 owner
+也会被接管（判据只看锁龄与 pid，无心跳；接管判定 `round.py` `:225-231`、
+`scripts/gateway-parity/common.py` `:624-633`，接管语义与「不自愈」例外详见本节
+「各装置的锁等待差异」之后两段）。因此**任何可能持锁超过 2400 s 的持有者都必须发布
+`cleanupPending: true`**；不发布的持有者必须有装置内的硬截止确保整块 <2400 s（如本批
+`run_round.py` 的 `signal.alarm(2280)`——2280 s 是调用方闹钟，不是租约属性），没有
+硬截止的块（如 fe-parity 的协调者配方，`run.mjs` 无墙钟上限）一律发布。
+
+宿主（沙箱外协调者）的取锁/释放片段（形态对齐三装置：`.guard` flock + mkdir +
+`owner.json`；类型约束：`pid` 正整数、`timestamp` 有限数、`token` 十六进制串、
+`cleanupPending` 真值——类型不符会被读侧判 `damaged`，锁永不接管、也无法自动回收）：
+
+```sh
+LOCK=/tmp/pdrs-parity.lock
+: >>"$LOCK.guard" && exec 9>>"$LOCK.guard" && flock 9     # guard 临界区（释放前重取）
+if [ -d "$LOCK" ]; then echo "parity lock held: $LOCK" >&2; exit 1; fi
+mkdir "$LOCK" && printf '{"pid":%s,"timestamp":%s,"token":"%s","cleanupPending":true}\n' \
+  "$$" "$(date +%s)" "$(uuidgen | tr -d -)" > "$LOCK/owner.json"
+flock -u 9
+# ……受保护的命令块……
+flock 9
+python3 -I -c "import json,sys;sys.exit(0 if json.load(open('$LOCK/owner.json'))['pid']==$$ else 1)" \
+  || { echo 'lock ownership changed; retaining lock' >&2; exit 1; }
+rm "$LOCK/owner.json" && rmdir "$LOCK"
+flock -u 9; exec 9>&-
+```
+
+释放时核 `owner.json` 的 pid 仍是自己（变了说明已被接管，保留锁退出）；异常中断留下的
+残留按本节第 1–3 步人工回收——发布过 `cleanupPending` 的锁**不会被自动接管**，只能
+人工持 guard 回收，这是防接管的代价。
 
 运行器报「retaining shared lock」或下次运行报锁被占时：
 1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并找残留 pgid：
@@ -93,7 +118,7 @@ token / cleanupPending），短块（<2280 s，与本批装置 2280 s 硬截止�
 | 装置 | 等待上限 | 抢不到锁的形态 | 源码 |
 |---|---|---|---|
 | `scripts/parity/round.py`（宿主 vs sidecar，53 场景） | **无限等**（`sleep 2` 轮询，没有 timeout 形参） | 不超时、不写 `run.json`，在 stderr 打 `waiting for /tmp/pdrs-parity.lock`；**别当死锁去删锁** | `parity_lock` `:211-267` |
-| `scripts/native-witness/collect.py`（原生采集） | **1 s** | 抛 `Blocked` → **BLOCKED / exit 2** | `parity_lock(timeout=1)` `:182` |
+| `scripts/native-witness/collect.py`（原生采集） | **1 s** | 抛 `Blocked` → **BLOCKED / exit 2** | `parity_lock` `:41`（调用 `:262`） |
 | `scripts/gateway-parity/session_domain.py`（E1 校准 / 原生判分） | **30 s** | 同 BLOCKED / exit 2（`TimeoutError` 走顶层 BLOCKED 分支） | `parity_lock(timeout=30)` `:2952` |
 | `src/pilotdeck-gateway/tests/fixtures/native-topology/run.py`（4 案 × 5 轮） | **默认 600 s**（`common.parity_lock` 默认值） | `TimeoutError` 未被 main 捕获 → **traceback / exit 1**（与它自己的 `run()` 退出码不同，判成败看 `report.json`） | `parity_lock()` `:609` |
 | `scripts/gateway-parity/run_round.py`（模块对拍） | **默认 600 s**（`--lock-timeout`） | `_guard.run_entry` 捕获 → 打印 `{"status":"BLOCKED",...}` 后 **exit 1**（策略 `round` 取 FAIL 码），**没有 traceback** | `parity_lock` `common.py:604`；`_guard.py:106-110`、`:136-144` |
@@ -140,8 +165,9 @@ cli-parity 自己的装置与 `calibrate.sh` 不打这句。
 等待上限 **180 s**，超时即测试失败、绝不接管；`cargo test` 与全量对拍撞在一起时，这类等待属正常排队。
 它同样不写 `cleanupPending`（见上）。
 
-**不在这套租约里的**：`scripts/fe-parity/README.md` 的一批配方直接
+**历史上不在这套租约里的**：`scripts/fe-parity/README.md` 曾有一批配方直接
 `mkdir /tmp/pdrs-parity.lock || exit 1` + `trap 'rmdir' EXIT`——没有 `.guard`、没有 `owner.json`，
-退出时的 `trap rmdir` 正是本节禁止的无 guard 删锁。看到锁目录里**没有** `owner.json` 时先怀疑它，
-按上一节第 1 步核残留后再处理；它与本节的租约规则冲突时以本节为准（同一反模式还散落在
-`docs/experiments/exp010-ui-server-parity-device/readme.md` 等实验记录里，同见 #1783）。
+退出时的 `trap rmdir` 正是本节禁止的无 guard 删锁；#2273 起这三处已改为按本节宿主片段
+取锁/释放。看到锁目录里**没有** `owner.json` 时先怀疑存量残留（同一反模式仍散落在
+`docs/experiments/exp010-ui-server-parity-device/readme.md` 等实验记录与 `docs/plan/`
+旧计划里，同见 #1783），按上一节第 1 步核残留后再处理。

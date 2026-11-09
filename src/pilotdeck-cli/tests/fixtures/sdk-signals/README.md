@@ -180,11 +180,14 @@ surface 判据不单独构成放行依据。放行前必须按 `D1-SDK-SIGNAL-RU
 `evidence/<格>/stdout.bin`（只剥精确 libtest driver 前缀，Rust 侧**不归一化**；
 勿用含 driver 横幅的 `stdout.raw`）中 `recovery.runId` 的 36 字节值替换为金样
 固定 UUID 后与金样 stdout 逐字节比对，相等才在登记范围内，否则红格不得按该登记
-放行（evidence 根目录与 source.json 均显式传参，不依赖 CWD）：
+放行（evidence 根目录与 source.json 均显式传参，不依赖 CWD。原条目 `:86-100` 的
+内联命令已由 R2 作废、勿照抄；本命令须在该批 cargo 进程退出后执行——`stdout.bin`
+为 create_new+write 非原子发布，批中读取会读到半截文件出假红）：
 
 ```sh
 python3 -I - <evidence-root> <repo>/src/pilotdeck-cli/tests/fixtures/sdk-signals/source.json <<'PY'
 import json, pathlib, re, sys
+assert len(sys.argv) == 3, 'usage: python3 -I - <evidence-root> <source.json>'
 root, source = (pathlib.Path(arg) for arg in sys.argv[1:3])
 caps = {c['input']['id']: c for c in json.loads(source.read_text())['captures']}
 for cid in ('run--unknown-cleanup', 'resume--unknown-cleanup'):
@@ -194,6 +197,8 @@ for cid in ('run--unknown-cleanup', 'resume--unknown-cleanup'):
     gr = re.search(rb'"runId":"([0-9a-f-]{36})"', g)
     assert ar is not None, f'{cid}: actual stdout has no 36-byte runId literal'
     assert gr is not None, f'{cid}: golden stdout has no 36-byte runId literal'
+    assert a.count(ar.group(1)) == 1, f'{cid}: actual runId literal not unique'
+    assert g.count(gr.group(1)) == 1, f'{cid}: golden runId literal not unique'
     assert a.replace(ar.group(1), gr.group(1)) == g, f'{cid}: runId-substituted stdout differs'
 print('both cells: runId-substituted stdout byte-equal')
 PY
@@ -231,24 +236,27 @@ trace 位置与 dispatched abort 的先后、reset 之后无 wire 事件；再�
 的调用方顺着 `--test sdk_signal_exit` / `signal_cases::` 这类测试选择器找，现知一处：
 `src/pilotdeck-gateway/tests/fixtures/sdk-signals/negative_controls.py`（自身不取
 parity 锁，内部 cargo test 选 `signal_cases::*` / `pending_abort_*` 真 bind 28999，
-与本节矩阵同样须宿主先持租约再跑）。宿主先取 `/tmp/pdrs-parity.lock` 目录租约，再
-执行本文件任何绑 28999 的命令块（不在此枚举，以 grep 现跑加间接判定口径为准；
-取不到租约即退出稍后重跑，不是自动排队），批期间不得并行任何绑 28999 的套件；
-重采块相反——`capture.py:45` 自取同一租约，宿主预持会使它 `Blocked`
-（`probe.mjs:16-17` 还断言 owner.pid 是 capture.py 自己），不要为它预持。持锁形态
-必须防接管：带接管逻辑的装置（`scripts/parity/round.py` 的 `parity_lock()`、
-`scripts/gateway-parity/common.py` 的 `parity_lock()`、`scripts/native-witness/collect.py:182`）
-在锁龄超 `MAX_AGE = 2400 s` 后按 `expired` `rmtree` 接管没有 `cleanupPending` 的锁，
-活 owner 也一样（判据只看锁龄与 pid，无心跳）；而全批兜底上界按
-`选择格数 × (2×12 + 5×3) + 30` 秒保守推导（100 格为 3930 s），远超 2400 s，
-短持中途被接管即两批并行 bind。因此宿主持锁须发布 `cleanupPending: true`（对齐上述
-三装置的 `owner.json` 形态：pid / timestamp / token / cleanupPending，`.guard` flock
-下 mkdir 后发布），或单块持锁 <2280 s（与 cli-parity 批装置 2280 s 硬截止同口径，
-只适用于远短于全批的块，全批矩阵只能用前者）。锁的回收与残留处置不自创，以
-`scripts/cli-parity/README.md`「锁被保留时怎么解」节为正本——该节只讲回收与残留、
-不含取锁形态（取锁形态即上一句），`owner.json` + guard 互斥、空目录不等于残留的
-口径不变。否则 `TcpListener::bind` 在比较阶段之前直接 panic（该格没有
-`differing surfaces` 行），不再满足「失败恰为 2 格且两格均为 stdout 单面」。
+与本节矩阵同样须宿主先持租约再跑）。**重采块是唯一例外**：`capture.py:45` 自取同一
+租约（cli-parity 的 `parity_lock()`），宿主预持会使它 `Blocked`（`probe.mjs:16-17`
+还断言 owner.pid 是 capture.py 自己），不要为它预持。除重采块外，宿主先取
+`/tmp/pdrs-parity.lock` 目录租约再执行任何绑 28999 的命令块（不在此枚举，以 grep
+现跑加间接判定口径为准；取不到租约即退出稍后重跑，不是自动排队），批期间不得并行
+任何绑 28999 的套件。取锁/释放的**形态与片段正本**在 `scripts/cli-parity/README.md`
+「锁被保留时怎么解」节（`.guard` flock + mkdir + `owner.json{pid,timestamp,token,cleanupPending}`，
+异常残留的人工回收同节），此处不复写。28999 车道特有的约束：全批兜底上界按
+`选择格数 × (2×12 + 5×3) + 30` 秒保守推导（100 格为 3930 s），远超接管阈值 2400 s
+（gateway 系 `MAX_AGE` / parity 系 `LOCK_MAX_AGE`）——带接管逻辑的装置
+（`scripts/parity/round.py` 的 `parity_lock()`、`scripts/gateway-parity/common.py` 的
+`parity_lock()`、复用后者的 `scripts/native-witness/collect.py:41`，调用点 `:262`）
+会按 `expired` `rmtree` 接管没有 `cleanupPending` 的锁，活 owner 也一样（判据只看
+锁龄与 pid，无心跳），短持中途被接管即两批并行 bind；且宿主块没有装置内的 2280 s
+硬截止闹钟（那是 cli-parity `run_round.py` 自己的 `signal.alarm`，见该节），宿主持锁
+一律发布 `cleanupPending: true`。重采块自取的恰是**无** `cleanupPending` 的 cli-parity
+租约，全量重采上界同上公式（100 格 3930 s）同样可超 2400 s，属可被 `expired` 接管的
+形态（capture.py 字节被金样测试 SHA 锚定，补发布属代码改动，另行跟进）：重采期间
+同机不得并行任何带接管逻辑的装置取这把锁。否则 `TcpListener::bind` 在比较阶段之前
+直接 panic（该格没有 `differing surfaces` 行），不再满足「失败恰为 2 格且两格均为
+stdout 单面」。
 
 ```sh
 scripts/cargo-slots.sh

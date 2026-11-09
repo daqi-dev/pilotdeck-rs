@@ -54,7 +54,7 @@
 - 调度会话 ≤ **2 小时**：到点把现场、证据、持有人、资源与下一就绪任务写进 board 并落实接续，然后继续（交接点不是停工，2026-10-16 人定）。
 
 ### 红线
-不下载预编译二进制 · 不碰 `~/.pilotdeck`、用户运行中的 PilotDeck、`~/ws/PilotDeck-rust-program-20261009/` · 推送前 gitleaks · 不强推 main · 同一失败 3 次挂起该项 · 全量对拍串行并保留锁 `mkdir /tmp/pdrs-parity.lock` · 不得在 `zhengdaqi` 下再建 `pilotdeck-rs`（会断 `daqi-dev/pilotdeck-rs` 的重定向）。
+不下载预编译二进制 · 不碰 `~/.pilotdeck`、用户运行中的 PilotDeck、`~/ws/PilotDeck-rust-program-20261009/` · 推送前 gitleaks · 不强推 main · 同一失败 3 次挂起该项 · 全量对拍串行并持 `/tmp/pdrs-parity.lock` 目录租约（取锁/释放形态以 `scripts/cli-parity/README.md`「锁被保留时怎么解」节为正本，不用裸 `mkdir` + `trap rmdir`） · 不得在 `zhengdaqi` 下再建 `pilotdeck-rs`（会断 `daqi-dev/pilotdeck-rs` 的重定向）。
 
 ### 冻结尺子的变更（沿用既有批准程序）
 - 冻结文件不擅改：须独立 issue、理由、两家评审、真实数据复算、重新登记；改判分语义须明确授权，否则登记阻塞转独立工作；已获批的不重复申请。冻结装置的批准条件以其规约为准，不适用 P2 折中。
