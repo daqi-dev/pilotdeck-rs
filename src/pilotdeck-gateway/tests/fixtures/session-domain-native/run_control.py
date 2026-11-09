@@ -68,8 +68,15 @@ def main():
     try:
         panel.check_case(name, output)
     except (ValueError, OSError, KeyError, TypeError, StopIteration,
-            subprocess.SubprocessError) as error:
+            subprocess.SubprocessError, MemoryError, RecursionError) as error:
         # The controls CLI's own catch set; EvidenceError carries its rule.
+        # fix-r17 (DS sibling#2 r16 P2): this tuple is a verbatim copy of
+        # the controls entry's — r15 (MemoryError) and r16 (RecursionError)
+        # extended the controls side twice without the copies, so a
+        # resource-exhaustion inside check_case fell through to the
+        # traceback policy here (exit 3, no verdict) while the controls CLI
+        # recorded a FAIL.  The copies stay in lockstep, pinned by
+        # test_safety's fixture-runner catch-set test.
         result = {'case': name, 'status': 'FAIL',
                   'rule': getattr(error, 'rule', 'CONTROL_EXECUTION'),
                   'detail': str(error)}

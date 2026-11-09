@@ -1122,22 +1122,48 @@ def _folded_string_fold(node, budget):
         for part in node.values:
             if isinstance(part, ast.Constant) and isinstance(part.value, str):
                 parts.append(part.value)
-            elif (isinstance(part, ast.FormattedValue) and part.format_spec is None
-                  and isinstance(part.value, ast.Constant)
-                  and isinstance(part.value.value, (str, int))):
-                parts.append(str(part.value.value))
-            elif (isinstance(part, ast.FormattedValue)
-                  and part.format_spec is not None
-                  and isinstance(part.value, ast.Constant)
-                  and isinstance(part.value.value, (str, int))):
-                # fix-r16 (anthropic boundary#2 r15 P2, probe-verified —
-                # fix-r16-audit/probe-r16-p0.out B): a conversion with a
-                # format spec on a constant value is still a constant
-                # expression — ``f'{"statusxx":.6}'`` is ``'status'`` at
-                # runtime — but this fold does not interpret specs, and a
-                # refusal certifies nothing about absence.  It stops the
-                # fold as the sentinel instead of the fail-open None.
-                return _FOLD_STRING_UNRESOLVED
+            elif isinstance(part, ast.FormattedValue):
+                # fix-r17 (DS boundary#1 + sibling#1 r16 P0/P1, two roles,
+                # probe-verified — fix-r17-audit/probe-r17-p0.out
+                # S1/S2/S3): the r16 sentinel only covered bare Constant
+                # interpolation values, so a foldable constant expression
+                # was still the fail-open None — ``f'{"sta" + "tus"}'`` is
+                # ``'status'`` at runtime, a spec on it truncates the same
+                # way the r16 P0 moved one level down
+                # (``f'{"sta" + "tus":.6}'``), and an outer f-string
+                # dropped the inner ``%`` sentinel exactly the way the
+                # outer ``%`` did before r16.  The interpolated expression
+                # is now folded recursively: a folded string joins the
+                # parts, the sentinel propagates, and None stays a
+                # genuinely-runtime interpolation (the fold makes no claim
+                # about it).
+                if (isinstance(part.value, ast.Constant)
+                        and isinstance(part.value.value, (str, int))):
+                    # str/int Constants fold directly — the recursive fold
+                    # below only folds str Constants, and the int face
+                    # (``f'{42}'`` folds '42') predates r17 and is exact.
+                    value = str(part.value.value)
+                else:
+                    value = _folded_string(part.value, budget)
+                if value is _FOLD_STRING_UNRESOLVED:
+                    return _FOLD_STRING_UNRESOLVED
+                if value is None:
+                    return None
+                if (part.format_spec is not None
+                        or part.conversion not in (-1, None, ord('s'))):
+                    # fix-r16 (anthropic boundary#2 r15 P2, probe-verified —
+                    # fix-r16-audit/probe-r16-p0.out B) and fix-r17
+                    # (probe S4): a constant interpolation under a format
+                    # spec — or under a repr/ascii conversion, which this
+                    # fold does not interpret either, so
+                    # ``f'{"status"!r}'`` would fold the untransformed
+                    # 'status' while the runtime value is "'status'" — is
+                    # still a constant expression, and a refusal certifies
+                    # nothing about the truncated/transformed runtime
+                    # value.  It stops the fold as the sentinel instead of
+                    # the fail-open None.
+                    return _FOLD_STRING_UNRESOLVED
+                parts.append(value)
             else:
                 return None
         return ''.join(parts)
@@ -8382,6 +8408,48 @@ def _aggregation_audit_impl():
         if ('fix-r16-self-check.py', f'rogue{_i}') not in _fsr2_found:
             failures.append('#892 aggregation-audit: an unconstrained-% '
                             'status write escaped enumeration '
+                            f'(rogue{_i}) (#1652)')
+            break
+    # #1652 fix-r17 (DS boundary#1 + sibling#1 r16 P0/P1, two roles,
+    # probe-verified — fix-r17-audit/probe-r17-p0.out S1/S2/S3/S4): the
+    # JoinedStr branch accepted only bare Constant interpolation values, so
+    # a foldable constant expression returned the fail-open None, a spec
+    # on it moved the r16 truncation point one level down, an outer
+    # f-string dropped the inner Mod sentinel, and a repr conversion
+    # folded the untransformed value.  Fold face first: the plain foldable
+    # interpolation must actually fold to the word.
+    _fsr3_fold = ast.parse('f\'{"sta" + "tus"}\'', mode='eval').body
+    if _folded_string(_fsr3_fold) != 'status':
+        failures.append('#892 aggregation-audit: a foldable f-string '
+                        'interpolation was read as runtime instead of '
+                        'folding to the status word (#1652)')
+    _fsr3_shapes = [
+        'f\'{"sta" + "tus":.6}\'',
+        'f\'{"%.6s" % ("sta" + "tus" + "x" * 999995)}\'',
+        'f\'{"status"!r}\'',
+    ]
+    if any(_folded_string(ast.parse(shape, mode='eval').body)
+           is not _FOLD_STRING_UNRESOLVED for shape in _fsr3_shapes):
+        failures.append('#892 aggregation-audit: an unresolvable f-string '
+                        'interpolation read as negative status evidence '
+                        'instead of stopping the fold (#1652)')
+    # End-to-end: every write below has a runtime key that is exactly the
+    # status word, so each rogue must be enumerated.
+    _fsr3_writes = [
+        '    report[f\'{"sta" + "tus"}\'] = \'PASS\'',
+        '    report[f\'{"sta" + "tus":.6}\'] = \'PASS\'',
+        '    report[f\'{"%.6s" % ("sta" + "tus" + "x" * 999995)}\']'
+        ' = \'PASS\'',
+    ]
+    _fsr3_lines = ['report = {}', '']
+    for _i, _write in enumerate(_fsr3_writes):
+        _fsr3_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr3_found, _fsr3_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr3_lines)), 'fix-r17-self-check.py')
+    for _i in range(len(_fsr3_writes)):
+        if ('fix-r17-self-check.py', f'rogue{_i}') not in _fsr3_found:
+            failures.append('#892 aggregation-audit: a foldable/spec '
+                            'f-string status write escaped enumeration '
                             f'(rogue{_i}) (#1652)')
             break
     # #1652 fix-r16 (DS sibling#2 r15 P2): _nested_slot_fail_closed keeps

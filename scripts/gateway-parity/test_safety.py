@@ -2007,6 +2007,55 @@ class ApparatusInputs(unittest.TestCase):
                       'fix-r16: a control-case RecursionError must be recorded '
                       'as a FAIL verdict, not the traceback policy')
 
+    def test_fixture_runner_catch_sets_match_controls(self):
+        # fix-r17 (DS sibling#2 r16 P2): the two single-control fixture
+        # runners describe their handler as "the controls CLI's own catch
+        # set" — a copy of the controls entry's except tuple — but r15
+        # (MemoryError) and r16 (RecursionError) extended the controls side
+        # without the copies, so a resource exhaustion inside a runner's
+        # check_case fell through to the traceback policy (exit 3, no
+        # verdict) while the controls CLI recorded a FAIL.  The drift
+        # happened twice; this source-reading pin over all three files
+        # keeps them in lockstep so the next extension cannot skip the
+        # copies (unregistered fixtures, so a revert mutant is killed by
+        # this pin alone).
+        import ast
+        entries = {
+            'controls': (common.SCRIPT / 'controls' / 'session_domain.py'),
+            'expectations': (common.ROOT / 'src/pilotdeck-gateway/'
+                             'tests/fixtures/session-domain-expectations/'
+                             'run_control.py'),
+            'native': (common.ROOT / 'src/pilotdeck-gateway/'
+                       'tests/fixtures/session-domain-native/'
+                       'run_control.py'),
+        }
+        for name, path in entries.items():
+            with self.subTest(runner=name):
+                text = path.read_text(encoding='utf-8')
+                guarded = [stmt for stmt in ast.walk(ast.parse(text))
+                           if isinstance(stmt, ast.Try) and any(
+                               isinstance(item, ast.Expr)
+                               and isinstance(item.value, ast.Call)
+                               and (getattr(item.value.func, 'id', None)
+                                    == 'check_case'
+                                    or getattr(item.value.func, 'attr', None)
+                                    == 'check_case')
+                               for item in stmt.body)]
+                self.assertEqual(len(guarded), 1,
+                                  'fix-r17: exactly one check_case call '
+                                  'under a handler: ' + name)
+                recorded = set()
+                for exc in guarded[0].handlers:
+                    members = (exc.type.elts if isinstance(exc.type, ast.Tuple)
+                               else [exc.type])
+                    recorded.update(member.id for member in members
+                                    if isinstance(member, ast.Name))
+                for resource in ('MemoryError', 'RecursionError'):
+                    self.assertIn(resource, recorded,
+                                  'fix-r17: the fixture runner catch set '
+                                  f'({name}) must carry {resource} like '
+                                  'the controls entry')
+
     def test_cli_main_is_only_the_one_guard_call(self):
         # The guard's single implementation is only useful if no entry keeps a
         # private bootstrap/classifier.  Each product CLI __main__ is exactly
