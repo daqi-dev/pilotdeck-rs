@@ -1441,3 +1441,27 @@ reverted, the conversion guard dropped, the fold pin's expectation
 reverted, the writes pin's direction reverted, the sentinel propagation
 swallowed, and both shims' RecursionError dropped) are killed by the
 named pins.
+
+fix-r18 (DS boundary#1 + sibling#1; MM boundary#1 + concurrency#1 r17
+P0/P1, two families, four roles, probe-verified —
+`fix-r18-audit/probe-r18-p0.out` F1-F6): the fold grammar returned the
+fail-open None for every node outside Constant/JoinedStr/BinOp, so a
+constant key built with a constant IfExp/BoolOp (`f'{"status" if True
+else "x"}'`, `'status' or "x"`) read as "not a status key" and the rogue
+write escaped enumeration; the key side also lacked the value side's
+`ast.walk` constant fallback, so the runtime-grammar Subscript shapes
+(`'status'[:6]`) escaped too.  Two layers: the fold's final return now
+stops as the sentinel for non-runtime IfExp/BoolOp (the only
+string-producing operators outside the grammar — a first draft folded
+every non-runtime grammar miss into the sentinel and failed the healthy
+controls `verdict = {}` baseline, so non-string shapes keep the None
+miss); `_status_key` gains the mirrored `ast.walk` constant fallback
+with the `**spread` None key kept a miss.  Pins: `_fsr4_shapes` (four
+constant shapes must stop the fold), `_fsr4_keys` (two Subscript shapes
+must read as status keys), `_fsr4_writes` (six rogues must be
+enumerated, the genuinely-runtime `report[name]` must stay out).  The
+test_safety lockstep pin now compares full catch sets (members read via
+`ast.unparse`) instead of MemoryError/RecursionError membership.  Ten
+revert mutants (both layers, four pin directions, the set-equality pin
+direction, and one dropped member per catch-set file) are killed by the
+named pins.
