@@ -684,20 +684,22 @@ impl LiveSession for SidecarSession {
         );
         let host_input = JsValue::Object(host_input);
         let build_router = || {
-            super::module_host::with_context_resources(self.context_resources.clone(), || {
-                super::module_host::with_mcp_owner(self.mcp_owner.clone(), || {
-                    super::module_host::with_user_dialogs(self.user_dialogs.clone(), || {
-                        super::module_host::build_with_router_state(
-                            self.config.snapshot.clone(),
-                            &host_input,
-                            events.clone(),
-                            cancellation_for_host.clone(),
-                            steers.clone(),
-                            self.usage_stats.clone(),
-                            self.config.services.clone(),
-                            self.interactions.clone(),
-                            Some(self.router_state.clone()),
-                        )
+            super::module_host::with_subagent_providers(self.subagent_providers.clone(), || {
+                super::module_host::with_context_resources(self.context_resources.clone(), || {
+                    super::module_host::with_mcp_owner(self.mcp_owner.clone(), || {
+                        super::module_host::with_user_dialogs(self.user_dialogs.clone(), || {
+                            super::module_host::build_with_router_state(
+                                self.config.snapshot.clone(),
+                                &host_input,
+                                events.clone(),
+                                cancellation_for_host.clone(),
+                                steers.clone(),
+                                self.usage_stats.clone(),
+                                self.config.services.clone(),
+                                self.interactions.clone(),
+                                Some(self.router_state.clone()),
+                            )
+                        })
                     })
                 })
             })
