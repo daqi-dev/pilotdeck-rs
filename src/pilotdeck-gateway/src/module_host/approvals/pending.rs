@@ -35,7 +35,7 @@
 
 use super::{
     ApprovalFailure, ApprovalPendingStore, ResumeSource, StoreAuthority, StoreResumeCommand,
-    StoreResumeInput, StoreStatusInput, js_truthy, state_error,
+    StoreResumeInput, StoreStatusInput, js_truthy, state_error, strict_equal_values as strict_equal,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -564,17 +564,6 @@ fn replay_receipt(
     ]))
 }
 
-// Resume compares caller values with JavaScript ===, not structural object
-// equality. Receipts read from JSON can never share object identity with input.
-fn strict_equal(left: &JsValue, right: &JsValue) -> bool {
-    match (left, right) {
-        (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
-        (JsValue::Bool(a), JsValue::Bool(b)) => a == b,
-        (JsValue::Number(a), JsValue::Number(b)) => !strict_not_equal(*a, *b),
-        (JsValue::String(a), JsValue::String(b)) => a == b,
-        _ => false,
-    }
-}
 fn is_human(source: &JsValue) -> bool {
     matches!(source, JsValue::String(v) if v.equals_str("human"))
 }
@@ -979,12 +968,6 @@ pub(crate) fn deep_strict_equal(left: &JsValue, right: &JsValue) -> bool {
         }
         _ => false,
     }
-}
-
-/// JavaScript strict `!==` for two revisions: numerically equal values are
-/// strictly equal (`-0 === 0`), `NaN` equals nothing.
-fn strict_not_equal(left: f64, right: f64) -> bool {
-    !(left == right)
 }
 
 /// #1473 negative-control support: swap one seeded entry's `state` behind

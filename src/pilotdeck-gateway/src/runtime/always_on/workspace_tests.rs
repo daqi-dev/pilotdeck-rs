@@ -546,7 +546,7 @@ impl CommandRunner for RemoveFailureRunner {
     }
 }
 #[tokio::test]
-async fn rollback_attempts_the_real_branch_cas_even_after_owned_directory_cleanup_fails() {
+async fn rollback_preserves_the_registered_branch_after_owned_directory_cleanup_fails() {
     use std::os::unix::fs::PermissionsExt;
     let fixture = Fixture::new();
     let project = Path::new(&fixture.paths.project_key);
@@ -571,7 +571,7 @@ async fn rollback_attempts_the_real_branch_cas_even_after_owned_directory_cleanu
     assert!(refused.is_err());
     assert!(closed.is_err());
     assert!(drained.is_ok());
-    assert_ne!(
+    assert_eq!(
         fixture
             .git(
                 project,
@@ -587,17 +587,10 @@ async fn rollback_attempts_the_real_branch_cas_even_after_owned_directory_cleanu
         Some(0)
     );
     let commands = commands.lock().unwrap();
-    let remove = commands
-        .iter()
-        .position(|c| c.contains("'worktree' 'remove'"))
-        .unwrap();
-    let cas = commands
-        .iter()
-        .position(|c| c.contains("'update-ref' '-d'"))
-        .unwrap();
+    assert!(commands.iter().any(|c| c.contains("'worktree' 'remove'")));
     assert!(
-        cas > remove,
-        "independent cleanup must not short-circuit: {commands:?}"
+        !commands.iter().any(|c| c.contains("'update-ref' '-d'")),
+        "failed worktree removal must preserve its checked-out ref: {commands:?}"
     );
 }
 struct OriginalReplacementRunner {
@@ -928,9 +921,177 @@ async fn missing_directory_does_not_authorize_foreign_registration_ref_or_unpinn
             assert!(cwd.with_extension("kept").join("tracked.txt").exists());
         }
         if kind == "foreign-directory" {
+            assert_eq!(
+                error.message,
+                JsString::from("Created workspace was replaced before cleanup.")
+            );
             assert_eq!(std::fs::read(cwd.join("foreign")).unwrap(), b"FOREIGN");
         }
-        assert!(provider.close().await.is_err());
+        assert_eq!(
+            provider.close().await.unwrap_err().code,
+            "workspace_cleanup_failed"
+        );
         fixture.registry.dispose().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn dispose_failed_git_remove_preserves_the_real_registered_branch_and_data() {
+    let fixture = Fixture::new();
+    let project = Path::new(&fixture.paths.project_key);
+    fixture.initialize_git(project).await;
+    let setup = fixture.provider(Arc::new(NativeOwnedShellCommandRunner));
+    let handle = setup
+        .prepare(
+            "git-worktree",
+            "dispose-remove-failure".into(),
+            "fixture".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    setup.close().await.unwrap();
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let provider = fixture.provider(Arc::new(RemoveFailureRunner {
+        commands: commands.clone(),
+    }));
+    let failed = provider.dispose(handle, false).await.unwrap_err();
+    assert_eq!(failed.code, "workspace_cleanup_failed");
+    assert_eq!(
+        fixture
+            .git(
+                project,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/heads/always-on/dispose-remove-failure"
+                ]
+            )
+            .await
+            .exit_code,
+        Some(0)
+    );
+    let listing = fixture
+        .git(project, &["worktree", "list", "--porcelain"])
+        .await;
+    assert_eq!(listing.exit_code, Some(0));
+    let owned = listing
+        .stdout
+        .split("\n\n")
+        .find(|record| {
+            record
+                .lines()
+                .any(|line| line == "branch refs/heads/always-on/dispose-remove-failure")
+        })
+        .unwrap();
+    let path = owned
+        .lines()
+        .find_map(|line| line.strip_prefix("worktree "))
+        .unwrap();
+    assert_eq!(
+        std::fs::read(Path::new(path).join("tracked.txt")).unwrap(),
+        b"INITIAL\n"
+    );
+    {
+        let commands = commands.lock().unwrap();
+        assert!(commands.iter().any(|c| c.contains("'worktree' 'remove'")));
+        assert!(!commands.iter().any(|c| c.contains("'update-ref' '-d'")));
+    }
+    assert!(provider.close().await.is_err());
+    fixture.registry.dispose().await.unwrap();
+}
+
+struct RegisterAfterRemoveRunner {
+    target: PathBuf,
+    commands: Arc<Mutex<Vec<String>>>,
+}
+impl CommandRunner for RegisterAfterRemoveRunner {
+    fn run(&self, command: JsString, options: CommandOptions) -> ToolFuture<CommandResult> {
+        let target = self.target.clone();
+        let commands = self.commands.clone();
+        Box::pin(async move {
+            let text = command.to_utf8().unwrap();
+            commands.lock().unwrap().push(text.clone());
+            let removed = text.contains("'worktree' 'remove'");
+            let result = NativeOwnedShellCommandRunner
+                .run(command, options.clone())
+                .await?;
+            if removed && result.exit_code == Some(0) {
+                let checkout = [
+                    "git",
+                    "worktree",
+                    "add",
+                    target.to_str().unwrap(),
+                    "always-on/recheckout",
+                ]
+                .into_iter()
+                .map(quote)
+                .collect::<Vec<_>>()
+                .join(" ");
+                let added = NativeOwnedShellCommandRunner
+                    .run(checkout.as_str().into(), options)
+                    .await?;
+                assert_eq!(added.exit_code, Some(0), "{}", added.stderr);
+            }
+            Ok(result)
+        })
+    }
+}
+#[tokio::test]
+async fn dispose_preserves_a_branch_registered_elsewhere_after_its_original_removal() {
+    let fixture = Fixture::new();
+    let project = Path::new(&fixture.paths.project_key);
+    fixture.initialize_git(project).await;
+    let setup = fixture.provider(Arc::new(NativeOwnedShellCommandRunner));
+    let handle = setup
+        .prepare("git-worktree", "recheckout".into(), "fixture".into(), None)
+        .await
+        .unwrap();
+    let original = native_path(&handle.cwd).unwrap();
+    setup.close().await.unwrap();
+    let target = fixture.root.0.join("external-checkout");
+    let commands = Arc::new(Mutex::new(Vec::new()));
+    let provider = fixture.provider(Arc::new(RegisterAfterRemoveRunner {
+        target: target.clone(),
+        commands: commands.clone(),
+    }));
+    let failed = provider.dispose(handle, false).await.unwrap_err();
+    assert_eq!(failed.code, "workspace_cleanup_failed");
+    assert!(
+        failed
+            .message
+            .to_utf8()
+            .unwrap()
+            .contains("remains registered")
+    );
+    assert!(!original.exists());
+    assert_eq!(
+        fixture
+            .git(
+                project,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/heads/always-on/recheckout"
+                ]
+            )
+            .await
+            .exit_code,
+        Some(0)
+    );
+    assert_eq!(
+        std::fs::read(target.join("tracked.txt")).unwrap(),
+        b"INITIAL\n"
+    );
+    assert!(
+        !commands
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|c| c.contains("'update-ref' '-d'"))
+    );
+    assert!(provider.close().await.is_err());
+    fixture.registry.dispose().await.unwrap();
 }

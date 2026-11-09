@@ -5218,3 +5218,8 @@ r129首编发现raw revision引用临时Undefined寿命不足，已用局部值�
 ### 2026-11-09 08:41 · 两小时接续与最终缺陷修复
 
 r130 固定357034288：SOP18/AO119/admission13/owner66及四bin通过，native554过2失败、approvals130过1失败、project189过1失败；已逐SHA接Cron closed Weak清第五真实引用环、resume事务避免二次migration丢numeric receipt，补503真实JSONL前提及Read真实文件fixture，strict八进制字面修复。AO缺目录重试接真实原fd/common-dir/registration/old-tip CAS四源及两真实Git回归，待r131；不承诺与外部Git新增注册原子事务，该边界正在审。SOP模型项目proxy真实9项全过；旧源FD峰native63/末53 KQUEUE的失败原件保留。第二镜像运行原owner负控，Notify only-enable与真旧顺序分别记录，绝不改marker求绿。下一步r131相关测试、FD曲线、独立增量终审；源码安装两代功能通过但原PID监视器总FAIL保留。仅本机提交、Rust只mbp2，CLI工程收口尚未完成，阶段人签仍待。
+
+
+### 2026-11-09 08:50 · 实际关闭图通过与清理保护补强
+
+r131 4b48bff9全目标check/strict/四bin通过，SOP18/磁盘resume44格所在4项/switch14/project190过；native555过1审批fixture错误码断言，AO120过1foreign目录错误域失败。前者按config原PermissionDenied→PROJECT_BINDING_STORE_INVALID契约修准确断言，后者确为dispose权限拒绝误标prepare导致close吞错，已修cleanup域并保原message/外物/ref。新增Gitremove失败保ref与移除后已被另处checkout拒删，修旧rollback失败仍CAS。256FD相同曲线cron17全过峰24末6、native峰31末19，真实boot四轮弱图全释放；不冒称所有资源无泄漏。双家SOP/生命周期增量已出一路四角色无P0/P1；P2a补ConfigStore真实解绑、TCP头有界完整读取、disabled resume顺序、复用===与精确oracle排除名，模型proxy缺测试由既有真实r130全链证据承接。下一步r132对应回归及AO独立终审。仅本机提交、Rust只mbp2。

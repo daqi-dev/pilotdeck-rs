@@ -177,7 +177,7 @@ pub(super) const NOT_ADVERTISED: &[(&str, &str)] = &[
     ),
     (
         "sdk_session_config",
-        "no `set_sdk_session_config` request exists in the wire protocol and no SDK session registry here; the #1305 registry (native_process/methods/mod.rs) routes nothing by that name",
+        "no `set_sdk_session_config` request exists in the wire protocol; native SDK settings are consumed by turn submission, not a request with this capability name",
     ),
 ];
 

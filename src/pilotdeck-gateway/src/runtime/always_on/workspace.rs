@@ -16,23 +16,6 @@ use std::{
 };
 use tokio::sync::{oneshot, watch};
 
-fn cleanup_results(
-    directory: Result<(), WorkspaceError>,
-    branch: Result<(), WorkspaceError>,
-) -> Result<(), WorkspaceError> {
-    match (directory, branch) {
-        (Ok(()), Ok(())) => Ok(()),
-        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-        (Err(directory), Err(branch)) => Err(WorkspaceError::new(
-            "workspace_cleanup_failed",
-            format!(
-                "{}; branch cleanup also failed: {}",
-                String::from_utf16_lossy(directory.message.units()),
-                String::from_utf16_lossy(branch.message.units())
-            ),
-        )),
-    }
-}
 const MAX_JOBS: usize = 4;
 const COMMAND_UNITS: usize = 8 * 1024 * 1024;
 const DIFF_UNITS: usize = 80_000;
@@ -632,9 +615,12 @@ impl NativeWorkspace {
             Ok(())
         }
         .await;
-        // Independent compare-and-delete is attempted even when directory
-        // inspection, registration cleanup, or the child runner failed.
-        let branch = match self
+        // A failed removal leaves a possibly checked-out workspace. Ref CAS
+        // does not enforce Git's checked-out-branch protection.
+        directory?;
+        self.require_unregistered_branch(repository, repository_path, branch_ref)
+            .await?;
+        match self
             .command(
                 repository,
                 repository_path,
@@ -645,8 +631,33 @@ impl NativeWorkspace {
         {
             Ok(result) => expect_ok(&result, "git update-ref rollback workspace branch"),
             Err(error) => Err(error),
-        };
-        cleanup_results(directory, branch)
+        }
+    }
+    async fn require_unregistered_branch(
+        &self,
+        repository: &Arc<File>,
+        repository_path: &Path,
+        branch_ref: &str,
+    ) -> Result<(), WorkspaceError> {
+        let listed = self
+            .command(
+                repository,
+                repository_path,
+                &["git", "worktree", "list", "--porcelain", "-z"],
+                None,
+            )
+            .await?;
+        expect_ok(&listed, "git worktree list before owned branch deletion")?;
+        let expected = format!("branch {branch_ref}");
+        if listed.stdout.split('\0').any(|field| field == expected) {
+            return Err(WorkspaceError::new(
+                "workspace_cleanup_failed",
+                "Workspace branch remains registered in a worktree; preserving its ref.",
+            ));
+        }
+        // This observation is not a lock on other Git writers. An external
+        // registration after this check is outside the native owner's fence.
+        Ok(())
     }
     async fn registered_worktree(
         &self,
@@ -917,6 +928,15 @@ impl NativeWorkspace {
                     {
                         return owner.dispose_removed_git(&handle, &cwd).await;
                     }
+                    Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                        // Refusing a cleanup because its directory identity is
+                        // uncertain is a cleanup failure, not prepare failure.
+                        // Keep it observable by the owned-job close drain.
+                        return Err(WorkspaceError::new(
+                            "workspace_cleanup_failed",
+                            error.to_string(),
+                        ));
+                    }
                     Err(error) => return Err(error.into()),
                 };
                 if handle.strategy == "git-worktree" {
@@ -937,8 +957,8 @@ impl NativeWorkspace {
                         })
                         .transpose()?;
                     let run = cwd.file_name().and_then(|name| name.to_str()).unwrap_or("");
-                    // Branch and directory cleanup are independent. In particular,
-                    // a previous partial cleanup may already have removed the ref.
+                    // A previous partial cleanup may already have removed the ref.
+                    // Removing the directory/registration must succeed before CAS.
                     let owned_branch: Result<Option<(String, String)>, WorkspaceError> = async {
                         let Some(branch) = branch.filter(|b| b == &format!("always-on/{run}"))
                         else {
@@ -975,25 +995,34 @@ impl NativeWorkspace {
                     let directory = owner
                         .remove_git_selected(&repository, &owner.0.project, cwd, directory)
                         .await;
-                    let branch = match owned_branch {
-                        Ok(Some((branch_ref, expected))) => match owner
-                            .command(
-                                &repository,
-                                &owner.0.project,
-                                &["git", "update-ref", "-d", &branch_ref, &expected],
-                                None,
-                            )
-                            .await
-                        {
-                            Ok(result) => {
-                                expect_ok(&result, "git update-ref dispose workspace branch")
+                    directory?;
+                    match owned_branch {
+                        Ok(Some((branch_ref, expected))) => {
+                            owner
+                                .require_unregistered_branch(
+                                    &repository,
+                                    &owner.0.project,
+                                    &branch_ref,
+                                )
+                                .await?;
+                            match owner
+                                .command(
+                                    &repository,
+                                    &owner.0.project,
+                                    &["git", "update-ref", "-d", &branch_ref, &expected],
+                                    None,
+                                )
+                                .await
+                            {
+                                Ok(result) => {
+                                    expect_ok(&result, "git update-ref dispose workspace branch")
+                                }
+                                Err(error) => Err(error),
                             }
-                            Err(error) => Err(error),
-                        },
+                        }
                         Ok(None) => Ok(()),
                         Err(error) => Err(error),
-                    };
-                    cleanup_results(directory, branch)
+                    }
                 } else {
                     let paths = owner.0.paths.clone();
                     let captured = owner

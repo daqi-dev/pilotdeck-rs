@@ -962,12 +962,23 @@ mod native_skills_proxy_limit_tests {
         let addr = listener.local_addr().unwrap();
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
-            let mut request = [0; 4096];
-            let n = stream.read(&mut request).await.unwrap();
-            assert!(std::str::from_utf8(&request[..n]).unwrap().starts_with("CONNECT skills.invalid:80 "));
+            async fn read_head(stream: &mut tokio::net::TcpStream) -> Vec<u8> {
+                tokio::time::timeout(Duration::from_secs(5), async {
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        assert!(head.len() < 16 * 1024, "oversize HTTP head");
+                        let mut byte = [0];
+                        assert_eq!(stream.read(&mut byte).await.unwrap(), 1, "early EOF");
+                        head.push(byte[0]);
+                    }
+                    head
+                }).await.expect("bounded HTTP head")
+            }
+            let request = read_head(&mut stream).await;
+            assert!(request.starts_with(b"CONNECT skills.invalid:80 "));
             stream.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.unwrap();
-            let n = stream.read(&mut request).await.unwrap();
-            assert!(std::str::from_utf8(&request[..n]).unwrap().starts_with("GET /manifest "));
+            let request = read_head(&mut stream).await;
+            assert!(request.starts_with(b"GET /manifest "));
             let size = 8 * 1024 * 1024 + 1;
             let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n");
             stream.write_all(headers.as_bytes()).await.unwrap();
