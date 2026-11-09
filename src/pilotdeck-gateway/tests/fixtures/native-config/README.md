@@ -1,6 +1,6 @@
 # native-config 负控（#1455）
 
-`config` 方法族（7 个 session 配置方法）与共享 `?.trim()` 守卫的变异负控装置。
+`config` 方法族（7 个 session 配置方法）与共享 `?.trim()` 守卫的变异负控装置；#1864/#2272/#2562/#2195 起接入跨族变异源（`assembly.rs` / `requests.rs` / `services.rs` / `methods/cron.rs`，见下「锚点」段）。
 
 ## 跑法
 
