@@ -527,3 +527,199 @@ pub(crate) fn shared_task_budget_port(
     Arc::new(crate::runtime::sdk_session::TaskBudgetStorePort::with_shared(store))
 }
 
+#[cfg(test)]
+pub fn native_submit_host_for_route_input_tests(
+    root: PathBuf,
+    owner: crate::runtime::session::SessionOwner,
+) -> Arc<GatewaySubmitHost> {
+    use crate::metadata::object;
+    use crate::runtime::replacement::{ReplacementCoordinator, ReplacementStorage, ReplacementSession};
+    use crate::runtime::session::TurnCompletionHandle;
+    use crate::runtime::turn::admission::{GatewaySubmitAdmission, SubmitAdmissionOptions};
+
+    struct RouteInputServices;
+    impl SubmitHostServices for RouteInputServices {
+        fn workspace_id(&self, _: &JsValue) -> Result<Option<JsString>, SubmitError> {
+            Ok(None)
+        }
+        fn snapshots(&self) -> Option<Arc<dyn SubmitSnapshots>> {
+            None
+        }
+        fn snapshots_required(&self) -> bool {
+            false
+        }
+        fn cwd(&self) -> Option<Arc<dyn SubmitCwdService>> {
+            None
+        }
+        fn refresh(&self) -> SubmitFuture<'_, Result<(), SubmitError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn run_policy(&self) -> Option<JsValue> {
+            None
+        }
+        fn resolve_attachments<'a>(
+            &'a self,
+            _: &'a JsValue,
+        ) -> SubmitFuture<'a, Result<SubmitAttachmentLease, SubmitError>> {
+            Box::pin(async {
+                Ok(SubmitAttachmentLease {
+                    attachments: vec![],
+                    release: Box::new(|| Box::pin(async { Ok(()) })),
+                })
+            })
+        }
+        fn prepare_attachment_turn<'a>(
+            &'a self,
+            _: &'a JsValue,
+            _: &'a RunRef,
+        ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+            Box::pin(async { Ok(object([("type", "text".into())])) })
+        }
+        fn resolve_model_selection<'a>(
+            &'a self,
+            _: &'a JsValue,
+        ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
+            Box::pin(async { Ok(object([("source", "default".into())])) })
+        }
+        fn record_failure<'a>(
+            &'a self,
+            _: &'a RunRef,
+            _: &'a JsValue,
+        ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+            Box::pin(async { Ok(()) })
+        }
+        fn after_turn(&self, _: &RunRef) -> Result<(), SubmitError> {
+            Ok(())
+        }
+        fn now_ms(&self) -> f64 {
+            0.0
+        }
+        fn abort_turn_timeout_ms(&self) -> u64 {
+            20
+        }
+    }
+
+    struct ChannelRouteInputAdmission {
+        home: PathBuf,
+        cwd: PathBuf,
+        inner: Arc<GatewaySubmitAdmission>,
+    }
+    impl SubmitAdmission for ChannelRouteInputAdmission {
+        fn normalize<'a>(
+            &'a self,
+            input: &'a mut JsValue,
+        ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+            self.inner.normalize(input)
+        }
+        fn route_input<'a>(
+            &'a self,
+            input: &'a mut JsValue,
+        ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+            let home = self.home.clone();
+            let cwd = self.cwd.clone();
+            let channel_key = input
+                .get("channelKey")
+                .and_then(JsValue::as_string)
+                .map(|key| String::from_utf16_lossy(key.units()))
+                .unwrap_or_default();
+            let message_text = input
+                .get("message")
+                .and_then(JsValue::as_string)
+                .map(|text| String::from_utf16_lossy(text.units()))
+                .unwrap_or_default();
+            let inner = self.inner.clone();
+            let input_owned = input.clone();
+            Box::pin(async move {
+                let mut replies = Vec::<String>::new();
+                let result = crate::config::routes::channel_inbound::production_route_input(
+                    &home,
+                    &cwd,
+                    channel_key.as_str(),
+                    message_text.as_str(),
+                    |reply| replies.push(reply.to_owned()),
+                );
+                if result.slash_handled {
+                    let mut events = Vec::new();
+                    for reply in replies {
+                        events.push(object([
+                            ("type", "channel_command_reply".into()),
+                            ("channelKey", channel_key.as_str().into()),
+                            ("message", reply.as_str().into()),
+                        ]));
+                    }
+                    events.push(object([
+                        ("type", "turn_completed".into()),
+                        ("finishReason", "channel_command".into()),
+                    ]));
+                    return Ok(events);
+                }
+                let mut input = input_owned;
+                inner.route_input(&mut input).await
+            })
+        }
+        fn preflight<'a>(
+            &'a self,
+            input: &'a JsValue,
+            run: &'a RunRef,
+        ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+            self.inner.preflight(input, run)
+        }
+        fn admitted_preflight<'a>(
+            &'a self,
+            input: &'a JsValue,
+            run: &'a RunRef,
+            completion: &'a TurnCompletionHandle,
+        ) -> SubmitFuture<'a, Result<Vec<JsValue>, SubmitError>> {
+            self.inner.admitted_preflight(input, run, completion)
+        }
+        fn observe_event<'a>(
+            &'a self,
+            input: &'a JsValue,
+            event: &'a JsValue,
+        ) -> SubmitFuture<'a, Result<(), SubmitError>> {
+            self.inner.observe_event(input, event)
+        }
+        fn has_sdk_config(&self) -> bool {
+            self.inner.has_sdk_config()
+        }
+        fn validate_sdk_config(&self, config: &JsValue) -> Result<(), SubmitError> {
+            self.inner.validate_sdk_config(config)
+        }
+        fn set_sdk_config<'a>(
+            &'a self,
+            input: &'a JsValue,
+            completion: &'a TurnCompletionHandle,
+        ) -> SubmitFuture<'a, Result<bool, SubmitError>> {
+            self.inner.set_sdk_config(input, completion)
+        }
+        fn reject_pending(&self, session: &JsString, reason: &str) -> Result<(), SubmitError> {
+            self.inner.reject_pending(session, reason)
+        }
+    }
+
+    let session: Arc<dyn ReplacementSession> = Arc::new(owner);
+    let replacement = ReplacementCoordinator::new(
+        ReplacementStorage {
+            fork_session: None,
+            replace_last_turn: None,
+            finalize_last_turn_replacement: None,
+        },
+        session,
+        60_000,
+        None,
+    );
+    let replacement = Arc::new(replacement);
+    let admission = Arc::new(ChannelRouteInputAdmission {
+        home: root.clone(),
+        cwd: root.clone(),
+        inner: Arc::new(GatewaySubmitAdmission::new(SubmitAdmissionOptions::new(
+            replacement.clone(),
+        ))),
+    });
+    Arc::new(GatewaySubmitHost::new(
+        Arc::new(RouteInputServices),
+        Arc::new(NativeSubmitReplacement((*replacement).clone())),
+        admission,
+    ))
+}
+

@@ -376,3 +376,94 @@ fn epoch_ms(value: &JsString) -> Option<i64> {
         _ => None,
     }
 }
+
+/// WS / shared-services entry for `rewind_files` (`GatewayServices::request`).
+pub async fn handle(
+    services: &crate::routes::GatewayServices,
+    params: &JsValue,
+) -> Result<JsValue, crate::runtime::connection::RequestError> {
+    use crate::runtime::connection::RequestError;
+    use crate::storage::{AsyncTranscriptAdapter, JsonlTranscriptStore};
+    use std::sync::Arc;
+
+    fn required_trimmed(
+        params: &JsValue,
+        key: &str,
+        code: &str,
+        message: &str,
+    ) -> Result<JsString, RequestError> {
+        match params.get(key).and_then(JsValue::as_string) {
+            Some(value) if !value.is_empty() => Ok(value.clone()),
+            _ => {
+                let mut error = RequestError::new(message);
+                error.code = code.into();
+                Err(error)
+            }
+        }
+    }
+
+    fn session_error(code: &str, message: &str) -> RequestError {
+        let mut error = RequestError::new(message);
+        error.code = code.into();
+        error
+    }
+
+    let home = services.home.clone();
+    let cwd = services.cwd.clone();
+    let admission = services.admission.clone();
+    let params = params.clone();
+    tokio::task::spawn_blocking(move || {
+        let session_key = required_trimmed(
+            &params,
+            "sessionKey",
+            "INVALID_SESSION_KEY",
+            "sessionKey is required.",
+        )?;
+        let user_message_id = required_trimmed(
+            &params,
+            "userMessageId",
+            "INVALID_MESSAGE_ID",
+            "userMessageId is required.",
+        )?;
+        if admission.has_active_turn(&session_key) {
+            return Err(session_error(
+                "SESSION_BUSY",
+                "Cannot rewind files while a turn is active.",
+            ));
+        }
+        let dry_run = params
+            .get("dryRun")
+            .and_then(JsValue::as_bool)
+            .unwrap_or(false);
+        let user_message_id = user_message_id
+            .to_utf8()
+            .map_err(|_| RequestError::new("userMessageId must be valid UTF-8."))?;
+        let project_root = match params.get("projectKey").and_then(JsValue::as_string) {
+            Some(key) => crate::metadata::resolve_path(&cwd, std::path::Path::new(
+                &key.to_utf8().map_err(|_| RequestError::new("projectKey must be valid UTF-8."))?,
+            )),
+            None => cwd.clone(),
+        };
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(JsonlTranscriptStore::new()),
+            Arc::new(|key: &crate::storage::ProjectKey| {
+                crate::session_chat_dir(
+                    &key.pilot_home,
+                    &key.project_root,
+                    &key.project_root.to_string_lossy(),
+                )
+            }),
+        );
+        Ok(rewind_files(RewindFilesInput {
+            adapter: &adapter,
+            project_root: &project_root,
+            pilot_home: &home,
+            session_key: &session_key,
+            user_message_id: &user_message_id,
+            dry_run,
+            now: None,
+        }))
+    })
+    .await
+    .map_err(|error| crate::runtime::connection::RequestError::new(error.to_string()))?
+}

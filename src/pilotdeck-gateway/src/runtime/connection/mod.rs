@@ -442,5 +442,40 @@ impl Drop for SubmitCleanup<'_> {
             .retain(|s| s != session);
     }
 }
+/// Pairing fixture transport reuses the same injection surface as [`GatewayConnection`].
+#[cfg(test)]
+pub type RequestContext = context::State;
+
+/// Mirrors `GatewayWsConnection` permission_decide notification emission.
+pub fn permission_notification(params: &JsValue) -> Result<Option<JsValue>, RequestError> {
+    if matches!(params, JsValue::Null | JsValue::Undefined) {
+        let kind = if params.is_undefined() {
+            "undefined"
+        } else {
+            "null"
+        };
+        return Err(RequestError::new(format!(
+            "Cannot read properties of {kind} (reading 'sessionKey')"
+        )));
+    }
+    let Some(session) = params.get("sessionKey").and_then(JsValue::as_string) else {
+        return Ok(None);
+    };
+    let Some(request_id) = params.get("requestId").and_then(JsValue::as_string) else {
+        return Ok(None);
+    };
+    let mut payload = JsObject::new();
+    payload.insert("type".into(), JsValue::from("resolved"));
+    payload.insert("sessionKey".into(), JsValue::String(session.clone()));
+    if params.get("projectKey").and_then(JsValue::as_string).is_some() {
+        payload.insert(
+            "projectKey".into(),
+            params.get("projectKey").cloned().unwrap(),
+        );
+    }
+    payload.insert("requestId".into(), JsValue::String(request_id.clone()));
+    Ok(Some(JsValue::Object(payload)))
+}
+
 #[cfg(test)]
 mod tests;

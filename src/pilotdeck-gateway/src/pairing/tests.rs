@@ -18,7 +18,7 @@ impl Pair {
         Self {
             client,
             server,
-            task: tokio::spawn(run(downstream, upstream)),
+            task: tokio::spawn(run(downstream, upstream, None)),
         }
     }
 
@@ -162,7 +162,7 @@ async fn large_text_payload_over_64k_stays_byte_exact() {
 async fn fragmented_tcp_reads_and_coalesced_frames_decode_independently() {
     let (mut client, downstream) = tokio::io::duplex(7);
     let (upstream, mut server) = tokio::io::duplex(7);
-    let relay = tokio::spawn(run(downstream, upstream));
+    let relay = tokio::spawn(run(downstream, upstream, None));
     let mut wire = client_frame(0x01, 127, b"first fragment is itself a message");
     wire.extend(client_frame(0x81, 126, b"second"));
     let expected = wire.clone();
@@ -667,7 +667,7 @@ async fn upstream_write_failure_on_text_ping_or_close_drains_pending_ts_close() 
     for opcode in [1, 9, 8] {
         let (mut client, downstream) = tokio::io::duplex(4096);
         let (upstream, mut server) = tokio::io::duplex(4096);
-        let task = tokio::spawn(run(downstream, BrokenUpstreamWriter(upstream)));
+        let task = tokio::spawn(run(downstream, BrokenUpstreamWriter(upstream), None));
         let close = close_wire(4002, "invalid_json");
         write(&mut server, &close[..3]).await;
         write(&mut client, &client_frame(0x80 | opcode, 0, &[])).await;

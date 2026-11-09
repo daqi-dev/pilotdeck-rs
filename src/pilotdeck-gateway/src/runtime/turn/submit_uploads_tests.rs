@@ -151,7 +151,7 @@ async fn virtual_general_upload_can_be_reopened_and_consumed_by_a_turn() {
         .create("missing", &JsValue::Array(vec![]), None)
         .unwrap_err();
     assert_eq!(unknown.code, "PROJECT_NOT_FOUND");
-    assert_eq!(unknown.message, "Unknown projectKey: missing");
+    assert_eq!(unknown.message, JsString::from("Unknown projectKey: missing"));
 }
 
 #[tokio::test]

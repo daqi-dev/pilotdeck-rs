@@ -1,0 +1,137 @@
+[
+  {
+    "name": "legacy-subset-valid",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "retries": { "type": "integer", "minimum": 0, "maximum": 5, "multipleOf": 1 },
+        "tag": { "type": "string", "minLength": 3, "maxLength": 8, "pattern": "^[a-z]+$" },
+        "contact": { "type": "string", "format": "email" },
+        "targets": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "labels": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } }
+      },
+      "required": ["retries", "tag", "targets", "contact"],
+      "additionalProperties": false
+    },
+    "value": {
+      "retries": 2,
+      "tag": "release",
+      "contact": "owner@example.com",
+      "targets": ["unit", "e2e"],
+      "labels": { "region": "us" }
+    },
+    "expected": true
+  },
+  {
+    "name": "legacy-subset-invalid",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "retries": { "type": "integer", "minimum": 0, "maximum": 5, "multipleOf": 1 },
+        "tag": { "type": "string", "minLength": 3, "maxLength": 8, "pattern": "^[a-z]+$" },
+        "contact": { "type": "string", "format": "email" },
+        "targets": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "labels": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } }
+      },
+      "required": ["retries", "tag", "targets", "contact"],
+      "additionalProperties": false
+    },
+    "value": {
+      "retries": 6,
+      "tag": "RELEASE",
+      "contact": "not-an-email",
+      "targets": ["unit", "unit"],
+      "labels": { "region": "" }
+    },
+    "expected": false
+  },
+  {
+    "name": "draft-valid",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "$defs": {
+        "positiveInteger": { "type": "integer", "minimum": 1 }
+      },
+      "properties": {
+        "retries": { "$ref": "#/$defs/positiveInteger" },
+        "modes": {
+          "type": "array",
+          "prefixItems": [{ "const": "safe" }],
+          "items": { "enum": ["safe", "fast"] },
+          "minItems": 1
+        }
+      },
+      "required": ["retries"],
+      "unevaluatedProperties": false
+    },
+    "value": { "retries": 2, "modes": ["safe", "fast"] },
+    "expected": true
+  },
+  {
+    "name": "draft-invalid-zero",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "$defs": {
+        "positiveInteger": { "type": "integer", "minimum": 1 }
+      },
+      "properties": {
+        "retries": { "$ref": "#/$defs/positiveInteger" },
+        "modes": {
+          "type": "array",
+          "prefixItems": [{ "const": "safe" }],
+          "items": { "enum": ["safe", "fast"] },
+          "minItems": 1
+        }
+      },
+      "required": ["retries"],
+      "unevaluatedProperties": false
+    },
+    "value": { "retries": 0 },
+    "expected": false
+  },
+  {
+    "name": "draft-invalid-extra",
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "$defs": {
+        "positiveInteger": { "type": "integer", "minimum": 1 }
+      },
+      "properties": {
+        "retries": { "$ref": "#/$defs/positiveInteger" },
+        "modes": {
+          "type": "array",
+          "prefixItems": [{ "const": "safe" }],
+          "items": { "enum": ["safe", "fast"] },
+          "minItems": 1
+        }
+      },
+      "required": ["retries"],
+      "unevaluatedProperties": false
+    },
+    "value": { "retries": 2, "unexpected": true },
+    "expected": false
+  },
+  {
+    "name": "format-email-valid",
+    "schema": {
+      "type": "object",
+      "properties": { "value": { "type": "string", "format": "email" } },
+      "required": ["value"]
+    },
+    "value": { "value": "owner@example.com" },
+    "expected": true
+  },
+  {
+    "name": "format-email-invalid",
+    "schema": {
+      "type": "object",
+      "properties": { "value": { "type": "string", "format": "email" } },
+      "required": ["value"]
+    },
+    "value": { "value": "owner.example.com" },
+    "expected": false
+  }
+]

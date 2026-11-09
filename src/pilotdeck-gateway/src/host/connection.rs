@@ -507,6 +507,11 @@ impl Connection {
         while self.incoming.try_recv().is_ok() {}
         result
     }
+
+    #[cfg(test)]
+    pub(super) fn widen_reap_for_test(&mut self) {
+        self.reap_deadline = Some(std::time::Duration::from_secs(10));
+    }
 }
 impl Drop for Connection {
     fn drop(&mut self) {

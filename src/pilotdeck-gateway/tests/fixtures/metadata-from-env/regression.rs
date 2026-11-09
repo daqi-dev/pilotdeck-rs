@@ -110,7 +110,7 @@ fn environment_worker() {
     let (downstream, down_peer) = tokio::io::duplex(64);
     let (upstream, up_peer) = tokio::io::duplex(64);
     drop((down_peer, up_peer));
-    let paired = runtime.block_on(crate::pairing::run(downstream, upstream));
+    let paired = runtime.block_on(crate::pairing::run(downstream, upstream, None));
     if let Some(error) = expected.get("error") {
         crate::negative_assert!(paired.is_err(), "pairing propagates cwd failure: {name}");
         let actual = paired.expect_err("#946 cwd fixture expected error");

@@ -534,14 +534,16 @@ async fn user_dialog_respond_recovered_native_http_persists_once_retries_and_nev
             backend.clone(),
             Arc::new(move |_| chat.clone()),
         );
-        let storage = Arc::new(adapter.create_session_storage(
-            crate::storage::SessionStorageInput {
-                project_root: scratch.0.join("project"),
-                pilot_home: scratch.0.join("home"),
-                session_id: "s".into(),
-                now: None,
-            },
-        ));
+        let storage = Arc::new(
+            adapter
+                .create_session_storage(crate::storage::SessionStorageInput {
+                    project_root: scratch.0.join("project"),
+                    pilot_home: scratch.0.join("home"),
+                    session_id: "s".into(),
+                    now: None,
+                })
+                .unwrap(),
+        );
         let journal = Arc::new(
             create_gateway_user_dialog_journal(
                 Some(&storage.transcript_path),

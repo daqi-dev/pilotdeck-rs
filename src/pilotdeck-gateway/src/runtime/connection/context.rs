@@ -43,7 +43,7 @@ pub(super) fn truthy(value: &JsValue) -> bool {
     }
 }
 #[derive(Default)]
-pub(super) struct State {
+pub struct State {
     pub authed: bool,
     // JS strings are UTF-16 code units; a lone surrogate clientName must remain
     // comparable with "sdk" without a lossy UTF-8 conversion.

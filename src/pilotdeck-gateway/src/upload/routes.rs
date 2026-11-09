@@ -228,7 +228,7 @@ fn gateway_error(mut error: UploadError) -> UploadError {
 mod tests {
     use super::*;
     use crate::upload::{Arc, Path, PathBuf, UploadStoreOptions, fs, io, string, text};
-    use pilotdeck_protocol::parse_json;
+    use pilotdeck_protocol::{JsString, parse_json};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Harness {
@@ -479,7 +479,7 @@ mod tests {
             assert_eq!(error.code, "UPLOAD_PART_INVALID");
             assert_eq!(
                 error.message,
-                "contentBase64 must be a valid base64 string."
+                JsString::from("contentBase64 must be a valid base64 string.")
             );
         }
         assert_eq!(
@@ -511,19 +511,28 @@ mod tests {
             set(&mut params, "clientFileId", id);
             let error = h.call("upload_part", params).await.unwrap_err();
             assert_eq!(error.code, "UPLOAD_MANIFEST_MISMATCH");
-            assert_eq!(error.message, "clientFileId is required.");
+            assert_eq!(error.message, JsString::from("clientFileId is required."));
         }
         for input in [JsValue::Null, JsValue::Undefined] {
             let error = h.call("upload_part", input).await.unwrap_err();
             assert_eq!(error.code, "gateway_request_failed");
-            assert!(error.message.ends_with("(reading 'uploadId')"));
+            assert!(
+                error
+                    .message
+                    .to_utf8()
+                    .unwrap()
+                    .ends_with("(reading 'uploadId')")
+            );
         }
         h.call("upload_create", create_params(1)).await.unwrap();
         let mut params = part_params(text("Zg=="));
         set(&mut params, "clientFileId", text(" file-1 "));
         let error = h.call("upload_part", params).await.unwrap_err();
         assert_eq!(error.code, "UPLOAD_MANIFEST_MISMATCH");
-        assert_eq!(error.message, "Unexpected or duplicate file part:  file-1 ");
+        assert_eq!(
+            error.message,
+            JsString::from("Unexpected or duplicate file part:  file-1 ")
+        );
     }
 
     #[tokio::test]
@@ -558,7 +567,7 @@ mod tests {
         assert_eq!(error.code, "UPLOAD_PART_TOO_LARGE");
         assert_eq!(
             error.message,
-            "Remote upload parts are limited to 8388608 bytes."
+            JsString::from("Remote upload parts are limited to 8388608 bytes.")
         );
         let record = h
             .call("upload_get", json(r#"{"uploadId":"upload-1"}"#))
@@ -635,7 +644,7 @@ mod tests {
         let resolved = h.project.clone();
         let opts = UploadStoreOptions::new(
             move |key| {
-                assert_eq!(key, " project ");
+                assert_eq!(key, &JsString::from(" project "));
                 Ok(resolved.clone())
             },
             || Ok(vec![]),
@@ -657,7 +666,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.code, "UPLOAD_NOT_FOUND");
-        assert_eq!(error.message, "Unknown uploadId: absent");
+        assert_eq!(error.message, JsString::from("Unknown uploadId: absent"));
         assert!(handle(&h.store, "other_method", &JsValue::Null).is_none());
     }
 
@@ -680,7 +689,7 @@ mod tests {
             assert_eq!(error.code, "gateway_request_failed");
             assert_eq!(
                 error.message,
-                format!("Cannot read properties of {kind} (reading 'uploadId')")
+                JsString::from(format!("Cannot read properties of {kind} (reading 'uploadId')"))
             );
         }
     }

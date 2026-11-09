@@ -144,11 +144,10 @@ impl SubmitHostServices for Fake {
         input: &'a JsValue,
         _: &'a RunRef,
     ) -> SubmitFuture<'a, Result<JsValue, SubmitError>> {
-        let attachments = input
-            .get("attachments")
-            .and_then(JsValue::as_array)
-            .map(|values| values.as_slice())
-            .unwrap_or(&[]);
+        let attachments = match input.get("attachments") {
+            Some(JsValue::Array(values)) => values.as_slice(),
+            _ => &[],
+        };
         self.attachments_seen.lock().unwrap().push(
             attachments
                 .iter()

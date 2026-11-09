@@ -25,7 +25,7 @@ struct Downstream<W> {
     invalidated: bool,
     pings_pending: usize,
     context: RequestContext,
-    binding: Option<pilotdeck_protocol::JsValue>,
+    binding: Option<crate::runtime::connection::binding::WsBinding>,
 }
 #[cfg(test)]
 struct PairedServices {
@@ -212,7 +212,17 @@ where
                             .is_some()
                     {
                         downstream.authenticated = true;
-                        downstream.binding = hello.get("interactionBinding").cloned();
+                        downstream.binding = hello
+                            .get("interactionBinding")
+                            .and_then(|value| {
+                                pilotdeck_protocol::stringify_json(value)
+                                    .ok()
+                                    .flatten()
+                                    .and_then(|json| serde_json::from_str::<serde_json::Value>(&json).ok())
+                            })
+                            .and_then(|json| {
+                                crate::runtime::connection::binding::WsBinding::from_json(&json).ok()
+                            });
                     }
                 }
                 Ok(None) => {
@@ -563,7 +573,13 @@ pub(crate) async fn run_local<S>(
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    run_local_with_metadata(stream, token, crate::metadata::Metadata::from_env(), mcp).await
+    run_local_with_metadata(
+        stream,
+        token,
+        crate::metadata::Metadata::from_env().ok().flatten(),
+        mcp,
+    )
+    .await
 }
 
 #[cfg(test)]

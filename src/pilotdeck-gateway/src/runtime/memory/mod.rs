@@ -1047,5 +1047,3 @@ mod tests {
     }
 }
 
-mod web_scheduler;
-pub use web_scheduler::{DefaultWebMemoryMaintenanceService, WebMemoryScheduler};
