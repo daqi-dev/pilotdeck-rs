@@ -1093,6 +1093,12 @@ def _conditional_status_word(node, words):
         # first, the guard is defense in depth): a conditional nested past
         # the interpreter's limit fails closed instead of taking the audit
         # down — the same polarity as _literal_test_value's wrapper.
+        # fix-r21 correction (DS concurrency#1 r20, probe-verified —
+        # fix-r21-audit/probe-r21-p0.out): "the parser refuses first"
+        # held only for the PAREN form (the tokenizer's nested-bracket
+        # limit); a no-paren conditional chain parses past depth 5000
+        # and reaches this guard — and the write path's unguarded walks
+        # (see _assigns_clean_status) — before anything else refuses.
         return True
 
 
@@ -5319,14 +5325,34 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
     'FAIL'`` takes the clean arm at runtime, so an empty arm set fails
     closed here too.
     """
-    arms = _exit_arms(value)
+    # fix-r21 (DS concurrency#1 r20, probe-verified — fix-r21-audit/
+    # probe-r21-p0.out + e2e-recursion-before.out): a no-paren conditional
+    # chain has NO bracket limit to stop it — the parser accepts depth
+    # 5000+ while the walks' frame budgets end far earlier (_exit_arms
+    # around 990, _exit_uncertain around 500 at audit depth), and this
+    # write path reaches both walks BEFORE any guarded surface: the
+    # RecursionError escaped every guard and collapsed the whole audit
+    # into one control_failure line.  A walk that cannot finish
+    # certifies nothing about absence — the same fail-closed True as
+    # every branch below (the _folded_string wrapper's polarity).
+    try:
+        arms = _exit_arms(value)
+    except RecursionError:
+        return True
     if not arms:
         return True
     # fix-r20 (DS boundary#1 r19 P0, write side, probe PB2): flattening can
     # drop a branch that certifies no arm while it can still write the
     # clean literal at runtime — a partial arm set certifies nothing here
     # either, the same fail-closed direction as the empty set above.
-    if _exit_uncertain(value):
+    try:
+        uncertain = _exit_uncertain(value)
+    except RecursionError:
+        # fix-r21: the companion walk shares the flattening recursion and
+        # blows even shallower (one generator frame per level) — same
+        # fail-closed return, not an audit crash.
+        return True
+    if uncertain:
         return True
     for arm in arms:
         if isinstance(arm, ast.NamedExpr):
@@ -7269,7 +7295,13 @@ def _aggregation_audit_impl():
         rel = path.relative_to(ROOT).as_posix()
         try:
             tree = ast.parse(path.read_text(encoding='utf-8'))
-        except (OSError, SyntaxError, UnicodeError) as error:
+        # fix-r21 (DS concurrency#1 r20): RecursionError joins the tuple —
+        # the no-paren conditional chain proves the parser has no depth
+        # refusal of its own for every form, and a parse that overflows
+        # the stack is a per-file fail-closed line, not an audit collapse
+        # (probe-r21-p0.out: depth-5000 ternaries parse fine today, so
+        # this arm is defense in depth for other shapes/interpreters).
+        except (OSError, SyntaxError, UnicodeError, RecursionError) as error:
             failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
                             f'{rel}: {type(error).__name__}: {error}')
             continue
@@ -7404,16 +7436,35 @@ def _aggregation_audit_impl():
                             f'{rel}:{name}')
             continue
         markers, function = found[key]
-        fn_shared, fn_rebound = _function_shared_names(
-            function, trusted_by_rel.get(rel), rel,
-            loaders_by_rel.get(rel, frozenset()),
-            proven_by_rel.get(rel, frozenset()))
-        # #892 r23: module/global-poisoned receivers lose the relay here too.
-        fn_rebound = fn_rebound | poisoned_by_rel.get(rel, frozenset())
-        shared = (calls_shared(function, fn_shared, fn_rebound)
-                  and 'return-int-status' not in markers)
-        slots = unshared_status_slots(function, key, modules.get(rel), rel,
-                                      aliases_by_rel.get(rel))
+        # fix-r21 (DS concurrency#1 r20, probe-verified — fix-r21-audit/
+        # e2e-recursion-{before,after}.out): a registered point whose
+        # writes nest past a walk's frame budget used to take the whole
+        # audit down — the RecursionError escaped every guard and the run
+        # collapsed into one control_failure line, losing every other
+        # point's verdict.  The analysis calls below share the flattening
+        # recursion family (calls_shared → _exit_arms,
+        # unshared_status_slots → _assigns_clean_status), so one boundary
+        # guards them all: the point itself fails closed and the audit
+        # keeps its table.
+        try:
+            fn_shared, fn_rebound = _function_shared_names(
+                function, trusted_by_rel.get(rel), rel,
+                loaders_by_rel.get(rel, frozenset()),
+                proven_by_rel.get(rel, frozenset()))
+            # #892 r23: module/global-poisoned receivers lose the relay here too.
+            fn_rebound = fn_rebound | poisoned_by_rel.get(rel, frozenset())
+            shared = (calls_shared(function, fn_shared, fn_rebound)
+                      and 'return-int-status' not in markers)
+            slots = unshared_status_slots(function, key, modules.get(rel), rel,
+                                          aliases_by_rel.get(rel))
+        except RecursionError:
+            failures.append(f'#164-fix-r7 aggregation-audit: {rel}:{name} '
+                            'walk exceeded recursion depth (fail-closed)')
+            points[point_id] = {'file': rel, 'function': name,
+                                'shared': False,
+                                'markers': sorted(markers),
+                                'unsharedSlots': ['recursion-depth-exceeded']}
+            continue
         points[point_id] = {'file': rel, 'function': name, 'shared': shared,
                             'markers': sorted(markers), 'unsharedSlots': slots}
         if not shared:
@@ -8990,6 +9041,31 @@ def _aggregation_audit_impl():
                         'non-status conditional was enumerated as a '
                         'status write (over-collection regression, '
                         'rogue6) (#1652)')
+    # #1652 fix-r21 (DS concurrency#1 r20, probe-verified — fix-r21-audit/
+    # probe-r21-p0.out + e2e-recursion-before.out): a no-paren conditional
+    # chain of clean-status writes nests past the walks' frame budgets
+    # while the parser accepts it (no bracket limit applies); before the
+    # fix the write path's RecursionError escaped every guard and the
+    # whole audit collapsed into one control_failure line.  Two depths
+    # isolate the two guarded faces: 600 blows _exit_uncertain only (the
+    # arm-flattening walk), 1200 blows _exit_arms first (the exit-split
+    # walk) — both must answer True (fail-closed, the flagging direction),
+    # never raise.
+    for _fsr6_depth in (600, 1200):
+        _fsr6_chain = "'FAIL'"
+        for _i in range(_fsr6_depth - 1):
+            _fsr6_chain = f"'PASS' if md else {_fsr6_chain}"
+        try:
+            if not _assigns_clean_status(
+                    ast.parse(_fsr6_chain, mode='eval').body, {}):
+                failures.append('#892 aggregation-audit: a too-deep '
+                                'conditional clean write read as legal on '
+                                'the write path (fail-closed polarity, '
+                                '#1652)')
+        except RecursionError:
+            failures.append('#892 aggregation-audit: a too-deep conditional '
+                            f'write (depth {_fsr6_depth}) crashed the write '
+                            'path instead of failing closed (#1652)')
     # #1652 fix-r16 (DS sibling#2 r15 P2): _nested_slot_fail_closed keeps
     # the bare ``in`` on purpose — a stopped fold (the sentinel) must NOT
     # exempt a nested status slot there; False is the flagging, safe
