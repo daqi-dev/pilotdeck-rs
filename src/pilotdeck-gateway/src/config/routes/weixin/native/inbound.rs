@@ -49,6 +49,12 @@ fn push_weixin_attachment(
             weixin_file_missing_url_diagnostic(media_owner)
         });
     };
+    if let Some(mime) = super::super::media::guess_mime_type_from_url(
+        &url,
+        if kind == "image" { Some("image/jpeg") } else { None },
+    ) {
+        attachment["mimeType"] = mime.into();
+    }
     attachment["url"] = url.into();
     let mut metadata = json!({ "weixinMediaOwner": media_owner.clone() });
     if let Some(file_id) = media_owner
@@ -63,6 +69,21 @@ fn push_weixin_attachment(
     None
 }
 
+fn resolve_inbound_attachment_id(message: &Value) -> String {
+    message
+        .get("message_id")
+        .or_else(|| message.get("client_id"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_millis().to_string())
+                .unwrap_or_else(|_| "0".into())
+        })
+}
+
 pub(crate) fn weixin_inbound_text_and_attachments(
     message: &Value,
 ) -> Option<(String, Vec<Value>)> {
@@ -70,12 +91,7 @@ pub(crate) fn weixin_inbound_text_and_attachments(
         return None;
     }
     let items = message.get("item_list")?.as_array()?;
-    let message_id = message
-        .get("message_id")
-        .or_else(|| message.get("client_id"))
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-        .unwrap_or("(unknown)");
+    let message_id = resolve_inbound_attachment_id(message);
     let mut parts: Vec<String> = Vec::new();
     let mut attachments = Vec::new();
     let mut diagnostics = Vec::new();
@@ -93,10 +109,12 @@ pub(crate) fn weixin_inbound_text_and_attachments(
             Some(t) if t == MESSAGE_ITEM_IMAGE => {
                 if let Some(image) = item.get("image_item") {
                     if let Some(line) =
-                        push_weixin_attachment(&mut attachments, message_id, "image", image)
+                        push_weixin_attachment(&mut attachments, &message_id, "image", image)
                     {
                         diagnostics.push(line);
                     }
+                } else {
+                    diagnostics.push(WEIXIN_IMAGE_MISSING_URL_DIAGNOSTIC.into());
                 }
             }
             Some(t) if t == MESSAGE_ITEM_VOICE => {
@@ -112,10 +130,15 @@ pub(crate) fn weixin_inbound_text_and_attachments(
             Some(t) if t == MESSAGE_ITEM_FILE => {
                 if let Some(file) = item.get("file_item") {
                     if let Some(line) =
-                        push_weixin_attachment(&mut attachments, message_id, "file", file)
+                        push_weixin_attachment(&mut attachments, &message_id, "file", file)
                     {
                         diagnostics.push(line);
                     }
+                } else {
+                    diagnostics.push(
+                        "微信文件 (unknown) 缺少下载 URL，已跳过。调试信息：file_item 中未找到 url/cdn_url/media.full_url。"
+                            .into(),
+                    );
                 }
             }
             Some(t) if t == MESSAGE_ITEM_VIDEO => {
@@ -193,7 +216,9 @@ mod tests {
         assert_eq!(text, "see file");
         assert_eq!(attachments.len(), 2);
         assert_eq!(attachments[0]["type"], "image");
-        assert_eq!(attachments[0]["name"], "image-(unknown).jpg");
+        let image_name = attachments[0]["name"].as_str().unwrap();
+        assert!(image_name.starts_with("image-") && image_name.ends_with(".jpg"));
+        assert_ne!(image_name, "image-(unknown).jpg");
         assert_eq!(attachments[1]["type"], "file");
     }
 

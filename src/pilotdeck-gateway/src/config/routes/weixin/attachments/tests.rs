@@ -274,7 +274,9 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
         assert!(
             diags.iter().any(|line| {
                 line.starts_with("微信附件处理失败：Error: 微信图片解密后仍不是可识别图片（")
-                    && line.contains("; at=decryptWeixinImageOrThrow")
+                    && line.contains("; at=")
+                    && line.contains(".rs:")
+                    && line.contains("candidates=")
             }),
             "expected TS formatWeixinError diagnostic, got {diags:?}"
         );
@@ -636,5 +638,41 @@ fn merge_inbound_and_materialize_into_one_diagnostics_block() {
         assert_eq!(decoded.len(), 32);
         assert!(decoded.iter().all(|byte| byte.is_ascii_hexdigit()));
         set_test_permit_loopback_fetch(false);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+    async fn send_outbound_rejects_local_path_without_grant() {
+        let http = Http::new();
+        let err = send_outbound(
+            &http,
+            &json!({"baseUrl": "http://127.0.0.1"}),
+            "user-1",
+            "ctx-1",
+            &json!({
+                "type": "file",
+                "name": "secret.pdf",
+                "local_path": "/tmp/secret.pdf"
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.message.contains("secret.pdf"));
+        assert!(err.message.contains("需要授权后才能发送"));
+    }
+
+    #[test]
+    fn attachment_store_dir_maps_empty_chat_to_unknown() {
+        let home = std::env::temp_dir().join(format!(
+            "pdrs-weixin-attach-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&home).unwrap();
+        let dir = attachment_store_dir(&home, "  ", "msg-1").unwrap();
+        assert!(
+            dir.to_string_lossy().contains("unknown"),
+            "expected unknown segment, got {}",
+            dir.display()
+        );
         let _ = std::fs::remove_dir_all(home);
     }

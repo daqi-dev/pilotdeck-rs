@@ -7,14 +7,92 @@ use base64::Engine;
 const WEIXIN_CDN_BASE_URL: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 
 /// `WeixinChannel.ts:1034-1047` (`formatWeixinError`).
-pub(crate) fn format_weixin_error(message: &str) -> String {
-    format!(
-        "Error: {message}; at=decryptWeixinImageOrThrow (config/routes/weixin/media.rs)"
-    )
+pub(crate) fn format_weixin_error(error: &crate::config::routes::RouteError) -> String {
+    let mut pieces = vec![format!("Error: {}", error.message)];
+    if !error.code.is_empty() && error.code != "gateway_request_failed" {
+        pieces.push(format!("code={}", error.code));
+    }
+    if let Some(line) = capture_error_backtrace_line() {
+        pieces.push(format!("at={line}"));
+    }
+    pieces.join("; ")
 }
 
-pub(crate) fn weixin_attachment_failure_diagnostic(message: &str) -> String {
-    format!("微信附件处理失败：{}", format_weixin_error(message))
+pub(crate) fn format_weixin_error_message(message: &str) -> String {
+    format_weixin_error(&crate::config::routes::RouteError::new("Error", message))
+}
+
+pub(crate) fn weixin_attachment_failure_diagnostic(error: &crate::config::routes::RouteError) -> String {
+    format!("微信附件处理失败：{}", format_weixin_error(error))
+}
+
+pub(crate) fn weixin_attachment_failure_diagnostic_message(message: &str) -> String {
+    weixin_attachment_failure_diagnostic(&crate::config::routes::RouteError::new(
+        "Error",
+        message,
+    ))
+}
+
+fn capture_error_backtrace_line() -> Option<String> {
+    let trace = std::backtrace::Backtrace::force_capture();
+    let text = format!("{trace}");
+    text.lines()
+        .map(str::trim)
+        .find(|line| {
+            line.contains(".rs:")
+                && !line.contains("backtrace")
+                && !line.contains("format_weixin_error")
+        })
+        .map(|line| line.strip_prefix("at ").unwrap_or(line).to_owned())
+}
+
+/// `WeixinChannel.ts:1094-1099`
+pub(crate) fn guess_mime_type_from_url(url: &str, fallback: Option<&str>) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
+    guess_mime_type_from_name(parsed.path()).or_else(|| fallback.map(str::to_owned))
+}
+
+/// `ImAttachmentDelivery.ts:56-66`
+pub(crate) fn guess_mime_type_from_name(name: &str) -> Option<String> {
+    let lower = name.to_lowercase();
+    if lower.ends_with(".png") {
+        return Some("image/png".into());
+    }
+    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+        return Some("image/jpeg".into());
+    }
+    if lower.ends_with(".gif") {
+        return Some("image/gif".into());
+    }
+    if lower.ends_with(".webp") {
+        return Some("image/webp".into());
+    }
+    if lower.ends_with(".pdf") {
+        return Some("application/pdf".into());
+    }
+    if lower.ends_with(".txt") || lower.ends_with(".log") {
+        return Some("text/plain".into());
+    }
+    if lower.ends_with(".md") {
+        return Some("text/markdown".into());
+    }
+    if lower.ends_with(".json") {
+        return Some("application/json".into());
+    }
+    None
+}
+
+/// `WeixinChannel.ts` `encodeURIComponent`
+pub(crate) fn encode_uri_component(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'!' | b'~' | b'*'
+            | b'\'' | b'(' | b')' => out.push(byte as char),
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
 }
 
 pub(crate) fn weixin_media_download_url(media_owner: &Value) -> Option<String> {
@@ -31,12 +109,13 @@ pub(crate) fn weixin_outbound_aes_key_field(aeskey: &[u8; 16]) -> String {
     base64::engine::general_purpose::STANDARD.encode(hex.as_bytes())
 }
 
+/// `WeixinChannel.ts:1166-1172` — trim only for emptiness check, preserve whitespace.
 fn read_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
+    let raw = value.and_then(Value::as_str)?;
+    if raw.trim().is_empty() {
+        return None;
+    }
+    Some(raw.to_owned())
 }
 
 pub(crate) fn extract_weixin_media_url(media_owner: &Value) -> Option<String> {
@@ -44,7 +123,7 @@ pub(crate) fn extract_weixin_media_url(media_owner: &Value) -> Option<String> {
     if let Some(param) = read_string(media.get("encrypt_query_param")) {
         return Some(format!(
             "{WEIXIN_CDN_BASE_URL}/download?encrypted_query_param={}",
-            url::form_urlencoded::byte_serialize(param.as_bytes()).collect::<String>()
+            encode_uri_component(&param)
         ));
     }
     read_string(media.get("full_url"))
@@ -70,9 +149,12 @@ pub(crate) fn decrypt_weixin_media_if_needed(
     let Some(media_owner) = media_owner else {
         if image {
             return Err(
-                failure(&format!("微信图片解密后仍不是可识别图片（{} ）", summarize_weixin_media_key_shape(None)))
-                    .message
-                    .into(),
+                failure(&format!(
+                    "微信图片解密后仍不是可识别图片（{} candidates=[])",
+                    summarize_weixin_media_key_shape(None)
+                ))
+                .message
+                .into(),
             );
         }
         return Ok(buffer.to_vec());
@@ -103,8 +185,16 @@ pub(crate) fn summarize_weixin_media_key_shape(media_owner: Option<&Value>) -> S
         return "keyShape=none".into();
     };
     let media = media_owner.get("media");
-    let owner_aes = read_string(media_owner.get("aeskey"));
-    let media_aes = media.and_then(|media| read_string(media.get("aes_key")));
+    let owner_aes = media_owner
+        .get("aeskey")
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_owned);
+    let media_aes = media
+        .and_then(|media| media.get("aes_key"))
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty())
+        .map(str::to_owned);
     let owner_len = owner_aes.as_ref().map(|v| v.len()).unwrap_or(0);
     let owner_hex = owner_aes
         .as_ref()
@@ -161,10 +251,32 @@ pub(crate) fn summarize_weixin_decrypt_candidates(
 }
 
 fn safe_base64_decoded_length(value: &str) -> Option<usize> {
+    decode_base64_loose(value).map(|decoded| decoded.len())
+}
+
+fn decode_base64_loose(value: &str) -> Option<Vec<u8>> {
+    let cleaned: String = value
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect();
+    if cleaned.is_empty() {
+        return None;
+    }
+    use base64::Engine;
+    if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(cleaned.as_bytes()) {
+        return Some(decoded);
+    }
+    if let Ok(decoded) = base64::engine::general_purpose::URL_SAFE.decode(cleaned.as_bytes()) {
+        return Some(decoded);
+    }
+  // Node ignores invalid characters; try filtering to alphabet.
+    let filtered: String = cleaned
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '+' || *ch == '/' || *ch == '=')
+        .collect();
     base64::engine::general_purpose::STANDARD
-        .decode(value)
+        .decode(filtered.as_bytes())
         .ok()
-        .map(|decoded| decoded.len())
 }
 
 pub(crate) fn aes_ecb_padded_size(plaintext_size: usize) -> usize {
@@ -205,8 +317,8 @@ pub(crate) fn build_weixin_cdn_upload_url(upload: &Value, filekey: &str) -> Opti
         .filter(|url| !url.is_empty())?;
     Some(format!(
         "{WEIXIN_CDN_BASE_URL}/upload?encrypted_query_param={}&filekey={}",
-        url::form_urlencoded::byte_serialize(param.as_bytes()).collect::<String>(),
-        url::form_urlencoded::byte_serialize(filekey.as_bytes()).collect::<String>()
+        encode_uri_component(param),
+        encode_uri_component(filekey)
     ))
 }
 
@@ -413,11 +525,43 @@ mod tests {
         let owner = serde_json::json!({ "aeskey": "00112233445566778899aabbccddeeff" });
         let err = decrypt_weixin_media_if_needed(buffer, Some(&owner), true).unwrap_err();
         assert!(err.contains("微信图片解密后仍不是可识别图片（"));
-        let formatted = weixin_attachment_failure_diagnostic(&err);
+        let formatted = weixin_attachment_failure_diagnostic_message(&err);
         assert!(formatted.starts_with("微信附件处理失败：Error: "));
-        assert!(formatted.contains("; at=decryptWeixinImageOrThrow"));
+        assert!(formatted.contains("; at="));
+        assert!(formatted.contains(".rs:"));
         assert!(formatted.contains("keyShape="));
         assert!(formatted.contains("candidates="));
+    }
+
+    #[test]
+    fn read_string_preserves_surrounding_whitespace() {
+        assert_eq!(
+            extract_weixin_media_url(&serde_json::json!({
+                "media": { "url": "  https://example.test/x  " }
+            })),
+            Some("  https://example.test/x  ".into())
+        );
+    }
+
+    #[test]
+    fn encode_uri_component_matches_percent_encoding() {
+        assert_eq!(
+            encode_uri_component("a b+!"),
+            "a%20b%2B!"
+        );
+    }
+
+    #[test]
+    fn guess_mime_from_url_path() {
+        assert_eq!(
+            guess_mime_type_from_url("https://x/y/z.png", None).as_deref(),
+            Some("image/png")
+        );
+    }
+
+    #[test]
+    fn loose_base64_decoded_length_tolerates_noise() {
+        assert_eq!(safe_base64_decoded_length("Y Q=="), Some(1));
     }
 
     #[test]

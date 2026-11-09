@@ -3,7 +3,8 @@ use super::attachment_net::{self, validate_attachment_fetch_url};
 use super::http::{Http, failure};
 use super::media::{
     aes_ecb_padded_size, build_weixin_cdn_upload_url, decrypt_weixin_media_if_needed,
-    encrypt_aes_128_ecb, weixin_outbound_aes_key_field,
+    encrypt_aes_128_ecb, guess_mime_type_from_name, guess_mime_type_from_url,
+    weixin_outbound_aes_key_field,
 };
 use super::storage::text;
 use crate::config::routes::Result;
@@ -63,22 +64,30 @@ pub(crate) fn merge_attachment_diagnostics(text: String, lines: &[String]) -> St
     }
 }
 
-fn sanitize_filename(name: &str) -> String {
+/// `ImAttachmentStore.ts:112` — strip control chars and `\/:*?"<>|`.
+fn sanitize_store_filename(name: &str) -> String {
     name.chars()
         .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-                ch
-            } else {
+            if ch.is_control() || "\\/:*?\"<>|".contains(ch) {
                 '_'
+            } else {
+                ch
             }
         })
         .collect()
 }
 
+/// `ImAttachmentDelivery.ts:75`
+fn sanitize_delivery_filename(name: &str) -> String {
+    sanitize_store_filename(name)
+}
+
 fn path_part(value: &str) -> Result<String> {
     let trimmed = value.trim();
-    if trimmed.is_empty()
-        || trimmed.contains("..")
+    if trimmed.is_empty() {
+        return Ok("unknown".into());
+    }
+    if trimmed.contains("..")
         || trimmed.contains('/')
         || trimmed.contains('\\')
         || trimmed.contains('\0')
@@ -91,9 +100,87 @@ fn path_part(value: &str) -> Result<String> {
         .take(120)
         .collect::<String>();
     if replaced.is_empty() || replaced == "." || replaced == ".." {
-        return Err(failure("Invalid attachment path component"));
+        return Ok("unknown".into());
     }
     Ok(replaced)
+}
+
+fn detect_image_mime(data: &[u8]) -> Option<&'static str> {
+    if data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+        return Some("image/png");
+    }
+    if data.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Some("image/jpeg");
+    }
+    if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        return Some("image/gif");
+    }
+    if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    None
+}
+
+fn extension_for_mime(mime: &str) -> Option<&'static str> {
+    match mime {
+        "image/png" => Some("png"),
+        "image/jpeg" => Some("jpg"),
+        "image/gif" => Some("gif"),
+        "image/webp" => Some("webp"),
+        "application/pdf" => Some("pdf"),
+        "text/plain" => Some("txt"),
+        "text/markdown" => Some("md"),
+        "application/json" => Some("json"),
+        _ => None,
+    }
+}
+
+fn replace_extension(name: &str, ext: &str) -> String {
+    let base = name.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(name);
+    format!("{base}.{ext}")
+}
+
+fn normalize_attachment_mime_type(
+    mime_hint: Option<&str>,
+    data: &[u8],
+    filename: &str,
+) -> String {
+    if let Some(mime) = detect_image_mime(data) {
+        return mime.to_owned();
+    }
+    if let Some(mime) = mime_hint {
+        return mime.to_owned();
+    }
+  if let Some(mime) = guess_mime_type_from_name(filename) {
+        return mime;
+    }
+    "application/octet-stream".to_owned()
+}
+
+fn filename_for_stored_attachment(
+    name: &str,
+    data: &[u8],
+    image: bool,
+    mime_hint: Option<&str>,
+) -> String {
+    let cleaned = sanitize_store_filename(name);
+    let mime = normalize_attachment_mime_type(mime_hint, data, &cleaned);
+    let mut filename = cleaned;
+    if image {
+        if let Some(ext) = extension_for_mime(&mime) {
+            filename = replace_extension(&filename, ext);
+        }
+    } else if let Some(ext) = extension_for_mime(&mime) {
+        if !filename.to_lowercase().ends_with(&format!(".{ext}")) {
+            filename = replace_extension(&filename, ext);
+        }
+    }
+    filename
+}
+
+/// `ImAttachmentDelivery.ts:79`
+pub(crate) fn format_im_attachment_error(error: &crate::config::routes::RouteError) -> String {
+    format!("Error: {}", error.message)
 }
 
 fn reject_symlink_component(path: &Path) -> Result<()> {
@@ -255,7 +342,10 @@ pub(crate) async fn materialize_inbound(
             .filter(|name| !name.is_empty())
             .map(str::to_owned)
             .unwrap_or(default_name);
-        let filename = sanitize_filename(&name);
+        let mime_hint = attachments[index]
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let media_owner = attachments[index]
             .get("metadata")
             .and_then(|metadata| metadata.get("weixinMediaOwner"))
@@ -268,33 +358,50 @@ pub(crate) async fn materialize_inbound(
                     Err(message) => Err(failure(&message)),
                     Ok(decrypted) => {
                         data = decrypted;
+                        let filename = filename_for_stored_attachment(
+                            &name,
+                            &data,
+                            image,
+                            mime_hint.as_deref(),
+                        );
                         write_attachment_bytes(&store_dir, &filename, &data)
-                            .map(|path| (path, data.len()))
+                            .map(|path| (path, data, filename))
                     }
                 }
             }
         };
         match materialize_result {
-            Ok((path, bytes)) => {
+            Ok((path, data, stored_name)) => {
+                let mime = normalize_attachment_mime_type(
+                    mime_hint.as_deref(),
+                    &data,
+                    &stored_name,
+                );
                 attachments[index]["path"] = path.to_string_lossy().into();
-                attachments[index]["bytes"] = bytes.into();
+                attachments[index]["bytes"] = data.len().into();
+                attachments[index]["name"] = stored_name.into();
+                attachments[index]["mimeType"] = mime.into();
                 let mut metadata = attachments[index]
                     .get("metadata")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
                 if let Some(object) = metadata.as_object_mut() {
+                    object.remove("weixinMediaOwner");
                     object.insert("channelKey".into(), "weixin".into());
                     object.insert("chatId".into(), chat.into());
                     object.insert("messageId".into(), message_id.into());
                     object.insert("sourceUrl".into(), url.into());
+                    object.insert("source".into(), "weixin".into());
+                    object.insert(
+                        "itemType".into(),
+                        if image { "image" } else { "file" }.into(),
+                    );
                 }
                 attachments[index]["metadata"] = metadata;
                 index += 1;
             }
             Err(error) => {
-                diagnostics.push(super::media::weixin_attachment_failure_diagnostic(
-                    &error.message,
-                ));
+                diagnostics.push(super::media::weixin_attachment_failure_diagnostic(&error));
                 attachments.remove(index);
             }
         }
@@ -317,6 +424,18 @@ pub(crate) async fn send_outbound(
         .get("path")
         .and_then(Value::as_str)
         .filter(|path| !path.is_empty());
+    let local_path = attachment
+        .get("local_path")
+        .and_then(Value::as_str)
+        .filter(|path| !path.is_empty());
+    if local_path.is_some() && path.is_none() && attachment.get("content").is_none() {
+        let name = attachment
+            .get("name")
+            .and_then(Value::as_str)
+            .or(local_path.and_then(|p| p.rsplit(['/', '\\']).next()))
+            .unwrap_or("附件");
+        return Err(failure(&format!("附件 {name} 需要授权后才能发送。")));
+    }
     let data = if let Some(path) = path {
         std::fs::read(path).map_err(|error| failure(&error.to_string()))?
     } else if let Some(content) = attachment.get("content").and_then(Value::as_str) {
@@ -327,19 +446,23 @@ pub(crate) async fn send_outbound(
     } else {
         return Ok(false);
     };
+    let raw_name = attachment
+        .get("name")
+        .and_then(Value::as_str)
+        .or_else(|| path.and_then(|p| p.rsplit(['/', '\\']).next()))
+        .unwrap_or("attachment.bin");
     if data.len() > LIMIT {
-        return Err(failure("attachment exceeds 52428800 bytes"));
+        return Err(failure(&format!(
+            "attachment {raw_name} exceeds 52428800 bytes (actual {})",
+            data.len()
+        )));
     }
     let kind = attachment
         .get("type")
         .and_then(Value::as_str)
         .unwrap_or("file");
     let image = kind == "image";
-    let name = attachment
-        .get("name")
-        .and_then(Value::as_str)
-        .or_else(|| path.and_then(|p| p.rsplit(['/', '\\']).next()))
-        .unwrap_or("attachment.bin");
+    let name = sanitize_delivery_filename(raw_name);
     let base = text(credentials, "baseUrl").ok_or_else(|| failure("Weixin baseUrl missing"))?;
     let token = text(credentials, "botToken");
     let filekey = uuid::Uuid::new_v4().simple().to_string();
@@ -367,10 +490,20 @@ pub(crate) async fn send_outbound(
             .and_then(Value::as_i64)
             .is_some_and(|code| code != 0)
     {
-        return Err(failure("Weixin getuploadurl rejected"));
+        let ret = upload.get("ret").and_then(Value::as_i64);
+        let errmsg = upload
+            .get("errmsg")
+            .or_else(|| upload.get("err_msg"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        return Err(failure(&format!(
+            "Weixin getuploadurl rejected ret={ret:?} errmsg={errmsg}"
+        )));
     }
     let Some(upload_url) = build_weixin_cdn_upload_url(&upload, &filekey) else {
-        return Err(failure("Weixin upload url response missing upload target"));
+        return Err(failure(
+            "weixin upload url response missing upload_full_url/upload_param",
+        ));
     };
     let download_param = upload_encrypted_cdn(&upload_url, &data, &aeskey).await?;
     use base64::Engine;
@@ -454,7 +587,7 @@ async fn upload_encrypted_cdn(upload_url: &str, data: &[u8], aeskey: &[u8; 16]) 
         .and_then(|value| value.to_str().ok())
         .filter(|text| !text.is_empty())
         .map(str::to_owned)
-        .ok_or_else(|| failure("Weixin CDN upload missing x-encrypted-param"))
+        .ok_or_else(|| failure("weixin CDN upload response missing x-encrypted-param"))
 }
 
 

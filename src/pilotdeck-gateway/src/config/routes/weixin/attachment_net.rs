@@ -62,7 +62,7 @@ fn permit_loopback_fetch() -> bool {
 }
 
 const MAX_REDIRECTS: u32 = 5;
-const BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(60);
 const DNS_CACHE_TTL: Duration = Duration::from_secs(120);
 const MAX_IDLE_CONNECTIONS: usize = 32;
 const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -480,7 +480,10 @@ pub(crate) struct PinnedHttpResponse {
 pub(crate) async fn pinned_get(url: &str, limit: usize) -> Result<Vec<u8>> {
     let response = pinned_exchange(Method::GET, url, None, limit).await?;
     if !response.status.is_success() {
-        return Err(failure("Attachment download HTTP error"));
+        return Err(failure(&format!(
+            "Attachment download HTTP {}",
+            response.status.as_u16()
+        )));
     }
     Ok(response.body)
 }

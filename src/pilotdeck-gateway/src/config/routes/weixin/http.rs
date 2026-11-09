@@ -3,8 +3,14 @@ use super::super::{Result, RouteError};
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full};
 use hyper_util::{client::legacy::Client, rt::TokioExecutor};
+use hyper::header::{HeaderMap, CONTENT_LENGTH};
 use serde_json::Value;
 use std::time::Duration;
+
+/// `WeixinChannel.ts:1333` (`stripContentLengthHeader`).
+pub(crate) fn strip_content_length_header(headers: &mut HeaderMap) {
+    headers.remove(CONTENT_LENGTH);
+}
 
 #[derive(Clone)]
 pub(super) struct Http {
@@ -57,10 +63,13 @@ impl Http {
                 body.to_string()
             })
             .unwrap_or_default();
-        let request = request
+        let mut request = request
             .header("Content-Type", "application/json")
             .body(Full::new(Bytes::from(bytes)))
             .map_err(|_| failure("Invalid iLink request"))?;
+        if endpoint.starts_with("ilink/bot/") {
+            strip_content_length_header(request.headers_mut());
+        }
         let work = async {
             let response = self
                 .client
