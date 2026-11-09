@@ -7782,7 +7782,7 @@ async fn session_cwd_preflight_worker() {
 /// it into `None`, so a broken chat directory masqueraded as a busy session.
 #[test]
 fn try_writer_lease_separates_contention_from_storage_failure() {
-    let dir = std::env::temp_dir().join(format!("pdrs-1873-lease-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("pdrs-1873-lease-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("#1873 the scratch directory opens");
     let transcript = dir.join("healthy.jsonl");
     std::fs::write(&transcript, b"").expect("#1873 the transcript file opens");
@@ -7824,4 +7824,29 @@ fn try_writer_lease_separates_contention_from_storage_failure() {
         error.message
     );
     std::fs::remove_dir_all(&dir).expect("#1873 the scratch directory cleans up");
+}
+
+/// #1874: the two `SESSION_WRITER_BUSY` producers — the session factory's
+/// draining path and the shared metadata protocol's — must keep answering
+/// with one code and one message. The literals live in two files and nothing
+/// else pairs them, so a future edit to either side alone would silently fork
+/// the answer the client sees (the `session-factory` mutation rows pin each
+/// side's own shape; this test pins the pairing).
+#[test]
+fn writer_busy_literals_stay_paired_across_producers() {
+    let factory_error = writer_busy();
+    let metadata_error = crate::runtime::session::transcript_locks::writer_busy_error();
+    crate::negative_assert_eq!(
+        factory_error.message,
+        String::from_utf16_lossy(metadata_error.message.units()),
+        "#1874 both busy producers answer with one message"
+    );
+    let code = factory_error
+        .js_error()
+        .and_then(|error| error.code.as_deref());
+    crate::negative_assert_eq!(
+        code,
+        Some(metadata_error.code.as_str()),
+        "#1874 both busy producers answer with one code"
+    );
 }

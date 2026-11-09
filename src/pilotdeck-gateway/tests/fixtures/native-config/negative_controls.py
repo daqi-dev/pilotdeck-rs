@@ -292,6 +292,7 @@ mutations = [
     # the bound test's expect_err dies on a success.
     ('set-alias-owner-busy-removed', CONFIG,
      '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && trimmed_string_is_non_empty(key)\n'
      '            && (self.owner.has_active_turn(key)\n'
      '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
      '        {',
@@ -300,6 +301,24 @@ mutations = [
      '        {',
      CFG + 'session_model_set_rejects_active_turn_on_alias_owner',
      '#1872 session_model_set is busy on the alias owner'),
+    # ── #1872: the blank-key arm of the same gate. TS consults
+    # hasActiveTurn on the request spelling only, where a blank key matches
+    # nothing, and answers INVALID_SESSION_KEY at the port write. Dropping
+    # the blank guard lets the owner-side check fire first for a key that
+    # folds onto the `session` transcript, and the bound test dies on the
+    # SESSION_BUSY answer instead of the sessionKey gate's.
+    ('set-busy-gate-blank-key-guard-removed', CONFIG,
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && trimmed_string_is_non_empty(key)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     '        if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)\n'
+     '            && (self.owner.has_active_turn(key)\n'
+     '                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))\n'
+     '        {',
+     CFG + 'session_model_set_blank_key_answers_the_session_key_gate',
+     '#1872 a blank key answers the sessionKey gate'),
     ('clear-alias-owner-busy-removed', CONFIG,
      '        if self.owner.has_active_turn(&session_key)\n'
      '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
@@ -322,6 +341,41 @@ mutations = [
      '                .reserve_transcript_write(owner.as_ref().unwrap(), "change the session model")',
      CFG + 'session_model_set_holds_the_owner_reservation_through_the_write',
      '#1872 the owner and alias reservations are held while the write is parked'),
+    ('clear-alias-owner-reservation-skipped', CONFIG,
+     '        if owner_reserved\n'
+     '            && let Err(error) = self\n'
+     '                .replacement\n'
+     '                .reserve_transcript_write(owner.as_ref().unwrap(), "clear the session model")',
+     '        if false\n'
+     '            && let Err(error) = self\n'
+     '                .replacement\n'
+     '                .reserve_transcript_write(owner.as_ref().unwrap(), "clear the session model")',
+     CFG + 'session_model_clear_holds_the_owner_reservation_through_the_write',
+     '#1872 the clear-side owner and alias reservations are held while the write is parked'),
+    # ── #1872: the fallback arm of close_model_selection_owner — the owner
+    # first seen by the append itself, published while the request was in
+    # flight, so the wrapper holds no reservation for it. Removing its
+    # has_active_turn recheck makes the close abort the admitted turn, and
+    # the bound test dies on a success instead of the busy error.
+    ('close-owner-fallback-busy-skipped', CONFIG,
+     '        if self.owner.has_active_turn(target) {\n'
+     '            self.replacement.release_transcript_write(target);\n'
+     '            return Err(gateway_error("SESSION_BUSY", busy_message));\n'
+     '        }',
+     '        if false {\n'
+     '            self.replacement.release_transcript_write(target);\n'
+     '            return Err(gateway_error("SESSION_BUSY", busy_message));\n'
+     '        }',
+     CFG + 'close_model_selection_owner_reports_busy_for_an_owner_seen_by_the_append',
+     '#1872 the fallback reports the admitted turn as busy'),
+    # ── #1872: the close target. Folding the owner spelling back to the
+    # request spelling leaves the owner session cached and serving the old
+    # selection; the bound test dies on its current_handle assertion.
+    ('set-closes-owner-target-reverted', CONFIG,
+     '        let target = loaded.unwrap_or(session_key);',
+     '        let target = session_key;',
+     CFG + 'model_set_closes_the_owner_spelling_of_an_alias_request',
+     '#1872 the close targeted the owner spelling, not the request spelling'),
     ('seed-mtime-wiring', CONFIG,
      '.seed_read_state(&path, mtime)',
      '.seed_read_state(&path, 0.0)',
@@ -637,6 +691,10 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1872 session_model_set is busy on the alias owner'),
     (CONFIG, '#1872 session_model_clear is busy on the alias owner'),
     (CONFIG, '#1872 the owner and alias reservations are held while the write is parked'),
+    (CONFIG, '#1872 the clear-side owner and alias reservations are held while the write is parked'),
+    (CONFIG, '#1872 a blank key answers the sessionKey gate'),
+    (CONFIG, '#1872 the fallback reports the admitted turn as busy'),
+    (CONFIG, '#1872 the close targeted the owner spelling, not the request spelling'),
     (CONFIG, '#1457 pm busy message'),
     (CONFIG, '#1457 th busy message'),
     (CONFIG, '#1457 style busy message'),
