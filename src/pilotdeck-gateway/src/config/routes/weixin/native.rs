@@ -735,6 +735,70 @@ fn weixin_inbound_message_type(message: &Value) -> bool {
     message.get("message_type").and_then(Value::as_i64) == Some(1)
 }
 
+pub(crate) fn weixin_inbound_text_and_attachments(message: &Value) -> Option<(String, Vec<Value>)> {
+    if message.get("message_type").and_then(Value::as_i64)? != 1 {
+        return None;
+    }
+    let items = message.get("item_list")?.as_array()?;
+    let mut parts = Vec::new();
+    let mut attachments = Vec::new();
+    for item in items {
+        match item.get("type").and_then(Value::as_i64) {
+            Some(1) => {
+                if let Some(text) = item
+                    .get("text_item")
+                    .and_then(|value| value.get("text"))
+                    .and_then(Value::as_str)
+                {
+                    parts.push(text);
+                }
+            }
+            Some(2) => {
+                if let Some(image) = item.get("image_item") {
+                    let mut attachment = json!({
+                        "type": "image",
+                        "name": image
+                            .get("file_name")
+                            .or_else(|| image.get("filename"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("image"),
+                    });
+                    if let Some(url) = image
+                        .get("url")
+                        .or_else(|| image.get("cos_url"))
+                        .and_then(Value::as_str)
+                    {
+                        attachment["url"] = url.into();
+                    }
+                    attachments.push(attachment);
+                }
+            }
+            Some(3) => {
+                if let Some(file) = item.get("file_item") {
+                    let mut attachment = json!({
+                        "type": "file",
+                        "name": file
+                            .get("file_name")
+                            .or_else(|| file.get("filename"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("file"),
+                    });
+                    if let Some(url) = file.get("url").and_then(Value::as_str) {
+                        attachment["url"] = url.into();
+                    }
+                    attachments.push(attachment);
+                }
+            }
+            _ => {}
+        }
+    }
+    let text = crate::metadata::js_trim(&parts.join("\n")).to_owned();
+    if text.is_empty() && attachments.is_empty() {
+        return None;
+    }
+    Some((text, attachments))
+}
+
 fn weixin_inbound_text(message: &Value) -> Option<String> {
     let mut parts = Vec::new();
     for item in message.get("item_list")?.as_array()? {
@@ -775,6 +839,24 @@ mod inbound_tests {
     fn only_message_type_one_is_processed() {
         assert!(!weixin_inbound_message_type(&json!({ "message_type": 2 })));
         assert!(weixin_inbound_message_type(&json!({ "message_type": 1 })));
+    }
+
+    #[test]
+    fn collects_image_and_file_items_as_attachments() {
+        let (text, attachments) = super::weixin_inbound_text_and_attachments(&json!({
+            "message_type": 1,
+            "item_list": [
+                {"type": 1, "text_item": {"text": "see file"}},
+                {"type": 2, "image_item": {"file_name": "photo.png", "url": "https://cdn.example/photo.png"}},
+                {"type": 3, "file_item": {"file_name": "doc.pdf", "url": "https://cdn.example/doc.pdf"}}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(text, "see file");
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0]["type"], "image");
+        assert_eq!(attachments[0]["name"], "photo.png");
+        assert_eq!(attachments[1]["type"], "file");
     }
 
     #[test]

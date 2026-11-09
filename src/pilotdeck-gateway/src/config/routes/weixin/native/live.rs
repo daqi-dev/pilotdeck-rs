@@ -210,21 +210,11 @@ impl LiveOwner {
         let Some(chat_id) = text(message, "from_user_id") else {
             return Ok(());
         };
-        let input = message["item_list"]
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        (item["type"] == 1)
-                            .then(|| item["text_item"]["text"].as_str())
-                            .flatten()
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
-        let input = crate::metadata::js_trim(&input);
+        let Some((input, attachments)) =
+            crate::config::routes::weixin::native::weixin_inbound_text_and_attachments(message)
+        else {
+            return Ok(());
+        };
         let chat = self.chat(chat_id);
         if let Some(context) = text(message, "context_token").filter(|context| !context.is_empty()) {
             chat.lock().await.context = Some(context.into());
@@ -234,7 +224,7 @@ impl LiveOwner {
                 .unwrap()
                 .insert(chat_id.into(), context.into());
         }
-        if input.is_empty() {
+        if input.is_empty() && attachments.is_empty() {
             return Ok(());
         }
         let receipt_path = self.receipt_path(id, index);
@@ -296,7 +286,7 @@ impl LiveOwner {
             }
             queued_generation = chat.lock().await.generation;
         } else if self
-            .answer(credentials, chat_id, input, queued_generation)
+            .answer(credentials, chat_id, input.as_str(), queued_generation)
             .await?
         {
             return Ok(());
@@ -316,7 +306,7 @@ impl LiveOwner {
             }
             if !is_new
                 && self
-                    .answer(credentials, chat_id, input, queued_generation)
+                    .answer(credentials, chat_id, input.as_str(), queued_generation)
                     .await?
             {
                 return Ok(());
@@ -331,7 +321,11 @@ impl LiveOwner {
             self.save_receipt(&receipt_path, &receipt)?;
             return Ok(());
         }
-        let input = if is_new { input[4..].trim() } else { input };
+        let prompt = if is_new {
+            input[4..].trim().to_owned()
+        } else {
+            input
+        };
         let capture = CapturedReply::default();
         let mut mapper = self.mapper.lock().unwrap().clone();
         let mut ctx = CommandContext {
@@ -342,7 +336,7 @@ impl LiveOwner {
             chat: chat_id,
             home: &self.storage.home,
         };
-        if execute_channel_command(input, &mut ctx).await? {
+        if execute_channel_command(&prompt, &mut ctx).await? {
             // Only copy this chat's entries. Other chats may have changed while
             // the command's gateway RPC was in flight.
             {
@@ -378,9 +372,12 @@ impl LiveOwner {
             state.active_session = Some(session.clone());
             state.generation
         };
-        let mut params = json!({"sessionKey":session,"channelKey":"weixin","runId":format!("weixin:{id}:{index}"),"message":input,"allowPlanModeTools":false});
+        let mut params = json!({"sessionKey":session,"channelKey":"weixin","runId":format!("weixin:{id}:{index}"),"message":prompt,"allowPlanModeTools":false});
         if let Some(project) = project {
             params["projectKey"] = project.into();
+        }
+        if !attachments.is_empty() {
+            params["attachments"] = serde_json::Value::Array(attachments);
         }
         let sink = LiveSink {
             owner: self,
@@ -394,7 +391,12 @@ impl LiveOwner {
         let current = chat.lock().await.finish_turn(generation);
         if current {
             if result.is_err() {
-                return result;
+                receipt["outbox"] =
+                    json!(["Failed to process this message. Please retry."]);
+                self.save_receipt(&receipt_path, &receipt)?;
+                return self
+                    .deliver_outbox(credentials, chat_id, &receipt_path, &mut receipt)
+                    .await;
             }
             let text = sink.text.lock().unwrap().clone();
             receipt["outbox"] = if text.is_empty() {
@@ -409,7 +411,7 @@ impl LiveOwner {
             receipt["complete"] = true.into();
             self.save_receipt(&receipt_path, &receipt)?;
         }
-        result
+        result.map(|()| ())
     }
     async fn answer(
         &self,
