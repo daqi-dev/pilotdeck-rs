@@ -9,8 +9,16 @@ const WEIXIN_CDN_BASE_URL: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 pub(crate) fn weixin_media_download_url(media_owner: &Value) -> Option<String> {
     read_string(media_owner.get("cdn_url"))
         .or_else(|| read_string(media_owner.get("url")))
-        .or_else(|| read_string(media_owner.get("cos_url")))
         .or_else(|| extract_weixin_media_url(media_owner))
+        .or_else(|| read_string(media_owner.get("cos_url")))
+}
+
+pub(crate) fn weixin_outbound_aes_key_field(aeskey: &[u8; 16]) -> String {
+    let hex = aeskey
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    base64::engine::general_purpose::STANDARD.encode(hex.as_bytes())
 }
 
 fn read_string(value: Option<&Value>) -> Option<String> {
@@ -39,26 +47,33 @@ pub(crate) fn decrypt_weixin_media_if_needed(
     buffer: &[u8],
     media_owner: Option<&Value>,
     image: bool,
-) -> Vec<u8> {
+) -> Result<Vec<u8>, String> {
+    use super::http::failure;
     let is_expected = if image {
         is_known_image_buffer
     } else {
         is_likely_known_file_buffer
     };
     if is_expected(buffer) {
-        return buffer.to_vec();
+        return Ok(buffer.to_vec());
     }
     let Some(media_owner) = media_owner else {
-        return buffer.to_vec();
+        if image {
+            return Err(failure("Weixin image decrypt failed").message.into());
+        }
+        return Ok(buffer.to_vec());
     };
     for key in extract_weixin_media_keys(media_owner) {
         for candidate in try_decrypt_weixin_media(buffer, &key) {
             if is_expected(&candidate) {
-                return candidate;
+                return Ok(candidate);
             }
         }
     }
-    buffer.to_vec()
+    if image {
+        return Err(failure("Weixin image decrypt failed").message.into());
+    }
+    Ok(buffer.to_vec())
 }
 
 pub(crate) fn aes_ecb_padded_size(plaintext_size: usize) -> usize {
@@ -262,6 +277,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn prefers_media_full_url_over_cos_url() {
+        let item = serde_json::json!({
+            "cos_url": "https://cos.example/file",
+            "media": { "full_url": "https://full.example/file" }
+        });
+        assert_eq!(
+            weixin_media_download_url(&item).as_deref(),
+            Some("https://full.example/file")
+        );
+    }
+
+    #[test]
     fn prefers_cdn_url_in_download_url_helper() {
         let item = serde_json::json!({
             "cdn_url": "https://cdn.example/cdn.bin",
@@ -271,6 +298,23 @@ mod tests {
             weixin_media_download_url(&item).as_deref(),
             Some("https://cdn.example/cdn.bin")
         );
+    }
+
+    #[test]
+    fn outbound_aes_key_matches_ts_base64_hex_ascii() {
+        let key = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+        let field = weixin_outbound_aes_key_field(&key);
+        assert_eq!(
+            field,
+            base64::engine::general_purpose::STANDARD.encode(b"0123456789abcdef0123456789abcdef")
+        );
+    }
+
+    #[test]
+    fn image_decrypt_failure_returns_err() {
+        let buffer = b"not-an-image";
+        let owner = serde_json::json!({ "aeskey": "00112233445566778899aabbccddeeff" });
+        assert!(decrypt_weixin_media_if_needed(buffer, Some(&owner), true).is_err());
     }
 
     #[test]

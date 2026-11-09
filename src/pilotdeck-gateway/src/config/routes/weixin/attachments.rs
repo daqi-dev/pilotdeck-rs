@@ -1,51 +1,21 @@
 //! Inbound download and outbound upload for Weixin attachments (WeixinChannel.ts).
+use super::attachment_net::{self, validate_attachment_fetch_url};
 use super::http::{Http, failure};
-use super::storage::text;
 use super::media::{
     aes_ecb_padded_size, build_weixin_cdn_upload_url, decrypt_weixin_media_if_needed,
-    encrypt_aes_128_ecb,
+    encrypt_aes_128_ecb, weixin_outbound_aes_key_field,
 };
+use super::storage::text;
 use crate::config::routes::Result;
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper_util::{client::legacy::Client, rt::TokioExecutor};
 use md5::{Digest, Md5};
 use serde_json::{Value, json};
-use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use url::Url;
+
+#[cfg(test)]
+pub(crate) use super::attachment_net::set_test_permit_loopback_fetch;
 
 const LIMIT: usize = 50 * 1024 * 1024;
-
-#[cfg(test)]
-static TEST_PERMIT_LOOPBACK_FETCH: AtomicBool = AtomicBool::new(false);
-
-#[cfg(test)]
-pub(crate) fn set_test_permit_loopback_fetch(permit: bool) {
-    TEST_PERMIT_LOOPBACK_FETCH.store(permit, Ordering::SeqCst);
-}
-
-fn permit_loopback_fetch() -> bool {
-    #[cfg(test)]
-    {
-        return TEST_PERMIT_LOOPBACK_FETCH.load(Ordering::SeqCst);
-    }
-    #[cfg(not(test))]
-    {
-        false
-    }
-}
-
-fn download_client() -> Client<
-    hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>,
-    Full<Bytes>,
-> {
-    let connector = crate::runtime::model::http::https_connector(
-        crate::runtime::model::http::webpki_client_config(),
-    );
-    Client::builder(TokioExecutor::new()).build(connector)
-}
 
 fn sanitize_filename(name: &str) -> String {
     name.chars()
@@ -81,70 +51,6 @@ fn path_part(value: &str) -> Result<String> {
     Ok(replaced)
 }
 
-fn is_blocked_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast()
-                || v4.octets()[0] == 0
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_unique_local()
-                || v6.is_unicast_link_local()
-                || v6.is_multicast()
-        }
-    }
-}
-
-fn host_is_local_name(host: &str) -> bool {
-    matches!(
-        host.to_ascii_lowercase().as_str(),
-        "localhost" | "localhost.localdomain"
-    )
-}
-
-pub(crate) async fn validate_attachment_fetch_url(url: &str) -> Result<Url> {
-    let parsed = Url::parse(url.trim()).map_err(|_| failure("Invalid attachment URL"))?;
-    let scheme = parsed.scheme();
-    if scheme != "http" && scheme != "https" {
-        return Err(failure("Attachment URL must be http or https"));
-    }
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err(failure("Attachment URL must not contain credentials"));
-    }
-    let Some(host) = parsed.host_str() else {
-        return Err(failure("Attachment URL must include a host"));
-    };
-    if host_is_local_name(host) && !permit_loopback_fetch() {
-        return Err(failure("Attachment URL host is not permitted"));
-    }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_blocked_ip(ip) && !permit_loopback_fetch() {
-            return Err(failure("Attachment URL host is not permitted"));
-        }
-        return Ok(parsed);
-    }
-    let mut resolved = tokio::net::lookup_host(format!("{host}:0"))
-        .await
-        .map_err(|_| failure("Attachment URL host resolution failed"))?
-        .map(|socket| socket.ip())
-        .collect::<Vec<_>>();
-    if resolved.is_empty() {
-        return Err(failure("Attachment URL host resolution failed"));
-    }
-    resolved.sort();
-    resolved.dedup();
-    if !permit_loopback_fetch() && resolved.iter().any(|ip| is_blocked_ip(*ip)) {
-        return Err(failure("Attachment URL host is not permitted"));
-    }
-    Ok(parsed)
-}
-
 fn attachment_store_dir(home: &Path, chat: &str, message_id: &str) -> Result<PathBuf> {
     let chat = path_part(chat)?;
     let message_id = path_part(message_id)?;
@@ -169,6 +75,56 @@ fn attachment_store_dir(home: &Path, chat: &str, message_id: &str) -> Result<Pat
         return Err(failure("Attachment path escapes storage root"));
     }
     Ok(canonical)
+}
+
+fn write_attachment_bytes(store_dir: &Path, filename: &str, data: &[u8]) -> Result<PathBuf> {
+    if store_dir
+        .symlink_metadata()
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(failure("Attachment path escapes storage root"));
+    }
+    let path = store_dir.join(filename);
+    if path
+        .symlink_metadata()
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return Err(failure("Attachment path escapes storage root"));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut file = match options.open(&path) {
+        Ok(file) => file,
+        #[cfg(unix)]
+        Err(error) if error.raw_os_error() == Some(libc::ELOOP) => {
+            return Err(failure("Attachment path escapes storage root"));
+        }
+        Err(error) => return Err(failure(&error.to_string())),
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = file.metadata().map_err(|error| failure(&error.to_string()))?;
+        if !metadata.is_file() || metadata.nlink() != 1 {
+            return Err(failure("Attachment path escapes storage root"));
+        }
+    }
+    use std::io::Write;
+    file.write_all(data)
+        .map_err(|error| failure(&error.to_string()))?;
+    let path = std::fs::canonicalize(path).map_err(|error| failure(&error.to_string()))?;
+    if !path.starts_with(store_dir) {
+        return Err(failure("Attachment path escapes storage root"));
+    }
+    Ok(path)
 }
 
 pub(crate) fn format_attachment_fallback(attachment: &Value) -> String {
@@ -230,25 +186,9 @@ pub(crate) async fn materialize_inbound(
         let media_owner = attachment
             .get("metadata")
             .and_then(|metadata| metadata.get("weixinMediaOwner"));
-        data = decrypt_weixin_media_if_needed(&data, media_owner, image);
-        let path = store_dir.join(&filename);
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new();
-        file.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            file.mode(0o600);
-        }
-        let mut file = file
-            .open(&path)
-            .map_err(|error| failure(&error.to_string()))?;
-        file.write_all(&data)
-            .map_err(|error| failure(&error.to_string()))?;
-        let path = std::fs::canonicalize(path).map_err(|error| failure(&error.to_string()))?;
-        if !path.starts_with(&store_dir) {
-            return Err(failure("Attachment path escapes storage root"));
-        }
+        data = decrypt_weixin_media_if_needed(&data, media_owner, image)
+            .map_err(|message| failure(&message))?;
+        let path = write_attachment_bytes(&store_dir, &filename, &data)?;
         attachment["path"] = path.to_string_lossy().into();
         attachment["bytes"] = data.len().into();
         let mut metadata = attachment
@@ -267,35 +207,7 @@ pub(crate) async fn materialize_inbound(
 }
 
 async fn download_bytes(url: &str) -> Result<Vec<u8>> {
-    let parsed = validate_attachment_fetch_url(url).await?;
-    let client = download_client();
-    let response = client
-        .get(
-            parsed
-                .to_string()
-                .parse::<hyper::Uri>()
-                .map_err(|_| failure("Invalid attachment URL"))?,
-        )
-        .await
-        .map_err(|_| failure("Attachment download transport failed"))?;
-    if !response.status().is_success() {
-        return Err(failure("Attachment download HTTP error"));
-    }
-    let mut data = Vec::new();
-    let mut body = response.into_body();
-    while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|_| failure("Attachment download body failed"))?;
-        if let Ok(bytes) = frame.into_data() {
-            if data.len() + bytes.len() > LIMIT {
-                return Err(failure(&format!(
-                    "Attachment is {} bytes (limit {LIMIT}).",
-                    data.len() + bytes.len()
-                )));
-            }
-            data.extend_from_slice(&bytes);
-        }
-    }
-    Ok(data)
+    attachment_net::pinned_get(url, LIMIT).await
 }
 
 pub(crate) async fn send_outbound(
@@ -368,7 +280,7 @@ pub(crate) async fn send_outbound(
     use base64::Engine;
     let media = json!({
         "encrypt_query_param": download_param,
-        "aes_key": base64::engine::general_purpose::STANDARD.encode(aeskey),
+        "aes_key": weixin_outbound_aes_key_field(&aeskey),
         "encrypt_type": 1,
     });
     let item = if image {
@@ -419,35 +331,23 @@ pub(crate) async fn send_outbound(
 }
 
 async fn upload_encrypted_cdn(upload_url: &str, data: &[u8], aeskey: &[u8; 16]) -> Result<String> {
-    validate_attachment_fetch_url(upload_url).await?;
     let ciphertext = encrypt_aes_128_ecb(data, aeskey);
-    let parsed = Url::parse(upload_url).map_err(|_| failure("Invalid upload URL"))?;
-    let client = download_client();
-    let request = hyper::Request::builder()
-        .method("POST")
-        .uri(
-            parsed
-                .to_string()
-                .parse::<hyper::Uri>()
-                .map_err(|_| failure("Invalid upload URL"))?,
-        )
-        .header("Content-Type", "application/octet-stream")
-        .body(Full::new(Bytes::copy_from_slice(&ciphertext)))
-        .map_err(|_| failure("Invalid upload request"))?;
-    let response = client
-        .request(request)
-        .await
-        .map_err(|_| failure("Attachment upload transport failed"))?;
-    if !response.status().is_success() {
+    let response = attachment_net::pinned_post(
+        upload_url,
+        Bytes::copy_from_slice(&ciphertext),
+        ciphertext.len().saturating_add(4096),
+    )
+    .await?;
+    if !response.status.is_success() {
         return Err(failure("Attachment upload HTTP error"));
     }
-    let param = response
-        .headers()
+    response
+        .headers
         .get("x-encrypted-param")
         .and_then(|value| value.to_str().ok())
         .filter(|text| !text.is_empty())
-        .map(str::to_owned);
-    param.ok_or_else(|| failure("Weixin CDN upload missing x-encrypted-param"))
+        .map(str::to_owned)
+        .ok_or_else(|| failure("Weixin CDN upload missing x-encrypted-param"))
 }
 
 #[cfg(test)]
@@ -579,9 +479,29 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_private_and_metadata_attachment_urls() {
+        let _lock = super::attachment_net::test_settings_lock();
+        set_test_permit_loopback_fetch(false);
+        use super::super::attachment_net::{is_blocked_ip, set_test_dns_map};
+        use std::collections::HashMap;
+        use std::net::{IpAddr, Ipv4Addr};
+        assert!(is_blocked_ip("::ffff:127.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(is_blocked_ip("::ffff:10.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(super::super::attachment_net::is_blocked_ipv4(Ipv4Addr::new(100, 64, 0, 1)));
+        assert!(super::super::attachment_net::is_blocked_ipv4(Ipv4Addr::new(224, 0, 0, 1)));
+        set_test_dns_map(Some(HashMap::from([(
+            "rebind.test".into(),
+            vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))],
+        )])));
+        assert!(
+            validate_attachment_fetch_url("http://rebind.test/evil")
+                .await
+                .is_err()
+        );
+        set_test_dns_map(None);
         for url in [
             "http://127.0.0.1/evil",
             "http://10.0.0.1/evil",
+            "http://[::ffff:127.0.0.1]/evil",
             "http://169.254.169.254/latest/meta-data",
             "ftp://example.com/file",
         ] {
@@ -603,7 +523,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn rejects_redirect_to_private_host() {
+        let _lock = super::attachment_net::test_settings_lock();
+        set_test_permit_loopback_fetch(true);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let private = "http://10.0.0.1/evil";
+        let task = tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let count = socket.read(&mut buf).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&buf[..count]);
+                    if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 302 Found\r\nLocation: {private}\r\nContent-Length: 0\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let url = format!("{base}/start");
+        assert!(attachment_net::pinned_get(&url, LIMIT).await.is_err());
+        task.abort();
+        set_test_permit_loopback_fetch(false);
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn rejects_symlink_attachment_target() {
+        let _lock = super::attachment_net::test_settings_lock();
+        set_test_permit_loopback_fetch(true);
+        let home = std::env::temp_dir().join(format!("weixin-symlink-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let (fixture, url) = fixture(b"payload").await;
+        let _ = fixture;
+        let mut attachments = vec![json!({"type":"file","name":"doc.bin","url":url})];
+        materialize_inbound(&home, "user-1", "m1", &mut attachments)
+            .await
+            .unwrap();
+        let store = attachment_store_dir(&home, "user-1", "m1").unwrap();
+        let outside = home.join("outside-secret.bin");
+        std::fs::write(&outside, b"secret").unwrap();
+        let link = store.join("doc.bin");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let mut again = vec![json!({"type":"file","name":"doc.bin","url":url})];
+        assert!(materialize_inbound(&home, "user-1", "m1", &mut again).await.is_err());
+        assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
+        set_test_permit_loopback_fetch(false);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+    async fn rejects_undecryptable_image_without_writing() {
+        let _lock = super::attachment_net::test_settings_lock();
+        set_test_permit_loopback_fetch(true);
+        let home = std::env::temp_dir().join(format!("weixin-bad-img-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let (fixture, url) = fixture(b"not-a-valid-image").await;
+        let _ = fixture;
+        let mut attachments = vec![json!({
+            "type": "image",
+            "name": "bad.jpg",
+            "url": url,
+            "metadata": { "weixinMediaOwner": { "aeskey": "00112233445566778899aabbccddeeff" } }
+        })];
+        assert!(materialize_inbound(&home, "user-1", "m1", &mut attachments).await.is_err());
+        let store = attachment_store_dir(&home, "user-1", "m1").unwrap();
+        assert!(!store.join("bad.jpg").exists());
+        set_test_permit_loopback_fetch(false);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
     async fn inbound_download_writes_local_path() {
+        let _lock = super::attachment_net::test_settings_lock();
         let home = std::env::temp_dir().join(format!("weixin-attach-in-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
         let (fixture, url) = fixture(b"hello-weixin").await;
@@ -622,6 +630,7 @@ mod tests {
 
     #[tokio::test]
     async fn outbound_send_uploads_encrypted_payload() {
+        let _lock = super::attachment_net::test_settings_lock();
         let home = std::env::temp_dir().join(format!("weixin-attach-out-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
         let file = home.join("out.bin");
@@ -650,6 +659,15 @@ mod tests {
         assert!(send["msg"]["item_list"][0]["file_item"]["media"]["encrypt_query_param"]
             .as_str()
             .is_some_and(|s| !s.is_empty()));
+        let aes_field = send["msg"]["item_list"][0]["file_item"]["media"]["aes_key"]
+            .as_str()
+            .unwrap();
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(aes_field)
+            .unwrap();
+        assert_eq!(decoded.len(), 32);
+        assert!(decoded.iter().all(|byte| byte.is_ascii_hexdigit()));
         set_test_permit_loopback_fetch(false);
         let _ = std::fs::remove_dir_all(home);
     }

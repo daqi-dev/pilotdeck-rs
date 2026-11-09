@@ -653,11 +653,19 @@ impl ChannelEventSink for LiveSink<'_> {
                     None
                 }
                 Some("assistant_attachment") => {
+                    let attachment = event["attachment"].clone();
                     let Some(context) = state.context.clone() else {
-                        return Ok(());
+                        drop(state);
+                        eprintln!("weixin: attachment send skipped: missing context");
+                        let fallback =
+                            super::super::attachments::format_attachment_fallback(&attachment);
+                        return self
+                            .owner
+                            .reply(self.credentials, self.chat, &fallback)
+                            .await
+                            .map(|_| ());
                     };
                     drop(state);
-                    let attachment = event["attachment"].clone();
                     match super::super::attachments::send_outbound(
                         &self.owner.http,
                         self.credentials,

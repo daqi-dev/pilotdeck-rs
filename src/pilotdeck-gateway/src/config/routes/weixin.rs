@@ -1,3 +1,4 @@
+mod attachment_net;
 mod attachments;
 mod http;
 mod media;
