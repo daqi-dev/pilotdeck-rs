@@ -144,7 +144,16 @@ def main():
     parser.add_argument('output', nargs='?')
     parser.add_argument('selected', nargs='*')
     args = parser.parse_args()
-    check_binding_scope()
+    # #1990 fix-r1 (review P2): the binding self-check runs before any
+    # mutation, so its failure is a "never started" refusal (rc 2) — the
+    # pre-`mutating_sources` boundary every guard below already follows
+    # (`specs/negative-controls/README.md`) — not an uncaught traceback a
+    # host would read as "ran and not green" (1). Same class of fix as
+    # #2441's sdk-mcp-session-tools fixture in this same tree.
+    try:
+        check_binding_scope()
+    except RuntimeError as error:
+        refuse(str(error))
     # Every refusal below happens before any mutation, so it is rc 2 ("this
     # run never started") and not rc 1 ("ran, not green") — the four-way table
     # in `specs/negative-controls/README.md`.
