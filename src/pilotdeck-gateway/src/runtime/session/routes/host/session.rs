@@ -103,18 +103,19 @@ impl LiveSession for BoundSession {
         &self,
         turn: &SessionQueuedTurn,
     ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-        {
-            let mut queued = self.queued.lock().unwrap();
-            let next = queued
+        // The queue is the single source of truth for FIFO admission. Pop only
+        // after the turn was actually submitted: a failed validation or
+        // `submit_inner` used to leave the session queue one item shorter than
+        // the handle's `pending` copy, so the next admission skipped a turn and
+        // `pump_blocked` stuck.
+        let next = {
+            let queued = self.queued.lock().unwrap();
+            queued
                 .front()
                 .filter(|next| next.item_id == turn.item_id && next.turn_id == turn.turn_id)
-                .ok_or_else(|| RuntimeError::new("Queued turn is not the next FIFO admission."))?;
-            self.state
-                .recorder
-                .start_queued_turn(&self.state.session_key, &next.turn_id, &next.item_id)
-                .map_err(runtime_error)?;
-            queued.pop_front();
-        }
+                .cloned()
+                .ok_or_else(|| RuntimeError::new("Queued turn is not the next FIFO admission."))?
+        };
         let mut options = turn
             .submit_options
             .as_object()
@@ -123,7 +124,19 @@ impl LiveSession for BoundSession {
         options.insert("turnId".into(), JsValue::String(turn.turn_id.clone()));
         let input =
             queued_execution_input(self.input_template.lock().unwrap().as_ref(), &turn.input)?;
-        self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))
+        self.state
+            .recorder
+            .start_queued_turn(&self.state.session_key, &next.turn_id, &next.item_id)
+            .map_err(runtime_error)?;
+        let stream = self.submit_inner(input, JsValue::Object(options), Some(&turn.item_id))?;
+        let mut queued = self.queued.lock().unwrap();
+        if queued
+            .front()
+            .is_some_and(|head| head.item_id == turn.item_id && head.turn_id == turn.turn_id)
+        {
+            queued.pop_front();
+        }
+        Ok(stream)
     }
     fn discard_queued_turns(&self, reason: &str) -> RuntimeResult {
         let mut queued = self.queued.lock().unwrap();
@@ -523,6 +536,69 @@ mod tests {
             2
         );
         resumed.dispose("test_done".into()).await.unwrap();
+        if root.exists() {
+            std::fs::remove_dir_all(root).unwrap();
+        }
+        Ok(())
+    }
+
+    /// A rejected queued turn must stay at the head of the session queue. The
+    /// old order popped first and validated afterwards, so a failure silently
+    /// dropped the turn from this queue while the handle kept its copy.
+    #[tokio::test]
+    async fn rejected_queued_turn_stays_at_the_head() -> Result<(), Box<dyn std::error::Error>> {
+        struct Active;
+        impl LiveSession for Active {
+            fn snapshot(&self) -> JsValue {
+                JsValue::Null
+            }
+            fn abort(&self, _: &JsString) -> RuntimeResult {
+                Ok(())
+            }
+            fn dispose(&self) -> DisposeFuture<'_> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+        let root = std::env::temp_dir().join(format!(
+            "pdrs-bound-queued-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let adapter = AsyncTranscriptAdapter::new(
+            Arc::new(crate::storage::JsonlTranscriptStore::new()),
+            Arc::new(|key| key.pilot_home.join("chats")),
+        );
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: root.clone(),
+                pilot_home: root.clone(),
+                session_id: "s".into(),
+                now: None,
+            })
+            .map_err(runtime_error)?;
+        let turn = SessionQueuedTurn {
+            item_id: "item".into(),
+            turn_id: "turn".into(),
+            input: JsValue::Null,
+            // Not an object: submission is rejected before any dispatch.
+            submit_options: JsValue::Null,
+        };
+        let session = BoundSession {
+            inner: Arc::new(Active),
+            state: LiveSessionState::new(
+                "s".into(),
+                root.to_string_lossy().as_ref().into(),
+                storage,
+            )
+            .unwrap(),
+            live: Arc::new(LiveBindings::default()),
+            execution_error: None,
+            queued: Mutex::new(VecDeque::from([turn.clone()])),
+            input_template: Mutex::new(None),
+        };
+        assert!(session.submit_queued_turn(&turn).is_err());
+        let pending = session.pending_queued_turns().unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].turn_id, turn.turn_id);
         if root.exists() {
             std::fs::remove_dir_all(root).unwrap();
         }

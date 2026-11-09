@@ -482,14 +482,23 @@ impl LiveSessionHandle {
         if self.state() != HandleState::Active {
             return Err(RuntimeError::new("Agent handle is not active."));
         }
+        // Check the runtime before mutating either queue: an admitted turn that
+        // cannot be pumped used to be reported as a success.
+        if tokio::runtime::Handle::try_current().is_err() {
+            return Err(RuntimeError::new(
+                "Queued turns require an active async runtime.",
+            ));
+        }
         self.0.session.enqueue_queued_turn(&turn)?;
         let mut queued = self.0.queued.lock().unwrap();
         queued.pending.push_back(turn);
         queued.pump_blocked = false;
         drop(queued);
         drop(_admission);
-        self.start_queued_pump();
-        Ok(())
+        // A turn admitted while no runtime is available would never be pumped:
+        // `start_queued_pump` used to clear `pump_running` and return silently,
+        // leaving the queue stuck with a success reported to the caller.
+        self.start_queued_pump()
     }
 
     pub fn enqueue_followup(
@@ -508,20 +517,24 @@ impl LiveSessionHandle {
     }
 
     pub fn resume_queued_turns(&self) {
-        self.start_queued_pump();
+        let _ = self.start_queued_pump();
     }
 
-    fn start_queued_pump(&self) {
-        {
+    fn start_queued_pump(&self) -> RuntimeResult {
+        let runtime = {
             let mut queued = self.0.queued.lock().unwrap();
             if queued.pending.is_empty() || queued.pump_running || queued.pump_blocked {
-                return;
+                return Ok(());
             }
+            // A turn admitted with no runtime would never be pumped, so report
+            // the failure instead of leaving the queue stuck after a success.
+            let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+                return Err(RuntimeError::new(
+                    "Queued turns require an active async runtime.",
+                ));
+            };
             queued.pump_running = true;
-        }
-        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
-            self.0.queued.lock().unwrap().pump_running = false;
-            return;
+            runtime
         };
         let handle = self.clone();
         runtime.spawn(async move {
@@ -535,9 +548,10 @@ impl LiveSessionHandle {
             };
             handle.0.changed.send_modify(|version| *version += 1);
             if restart {
-                handle.start_queued_pump();
+                let _ = handle.start_queued_pump();
             }
         });
+        Ok(())
     }
 
     async fn run_queued_pump(&self) -> RuntimeResult {
@@ -561,8 +575,20 @@ impl LiveSessionHandle {
                     let activity = HandleActivity(self.clone());
                     match self.0.session.submit_queued_turn(&turn) {
                         Ok(stream) => {
-                            let removed = self.0.queued.lock().unwrap().pending.pop_front();
-                            debug_assert_eq!(removed.as_ref(), Some(&turn));
+                            // `submit_queued_turn` already popped the session
+                            // queue; drop the matching handle copy under the
+                            // same admission lock so a failed submit keeps both.
+                            let mut queued = self.0.queued.lock().unwrap();
+                            if queued
+                                .pending
+                                .front()
+                                .is_some_and(|head| {
+                                    head.item_id == turn.item_id && head.turn_id == turn.turn_id
+                                })
+                            {
+                                queued.pending.pop_front();
+                            }
+                            drop(queued);
                             Some(Ok(SessionSubmission {
                                 stream,
                                 _activity: Some(activity),
@@ -1211,6 +1237,30 @@ mod tests {
             result.unwrap().is_err(),
             "expected error from panicked dispose"
         );
+    }
+
+    /// A queued turn admitted without a runtime can never be pumped, so it
+    /// must fail instead of reporting a success nobody will act on.
+    #[test]
+    fn enqueue_without_runtime_reports_an_error() {
+        // Construction captures the executor, so build on a runtime thread
+        // and exercise the enqueue from a plain thread with no reactor.
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let handle = runtime.block_on(async {
+            LiveSessionHandle::new(MemSession::new(), None)
+        });
+        let turn = SessionQueuedTurn {
+            item_id: "item".into(),
+            turn_id: "turn".into(),
+            input: JsValue::Null,
+            submit_options: parse_json("{}").unwrap(),
+        };
+        let error = handle.enqueue_queued_turn(turn).unwrap_err();
+        assert!(
+            error.to_string().contains("active async runtime"),
+            "unexpected error: {error}"
+        );
+        assert!(handle.0.queued.lock().unwrap().pending.is_empty());
     }
 }
 
