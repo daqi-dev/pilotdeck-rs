@@ -186,7 +186,7 @@ a54c2856f2d48dcbab6cea5f1325d7686366f5c80516b65c7cef10a3a1368ed9  ../../scripts/
 5aa2f14fb2890f795f7638b6ccb4005f64cadc21d3ce3cff38797982b51e7e12  ../../scripts/gateway-parity/compare.py
 7549635a5f2131e610548c2d92a32f0afd9fcfddc21cd0a386b36e79e11dd5f4  ../../scripts/gateway-parity/controls/prerequisites.py
 aed0bb648789e449a75a7a5f7ecee1fbb97bd036420c6fdbbdd310b863c6d907  ../../scripts/gateway-parity/controls/run_all.py
-9a31b25ee9c332a3426b1cfaaf55ba50e4ee208bc8ff4dc0395c173518545614  ../../scripts/gateway-parity/controls/session_domain.py
+9c3e5783849444494481101f439f4e47bee10216a04576ea281c705bd3691955  ../../scripts/gateway-parity/controls/session_domain.py
 5f8e906fa532a58b994dff4f5e6438b07e31f14195b8142b75b398b6778e9e63  ../../scripts/gateway-parity/driver.mts
 9ed524745450a2139824265ec1b0df5b3853d18482c10e8e262187022516b297  ../../scripts/gateway-parity/fixtures/retirement-methods.json
 41b1313fc047e8334a1655b69e277c4bcc451edaf15b79efd37e403e7005dab2  ../../scripts/gateway-parity/fixtures/session-calibration.json
@@ -198,7 +198,7 @@ aed0bb648789e449a75a7a5f7ecee1fbb97bd036420c6fdbbdd310b863c6d907  ../../scripts/
 0ea4fb1ff42bf4a72e6e69ad788bfdfd2f4771d57059817f12f58cd550fc7b49  ../../scripts/gateway-parity/run_round.py
 5806c93ced4bae707858ed9c5859b2428a630c4524e01a5b45f42f153edfef78  ../../scripts/gateway-parity/session_domain.py
 855136b60c4579eda257224fe75c8faaf89ad54eeaa85abff9eb369e02cc6661  ../../scripts/gateway-parity/session_observations.mjs
-ce31e8e95a74374d4769c26afc61d092ae1f0c77c4daff3f789a274279312bbf  ../../scripts/gateway-parity/test_safety.py
+425e43abb47a00a3149e988e180c74fa25438ef3843a7ecd8b0bc2153d377985  ../../scripts/gateway-parity/test_safety.py
 e1dfeac23d5cfd0777fd2836cb1011430c73d6b3b10fe44724738194f49901df  ../../scripts/gateway-parity/watcher.mjs
 886d12cdd36a5ecac53d314fabd52fed9ecd093b2a07939bbcf553d88b37e519  acceptance.md
 3e641ee353effae94c3751b198cb08f1728bf225bc9963356befea1d722df49b  accepted-diffs.md
