@@ -3271,3 +3271,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - **`git merge --no-ff`** → `2ef5bdf`，父 `a050aef` + `43772a7`；Codex r7 三提交并入。
 - **全量 lib** 4258/0；六组定向测全绿；证据 `pdrs-ext/…/r12/最终报告.md`；未 push。
+
+### 2026-11-09 pdrs-daqi-b-channels r13（Grok r3a 企微/微信/turn_started）
+
+- 企微 webhook：query 缺参拒绝 · `token` 验签 · 解密 `encrypt` 后路由；微信附件下载落盘 + 出站上传；`turn_started` 改到 `submit_inner` 成功之后。
+- **全量 lib** 4260/0；证据 `pdrs-ext/…/r13/最终报告.md`，`r13/logs/lib-full-r13.log`；已提交，未 push。
