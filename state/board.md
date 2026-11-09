@@ -3301,3 +3301,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - 坏图中文诊断 + 单块 diagnostics；outbox 失败入队；权限/追问 `reply` 不入队；`MessageItemType` 3=VOICE/4=FILE；file_name/空 voice/空 x-error-message；DNS/池/锁/Host 线测/拆分 inbound+attach tests。
 - **全量 lib** 4288/0；证据 `pdrs-ext/…/r18/最终报告.md`，`r18/logs/lib-full-r18.log`；见本链 HEAD，未 push。
+
+### 2026-11-10 pdrs-daqi-b-channels r19（Grok r18 formatWeixinError/控制流/FILE=4）
+
+- `formatWeixinError` 全文；纯 `/new` 不入队；权限/elicitation/outbox 多段 TS 控制流；入出站 FILE=4；`image-{id}.jpg`；FIFO；`native_tests` 拆分。
+- **全量 lib** 4290/0；`r19/TS对照表.md`、`r19/最终报告.md`、`r19/logs/lib-full-r19.log`；未 push。
