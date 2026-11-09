@@ -93,22 +93,29 @@ def main():
         registered(cases, EXPECTED_NAMES)
     except ValueError as error:
         refuse(str(error))
+    if any(len(row) != 6 for row in cases):
+        refuse('#2131 malformed case row: every mutation needs 6 fields')
     if sys.argv[1:] == ['--check-anchors']:
         failures = []
         # Hold the tree lock while reading: a sibling mutating runner may
         # have a mutant on disk between its write and restore phases, which
         # would make this read-only check see `count == 0` spuriously.
-        with tree_lock(root):
-            for name, path, old, _, _, _ in cases:
-                count = path.read_text().count(old)
-                if count != 1:
-                    failures.append(f'{name}: expected 1 anchor, got {count}')
+        try:
+            with tree_lock(root):
+                for name, path, old, _, _, _ in cases:
+                    count = path.read_text().count(old)
+                    if count != 1:
+                        failures.append(f'{name}: expected 1 anchor, got {count}')
+        except OSError as error:
+            # TimeoutError is an OSError subclass: a busy lock or an unreadable
+            # anchor source is a refusal (2), not a bare traceback (1).
+            refuse(f'#2131 check-anchors tree lock or read failed: {error}')
         print('\n'.join(failures) if failures else f'{len(cases)} anchors OK')
         return int(bool(failures))
     args = [argument for argument in sys.argv[1:] if argument != '--compile-only']
     compile_only = '--compile-only' in sys.argv[1:]
     if not args:
-        raise SystemExit('usage: --check-anchors | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
+        refuse('usage: --check-anchors | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
     # No baseline row exists in this suite: each case carries its own
     # positive control, so the selector's baseline default is turned off.
     try:
@@ -194,6 +201,12 @@ def main():
             # nothing was measured: a dirty tree or a lock timeout is a
             # refusal (2), not a run that came out not-green (1).
             refuse(reason)
+        # The guard failed (or the run was cancelled) after mutations were
+        # written: every row is untrustworthy, so void what ran, account for
+        # the rest, publish the INVALID summary and exit 2 -- the same
+        # #1076 fix-r1 contract as negative_suite.run_cases: an unverified
+        # restore or a cancellation-invalidated run never reports a 1 that
+        # callers would read as "ran and came out not green".
         for row in results:
             row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
             row['compiled'] = False
@@ -201,7 +214,11 @@ def main():
             results.append(dict(mutation=name, test=test, assertion=marker,
                                 status='INVALID', reason=reason, compiled=False))
             print(f'{name}: INVALID: {reason}', flush=True)
-    publish_summary(out, results)
+        publish_summary(out, results,
+                        states=('KILLED', 'SURVIVED', 'INVALID', 'COMPILED'))
+        raise SystemExit(2)
+    publish_summary(out, results,
+                    states=('KILLED', 'SURVIVED', 'INVALID', 'COMPILED'))
     return verdict_exit(results, key='status',
                         killed='COMPILED' if compile_only else 'KILLED')
 
