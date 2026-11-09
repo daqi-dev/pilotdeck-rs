@@ -15,6 +15,25 @@ use std::{
 const MAX_TAIL: usize = 12_000;
 const MISSING_UPDATER: &str = "This installation does not include the Git Web updater. Use application settings or update manually.";
 
+// Source-only tests need a deployment anchor without changing process-wide
+// environment or installing fixture files into the checkout.
+#[cfg(test)]
+thread_local! {
+    static TEST_DEPLOYMENT_ANCHOR: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(crate) fn with_deployment_anchor_for_tests<T>(start: &Path, run: impl FnOnce() -> T) -> T {
+    struct Reset(Option<PathBuf>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_DEPLOYMENT_ANCHOR.with(|anchor| anchor.replace(self.0.take()));
+        }
+    }
+    let _reset = Reset(TEST_DEPLOYMENT_ANCHOR.with(|anchor| anchor.replace(Some(start.into()))));
+    run()
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct UpdateResult {
     /// Raw child exit code. CLI treats both 0 and 2 as success; IM distinguishes 2.
@@ -25,6 +44,10 @@ pub struct UpdateResult {
 
 /// `updateCommand.ts:6-10` — compiled module directory, not the crate root.
 pub fn update_module_start() -> PathBuf {
+    #[cfg(test)]
+    if let Some(start) = TEST_DEPLOYMENT_ANCHOR.with(|anchor| anchor.borrow().clone()) {
+        return start;
+    }
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/runtime")
 }
 
@@ -39,6 +62,10 @@ pub fn find_update_root(start: &Path) -> io::Result<PathBuf> {
 }
 
 pub fn find_update_root_from_deployment() -> io::Result<PathBuf> {
+    #[cfg(test)]
+    if let Some(start) = TEST_DEPLOYMENT_ANCHOR.with(|anchor| anchor.borrow().clone()) {
+        return find_update_root(&start);
+    }
     let executable = std::env::current_exe()?;
     find_update_root(executable.parent().unwrap_or(&executable))
         .or_else(|_| find_update_root(&update_module_start()))
@@ -403,19 +430,24 @@ mod tests {
 
     #[test]
     fn update_module_anchor_finds_shipped_script_in_repo() {
-        // `scripts/update-web.mjs` ships with the Web/deployment package. A
-        // source-only checkout has neither the script nor a resolvable root, so
-        // the anchor contract is only asserted where the package exists.
-        let Ok(root) = find_update_root(&update_module_start()) else {
-            return;
-        };
-        if !root.join("scripts/update-web.mjs").exists() {
-            return;
-        }
-        assert!(
-            root.join("scripts/update-web.mjs").is_file(),
-            "production anchor must discover scripts/update-web.mjs"
-        );
+        let scratch = crate::scratch::Scratch::new("update-shipped-script");
+        let anchor = scratch.path().join("gateway/src/runtime");
+        fs::create_dir_all(&anchor).unwrap();
+        fs::create_dir_all(scratch.path().join("scripts")).unwrap();
+        fs::write(
+            scratch.path().join("scripts/update-web.mjs"),
+            "process.exit(0);\n",
+        )
+        .unwrap();
+        with_deployment_anchor_for_tests(&anchor, || {
+            let root = find_update_root(&update_module_start()).unwrap();
+            assert_eq!(root, scratch.path());
+            assert_eq!(find_update_root_from_deployment().unwrap(), root);
+            assert!(
+                root.join("scripts/update-web.mjs").is_file(),
+                "production anchor must discover scripts/update-web.mjs"
+            );
+        });
     }
 
     #[test]

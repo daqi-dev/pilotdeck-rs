@@ -3,7 +3,7 @@
 use super::super::project::{DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult};
 use pilotdeck_protocol::{JsString, JsValue};
 use std::sync::{Arc, Mutex};
-use std::{collections::VecDeque, future::Future, pin::Pin};
+use std::{future::Future, pin::Pin};
 use tokio::sync::watch;
 
 /// One awaited native stream step.
@@ -210,7 +210,10 @@ struct Inner {
 
 #[derive(Default)]
 struct QueuedProgress {
-    pending: VecDeque<SessionQueuedTurn>,
+    /// The session owns the one ordered queue (TS `AgentTurnInbox`); the
+    /// handle only tracks whether a pump is running or blocked. Keeping a
+    /// second copy here made `turn_started`, the durable dequeue and the
+    /// in-memory dequeue three separate transitions that could disagree.
     pump_running: bool,
     pump_blocked: bool,
 }
@@ -333,7 +336,6 @@ impl LiveSessionHandle {
     /// Must be constructed inside a Tokio runtime. Later disposal and Drop
     /// may run on a plain thread; they continue to use this captured executor.
     pub fn new(session: Arc<dyn LiveSession>, lease: Option<RuntimeLease>) -> Self {
-        let pending = session.pending_queued_turns().unwrap_or_default();
         Self(Arc::new(Inner {
             session,
             lease: Mutex::new(lease),
@@ -353,7 +355,6 @@ impl LiveSessionHandle {
             changed: watch::channel(0).0,
             admission: Mutex::new(()),
             queued: Mutex::new(QueuedProgress {
-                pending: pending.into(),
                 ..Default::default()
             }),
             // Same contract as PendingSession/ProjectRuntimeRegistry: the
@@ -465,11 +466,10 @@ impl LiveSessionHandle {
     ) -> Result<SessionSubmission, RuntimeError> {
         let activity = {
             let _admission = self.0.admission.lock().unwrap();
-            let queued = self.0.queued.lock().unwrap();
-            if !queued.pending.is_empty() || queued.pump_running {
+            let pump_running = self.0.queued.lock().unwrap().pump_running;
+            if pump_running || self.has_pending_queued_turn()? {
                 return Err(RuntimeError::new("Agent handle already has a queued turn."));
             }
-            drop(queued);
             // The activity flag reserves this admission until the stream ends.
             self.begin_activity()?
         };
@@ -494,7 +494,6 @@ impl LiveSessionHandle {
         }
         self.0.session.enqueue_queued_turn(&turn)?;
         let mut queued = self.0.queued.lock().unwrap();
-        queued.pending.push_back(turn);
         queued.pump_blocked = false;
         drop(queued);
         drop(_admission);
@@ -523,10 +522,23 @@ impl LiveSessionHandle {
         let _ = self.start_queued_pump();
     }
 
+    /// The session owns the one ordered queue, so every pending question is
+    /// answered from it rather than from a handle-side copy.
+    fn peek_queued_turn(&self) -> Result<Option<SessionQueuedTurn>, RuntimeError> {
+        Ok(self.0.session.pending_queued_turns()?.into_iter().next())
+    }
+
+    fn has_pending_queued_turn(&self) -> Result<bool, RuntimeError> {
+        Ok(self.peek_queued_turn()?.is_some())
+    }
+
     fn start_queued_pump(&self) -> RuntimeResult {
+        if !self.has_pending_queued_turn()? {
+            return Ok(());
+        }
         let runtime = {
             let mut queued = self.0.queued.lock().unwrap();
-            if queued.pending.is_empty() || queued.pump_running || queued.pump_blocked {
+            if queued.pump_running || queued.pump_blocked {
                 return Ok(());
             }
             // A turn admitted with no runtime would never be pumped, so report
@@ -547,7 +559,11 @@ impl LiveSessionHandle {
                 let mut queued = handle.0.queued.lock().unwrap();
                 queued.pump_running = false;
                 queued.pump_blocked = blocked;
-                !blocked && !queued.pending.is_empty() && active
+                !blocked
+                    && active
+                    && handle
+                        .has_pending_queued_turn()
+                        .unwrap_or(false)
             };
             handle.0.changed.send_modify(|version| *version += 1);
             if restart {
@@ -569,7 +585,8 @@ impl LiveSessionHandle {
                 if progress.activity {
                     None
                 } else {
-                    let turn = self.0.queued.lock().unwrap().pending.front().cloned();
+                    // The session queue is the only ordered copy.
+                    let turn = self.peek_queued_turn()?;
                     let Some(turn) = turn else { return Ok(()) };
                     progress.activity = true;
                     progress.maintenance = false;
@@ -583,16 +600,9 @@ impl LiveSessionHandle {
                 continue;
             };
             let stream = self.0.session.submit_queued_turn(&turn)?;
-            {
-                // Commit the handle queue only after successful submission.
-                let _admission = self.0.admission.lock().unwrap();
-                let mut queued = self.0.queued.lock().unwrap();
-                if queued.pending.front().is_some_and(|head| {
-                    head.item_id == turn.item_id && head.turn_id == turn.turn_id
-                }) {
-                    queued.pending.pop_front();
-                }
-            }
+            // `submit_queued_turn` owns the single commit: it writes
+            // `turn_started` and drops the item from the durable queue in one
+            // step, so there is no second copy left to advance here.
             let mut submission = SessionSubmission {
                 stream,
                 _activity: Some(activity),
@@ -956,6 +966,8 @@ mod tests {
         active_calls: AtomicUsize,
         max_active_calls: AtomicUsize,
         queued_calls: AtomicUsize,
+        /// The session owns the queue, so the fixture keeps it here too.
+        queued: Mutex<std::collections::VecDeque<SessionQueuedTurn>>,
     }
 
     impl SubmitSession {
@@ -967,6 +979,7 @@ mod tests {
                 active_calls: AtomicUsize::new(0),
                 max_active_calls: AtomicUsize::new(0),
                 queued_calls: AtomicUsize::new(0),
+                queued: Mutex::default(),
             })
         }
     }
@@ -1003,15 +1016,27 @@ mod tests {
             }
             Ok(Box::new(SubmitTurn(input == JsValue::from("stream-error"))))
         }
-        fn enqueue_queued_turn(&self, _: &SessionQueuedTurn) -> RuntimeResult {
+        fn enqueue_queued_turn(&self, turn: &SessionQueuedTurn) -> RuntimeResult {
+            self.queued.lock().unwrap().push_back(turn.clone());
             Ok(())
+        }
+        fn pending_queued_turns(&self) -> Result<Vec<SessionQueuedTurn>, RuntimeError> {
+            Ok(self.queued.lock().unwrap().iter().cloned().collect())
         }
         fn submit_queued_turn(
             &self,
             turn: &SessionQueuedTurn,
         ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
             self.queued_calls.fetch_add(1, Ordering::SeqCst);
-            self.submit(turn.input.clone(), turn.submit_options.clone())
+            let stream = self.submit(turn.input.clone(), turn.submit_options.clone())?;
+            let mut queued = self.queued.lock().unwrap();
+            if queued
+                .front()
+                .is_some_and(|head| head.item_id == turn.item_id && head.turn_id == turn.turn_id)
+            {
+                queued.pop_front();
+            }
+            Ok(stream)
         }
         fn snapshot(&self) -> JsValue {
             JsValue::Null
@@ -1084,7 +1109,8 @@ mod tests {
             loop {
                 let finished = {
                     let queued = handle.0.queued.lock().unwrap();
-                    queued.pending.is_empty() && !queued.pump_running
+                    !queued.pump_running
+                        && !handle.has_pending_queued_turn().unwrap_or(false)
                 };
                 if finished {
                     break;
@@ -1172,7 +1198,8 @@ mod tests {
             loop {
                 let finished = {
                     let queued = handle.0.queued.lock().unwrap();
-                    queued.pending.is_empty() && !queued.pump_running
+                    !queued.pump_running
+                        && !handle.has_pending_queued_turn().unwrap_or(false)
                 };
                 if finished {
                     break;
@@ -1205,9 +1232,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(handle.in_flight_for_test(), 0);
-        let queued = handle.0.queued.lock().unwrap();
-        assert_eq!(queued.pending.front(), Some(&turn));
-        assert!(queued.pump_blocked);
+        // The session keeps the item because submission never started it.
+        assert_eq!(
+            handle.peek_queued_turn().unwrap().as_ref(),
+            Some(&turn),
+            "the failed head must stay in the one queue"
+        );
+        assert!(handle.0.queued.lock().unwrap().pump_blocked);
     }
 
     struct MemSession {
@@ -1510,7 +1541,7 @@ mod tests {
             error.to_string().contains("active async runtime"),
             "unexpected error: {error}"
         );
-        assert!(handle.0.queued.lock().unwrap().pending.is_empty());
+        assert!(!handle.has_pending_queued_turn().unwrap());
     }
 }
 
