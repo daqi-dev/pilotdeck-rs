@@ -380,6 +380,48 @@ mutations = [
      '        {',
      CFG + 'session_model_clear_blank_key_answers_the_session_key_gate',
      '#1872 the blank key is a sessionKey error on clear'),
+    # ── #1872 fix-r3: the owner-side reservation skip for a blank request
+    # key. Restoring the unfiltered owner resolution lets a busy
+    # reservation under the folded owner spelling answer SESSION_BUSY for
+    # a request TS rejects as INVALID_SESSION_KEY, and the bound test dies
+    # on the sessionKey-gate assert.
+    ('set-blank-key-owner-reservation-restored', CONFIG,
+     '        // #1872 fix-r3: a blank request key never reaches the write — the\n'
+     '        // sessionKey gate inside rejects it first — and TS reserves only the\n'
+     '        // request spelling (InProcessGateway.ts:2193), so reserving the\n'
+     '        // owner a blank key folds onto would let that owner\'s concurrent\n'
+     '        // reservation answer busy for a request TS rejects as\n'
+     '        // INVALID_SESSION_KEY (ts-blankkey-probe E/G). Skip the owner side\n'
+     '        // for a blank request key.\n'
+     '        let owner = reserved\n'
+     '            .filter(|key| trimmed_string_is_non_empty(key))\n'
+     '            .and_then(|key| self.live_transcript_owner(Some(key)));',
+     '        let owner = self.live_transcript_owner(reserved);',
+     CFG + 'session_model_set_blank_key_ignores_a_busy_owner_reservation',
+     '#1872 the blank key is a sessionKey error despite a busy owner reservation'),
+    # ── #1872 fix-r3: the clear twin of the owner-reservation skip.
+    ('clear-blank-key-owner-reservation-restored', CONFIG,
+     '        // #1872 fix-r3: mirror the set wrapper — the owner a blank key\n'
+     '        // folds onto is not reserved either (TS reserves only the request\n'
+     '        // spelling, InProcessGateway.ts:2203), so a busy owner reservation\n'
+     '        // cannot answer for a request the sessionKey gate rejects.\n'
+     '        let owner = reserved\n'
+     '            .filter(|key| trimmed_string_is_non_empty(key))\n'
+     '            .and_then(|key| self.live_transcript_owner(Some(key)));',
+     '        let owner = self.live_transcript_owner(reserved);',
+     CFG + 'session_model_clear_blank_key_ignores_a_busy_owner_reservation',
+     '#1872 the blank key is a sessionKey error on clear despite a busy owner reservation'),
+    # ── #1872 fix-r3: permission's blank key with no turn must reach the
+    # sessionKey gate. Weakening the require to a blank default lets the
+    # request apply an override under the empty spelling and the bound
+    # test dies on the INVALID_SESSION_KEY assert.
+    ('permission-blank-key-require-weakened', CONFIG,
+     '        let session_key = require_session_key(params)?;\n'
+     '        let mode = match mode.as_string() {',
+     '        let session_key = require_session_key(params).unwrap_or_default();\n'
+     '        let mode = match mode.as_string() {',
+     CFG + 'set_permission_mode_blank_key_answers_the_session_key_gate',
+     '#1872 the blank key is a sessionKey error for permission'),
     ('clear-alias-owner-busy-removed', CONFIG,
      '        if self.owner.has_active_turn(&session_key)\n'
      '            || owner.is_some_and(|owner| self.owner.has_active_turn(owner))\n'
@@ -757,6 +799,9 @@ LITERAL_ANCHORS = [
     (CONFIG, '#1872 the blank key answers busy'),
     (CONFIG, '#1872 the blank key answers busy for permission'),
     (CONFIG, '#1872 the blank key is a sessionKey error on clear'),
+    (CONFIG, '#1872 the blank key is a sessionKey error despite a busy owner reservation'),
+    (CONFIG, '#1872 the blank key is a sessionKey error on clear despite a busy owner reservation'),
+    (CONFIG, '#1872 the blank key is a sessionKey error for permission'),
     (CONFIG, '#1872 the fallback reports the admitted turn as busy'),
     (CONFIG, '#1872 the close targeted the owner spelling, not the request spelling'),
     (CONFIG, '#1457 pm busy message'),

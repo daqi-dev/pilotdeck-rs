@@ -215,7 +215,17 @@ impl Requests {
         // reserve it too, held in the same `Drop`-guard shape as the request
         // key (#2391) so both reservations release side by side on every
         // exit, at the same level they were taken.
-        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);
+        // #1872 fix-r3: a blank request key never reaches the write — the
+        // sessionKey gate inside rejects it first — and TS reserves only the
+        // request spelling (InProcessGateway.ts:2193), so reserving the
+        // owner a blank key folds onto would let that owner's concurrent
+        // reservation answer busy for a request TS rejects as
+        // INVALID_SESSION_KEY (ts-blankkey-probe E/G). Skip the owner side
+        // for a blank request key.
+        let reserved_key = params
+            .get("sessionKey")
+            .and_then(JsValue::as_string)
+            .filter(|key| trimmed_string_is_non_empty(key));
         let owner = self.live_transcript_owner(reserved_key.as_ref());
         let owner_reserved =
             matches!((&owner, reserved_key.as_ref()), (Some(owner), Some(key)) if owner != key);
@@ -309,7 +319,14 @@ impl Requests {
         // onto is gated by its own exact key, so reserve it before the busy
         // check → append → close window opens on it, held in the same
         // `Drop`-guard shape as the request key (#2391).
-        let reserved_key = params.get("sessionKey").and_then(JsValue::as_string);
+        // #1872 fix-r3: mirror the set wrapper — the owner a blank key
+        // folds onto is not reserved either (TS reserves only the request
+        // spelling, InProcessGateway.ts:2203), so a busy owner reservation
+        // cannot answer for a request the sessionKey gate rejects.
+        let reserved_key = params
+            .get("sessionKey")
+            .and_then(JsValue::as_string)
+            .filter(|key| trimmed_string_is_non_empty(key));
         let owner = self.live_transcript_owner(reserved_key.as_ref());
         let owner_reserved =
             matches!((&owner, reserved_key.as_ref()), (Some(owner), Some(key)) if owner != key);
@@ -1657,6 +1674,94 @@ mod tests {
             "#1872 the blank key keeps permission's busy message"
         );
         r.owner.end_turn(&"".into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #1872 (fix-r2 arbitration of the DS P1): with no turn anywhere, a
+    /// blank sessionKey falls through permission's busy gate to its
+    /// sessionKey gate — the real TS wiring's callback rejects it there
+    /// (`!input.sessionKey?.trim()`, createLocalGateway.ts), so both sides
+    /// answer `INVALID_SESSION_KEY` without touching the override store.
+    #[tokio::test]
+    async fn set_permission_mode_blank_key_answers_the_session_key_gate() {
+        let (_scratch, r) = setup_fixture();
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", "".into()), ("mode", "plan".into())]),
+            )
+            .await
+            .expect_err("#1872 a blank key answers permission's sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1872 the blank key is a sessionKey error for permission"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "sessionKey is required.",
+            "#1872 the blank key keeps the gate message for permission"
+        );
+        teardown(&r).await;
+    }
+
+    /// #1872 fix-r3: a blank request key must not consult — or hold — the
+    /// owner-side transcript-write reservation. The owner it folds onto
+    /// (`session`) has a concurrent reservation held here; before the skip
+    /// that reservation answered `SESSION_BUSY` for a request TS rejects
+    /// as `INVALID_SESSION_KEY` (the owner reservation is the Rust-only
+    /// side of registered divergence ①; TS reserves only the request
+    /// spelling, InProcessGateway.ts:2193).
+    #[tokio::test]
+    async fn session_model_set_blank_key_ignores_a_busy_owner_reservation() {
+        let (_scratch, r) = setup_fixture();
+        let _recorder = register_recorder(&r, "session");
+        r.replacement
+            .reserve_transcript_write(&"session".into(), "hold the owner's transcript write")
+            .expect("#1872 stage the owner's concurrent reservation");
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err(
+                "#1872 a blank key answers the sessionKey gate, not the owner's busy reservation",
+            );
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1872 the blank key is a sessionKey error despite a busy owner reservation"
+        );
+        r.replacement.release_transcript_write(&"session".into());
+        teardown(&r).await;
+    }
+
+    /// #1872 fix-r3: the clear twin — the folded owner's busy reservation
+    /// cannot answer for a blank request key the sessionKey gate rejects.
+    #[tokio::test]
+    async fn session_model_clear_blank_key_ignores_a_busy_owner_reservation() {
+        let (_scratch, r) = setup_fixture();
+        let _recorder = register_recorder(&r, "session");
+        r.replacement
+            .reserve_transcript_write(&"session".into(), "hold the owner's transcript write")
+            .expect("#1872 stage the owner's concurrent reservation");
+        let error = r
+            .session_config_request(
+                "session_model_clear".into(),
+                object([("sessionKey", "".into())]),
+            )
+            .await
+            .expect_err("#1872 a blank key answers clear's sessionKey gate, not the owner's busy reservation");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1872 the blank key is a sessionKey error on clear despite a busy owner reservation"
+        );
+        r.replacement.release_transcript_write(&"session".into());
         teardown(&r).await;
     }
 

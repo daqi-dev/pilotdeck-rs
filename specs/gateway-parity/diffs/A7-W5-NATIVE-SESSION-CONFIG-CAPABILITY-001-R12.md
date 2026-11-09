@@ -30,6 +30,14 @@ port write 的 sessionKey 门）；配 set/clear/permission 三用例与三负�
 submit 侧 null→`""` 折叠坍缩 TS 两拼法的残余格开单 #2692（前置于 #1457
 收尾）。
 
+修复轮三（DS/MM 增量评审 P2 处置）：空键的 owner 侧转写预约整体跳过（见
+Rust 行为——修前折叠 owner 的并发预约可为空键请求先答 `SESSION_BUSY`，两家
+两轮独立撞上）；permission 空键无回合格补用例与负控；回退支路的复查→close
+非原子窗口并入 #2687 登记；thinking/style/seed 的空键门序经 TS 源码核为
+sessionKey 门先于 busy 门（InProcessGateway.ts:2364-2366 / :2381-2383 /
+:2423-2429），与 Rust 三法 `require_session_key` 先于 `has_active_turn`
+逐法同形，零改动登记。
+
 - 差异 ①（别名键 busy 格）：`session_model_set` / `session_model_clear` 以别名
   拼写请求（`a-b`，owner 注册为 `a/b`——`sanitize_session_id` 把 `/` 与 `\` 折成
   `-`，一个转录文件两种拼写）且 owner 有活跃回合时，TS 成功（选择落盘、`a/b`
@@ -75,10 +83,10 @@ submit 侧 null→`""` 折叠坍缩 TS 两拼法的残余格开单 #2692（前�
 ## Rust 行为
 
 差异 ①（#1872）：两个 wrapper
-（`config.rs:189-228` set / `:296-333` clear，修复轮二后 sha256
-`a733b64f283dfa48a76f822756d4c07dffd0718858da9746f995bb62a250e7b0`）先以
-`live_transcript_owner`（`:233`）解析别名折叠到的 owner 注册键，请求键与 owner
-键同时过 `has_active_turn` 门（`:258-262` / `:345-348`）——owner 有回合即
+（`config.rs:189-249` set / `:307-348` clear，修复轮三后 sha256
+`e2ca9c6b39b475635a56bc53b01dee7d71560d8230e45fcd27f82dbede1f1cb4`）先以
+`live_transcript_owner`（`:242`）解析别名折叠到的 owner 注册键，请求键与 owner
+键同时过 `has_active_turn` 门（`:266-270` / `:360-363`）——owner 有回合即
 `SESSION_BUSY`，报文与 TS 精确键格逐字相同；两键同时进 replacement 协调器的
 transcript-write 预约表（check→append→close 窗口不纳新回合，`:205-227`）。
 **空串键**（修复轮二改形，`e9ad34549` 的整门跳过卫废弃）：busy 门的请求侧
@@ -86,20 +94,27 @@ transcript-write 预约表（check→append→close 窗口不纳新回合，`:20
 `set_permission_mode` 同形）；仅 owner 侧共轭项以 `trimmed_string_is_non_empty
 (key)` 限定，空请求键（`""` 经 `sanitize_session_id` 折到 `session` 转录的
 owner）不再让 owner 先答 busy，落回 port write 的 sessionKey 门答
-`INVALID_SESSION_KEY`（probe E/G）。clear 侧 `require_session_key` 先于 busy
+`INVALID_SESSION_KEY`（probe E/G）。修复轮三把该排除扩到预约：owner 侧解析与
+预约对空请求键整体跳过（`config.rs:205-214` / `:319-325`），折叠 owner 的并发
+转写预约不再能为空键先答 busy（TS 只预约请求拼写，`InProcessGateway.ts:2193`
+/ `:2203`）；请求键自身的预约照旧（与 TS 同形）。反向镜像格——请求键为折叠
+拼写（如 `session`）、owner 为空串拼写——owner 有回合仍答 busy，属差异 ①
+已登记格。clear 侧 `require_session_key` 先于 busy
 门，与 TS `sessionModelClear` 的 requireSessionKey→hasActiveTurn 顺序同形
 （空键恒答 `INVALID_SESSION_KEY`）。null 请求键（as_string 为 None）整门
 跳过、答 `INVALID_SESSION_KEY`；与 TS null 拼法回合的两格分歧（probe E/F
 的 TS 侧）源于 submit 侧 null→`""` 折叠（`runtime/turn/submit.rs:351` +
 `:1288-1290`，基线既有）坍缩两拼法，登记 #2692。
 成功路径的追加固有语义不变：过 owner 的 recorder 追加后关闭 *owner* 拼写
-（`close_model_selection_owner`，`:377-410`，#1457 fix-r3 的关闭目标在 #1872 的
+（`close_model_selection_owner`，`:392-417`，#1457 fix-r3 的关闭目标在 #1872 的
 别名门下由正控钉住；其回退支路——owner 为 append 期间才发布——修复轮起有用例
 与负控，见机器判据）。非别名路径（请求键 = owner 键）行为与修前及 TS 完全
 一致。**登记的残余窗口**（修法开单，不在本件）：直关分支
 （`target == session_key || reserved_owner == Some(target)`）不复查
 `has_active_turn`——已过 preflight、尚未 `begin_turn` 的回合仍会被 close 中止
-（#2687）；回退支路报 busy 时条目已落盘，重试会追加第二条 model-selection 条目
+（#2687）；回退支路的 `has_active_turn` 复查与 close 非原子，复查通过后才
+入驻的回合同样会被 close 中止（同型窗口，并入 #2687 评论登记）；回退支路报
+busy 时条目已落盘，重试会追加第二条 model-selection 条目
 （代码注释与本件双登记，#2687 同单跟进）。
 
 差异 ②（#1873；#1874 收拢）：
@@ -109,7 +124,7 @@ owner）不再让 owner 先答 busy，落回 port write 的 sessionKey 门答
 `798e59ae84ba9e037c1437ccec85d460669c797acac90eaf33d4443a4201871f`，增量
 不在 `:448-517` 段）冷路径经共享
 三段协议 `transcript_locks::append_metadata_with_lease`
-（`transcript_locks.rs:131-174`，sha256
+（`transcript_locks.rs:131-176`，sha256
 `3f841068ee84c873f15412ee6925d5a96cc615dcbf66e3e9d69e9b5c45bdff76`——修复轮
 二起含 `transcript_exists` 探测错误窗口的 #2686 注释锚，逻辑零变化）：live
 checked 追加 → 冷路取 `try_writer_lease` → 忙租约回查 live 否则
@@ -145,44 +160,55 @@ set/clear 全链，本件零变化）；TS 别名成功格的 Rust 侧对应（R
 （`config.rs` 各法自带），permission/seed 不 close（permission 的 override 存
 于会话覆盖表、seed 只 `begin_maintenance`），都不会打断 owner 回合——与 TS 同
 形，保持现状非漏改。permission 的空键行为经修复轮二仲裁确认与真实装配同形
-（外层 busy 门先答 probe C、回调 sessionKey 门在后，`config.rs:516-523` +
-createLocalGateway.ts 回调），本件零改动。
+（外层 busy 门先答 probe C、回调 sessionKey 门在后，`config.rs:531-539` +
+createLocalGateway.ts 回调），本件零改动；修复轮三补其空键无回合格的用例。
+thinking/style/seed 的空键门序经 TS 源码核为 sessionKey 门先于 busy 门
+（InProcessGateway.ts:2364-2366 / :2381-2383 / :2423-2429），Rust 三法
+`require_session_key` 先于 `has_active_turn`（`config.rs:553-556` / `:618-621`
+/ `:725-739`）逐法同形，零改动登记。
 `services.rs::record_failure`（turn 路径）仍用未检式 `record_agent_status_message`：
 非请求路径，#1874 范围未覆盖，按现状豁免（TS 侧 writer 关闭语义未实测，收口
 另单）。不放宽判分。
 
 ## 机器判据
 
-以下现核于修复轮二（行号为该提交上的行号；`e9ad34549` / `44bf56991` 上的
+以下现核于修复轮三（行号为该提交上的行号；`e9ad34549` / `44bf56991` 上的
 旧行号见 Git 历史）：
 
 - 差异 ① 用例：`session_model_set_rejects_active_turn_on_alias_owner`
-  （`config.rs:1385`）与 `session_model_clear_rejects_active_turn_on_alias_owner`
-  （`:1571`）——recorder 注册 `al-set/session` / `al-clear/session`、
+  （`config.rs:1400`）与 `session_model_clear_rejects_active_turn_on_alias_owner`
+  （`:1674`）——recorder 注册 `al-set/session` / `al-clear/session`、
   `begin_turn` 在 owner 拼写、请求 `al-set-session` / `al-clear-session`，断
   `SESSION_BUSY` + 逐字报文；空串键用例
-  `session_model_set_blank_key_answers_the_session_key_gate`（`:1423`，修复轮
+  `session_model_set_blank_key_answers_the_session_key_gate`（`:1438`，修复轮
   新增——recorder 注册 `session` 且其上有回合，请求空串键断
   `INVALID_SESSION_KEY` "sessionKey is required."，owner 侧不先答 busy）；
-  空串键三联（修复轮二新增）：`session_model_set_reports_busy_for_a_turn_
-  held_on_the_blank_key`（`:1467`——recorder 与回合都挂 `""` 拼写，请求空串
+  空串键六联（修复轮二/三新增）：`session_model_set_reports_busy_for_a_turn_
+  held_on_the_blank_key`（`:1482`——recorder 与回合都挂 `""` 拼写，请求空串
   键断 `SESSION_BUSY` + 逐字报文，请求侧对空键照查，probe B）、
-  `session_model_clear_blank_key_answers_the_session_key_gate`（`:1505`——同
+  `session_model_clear_blank_key_answers_the_session_key_gate`（`:1520`——同
   挂 `""` 回合，clear 答 `INVALID_SESSION_KEY` 且回合存活，require 先于 busy
   门）、`set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key`
-  （`:1540`——`""` 回合在飞，permission 答 `SESSION_BUSY` + 逐字报文，probe C，
-  仲裁后 permission 零改动即同形）；窗口用例
+  （`:1555`——`""` 回合在飞，permission 答 `SESSION_BUSY` + 逐字报文，probe C，
+  仲裁后 permission 零改动即同形）、`set_permission_mode_blank_key_answers_
+  the_session_key_gate`（`:1590`，修复轮三新增——无任何回合时空键落
+  permission 的 sessionKey 门，断 `INVALID_SESSION_KEY` + 逐字报文）、
+  `session_model_set_blank_key_ignores_a_busy_owner_reservation`（`:1620`，
+  修复轮三新增——recorder 注册 `session` 且其转写预约被并发持有，请求空串
+  键断 `INVALID_SESSION_KEY` 而非 owner 预约的 busy）与 clear 孪生
+  `session_model_clear_blank_key_ignores_a_busy_owner_reservation`（`:1650`）；
+  窗口用例
   `session_model_set_holds_the_owner_reservation_through_the_write`
-  （`:1605`）与其 clear 孪生
+  （`:1708`）与其 clear 孪生
   `session_model_clear_holds_the_owner_reservation_through_the_write`
-  （`:1680`，修复轮新增）——请求停在转录 fence 上时预约表里两拼写并在、事后
+  （`:1783`，修复轮新增）——请求停在转录 fence 上时预约表里两拼写并在、事后
   双释放；正控 `model_set_closes_the_owner_spelling_of_an_alias_request`
-  （`:1860`）——别名请求成功、条目落盘、`current_handle("g7/session")` 事后
+  （`:1963`）——别名请求成功、条目落盘、`current_handle("g7/session")` 事后
   `None`（关闭目标是 owner 拼写）、reload `restore()` 通过；回退支路双用例
   `close_model_selection_owner_reports_busy_for_an_owner_seen_by_the_append`
-  （`:1940`，修复轮新增——append 期间才见 owner 且有回合：断 `SESSION_BUSY`、
+  （`:2043`，修复轮新增——append 期间才见 owner 且有回合：断 `SESSION_BUSY`、
   回合未被 abort、预约已释放）与 `close_model_selection_owner_closes_an_
-  owner_seen_by_the_append`（`:1998`，修复轮新增——无回合则关闭该 owner 拼写）。
+  owner_seen_by_the_append`（`:2101`，修复轮新增——无回合则关闭该 owner 拼写）。
 - 差异 ② 用例：`status_cold_write_reports_busy_while_a_session_holds_the_lease`
   （`session_dir.rs:743`，断 `SESSION_WRITER_BUSY` 且盘上无写入）、
   `status_cold_write_surfaces_a_broken_lock_file_as_an_error`（`:800`，断码非
@@ -191,17 +217,17 @@ createLocalGateway.ts 回调），本件零改动。
   修复轮新增的另两个调用点对偶：`rename_cold_write_surfaces_a_broken_lock_
   file_as_an_error`（`session_dir.rs:851`）与
   `model_set_cold_write_surfaces_a_broken_lock_file_as_an_error`
-  （`config.rs:1819`）——三调用点的存储故障格各有正例；`model_set` 的对应
+  （`config.rs:1922`）——三调用点的存储故障格各有正例；`model_set` 的对应
   busy 格 `model_set_cold_write_reports_busy_while_a_session_holds_the_lease`
-  （`config.rs:1743`）；lease 分层单测
+  （`config.rs:1846`）；lease 分层单测
   `try_writer_lease_separates_contention_from_storage_failure`
   （`factory_tests.rs:7735`）；双生产者字面钉
   `writer_busy_literals_stay_paired_across_producers`（`factory_tests.rs:7787`，
   修复轮新增——factory 侧 `writer_busy()` 与共享协议 `writer_busy_error()` 的
   code/message 两两相等）。
-- 负控（`tests/fixtures/native-config/negative_controls.py`，行号为修复轮二
+- 负控（`tests/fixtures/native-config/negative_controls.py`，行号为修复轮三
   提交上的行号）：差异 ① 的 `set-alias-owner-busy-removed`（`:287`）/
-  `clear-alias-owner-busy-removed`（`:377`）（busy 门反改请求键单侧）/
+  `clear-alias-owner-busy-removed`（`:419`）（busy 门反改请求键单侧）/
   `set-busy-gate-blank-key-guard-removed`（`:306`，修复轮新增、轮二改形——
   owner 侧空键卫移除则空请求键先答 busy；锚为用例自身的断言标签，cb8 样本
   r1 的 INVALID 即锚未进 panic 载荷所致，已改）/ `set-blank-key-busy-reverted-
@@ -210,22 +236,30 @@ createLocalGateway.ts 回调），本件零改动。
   （`:341`，修复轮二新增——被仲裁否掉的「permission 加空键卫」形状，probe C
   的机检）/ `clear-blank-key-require-weakened`（`:366`，修复轮二新增——
   require 弱化为空默认则 clear 对 `""` 回合答 busy 而非 sessionKey 门）/
-  `set-alias-owner-reservation-skipped`（`:388`）与其
-  clear 孪生 `clear-alias-owner-reservation-skipped`（`:399`，修复轮新增）/
-  `close-owner-fallback-busy-skipped`（`:415`，修复轮新增——回退支路复查
-  移除则 close abort 在飞回合）/ `set-closes-owner-target-reverted`（`:429`，
+  `set-blank-key-owner-reservation-restored`（`:382`，修复轮三新增——owner
+  侧解析还原为不过滤则折叠 owner 的并发预约对空键先答 busy）与其 clear 孪生
+  `clear-blank-key-owner-reservation-restored`（`:397`）/ `permission-blank-
+  key-require-weakened`（`:412`，修复轮三新增——permission 的 require 弱化
+  为空默认则空键落 override 表而非 sessionKey 门）/
+  `set-alias-owner-reservation-skipped`（`:430`）与其
+  clear 孪生 `clear-alias-owner-reservation-skipped`（`:441`，修复轮新增）/
+  `close-owner-fallback-busy-skipped`（`:457`，修复轮新增——回退支路复查
+  移除则 close abort 在飞回合）/ `set-closes-owner-target-reverted`（`:471`，
   修复轮新增——关闭目标折回请求拼写）；差异 ② 的 `writer-lease-folded-to-busy`
   （`:268`，存储故障折回 busy）；三段协议的 `transcript-cold-lease-skipped`(-
   `-status`/`-config`)（`:224`/`:231`/`:238`，同锚不同绑定）与三条
   `*-checked-append-reverted`（`:249`/`:254`/`:259`）。静态核
-  `python3 -I negative_controls.py --check` → `#1457 66 mutation anchors OK;
-  #2065 56 literal anchors OK`（本件十六行——初登记九行 + 修复轮四行 + 修复轮
-  二三行；rebase 并入 main 侧 #2562/#2564 行后同表为 66/56，`--check` 复核过）；
+  `python3 -I negative_controls.py --check` → `#1457 69 mutation anchors OK;
+  #2065 59 literal anchors OK`（本件十九行——初登记九行 + 修复轮四行 + 修复轮
+  二三行 + 修复轮三三行；rebase 并入 main 侧 #2562/#2564 行后同表为 69/59，
+  `--check` 复核过）；
   新/迁行样本跑全 KILLED（改坏红；初登记九行的证据分布在
   `_tmp/20261026-issue-1872/negctl-s1-sample/`、`negctl-s1-sample2/`、
   `negctl-s1-sample3/`、`negctl-s2-sample/`、`negctl-s3-sample/`；修复轮
   四行中三行 KILLED 见 `_tmp/20261109-1872-harvest/negctl-fix-sample/`（第
-  四行锚未命中判 INVALID 已随轮二修复）；修复轮二的三行样本随本轮宿主复跑）。
+  四行锚未命中判 INVALID 已随轮二修复）；修复轮二的五行 KILLED 见
+  `_tmp/20261109-1872-harvest/negctl-fix2-sample/`（head 6186bf101，
+  `cb8-verify-1872-r4.log`）；修复轮三的三行样本随本轮宿主复跑）。
 - 绿跑（worker 树 HEAD `1f03a0b95`，工作树干净）：`cargo test -p
   pilotdeck-gateway --lib -- native_process::` → `347 passed; 0 failed`、
   `-- runtime::session::` → `340 passed; 0 failed`；fmt --check 与 clippy
@@ -235,7 +269,11 @@ createLocalGateway.ts 回调），本件零改动。
   窗口、回退双用例、set/rename broken-lock 对偶）/ `341 passed; 0 failed`
   （+1：字面钉），fmt/clippy 绿、负控 63/53（原始输出
   `_tmp/20261109-1872-harvest/cb8-verify-1872.log` 与
-  `cb8-verify-1872-r3.log`）。
+  `cb8-verify-1872-r3.log`）；修复轮二 head `6186bf101` 同树复跑
+  `native_process::` **360** passed（+3：空串键三联）/ `runtime::session::`
+  **341** passed，负控 `--check` 66/56、五行有界样本全 KILLED（原始输出
+  `cb8-verify-1872-r4.log`，样本目录 `negctl-fix2-sample/`；fmt/clippy 由
+  修复轮三的头复跑覆盖，r4 的这两条命令形参错不采信）。
 - 账本闸门：`diffs/` 只追加，`check_frozen.py` 的 `check_diffs` 规则要求本件
   frontmatter `original` 写基础 ID（已写 `-001`，非 `-R11`）。
 
