@@ -1890,6 +1890,14 @@ def _container_holds_a_path_literal(node, constants, seen=()):
     what makes ``Path(CH['a']['b']) / 'mod.rs'`` read as a repository path
     instead of dropping out of both the key and the report.
     """
+    if isinstance(node, ast.Constant):
+        # ``S = 'src/x'`` then ``CH = {'a': S}``: resolving the name lands on
+        # the constant, and the container still spells the path (r29, review
+        # P0). Without this branch the recursion returned False for every
+        # non-container node it resolved to, so the named spelling slipped
+        # past where the written-out one keyed.
+        return (isinstance(node.value, str)
+                and _is_relative_path_literal(node.value))
     if isinstance(node, ast.Name):
         if node.id in seen or node.id not in constants:
             return False
@@ -1903,11 +1911,8 @@ def _container_holds_a_path_literal(node, constants, seen=()):
         elements = node.values
     else:
         return False
-    return any(
-        (isinstance(element, ast.Constant) and isinstance(element.value, str)
-         and _is_relative_path_literal(element.value))
-        or _container_holds_a_path_literal(element, constants, seen)
-        for element in elements)
+    return any(_container_holds_a_path_literal(element, constants, seen)
+               for element in elements)
 
 
 def _container_holds_a_bare_component(node, constants, seen=()):
@@ -1919,6 +1924,14 @@ def _container_holds_a_bare_component(node, constants, seen=()):
     (r28, review P0). Mirrors ``_container_holds_a_path_literal`` with the
     single-component test in place of the separator one.
     """
+    if isinstance(node, ast.Constant):
+        # ``S = 'src'`` then ``D = {'one': S}``: the mirror of the path-literal
+        # branch above — a resolved name landing on a constant still spells
+        # the component (r29, review P0; the r28 version only tested elements
+        # written out inline, so ``D = {'one': S}`` passed where
+        # ``D = {'one': 'src'}`` reported).
+        return (isinstance(node.value, str)
+                and _is_bare_component(node.value))
     if isinstance(node, ast.Name):
         if node.id in seen or node.id not in constants:
             return False
@@ -1932,11 +1945,8 @@ def _container_holds_a_bare_component(node, constants, seen=()):
         elements = node.values
     else:
         return False
-    return any(
-        (isinstance(element, ast.Constant) and isinstance(element.value, str)
-         and _is_bare_component(element.value))
-        or _container_holds_a_bare_component(element, constants, seen)
-        for element in elements)
+    return any(_container_holds_a_bare_component(element, constants, seen)
+               for element in elements)
 
 
 def _indexes_a_path_container(node, constants):
@@ -1980,11 +1990,17 @@ def _leading_path_piece(node):
                 and node.func.id in ('str', 'Path') and len(node.args) == 1
                 and not node.keywords):
             node = node.args[0]
+        elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr != 'join' and not node.keywords):
+            # A method on the piece itself — ``Path(D[name]).resolve()`` and
+            # ``Path(D[name]).joinpath('a', 'b')``: the *receiver* carries
+            # the piece, not the literal arguments after it (r29, review P0 —
+            # taking the first argument read the tail and dropped the dynamic
+            # head). ``join`` keeps reading its first argument: a stdlib join
+            # builds from its arguments, not from the ``os.path`` receiver.
+            node = node.func.value
         elif isinstance(node, ast.Call) and node.args:
             node = node.args[0]
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-            # ``Path(D[name]).resolve()``: the wrapper call carries the piece.
-            node = node.func.value
         elif isinstance(node, ast.Attribute):
             node = node.value
         else:
@@ -2018,6 +2034,12 @@ def _single_component_directory(node, constants):
             # review P0). ``D = {'one': 'src'}`` with ``D[name]`` is the same
             # hole ``D['one']`` already keyed.
             return _container_holds_a_bare_component(node.value, constants)
+        # A literal index onto a *name* (``D = {'one': S}``) needs no branch
+        # of its own here: the literal-index net already resolves the name
+        # through the constants and keys the join, so this lookup only ever
+        # answers for indexes that net cannot pair (r29 — a first draft
+        # resolved the element here too and no test could tell the
+        # difference).
         return (isinstance(element, ast.Constant)
                 and isinstance(element.value, str)
                 and _is_bare_component(element.value))
@@ -2096,6 +2118,18 @@ def _runtime_parents_index(node, pairs, position, seen=()):
     keeps its old reading for them — and a value that never spells ``.parents``
     answers False, keeping the historic assumption for shapes that were never
     statically visible at all.
+
+    The structural walk used to stop at the shapes it recognized — a
+    ``Path(...)`` wrapper, a zero-argument ``resolve()`` — so a method call
+    *with* arguments (``parents[int(0)].joinpath('..')``) or a join wrapping
+    the chain read back as "no runtime index" and the unverifiable root was
+    assumed anyway (r29, review P0). The whole expression is now searched: a
+    runtime ``.parents`` index anywhere below fails closed, and every name in
+    it is followed through its binding, so a chain hidden behind a wrapper
+    name is still read. A literal index keeps its old silent reading wherever
+    it sits; the depth it spells may still be invisible (``joinpath('..')``
+    after it), which stays with the historic "not statically visible" class
+    rather than this fail-closed one.
     """
     if isinstance(node, ast.Name):
         if node.id == '__file__' or node.id in seen:
@@ -2105,32 +2139,33 @@ def _runtime_parents_index(node, pairs, position, seen=()):
             return False
         index, value = binding
         return _runtime_parents_index(value, pairs, index, seen + (node.id,))
-    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-            and node.func.id == 'Path' and len(node.args) == 1):
-        return _runtime_parents_index(node.args[0], pairs, position, seen)
-    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-            and node.func.attr in ('resolve', 'absolute', 'expanduser')
-            and not node.args):
-        return _runtime_parents_index(node.func.value, pairs, position, seen)
-    if (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute)
-            and node.value.attr == 'parents'):
-        index = node.slice
-        if isinstance(index, ast.UnaryOp) and isinstance(index.op, (ast.UAdd, ast.USub)):
+
+    def dynamic(sub):
+        index = sub.slice
+        if (isinstance(index, ast.UnaryOp)
+                and isinstance(index.op, (ast.UAdd, ast.USub))):
             # ``parents[-1]`` spells its literal through a unary op; it is not
             # a runtime value, and the depth check keeps its old silent
             # reading for it (``_levels_above_file`` cannot verify it either).
             index = index.operand
-        if not isinstance(index, ast.Constant) or not isinstance(index.value, int):
+        return (not isinstance(index, ast.Constant)
+                or not isinstance(index.value, int))
+
+    for sub in ast.walk(node):
+        if (isinstance(sub, ast.Subscript)
+                and isinstance(sub.value, ast.Attribute)
+                and sub.value.attr == 'parents' and dynamic(sub)):
             return True
-        return _runtime_parents_index(node.value.value, pairs, position, seen)
-    if isinstance(node, ast.Attribute):
-        # ``parents[int(0)].parent``: the runtime index sits one attribute below
-        # the spelling this walker used to stop at, and stopping there read the
-        # unverifiable chain back as the repository root (r28, review P0). The
-        # flag travels up with the chain it belongs to — ``_levels_above_file``
-        # already answers None for it, so nothing else changes for a chain that
-        # really is statically readable (``parents[5].parent`` stays silent).
-        return _runtime_parents_index(node.value, pairs, position, seen)
+        if isinstance(sub, ast.Name):
+            if sub.id == '__file__' or sub.id in seen:
+                continue
+            binding = _binding_before(pairs, sub.id, position)
+            if binding is None:
+                continue
+            index, value = binding
+            if _runtime_parents_index(value, pairs, index,
+                                       seen + (sub.id,)):
+                return True
     return False
 
 
@@ -2282,12 +2317,24 @@ ENUMERATION_NAMES = frozenset({'walk', 'listdir', 'scandir'})
 FS_MODULES = frozenset({'os', 'os.path', 'glob', 'shutil', 'pathlib'})
 
 
+# The opaque target a relative import (``from . import os``) binds its name to:
+# a module path no static reading can spell, so it is compared for identity
+# only and never maps anywhere (r29, review P0).
+_RELATIVE_IMPORT_TARGET = '<relative import>'
+
+
 def _alias_bindings(tree):
     """``{name: {module spellings}}`` for every name an import statement binds.
 
     A name can be bound more than once — at the top level and inside a
     function, or by two functions — and each binding is collected: scopes
-    decide which module a use site sees, not a merge order.
+    decide which module a use site sees, not a merge order. A relative import
+    (``from . import os``) binds its name to a package-local module this
+    scanner cannot resolve, so it counts as its own opaque target (r29,
+    review P0): a scope mixing it with an absolute import of the same name
+    is a conflict — the join nets must not silently pick either side — while
+    a sole relative binding stays out of the resolution map and keeps the
+    literal-spelling fallback.
     """
     bindings = {}
     for node in ast.walk(tree):
@@ -2304,12 +2351,28 @@ def _alias_bindings(tree):
                     # that spells the import that way.
                     top = alias.name.split('.')[0]
                     bindings.setdefault(top, set()).add(top)
-        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
-            for alias in node.names:
-                if alias.name != '*':
-                    bound = alias.asname or alias.name
-                    bindings.setdefault(bound, set()).add(
-                        f'{node.module}.{alias.name}')
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and not node.level:
+                for alias in node.names:
+                    if alias.name != '*':
+                        bound = alias.asname or alias.name
+                        bindings.setdefault(bound, set()).add(
+                            f'{node.module}.{alias.name}')
+            elif node.level:
+                # ``from . import os``: a package-relative import binds the
+                # name to a module this scanner cannot resolve. It still
+                # counts as a binding — skipping it whole let a function-local
+                # ``import random as os`` look like the only binding of ``os``
+                # while the module-level relative one was the real join path
+                # (r29, review P0) — so it is collected as its own opaque
+                # target: mixing it with an absolute import of the same name
+                # is a conflict, and a sole relative binding keeps the
+                # literal-spelling fallback rather than resolving anywhere.
+                for alias in node.names:
+                    if alias.name != '*':
+                        bound = alias.asname or alias.name
+                        bindings.setdefault(bound, set()).add(
+                            _RELATIVE_IMPORT_TARGET)
     return bindings
 
 
@@ -2324,11 +2387,15 @@ def _module_aliases(tree):
     out of every net (r28, review P0; a regression r25 introduced by
     merging scopes). Such names are left out of the map — a use then falls
     back to its literal spelling, the module-level reading — and
-    ``_alias_binding_conflicts`` reports them at their use sites.
+    ``_alias_binding_conflicts`` reports them at their use sites. A name
+    bound only by a relative import maps nowhere for the same reason: where
+    the package's module sits is a runtime fact (r29, review P0), so the
+    literal spelling is the safer reading.
     """
     return {name: next(iter(targets))
             for name, targets in _alias_bindings(tree).items()
-            if len(targets) == 1}
+            if len(targets) == 1
+            and _RELATIVE_IMPORT_TARGET not in targets}
 
 
 def _alias_binding_conflicts(tree):
@@ -2522,6 +2589,27 @@ def _resets_join(value):
         return True
     # ``C:\\x`` is absolute on Windows even when the table runs elsewhere.
     return _is_drive_prefixed(value)
+
+
+def _join_resets_to_absolute(node, constants, aliases):
+    """Whether a filesystem join's absolute argument discards its dynamic head.
+
+    ``os.path.join(D[name], '/tmp', 'mod.rs')`` reads ``/tmp/mod.rs`` at
+    runtime — outside the repository — so the single-component-directory
+    fallback must not report it: the reset argument has already thrown the
+    dynamic head away (r29, review P1). Only the *filesystem* joins reset;
+    ``os.sep.join`` concatenates and keeps its own reading, so it never
+    reaches this question.
+    """
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return False
+    if _qualified_spelling(node.func, aliases) not in _STDLIB_JOIN_CALLS:
+        return False
+    for element in _joined_elements(node):
+        value = _string_value(element, constants)
+        if value is not None and _resets_join(value):
+            return True
+    return False
 
 
 def _relative_path_segments(node, constants, aliases=None):
@@ -3364,14 +3452,21 @@ def bare_concat_keys(tree, table, root=FIXTURES):
             ambiguous = ambiguous_names(node)
             if ambiguous:
                 report_ambiguous(ambiguous[0], expression)
-            elif (repo_rooted(node) or opaque_join_segment(node)
-                  or _single_component_directory(_leading_path_piece(node),
-                                                 constants)):
+            elif (repo_rooted(node) or opaque_join_segment(node)):
+                report_unresolvable(expression)
+            elif (_single_component_directory(_leading_path_piece(node),
+                                              constants)
+                  and not _join_resets_to_absolute(node, constants, aliases)):
                 # ``Path(D[name]) / 'a' / 'lib.rs'`` with ``D = {'one': 'src'}``:
                 # no segment resolves, no argument is opaque on its own, yet
                 # the chain starts at a directory the container may name — the
                 # same unresolvable build the literal subscript keys (r28,
-                # review P0). The head decides, not the tail it joins to.
+                # review P0). The head decides, not the tail it joins to —
+                # unless a filesystem join's absolute argument has already
+                # discarded that head (``os.path.join(D[name], '/tmp',
+                # 'mod.rs')`` reads ``/tmp/mod.rs``, outside the repository),
+                # which keeps the absolute-path silence instead of a report
+                # the reset semantics contradict (r29, review P1).
                 report_unresolvable(expression)
             return False
         if (getattr(constants, 'cwd_unknown', False)
@@ -4004,36 +4099,96 @@ def _duplicate_test_names(source):
     definition, so the earlier one is dead code no run ever executes — that is
     how a control silently stops existing. The whole file is parsed here so the
     check below can re-read this very module. A definition inside a compound
-    statement of the class body (``if``/``try``/``with``/``for``) still lands
-    in the class namespace when the body runs, so those are collected in
-    source order too — a ``def`` under ``if True:`` overwrites the one above
-    it exactly as a top-level ``def`` does (r28, review P2).
+    statement of the class body (``if``/``try``/``with``/``for``/``match``)
+    still lands in the class namespace when the body runs, so those count in
+    source order too — a ``def`` under ``if True:`` overwrites the one above it
+    exactly as a top-level ``def`` does (r28, review P2). Arms that cannot
+    both run do **not** count twice: an ``if``/``elif``/``else`` statement and
+    a ``match`` each execute at most one arm, so the statement contributes one
+    definition of a name however many arms spell it, while two definitions in
+    the *same* arm — or in arms of different statements — still collide (r29,
+    review P2: the r28 drill-down read both arms of one ``if`` as duplicates).
     """
     duplicates = {}
     for node in ast.parse(source).body:
         if not isinstance(node, ast.ClassDef):
             continue
 
-        def test_defs(body):
+        def definition_runs(body):
+            """``[(name, runs)]`` — how often one pass can define each name.
+
+            An ``if``/``match`` statement contributes the *maximum* of its
+            arms (exactly one of them runs, the no-arm case contributing
+            zero); every other compound statement — a ``try`` body and its
+            handlers, a loop body and its ``else``, a ``with`` body — can run
+            in one pass, so those merge additively.
+            """
+            runs = {}
+
+            def bump(name, count):
+                if count <= 0:
+                    return
+                runs[name] = runs.get(name, 0) + count
+
             for child in body:
                 if (isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef))
                         and child.name.startswith('test_')):
-                    yield child.name
-                elif isinstance(child, (ast.If, ast.Try, ast.With, ast.For,
+                    bump(child.name, 1)
+                    continue
+                arms = None
+                if isinstance(child, ast.If):
+                    arms = [child.body]
+                    if child.orelse:
+                        arms.append(child.orelse)
+                elif isinstance(child, getattr(ast, 'Match', ())):
+                    arms = [case.body for case in child.cases]
+                if arms is not None:
+                    # ``elif`` chains need no flattening of their own: the
+                    # nested ``if`` sits inside the ``else`` arm, so one pass
+                    # still executes at most one arm of the outer statement.
+                    merged = [definition_runs(arm) for arm in arms]
+                    spelled = []
+                    for part in merged:
+                        for name in part:
+                            if name not in spelled:
+                                spelled.append(name)
+                    for name in spelled:
+                        bump(name, max(part.get(name, 0) for part in merged))
+                    continue
+                groups = None
+                if isinstance(child, (ast.Try, getattr(ast, 'TryStar', ()))):
+                    # A ``try`` is not mutually exclusive: the body defines a
+                    # name, the exception fires *after* that line, and the
+                    # handler defines it again — one pass can land both in the
+                    # class namespace. Each region is its own body and the
+                    # regions merge additively.
+                    groups = ([child.body]
+                              + [handler.body for handler in child.handlers]
+                              + [child.orelse, child.finalbody])
+                elif isinstance(child, (ast.With, getattr(ast, 'AsyncWith', ()))):
+                    # ``with`` has no ``else`` clause — neither spelling of it
+                    # carries an ``orelse`` field, so only the body runs (the
+                    # grouping below reads ``.orelse`` and would raise on a
+                    # ``with``; caught while writing this round's tests).
+                    groups = [child.body]
+                elif isinstance(child, (ast.For, getattr(ast, 'AsyncFor', ()),
                                         ast.While)):
-                    yield from test_defs(child.body)
-                    if isinstance(child, ast.Try):
-                        for handler in child.handlers:
-                            yield from test_defs(handler.body)
-                    blocks = (list(getattr(child, 'orelse', []))
-                              + list(getattr(child, 'finalbody', [])))
-                    yield from test_defs(blocks)
+                    # The loop body and its ``else`` both run in one pass, so
+                    # they are one additive region, not two.
+                    groups = [child.body + child.orelse]
+                if groups is not None:
+                    # ``groups`` is a list of bodies, each a flat statement
+                    # list; recursing on each *statement* separately read a
+                    # ``FunctionDef`` as a body and raised, and merging the
+                    # runs statement-by-statement would still have lost the
+                    # additive counts across the regions.
+                    for group in groups:
+                        for name, count in definition_runs(group).items():
+                            bump(name, count)
+            return runs
 
-        seen, repeated = set(), []
-        for name in test_defs(node.body):
-            if name in seen and name not in repeated:
-                repeated.append(name)
-            seen.add(name)
+        repeated = [name for name, count in definition_runs(node.body).items()
+                    if count > 1]
         if repeated:
             duplicates[node.name] = repeated
     return duplicates
@@ -7568,6 +7723,379 @@ class DiscoveryAnchorTests(unittest.TestCase):
                 self.assertTrue(
                     any('unresolvable repository path' in problem for problem in problems),
                     problems)
+
+    def test_a_relative_import_binding_conflicts_with_an_absolute_one(self):
+        """``from . import os`` is a binding, not a gap in the import map.
+
+        Skipping the relative form whole let a function-local
+        ``import random as os`` look like the *only* binding of ``os`` while
+        the module-level relative import was the one the joins really used —
+        the join nets silently resolved to the wrong family (r29, review
+        P0). Both spellings must be collected, and their disagreement
+        reported at the use sites instead of either side winning.
+        """
+        mixed_scopes = (
+            "from . import os\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [os.path.join('src', 'pilotdeck-gateway', 'src', 'lib.rs')]\n"
+            "def f():\n"
+            "    import random as os\n"
+            "    return os.random()\n"
+        )
+        problems = violations(mixed_scopes, 'example/negative_controls.py')
+        self.assertTrue(any('conflicting import bindings' in problem
+                            for problem in problems), problems)
+        both_top_level = (
+            "from . import os\n"
+            "import os\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [os.path.join('src', 'pilotdeck-gateway', 'src', 'lib.rs')]\n"
+        )
+        problems = violations(both_top_level, 'example/negative_controls.py')
+        self.assertTrue(any('conflicting import bindings' in problem
+                            for problem in problems), problems)
+
+    def test_a_sole_relative_import_keeps_the_literal_spelling_fallback(self):
+        """One relative binding is unknown, not wrong — the literal still keys.
+
+        Where the package's module sits is a runtime fact, so a sole
+        ``from . import os`` maps nowhere and the join falls back to its
+        literal spelling instead of resolving through a guessed module
+        (r29, review P0). The fallback must not read as a conflict.
+        """
+        synthetic = (
+            "from . import os\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [os.path.join('src', 'pilotdeck-gateway', 'src', 'lib.rs')]\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertFalse(any('conflicting import bindings' in problem
+                             for problem in problems), problems)
+        self.assertTrue(any('missing anchor: src/lib.rs' in problem
+                            for problem in problems), problems)
+
+    def test_a_named_constant_inside_a_container_still_spells_the_path(self):
+        """``S = 'src/example/x'`` then ``CH = {'a': S}`` keys like the literal.
+
+        The r28 container recursion only tested elements written out inline,
+        so a name resolved to a constant returned False and the spelled-out
+        form reported where the named one silently passed (r29, review P0).
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "S = 'src/example/x'\n"
+            "CH = {'a': S}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(CH['a']) / 'mod.rs']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: x/mod.rs' in problem
+                            for problem in problems), problems)
+        self.assertTrue(any('anchor is not a literal in this file: x/mod.rs'
+                            in problem for problem in problems), problems)
+        # The dynamic index hides the value instead of pairing it, so the
+        # container walk is the only net that can see the named constant —
+        # without the constant branch the recursion read "not a container"
+        # for every resolved name and the lookup stayed silent.
+        dynamic_index = (
+            "from pathlib import Path\n"
+            "S = 'src/example/x'\n"
+            "CH = {'a': S}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(CH[name]) / 'mod.rs'\n"
+        )
+        problems = violations(dynamic_index, 'example/negative_controls.py')
+        self.assertTrue(any('unresolvable repository path' in problem
+                            for problem in problems), problems)
+
+    def test_a_named_constant_inside_a_single_component_container_keys(self):
+        """``D = {'one': S}`` with ``S = 'src'`` reads the directory the same.
+
+        The mirror of the path-literal case for the single-component lookup:
+        the value is only hidden behind the name, not absent (r29, review
+        P0).
+        """
+        literal_index = (
+            "from pathlib import Path\n"
+            "S = 'src'\n"
+            "D = {'one': S}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(D['one']) / 'mod.rs']\n"
+        )
+        problems = violations(literal_index, 'example/negative_controls.py')
+        self.assertTrue(any('missing anchor: src/mod.rs' in problem
+                            for problem in problems), problems)
+        dynamic_index = (
+            "from pathlib import Path\n"
+            "S = 'src'\n"
+            "D = {'one': S}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(D[name]) / 'mod.rs'\n"
+        )
+        problems = violations(dynamic_index, 'example/negative_controls.py')
+        self.assertTrue(any('unresolvable repository path' in problem
+                            for problem in problems), problems)
+        # The *selected* element decides, not any sibling: a literal index
+        # onto a value that is not a string at all stays silent even when
+        # another value in the same container is a bare component — the
+        # container-wide fallback is only for indexes this scanner cannot
+        # pair (a string with a separator is the path-literal net's case,
+        # not this one's).
+        precise = (
+            "from pathlib import Path\n"
+            "N = 42\n"
+            "V = 'src'\n"
+            "D = {'one': N, 'two': V}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [Path(D['one']) / 'mod.rs']\n"
+        )
+        problems = violations(precise, 'example/negative_controls.py')
+        self.assertEqual(problems, [])
+
+    def test_an_unreadable_container_element_proves_nothing_either_way(self):
+        """A container element this scanner cannot read is not a directory read.
+
+        ``D = {'one': UNBOUND}`` — the value is a runtime fact, and neither
+        the readable-constant branch nor a literal element applies, so the
+        lookup stays with the historic silent class rather than failing
+        closed on a guess (the boundary of the r29 fix: only statically
+        readable names resolve).
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "D = {'one': UNBOUND}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(D[name]) / 'mod.rs'\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertEqual(problems, [])
+
+    def test_a_joinpath_receiver_is_drilled_into_not_its_arguments(self):
+        """``Path(D[name]).joinpath('a', 'b')`` builds from the receiver.
+
+        Reading the first *argument* of a method on the piece took the tail
+        and dropped the dynamic head, so the join fell out of every net while
+        the table stayed green (r29, review P0). ``join`` keeps reading its
+        first argument: a stdlib join builds from its arguments, not from
+        the ``os.path`` receiver.
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(D[name]).joinpath('pilotdeck-gateway', 'src', 'lib.rs')\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any("joinpath('pilotdeck-gateway'" in problem
+                            and 'unresolvable repository path' in problem
+                            for problem in problems), problems)
+        resolved = (
+            "from pathlib import Path\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(D[name]).resolve() / 'x' / 'lib.rs'\n"
+        )
+        problems = violations(resolved, 'example/negative_controls.py')
+        self.assertTrue(any('unresolvable repository path' in problem
+                            for problem in problems), problems)
+
+    def test_a_runtime_parents_index_behind_a_method_call_is_reported(self):
+        """``parents[int(0)].joinpath('..')`` hides the depth behind a call.
+
+        The structural walk used to stop at the shapes it recognized, so a
+        method call *with* arguments read back as "no runtime index" and the
+        unverifiable root was assumed anyway (r29, review P0). The whole
+        expression is now searched, so a runtime ``.parents`` index anywhere
+        below fails closed.
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[int(0)].joinpath('..')\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [ROOT / 'negative_scope.py']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(any('runtime index' in problem
+                            for problem in problems), problems)
+        aliased = (
+            "from pathlib import Path\n"
+            "IDX = int('4')\n"
+            "BASE = Path(__file__).resolve().parents[IDX]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [BASE / 'negative_scope.py']\n"
+        )
+        problems = violations(aliased, 'example/negative_controls.py')
+        self.assertTrue(any("BASE / 'negative_scope.py'" in problem
+                            and 'unresolvable' in problem
+                            for problem in problems), problems)
+
+    def test_a_literal_parents_depth_with_a_joinpath_stays_historic(self):
+        """``parents[5].joinpath('..')`` keeps its old silent reading.
+
+        The index is a literal, so the depth check keeps its old reading for
+        it; the depth the ``joinpath('..')`` then removes stays with the
+        historic "not statically visible" class — declared here so the
+        fail-closed branch above does not quietly widen to it (r29).
+        """
+        synthetic = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5].joinpath('..')\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "rows = [ROOT / 'negative_scope.py']\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertEqual(problems, [])
+
+    def test_an_absolute_reset_inside_a_stdlib_join_stays_silent(self):
+        """``os.path.join(D[name], '/tmp', 'mod.rs')`` reads ``/tmp/mod.rs``.
+
+        The reset argument throws the dynamic head away, so the
+        single-component-directory fallback must not report it as a
+        repository path (r29, review P1). Only the *filesystem* joins reset;
+        the string-join reading keeps its own report, exactly as the
+        existing string-join test already asserts.
+        """
+        synthetic = (
+            "import os\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return os.path.join(D[name], '/tmp', 'mod.rs')\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertEqual(problems, [])
+        # A Windows-shaped piece keeps the *report*, not the silence: the
+        # drive-prefixed and backslash forms have their own net, asserted by
+        # ``test_a_drive_prefixed_segment_inside_a_join_is_reported``.
+
+    def test_a_match_case_shadow_is_reported(self):
+        """``match`` arms land in the class namespace like ``if`` arms do.
+
+        A ``def`` under a ``match`` case overwrites the one above it, and
+        one pass executes at most one arm — two definitions in *different*
+        arms of the same statement collide only through the shadowing, which
+        is exactly what the duplicate-name scan reports (r29, review P2).
+        """
+        source = (
+            'class T(unittest.TestCase):\n'
+            '    def test_a(self):\n        pass\n'
+            '    match 1:\n'
+            '        case 1:\n'
+            '            def test_a(self):\n                pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(source), {'T': ['test_a']})
+        same_arm = (
+            'class T(unittest.TestCase):\n'
+            '    match 1:\n'
+            '        case 1:\n'
+            '            def test_a(self):\n                pass\n'
+            '            def test_a(self):\n                pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(same_arm), {'T': ['test_a']})
+
+    def test_mutually_exclusive_arms_do_not_collide(self):
+        """One pass executes at most one arm of an ``if``/``elif``/``match``.
+
+        The r28 drill-down read both arms of one ``if`` as duplicates (r29,
+        review P2); each arm-max statement now contributes one definition of
+        a name however many arms spell it, while an ``elif`` chain needs no
+        flattening of its own — the nested ``if`` sits inside the ``else``
+        arm.
+        """
+        if_else = (
+            'class T(unittest.TestCase):\n'
+            '    if True:\n'
+            '        def test_a(self):\n            pass\n'
+            '    else:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(if_else), {})
+        elif_chain = (
+            'class T(unittest.TestCase):\n'
+            '    if 0:\n'
+            '        def test_a(self):\n            pass\n'
+            '    elif 1:\n'
+            '        def test_a(self):\n            pass\n'
+            '    else:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(elif_chain), {})
+        match_arms = (
+            'class T(unittest.TestCase):\n'
+            '    match 1:\n'
+            '        case 1:\n'
+            '            def test_a(self):\n                pass\n'
+            '        case 2:\n'
+            '            def test_a(self):\n                pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(match_arms), {})
+
+    def test_a_branch_definition_and_an_outer_definition_collide(self):
+        """Arms of different statements — and the body around them — do add up.
+
+        An ``if`` arm and the top-level body around it can both run in one
+        pass, so their definitions of one name collide; two definitions in
+        the *same* arm are a plain duplicate.
+        """
+        branch_and_outer = (
+            'class T(unittest.TestCase):\n'
+            '    def test_a(self):\n        pass\n'
+            '    if True:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(branch_and_outer), {'T': ['test_a']})
+        same_arm = (
+            'class T(unittest.TestCase):\n'
+            '    if True:\n'
+            '        def test_a(self):\n            pass\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(same_arm), {'T': ['test_a']})
+
+    def test_a_try_body_and_its_handler_both_define_the_name(self):
+        """``try`` is not mutually exclusive: the exception can fire late.
+
+        The body defines the name, the exception fires *after* that line,
+        and the handler defines it again — one pass can land both in the
+        class namespace, so the regions merge additively rather than
+        taking an arm maximum (r29).
+        """
+        source = (
+            'class T(unittest.TestCase):\n'
+            '    try:\n'
+            '        def test_a(self):\n            pass\n'
+            '    except E:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(source), {'T': ['test_a']})
+
+    def test_an_async_with_and_async_for_shadow_is_reported(self):
+        """``async with`` and ``async for`` bodies land in the namespace too.
+
+        Neither spelling of ``with`` carries an ``else`` clause, so only the
+        body runs; the loop forms keep their ``else`` in the additive
+        region. Both were absent from the r28 drill-down (r29, review P2
+        from the boundary role).
+        """
+        async_with = (
+            'class T(unittest.TestCase):\n'
+            '    async def test_a(self):\n        pass\n'
+            '    async with x():\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(async_with), {'T': ['test_a']})
+        async_for = (
+            'class T(unittest.TestCase):\n'
+            '    async def test_a(self):\n        pass\n'
+            '    async for i in y():\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(async_for), {'T': ['test_a']})
 
 
 if __name__ == '__main__':
