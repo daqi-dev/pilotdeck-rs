@@ -945,6 +945,9 @@ NON_AGGREGATION_POINTS = {
      'aggregation_audit'):
         'the audit itself; test-only',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
+     '_aggregation_audit_impl'):
+        'the audit body behind the exception-safe fix-r13 wrapper; test-only',
+    ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
      'runtime_negative'):
         'test-only control; the bypass stub below carries the probe verdict, not a batch',
     ('src/pilotdeck-gateway/tests/fixtures/session-domain-cleanup/check_cleanup.py',
@@ -991,7 +994,7 @@ def _status_words():
     return STATUS_WORDS
 
 
-def _folded_string(node):
+def _folded_string(node, budget=None):
     """The string *node* builds out of constants, or None (#892 r20).
 
     ``'PA' + 'SS'`` and ``f'{"PA"}{"SS"}'`` are the same literal as ``'PASS'``
@@ -1016,9 +1019,22 @@ def _folded_string(node):
     Every fold-level error now folds to None — the shape is not a known
     literal — and the ``%`` branch is bounded *before* the interpreter is
     asked to build anything.
+
+    fix-r13 (DS sibling#2 r12 P2, probe-verified —
+    fix-r13-audit/probe-r13-p1.out C): the string fold is the other half
+    of the ``_format_max_width`` pair — it read no budget at all, so a
+    ``+`` chain's quadratic copy work stayed unconstrained under an
+    active audit pass cell.  It now mints from the same cell the value
+    fold does and charges its Add/Mult/Mod materialisations to it.
     """
+    if budget is None:
+        # fix-r13 (DS sibling#2 r12 P2): active pass cell first, fresh
+        # per-fold allowance otherwise — the same mint the value fold
+        # gained in fix-r12.
+        budget = (_AUDIT_PASS_BUDGET if _AUDIT_PASS_BUDGET is not None
+                  else [_FOLD_SIZE_WORK_CAP])
     try:
-        return _folded_string_fold(node)
+        return _folded_string_fold(node, budget)
     except (ArithmeticError, TypeError, ValueError, MemoryError, RecursionError):
         return None
 
@@ -1055,7 +1071,7 @@ def _format_max_width(fmt):
     return width, specs
 
 
-def _folded_string_fold(node):
+def _folded_string_fold(node, budget):
     if isinstance(node, ast.Constant):
         return node.value if isinstance(node.value, str) else None
     if isinstance(node, ast.JoinedStr):
@@ -1071,13 +1087,20 @@ def _folded_string_fold(node):
                 return None
         return ''.join(parts)
     if isinstance(node, ast.BinOp):
-        left = _folded_string(node.left)
-        right = _folded_string(node.right)
+        left = _folded_string(node.left, budget)
+        right = _folded_string(node.right, budget)
         if isinstance(node.op, ast.Add) and left is not None and right is not None:
             # fix-r6 (DS sibling r5 P2-2): the concat fold had no cap, so a
             # chain of ``+`` on constant strings grew the folded string
             # without one.  Over cap, the shape is not a known literal.
             if len(left) + len(right) > _FOLD_MAX_ITEMS:
+                return None
+            # fix-r13 (DS sibling#2 r12 P2): the ``+`` chain copies its
+            # running total at every level (quadratic copy work), so each
+            # concat is charged to the fold budget before it runs — an
+            # exhausted budget folds to None, the fail-closed literal.
+            budget[0] -= len(left) + len(right)
+            if budget[0] < 0:
                 return None
             return left + right
         if isinstance(node.op, ast.Mod) and left is not None and right is not None:
@@ -1102,6 +1125,11 @@ def _folded_string_fold(node):
             width, specs = _format_max_width(left)
             if len(left) + len(specs) * max(len(right), width) > _FOLD_MAX_ITEMS:
                 return None
+            # fix-r13 (DS sibling#2 r12 P2): the format result is charged
+            # to the fold budget before the interpreter builds it.
+            budget[0] -= len(left) + len(specs) * max(len(right), width)
+            if budget[0] < 0:
+                return None
             try:
                 return left % right
             except (TypeError, ValueError, MemoryError):
@@ -1115,6 +1143,11 @@ def _folded_string_fold(node):
             # itself still raises OverflowError for an oversized count
             # (``'' * 10**100``); the wrapper folds that to None.
             if len(left) * abs(node.right.value) > _FOLD_MAX_ITEMS:
+                return None
+            # fix-r13 (DS sibling#2 r12 P2): the repetition is charged to
+            # the fold budget before it runs.
+            budget[0] -= len(left) * abs(node.right.value)
+            if budget[0] < 0:
                 return None
             return left * node.right.value
     return None
@@ -4778,6 +4811,30 @@ def _literal_test_value_fold(node, budget=None):
                        else len(str(right)))
             if len(left) + len(specs) * max(payload, width) > _FOLD_MAX_ITEMS:
                 return _LITERAL_TEST_UNRESOLVED
+        # fix-r13 (DS boundary#2 + sibling#1 r12 P1 family, probe-verified —
+        # fix-r13-audit/probe-r13-p1.out B): the caps above bound the folded
+        # *result*; the interpreter still builds it, and nothing debited the
+        # build to the pass cell — ~300k materialising operands (~3.3 MB of
+        # source, measured debit=0 at k=400) kept an active cell essentially
+        # full while the copies alone ran past the 180 s CHECK_TIMEOUT.  The
+        # three materialising families are charged in the same units the
+        # container branches pay to ``_folded_size``, before the op runs; an
+        # exhausted cell resolves the shape fail-closed, exactly like the
+        # traversal overflow.  int materialisations are skipped: the bit
+        # caps above already bound them by result size.
+        if isinstance(node.op, ast.Mult):
+            for sequence, count in ((left, right), (right, left)):
+                if (isinstance(sequence, (str, bytes, list, tuple))
+                        and isinstance(count, int)):
+                    budget[0] -= len(sequence) * abs(count)
+        elif (isinstance(node.op, ast.Add)
+                and isinstance(left, (str, bytes, list, tuple))
+                and isinstance(right, (str, bytes, list, tuple))):
+            budget[0] -= len(left) + len(right)
+        elif (isinstance(node.op, ast.Mod) and isinstance(left, (str, bytes))):
+            budget[0] -= len(left) + len(specs) * max(payload, width)
+        if budget[0] < 0:
+            return _LITERAL_TEST_UNRESOLVED
         try:
             if isinstance(node.op, ast.Add):
                 return left + right
@@ -6790,6 +6847,24 @@ def scan_aggregation_tree(tree, rel, aliases=None):
 
 
 def aggregation_audit():
+    """Thin exception-safe entry: the pass cell never outlives the audit.
+
+    fix-r13 (DS concurrency#3/simplify#1 r12 P2 + boundary#3 P3): the
+    audit-pass budget is module-level shared state, so an exception
+    escaping the scan used to leave a half-spent cell behind for the rest
+    of the process — fail-closed in direction, but one stray decode error
+    turned every later direct-call fold red.  The ``finally`` clears the
+    cell on every exit path; the body lives in
+    ``_aggregation_audit_impl``.
+    """
+    global _AUDIT_PASS_BUDGET
+    try:
+        return _aggregation_audit_impl()
+    finally:
+        _AUDIT_PASS_BUDGET = None
+
+
+def _aggregation_audit_impl():
     """Enumerate every aggregation point and require the one shared function.
 
     The detector is self-tested with an inline summary (must be flagged) and a
@@ -6814,6 +6889,7 @@ def aggregation_audit():
     poisoned_by_rel = {}
     failures = []
     audit_pass_files = 0
+    audit_pass_tail = 0
     if not callable(getattr(md.common, 'aggregate_status', None)):
         failures.append('#164-fix-r7 aggregation-audit: common.aggregate_status is missing')
     product_words = set(getattr(md.common, 'BATCH_STATUS_ORDER', ()))
@@ -6844,7 +6920,7 @@ def aggregation_audit():
         rel = path.relative_to(ROOT).as_posix()
         try:
             tree = ast.parse(path.read_text(encoding='utf-8'))
-        except (OSError, SyntaxError) as error:
+        except (OSError, SyntaxError, UnicodeError) as error:
             failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
                             f'{rel}: {type(error).__name__}: {error}')
             continue
@@ -6902,10 +6978,17 @@ def aggregation_audit():
                             f'name {duplicate[0]}:{duplicate[1]}')
         found.update(scanned)
 
-    # fix-r12 (DS concurrency#1 r11 P1): the pass budget belongs to the
-    # audited-file loop above; the self-test probes below run on fresh
-    # per-fold budgets exactly like the direct ``test_safety`` calls.
-    _AUDIT_PASS_BUDGET = None
+    # fix-r13 (DS sibling#1 + concurrency#1 r12 P1, both roles independently,
+    # probe-verified — fix-r13-audit/probe-r13-p1.out A): the registered-point
+    # loop below folds its return leaves through ``_exit_arms`` too, and
+    # clearing the cell here re-armed the per-fold mint — a registered point
+    # carrying ~200 ``return <pile> and 0`` leaves (8 KiB of source,
+    # measured 0.9125 s per leaf) re-attained the 180 s CHECK_TIMEOUT face
+    # this cell exists to bound.  The points phase now draws its own cell;
+    # the wrapper's ``finally`` clears it on every exit path (an exception
+    # escaping mid-loop no longer leaks a half-spent cell either).
+    _AUDIT_PASS_BUDGET = [_AUDIT_PASS_WORK_CAP]
+    audit_pass_tail += 1
     if audit_pass_files == 0:
         failures.append('#892 aggregation-audit: the file loop never '
                         'activated an audit-pass fold budget; the per-file '
@@ -6921,7 +7004,7 @@ def aggregation_audit():
         try:
             definition_tree = ast.parse(
                 definition_path.read_text(encoding='utf-8'))
-        except (OSError, SyntaxError) as error:
+        except (OSError, SyntaxError, UnicodeError) as error:
             failures.append(f'#892 aggregation-audit: cannot scan proven '
                             f'definition {definition_rel}: '
                             f'{type(error).__name__}: {error}')
@@ -6970,6 +7053,17 @@ def aggregation_audit():
             failures.append(f'#892 aggregation-audit: {rel}:{name} must route every '
                             f'batch status/exit computation through '
                             f'common.aggregate_status (found {slot})')
+
+    # fix-r13: the points-phase cell ends with the points loop; the
+    # self-test probes below run on fresh per-fold budgets exactly like the
+    # direct ``test_safety`` calls.  The wiring pin mirrors the file-loop
+    # one: a mutant that drops the activation above leaves the counter at
+    # zero and the points loop unbudgeted.
+    _AUDIT_PASS_BUDGET = None
+    if audit_pass_tail == 0:
+        failures.append('#892 aggregation-audit: the registered-point phase '
+                        'never activated an audit-pass fold budget; the '
+                        'points loop is unbudgeted (#1652)')
 
     unclassified = []
     for key, (markers, _function) in sorted(found.items()):
@@ -7885,7 +7979,10 @@ def aggregation_audit():
     # where per-fold minting kept folding.  (A reduced allowance keeps
     # the pin deterministic and cheap: one ~1e6-visit pile per fold.)
     _pass_probe = ast.parse("([''] * 999999,)", mode='eval').body
-    _AUDIT_PASS_BUDGET = [2_000_000]
+    # fix-r13 (DS boundary#4 r12 P3): the reduced allowance is derived from
+    # the cap family, not a hand-written constant — one ~1e6-visit pile per
+    # fold either way, and the derivation cannot drift when caps change.
+    _AUDIT_PASS_BUDGET = [2 * _FOLD_MAX_ITEMS]
     try:
         _early = _literal_test_value(_pass_probe)
         _late = _early
@@ -7898,6 +7995,38 @@ def aggregation_audit():
         failures.append('#892 aggregation-audit: a later fold on the same '
                         'audit-pass allowance folded instead of failing '
                         'closed (#1652)')
+    # #1652 fix-r13 (DS boundary#2 + sibling#1 r12 P1 family, probe-verified
+    # — fix-r13-audit/probe-r13-p1.out B): a materialising BinOp is charged
+    # to the audit-pass cell in the same units the container branches pay —
+    # with the billing reverted, both folds below succeed on a cell they
+    # never touched (the top-level BinOp walk costs no _folded_size units,
+    # so only the materialisation debit can trip the second fold).
+    _mat_probe = ast.parse("[''] * 999999", mode='eval').body
+    _AUDIT_PASS_BUDGET = [3 * _FOLD_MAX_ITEMS // 2]
+    try:
+        _mat_early = _literal_test_value(_mat_probe)
+        _mat_late = _literal_test_value(_mat_probe)
+    finally:
+        _AUDIT_PASS_BUDGET = None
+    if (_mat_early is _LITERAL_TEST_UNRESOLVED
+            or _mat_late is not _LITERAL_TEST_UNRESOLVED):
+        failures.append('#892 aggregation-audit: a materialising BinOp '
+                        'cost the audit-pass cell nothing (#1652)')
+    # #1652 fix-r13 (DS sibling#2 r12 P2, probe-verified —
+    # fix-r13-audit/probe-r13-p1.out C): the string fold mints from the
+    # same cell — with its budget reverted, the second 1e6-character
+    # repetition still folds.
+    _fs_probe = ast.parse("'a' * 999999", mode='eval').body
+    _AUDIT_PASS_BUDGET = [3 * _FOLD_MAX_ITEMS // 2]
+    try:
+        _fs_early = _folded_string(_fs_probe)
+        _fs_late = _folded_string(_fs_probe)
+    finally:
+        _AUDIT_PASS_BUDGET = None
+    if (_fs_early is None or len(_fs_early) != 999999
+            or _fs_late is not None):
+        failures.append('#892 aggregation-audit: the string fold cost the '
+                        'audit-pass cell nothing (#1652)')
     # #1652 fix-r12 (DS concurrency#2 r11 P2, probe-verified —
     # fix-r12-audit/probe-r12-p1.out B): the BoolOp value fold is lazy —
     # a settling operand ends the fold, so a zero-size pile behind it is

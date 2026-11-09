@@ -3743,8 +3743,14 @@ class RetirementScoring(unittest.TestCase):
                         'outcomes': [{'method': 'submit_turn', 'outcome': 'ok', 'shape': 'stream'}],
                         'runtime': {'pilotHome': str(home)}}
 
+            # fix-r13 (anthropic r12 boundary#1, P2b read as P1): 600 is the
+            # first value past the domain top — the mutant ``<= 600`` used to
+            # survive the whole suite and read a corrupt status=600 artifact
+            # as a HIT on /health (the port matrix gained 65536 in fix-r10
+            # and the pid matrix 2**31 in fix-r11; this is the same family).
             for tag, bad_status in (('json string', '404'), ('boolean', True),
-                                    ('zero', 0), ('negative', -1), ('oversized', 999)):
+                                    ('zero', 0), ('negative', -1), ('oversized', 999),
+                                    ('domain-top', 600)):
                 inventory = self.session._retirement_entry_inventory(
                     baseline, round_row('round-01', bad_status))
                 health = next(entry for entry in inventory['entries']
