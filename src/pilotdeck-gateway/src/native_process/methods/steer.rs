@@ -54,7 +54,11 @@ fn turn_mismatch(field: &'static str) -> JsValue {
 /// frames may differ (ledger §交错 A/B); a missing key folds to the literal
 /// text "undefined" and an explicit `null` to "null" (probe
 /// `_tmp/20261109-review-2382-r2-ds/ts-probe/output5.txt`), so each also
-/// aliases a genuine string id of that spelling.
+/// aliases a genuine string id of that spelling. The empty text (`[]` and
+/// `""` both fold to `""`) aliases the same way (ledger 差异 7) and is the
+/// one coerced id the durable claim gate skips, where TS's truthiness gate
+/// claims the raw `[]` (ledger 差异 6, probe
+/// `_tmp/20261109-review-2382-r5-ds/ts-probe/output6.txt`).
 fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {
     js_value::to_string_units(value)
         .map(JsString::from_utf16)
