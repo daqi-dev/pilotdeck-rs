@@ -114,21 +114,37 @@ async function partA() {
   // 复用直测前提（fix-r1 评审 P1）：close 前经同一 keep-alive agent 完成一次
   // 请求，socket 入池——close 后同 agent 的第二次请求才是「复用已关连接」的
   // 直测，而不是新建 agent 的新连接。
+  // #2662：前提须守门——pooled1 失败、或响应 Connection 不是 keep-alive
+  // （agent 不入池）时，观察 3 的 agent 复用直测无效，跳过并记
+  // A/SKIP-agent-reuse，不再以「close 前池化」的 note 产出错误前提的
+  // 证据记录；Connection 头与裸层 :109 的 connHeader 对称捕获。
   const agent = new http.Agent({ keepAlive: true, keepAliveMsecs: 1000 });
   const pooled1 = await new Promise((res) => {
     const req = http.request({ host: "127.0.0.1", port: PORT_A, path: "/health", agent, timeout: 3000 }, (r) => {
       let body = "";
       r.on("data", (c) => (body += c));
-      r.on("end", () => res({ ok: true, status: r.statusCode }));
+      r.on("end", () => res({ ok: true, status: r.statusCode, connection: r.headers["connection"] }));
     });
     req.on("timeout", () => { req.destroy(); res({ ok: false, error: "timeout" }); });
     req.on("error", (e) => res({ ok: false, code: e.code, message: e.message }));
     req.end();
   });
+  const pooledConnection = typeof pooled1.connection === "string" ? pooled1.connection.toLowerCase() : undefined;
+  // #2662：入池前提断言——ok 且 Connection: keep-alive 才意味着 socket 会入池。
+  const pooledPremise = pooled1.ok === true && pooledConnection === "keep-alive";
   log("A/agent-pooled-request1", {
     pooled1,
-    note: "close() 前经该 agent 完成请求 1、socket 入池（复用直测前提）",
+    pooledPremise,
+    note: pooledPremise
+      ? "close() 前经该 agent 完成请求 1、socket 入池（复用直测前提成立）"
+      : "复用直测前提未成立（pooled1 失败或 Connection 非 keep-alive，socket 未入池）——见 A/SKIP-agent-reuse",
   });
+  if (!pooledPremise) {
+    log("A/SKIP-agent-reuse", {
+      reason: pooled1.ok !== true ? "pooled1 failed" : "response Connection 不是 keep-alive，socket 未入池",
+      pooled1,
+    });
+  }
 
   const t0 = Date.now();
   const closePromise = server.close().then(
@@ -167,22 +183,29 @@ async function partA() {
   });
 
   // 观察 3：同 agent（close 前已池化）复用 + fetch 新连接 + 新 TCP
-  const agentReuse = await new Promise((res) => {
-    const req = http.request({ host: "127.0.0.1", port: PORT_A, path: "/health", agent, timeout: 3000 }, (r) => {
-      let body = "";
-      r.on("data", (c) => (body += c));
-      r.on("end", () => res({ ok: true, status: r.statusCode }));
-    });
-    req.on("timeout", () => { req.destroy(); res({ ok: false, error: "timeout" }); });
-    req.on("error", (e) => res({ ok: false, code: e.code, message: e.message, phase: e.message.startsWith("connect") ? "connect-phase" : "other" }));
-    req.end();
-  });
+  // #2662：前提不成立时跳过 agent 复用直测（池为空时测到的是新连接而非
+  // 复用，证据无效）；fetch 新连接与新 TCP 探测与入池无关，照常记录。
+  const agentReuse = pooledPremise
+    ? await new Promise((res) => {
+        const req = http.request({ host: "127.0.0.1", port: PORT_A, path: "/health", agent, timeout: 3000 }, (r) => {
+          let body = "";
+          r.on("data", (c) => (body += c));
+          r.on("end", () => res({ ok: true, status: r.statusCode }));
+        });
+        req.on("timeout", () => { req.destroy(); res({ ok: false, error: "timeout" }); });
+        // #2662（P3 顺带）：connect 相位判定改 e.code，免 message 格式漂移。
+        req.on("error", (e) => res({ ok: false, code: e.code, message: e.message, phase: e.code === "ECONNREFUSED" ? "connect-phase" : "other" }));
+        req.end();
+      })
+    : { skipped: true, reason: "复用直测前提未成立（见 A/SKIP-agent-reuse）" };
   agent.destroy();
   log("A/agent-reuse-after-close", {
     agentReuse,
     fetchNew: await fetchProbe(PORT_A, "/health"),
     newTcpRefused: await tcpRefused(PORT_A),
-    note: "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错；裸层复用对照为静默悬挂（写成功、无回包、无 RST，见 A/raw-reuse-after-fin）",
+    note: pooledPremise
+      ? "同 agent（close 前池化，见 A/agent-pooled-request1）复用直测：ECONNREFUSED 是 connect 相位错误（agent 丢弃已被服务端关闭的 socket 后重建连），非同 socket 报错；裸层复用对照为静默悬挂（写成功、无回包、无 RST，见 A/raw-reuse-after-fin）"
+      : "agent 复用直测跳过（前提未成立，见 A/SKIP-agent-reuse）；fetch 新连接与 newTcpRefused 与入池无关，照常记录",
   });
 
   log("A/close-settled", await Promise.race([closePromise, sleep(4000).then(() => ({ settled: false, note: "4s 窗未 settle（有活连接时预期）" }))]));
