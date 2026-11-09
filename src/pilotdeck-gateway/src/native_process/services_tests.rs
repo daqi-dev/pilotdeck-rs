@@ -2717,11 +2717,12 @@ fn direct_content_with_an_invalid_channel_key_path_stays_silent() {
 fn direct_content_with_an_eloop_path_stays_silent() {
     use std::os::unix::fs::symlink;
     let scratch = Scratch::new();
-    // #1460: a P2 internal error (an ELOOP canonicalize failure of the
-    // path itself under a valid root) is swallowed for a content-produced
-    // attachment exactly like the registration pass's own `catch {}`
-    // swallows its stat error — the turn must not fail over a path the
-    // resolver projection never sees.
+    // #1460/#1629: an ELOOP canonicalize failure of the path itself under
+    // a valid root (#1629: no longer a P2 internal error — it softens
+    // inside `lease_guard` like every other unresolvable path) is swallowed
+    // for a content-produced attachment exactly like the registration
+    // pass's own `catch {}` swallows its stat error — the turn must not
+    // fail over a path the resolver projection never sees.
     let link = scratch.lease("loop.png");
     symlink(Path::new(&link), Path::new(&link)).expect("#1460 symlink loop fixture");
     let entry = object([
@@ -3432,6 +3433,7 @@ fn symlink_loop_lease_path_softens_to_not_found_diagnostic() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn not_directory_lease_path_softens_to_not_found_diagnostic() {
     let scratch = Scratch::new();
@@ -3439,8 +3441,10 @@ fn not_directory_lease_path_softens_to_not_found_diagnostic() {
     // failure — a regular file where a directory component is expected
     // (ENOTDIR), the same error class the TS stat catch swallows. An EACCES
     // fixture would need chmod 000, which does not fail under a root uid
-    // (the #1459 root-test precedent), so ENOTDIR — deterministic on every
-    // uid and both Unixes — carries the "any failure" claim.
+    // (the #1459 root-test precedent), so ENOTDIR — uid-independent and
+    // POSIX-mandated on both Unixes CI runs (Linux and macOS; an exotic
+    // mount reporting ENOENT here would still soften, only the pinned
+    // wording would differ) — carries the "any failure" claim.
     std::fs::write(scratch.lease("plain.txt"), b"x").expect("#1629 regular-file fixture");
     let path = scratch.lease("plain.txt/sub.png");
     let result = crate::test_negative_receipt::expect_ok(
