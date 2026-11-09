@@ -10,7 +10,6 @@ pub(crate) fn weixin_media_download_url(media_owner: &Value) -> Option<String> {
     read_string(media_owner.get("cdn_url"))
         .or_else(|| read_string(media_owner.get("url")))
         .or_else(|| extract_weixin_media_url(media_owner))
-        .or_else(|| read_string(media_owner.get("cos_url")))
 }
 
 pub(crate) fn weixin_outbound_aes_key_field(aeskey: &[u8; 16]) -> String {
@@ -277,7 +276,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prefers_media_full_url_over_cos_url() {
+    fn prefers_media_full_url_over_top_level_cos_url_is_ignored() {
         let item = serde_json::json!({
             "cos_url": "https://cos.example/file",
             "media": { "full_url": "https://full.example/file" }
@@ -285,6 +284,12 @@ mod tests {
         assert_eq!(
             weixin_media_download_url(&item).as_deref(),
             Some("https://full.example/file")
+        );
+        assert_eq!(
+            weixin_media_download_url(&serde_json::json!({
+                "cos_url": "https://cos.example/only"
+            })),
+            None
         );
     }
 

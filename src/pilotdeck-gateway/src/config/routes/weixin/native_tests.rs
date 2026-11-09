@@ -1049,6 +1049,21 @@ async fn production_weixin_cron_empty_origin_session_does_not_use_session_key() 
 }
 
 #[tokio::test]
+async fn attachment_fallback_without_context_is_queued_not_err() {
+    let server = server(false).await;
+    let (storage, _, _) = setup(&server.base, json!([]));
+    let delivery = NativeWeixinFactory::new(storage.home.clone(), Some(server.base.clone()))
+        .unwrap()
+        .delivery();
+    delivery.queue_attachment_fallback(
+        "chat",
+        &json!({"name":"doc.pdf","path":"/tmp/doc.pdf"}),
+    );
+    assert_eq!(delivery.test_pending_len("chat"), 1);
+    assert!(server.requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn production_weixin_cron_send_failure_returns_false_and_queues() {
     let server = server(true).await;
     let (storage, credentials, _) = setup(&server.base, json!([]));

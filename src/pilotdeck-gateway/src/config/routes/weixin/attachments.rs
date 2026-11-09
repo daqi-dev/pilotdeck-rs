@@ -51,25 +51,42 @@ fn path_part(value: &str) -> Result<String> {
     Ok(replaced)
 }
 
-fn attachment_store_dir(home: &Path, chat: &str, message_id: &str) -> Result<PathBuf> {
-    let chat = path_part(chat)?;
-    let message_id = path_part(message_id)?;
-    let root = home.join("im-attachments").join("weixin");
-    std::fs::create_dir_all(&root).map_err(|error| failure(&error.to_string()))?;
-    let root = std::fs::canonicalize(&root).map_err(|error| failure(&error.to_string()))?;
-    let dir = root.join(&chat).join(&message_id);
-    {
+fn reject_symlink_component(path: &Path) -> Result<()> {
+    if path.exists() {
+        let meta = std::fs::symlink_metadata(path).map_err(|error| failure(&error.to_string()))?;
+        if meta.file_type().is_symlink() {
+            return Err(failure("Attachment path escapes storage root"));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_dir_component(parent: &Path, name: &str) -> Result<PathBuf> {
+    let path = parent.join(name);
+    reject_symlink_component(&path)?;
+    if !path.exists() {
         let mut builder = std::fs::DirBuilder::new();
-        builder.recursive(true);
+        builder.recursive(false);
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
             builder.mode(0o700);
         }
         builder
-            .create(&dir)
+            .create(&path)
             .map_err(|error| failure(&error.to_string()))?;
     }
+    Ok(path)
+}
+
+fn attachment_store_dir(home: &Path, chat: &str, message_id: &str) -> Result<PathBuf> {
+    let chat = path_part(chat)?;
+    let message_id = path_part(message_id)?;
+    let root = home.join("im-attachments").join("weixin");
+    std::fs::create_dir_all(&root).map_err(|error| failure(&error.to_string()))?;
+    let root = std::fs::canonicalize(&root).map_err(|error| failure(&error.to_string()))?;
+    let chat_dir = ensure_dir_component(&root, &chat)?;
+    let dir = ensure_dir_component(&chat_dir, &message_id)?;
     let canonical = std::fs::canonicalize(&dir).map_err(|error| failure(&error.to_string()))?;
     if !canonical.starts_with(&root) {
         return Err(failure("Attachment path escapes storage root"));
@@ -94,7 +111,7 @@ fn write_attachment_bytes(store_dir: &Path, filename: &str, data: &[u8]) -> Resu
         return Err(failure("Attachment path escapes storage root"));
     }
     let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
+    options.write(true).create(true);
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;
@@ -117,6 +134,8 @@ fn write_attachment_bytes(store_dir: &Path, filename: &str, data: &[u8]) -> Resu
             return Err(failure("Attachment path escapes storage root"));
         }
     }
+    file.set_len(0)
+        .map_err(|error| failure(&error.to_string()))?;
     use std::io::Write;
     file.write_all(data)
         .map_err(|error| failure(&error.to_string()))?;
@@ -151,19 +170,21 @@ pub(crate) async fn materialize_inbound(
     home: &Path,
     chat: &str,
     message_id: &str,
-    attachments: &mut [Value],
+    attachments: &mut Vec<Value>,
 ) -> Result<()> {
     let store_dir = attachment_store_dir(home, chat, message_id)?;
-    for attachment in attachments.iter_mut() {
-        let Some(url) = attachment
+    let mut index = 0usize;
+    while index < attachments.len() {
+        let Some(url) = attachments[index]
             .get("url")
             .and_then(Value::as_str)
             .filter(|url| !url.is_empty())
             .map(str::to_owned)
         else {
+            index += 1;
             continue;
         };
-        let kind = attachment
+        let kind = attachments[index]
             .get("type")
             .and_then(Value::as_str)
             .unwrap_or("file")
@@ -174,34 +195,53 @@ pub(crate) async fn materialize_inbound(
         } else {
             format!("attachment-{message_id}.bin")
         };
-        let name = attachment
+        let name = attachments[index]
             .get("name")
             .and_then(Value::as_str)
             .filter(|name| !name.is_empty())
             .map(str::to_owned)
             .unwrap_or(default_name);
         let filename = sanitize_filename(&name);
-        validate_attachment_fetch_url(&url).await?;
-        let mut data = download_bytes(&url).await?;
-        let media_owner = attachment
+        let media_owner = attachments[index]
             .get("metadata")
-            .and_then(|metadata| metadata.get("weixinMediaOwner"));
-        data = decrypt_weixin_media_if_needed(&data, media_owner, image)
-            .map_err(|message| failure(&message))?;
-        let path = write_attachment_bytes(&store_dir, &filename, &data)?;
-        attachment["path"] = path.to_string_lossy().into();
-        attachment["bytes"] = data.len().into();
-        let mut metadata = attachment
-            .get("metadata")
-            .cloned()
-            .unwrap_or_else(|| json!({}));
-        if let Some(object) = metadata.as_object_mut() {
-            object.insert("channelKey".into(), "weixin".into());
-            object.insert("chatId".into(), chat.into());
-            object.insert("messageId".into(), message_id.into());
-            object.insert("sourceUrl".into(), url.into());
+            .and_then(|metadata| metadata.get("weixinMediaOwner"))
+            .cloned();
+        let materialize_result = match download_bytes(&url).await {
+            Err(error) => Err(error),
+            Ok(mut data) => {
+                let owner_ref = media_owner.as_ref();
+                match decrypt_weixin_media_if_needed(&data, owner_ref, image) {
+                    Err(message) => Err(failure(&message)),
+                    Ok(decrypted) => {
+                        data = decrypted;
+                        write_attachment_bytes(&store_dir, &filename, &data)
+                            .map(|path| (path, data.len()))
+                    }
+                }
+            }
+        };
+        match materialize_result {
+            Ok((path, bytes)) => {
+                attachments[index]["path"] = path.to_string_lossy().into();
+                attachments[index]["bytes"] = bytes.into();
+                let mut metadata = attachments[index]
+                    .get("metadata")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                if let Some(object) = metadata.as_object_mut() {
+                    object.insert("channelKey".into(), "weixin".into());
+                    object.insert("chatId".into(), chat.into());
+                    object.insert("messageId".into(), message_id.into());
+                    object.insert("sourceUrl".into(), url.into());
+                }
+                attachments[index]["metadata"] = metadata;
+                index += 1;
+            }
+            Err(error) => {
+                eprintln!("weixin: attachment materialize failed: {}", error.message);
+                attachments.remove(index);
+            }
         }
-        attachment["metadata"] = metadata;
     }
     Ok(())
 }
@@ -582,31 +622,166 @@ mod tests {
         let _ = std::fs::remove_file(&link);
         std::os::unix::fs::symlink(&outside, &link).unwrap();
         let mut again = vec![json!({"type":"file","name":"doc.bin","url":url})];
-        assert!(materialize_inbound(&home, "user-1", "m1", &mut again).await.is_err());
+        materialize_inbound(&home, "user-1", "m1", &mut again)
+            .await
+            .unwrap();
+        assert!(again.is_empty());
         assert_eq!(std::fs::read(&outside).unwrap(), b"secret");
         set_test_permit_loopback_fetch(false);
         let _ = std::fs::remove_dir_all(home);
     }
 
     #[tokio::test]
-    async fn rejects_undecryptable_image_without_writing() {
+    async fn skips_undecryptable_image_without_failing_batch() {
         let _lock = super::attachment_net::test_settings_lock();
         set_test_permit_loopback_fetch(true);
         let home = std::env::temp_dir().join(format!("weixin-bad-img-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
-        let (fixture, url) = fixture(b"not-a-valid-image").await;
-        let _ = fixture;
-        let mut attachments = vec![json!({
-            "type": "image",
-            "name": "bad.jpg",
-            "url": url,
-            "metadata": { "weixinMediaOwner": { "aeskey": "00112233445566778899aabbccddeeff" } }
-        })];
-        assert!(materialize_inbound(&home, "user-1", "m1", &mut attachments).await.is_err());
+        let (good_fixture, good_url) = fixture(b"hello-weixin").await;
+        let (bad_fixture, bad_url) = fixture(b"not-a-valid-image").await;
+        let _ = (good_fixture, bad_fixture);
+        let mut attachments = vec![
+            json!({
+                "type": "image",
+                "name": "bad.jpg",
+                "url": bad_url,
+                "metadata": { "weixinMediaOwner": { "aeskey": "00112233445566778899aabbccddeeff" } }
+            }),
+            json!({"type":"file","name":"doc.bin","url":good_url}),
+        ];
+        materialize_inbound(&home, "user-1", "m1", &mut attachments)
+            .await
+            .unwrap();
         let store = attachment_store_dir(&home, "user-1", "m1").unwrap();
         assert!(!store.join("bad.jpg").exists());
+        assert_eq!(attachments.len(), 1);
+        assert!(attachments[0]["path"].as_str().is_some());
         set_test_permit_loopback_fetch(false);
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+  #[cfg(unix)]
+    async fn rejects_symlink_chat_directory_before_create() {
+        let home = std::env::temp_dir().join(format!("weixin-chat-link-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&home).unwrap();
+        let root = home.join("im-attachments").join("weixin");
+        std::fs::create_dir_all(&root).unwrap();
+        let outside = home.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("chat-link")).unwrap();
+        assert!(attachment_store_dir(&home, "chat-link", "m1").is_err());
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[tokio::test]
+    async fn post_upload_sets_octet_stream_content_type() {
+        let _lock = super::attachment_net::test_settings_lock();
+        set_test_permit_loopback_fetch(true);
+        let captured = Arc::new(StdMutex::new(String::new()));
+        let seen = captured.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let upload_url = format!("{base}/upload");
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let count = socket.read(&mut buf).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&buf[..count]);
+                    if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                *seen.lock().unwrap() = String::from_utf8_lossy(&bytes).into_owned();
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nx-encrypted-param: mock-cdn-param\r\n\r\n",
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let key = [0u8; 16];
+        upload_encrypted_cdn(&upload_url, b"cipher", &key)
+            .await
+            .unwrap();
+        let header = captured.lock().unwrap().clone();
+        assert!(
+            header
+                .to_ascii_lowercase()
+                .contains("content-type: application/octet-stream")
+        );
+        set_test_permit_loopback_fetch(false);
+    }
+
+    #[tokio::test]
+    async fn preserves_post_body_across_307_redirect() {
+        let _lock = super::attachment_net::test_settings_lock();
+        set_test_permit_loopback_fetch(true);
+        let bodies = Arc::new(StdMutex::new(Vec::new()));
+        let recorded = bodies.clone();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let base = format!("http://{addr}");
+        let final_url = format!("{base}/final");
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut buf = [0u8; 4096];
+                loop {
+                    let count = socket.read(&mut buf).await.unwrap();
+                    if count == 0 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&buf[..count]);
+                    if bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let header = String::from_utf8_lossy(&bytes);
+                let body_start = bytes
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .map(|index| index + 4)
+                    .unwrap_or(bytes.len());
+                let body = bytes[body_start..].to_vec();
+                let path = header.split_whitespace().nth(1).unwrap_or("/");
+                recorded.lock().unwrap().push(body);
+                if path.contains("/final") {
+                    socket
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello")
+                        .await
+                        .unwrap();
+                    continue;
+                }
+                socket
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 307 Temporary Redirect\r\nLocation: {final_url}\r\nContent-Length: 0\r\n\r\n"
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+        let payload = Bytes::from_static(b"payload-bytes");
+        let response = attachment_net::pinned_post(&format!("{base}/start"), payload.clone(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(response.body, b"hello");
+        let posted = bodies.lock().unwrap();
+        assert_eq!(posted.len(), 2);
+        assert_eq!(posted[1], payload.as_ref());
+        set_test_permit_loopback_fetch(false);
     }
 
     #[tokio::test]

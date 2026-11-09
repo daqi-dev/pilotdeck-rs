@@ -23,7 +23,12 @@ pub struct WeixinDelivery {
 const MAX_PENDING_REPLIES_PER_CHAT: usize = 20;
 
 impl WeixinDelivery {
-    fn queue_pending_reply(&self, chat: &str, text: &str) {
+    pub(crate) fn queue_attachment_fallback(&self, chat: &str, attachment: &Value) {
+        let text = super::attachments::format_attachment_fallback(attachment);
+        self.queue_pending_reply(chat, &text);
+    }
+
+    pub(crate) fn queue_pending_reply(&self, chat: &str, text: &str) {
         let mut pending = self.pending_replies.lock().unwrap();
         let replies = pending.entry(chat.into()).or_default();
         replies.push(text.into());
@@ -745,9 +750,10 @@ fn push_weixin_attachment(attachments: &mut Vec<Value>, kind: &str, media_owner:
         "type": kind,
         "name": name,
     });
-    if let Some(url) = super::media::weixin_media_download_url(media_owner) {
-        attachment["url"] = url.into();
-    }
+    let Some(url) = super::media::weixin_media_download_url(media_owner) else {
+        return;
+    };
+    attachment["url"] = url.into();
     let mut metadata = json!({ "weixinMediaOwner": media_owner.clone() });
     if let Some(file_id) = media_owner
         .get("file_id")
@@ -859,22 +865,20 @@ mod inbound_tests {
     }
 
     #[test]
-    fn collects_attachment_only_messages_with_cos_url_and_file_id() {
-        let (text, attachments) = super::weixin_inbound_text_and_attachments(&json!({
-            "message_type": 1,
-            "item_list": [
-                {"type": 3, "file_item": {
-                    "file_name": "doc.pdf",
-                    "cos_url": "https://cdn.example/doc.pdf",
-                    "file_id": "fid-1"
-                }}
-            ]
-        }))
-        .unwrap();
-        assert!(text.is_empty());
-        assert_eq!(attachments.len(), 1);
-        assert_eq!(attachments[0]["url"], "https://cdn.example/doc.pdf");
-        assert_eq!(attachments[0]["metadata"]["fileId"], "fid-1");
+    fn skips_cos_url_only_file_items_like_ts() {
+        assert!(
+            super::weixin_inbound_text_and_attachments(&json!({
+                "message_type": 1,
+                "item_list": [
+                    {"type": 3, "file_item": {
+                        "file_name": "doc.pdf",
+                        "cos_url": "https://cdn.example/doc.pdf",
+                        "file_id": "fid-1"
+                    }}
+                ]
+            }))
+            .is_none()
+        );
     }
 
     #[test]

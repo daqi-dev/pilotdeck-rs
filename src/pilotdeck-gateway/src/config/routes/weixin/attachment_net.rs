@@ -5,15 +5,16 @@ use bytes::Bytes;
 use http_body_util::{BodyExt, Empty, Full};
 use hyper::{
     Method, Request, StatusCode,
-    header::{HOST, LOCATION},
+    header::{CONTENT_TYPE, HOST, LOCATION},
 };
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use url::Url;
@@ -23,7 +24,9 @@ static TEST_SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 
 #[cfg(test)]
 pub(crate) fn test_settings_lock() -> std::sync::MutexGuard<'static, ()> {
-    TEST_SETTINGS_LOCK.lock().unwrap()
+    TEST_SETTINGS_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 #[cfg(test)]
@@ -35,6 +38,7 @@ static TEST_PERMIT_LOOPBACK_FETCH: AtomicBool = AtomicBool::new(false);
 #[cfg(test)]
 pub(crate) fn set_test_dns_map(map: Option<HashMap<String, Vec<IpAddr>>>) {
     *TEST_DNS_MAP.lock().unwrap() = map;
+    dns_cache().lock().unwrap().clear();
 }
 
 #[cfg(test)]
@@ -58,6 +62,46 @@ fn permit_loopback_fetch() -> bool {
 }
 
 const MAX_REDIRECTS: u32 = 5;
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
+const DNS_CACHE_TTL: Duration = Duration::from_secs(120);
+const MAX_IDLE_CONNECTIONS: usize = 32;
+
+type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
+type HttpSender = hyper::client::conn::http1::SendRequest<BoxBody>;
+
+static TLS_CONNECTOR: OnceLock<TlsConnector> = OnceLock::new();
+static DNS_CACHE: OnceLock<Mutex<HashMap<String, (IpAddr, Instant)>>> = OnceLock::new();
+static CONNECTION_POOL: Mutex<Vec<(PoolKey, HttpSender)>> = Mutex::new(Vec::new());
+
+fn dns_cache() -> &'static Mutex<HashMap<String, (IpAddr, Instant)>> {
+    DNS_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[derive(Clone, Eq)]
+struct PoolKey {
+    pin: IpAddr,
+    port: u16,
+    https: bool,
+    authority: String,
+}
+
+impl PartialEq for PoolKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.pin == other.pin
+            && self.port == other.port
+            && self.https == other.https
+            && self.authority == other.authority
+    }
+}
+
+impl Hash for PoolKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.pin.hash(state);
+        self.port.hash(state);
+        self.https.hash(state);
+        self.authority.hash(state);
+    }
+}
 
 pub(crate) fn is_blocked_ipv4(addr: Ipv4Addr) -> bool {
     let octets = addr.octets();
@@ -69,21 +113,45 @@ pub(crate) fn is_blocked_ipv4(addr: Ipv4Addr) -> bool {
         || addr.is_multicast()
         || octets[0] == 0
         || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+        || (240..=254).contains(&octets[0])
+}
+
+fn ipv4_compatible(v6: std::net::Ipv6Addr) -> Option<Ipv4Addr> {
+    let segments = v6.segments();
+    if segments[..6].iter().all(|segment| *segment == 0) {
+        Some(Ipv4Addr::new(
+            (segments[6] >> 8) as u8,
+            (segments[6] & 0xff) as u8,
+            (segments[7] >> 8) as u8,
+            (segments[7] & 0xff) as u8,
+        ))
+    } else {
+        None
+    }
+}
+
+fn is_blocked_ipv6(v6: std::net::Ipv6Addr) -> bool {
+    if let Some(mapped) = v6.to_ipv4_mapped() {
+        return is_blocked_ipv4(mapped);
+    }
+    if let Some(compat) = ipv4_compatible(v6) {
+        return is_blocked_ipv4(compat);
+    }
+    let segments = v6.segments();
+    if (segments[0] & 0xffc0) == 0xfec0 {
+        return true;
+    }
+    v6.is_loopback()
+        || v6.is_unspecified()
+        || v6.is_unique_local()
+        || v6.is_unicast_link_local()
+        || v6.is_multicast()
 }
 
 pub(crate) fn is_blocked_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_blocked_ipv4(v4),
-        IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_blocked_ipv4(mapped);
-            }
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_unique_local()
-                || v6.is_unicast_link_local()
-                || v6.is_multicast()
-        }
+        IpAddr::V6(v6) => is_blocked_ipv6(v6),
     }
 }
 
@@ -114,6 +182,33 @@ async fn resolve_host_ips(host: &str) -> Result<Vec<IpAddr>> {
     Ok(ips)
 }
 
+async fn pin_for_host(host: &str) -> Result<IpAddr> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Ok(ip);
+    }
+    {
+        let cache = dns_cache().lock().unwrap();
+        if let Some((ip, saved)) = cache.get(host) {
+            if saved.elapsed() < DNS_CACHE_TTL {
+                return Ok(*ip);
+            }
+        }
+    }
+    let ips = resolve_host_ips(host).await?;
+    if !permit_loopback_fetch() && ips.iter().any(|ip| is_blocked_ip(*ip)) {
+        return Err(failure("Attachment URL host is not permitted"));
+    }
+    let pin = ips
+        .into_iter()
+        .find(|ip| permit_loopback_fetch() || !is_blocked_ip(*ip))
+        .ok_or_else(|| failure("Attachment URL host is not permitted"))?;
+    dns_cache()
+        .lock()
+        .unwrap()
+        .insert(host.into(), (pin, Instant::now()));
+    Ok(pin)
+}
+
 pub(crate) async fn validate_attachment_fetch_url(url: &str) -> Result<Url> {
     let (url, _) = validate_attachment_fetch_url_pinned(url).await?;
     Ok(url)
@@ -139,13 +234,7 @@ pub(crate) async fn validate_attachment_fetch_url_pinned(url: &str) -> Result<(U
         }
         ip
     } else {
-        let ips = resolve_host_ips(host).await?;
-        if !permit_loopback_fetch() && ips.iter().any(|ip| is_blocked_ip(*ip)) {
-            return Err(failure("Attachment URL host is not permitted"));
-        }
-        ips.into_iter()
-            .find(|ip| permit_loopback_fetch() || !is_blocked_ip(*ip))
-            .ok_or_else(|| failure("Attachment URL host is not permitted"))?
+        pin_for_host(host).await?
     };
     Ok((parsed, pin))
 }
@@ -171,16 +260,65 @@ impl PinnedTarget {
             .port()
             .unwrap_or(if self.url.scheme() == "https" { 443 } else { 80 })
     }
+
+    fn authority(&self) -> String {
+        let host = self.host();
+        let port = self.port();
+        let default = if self.url.scheme() == "https" { 443 } else { 80 };
+        if port == default {
+            host.to_owned()
+        } else {
+            format!("{host}:{port}")
+        }
+    }
+
+    fn pool_key(&self) -> PoolKey {
+        PoolKey {
+            pin: self.pin,
+            port: self.port(),
+            https: self.url.scheme() == "https",
+            authority: self.authority(),
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn authority_for_url(url: &str) -> Result<String> {
+    let parsed = Url::parse(url).map_err(|_| failure("Invalid attachment URL"))?;
+    let host = parsed.host_str().ok_or_else(|| failure("Attachment URL must include a host"))?;
+    let port = parsed
+        .port()
+        .unwrap_or(if parsed.scheme() == "https" { 443 } else { 80 });
+    let default = if parsed.scheme() == "https" { 443 } else { 80 };
+    Ok(if port == default {
+        host.to_owned()
+    } else {
+        format!("{host}:{port}")
+    })
 }
 
 fn redirect_status(status: StatusCode) -> bool {
     matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
 }
 
-fn tls_connector() -> TlsConnector {
-    TlsConnector::from(Arc::new(
-        crate::runtime::model::http::webpki_client_config(),
-    ))
+fn tls_connector() -> &'static TlsConnector {
+    TLS_CONNECTOR.get_or_init(|| {
+        TlsConnector::from(Arc::new(
+            crate::runtime::model::http::webpki_client_config(),
+        ))
+    })
+}
+
+fn empty_body() -> BoxBody {
+    Empty::<Bytes>::new()
+        .map_err(|never| match never {})
+        .boxed()
+}
+
+fn body_from_bytes(bytes: Bytes) -> BoxBody {
+    Full::new(bytes)
+        .map_err(|never| match never {})
+        .boxed()
 }
 
 async fn connect_tcp(target: &PinnedTarget) -> Result<TcpStream> {
@@ -191,22 +329,8 @@ async fn connect_tcp(target: &PinnedTarget) -> Result<TcpStream> {
         .map_err(|_| failure("Attachment download transport failed"))
 }
 
-async fn send_once(
-    target: &PinnedTarget,
-    method: &Method,
-    body: Option<Bytes>,
-) -> Result<hyper::Response<hyper::body::Incoming>> {
+async fn connect_sender(target: &PinnedTarget) -> Result<HttpSender> {
     let tcp = connect_tcp(target).await?;
-    let request_body = match body {
-        Some(bytes) => Full::new(bytes).map_err(|never| match never {}).boxed(),
-        None => Empty::<Bytes>::new().map_err(|never| match never {}).boxed(),
-    };
-    let request = Request::builder()
-        .method(method)
-        .uri(target.url.as_str())
-        .header(HOST, target.host())
-        .body(request_body)
-        .map_err(|_| failure("Invalid attachment request"))?;
     if target.url.scheme() == "https" {
         let server_name = ServerName::try_from(target.host().to_owned())
             .map_err(|_| failure("Invalid attachment URL"))?;
@@ -214,45 +338,113 @@ async fn send_once(
             .connect(server_name, tcp)
             .await
             .map_err(|_| failure("Attachment download transport failed"))?;
-        let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
+        let (sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tls))
             .await
             .map_err(|_| failure("Attachment download transport failed"))?;
         tokio::spawn(async move {
             let _ = conn.await;
         });
-        return sender
-            .send_request(request)
-            .await
-            .map_err(|_| failure("Attachment download transport failed"));
+        return Ok(sender);
     }
-    let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tcp))
+    let (sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(tcp))
         .await
         .map_err(|_| failure("Attachment download transport failed"))?;
     tokio::spawn(async move {
         let _ = conn.await;
     });
+    Ok(sender)
+}
+
+fn pool_take(key: &PoolKey) -> Option<HttpSender> {
+    let mut pool = CONNECTION_POOL.lock().unwrap();
+    if let Some(index) = pool.iter().position(|(entry, _)| entry == key) {
+        return Some(pool.swap_remove(index).1);
+    }
+    None
+}
+
+fn pool_store(key: PoolKey, sender: HttpSender) {
+    let mut pool = CONNECTION_POOL.lock().unwrap();
+    if pool.len() >= MAX_IDLE_CONNECTIONS {
+        return;
+    }
+    pool.push((key, sender));
+}
+
+async fn acquire_sender(target: &PinnedTarget) -> Result<HttpSender> {
+    let key = target.pool_key();
+    if let Some(mut sender) = pool_take(&key) {
+        if sender.ready().await.is_ok() {
+            return Ok(sender);
+        }
+    }
+    connect_sender(target).await
+}
+
+async fn release_sender(key: PoolKey, mut sender: HttpSender) {
+    if sender.ready().await.is_ok() {
+        pool_store(key, sender);
+    }
+}
+
+async fn send_on_sender(
+    sender: &mut HttpSender,
+    target: &PinnedTarget,
+    method: &Method,
+    body: Option<Bytes>,
+) -> Result<hyper::Response<hyper::body::Incoming>> {
+    let request_body = match &body {
+        Some(bytes) => body_from_bytes(bytes.clone()),
+        None => empty_body(),
+    };
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(target.url.as_str())
+        .header(HOST, target.authority());
+    if *method == Method::POST {
+        builder = builder.header(CONTENT_TYPE, "application/octet-stream");
+    }
+    let request = builder
+        .body(request_body)
+        .map_err(|_| failure("Invalid attachment request"))?;
     sender
         .send_request(request)
         .await
         .map_err(|_| failure("Attachment download transport failed"))
 }
 
+async fn send_once(
+    target: &PinnedTarget,
+    method: &Method,
+    body: Option<Bytes>,
+) -> Result<(hyper::Response<hyper::body::Incoming>, PoolKey, HttpSender)> {
+    let key = target.pool_key();
+    let mut sender = acquire_sender(target).await?;
+    let response = send_on_sender(&mut sender, target, method, body).await?;
+    Ok((response, key, sender))
+}
+
 async fn read_body(incoming: hyper::body::Incoming, limit: usize) -> Result<Vec<u8>> {
-    let mut data = Vec::new();
-    let mut body = incoming;
-    while let Some(frame) = body.frame().await {
-        let frame = frame.map_err(|_| failure("Attachment download body failed"))?;
-        if let Ok(bytes) = frame.into_data() {
-            if data.len() + bytes.len() > limit {
-                return Err(failure(&format!(
-                    "Attachment is {} bytes (limit {limit}).",
-                    data.len() + bytes.len()
-                )));
+    let read = async {
+        let mut data = Vec::new();
+        let mut body = incoming;
+        while let Some(frame) = body.frame().await {
+            let frame = frame.map_err(|_| failure("Attachment download body failed"))?;
+            if let Ok(bytes) = frame.into_data() {
+                if data.len() + bytes.len() > limit {
+                    return Err(failure(&format!(
+                        "Attachment is {} bytes (limit {limit}).",
+                        data.len() + bytes.len()
+                    )));
+                }
+                data.extend_from_slice(&bytes);
             }
-            data.extend_from_slice(&bytes);
         }
-    }
-    Ok(data)
+        Ok(data)
+    };
+    tokio::time::timeout(BODY_READ_TIMEOUT, read)
+        .await
+        .map_err(|_| failure("Attachment download body timed out"))?
 }
 
 pub(crate) struct PinnedHttpResponse {
@@ -282,12 +474,14 @@ async fn pinned_exchange(
     let mut target = PinnedTarget::parse(url).await?;
     let mut method = method;
     let mut body = body;
+    let post_body = body.clone();
     for _ in 0..=MAX_REDIRECTS {
-        let response = send_once(&target, &method, body.take()).await?;
+        let (response, pool_key, mut sender) = send_once(&target, &method, body.take()).await?;
         let status = response.status();
         let headers = response.headers().clone();
         if redirect_status(status) {
             let Some(location) = headers.get(LOCATION).and_then(|value| value.to_str().ok()) else {
+                let _ = read_body(response.into_body(), limit).await;
                 return Err(failure("Attachment redirect is invalid"));
             };
             let next = target
@@ -296,13 +490,26 @@ async fn pinned_exchange(
                 .or_else(|_| Url::parse(location))
                 .map_err(|_| failure("Attachment redirect is invalid"))?;
             target = PinnedTarget::parse(next.as_str()).await?;
-            if status == StatusCode::SEE_OTHER {
-                method = Method::GET;
+            match status {
+                StatusCode::SEE_OTHER | StatusCode::MOVED_PERMANENTLY | StatusCode::FOUND => {
+                    method = Method::GET;
+                    body = None;
+                }
+                StatusCode::TEMPORARY_REDIRECT | StatusCode::PERMANENT_REDIRECT => {
+                    body = post_body.clone();
+                }
+                _ => body = None,
             }
             let _ = read_body(response.into_body(), limit).await?;
+            if sender.ready().await.is_ok() {
+                release_sender(pool_key, sender).await;
+            }
             continue;
         }
         let data = read_body(response.into_body(), limit).await?;
+        if sender.ready().await.is_ok() {
+            release_sender(pool_key, sender).await;
+        }
         return Ok(PinnedHttpResponse {
             status,
             headers,
@@ -310,4 +517,32 @@ async fn pinned_exchange(
         });
     }
     Err(failure("Too many attachment redirects"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    #[test]
+    fn blocks_ipv4_compatible_and_fec0() {
+        let compat: IpAddr = "::127.0.0.1".parse().unwrap();
+        assert!(is_blocked_ip(compat));
+        let fec0: IpAddr = "fec0::1".parse().unwrap();
+        assert!(is_blocked_ip(fec0));
+        assert!(is_blocked_ipv4(Ipv4Addr::new(240, 0, 0, 1)));
+        assert!(!is_blocked_ipv4(Ipv4Addr::new(8, 8, 8, 8)));
+    }
+
+    #[test]
+    fn authority_includes_non_default_port() {
+        assert_eq!(
+            authority_for_url("http://cdn.example:8080/path").unwrap(),
+            "cdn.example:8080"
+        );
+        assert_eq!(
+            authority_for_url("https://cdn.example/path").unwrap(),
+            "cdn.example"
+        );
+    }
 }
