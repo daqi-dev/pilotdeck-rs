@@ -1853,8 +1853,10 @@ async fn dispose_during_an_in_flight_handshake_removes_the_session_directory() {
     // handshake as failed and `dispose()` then removes the directory before
     // returning (measured in `_tmp/20261107-2225-r5/probe.log`). This test
     // disposes well inside that window; the positive control, its fixed-value
-    // form, and the teardown residue shapes are pinned by the #2233 sibling
-    // tests below instead of widened here.
+    // form, and the before-dispatch teardown residue shape are pinned by the
+    // #2233 sibling tests below instead of widened here (the after-dispatch
+    // residue shape is a probe-measured premise, not an in-tree pin — see the
+    // ③ test's comment below).
     assert_eq!(
         runtime
             .client("mock")
@@ -2072,12 +2074,15 @@ async fn stop_after_the_late_handshake_settles_returns_with_the_directory_remove
 /// the runtime cancels the in-flight handshake (kill_on_drop reaps the mock)
 /// with nobody left to remove anything. The after-dispatch shape is NOT
 /// pinned in-tree: per the #2233 S2 delivery's tokio 1.48.0 probe
-/// (`Runtime::drop` returned only after an 800 ms `spawn_blocking` task
-/// finished — measured 809.7 ms), drop waits for an already-started
+/// (entering `Runtime::drop` returned after 809.7 ms for an 800 ms
+/// `spawn_blocking` task — i.e. ~9.7 ms after the task finished; a separate
+/// `/tmp` probe measured 800.6 ms), drop waits for an already-started
 /// blocking task, so a dispatched `remove_dir_all` completes before the
 /// drop returns. That is a tokio-version premise recorded in the
-/// `A6.5-MCP-SESSION-DIR-LIFETIME-001` ledger correction (probe-measured,
-/// not a repo-pinned invariant), not something this file asserts.
+/// `A6.5-MCP-SESSION-DIR-LIFETIME-001-R2` ledger correction
+/// (`specs/gateway-parity/diffs/`; its parity-suite mirror is `-R1`) —
+/// probe-measured, not a repo-pinned invariant — not something this file
+/// asserts.
 #[test]
 fn runtime_teardown_before_the_removal_dispatch_leaves_the_session_directory() {
     let scratch = Scratch::new("mcp-client-teardown-before-dispatch");
