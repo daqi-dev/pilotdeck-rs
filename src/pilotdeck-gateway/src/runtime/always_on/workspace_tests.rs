@@ -846,6 +846,63 @@ async fn dispose_retry_removes_unchanged_ref_after_its_owned_git_directory_was_r
     fixture.registry.dispose().await.unwrap();
 }
 #[tokio::test]
+async fn four_failed_disposals_refuse_more_work_and_close_keeps_the_failure() {
+    let fixture = Fixture::new();
+    let project = Path::new(&fixture.paths.project_key);
+    fixture.initialize_git(project).await;
+    let runner = Arc::new(FailFirstDisposeCas(std::sync::atomic::AtomicBool::new(
+        false,
+    )));
+    let provider = fixture.provider(runner.clone());
+    let handle = provider
+        .prepare(
+            "git-worktree",
+            "failure-budget".into(),
+            "fixture".into(),
+            None,
+        )
+        .await
+        .unwrap();
+    for _ in 0..MAX_JOBS {
+        runner.0.store(false, std::sync::atomic::Ordering::SeqCst);
+        let error = provider.dispose(handle.clone(), false).await.unwrap_err();
+        assert_eq!(error.code, "workspace_cleanup_failed");
+        assert!(
+            error
+                .message
+                .to_utf8()
+                .unwrap()
+                .contains("first owned branch CAS failed")
+        );
+    }
+    let rejected = provider.dispose(handle, false).await.unwrap_err();
+    assert_eq!(rejected.code, "workspace_unavailable");
+    assert_eq!(
+        rejected.message,
+        JsString::from("Always-On workspace operation capacity is full.")
+    );
+    assert_eq!(
+        fixture
+            .git(
+                project,
+                &[
+                    "show-ref",
+                    "--verify",
+                    "--quiet",
+                    "refs/heads/always-on/failure-budget"
+                ]
+            )
+            .await
+            .exit_code,
+        Some(0)
+    );
+    assert_eq!(
+        provider.close().await.unwrap_err().code,
+        "workspace_cleanup_failed"
+    );
+    fixture.registry.dispose().await.unwrap();
+}
+#[tokio::test]
 async fn missing_directory_does_not_authorize_foreign_registration_ref_or_unpinned_handle() {
     for kind in [
         "registered",

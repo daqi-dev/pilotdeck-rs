@@ -164,10 +164,11 @@ mod tests {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct Transport(Mutex<Vec<JsValue>>);
+    struct Transport(Mutex<Vec<JsValue>>, std::sync::atomic::AtomicUsize);
     impl ModuleHttpTransport for Transport {
         fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
             Box::pin(async move {
+                self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let body = if request.method == "GET" {
                     r#"{"protocolVersion":"2.0","implementationId":"staffdeck.knowledge","contract":"staffdeck.knowledge/v1","transport":"module-http-v2","methods":["query"]}"#.to_string()
                 } else {
@@ -293,6 +294,7 @@ mod tests {
             "invalid_input"
         );
         assert!(transport.0.lock().unwrap().is_empty());
+        assert_eq!(transport.1.load(std::sync::atomic::Ordering::Relaxed), 0);
         let query = crate::metadata::object([("query", "hello".into())]);
         let result = protected.execute(query.clone(), context()).await.unwrap();
         assert_eq!(
@@ -358,6 +360,14 @@ mod tests {
                 .execute(case.get("input").unwrap().clone(), context())
                 .await;
             let requests = transport.0.lock().unwrap();
+            let JsValue::Array(expected_wire) = case.get("wire").unwrap() else {
+                panic!("wire")
+            };
+            assert_eq!(
+                transport.1.load(std::sync::atomic::Ordering::Relaxed),
+                expected_wire.len(),
+                "all GET/POST sends: {id}"
+            );
             if credential {
                 assert_eq!(
                     answer.unwrap_err().code,

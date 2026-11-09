@@ -140,6 +140,8 @@ impl NativeWorkspace {
             }
             // Completed successes need not be retained. A dropped/panicked job's
             // failure stays observable by close instead of claiming quiescence.
+            // Failed cleanup deliberately consumes a slot until close: four
+            // unresolved failures refuse new work in this provider generation.
             jobs.running
                 .retain(|job| !matches!(&*job.borrow(), Some(Ok(()))));
             if jobs.running.len() >= MAX_JOBS {

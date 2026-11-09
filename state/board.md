@@ -5228,3 +5228,8 @@ r131 4b48bff9全目标check/strict/四bin通过，SOP18/磁盘resume44格所在4
 ### 2026-11-09 08:58 · 全审批回归通过，清理错误统一收口
 
 r132 全目标check、SOP18、approvals131/1忽略、skills CONNECT1、default-mode1通过，完整CLI回归在跑；native556过1仅capability解释缺源码指针，已补真实assembly.rs；AO122过1旧snapshot拒绝后close仍期待成功，现精确断dispose/close同cleanup错误，原外物与ref保全不变。AO双家增量定位其余Git/IO失败也会被close漏记，统一在owned dispose边界保message/missing改cleanup域，补两代CAS失败被close保留、第三代成功与第四代幂等不触CAS。两家P2残余按安全保全处置：准备失败无法证实完整移除时保ref+显式错误，外部Git登记到CAS窗口不宣称原子；使用说明明确。知识consumer固定TS五格与最终可复采脚本逐字一致，credential/非credential原策略不变，测试待r133。后续只做必要定向复验、独立增量确认与源码证据绑定，不增加功能范围。仍仅本机提交、Rust仅mbp2。
+
+
+### 2026-11-09 09:14 · 固定源码绿线与末次观察补强
+
+r133 d50546fe9的4808文件SHA、HEAD、空diff及fmt零变更均核；all-target check/strict/四bin/native558过0败67忽略/AO123过0败1忽略全通过，bin仅mbp2冻结，原件verify-r133/logs。r132完整CLI546过0败140条件忽略、审批131过0败1忽略原件已分可执行文件核数。两家最终增量三角色P0/P1均0；最后两项P2只补观察：knowledge计所有GET/POST并与五格TS wire数量一致，AO真实4次CAS失败钉住既有fail-closed容量行为并文档说明，不改生产策略。既有SDK started快照只作补充诊断，票据与实际owner变异是有效判据，不拿快照充负控。Gateway差异草稿R1缺必需6段/原ID元数据已补齐，三类冻结检查通过，旧失败原件保留。owner当前3变异5case真KILLED，only-enable实际等价SURVIVED原件保留，真实旧创建顺序反例在跑。接末次定向验证与仅P2非作者复核，然后交付；不再扩功能，仍本机提交、Rust仅mbp2。
