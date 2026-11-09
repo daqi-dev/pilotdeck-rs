@@ -1,0 +1,76 @@
+---
+type: experiment
+number: "016"
+date: 2026-11-09
+title: A8.5 切换状态机矩阵 · 探针装置进仓与补格（#2251/#2255/#2258）
+status: 装置进仓（P1–P7 移植参数化）+ P8–P12 补格完成；P13–P16（#2255/#2258）随后续段补
+related: [research/012_phase-a-switch-matrix, experiments/exp015-a52b-session-fixtures]
+---
+
+# exp016：A8.5 切换状态机矩阵探针装置（P1–P16）
+
+研究对象是 `docs/research/012_phase-a-switch-matrix/matrix.md` 的逐格断言。原始 P1–P7 探针只在
+#1353 轮次的 `_tmp/` 里（不进提交），矩阵 A1–A14 断言表是主实现轮照抄成测试的输入——没有可复跑
+装置就无法复算。本实验把装置进仓（`scripts/a8-5/`），并补齐 #2251/#2255/#2258 点名的缺口格。
+
+## 假设
+
+1. 装置与结论可分离：P1–P7 移植（路径参数化、行为逐字保留）后可在另一台主机（mbp2/Darwin）复现
+   cb8（Linux）的关键结论（p1_smoke 全过、p2b 三态 settle 行为一致）。
+2. #2251 四项遗留 + 矩阵内 #2251 标注的 S1–S3 接纳/零字节格可按同一装置实测，不需要改 TS 基线。
+
+## 做法
+
+- **被测**：只读 TS 基线 PilotDeck @ `cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85`（dist 构建，dist
+  mtime 晚于 src 最后修改）。原始轮次在 cb8（Linux，路径 `/home/clawbox-08/ws/pdrs-runner/...`）；
+  进仓后在 mbp2（Darwin）以 `/Users/da/ws/pdrs-runner/resources/PilotDeck` 复测。Node v22.22.0 /
+  ICU 78.2。
+- **落位**：`scripts/a8-5/`（common.mjs + 各探针；`--base`/`--out` 参数化，默认基线取
+  `PILOTDECK_BASE` 或标准 runner 路径）。`node scripts/a8-5/<probe>.mjs --out <证据目录>`。
+- **纪律**：仅 loopback 高位端口（39871–39891 段）、隔离 `PILOT_HOME`/`diskSpillDir`、不外发网络
+  （provider 指不可路由 loopback）、子进程记 pid 逐个收尸、观察窗全部有界、无无界派生。
+- **证据**：P1–P7 原始输出（cb8）归档于主仓
+  `_tmp/20261107-archive-wt-1353/20261026-issue-1353/raw/`；P8–P16 原始输出（mbp2）在
+  `_tmp/20261109-p2batch-d6/raw/`（提交后归协调者归档，路径以 RESULT 登记为准）。
+
+| 探针 | 覆盖格 | 一句话结论 |
+|---|---|---|
+| p1_smoke | 装置自检 | mbp2 复验通过（health/hello/describe/close 全过） |
+| p1_p2_stages | E1/E2 × S0–S4 + t3 | 见 matrix §4.1/§4.2（cb8 原始数值） |
+| p2b_block | close() 阻塞规则 | mbp2 复验：无连接 settle / 一条 WS 2000ms 不 settle、断开后 1ms / 空闲 keep-alive settle——与 cb8 一致 |
+| p2c_post_dispose | S3/S4 既有 WS | 见 matrix §4.1（cb8） |
+| p3_child/p3_driver | t4 drain 注入 | 见 matrix §5.2（cb8） |
+| p4_cron | E3 × 全阶段 | 见 matrix §4.3（cb8） |
+| p5_background | E5 × 全阶段 | 见 matrix §4.5（cb8） |
+| p6_real_server | t5 端到端 | 见 matrix §5.1/§5.3（cb8） |
+| p7_channels | E4 × S2 + 竞态 | 见 matrix §4.4（cb8） |
+| p8_channel_stop_race | #2251 条目 2 | close 只等快照 handle：在飞 hot-reload stop 不被 join（close 1ms settle）、失败 stop 回填 map（deliverCronResult 复投 true）、二次 close 复用 rejected promise 不重停 |
+| p9_background_descendants | #2251 条目 3 | 同组 TERM 免疫后代零残留（组 SIGKILL 覆盖）；setsid 跨组后代逃逸存活（ppid→1、自有 pgid；任务 pid 锚定的 ppid 链漏检） |
+| p10_background_hangs | #2251 条目 4 | start 永不 settle ⇒ dispose 卡 whenStartsDrained（3s 窗右删失）；快照写挂起 ⇒ TERM 已杀、dispose 卡 `await done`（settleEntry 停 store.write） |
+| p11_child/p11_driver | §4.5 S1–S3 接纳 + 连接两态 | closing 窗口内 E5 新任务被接纳（running）；断开 ⇒ dispose 杀（码 0 零残留）；保持 ⇒ close 永不 settle，SIGKILL 后 detached 任务成孤儿 |
+| p12_zero_byte_close | A4 零字节 ≥65s | GatewayServer 实例级：零字节连接使 close() 70s 窗不 settle（>60s headersTimeout，右删失下界 70s）、服务端不主动断该连接 |
+
+## 结论
+
+逐格结论登记进 matrix.md（§4.4 新两行、§4.5 新两行 + S1–S3 接纳行改实测、§4.2 零字节注、A4/A10/A11
+的「未实测」标注解除）。要点：
+
+1. **装置可移植**：p2b 在 mbp2 逐态复现 cb8 行为——`server.close()` 阻塞规则不是主机特异。
+2. **closeServer 的 join 面只有快照**（p8）：被 claim 的 handle 的在飞 stop 不进 `Promise.allSettled`，
+   close 先 settle、flush/dispose 照走；失败 stop 在 `closing=true` 后回填 map 且永不再被停。
+3. **杀灭口径必须覆盖后代**（p9）：基线组杀覆盖同组后代；跨组逃逸（setsid）残留是杀灭断言的边界，
+   「零残留」检测必须用快照差集/全量 cmdline（ppid 链在 reparent 后漏检）。
+4. **「SIGKILL 后 dispose 必然收敛」不成立**（p10）：start 未落定或快照写挂起时 dispose 无界挂起
+   （无二次超时）；是否加界归 #1353 决策卡。
+5. **E5 在 S1–S3 照常接纳 + 孤儿路径**（p11）：接纳面只看运行时自身状态；提交连接保持打开 ⇒
+   S4 不可达 ⇒ SIGKILL 旧进程后 detached 任务成孤儿。
+6. **零字节格**（p12）：GatewayServer 实例级右删失下界 70s，>headersTimeout(60s)。
+
+## 边界（时间与规模）
+
+- P8–P12 的观察窗有界（3–70s），「不落定」均为右删失下界、非「永不」证明；dispose 挂起格以源码
+  无超时逻辑 + 窗口不落定共同支撑。
+- mbp2（Darwin）与 cb8（Linux）行为差异未系统排查；p2b/p1_smoke 复验一致是移植可用性的证据，
+  不构成全谱系跨平台等价声明。macOS 无 `setsid` 命令，逃逸用例用 `python3 os.setsid()` 构造。
+- P8/P9 的注入均不改动基线文件（假 channel / 假 shell provider / 假 snapshotStore 都是运行时注入）。
+- P13–P16（#2255 空集合/半停/单飞、#2258 停接纳机制）在本实验目录续登记。
