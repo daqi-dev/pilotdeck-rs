@@ -1882,22 +1882,37 @@ def _is_relative_path_literal(value):
     return len(segments) > 1 and all(segment not in ('', '.', '..') for segment in segments)
 
 
+def _element_holds_a_path_literal(node, constants, seen):
+    """Whether an *element* of a container spells a relative path literal.
+
+    The element position is where a resolved name may land on a plain
+    constant: ``S = 'src/x'`` then ``CH = {'a': S}`` — the container still
+    spells the path through the name (r29, review P0). An element may itself
+    be a nested container, so container shapes recurse here too.
+    """
+    if isinstance(node, ast.Constant):
+        return (isinstance(node.value, str)
+                and _is_relative_path_literal(node.value))
+    if isinstance(node, ast.Name):
+        if node.id in seen or node.id not in constants:
+            return False
+        return _element_holds_a_path_literal(constants[node.id], constants,
+                                             seen + (node.id,))
+    return _container_holds_a_path_literal(node, constants, seen)
+
+
 def _container_holds_a_path_literal(node, constants, seen=()):
     """Whether a container constant holds a relative path literal, at any depth.
 
     ``CH = {'a': {'b': 'src/x'}}`` keeps the directory one index deeper than
     the shapes this guard first looked at; recursing into nested containers is
     what makes ``Path(CH['a']['b']) / 'mod.rs'`` read as a repository path
-    instead of dropping out of both the key and the report.
+    instead of dropping out of both the key and the report. Only real
+    containers count here: a name resolving to a *string* is a subscripted
+    display string (``WORD[0]`` in ``f'{WORD[0]}/{total} killed'``), not a
+    table of directories, and must stay silent — treating the constant
+    itself as the container reported that display f-string (r30, review P1).
     """
-    if isinstance(node, ast.Constant):
-        # ``S = 'src/x'`` then ``CH = {'a': S}``: resolving the name lands on
-        # the constant, and the container still spells the path (r29, review
-        # P0). Without this branch the recursion returned False for every
-        # non-container node it resolved to, so the named spelling slipped
-        # past where the written-out one keyed.
-        return (isinstance(node.value, str)
-                and _is_relative_path_literal(node.value))
     if isinstance(node, ast.Name):
         if node.id in seen or node.id not in constants:
             return False
@@ -1911,8 +1926,25 @@ def _container_holds_a_path_literal(node, constants, seen=()):
         elements = node.values
     else:
         return False
-    return any(_container_holds_a_path_literal(element, constants, seen)
+    return any(_element_holds_a_path_literal(element, constants, seen)
                for element in elements)
+
+
+def _element_holds_a_bare_component(node, constants, seen):
+    """Whether an *element* of a container spells a bare component.
+
+    The mirror of ``_element_holds_a_path_literal`` with the single-component
+    test in place of the separator one.
+    """
+    if isinstance(node, ast.Constant):
+        return (isinstance(node.value, str)
+                and _is_bare_component(node.value))
+    if isinstance(node, ast.Name):
+        if node.id in seen or node.id not in constants:
+            return False
+        return _element_holds_a_bare_component(constants[node.id], constants,
+                                                seen + (node.id,))
+    return _container_holds_a_bare_component(node, constants, seen)
 
 
 def _container_holds_a_bare_component(node, constants, seen=()):
@@ -1921,17 +1953,10 @@ def _container_holds_a_bare_component(node, constants, seen=()):
     ``D = {'one': 'src'}`` then ``Path(D[name]) / 'x.rs'`` — with ``name``
     runtime — may well start at the ``src`` directory, exactly as the literal
     subscript does; the value is only hidden behind the index, not absent
-    (r28, review P0). Mirrors ``_container_holds_a_path_literal`` with the
-    single-component test in place of the separator one.
+    (r28, review P0). Mirrors ``_container_holds_a_path_literal``: only real
+    containers count, so a subscripted display string stays silent (r30,
+    review P1).
     """
-    if isinstance(node, ast.Constant):
-        # ``S = 'src'`` then ``D = {'one': S}``: the mirror of the path-literal
-        # branch above — a resolved name landing on a constant still spells
-        # the component (r29, review P0; the r28 version only tested elements
-        # written out inline, so ``D = {'one': S}`` passed where
-        # ``D = {'one': 'src'}`` reported).
-        return (isinstance(node.value, str)
-                and _is_bare_component(node.value))
     if isinstance(node, ast.Name):
         if node.id in seen or node.id not in constants:
             return False
@@ -1945,7 +1970,7 @@ def _container_holds_a_bare_component(node, constants, seen=()):
         elements = node.values
     else:
         return False
-    return any(_container_holds_a_bare_component(element, constants, seen)
+    return any(_element_holds_a_bare_component(element, constants, seen)
                for element in elements)
 
 
@@ -1991,13 +2016,17 @@ def _leading_path_piece(node):
                 and not node.keywords):
             node = node.args[0]
         elif (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr != 'join' and not node.keywords):
+                and node.func.attr != 'join'):
             # A method on the piece itself — ``Path(D[name]).resolve()`` and
             # ``Path(D[name]).joinpath('a', 'b')``: the *receiver* carries
             # the piece, not the literal arguments after it (r29, review P0 —
             # taking the first argument read the tail and dropped the dynamic
             # head). ``join`` keeps reading its first argument: a stdlib join
             # builds from its arguments, not from the ``os.path`` receiver.
+            # Keyword arguments do not change the receiver — excluding them
+            # let ``Path(D[name]).with_suffix(suffix='')`` fall through to the
+            # generic call branch and read the empty-string tail instead
+            # (r30, review P0).
             node = node.func.value
         elif isinstance(node, ast.Call) and node.args:
             node = node.args[0]
@@ -2034,12 +2063,24 @@ def _single_component_directory(node, constants):
             # review P0). ``D = {'one': 'src'}`` with ``D[name]`` is the same
             # hole ``D['one']`` already keyed.
             return _container_holds_a_bare_component(node.value, constants)
-        # A literal index onto a *name* (``D = {'one': S}``) needs no branch
-        # of its own here: the literal-index net already resolves the name
-        # through the constants and keys the join, so this lookup only ever
-        # answers for indexes that net cannot pair (r29 — a first draft
-        # resolved the element here too and no test could tell the
-        # difference).
+        # A literal index onto a *name* (``D = {'one': S}`` with ``S =
+        # 'src'``) reaches this function with the element still a name, and
+        # the f-string net — the caller of this lookup — does not go through
+        # the literal-index spellings, so the name has to be resolved here:
+        # ``f"{D['one']}/{name}"`` must report exactly as the written-out
+        # ``f"{'src'}/{name}"`` does (r30, review P1: the r29 comment claimed
+        # the other net covered the named spelling, which only holds for
+        # slash-join arguments, not f-strings). A mutated container makes the
+        # written value stale, so it falls back to the container reading
+        # rather than trusting the snapshot.
+        if isinstance(element, ast.Name):
+            resolved = None
+            if element.id not in getattr(constants, 'mutated', frozenset()):
+                resolved = constants.get(element.id)
+            if isinstance(resolved, ast.Constant):
+                return (isinstance(resolved.value, str)
+                        and _is_bare_component(resolved.value))
+            return _container_holds_a_bare_component(node.value, constants)
         return (isinstance(element, ast.Constant)
                 and isinstance(element.value, str)
                 and _is_bare_component(element.value))
@@ -2601,8 +2642,14 @@ def _join_resets_to_absolute(node, constants, aliases):
     ``os.sep.join`` concatenates and keeps its own reading, so it never
     reaches this question.
     """
-    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+    if not isinstance(node, ast.Call) or not isinstance(
+            node.func, (ast.Attribute, ast.Name)):
         return False
+    # A bare name reaches the same stdlib join — ``from os.path import join
+    # as j`` then ``j(D[name], '/tmp', 'mod.rs')`` resets exactly like the
+    # dotted spelling, and the import alias map is resolved here so the
+    # check is spelling-independent (r30, review P1: the ``Attribute``-only
+    # gate left the imported spelling without the absolute-reset defence).
     if _qualified_spelling(node.func, aliases) not in _STDLIB_JOIN_CALLS:
         return False
     for element in _joined_elements(node):
@@ -4119,8 +4166,9 @@ def _duplicate_test_names(source):
 
             An ``if``/``match`` statement contributes the *maximum* of its
             arms (exactly one of them runs, the no-arm case contributing
-            zero); every other compound statement — a ``try`` body and its
-            handlers, a loop body and its ``else``, a ``with`` body — can run
+            zero); a ``try`` mixes the two — the body and ``finally`` always
+            run, the handler block and ``else`` never both do — and the other
+            compounds (a loop body and its ``else``, a ``with`` body) can run
             in one pass, so those merge additively.
             """
             runs = {}
@@ -4157,14 +4205,42 @@ def _duplicate_test_names(source):
                     continue
                 groups = None
                 if isinstance(child, (ast.Try, getattr(ast, 'TryStar', ()))):
-                    # A ``try`` is not mutually exclusive: the body defines a
-                    # name, the exception fires *after* that line, and the
-                    # handler defines it again — one pass can land both in the
-                    # class namespace. Each region is its own body and the
-                    # regions merge additively.
-                    groups = ([child.body]
-                              + [handler.body for handler in child.handlers]
-                              + [child.orelse, child.finalbody])
+                    # A ``try`` is not a flat additive region: the body runs
+                    # first, and *if* an exception fires, exactly one handler
+                    # runs for it. For a plain ``try`` the handlers are
+                    # mutually exclusive — one exception unwinds to one
+                    # ``except`` — and ``else`` runs only when no exception
+                    # fired, so the handler block and the ``else`` block
+                    # never both run: each name contributes
+                    # ``max(handlers..., else)``. A ``try*`` (exception
+                    # groups) can fan one pass out through *several*
+                    # handlers as the group travels, so there the handler
+                    # contributions add. ``finally`` always runs — additive
+                    # either way. Two definitions in the same handler, or
+                    # one in the body and one in a handler, still collide:
+                    # the exception fires *after* the body line, so one pass
+                    # can land both in the class namespace (r30, review P1:
+                    # summing the plain-``try`` handlers reported two
+                    # ``except`` clauses that can never both run).
+                    handler_runs = [definition_runs(handler.body)
+                                    for handler in child.handlers]
+                    if isinstance(child, getattr(ast, 'TryStar', ())):
+                        handler_part = {}
+                        for part in handler_runs:
+                            for name, count in part.items():
+                                handler_part[name] = (handler_part.get(name, 0)
+                                                       + count)
+                    else:
+                        handler_part = {}
+                        for part in handler_runs:
+                            for name, count in part.items():
+                                handler_part[name] = max(handler_part.get(name, 0),
+                                                         count)
+                    else_runs = definition_runs(child.orelse)
+                    for name in set(handler_part) | set(else_runs):
+                        bump(name, max(handler_part.get(name, 0),
+                                       else_runs.get(name, 0)))
+                    groups = [child.body, child.finalbody]
                 elif isinstance(child, (ast.With, getattr(ast, 'AsyncWith', ()))):
                     # ``with`` has no ``else`` clause — neither spelling of it
                     # carries an ``orelse`` field, so only the body runs (the
@@ -5265,6 +5341,42 @@ class DiscoveryAnchorTests(unittest.TestCase):
             "    return f'{CH[\"k\"]}/{name}'\n"
         )
         problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unsupported f-string path' in problem for problem in problems),
+            problems)
+
+    def test_a_named_constant_element_in_an_f_string_subscript_is_reported(self):
+        """``D = {'one': S}`` with ``S = 'src'`` is the written-out spelling.
+
+        The f-string net does not pass through the literal-index spellings, so
+        the container lookup has to resolve the named element itself:
+        ``f'{D["one"]}/{name}'`` must report exactly as ``f'{"src"}/{name}'``
+        does, or hiding the component behind a name turns the report off (r30,
+        review P1 — a name resolving to a plain string is an *element* of the
+        container here, never the container itself).
+        """
+        literal = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "D = {'one': 'src'}\n"
+            "def row(name):\n"
+            "    return f'{D[\"one\"]}/{name}'\n"
+        )
+        problems = violations(literal, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unsupported f-string path' in problem for problem in problems),
+            problems)
+        named = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "S = 'src'\n"
+            "D = {'one': S}\n"
+            "def row(name):\n"
+            "    return f'{D[\"one\"]}/{name}'\n"
+        )
+        problems = violations(named, 'example/negative_controls.py')
         self.assertTrue(
             any('unsupported f-string path' in problem for problem in problems),
             problems)
@@ -6938,6 +7050,48 @@ class DiscoveryAnchorTests(unittest.TestCase):
         )
         self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
 
+    def test_a_subscripted_display_string_stays_silent(self):
+        """``f'{WORD[0]}/{total} killed'`` is a message, not a path build.
+
+        A name resolving to a plain *string* is not a table of directories:
+        the subscript reads a character of the message word, so the new
+        element-position constant check must not treat the string itself as
+        the container and report a display f-string (r30, review P1 — this
+        was the r29 regression that made a passing summary line fail).
+        """
+        synthetic = (
+            "WORD = 'passed'\n"
+            "total = 10\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "print(f'{WORD[0]}/{total} killed')\n"
+        )
+        self.assertEqual(violations(synthetic, 'example/negative_controls.py'), [])
+        # A word that itself carries a separator is a display too — both
+        # container readings (path literal and bare component) must refuse
+        # to treat the string itself as the container.
+        path_shaped = (
+            "WORD = 'a/b'\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "print(f'{WORD[0]}/{42} killed')\n"
+        )
+        self.assertEqual(
+            violations(path_shaped, 'example/negative_controls.py'), [])
+        # The container spellings keep their reports: a name inside a *real*
+        # container is an element position, and a dynamic index onto a
+        # container that spells bare components still fails closed.
+        container = (
+            "from pathlib import Path\n"
+            "ROOT = Path(__file__).resolve().parents[5]\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "CH = {'k': 'src/pilotdeck-gateway/src/channel/x'}\n"
+            "def row(name):\n"
+            "    return f'{CH[\"k\"]}/{name}'\n"
+        )
+        problems = violations(container, 'example/negative_controls.py')
+        self.assertTrue(
+            any('unsupported f-string path' in problem for problem in problems),
+            problems)
+
     def test_a_package_initialiser_is_parsed_for_its_own_imports(self):
         """``import pkg`` runs ``pkg/__init__.py``; what it imports is a key too."""
         with tempfile.TemporaryDirectory() as workspace:
@@ -7904,6 +8058,28 @@ class DiscoveryAnchorTests(unittest.TestCase):
         self.assertTrue(any('unresolvable repository path' in problem
                             for problem in problems), problems)
 
+    def test_a_method_call_with_keyword_arguments_still_reads_the_receiver(self):
+        """``Path(D[name]).with_suffix(suffix='')`` keeps its dynamic head.
+
+        Keyword arguments do not change the receiver, so the receiver branch
+        must drill into ``D[name]`` however the method spells its options:
+        excluding keyword calls let this shape fall through to the generic
+        branch, read the empty-string tail, and pass with empty anchors while
+        the runtime path sat inside the repository (r30, review P0).
+        """
+        keyworded = (
+            "from pathlib import Path\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return Path(D[name]).with_suffix(suffix='') / 'pilotdeck-gateway' / 'src' / 'lib.rs'\n"
+        )
+        problems = violations(keyworded, 'example/negative_controls.py')
+        self.assertTrue(
+            any("with_suffix(suffix='') / 'pilotdeck-gateway'" in problem
+                and 'unresolvable repository path' in problem
+                for problem in problems), problems)
+
     def test_a_runtime_parents_index_behind_a_method_call_is_reported(self):
         """``parents[int(0)].joinpath('..')`` hides the depth behind a call.
 
@@ -7972,6 +8148,36 @@ class DiscoveryAnchorTests(unittest.TestCase):
         # A Windows-shaped piece keeps the *report*, not the silence: the
         # drive-prefixed and backslash forms have their own net, asserted by
         # ``test_a_drive_prefixed_segment_inside_a_join_is_reported``.
+
+    def test_an_import_aliased_join_with_an_absolute_reset_stays_silent(self):
+        """``j(D[name], '/tmp', 'mod.rs')`` reads ``/tmp/mod.rs`` too.
+
+        The reset defence has to be spelling-independent — ``from os.path
+        import join as j`` reaches the same stdlib join, and a gate that only
+        accepted the ``Attribute`` spelling left the imported one reporting a
+        path the runtime never builds inside the repository (r30, review P1).
+        """
+        synthetic = (
+            "from os.path import join as j\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return j(D[name], '/tmp', 'mod.rs')\n"
+        )
+        problems = violations(synthetic, 'example/negative_controls.py')
+        self.assertEqual(problems, [])
+        # Without the reset argument the same imported spelling keeps its
+        # report — the alias resolution did not quietly widen to silence.
+        reporting = (
+            "from os.path import join as j\n"
+            "D = {'one': 'src'}\n"
+            "DISCOVERY_ANCHORS = ()\n"
+            "def row(name):\n"
+            "    return j(D[name], 'tmp', 'mod.rs')\n"
+        )
+        problems = violations(reporting, 'example/negative_controls.py')
+        self.assertTrue(any('unresolvable repository path' in problem
+                            for problem in problems), problems)
 
     def test_a_match_case_shadow_is_reported(self):
         """``match`` arms land in the class namespace like ``if`` arms do.
@@ -8062,14 +8268,75 @@ class DiscoveryAnchorTests(unittest.TestCase):
 
         The body defines the name, the exception fires *after* that line,
         and the handler defines it again — one pass can land both in the
-        class namespace, so the regions merge additively rather than
-        taking an arm maximum (r29).
+        class namespace, so the body and ``finally`` merge additively with
+        the handler block rather than taking an arm maximum (r29; the
+        handler/``else`` maximum is this round's fix, see the test below).
         """
         source = (
             'class T(unittest.TestCase):\n'
             '    try:\n'
             '        def test_a(self):\n            pass\n'
             '    except E:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(source), {'T': ['test_a']})
+
+    def test_mutually_exclusive_try_branches_do_not_collide(self):
+        """One exception unwinds to exactly one ``except`` — or skips them all.
+
+        Two handlers of a plain ``try`` never both run, and ``else`` runs only
+        when no exception fired, so a name defined in each still counts once;
+        summing the regions reported a legal class body as shadowed (r30,
+        review P1). ``finally`` always runs and stays additive with whatever
+        preceded it.
+        """
+        handlers = (
+            'class T(unittest.TestCase):\n'
+            '    try:\n'
+            '        raise ValueError()\n'
+            '    except ValueError:\n'
+            '        def test_a(self):\n            pass\n'
+            '    except TypeError:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(handlers), {})
+        handler_and_else = (
+            'class T(unittest.TestCase):\n'
+            '    try:\n'
+            '        pass\n'
+            '    except ValueError:\n'
+            '        def test_a(self):\n            pass\n'
+            '    else:\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(handler_and_else), {})
+        finally_adds = (
+            'class T(unittest.TestCase):\n'
+            '    try:\n'
+            '        raise ValueError()\n'
+            '    except ValueError:\n'
+            '        pass\n'
+            '    finally:\n'
+            '        def test_a(self):\n            pass\n'
+            '        def test_a(self):\n            pass\n'
+        )
+        self.assertEqual(_duplicate_test_names(finally_adds), {'T': ['test_a']})
+
+    def test_try_star_handlers_can_all_run_and_do_collide(self):
+        """An exception group fans one pass out through several ``except*``.
+
+        ``try*`` handlers are not mutually exclusive the way plain ``except``
+        clauses are: the group keeps travelling, so a name defined in two of
+        them really can be defined twice in one pass (r30, review P1 — the
+        plain-``try`` maximum must not quietly cover the starred spelling).
+        """
+        source = (
+            'class T(unittest.TestCase):\n'
+            '    try:\n'
+            '        raise ExceptionGroup("e", [ValueError(), TypeError()])\n'
+            '    except* ValueError:\n'
+            '        def test_a(self):\n            pass\n'
+            '    except* TypeError:\n'
             '        def test_a(self):\n            pass\n'
         )
         self.assertEqual(_duplicate_test_names(source), {'T': ['test_a']})
