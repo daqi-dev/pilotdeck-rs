@@ -2855,7 +2855,22 @@ fn empty_steps_cannot_be_zero_coverage() {
 /// channel bound to it would answer the probe requests and corrupt the
 /// recorded oracle bytes. Fail fast with a dedicated message instead of
 /// letting the run mismatch. (The switch keeps the guard testable.)
-async fn ensure_replay_port_free(port: u16) {
+///
+/// #2691 gap 1: the guard is parameterized by the host the product will
+/// actually bind — the same `String(webhookHost ?? DEFAULT_HOST)` coalesce
+/// `start` runs ([`effective_webhook_host`]). Only the empty host binds the
+/// dual-stack `::` (`bind_listener`, mod.rs:815-845), so only there can the
+/// v6 half below ask its question; a fixed host (every recorded case is
+/// `127.0.0.1` or the unreachable `203.0.113.7`) never touches IPv6, and a
+/// v6-only occupier used to fail the probe although the product's own
+/// `bind(("127.0.0.1", port))` succeeds — measured on both sides
+/// (`_tmp/20261026-issue-2691/probes/`: a v6-only holder of `[::]:P` makes
+/// the `::` bind `EADDRINUSE` while the 127.0.0.1 bind and Node's
+/// `listen(127.0.0.1, P)` both succeed). The v4 half stays on 127.0.0.1 for
+/// every host: it watches the address the replay's own probe traffic dials
+/// (`raw_request` / `raw_until_close` / the `connect` steps), not the
+/// product's bind address.
+async fn ensure_replay_port_free(port: u16, host: &str) {
     if crate::mutants::on("sms-port-preflight") {
         return;
     }
@@ -2899,13 +2914,23 @@ async fn ensure_replay_port_free(port: u16) {
     // #1729 fix-r1: check the wildcard bind first. On macOS a socket bound
     // to `[::]:port` without listening can stall the IPv4 connect below;
     // the bind probe still reports that IPv6 is occupied immediately.
-    match v6_wildcard_state(port) {
-        V6Port::Free | V6Port::Absent => {}
-        V6Port::Occupied => panic!(
-            "#1339 port {port} already in use on IPv6; the `::` bind would fail and fall back to IPv4-only"
-        ),
-        V6Port::Unknown => {
-            panic!("#1339 cannot prove the IPv6 wildcard port {port} is free; refusing to replay")
+    //
+    // #2691: only for the empty host — the one shape whose product bind is
+    // the `::` wildcard. For a fixed host the question is moot (the product
+    // never issues this bind), and answering it anyway is the pre-fix false
+    // red the `sms-port-preflight-v6-any-host` switch keeps for the negative
+    // control.
+    if host.is_empty() || crate::mutants::on("sms-port-preflight-v6-any-host") {
+        match v6_wildcard_state(port) {
+            V6Port::Free | V6Port::Absent => {}
+            V6Port::Occupied => panic!(
+                "#1339 port {port} already in use on IPv6; the `::` bind would fail and fall back to IPv4-only"
+            ),
+            V6Port::Unknown => {
+                panic!(
+                    "#1339 cannot prove the IPv6 wildcard port {port} is free; refusing to replay"
+                )
+            }
         }
     }
 
@@ -3002,6 +3027,50 @@ fn v6_wildcard_state(port: u16) -> V6Port {
         Err(error) if means_no_ipv6(&error) => V6Port::Absent,
         Err(_) => V6Port::Unknown,
     }
+}
+
+/// #2691: the host the product's `bind_listener` will bind for a case — the
+/// same `String(webhookHost ?? DEFAULT_HOST)` coalesce `start` runs
+/// (mod.rs:554-557), reusing the product's own `nullish` / `js_string_of`
+/// instead of a hand-built twin (a non-string host coerces exactly like the
+/// channel coerces it). The preflight must probe this address, not a
+/// lookalike: an empty host is the only shape that binds the dual-stack
+/// `::`, every other host binds that host alone and cannot collide with a
+/// v6-only occupier.
+fn effective_webhook_host(extra: Option<&Value>) -> String {
+    let field = extra
+        .and_then(|extra| extra.get("webhookHost"))
+        .map_or(JsValue::Undefined, to_js);
+    let host = if nullish(&field) {
+        JsValue::from("127.0.0.1")
+    } else {
+        field
+    };
+    String::from_utf16_lossy(js_string_of(&host).units())
+}
+
+/// #2691 gap 2 (TOCTOU): the preflight above is a pre-`start` probe, but
+/// `start` swallows a lost bind into the no-op handle (mod.rs:606-628: the
+/// `sms: HTTP server failed` log, then the no-op return), so an occupier
+/// that appears between the probe and the bind leaves the pin silently
+/// measuring the foreign listener. The
+/// `Arc::strong_count` guard after `start()` closes that window — the same
+/// shape `head_timeout_tests.rs` runs after every one of its starts (#2020,
+/// pinned from the failing side by its bind-race cell): a no-op handle owns
+/// no `SmsShared`, while a started channel keeps one in the handle and one
+/// in its accept task. What slips past both probes (a dual-stack
+/// `[::]:port` socket bound but never listening refuses the v4 connect and
+/// never listens, so only the product's own bind notices it) lands here too.
+fn assert_bound_listener(shared: &Arc<SmsShared>, port: u16) {
+    if crate::mutants::on("sms-pin-bind-race-unchecked") {
+        return;
+    }
+    crate::negative_assert!(
+        Arc::strong_count(shared) >= 2,
+        "#2691 start() on port {port} returned the no-op handle: the bind lost the \
+         race with an occupier the preflight could not see, so this pin would \
+         measure a foreign listener"
+    );
 }
 
 /// #1339 fix-r12 (P2, Codex r11 #1 / minimax simplify r11 #2): pin the
@@ -3278,7 +3347,11 @@ async fn replay_named(name: &str) {
     let steps = recorded_steps(&case).expect("#1339 steps validated array");
     assert_boundary_body_len(name, &case);
     let port = case["port"].as_u64().expect("#1339 case port") as u16;
-    ensure_replay_port_free(port).await;
+    // #2691: the case's own effective host, so the guard probes the address
+    // this very cell's product bind will use ("" -> the `::` wildcard,
+    // 127.0.0.1 -> the fixed host that never touches IPv6).
+    let host = effective_webhook_host(recorded_extra(&case));
+    ensure_replay_port_free(port, &host).await;
     if name == "body-read-timeout" {
         // #1901: the recorded TS answer arrives only after Node's full 300 s
         // `requestTimeout`, so the cell is replayed through a shortened
@@ -3604,12 +3677,16 @@ async fn http10_request_closes_the_connection() {
     // no gateway the dispatched turn dies in its spawned task (logged into
     // the void, the recorder is absent) long after the 200 TWIML is already
     // on the wire.
-    // #2257 fix-r3: `start` swallows a bind failure into a NoopHandle, so a
-    // port collision would silently test someone else's listener — preflight
-    // the port like the replay cells do.
-    ensure_replay_port_free(PORT).await;
     let mut extra = recorded_extra(&case).cloned().unwrap_or_else(|| json!({}));
     extra["webhookPort"] = json!(PORT);
+    // #2257 fix-r3: `start` swallows a bind failure into a NoopHandle, so a
+    // port collision would silently test someone else's listener — preflight
+    // the port like the replay cells do. #2691: with the host this pin's
+    // own extra resolves to (the recorded `127.0.0.1`), so the v6 half of
+    // the guard does not fail the pin on a v6-only occupier the product
+    // never collides with.
+    let host = effective_webhook_host(Some(&extra));
+    ensure_replay_port_free(PORT, &host).await;
     let channel = SmsChannel::new(SmsChannelOptions {
         extra: Some(to_js_object(&extra)),
         mapper: None,
@@ -3619,6 +3696,7 @@ async fn http10_request_closes_the_connection() {
         record_unhandled: None,
         request_timeout: None,
     });
+    let shared = channel.shared.clone();
     let handle = channel
         .start(ChannelStartDeps {
             config: None,
@@ -3628,6 +3706,10 @@ async fn http10_request_closes_the_connection() {
         })
         .await
         .expect("#1913 start for the http10 pin");
+    // #2691: the preflight cannot see an occupier that wins the window
+    // between its probe and this bind — prove the bind really happened.
+    drop(channel);
+    assert_bound_listener(&shared, PORT);
     let raw = bounded("http10 pin response", raw_until_close(PORT, &request)).await;
     settle().await;
     bounded("http10 pin cleanup stop", handle.stop("cleanup"))
@@ -3756,11 +3838,13 @@ async fn http10_not_found_keeps_the_close_delimited_framing() {
         let version = words.next().expect("#1913 request version");
         format!("{method} /no-such-path {version}\r\n{rest}").into_bytes()
     };
-    // #2257 fix-r3: same preflight as the 200 pin — a NoopHandle fallback on
-    // a busy port would fake-pass against a foreign listener.
-    ensure_replay_port_free(PORT).await;
     let mut extra = recorded_extra(&case).cloned().unwrap_or_else(|| json!({}));
     extra["webhookPort"] = json!(PORT);
+    // #2257 fix-r3: same preflight as the 200 pin — a NoopHandle fallback on
+    // a busy port would fake-pass against a foreign listener. #2691: with
+    // this pin's own extra (the recorded `127.0.0.1` host).
+    let host = effective_webhook_host(Some(&extra));
+    ensure_replay_port_free(PORT, &host).await;
     let channel = SmsChannel::new(SmsChannelOptions {
         extra: Some(to_js_object(&extra)),
         mapper: None,
@@ -3770,6 +3854,7 @@ async fn http10_not_found_keeps_the_close_delimited_framing() {
         record_unhandled: None,
         request_timeout: None,
     });
+    let shared = channel.shared.clone();
     let handle = channel
         .start(ChannelStartDeps {
             config: None,
@@ -3779,6 +3864,9 @@ async fn http10_not_found_keeps_the_close_delimited_framing() {
         })
         .await
         .expect("#2257 start for the http10 404 pin");
+    // #2691: same post-start bind proof as the 200 pin.
+    drop(channel);
+    assert_bound_listener(&shared, PORT);
     let raw = bounded("http10 404 pin response", raw_until_close(PORT, &request)).await;
     settle().await;
     bounded("http10 404 pin cleanup stop", handle.stop("cleanup"))
@@ -3815,9 +3903,12 @@ async fn pin_channel(
     case: &Value,
     port: u16,
 ) -> std::sync::Arc<dyn crate::channel::protocol::ChannelHandle> {
-    ensure_replay_port_free(port).await;
     let mut extra = recorded_extra(case).cloned().unwrap_or_else(|| json!({}));
     extra["webhookPort"] = json!(port);
+    // #2691: the preflight follows the effective host of the case's extra
+    // (same merge as the product's `String(webhookHost ?? DEFAULT_HOST)`).
+    let host = effective_webhook_host(Some(&extra));
+    ensure_replay_port_free(port, &host).await;
     let channel = SmsChannel::new(SmsChannelOptions {
         extra: Some(to_js_object(&extra)),
         mapper: None,
@@ -5570,12 +5661,16 @@ async fn json_null_body_is_unhandled_destroy() {
     // moved out to the free gap above that segment, same policy as the
     // 200/404 pins (18923/18922), the head-timeout ports (18924/18925)
     // and the #2152 parser-admission pins (18927/18928).
-    ensure_replay_port_free(PORT).await;
+    // #2691: this pin's extra carries no `webhookHost`, so the effective
+    // host is the `127.0.0.1` default — the fixed-host shape.
+    let extra = json!({
+        "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",
+        "webhookPort": PORT,
+    });
+    let host = effective_webhook_host(Some(&extra));
+    ensure_replay_port_free(PORT, &host).await;
     let channel = SmsChannel::new(SmsChannelOptions {
-        extra: Some(to_js_object(&json!({
-            "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",
-            "webhookPort": PORT,
-        }))),
+        extra: Some(to_js_object(&extra)),
         mapper: None,
         gateway: None,
         env: None,
@@ -5583,6 +5678,7 @@ async fn json_null_body_is_unhandled_destroy() {
         record_unhandled: Some(record_unhandled),
         request_timeout: None,
     });
+    let shared = channel.shared.clone();
     let handle = channel
         .start(ChannelStartDeps {
             config: None,
@@ -5592,6 +5688,12 @@ async fn json_null_body_is_unhandled_destroy() {
         })
         .await
         .expect("#1339 json-null test start");
+    // #2691: same post-start bind proof as the http10 pins — the NoopHandle
+    // fallback this test's own `closed: true` outcome could fake-pass through
+    // (a foreign listener that ignores the request destroys too) must not
+    // stay silent.
+    drop(channel);
+    assert_bound_listener(&shared, PORT);
     // 1) No signature header: the gate is skipped, `params.Body` on null
     //    throws first.
     let outcome = bounded(
@@ -5724,7 +5826,9 @@ fn port_busy_on_ipv6_preflight_fails_fast() {
             .enable_all()
             .build()
             .expect("#1339 preflight runtime build")
-            .block_on(ensure_replay_port_free(port))
+            // #2691: the empty host — the one shape whose product bind is the
+            // `::` wildcard the v6 half exists for.
+            .block_on(ensure_replay_port_free(port, ""))
     }));
     let payload = match result {
         Err(payload) => payload
@@ -5743,6 +5847,207 @@ fn port_busy_on_ipv6_preflight_fails_fast() {
         "#1339 v6 port-busy preflight marker: {payload}"
     );
     drop(socket);
+}
+
+/// #2691 gap 1: the preflight's v6 half is calibrated for the *empty*
+/// `webhookHost` — the one shape whose product bind is the dual-stack `::`
+/// (`bind_listener`, mod.rs:815-845). A fixed `127.0.0.1` host never touches
+/// IPv6, so a genuine v6-only occupier of `[::]:port` used to fail the probe
+/// although the product's own `bind(("127.0.0.1", port))` succeeds — a false
+/// red. Both halves measured (`_tmp/20261026-issue-2691/probes/`: with
+/// `IPV6_V6ONLY` set on `[::]:P`, the guard's `::`-shaped bind reports
+/// `EADDRINUSE` while the 127.0.0.1 bind and Node's `listen(127.0.0.1, P)`
+/// both succeed). Unfixed code fails here with the guard's own IPv6 panic;
+/// the `sms-port-preflight-v6-any-host` switch keeps that shape for the
+/// negative control.
+#[test]
+fn v6_only_occupier_does_not_block_the_fixed_127_0_0_1_host() {
+    const PORT: u16 = 18927;
+    // A genuine v6-only holder of `[::]:PORT`, bound without listening (the
+    // Q2 shape of `port_busy_on_ipv6_preflight_fails_fast`). tokio 1.48's
+    // `TcpSocket` cannot set `IPV6_V6ONLY` and the crate forbids `unsafe`,
+    // so the occupier is a socket2 socket — the crate tokio's own listener
+    // is built on.
+    let socket = match socket2::Socket::new(socket2::Domain::IPV6, socket2::Type::STREAM, None) {
+        Ok(socket) => socket,
+        Err(error) if means_no_ipv6(&error) => {
+            eprintln!("#2691 skipped: host has no IPv6 ({error})");
+            return;
+        }
+        Err(error) => panic!("#2691 cannot create an IPv6 socket for the occupier: {error}"),
+    };
+    if let Err(error) = socket.set_only_v6(true) {
+        panic!("#2691 cannot make the occupier v6-only: {error}");
+    }
+    let address = std::net::SocketAddr::from(([0u16; 8], PORT));
+    if let Err(error) = socket.bind(&address.into()) {
+        if means_no_ipv6(&error) {
+            eprintln!("#2691 skipped: host has no IPv6 wildcard ({error})");
+            return;
+        }
+        panic!("#2691 cannot bind the v6-only occupier to {address}: {error}");
+    }
+    // 1. The preflight must not fire its v6 half for the fixed host: the
+    //    product never binds IPv6 on this shape.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("#2691 preflight runtime build");
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.block_on(ensure_replay_port_free(PORT, "127.0.0.1"))
+    }));
+    if let Err(payload) = panicked {
+        let text = payload
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| {
+                payload
+                    .downcast_ref::<&str>()
+                    .map(|text| (*text).to_owned())
+            })
+            .unwrap_or_else(|| "#2691 non-string panic payload".to_owned());
+        panic!(
+            "#2691 the v6 half probed the fixed 127.0.0.1 host — the product \
+             never binds IPv6 there, so this is the pre-fix false red: {text}"
+        );
+    }
+    // 2. The product binding path runs to its own success: with the v6-only
+    //    occupier still held, the channel binds 127.0.0.1:PORT, answers the
+    //    request, and the post-start guard sees a live listener.
+    runtime.block_on(async {
+        let case = case_by_name("http10");
+        let steps = recorded_steps(&case).expect("#2691 http10 steps validated array");
+        let request = build_raw(
+            steps
+                .first()
+                .expect("#2691 the http10 case carries one request step"),
+        );
+        let mut extra = recorded_extra(&case).cloned().unwrap_or_else(|| json!({}));
+        extra["webhookPort"] = json!(PORT);
+        let channel = SmsChannel::new(SmsChannelOptions {
+            extra: Some(to_js_object(&extra)),
+            mapper: None,
+            gateway: None,
+            env: None,
+            twilio_factory: Some(null_factory()),
+            record_unhandled: None,
+            request_timeout: None,
+        });
+        let shared = channel.shared.clone();
+        let handle = channel
+            .start(ChannelStartDeps {
+                config: None,
+                report_status: None,
+                log: None,
+                turn_gateway: None,
+            })
+            .await
+            .expect("#2691 start with the v6-only occupier held");
+        drop(channel);
+        assert_bound_listener(&shared, PORT);
+        let raw = bounded("#2691 v6-occupier pin response", async {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let mut stream = TcpStream::connect(("127.0.0.1", PORT))
+                .await
+                .expect("#2691 connect to the pin's own 127.0.0.1 listener");
+            stream
+                .write_all(&request)
+                .await
+                .expect("#2691 send the http10 request");
+            let mut raw = Vec::new();
+            stream
+                .read_to_end(&mut raw)
+                .await
+                .expect("#2691 read the pin response to the close");
+            raw
+        })
+        .await;
+        crate::negative_assert!(
+            raw.starts_with(b"HTTP/1.0 200 OK\r\n"),
+            "#2691 the pin answered through its own 127.0.0.1 listener while a \
+             v6-only socket held [::]:{PORT}: {raw:?}"
+        );
+        settle().await;
+        bounded("#2691 v6-occupier pin stop", handle.stop("cleanup"))
+            .await
+            .expect("#2691 v6-occupier pin cleanup stop");
+    });
+    drop(socket);
+}
+
+/// #2691 gap 2 (TOCTOU): the preflight is a pre-`start` probe — an occupier
+/// that appears in the window between the probe and the bind is invisible to
+/// it, and `start` swallows the lost bind into the no-op handle
+/// (mod.rs:606-628), so a pin would silently measure the foreign listener.
+/// This test manufactures that window deterministically and proves the
+/// post-start guard catches it (the same shape `head_timeout_tests.rs`
+/// guards its own module with, #2020). The `sms-pin-bind-race-unchecked`
+/// switch disarms the guard; this test is then the one that must fail.
+#[tokio::test]
+async fn a_pin_start_that_loses_the_bind_race_is_caught_after_start() {
+    const PORT: u16 = 18928;
+    let extra = json!({
+        "accountSid": "AC1", "authToken": "tok", "phoneNumber": "+15550000",
+        "webhookPort": PORT,
+    });
+    let host = effective_webhook_host(Some(&extra));
+    // 1. The preflight passes: the port is free.
+    ensure_replay_port_free(PORT, &host).await;
+    // 2. The occupier appears inside the window the probe cannot see.
+    let occupier = std::net::TcpListener::bind(("127.0.0.1", PORT))
+        .expect("#2691 occupier bind between the preflight and the start");
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&extra)),
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+        request_timeout: None,
+    });
+    let shared = channel.shared.clone();
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+            turn_gateway: None,
+        })
+        .await
+        .expect("#2691 a lost bind is still a started channel");
+    drop(channel);
+    // 3. The post-start guard must fire: the no-op handle owns no SmsShared.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        assert_bound_listener(&shared, PORT)
+    }));
+    match result {
+        Err(payload) => {
+            let text = payload
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| {
+                    payload
+                        .downcast_ref::<&str>()
+                        .map(|text| (*text).to_owned())
+                })
+                .unwrap_or_else(|| "#2691 non-string panic payload".to_owned());
+            crate::negative_assert!(
+                text.contains("#2691 start() on port"),
+                "#2691 the post-start bind guard fired with an unexpected message: {text}"
+            );
+        }
+        Ok(()) => panic!(
+            "#2691 the post-start bind guard did not fire although the no-op \
+             handle owns no SmsShared — the pre-fix TOCTOU shape would \
+             silently measure the occupier's listener"
+        ),
+    }
+    // Production hands the no-op handle to the supervisor; it must stop.
+    bounded("#2691 TOCTOU cleanup stop", handle.stop("cleanup"))
+        .await
+        .expect("#2691 stop the no-op handle");
+    drop(occupier);
+    settle().await;
 }
 
 /// #1339 fix-r1 (P2 #15): the mapped Node `listen` error texts (probed on
