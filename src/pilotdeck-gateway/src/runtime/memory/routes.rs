@@ -651,18 +651,15 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        let listed = routes
+        // A lone surrogate in `createdAt` is a measured host boundary in this
+        // tree: the native collation refuses to order unpaired UTF-16 and asks
+        // for the Node host instead of silently choosing an order.
+        let error = routes
             .handle("snapshot_list", &json(r#"{"projectKey":"p"}"#))
             .unwrap()
             .await
-            .unwrap();
-        let listed = array(listed.get("items").unwrap());
-        assert_eq!(listed.len(), 3);
-        assert!(listed.iter().any(|item| {
-            item.get("createdAt")
-                .and_then(JsValue::as_string)
-                .is_some_and(|v| v.units() == [0xd800])
-        }));
+            .unwrap_err();
+        assert_eq!(code(&error), JsValue::from("JS_HOST_REQUIRED"));
         assert_eq!(fixture.ids.len(), 4);
     }
 

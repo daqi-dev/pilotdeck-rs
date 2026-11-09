@@ -196,6 +196,43 @@ impl<const P: bool> PendingBus<P> {
             .retain(|b| !b.entries.lock().unwrap().is_empty());
         Some(stored.entry)
     }
+    /// Wire form. A truthy non-object binding still has to fail the current
+    /// binding comparison; only nullish/`false` means "no binding".
+    pub(crate) fn consume_wire(
+        &self,
+        owner: &JsString,
+        request: &JsString,
+        binding: Option<&JsValue>,
+    ) -> Option<PendingEntry> {
+        let mut state = self.port.state.lock().unwrap();
+        if binding
+            .filter(|binding| truthy(binding))
+            .is_some_and(|binding| {
+                !reconnect::is_current_wire(&state, owner, self.kind(), request, binding)
+            })
+        {
+            return None;
+        }
+        let index = state
+            .buckets
+            .iter()
+            .position(|b| b.bus == self.id && &b.owner == owner)?;
+        let stored = {
+            let mut entries = state.buckets[index].entries.lock().unwrap();
+            let index = entries.iter().position(|e| {
+                &e.entry.request_id == request
+                    && (e.active.load(Ordering::SeqCst)
+                        || e.settled_by == Some(std::thread::current().id()))
+            })?;
+            entries.remove(index)
+        };
+        stored.active.store(false, Ordering::SeqCst);
+        reconnect::remove(&mut state, stored.token, owner);
+        state
+            .buckets
+            .retain(|b| !b.entries.lock().unwrap().is_empty());
+        Some(stored.entry)
+    }
     pub fn has_pending(&self, owner: &JsString, request: &JsString) -> bool {
         self.port.state.lock().unwrap().buckets.iter().any(|b| {
             b.bus == self.id
@@ -368,6 +405,15 @@ fn truthy(value: &JsValue) -> bool {
 impl PendingBus<true> {
     pub fn deny_session(&self, owner: &JsString, reason: &JsString) {
         self.deny(owner, reason);
+    }
+}
+fn truthy(value: &JsValue) -> bool {
+    match value {
+        JsValue::Undefined | JsValue::Null => false,
+        JsValue::Bool(value) => *value,
+        JsValue::Number(value) => *value != 0.0 && !value.is_nan(),
+        JsValue::String(value) => !value.is_empty(),
+        JsValue::Object(_) | JsValue::Array(_) => true,
     }
 }
 fn message(parts: &[JsString]) -> JsString {

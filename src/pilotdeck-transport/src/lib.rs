@@ -8,6 +8,7 @@ use pilotdeck_protocol::model::BoundarySnapshot;
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
 pub mod default_factory;
+pub mod direct_host;
 pub mod execute;
 mod factory_payload;
 mod host_operations;

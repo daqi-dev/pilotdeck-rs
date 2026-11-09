@@ -3,14 +3,16 @@ use crate::config::permission::{GatewaySessionPermissionRuleSetRegistry, Lease, 
 use crate::runtime::{
     mcp::{
         bridge::{CreateToolDefinitionsOptions, create_mcp_tool_definitions_from_runtime},
-        registry::{SessionMcpRuntimeRegistration, SessionMcpRuntimeRegistry},
+        registry::{
+            SessionMcpRuntimeRegistration, SessionMcpRuntimeRegistry, parse_plugin_mcp_servers,
+        },
         runtime::{McpRuntime, McpRuntimeOptions, McpRuntimePort},
-        sdk::SdkMcpConfig,
+        sdk::{SdkMcpConfig, SdkMcpConfigOptions},
     },
     project::RuntimeError,
     tools::{ToolRegistration, ToolRegistry},
 };
-use pilotdeck_protocol::JsString;
+use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{path::Path, sync::Arc};
 
 pub struct SessionMcpOwner {
@@ -21,15 +23,56 @@ pub struct SessionMcpOwner {
 impl SessionMcpOwner {
     pub async fn open(
         config: &SdkMcpConfig,
+        // Supply the same collaborators used to construct this SDK config.
+        options: &SdkMcpConfigOptions,
         permissions: &GatewaySessionPermissionRuleSetRegistry,
         home: &Path,
         project: &Path,
         session: &JsString,
     ) -> Result<Option<Arc<Self>>, RuntimeError> {
-        let specs = config
-            .runtime_servers(Some(&project.to_string_lossy().as_ref().into()), session)
-            .await
+        let project_key = JsString::from(project.to_string_lossy().into_owned());
+        let resolved = options.resolver.resolve(Some(&project_key)).await
             .map_err(|e| RuntimeError::new(String::from_utf16_lossy(e.message().units())))?;
+        resolved.refresh().await
+            .map_err(|e| RuntimeError::new(String::from_utf16_lossy(e.message().units())))?;
+        let session_key = JsValue::String(session.clone());
+        let plugins = resolved.snapshot().await;
+        let session_plugins = options.session_plugins.plugins(&session_key).await
+            .map_err(|e| RuntimeError::new(String::from_utf16_lossy(e.message().units())))?;
+        let mut raw = JsObject::new();
+        for plugin in plugins.into_iter().chain(session_plugins) {
+            match &plugin.mcp_servers {
+                Some(JsValue::Object(servers)) => {
+                    for (name, spec) in servers.own_entries() {
+                        raw.insert(name.clone(), spec.clone());
+                    }
+                }
+                Some(JsValue::Array(servers)) => {
+                    for (index, spec) in servers.iter().enumerate() {
+                        raw.insert(index.to_string().into(), spec.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        // Plugin names remain reserved, including invalid plugin specs.
+        for (name, entry) in config.session_mcp_servers(&session_key) {
+            if raw.get_key(&name).is_none()
+                && entry.get("enabled").is_some_and(super::truthy)
+            {
+                let spec = entry.get("config").ok_or_else(|| {
+                    RuntimeError::new("SDK MCP entry is missing its config")
+                })?;
+                raw.insert(name, spec.clone());
+            }
+        }
+        let parsed = parse_plugin_mcp_servers(Some(&raw), options.environment.as_ref());
+        if let Some(error) = parsed.diagnostics.first() {
+            return Err(RuntimeError::new(format!(
+                "MCP {}: {}", error.id, error.message
+            )));
+        }
+        let specs = parsed.servers;
         if specs.is_empty() {
             return Ok(None);
         }

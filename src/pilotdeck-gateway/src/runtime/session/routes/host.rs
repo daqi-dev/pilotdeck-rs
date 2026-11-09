@@ -40,13 +40,13 @@ impl TranscriptHost for NativeTranscriptHost {
                 ));
             }
         };
-        let project = resolve_process_path(&self.cwd, &requested);
+        let project = resolve_process_path(&self.cwd, &requested).map_err(failed)?;
         let metadata = Metadata {
             home: self.home.clone(),
             cwd: self.cwd.clone(),
             files: NativeFiles,
         };
-        if project != self.home && !metadata.has_registered_project(&project) {
+        if project != self.home && !metadata.has_registered_project(&project).map_err(failed)? {
             return Err(error(
                 "PROJECT_NOT_FOUND",
                 format!("Unknown projectKey: {}", requested.display()),
@@ -64,12 +64,14 @@ impl TranscriptHost for NativeTranscriptHost {
         if id == "." || id == ".." || session_key.units().contains(&0) {
             return Err(error("INVALID_SESSION_KEY", "Invalid sessionKey."));
         }
-        Ok(self.adapter.create_session_storage(SessionStorageInput {
-            project_root: project_root.into(),
-            pilot_home: self.home.clone(),
-            session_id: session_key.clone(),
-            now: None,
-        }))
+        self.adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project_root.into(),
+                pilot_home: self.home.clone(),
+                session_id: session_key.clone(),
+                now: None,
+            })
+            .map_err(failed)
     }
 
     fn prepare_seed<'a>(&'a self, params: &'a JsValue) -> TranscriptFuture<'a, SeedReadTarget> {
@@ -88,7 +90,7 @@ impl TranscriptHost for NativeTranscriptHost {
                 })?;
                 if !cwd.is_empty() {
                     let path = PathBuf::from(cwd.to_utf8().map_err(failed)?);
-                    let cwd = resolve_process_path(&self.cwd, &path);
+                    let cwd = resolve_process_path(&self.cwd, &path).map_err(failed)?;
                     self.live
                         .set_cwd(session, cwd.to_string_lossy().as_ref().into());
                     // An idle session's cwd is immutable in the sidecar config; recreate it.

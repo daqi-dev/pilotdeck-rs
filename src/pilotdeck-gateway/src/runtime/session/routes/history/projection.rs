@@ -474,7 +474,7 @@ fn flatten_result_text(block: &JsValue, out: &mut Vec<String>) {
             "pdf" => {
                 let pages = text(block, "pages");
                 let pages = if pages.is_empty() && number(block, "pages") != 0.0 {
-                    pilotdeck_protocol::js_value::number_string(number(block, "pages"))
+                    crate::js_value::number_string(number(block, "pages"))
                 } else {
                     pages
                 };

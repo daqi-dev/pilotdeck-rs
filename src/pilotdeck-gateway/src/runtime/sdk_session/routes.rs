@@ -1,6 +1,7 @@
 //! Shared CONFIG session validation; mutations live in SdkSessionRegistry.
 use super::field;
-use crate::config::routes::{Result, RouteError};
+use super::SdkSessionError as RouteError;
+type Result<T> = std::result::Result<T, RouteError>;
 use pilotdeck_protocol::{JsString, JsValue};
 pub(crate) fn session_key(params: &JsValue) -> Result<JsString> {
     match field(params, "sessionKey") {

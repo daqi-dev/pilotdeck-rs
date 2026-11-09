@@ -7,6 +7,29 @@ pub type DisposeFn = Box<
     dyn Fn() -> Pin<Box<dyn Future<Output = Result<(), String>> + Send + 'static>> + Send + Sync,
 >;
 
+/// Native equivalent of TS `RouterContribution`. Programmatic/builtin plugins
+/// provide a factory; disk manifests contain no executable router code.
+#[derive(Clone)]
+pub struct RouterContribution {
+    pub id: pilotdeck_protocol::JsString,
+    pub description: Option<pilotdeck_protocol::JsString>,
+    pub create_custom_router: Arc<
+        dyn Fn() -> Result<
+                crate::runtime::model::router::CustomRouterInstance,
+                super::PluginRuntimeError,
+            > + Send
+            + Sync,
+    >,
+}
+impl std::fmt::Debug for RouterContribution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouterContribution")
+            .field("id", &self.id)
+            .field("description", &self.description)
+            .finish_non_exhaustive()
+    }
+}
+
 use super::options::{PilotExtensionPaths, PluginRuntimeOptions};
 
 /// A loaded plugin, matching `PilotDeckLoadedPlugin`.
@@ -20,6 +43,8 @@ pub struct LoadedPlugin {
     pub hooks_config: Option<HooksSettings>,
     pub mcp_servers: Option<pilotdeck_protocol::JsValue>,
     pub lsp_servers: Option<pilotdeck_protocol::JsValue>,
+    /// Programmatic router factories; disk manifests never populate this.
+    pub router_contributions: Vec<RouterContribution>,
     /// Optional async teardown for programmatic (builtin/test-injected) plugins.
     /// `Ok(())` = success; `Err(message)` = failure text forwarded to callers.
     pub dispose: Option<DisposeFn>,
@@ -230,6 +255,7 @@ pub fn load_skill_from_path(
         hooks_config: None,
         mcp_servers: None,
         lsp_servers: None,
+        router_contributions: Vec::new(),
         dispose: None,
     })
 }
@@ -274,6 +300,7 @@ pub fn load_plugin_from_path(
         hooks_config,
         mcp_servers: servers("mcpServers")?,
         lsp_servers: servers("lspServers")?,
+        router_contributions: Vec::new(),
         dispose: None,
     })
 }

@@ -207,7 +207,11 @@ impl ContextResources {
 
 struct NativeMemoryGeneration {
     provider: crate::runtime::memory::edgeclaw::NativeProjectMemoryOwner,
-    maintenance: crate::runtime::memory::ProjectMemoryMaintenanceController,
+    maintenance: Option<
+        crate::runtime::memory::ProjectMemoryMaintenanceController<
+            crate::runtime::memory::ProjectMemoryMaintenanceRuntime,
+        >,
+    >,
     leases: AtomicUsize,
     retired: AtomicBool,
     disposed: tokio::sync::OnceCell<Result<(), String>>,
@@ -215,12 +219,13 @@ struct NativeMemoryGeneration {
 
 impl NativeMemoryGeneration {
     fn new(provider: crate::runtime::memory::edgeclaw::NativeProjectMemoryOwner) -> Self {
-        let maintenance = crate::runtime::memory::ProjectMemoryMaintenanceController::default();
-        maintenance.start(
-            Some(provider.maintenance.clone()),
-            provider.enabled,
-            provider.has_llm,
-        );
+        let maintenance = if provider.enabled && provider.has_llm {
+            let controller = crate::runtime::memory::ProjectMemoryMaintenanceController::default();
+            controller.start(Some(provider.maintenance.clone()), true, true);
+            Some(controller)
+        } else {
+            None
+        };
         Self {
             provider,
             maintenance,
@@ -280,7 +285,9 @@ impl NativeMemoryGeneration {
     async fn dispose(&self) -> Result<(), String> {
         self.disposed
             .get_or_init(|| async {
-                self.maintenance.stop();
+                if let Some(maintenance) = &self.maintenance {
+                    maintenance.stop();
+                }
                 (self.provider.disposer)()
                     .await
                     .map_err(|error| error.message)
@@ -600,8 +607,13 @@ impl From<PluginSessionContributionSnapshot> for SessionExtensionResolver {
                 .mcp_instructions
                 .into_iter()
                 .map(|entry| McpServerInstruction {
-                    server_name: entry.server_name,
-                    instructions: Some(entry.instructions),
+                    // Plugin contributions carry UTF-16 text; the prompt block
+                    // is a UTF-8 string builder, so keep lone surrogates as the
+                    // replacement character rather than failing the session.
+                    server_name: String::from_utf16_lossy(entry.server_name.units()),
+                    instructions: Some(String::from_utf16_lossy(
+                        entry.instructions.units(),
+                    )),
                 })
                 .collect(),
             prompts: value
@@ -764,7 +776,8 @@ fn schema(value: &str) -> JsObject {
 mod tests {
     use super::*;
     use crate::runtime::context::memory::{
-        MemoryFuture, MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
+        MemoryCaptureFuture, MemoryCaptureTurnInput, MemoryFuture, MemoryResolver,
+        MemoryRetrieveInput, MemoryRetrieveResult,
     };
     use crate::runtime::memory::{
         MemoryFuture as MaintenanceFuture, MemoryMaintenanceService, MemoryManagementService,
@@ -781,6 +794,10 @@ mod tests {
     impl MemoryResolver for Memory {
         fn retrieve(&self, _: MemoryRetrieveInput) -> MemoryFuture {
             Box::pin(async { Ok(MemoryRetrieveResult::default()) })
+        }
+
+        fn capture_turn(&self, _: MemoryCaptureTurnInput) -> MemoryCaptureFuture {
+            Box::pin(async { Ok(()) })
         }
     }
 

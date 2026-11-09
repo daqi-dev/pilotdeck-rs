@@ -24,8 +24,17 @@ impl pilotdeck_transport::direct_host::DirectHostCallback for DirectModuleHost {
         control.check()?;
         let call = request.clone();
         let handler = self.handler.clone();
-        self.runtime
-            .block_on(async move { handler.module_call(call).await.map_err(host_error_to_port) })
+        self.runtime.block_on(async move {
+            tokio::select! {
+                result = handler.module_call(call) => result.map_err(host_error_to_port),
+                result = async {
+                    loop {
+                        control.check()?;
+                        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    }
+                } => result,
+            }
+        })
     }
 }
 

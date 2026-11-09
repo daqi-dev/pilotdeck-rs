@@ -139,13 +139,14 @@ pub(super) struct InvocationAttempt {
 impl InvocationAttempt {
     pub fn begin(
         options: &super::http::StreamOptions,
+        invocation: Option<&ModelInvocation>,
         provider: &JsValue,
         model: &JsValue,
         stream: bool,
         body: &JsValue,
         attempt: f64,
     ) -> Result<Option<Self>, super::http::ModelStreamError> {
-        let Some(invocation) = &options.invocation else {
+        let Some(invocation) = invocation else {
             return Ok(None);
         };
         // Audit logs the body after extraBody, including its exact UTF-16 JSON.

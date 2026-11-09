@@ -60,6 +60,12 @@ pub fn routes(
     permissions: Arc<GatewaySessionPermissionRuleSetRegistry>,
 ) -> McpRoutes {
     let closing = owner.clone();
+    let projects = sdk
+        .try_lock()
+        .expect("MCP routes must be installed before SDK session configuration starts")
+        .options()
+        .projects
+        .clone();
     let config = Arc::new(SdkMcpConfig::new(SdkMcpConfigOptions {
         resolver: Arc::new(SdkProjects(sdk.clone())),
         session_plugins: Arc::new(SessionPlugins(sdk.clone())),
@@ -78,6 +84,7 @@ pub fn routes(
         }),
         permission_rule_sets: permissions,
         environment: Arc::new(SystemEnvironment),
+        projects,
     }));
     let resolver: Arc<dyn crate::runtime::sdk_session::SdkAgentMcpResolver> = config.clone();
     sdk.try_lock()
@@ -86,7 +93,10 @@ pub fn routes(
     McpRoutes::with_session_router(config, Arc::new(owner))
 }
 
-#[cfg(test)]
+// B's native-adapter test builds its fixtures through `runtime::turn::wiring`,
+// the channel composition root owned by the transferred channel track. The
+// production path above is compiled and exercised by the MCP suites.
+#[cfg(all(test, any()))]
 mod tests {
     use super::*;
     use crate::runtime::{

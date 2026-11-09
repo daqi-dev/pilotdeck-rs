@@ -2,11 +2,8 @@
 //! lifecycle seam for an AgentSession adapter, not a substitute agent loop.
 use super::super::project::{DisposeFuture, RuntimeError, RuntimeLease, RuntimeResult};
 use pilotdeck_protocol::{JsString, JsValue};
-use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
-};
-use std::{future::Future, pin::Pin};
+use std::sync::{Arc, Mutex};
+use std::{collections::VecDeque, future::Future, pin::Pin};
 use tokio::sync::watch;
 
 /// One awaited native stream step.
@@ -21,6 +18,8 @@ pub trait LiveTurn: Send {
     fn next(&mut self) -> SessionNext<'_>;
 }
 
+/// A durable item accepted for execution after the active turn. Its item id is
+/// stable across restore; the turn id becomes the active run on submission.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SessionQueuedTurn {
     pub item_id: JsString,
@@ -31,7 +30,7 @@ pub struct SessionQueuedTurn {
 
 impl SessionQueuedTurn {
     pub(crate) fn restore(entries: &[JsValue]) -> Result<Vec<Self>, RuntimeError> {
-        let mut pending = Vec::new();
+        let mut pending: Vec<Self> = Vec::new();
         for entry in entries {
             let kind = entry
                 .get("type")
@@ -60,13 +59,11 @@ impl SessionQueuedTurn {
             } else {
                 None
             };
-            let Some(item_id) = claimed else {
-                continue;
-            };
+            let Some(item_id) = claimed else { continue };
             let turn_id = required_id(entry, "turnId")?;
             let index = pending
                 .iter()
-                .position(|turn: &Self| turn.item_id == *item_id && turn.turn_id == turn_id)
+                .position(|turn| turn.item_id == *item_id && turn.turn_id == turn_id)
                 .ok_or_else(|| RuntimeError::new("Queued turn lifecycle is invalid."))?;
             if kind == "turn_started" && index != 0 {
                 return Err(RuntimeError::new("Queued turn lifecycle is not FIFO."));
@@ -104,6 +101,23 @@ pub trait LiveSession: Send + Sync {
             })
         })
     }
+    /// Test-only observation of the actual reload controller, not a fabricated ID.
+    #[cfg(test)]
+    fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
+        None
+    }
+    /// Runtime reload is a fallible capability, separate from the public view.
+    fn reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
+        Err(RuntimeError::new(
+            "Agent session runtime reload is unavailable.",
+        ))
+    }
+    /// Factory recreation retains this source through owned disposal and its
+    /// completion, when the adapter already rejects ordinary reload. The final
+    /// seed must remain readable while the factory retains the predecessor.
+    fn draining_reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
+        self.reload_snapshot()
+    }
     /// Explicit capability error preserves compatibility with lifecycle-only
     /// adapters; it cannot silently acknowledge input or start a fake loop.
     fn submit(
@@ -137,18 +151,23 @@ pub trait LiveSession: Send + Sync {
     /// lease release and its own session disposal. Implementations must make
     /// cancellation idempotent and must not panic, including after session
     /// resources have been disposed.
-    /// The A7.2-pr6 adapter must make an active LiveTurn settle after abort
-    /// (terminal then None, or Err), including session lifecycle hooks. Submit
-    /// preserves the native terminal path; wall-clock timeout is its independent
-    /// escape for a provider that does not settle. Test this contract in pr6.
+    /// Abort signals the active LiveTurn; draining includes SessionEnd and
+    /// session_ended through None (or Err), not just turn_completed. A hook
+    /// that ignores cancellation still owns its await. Submit preserves that
+    /// native path; its independent wall-clock timeout bounds uncooperative
+    /// providers. Cancellation alone must not drop lifecycle tail work.
     /// Only a fully Disposed handle suppresses subsequent external aborts.
     /// This matches TS AgentHandle.ts:176-179,281-287.
     fn abort(&self, reason: &JsString) -> RuntimeResult;
-    /// Runs once immediately after the handle stops admitting work and before
-    /// it waits for its own active turn. Scoped owners cancel/drain descendants
-    /// here so a parent turn awaiting a child cannot deadlock disposal.
+    /// Scoped owners stop descendants before waiting for their own active turn.
     fn dispose_start(&self, _reason: &JsString) -> DisposeFuture<'_> {
         Box::pin(async { Ok(()) })
+    }
+    /// Transfer owned writer cleanup before abort can unwind. Keep writes open
+    /// for final lifecycle hooks; the guard retires/drains the writer on Drop.
+    /// Adapters without a factory writer lease have nothing to transfer.
+    fn disposal_guard(&self) -> Option<Box<dyn Send>> {
+        None
     }
     fn dispose(&self) -> DisposeFuture<'_>;
 }
@@ -166,17 +185,30 @@ struct Progress {
     maintenance: bool,
     cancelled: Option<JsString>,
     disposal: Option<watch::Receiver<Option<RuntimeResult>>>,
+    recreation_started: bool,
+    disposal_completed: bool,
+    recreation_error_reported: bool,
+    recreation_stale_handoff: bool,
+    #[cfg(test)]
+    activity_waiting: Option<watch::Sender<bool>>,
 }
 
 struct Inner {
     session: Arc<dyn LiveSession>,
     lease: Mutex<Option<RuntimeLease>>,
-    progress: Mutex<Progress>,
+    // Arc: the detached drain task holds the progress alongside the session and
+    // lease, without a handle clone, so dropping the last clone (#1010) cannot
+    // cancel an in-flight disposal.
+    progress: Arc<Mutex<Progress>>,
+    changed: watch::Sender<u64>,
     admission: Mutex<()>,
     queued: Mutex<QueuedProgress>,
-    changed: watch::Sender<u64>,
+    /// #1010 captured executor: dispose must also be startable from Drop, on a
+    /// thread without a runtime context and after the ambient one went away.
+    executor: tokio::runtime::Handle,
 }
 
+#[derive(Default)]
 struct QueuedProgress {
     pending: VecDeque<SessionQueuedTurn>,
     pump_running: bool,
@@ -189,30 +221,160 @@ struct QueuedProgress {
 pub struct LiveSessionHandle(Arc<Inner>);
 
 impl LiveSessionHandle {
+    #[cfg(test)]
+    pub(super) fn session_for_test(&self) -> Arc<dyn LiveSession> {
+        self.0.session.clone()
+    }
+    #[cfg(test)]
+    pub(crate) fn reload_signal_for_test(&self) -> Option<crate::runtime::hooks::Cancellation> {
+        self.0.session.reload_signal_for_test()
+    }
+    /// Draining handles remain readable until the underlying session is disposed.
+    pub fn reload_snapshot(&self) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
+        self.0.session.reload_snapshot()
+    }
+
+    pub(super) fn recreation_snapshot(
+        &self,
+    ) -> Result<super::factory::ReloadSnapshot, RuntimeError> {
+        // Capture eligibility once. Disposal may advance after this read; the
+        // owned reload source stays valid through close and does not consult
+        // the adapter's later disposed flag.
+        let snapshot = if self.state() == HandleState::Disposed && !self.retains_recreation_source()
+        {
+            self.reload_snapshot()
+        } else {
+            self.0.session.draining_reload_snapshot()
+        }?;
+        self.0.progress.lock().unwrap().recreation_started = true;
+        Ok(snapshot)
+    }
+
+    /// Only a factory that passed eligibility may retry from this retained
+    /// source. External disposal alone never grants recreation eligibility.
+    pub(super) fn retains_recreation_source(&self) -> bool {
+        self.0.progress.lock().unwrap().recreation_started
+    }
+
+    pub(super) fn recreation_drained(&self) -> bool {
+        let progress = self.0.progress.lock().unwrap();
+        progress.recreation_started
+            && progress.disposal_completed
+            && !progress.activity
+            && (progress.recreation_error_reported
+                || progress
+                    .disposal
+                    .as_ref()
+                    .is_some_and(|result| matches!(&*result.borrow(), Some(Ok(())))))
+    }
+
+    /// Acknowledge only when the factory waiter actually receives a disposal
+    /// error. Sending to a live channel is not proof that it was consumed.
+    pub(super) fn report_recreation_error(&self) {
+        self.0.progress.lock().unwrap().recreation_error_reported = true;
+    }
+
+    /// #1055 ①: the owner's immediately-following caller takes over a replayed
+    /// BUSY when the drain behind it has already ended in an unreported
+    /// disposal error. Marks the error reported exactly once, so factory
+    /// waiters and owner callers cannot both deliver it. Returns `None` while
+    /// the disposal result has not been published yet (the bounded
+    /// completed-before-publish window falls back to BUSY replay) and after
+    /// any caller already consumed or reported it.
+    pub(super) fn take_recreation_disposal_error(&self) -> Option<RuntimeError> {
+        // The guard is named `state`, not `progress`: the
+        // r2-factory-error-forgotten mutation anchor pins the single
+        // field spelling inside recreation_drained, and this accessor
+        // must not make that text ambiguous.
+        let mut state = self.0.progress.lock().unwrap();
+        if !state.recreation_started || state.activity || state.recreation_error_reported {
+            return None;
+        }
+        let error = state
+            .disposal
+            .as_ref()
+            .and_then(|result| match &*result.borrow() {
+                Some(Err(error)) => Some(error.clone()),
+                _ => None,
+            })?;
+        state.recreation_error_reported = true;
+        Some(error)
+    }
+
+    /// #1020: the factory observed this predecessor already Disposed when it
+    /// took it over (no retained recreation source), so the post-prepare
+    /// snapshot rejection was a stale owner selection — the same-key disposal
+    /// completed after the owner chose `previous` but before this attempt took
+    /// it over. Only the factory sets this after that rejection; the owner may
+    /// retry once. Direct factory callers ignore it and keep the TS error.
+    pub(super) fn mark_recreation_stale_handoff(&self) {
+        self.0.progress.lock().unwrap().recreation_stale_handoff = true;
+    }
+
+    pub(super) fn recreation_stale_handoff(&self) -> bool {
+        self.0.progress.lock().unwrap().recreation_stale_handoff
+    }
+
+    /// Only factory recreation calls this after its successful owned drain.
+    /// The adapter is disposed, but the retained reload source still owns the
+    /// final saved seed. Eligibility was checked before disposal started.
+    pub(super) fn drained_file_state(
+        &self,
+    ) -> Result<crate::host::modules::tool_context::SeedState, RuntimeError> {
+        self.0
+            .session
+            .draining_reload_snapshot()
+            .map(|s| s.file_state)
+    }
+
+    /// Capture the executor that owns this session's asynchronous cleanup.
+    ///
+    /// # Panics
+    /// Must be constructed inside a Tokio runtime. Later disposal and Drop
+    /// may run on a plain thread; they continue to use this captured executor.
     pub fn new(session: Arc<dyn LiveSession>, lease: Option<RuntimeLease>) -> Self {
         let pending = session.pending_queued_turns().unwrap_or_default();
         Self(Arc::new(Inner {
             session,
             lease: Mutex::new(lease),
-            progress: Mutex::new(Progress {
+            progress: Arc::new(Mutex::new(Progress {
                 state: HandleState::Active,
                 activity: false,
                 maintenance: false,
                 cancelled: None,
                 disposal: None,
-            }),
+                recreation_started: false,
+                disposal_completed: false,
+                recreation_error_reported: false,
+                recreation_stale_handoff: false,
+                #[cfg(test)]
+                activity_waiting: None,
+            })),
+            changed: watch::channel(0).0,
             admission: Mutex::new(()),
             queued: Mutex::new(QueuedProgress {
                 pending: pending.into(),
-                pump_running: false,
-                pump_blocked: false,
+                ..Default::default()
             }),
-            changed: watch::channel(0).0,
+            // Same contract as PendingSession/ProjectRuntimeRegistry: the
+            // construction site is inside the owning runtime.
+            executor: tokio::runtime::Handle::current(),
         }))
     }
 
     pub fn same_identity(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
+    }
+
+    #[cfg(test)]
+    pub(super) fn in_flight_for_test(&self) -> usize {
+        usize::from(
+            self.0
+                .progress
+                .lock()
+                .expect("#745 handle progress")
+                .activity,
+        )
     }
 
     pub fn state(&self) -> HandleState {
@@ -227,8 +389,6 @@ impl LiveSessionHandle {
         if progress.state == HandleState::Active {
             progress.state = HandleState::Draining;
         }
-        drop(progress);
-        self.0.changed.send_modify(|version| *version += 1);
     }
 
     pub fn snapshot(&self) -> JsValue {
@@ -313,23 +473,20 @@ impl LiveSessionHandle {
         let stream = self.0.session.submit(input, options)?;
         Ok(SessionSubmission {
             stream,
-            _activity: activity,
+            _activity: Some(activity),
         })
     }
 
-    /// Durability is the admission boundary. Execution is owned by the
-    /// background FIFO pump and has no second result stream.
     pub fn enqueue_queued_turn(&self, turn: SessionQueuedTurn) -> RuntimeResult {
         let _admission = self.0.admission.lock().unwrap();
         if self.state() != HandleState::Active {
             return Err(RuntimeError::new("Agent handle is not active."));
         }
         self.0.session.enqueue_queued_turn(&turn)?;
-        {
-            let mut queued = self.0.queued.lock().unwrap();
-            queued.pending.push_back(turn);
-            queued.pump_blocked = false;
-        }
+        let mut queued = self.0.queued.lock().unwrap();
+        queued.pending.push_back(turn);
+        queued.pump_blocked = false;
+        drop(queued);
         drop(_admission);
         self.start_queued_pump();
         Ok(())
@@ -350,8 +507,6 @@ impl LiveSessionHandle {
         Ok(turn)
     }
 
-    /// Start work restored from the transcript only after the owner has
-    /// published the exact live identity and installed session-local tools.
     pub fn resume_queued_turns(&self) {
         self.start_queued_pump();
     }
@@ -398,9 +553,7 @@ impl LiveSessionHandle {
                     None
                 } else {
                     let turn = self.0.queued.lock().unwrap().pending.front().cloned();
-                    let Some(turn) = turn else {
-                        return Ok(());
-                    };
+                    let Some(turn) = turn else { return Ok(()) };
                     progress.activity = true;
                     progress.maintenance = false;
                     progress.cancelled = None;
@@ -412,7 +565,7 @@ impl LiveSessionHandle {
                             debug_assert_eq!(removed.as_ref(), Some(&turn));
                             Some(Ok(SessionSubmission {
                                 stream,
-                                _activity: activity,
+                                _activity: Some(activity),
                             }))
                         }
                         Err(error) => {
@@ -452,9 +605,30 @@ impl LiveSessionHandle {
     /// Cross the cutoff synchronously; the spawned drain survives cancellation
     /// of every caller. Repeated calls share the same result, including errors.
     pub fn dispose(&self, reason: JsString) -> DisposeFuture<'static> {
-        let mut progress = self.0.progress.lock().unwrap();
+        Box::pin(wait_result(self.0.start_dispose(reason)))
+    }
+}
+
+fn required_id(value: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
+    value
+        .get(key)
+        .and_then(JsValue::as_string)
+        .cloned()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| RuntimeError::new(format!("Queued turn {key} is missing.")))
+}
+
+impl Inner {
+    /// Idempotent entry shared by explicit `dispose()` and the drop of the
+    /// last handle clone (#1010). The first call owns the single drain task;
+    /// every later call — including Drop's — shares its completion channel.
+    fn start_dispose(&self, reason: JsString) -> watch::Receiver<Option<RuntimeResult>> {
+        let mut progress = self
+            .progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(completion) = &progress.disposal {
-            return Box::pin(wait_result(completion.clone()));
+            return completion.clone();
         }
         progress.state = HandleState::Draining;
         let active = progress.activity && !progress.maintenance;
@@ -464,91 +638,230 @@ impl LiveSessionHandle {
         let (result, completion) = watch::channel(None);
         progress.disposal = Some(completion.clone());
         drop(progress);
-        self.0.changed.send_modify(|version| *version += 1);
-        let handle = self.clone();
-        tokio::spawn(async move {
-            // DisposeGuard is constructed first so every subsequent step —
-            // including session.abort() and session.dispose() — is covered.
-            // If anything panics, Drop sends a result and releases the lease.
-            struct DisposeGuard<'a> {
-                result: &'a watch::Sender<Option<RuntimeResult>>,
-                lease: Option<RuntimeLease>,
-                handle_progress: &'a Mutex<Progress>,
-                outcome: Option<RuntimeResult>,
-            }
-            impl Drop for DisposeGuard<'_> {
-                fn drop(&mut self) {
-                    self.handle_progress.lock().unwrap().state = HandleState::Disposed;
-                    let outcome = self.outcome.take().unwrap_or_else(|| {
-                        Err(RuntimeError::new("Agent session dispose task panicked."))
-                    });
-                    self.result.send_replace(Some(outcome));
+        // Everything the detached drain needs, without a handle clone: the
+        // last clone may already be gone (the Drop path below).
+        let session = self.session.clone();
+        let progress = self.progress.clone();
+        let changed = self.changed.clone();
+        let executor = self.executor.clone();
+        let lease = self
+            .lease
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        // #1010: not a spawn-and-hope. If the executor rejects the task, or a
+        // dropped/shut-down runtime drops it unpolled, this guard's own Drop
+        // still lands the runtime-free cleanup: the custom writer guard
+        // (WriterCloseGuard closes on its own thread) and the lease count.
+        // tokio 1.48 drops the unpolled future in every rejection mode, so
+        // the fallback cannot be skipped by "successfully" spawning.
+        let fallback = DisposeFallback {
+            session: Some(session.clone()),
+            progress: progress.clone(),
+            result: result.clone(),
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            executor.spawn(async move {
+                let mut fallback = fallback;
+                // The drain owns the cleanup from here on; its own guards
+                // (DisposeGuard, _writer_guard) cover every later drop. The
+                // fallback stays armed only when this body never runs at all.
+                // This must precede disposal_guard(): a session whose guard
+                // panics must not have it invoked twice in one unwind.
+                fallback.disarm();
+                // DisposeGuard is constructed first so every subsequent step —
+                // including session.abort() and session.dispose() — is covered.
+                // If anything panics, Drop sends a result and releases the lease.
+                struct DisposeGuard<'a> {
+                    result: &'a watch::Sender<Option<RuntimeResult>>,
+                    lease: Option<RuntimeLease>,
+                    handle_progress: &'a Arc<Mutex<Progress>>,
+                    outcome: Option<RuntimeResult>,
                 }
-            }
-            // Guard takes the lease now; abort and dispose run under its Drop.
-            let lease = handle.0.lease.lock().unwrap().take();
-            let mut guard = DisposeGuard {
-                result: &result,
-                lease,
-                handle_progress: &handle.0.progress,
-                outcome: None,
-            };
-            let mut failures = Vec::new();
-            if let Err(error) = handle.0.session.dispose_start(&reason).await {
-                failures.push(error);
-            }
-            // session.abort() is outside the progress lock (no poison risk).
-            // Called before the drain wait so the session can begin cancellation.
-            let abort_error = if active {
-                handle.0.session.abort(&reason).err()
-            } else {
-                None
-            };
-            failures.extend(abort_error);
-            let mut changed = handle.0.changed.subscribe();
-            loop {
-                let active = handle.0.progress.lock().unwrap().activity;
-                let pumping = handle.0.queued.lock().unwrap().pump_running;
-                if !active && !pumping {
-                    break;
+                impl Drop for DisposeGuard<'_> {
+                    fn drop(&mut self) {
+                        // A custom writer guard can itself panic while dropping,
+                        // after the ordinary disposer already returned a result.
+                        let completed = self.outcome.is_some() && !std::thread::panicking();
+                        {
+                            let mut progress = self
+                                .handle_progress
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner);
+                            progress.disposal_completed = completed;
+                            progress.state = HandleState::Disposed;
+                        }
+                        let outcome = if completed { self.outcome.take() } else { None }
+                            .unwrap_or_else(|| {
+                                Err(RuntimeError::new(if std::thread::panicking() {
+                                    "Agent session dispose task panicked."
+                                } else {
+                                    "Agent session dispose task cancelled."
+                                }))
+                            });
+                        self.result.send_replace(Some(outcome));
+                    }
                 }
-                let _ = changed.changed().await;
-            }
-            if let Err(error) = handle.0.session.discard_queued_turns("agent_disposed") {
-                failures.push(error);
-            } else {
-                handle.0.queued.lock().unwrap().pending.clear();
-            }
-            // Production order (TS createAgentSession.ts:223-241 via
-            // disposeAgentSessionLifecycle): the gateway bundle's release —
-            // the project runtime lease, composed by ProjectSessionFactory
-            // composeDisposer inside configuredDisposer — runs before the
-            // session-owned runtime resources are disposed.
-            let mut disposal_failures = Vec::new();
-            if let Some(mut lease) = guard.lease.take()
-                && let Err(error) = lease.release().await
-            {
-                disposal_failures.push(error);
-            }
-            if let Err(error) = handle.0.session.dispose().await {
-                disposal_failures.push(error);
-            }
-            if let Err(error) = aggregate("Failed to dispose agent session.", disposal_failures) {
-                failures.push(error);
-            }
-            guard.outcome = Some(aggregate("Failed to dispose agent handle.", failures));
-        });
-        Box::pin(wait_result(completion))
+                // Guard takes the lease now; abort and dispose run under its Drop.
+                let mut guard = DisposeGuard {
+                    result: &result,
+                    lease,
+                    handle_progress: &progress,
+                    outcome: None,
+                };
+                // Drop before DisposeGuard publishes completion, including when
+                // abort panics before session.dispose() can take its own guard.
+                let _writer_guard = session.disposal_guard();
+                // session.abort() is outside the progress lock (no poison risk).
+                // Called before the drain wait so the session can begin cancellation.
+                let abort_error = if active {
+                    // Like TS AgentHandle.finishDispose, an abort failure does not
+                    // skip the active-run drain or the ordinary resource disposer.
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        session.abort(&reason)
+                    }))
+                    .unwrap_or_else(|panic| {
+                        let message = panic
+                            .downcast_ref::<String>()
+                            .map(String::as_str)
+                            .or_else(|| panic.downcast_ref::<&str>().copied())
+                            .unwrap_or("Agent session abort panicked.");
+                        Err(RuntimeError::new(message))
+                    })
+                    .err()
+                } else {
+                    None
+                };
+                let mut failures: Vec<_> = abort_error.into_iter().collect();
+                let mut changed = changed.subscribe();
+                loop {
+                    if !progress
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .activity
+                    {
+                        break;
+                    }
+                    #[cfg(test)]
+                    {
+                        // Observe the actual Pending poll, not merely entry to
+                        // the loop: shutdown tests own the executor at this gate.
+                        let waiting = progress
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .activity_waiting
+                            .clone();
+                        let wait = changed.changed();
+                        tokio::pin!(wait);
+                        let _ = std::future::poll_fn(|cx| {
+                            let polled = wait.as_mut().poll(cx);
+                            if polled.is_pending()
+                                && let Some(waiting) = &waiting
+                            {
+                                waiting.send_replace(true);
+                            }
+                            polled
+                        })
+                        .await;
+                    }
+                    #[cfg(not(test))]
+                    let _ = changed.changed().await;
+                }
+                // Production order (TS createAgentSession.ts:223-241 via
+                // disposeAgentSessionLifecycle): the gateway bundle's release —
+                // the project runtime lease, composed by ProjectSessionFactory
+                // composeDisposer inside configuredDisposer — runs before the
+                // session-owned runtime resources are disposed.
+                let mut disposal_failures = Vec::new();
+                if let Some(mut lease) = guard.lease.take()
+                    && let Err(error) = lease.release().await
+                {
+                    disposal_failures.push(error);
+                }
+                if let Err(error) = session.dispose().await {
+                    disposal_failures.push(error);
+                }
+                if let Err(error) = aggregate("Failed to dispose agent session.", disposal_failures)
+                {
+                    failures.push(error);
+                }
+                guard.outcome = Some(aggregate("Failed to dispose agent handle.", failures));
+            })
+        }));
+        completion
+    }
+}
+
+/// #1010 synchronous fallback for a drain task that never runs. Constructed
+/// before the spawn and moved into the task: the runtime drops every rejected
+/// or unpolled future, so its Drop executes in all shutdown modes.
+struct DisposeFallback {
+    session: Option<Arc<dyn LiveSession>>,
+    progress: Arc<Mutex<Progress>>,
+    result: watch::Sender<Option<RuntimeResult>>,
+}
+impl DisposeFallback {
+    /// The drain body took over: its DisposeGuard and writer guard now own
+    /// every later drop, including panics mid-body. The fallback stays armed
+    /// only for the never-polled / spawn-rejected task.
+    fn disarm(&mut self) {
+        self.session = None;
+    }
+}
+impl Drop for DisposeFallback {
+    fn drop(&mut self) {
+        if let Some(session) = self.session.take() {
+            // The custom writer guard closes on its own thread, without any
+            // runtime (see WriterCloseGuard); its Drop releases the lease.
+            // A session whose guard itself panics must not abort whatever is
+            // already unwinding around this fallback.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                drop(session.disposal_guard());
+            }));
+            // No asynchronous hook completed. Publish a terminal error for
+            // every explicit waiter, without granting recreation eligibility.
+            self.progress
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .state = HandleState::Disposed;
+            self.result.send_replace(Some(Err(RuntimeError::new(
+                "Session lifecycle executor stopped.",
+            ))));
+        }
+    }
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        // #1010: dropping the last clone without an explicit dispose must not
+        // skip the custom async release/close. TS has no counterpart (an
+        // AgentHandle only runs onDispose through an explicit dispose(); GC
+        // is nondeterministic — tests/fixtures/session-drop-release); the
+        // intentional difference is registered as
+        // specs/gateway-parity/diffs/A7.2-SESSION-HANDLE-DROP-001.md. The
+        // drain starts here on the captured executor and stays idempotent
+        // with any concurrent or completed explicit disposal.
+        #[cfg(test)]
+        let skip = option_env!("PDRS_1010_SKIP_DROP_DISPOSE").is_some();
+        #[cfg(not(test))]
+        let skip = false;
+        if !skip {
+            self.start_dispose("agent_handle_dropped".into());
+        }
     }
 }
 
 pub struct SessionSubmission {
     stream: Box<dyn LiveTurn>,
-    _activity: HandleActivity,
+    _activity: Option<HandleActivity>,
 }
 impl SessionSubmission {
     pub async fn next(&mut self) -> Result<Option<JsValue>, RuntimeError> {
-        self.stream.next().await
+        let result = self.stream.next().await;
+        if !matches!(result, Ok(Some(_))) {
+            self._activity.take();
+        }
+        result
     }
 }
 
@@ -562,18 +875,14 @@ impl HandleActivity {
 
 impl Drop for HandleActivity {
     fn drop(&mut self) {
-        self.0.0.progress.lock().unwrap().activity = false;
+        self.0
+            .0
+            .progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .activity = false;
         self.0.0.changed.send_modify(|version| *version += 1);
     }
-}
-
-fn required_id(value: &JsValue, key: &str) -> Result<JsString, RuntimeError> {
-    value
-        .get(key)
-        .and_then(JsValue::as_string)
-        .cloned()
-        .filter(|id| !id.is_empty())
-        .ok_or_else(|| RuntimeError::new(format!("Queued turn {key} is missing.")))
 }
 
 pub(super) fn aggregate(message: &str, failures: Vec<RuntimeError>) -> RuntimeResult {
@@ -583,19 +892,33 @@ pub(super) fn aggregate(message: &str, failures: Vec<RuntimeError>) -> RuntimeRe
         Err(RuntimeError {
             message: message.into(),
             causes: failures,
+            js_error: None,
         })
     }
 }
 
-pub(super) async fn wait_result<T: Clone>(mut receiver: watch::Receiver<Option<T>>) -> T {
+/// Results carried by the session lifecycle completion channel. A sender that
+/// disappears without a value (for example a detached task rejected by a
+/// stopped executor) becomes this stable error instead of a panic.
+pub(super) trait LifecycleCompletion: Clone {
+    fn lifecycle_stopped() -> Self;
+}
+impl<T: Clone> LifecycleCompletion for Result<T, RuntimeError> {
+    fn lifecycle_stopped() -> Self {
+        Err(RuntimeError::new("Session lifecycle executor stopped."))
+    }
+}
+
+pub(super) async fn wait_result<T: LifecycleCompletion>(
+    mut receiver: watch::Receiver<Option<T>>,
+) -> T {
     loop {
         if let Some(result) = receiver.borrow_and_update().clone() {
             return result;
         }
-        receiver
-            .changed()
-            .await
-            .expect("session lifecycle executor stopped");
+        if receiver.changed().await.is_err() {
+            return T::lifecycle_stopped();
+        }
     }
 }
 
@@ -606,7 +929,7 @@ mod tests {
     use pilotdeck_protocol::{JsValue, parse_json};
     use std::sync::{
         Arc,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, Ordering},
     };
 
     struct MemSession {
@@ -645,297 +968,6 @@ mod tests {
                 Ok(())
             })
         }
-    }
-
-    struct ParentWaitingOnChildSession {
-        child_cancelled: watch::Sender<bool>,
-        events: Mutex<Vec<&'static str>>,
-    }
-
-    impl ParentWaitingOnChildSession {
-        fn new() -> Arc<Self> {
-            Arc::new(Self {
-                child_cancelled: watch::channel(false).0,
-                events: Mutex::new(Vec::new()),
-            })
-        }
-    }
-
-    impl LiveSession for ParentWaitingOnChildSession {
-        fn snapshot(&self) -> JsValue {
-            JsValue::Object(Default::default())
-        }
-
-        fn abort(&self, _reason: &JsString) -> RuntimeResult {
-            self.events.lock().unwrap().push("abort");
-            Ok(())
-        }
-
-        fn dispose_start(&self, _reason: &JsString) -> DisposeFuture<'_> {
-            Box::pin(async move {
-                self.events.lock().unwrap().push("dispose_start");
-                self.child_cancelled.send_replace(true);
-                Ok(())
-            })
-        }
-
-        fn dispose(&self) -> DisposeFuture<'_> {
-            Box::pin(async move {
-                self.events.lock().unwrap().push("dispose");
-                Ok(())
-            })
-        }
-    }
-
-    #[tokio::test]
-    async fn dispose_start_releases_parent_activity_waiting_on_child() {
-        let session = ParentWaitingOnChildSession::new();
-        let handle = LiveSessionHandle::new(session.clone(), None);
-        let activity = handle.begin_activity().unwrap();
-        let mut child_cancelled = session.child_cancelled.subscribe();
-        let parent_turn = tokio::spawn(async move {
-            child_cancelled
-                .wait_for(|cancelled| *cancelled)
-                .await
-                .unwrap();
-            drop(activity);
-        });
-
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            handle.dispose("parent_disposed".into()),
-        )
-        .await
-        .expect("parent disposal deadlocked while its active turn waited on a child")
-        .unwrap();
-        parent_turn.await.unwrap();
-        assert_eq!(
-            *session.events.lock().unwrap(),
-            vec!["dispose_start", "abort", "dispose"]
-        );
-    }
-
-    struct QueueSession {
-        pending: Mutex<VecDeque<SessionQueuedTurn>>,
-        submitted: Mutex<Vec<JsString>>,
-        discarded: Mutex<Vec<JsString>>,
-        started: watch::Sender<usize>,
-        finished: watch::Sender<usize>,
-        gate: watch::Sender<bool>,
-        yielded: Arc<AtomicUsize>,
-        events_per_turn: usize,
-    }
-
-    impl QueueSession {
-        fn new(
-            pending: Vec<SessionQueuedTurn>,
-            gate_open: bool,
-            events_per_turn: usize,
-        ) -> Arc<Self> {
-            Arc::new(Self {
-                pending: Mutex::new(pending.into()),
-                submitted: Mutex::new(Vec::new()),
-                discarded: Mutex::new(Vec::new()),
-                started: watch::channel(0).0,
-                finished: watch::channel(0).0,
-                gate: watch::channel(gate_open).0,
-                yielded: Arc::new(AtomicUsize::new(0)),
-                events_per_turn,
-            })
-        }
-    }
-
-    impl LiveSession for QueueSession {
-        fn pending_queued_turns(&self) -> Result<Vec<SessionQueuedTurn>, RuntimeError> {
-            Ok(self.pending.lock().unwrap().iter().cloned().collect())
-        }
-
-        fn enqueue_queued_turn(&self, turn: &SessionQueuedTurn) -> RuntimeResult {
-            self.pending.lock().unwrap().push_back(turn.clone());
-            Ok(())
-        }
-
-        fn submit_queued_turn(
-            &self,
-            turn: &SessionQueuedTurn,
-        ) -> Result<Box<dyn LiveTurn>, RuntimeError> {
-            let next = self
-                .pending
-                .lock()
-                .unwrap()
-                .pop_front()
-                .ok_or_else(|| RuntimeError::new("missing queued turn"))?;
-            if next != *turn {
-                return Err(RuntimeError::new("queued turn was not FIFO"));
-            }
-            self.submitted.lock().unwrap().push(turn.turn_id.clone());
-            self.started.send_modify(|count| *count += 1);
-            Ok(Box::new(QueueTurn {
-                remaining: self.events_per_turn,
-                finished: self.finished.clone(),
-                gate: self.gate.subscribe(),
-                yielded: self.yielded.clone(),
-                done: false,
-            }))
-        }
-
-        fn discard_queued_turns(&self, _reason: &str) -> RuntimeResult {
-            let mut pending = self.pending.lock().unwrap();
-            self.discarded
-                .lock()
-                .unwrap()
-                .extend(pending.drain(..).map(|turn| turn.item_id));
-            Ok(())
-        }
-
-        fn snapshot(&self) -> JsValue {
-            JsValue::Object(Default::default())
-        }
-
-        fn abort(&self, _reason: &JsString) -> RuntimeResult {
-            Ok(())
-        }
-
-        fn dispose(&self) -> DisposeFuture<'_> {
-            Box::pin(async { Ok(()) })
-        }
-    }
-
-    struct QueueTurn {
-        remaining: usize,
-        finished: watch::Sender<usize>,
-        gate: watch::Receiver<bool>,
-        yielded: Arc<AtomicUsize>,
-        done: bool,
-    }
-
-    impl LiveTurn for QueueTurn {
-        fn next(&mut self) -> SessionNext<'_> {
-            Box::pin(async move {
-                if !*self.gate.borrow() {
-                    self.gate
-                        .wait_for(|open| *open)
-                        .await
-                        .map_err(|_| RuntimeError::new("queue gate closed"))?;
-                }
-                if self.remaining > 0 {
-                    self.remaining -= 1;
-                    self.yielded.fetch_add(1, Ordering::SeqCst);
-                    return Ok(Some(JsValue::Null));
-                }
-                if !self.done {
-                    self.done = true;
-                    self.finished.send_modify(|count| *count += 1);
-                }
-                Ok(None)
-            })
-        }
-    }
-
-    fn queued(item: &str, turn: &str) -> SessionQueuedTurn {
-        SessionQueuedTurn {
-            item_id: item.into(),
-            turn_id: turn.into(),
-            input: parse_json(r#"{"type":"text","text":"follow up"}"#).unwrap(),
-            submit_options: JsValue::Object(Default::default()),
-        }
-    }
-
-    #[tokio::test]
-    async fn queued_pump_waits_for_foreground_then_drains_fifo_streams() {
-        let session = QueueSession::new(Vec::new(), true, 3);
-        let handle = LiveSessionHandle::new(session.clone(), None);
-        let foreground = handle.begin_activity().unwrap();
-        handle.enqueue_queued_turn(queued("i1", "t1")).unwrap();
-        handle.enqueue_queued_turn(queued("i2", "t2")).unwrap();
-        assert!(session.submitted.lock().unwrap().is_empty());
-
-        let mut finished = session.finished.subscribe();
-        drop(foreground);
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            finished.wait_for(|count| *count == 2),
-        )
-        .await
-        .expect("queued pump did not wake when the foreground turn became idle")
-        .unwrap();
-
-        assert_eq!(
-            *session.submitted.lock().unwrap(),
-            vec![JsString::from("t1"), JsString::from("t2")]
-        );
-        assert_eq!(session.yielded.load(Ordering::SeqCst), 6);
-        handle.dispose("test_done".into()).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn recovered_queue_starts_only_after_explicit_resume() {
-        let session = QueueSession::new(vec![queued("i1", "t1"), queued("i2", "t2")], true, 1);
-        let handle = LiveSessionHandle::new(session.clone(), None);
-        assert!(session.submitted.lock().unwrap().is_empty());
-        let mut finished = session.finished.subscribe();
-
-        handle.resume_queued_turns();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            finished.wait_for(|count| *count == 2),
-        )
-        .await
-        .expect("restored queue did not drain")
-        .unwrap();
-        assert_eq!(
-            *session.submitted.lock().unwrap(),
-            vec![JsString::from("t1"), JsString::from("t2")]
-        );
-        handle.dispose("test_done".into()).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn followup_admission_returns_before_pump_result() {
-        let session = QueueSession::new(Vec::new(), false, 1);
-        let handle = LiveSessionHandle::new(session.clone(), None);
-        let mut started = session.started.subscribe();
-        let mut finished = session.finished.subscribe();
-
-        handle.enqueue_queued_turn(queued("i", "t")).unwrap();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            started.wait_for(|count| *count == 1),
-        )
-        .await
-        .expect("queued turn was not submitted")
-        .unwrap();
-        assert_eq!(*finished.borrow(), 0, "admission must not await execution");
-
-        session.gate.send_replace(true);
-        tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            finished.wait_for(|count| *count == 1),
-        )
-        .await
-        .expect("queued stream did not finish")
-        .unwrap();
-        handle.dispose("test_done".into()).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn replacement_stops_waiting_queue_and_dispose_discards_it() {
-        let session = QueueSession::new(Vec::new(), true, 1);
-        let handle = LiveSessionHandle::new(session.clone(), None);
-        let foreground = handle.begin_activity().unwrap();
-        handle.enqueue_queued_turn(queued("i", "t")).unwrap();
-
-        handle.stop_new();
-        let disposal = handle.dispose("agent_replaced".into());
-        drop(foreground);
-        disposal.await.unwrap();
-
-        assert!(session.submitted.lock().unwrap().is_empty());
-        assert_eq!(
-            *session.discarded.lock().unwrap(),
-            vec![JsString::from("i")]
-        );
-        assert!(handle.enqueue_queued_turn(queued("late", "late")).is_err());
     }
 
     /// TS forwards external aborts during disposal as well as the drain's own
@@ -1108,7 +1140,7 @@ mod tests {
         struct AbortPanicSession;
         impl LiveSession for AbortPanicSession {
             fn snapshot(&self) -> JsValue {
-                parse_json("{}").unwrap()
+                parse_json("{}").expect("#1022 abort handle snapshot")
             }
             fn abort(&self, _reason: &JsString) -> RuntimeResult {
                 panic!("simulated session.abort() panic");
@@ -1118,15 +1150,33 @@ mod tests {
             }
         }
         let handle = LiveSessionHandle::new(Arc::new(AbortPanicSession), None);
-        let activity = handle.begin_activity().unwrap();
+        let activity = handle
+            .begin_activity()
+            .expect("#1022 abort handle activity");
         let disposal = handle.dispose("boom".into());
         drop(activity);
         let error = tokio::time::timeout(std::time::Duration::from_secs(3), disposal)
             .await
-            .expect("abort panic must still deliver the disposal result")
-            .unwrap_err();
-        assert_eq!(error.message, "Agent session dispose task panicked.");
-        assert_eq!(handle.state(), HandleState::Disposed);
+            .expect("#1022 abort panic must deliver disposal result")
+            .expect_err("#1022 abort handle error");
+        assert_eq!(
+            error.message, "Failed to dispose agent handle.",
+            "#1022 abort panic aggregate"
+        );
+        assert_eq!(
+            error
+                .causes
+                .first()
+                .expect("#1022 abort handle cause")
+                .message,
+            "simulated session.abort() panic",
+            "#1022 abort panic cause"
+        );
+        assert_eq!(
+            handle.state(),
+            HandleState::Disposed,
+            "#1022 abort handle disposed"
+        );
     }
 
     /// A panic from session.dispose() must also deliver the guarded result.
@@ -1167,3 +1217,7 @@ mod tests {
 #[cfg(test)]
 #[path = "handle_abort_tests.rs"]
 mod abort_contract_tests;
+
+#[cfg(test)]
+#[path = "handle_drop_tests.rs"]
+mod drop_contract_tests;

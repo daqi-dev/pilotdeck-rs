@@ -824,6 +824,16 @@ impl TranscriptWriter {
     ) -> AdapterResult<()> {
         self.append(session_id, turn_id, draft)
     }
+    /// Native session turn/inbox lifecycle. It shares the writer's commit lock
+    /// and the same domain state, so a native entry cannot bypass validation.
+    pub fn record_native_session_event(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        draft: JsObject,
+    ) -> AdapterResult<()> {
+        self.append(session_id, turn_id, draft)
+    }
     pub fn record_accepted_input(
         &self,
         session_id: &JsString,
@@ -918,6 +928,11 @@ impl TranscriptWriter {
         Ok((now, uuid().map_err(|e| AdapterError::Store(e.into()))?))
     }
     fn adapter_domain(domain: &DomainState, entry: &JsValue) -> AdapterResult<DomainState> {
+        // daqi ports TS `SessionDomainValidation`: the raw writer validates the
+        // entry and publishes the next state, so `turn_result` closes the turn
+        // here too. B dc123d18 instead refuses in the writer and requires the
+        // Node host; that split is a B storage-architecture choice, not TS
+        // behavior, and the transcript-adapter oracle pins the TS semantics.
         domain.next(entry).map_err(AdapterError::from)
     }
     fn append_with<E: From<AdapterError>>(

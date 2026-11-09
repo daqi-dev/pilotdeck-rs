@@ -143,19 +143,18 @@ impl LiveSessionState {
             .and_then(|s| s.to_utf8().ok())
             .unwrap_or_default();
         if kind == "context_budget" {
-            use crate::runtime::turn::projector::{
-                GatewayAgentEventProjectionInput, GatewayAgentEventProjector,
-            };
+            use crate::runtime::turn::projector::map_agent_event;
             let turn =
                 turn.ok_or_else(|| RuntimeError::new("Session event turnId is required."))?;
             let run = turn.to_utf8().map_err(failed)?;
-            let frames = GatewayAgentEventProjector::default()
-                .project(&GatewayAgentEventProjectionInput {
-                    event,
-                    run_id: &run,
-                    forward_subagent_text: false,
-                })
-                .map_err(failed)?;
+            // The facade reuses the process-level default projector, matching
+            // the TS `mapAgentEvent` owner; a per-call projector would fork it.
+            let frames = map_agent_event(
+                event,
+                &run,
+                crate::runtime::turn::projector::GatewayAgentEventProjectorOptions::default(),
+            )
+            .map_err(failed)?;
             for detail in frames {
                 let status = crate::metadata::object([
                     ("event", "context_budget".into()),
@@ -278,8 +277,16 @@ impl LiveSessionState {
                 {
                     return Err(RuntimeError::new("Turn result identity mismatch."));
                 }
-                self.recorder.complete_turn(result).map_err(failed)?;
-                self.reappend_metadata(&mut projection, turn.unwrap())?;
+                // This path already holds the projection lock; call the recorder
+                // directly (identity was checked above) instead of re-entering
+                // `complete_turn`, which would deadlock on the same mutex.
+                let turn = turn.ok_or_else(|| {
+                    RuntimeError::new("Session event turnId is required.")
+                })?;
+                self.recorder
+                    .complete_turn(&self.session_key, turn, result.clone())
+                    .map_err(failed)?;
+                self.reappend_metadata(&mut projection, turn)?;
             }
             "turn_failed" => {
                 let turn =
@@ -369,11 +376,13 @@ impl LiveSessionState {
         if result.get("sessionId").and_then(JsValue::as_string) != Some(&self.session_key) {
             return Err(RuntimeError::new("Turn result identity mismatch."));
         }
-        self.recorder.complete_turn(result).map_err(failed)?;
         let turn = result
             .get("turnId")
             .and_then(JsValue::as_string)
             .ok_or_else(|| RuntimeError::new("Turn result identity mismatch."))?;
+        self.recorder
+            .complete_turn(&self.session_key, turn, result.clone())
+            .map_err(failed)?;
         self.reappend_metadata(&mut projection, turn)
     }
 

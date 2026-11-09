@@ -181,12 +181,14 @@ impl TranscriptRoutes {
             Arc::new(JsonlTranscriptStore::new()),
             Arc::new(move |_| directory.clone()),
         );
-        let staged = adapter.create_session_storage(SessionStorageInput {
-            project_root: project,
-            pilot_home: storage.chat_dir.clone(),
-            session_id: format!("{}.restore.tmp", uuid::Uuid::new_v4()).into(),
-            now: Some(Arc::new(now)),
-        });
+        let staged = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project,
+                pilot_home: storage.chat_dir.clone(),
+                session_id: format!("{}.restore.tmp", uuid::Uuid::new_v4()).into(),
+                now: Some(Arc::new(now)),
+            })
+            .map_err(adapter_error)?;
         let _temporary = Temporary(staged.transcript_path.clone());
         let turn: JsString = format!("sdk:restore:{}", uuid::Uuid::new_v4()).into();
         let title = field(archive, "title");
@@ -459,7 +461,12 @@ fn adapter_error(error: AdapterError) -> Error {
         AdapterError::Type(message) => plain("TypeError", message),
         AdapterError::Range(message) => plain("RangeError", message),
         AdapterError::Store(error) => ledger_error(error),
-        AdapterError::NodeHostRequired(message) => plain("Error", message),
+        AdapterError::Domain { code, message } => {
+            named("SessionDomainValidationError", code, message)
+        }
+        AdapterError::ProjectionUnavailable(message) | AdapterError::Retired(message) => {
+            plain("Error", message)
+        }
     }
 }
 fn recorder_error(error: RecorderError) -> Error {

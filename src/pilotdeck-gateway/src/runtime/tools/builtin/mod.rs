@@ -3,6 +3,21 @@
 //! under `resources/PilotDeck/src/tool/builtin`; filesystem paths are resolved
 //! lexically in UTF-16 first so path identity and state keys keep the original
 //! wire spelling, and only the OS boundary uses an `OsStr`.
+pub mod agent;
+pub mod ask_user_question;
+pub mod execute_code;
+pub mod goal;
+pub mod knowledge_query;
+pub mod lsp;
+pub mod noop;
+pub mod plan_mode;
+pub mod request_user_dialog;
+pub mod request_user_input;
+pub mod send_attachment;
+pub mod structured_output;
+pub mod subagent_continuation;
+pub mod submit_step_result;
+pub mod todo_write;
 pub mod bash;
 pub mod agent;
 pub mod structured_output;
@@ -55,6 +70,33 @@ pub fn read_only_tools() -> Vec<Arc<dyn ExecutableTool>> {
         Arc::new(grep::GrepTool::new()),
         Arc::new(time::GetCurrentTimeTool::new()),
     ]
+}
+
+/// SDK opt-in catalog: generic input is never added to ordinary sessions.
+pub fn register_user_dialog_tools(
+    registry: &ToolRegistry,
+    kinds: &[JsString],
+) -> Result<Vec<ToolRegistration>, HostError> {
+    let mut registrations = Vec::new();
+    for kind in kinds {
+        let tool: Option<Arc<dyn ExecutableTool>> = if kind.equals_str("input") {
+            Some(Arc::new(request_user_input::RequestUserInputTool::new()))
+        } else if kind.equals_str("select") {
+            Some(Arc::new(request_user_dialog::RequestUserChoiceTool::new()))
+        } else if kind.equals_str("confirm") {
+            Some(Arc::new(
+                request_user_dialog::RequestUserConfirmationTool::new(),
+            ))
+        } else if kind.equals_str("form") {
+            Some(Arc::new(request_user_dialog::RequestUserFormTool::new()))
+        } else {
+            None
+        };
+        if let Some(tool) = tool {
+            registrations.push(registry.register(tool)?);
+        }
+    }
+    Ok(registrations)
 }
 
 /// A6.5-pr5 write family. Registered separately from the read-only catalog so
@@ -400,6 +442,9 @@ pub(super) enum StatKind {
 pub(super) struct ResolvedPath {
     pub absolute: JsString,
     pub relative: JsString,
+    /// Workspace root the relative path is measured against; the file-change
+    /// hook reports it so a client can map the path back to its workspace.
+    pub root: JsString,
 }
 
 /// `resolvePilotDeckWorkspacePath` for the read-only family. `allow_registered`
@@ -433,6 +478,7 @@ pub(super) fn resolve_workspace_path(
         return Ok(ResolvedPath {
             absolute,
             relative: relative_cwd.clone(),
+            root: normalize(&cwd),
         });
     }
 
@@ -460,16 +506,20 @@ pub(super) fn resolve_workspace_path(
                     canonical(allowed).unwrap_or_else(|| normalize(allowed)) == real
                 }) || is_managed_attachment(&real, context);
             if allowed {
+                let root = normalize(&cwd);
                 return Ok(ResolvedPath {
                     absolute,
                     relative: relative_cwd.clone(),
+                    root,
                 });
             }
         }
         if allow_outside {
+            let root = normalize(&cwd);
             return Ok(ResolvedPath {
                 absolute,
                 relative: relative_cwd.clone(),
+                root,
             });
         }
         return Err(tool_error(
@@ -498,7 +548,11 @@ pub(super) fn resolve_workspace_path(
             format!("File {input_text} does not exist."),
         ));
     }
-    Ok(ResolvedPath { absolute, relative })
+    Ok(ResolvedPath {
+        absolute,
+        relative,
+        root: root.clone(),
+    })
 }
 
 fn is_managed_attachment(real: &JsString, context: &crate::runtime::tools::ToolRunContext) -> bool {
@@ -1013,6 +1067,7 @@ pub(super) fn resolve_write_path(
         return Ok(ResolvedPath {
             absolute,
             relative: relative_cwd,
+            root: normalize(&cwd),
         });
     }
 
@@ -1034,6 +1089,7 @@ pub(super) fn resolve_write_path(
             return Ok(ResolvedPath {
                 absolute,
                 relative: relative_cwd,
+                root: normalize(&cwd),
             });
         }
         return Err(tool_error(
@@ -1076,6 +1132,7 @@ pub(super) fn resolve_write_path(
     Ok(ResolvedPath {
         absolute,
         relative: relative_path,
+        root: root.clone(),
     })
 }
 

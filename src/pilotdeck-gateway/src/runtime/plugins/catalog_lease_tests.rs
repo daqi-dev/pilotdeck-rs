@@ -47,6 +47,7 @@ async fn catalog_lease_finally() {
                 hooks_config: None,
                 mcp_servers: None,
                 lsp_servers: None,
+                router_contributions: Vec::new(),
                 dispose: Some(Box::new(move || {
                     count.fetch_add(1, Ordering::SeqCst);
                     release_events.lock().expect(MSG).push("release");
@@ -361,6 +362,7 @@ async fn lease_drop_off_runtime(flavor: &str) {
         hooks_config: None,
         mcp_servers: None,
         lsp_servers: None,
+        router_contributions: Vec::new(),
         dispose: None,
     });
     let runtime = Arc::new(PluginRuntime::new(PluginRuntimeOptions {
@@ -461,6 +463,7 @@ async fn shutdown_lease_fixture() -> (Arc<PluginRuntime>, Arc<AtomicUsize>) {
         hooks_config: None,
         mcp_servers: None,
         lsp_servers: None,
+        router_contributions: Vec::new(),
         dispose: Some(Box::new(move || {
             observed.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(()) })
@@ -1011,6 +1014,7 @@ async fn completed_release_result_survives_unrelated_loss() {
                 hooks_config: None,
                 mcp_servers: None,
                 lsp_servers: None,
+                router_contributions: Vec::new(),
                 dispose: Some(Box::new(move || {
                     Box::pin(async move {
                         if fails {

@@ -281,15 +281,20 @@ struct SessionPluginsSource {
     probe: Probe,
 }
 impl SdkMcpSessionPlugins for SessionPluginsSource {
-    fn plugins(&self, session_key: &JsValue) -> Vec<Arc<plugins::LoadedPlugin>> {
-        let Some(key) = session_key.as_string().and_then(|key| key.to_utf8().ok()) else {
-            return Vec::new();
-        };
-        lock(&self.probe.0.plugins)
-            .iter()
-            .find(|(existing, _)| existing == &key)
-            .map(|(_, plugins)| plugins.clone())
-            .unwrap_or_default()
+    fn plugins<'a>(
+        &'a self,
+        session_key: &'a JsValue,
+    ) -> super::sdk::SdkMcpFuture<'a, Result<Vec<Arc<plugins::LoadedPlugin>>, SdkMcpError>> {
+        Box::pin(async move {
+            let Some(key) = session_key.as_string().and_then(|key| key.to_utf8().ok()) else {
+                return Ok(Vec::new());
+            };
+            Ok(lock(&self.probe.0.plugins)
+                .iter()
+                .find(|(existing, _)| existing == &key)
+                .map(|(_, plugins)| plugins.clone())
+                .unwrap_or_default())
+        })
     }
 }
 
@@ -460,6 +465,7 @@ impl Harness {
                         hooks_config: None,
                         mcp_servers: Some(JsValue::Object(mcp_servers)),
                         lsp_servers: None,
+                        router_contributions: Vec::new(),
                         dispose: None,
                     })],
                 ));

@@ -95,7 +95,7 @@ fn request(run: &str) -> ExecuteRequest {
 }
 fn limits() -> Limits {
     Limits {
-        execution_timeout: Duration::from_secs(2),
+        execution_timeout: Some(Duration::from_secs(2)),
         terminal_drain_timeout: Duration::from_millis(1),
         ..Limits::default()
     }
@@ -174,7 +174,7 @@ async fn timeout_retires_old_drain_and_does_not_deliver_old_events_to_next_turn(
             request("slow"),
             old.clone(),
             Limits {
-                execution_timeout: Duration::from_millis(10),
+                execution_timeout: Some(Duration::from_millis(10)),
                 ..limits()
             },
             Cancellation::default(),

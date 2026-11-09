@@ -3244,12 +3244,14 @@ mod tests {
 
     impl NativeTestFactory {
         fn storage(&self, session_id: JsString) -> crate::storage::SessionStorage {
-            self.adapter.create_session_storage(SessionStorageInput {
-                project_root: self.project_root.clone(),
-                pilot_home: self.pilot_home.clone(),
-                session_id,
-                now: None,
-            })
+            self.adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: self.project_root.clone(),
+                    pilot_home: self.pilot_home.clone(),
+                    session_id,
+                    now: None,
+                })
+                .unwrap()
         }
     }
 
@@ -3972,12 +3974,14 @@ mod tests {
             store,
             Arc::new(move |_: &ProjectKey| PathBuf::from("/virtual/agent-parent-chats")),
         ));
-        let storage = adapter.create_session_storage(SessionStorageInput {
-            project_root: PathBuf::from("/virtual/agent-parent-project"),
-            pilot_home: PathBuf::from("/virtual/agent-parent-home"),
-            session_id: "parent-agent".into(),
-            now: None,
-        });
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: PathBuf::from("/virtual/agent-parent-project"),
+                pilot_home: PathBuf::from("/virtual/agent-parent-home"),
+                session_id: "parent-agent".into(),
+                now: None,
+            })
+            .unwrap();
         let handle = LiveSessionHandle::new(
             Arc::new(NativeTestSession {
                 session_id: "parent-agent".into(),

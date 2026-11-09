@@ -194,14 +194,43 @@ struct Entry {
 
 #[derive(Default)]
 struct Inner {
-    entries: HashMap<JsString, Entry>,
+    entries: HashMap<SessionKey, Entry>,
     next_id: u64,
 }
 
+// The wire grant has no sessionKey validation. Keep JS Map keys distinct from
+// strings; each JSON object/array belongs to a fresh request identity.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum SessionKey {
+    String(JsString),
+    Undefined,
+    Null,
+    Bool(bool),
+    Number(u64),
+    Object(u64),
+}
+
 impl Inner {
+    fn wire_key(&self, value: &JsValue) -> SessionKey {
+        match value {
+            JsValue::String(value) => SessionKey::String(value.clone()),
+            JsValue::Undefined => SessionKey::Undefined,
+            JsValue::Null => SessionKey::Null,
+            JsValue::Bool(value) => SessionKey::Bool(*value),
+            JsValue::Number(value) => SessionKey::Number(if *value == 0.0 {
+                0
+            } else if value.is_nan() {
+                f64::NAN.to_bits()
+            } else {
+                value.to_bits()
+            }),
+            JsValue::Object(_) | JsValue::Array(_) => SessionKey::Object(self.next_id),
+        }
+    }
+
     fn ensure(
         &mut self,
-        session_key: &JsString,
+        session_key: &SessionKey,
         configured: Option<&ConfiguredRuleSet>,
     ) -> (u64, RuleSetHandle) {
         if let Some(entry) = self.entries.get_mut(session_key) {
@@ -237,7 +266,7 @@ impl Inner {
         (id, rules)
     }
 
-    fn delete_if_unused(&mut self, session_key: &JsString, id: u64) {
+    fn delete_if_unused(&mut self, session_key: &SessionKey, id: u64) {
         let remove = self
             .entries
             .get(session_key)
@@ -247,7 +276,7 @@ impl Inner {
         }
     }
 
-    fn entry_mut(&mut self, session_key: &JsString, id: u64) -> Option<&mut Entry> {
+    fn entry_mut(&mut self, session_key: &SessionKey, id: u64) -> Option<&mut Entry> {
         self.entries
             .get_mut(session_key)
             .filter(|entry| entry.id == id)
@@ -392,7 +421,7 @@ impl ConfiguredRuleSet {
 /// `GatewaySessionPermissionRuleSetLease`: one retain on an entry.
 pub struct Lease {
     inner: Arc<Mutex<Inner>>,
-    session_key: JsString,
+    session_key: SessionKey,
     id: u64,
     rules: RuleSetHandle,
     released: AtomicBool,
@@ -436,14 +465,15 @@ impl GatewaySessionPermissionRuleSetRegistry {
     }
 
     pub fn acquire(&self, session_key: &JsString, configured: Option<&ConfiguredRuleSet>) -> Lease {
+        let session_key = SessionKey::String(session_key.clone());
         let mut inner = lock(&self.inner);
-        let (id, rules) = inner.ensure(session_key, configured);
-        if let Some(entry) = inner.entry_mut(session_key, id) {
+        let (id, rules) = inner.ensure(&session_key, configured);
+        if let Some(entry) = inner.entry_mut(&session_key, id) {
             entry.retains += 1;
         }
         Lease {
             inner: Arc::clone(&self.inner),
-            session_key: session_key.clone(),
+            session_key,
             id,
             rules,
             released: AtomicBool::new(false),
@@ -455,10 +485,17 @@ impl GatewaySessionPermissionRuleSetRegistry {
     /// PermissionRule creates a new object. This typed port does not emulate
     /// exceptions for JavaScript calls outside the PermissionRule input domain.
     pub fn grant(&self, session_key: &JsString, rule: impl Into<SessionValue>) -> bool {
+        self.grant_wire(&JsValue::String(session_key.clone()), rule)
+    }
+
+    /// One parsed wire call: non-string keys retain Map scalar semantics and
+    /// object keys cannot alias a separately parsed request or a string session.
+    pub(crate) fn grant_wire(&self, session_key: &JsValue, rule: impl Into<SessionValue>) -> bool {
         let rule = rule.into();
         let mut inner = lock(&self.inner);
-        let (id, _) = inner.ensure(session_key, None);
-        let Some(entry) = inner.entry_mut(session_key, id) else {
+        let session_key = inner.wire_key(session_key);
+        let (id, _) = inner.ensure(&session_key, None);
+        let Some(entry) = inner.entry_mut(&session_key, id) else {
             return false;
         };
         entry.grant_pinned = true;
@@ -478,7 +515,7 @@ impl GatewaySessionPermissionRuleSetRegistry {
     pub fn allow_rules(&self, session_key: &JsString) -> AllowRulesHandle {
         let allow = lock(&self.inner)
             .entries
-            .get(session_key)
+            .get(&SessionKey::String(session_key.clone()))
             .map(|entry| entry.rules.member("allow"));
         AllowRulesHandle {
             allow: allow.unwrap_or_else(new_array),
@@ -494,7 +531,7 @@ impl GatewaySessionPermissionRuleSetRegistry {
     ) -> bool {
         let ask = lock(&self.inner)
             .entries
-            .get(session_key)
+            .get(&SessionKey::String(session_key.clone()))
             .map(|entry| entry.rules.member("ask"));
         let Some(ask) = ask else {
             return false;
@@ -504,13 +541,14 @@ impl GatewaySessionPermissionRuleSetRegistry {
     }
 
     pub fn close_session(&self, session_key: &JsString) {
+        let session_key = SessionKey::String(session_key.clone());
         let mut inner = lock(&self.inner);
-        let Some(entry) = inner.entries.get_mut(session_key) else {
+        let Some(entry) = inner.entries.get_mut(&session_key) else {
             return;
         };
         entry.grant_pinned = false;
         let id = entry.id;
-        inner.delete_if_unused(session_key, id);
+        inner.delete_if_unused(&session_key, id);
     }
 
     pub fn dispose(&self) {
@@ -633,6 +671,28 @@ impl GatewaySessionPermissionModeRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wire_grant_uses_same_value_zero_and_distinct_scalar_key_types() {
+        let registry = GatewaySessionPermissionRuleSetRegistry::new();
+        let rule = || PermissionRule::new("session", "allow", "read_file");
+        for (key, inserted, size) in [
+            (JsValue::Number(0.0), true, 1),
+            (JsValue::Number(-0.0), false, 1),
+            (JsValue::Number(f64::NAN), true, 2),
+            (JsValue::Number(-f64::NAN), false, 2),
+            (JsValue::Bool(false), true, 3),
+            (JsValue::Bool(false), false, 3),
+            (JsValue::from("false"), true, 4),
+            (JsValue::Undefined, true, 5),
+            (JsValue::Null, true, 6),
+        ] {
+            assert_eq!(registry.grant_wire(&key, rule()), inserted);
+            assert_eq!(registry.size(), size);
+        }
+        registry.dispose();
+        assert_eq!(registry.size(), 0);
+    }
     use std::{sync::Barrier, thread};
 
     fn key(value: &str) -> JsString {

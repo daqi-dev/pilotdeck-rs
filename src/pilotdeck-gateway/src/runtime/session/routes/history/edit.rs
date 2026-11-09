@@ -18,8 +18,8 @@ impl ProjectSessionForkPort for NativeProjectSessionForkPort {
                     now: Some(now.clone()),
                 })
             };
-            let source = storage(request.source_session_id);
-            let target = storage(request.target_session_id);
+            let source = storage(request.source_session_id).map_err(failure)?;
+            let target = storage(request.target_session_id).map_err(failure)?;
             confined(&source.chat_dir, &source.transcript_path)?;
             confined(&target.chat_dir, &target.transcript_path)?;
             create_fork(

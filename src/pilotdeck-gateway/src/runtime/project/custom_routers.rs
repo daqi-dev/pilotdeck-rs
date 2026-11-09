@@ -26,10 +26,9 @@ impl CustomRouterRegistry for ProjectCustomRouterRegistry {
         _extension_id: &JsString,
         _session_id: &JsString,
     ) -> Option<Arc<dyn CustomRouter>> {
-        // Programmatic router contributions are not implemented yet.
-        // PluginRouterContribution exists but collect_router_contributions
-        // returns an empty Vec. When programmatic routers are implemented,
-        // this will query the plugin runtime's session contributions.
+        // Live router instances are owned by the session-scoped
+        // `SessionCustomRouterRegistry` a generation registers into; this
+        // project-level view has no session key to resolve them by.
         None
     }
 }

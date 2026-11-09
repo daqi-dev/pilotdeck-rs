@@ -55,7 +55,9 @@ pub use contributions::{
     PluginSessionContributionLease, PluginSessionContributionSnapshot, PluginSkillContribution,
     PluginToolContribution,
 };
-pub use loader::{LoadedPlugin, PluginRefreshFailure, PluginRefreshResult, PluginSource};
+pub use loader::{
+    LoadedPlugin, PluginRefreshFailure, PluginRefreshResult, PluginSource, RouterContribution,
+};
 pub use options::{PilotExtensionPaths, PluginRuntimeOptions};
 
 // ─────────────────────────────────────────────────────────── sub-modules

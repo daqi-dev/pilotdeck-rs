@@ -124,7 +124,8 @@ fn rejected_module_terminal_is_persisted_once_with_ts_failure_details() {
         pilot_home: root,
         session_id: "s".into(),
         now: None,
-    });
+    })
+    .unwrap();
     let writer = Arc::new(storage.transcript);
     host.transcript = Some(writer.clone());
     for (index, outcome, code, kind, stop_reason) in [
@@ -505,12 +506,14 @@ fn native_storage(store: Arc<RecordStore>) -> crate::storage::SessionStorage {
         store,
         Arc::new(|_| std::path::PathBuf::from("/pdrs-in-memory/chat")),
     );
-    adapter.create_session_storage(crate::storage::SessionStorageInput {
-        project_root: "/pdrs-in-memory/project".into(),
-        pilot_home: "/pdrs-in-memory/home".into(),
-        session_id: "s".into(),
-        now: Some(Arc::new(|| "2026-10-27T00:00:00.000Z".into())),
-    })
+    adapter
+        .create_session_storage(crate::storage::SessionStorageInput {
+            project_root: "/pdrs-in-memory/project".into(),
+            pilot_home: "/pdrs-in-memory/home".into(),
+            session_id: "s".into(),
+            now: Some(Arc::new(|| "2026-10-27T00:00:00.000Z".into())),
+        })
+        .unwrap()
 }
 fn native_write(
     writer: &TranscriptWriter,
@@ -525,7 +528,13 @@ fn native_write(
 }
 fn assert_domain(result: crate::storage::AdapterResult<()>, expected: &str) {
     assert!(
-        matches!(result, Err(crate::storage::AdapterError::Validation { code, .. }) if code == expected)
+        matches!(
+            result,
+            Err(
+                crate::storage::AdapterError::Validation { code, .. }
+                    | crate::storage::AdapterError::Domain { code, .. }
+            ) if code == expected
+        )
     );
 }
 
@@ -575,13 +584,15 @@ fn native_inbox_requires_a_live_turn_claim_before_message_and_empty_queue_before
     assert_domain(native_write(writer, "t", insert), "event_outside_turn");
     assert_domain(native_write(writer, "t", durable), "invalid_inbox_mutation");
     assert_domain(native_write(writer, "t", terminal), "event_outside_turn");
+    // daqi validates this shape natively instead of refusing it as a Node-only
+    // domain, so the same entry now fails domain validation by name.
     assert!(matches!(
         writer.record_session_event(
             &"s".into(),
             &"new".into(),
             json(insert).as_object().unwrap().clone()
         ),
-        Err(crate::storage::AdapterError::NodeHostRequired(_))
+        Err(crate::storage::AdapterError::Domain { .. })
     ));
     let restored = native_storage(store);
     restored.restore().unwrap();

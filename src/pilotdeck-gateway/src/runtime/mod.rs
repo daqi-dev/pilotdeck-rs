@@ -29,7 +29,4 @@ pub mod sop;
 pub mod steer;
 pub mod tools;
 pub mod turn;
-pub mod update;
-pub mod update_release;
-pub mod update_service;
-pub mod update_web_client;
+pub mod user_dialog;

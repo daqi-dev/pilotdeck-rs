@@ -427,7 +427,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn bound_session_restores_and_claims_durable_queue_once_in_fifo_order() {
+    async fn bound_session_restores_and_claims_durable_queue_once_in_fifo_order() -> RuntimeResult {
         let root =
             std::env::temp_dir().join(format!("pdrs-bound-queued-turns-{}", uuid::Uuid::new_v4()));
         let chat = root.join("chat");
@@ -436,12 +436,14 @@ mod tests {
             Arc::new(move |_| chat.clone()),
         ));
         let storage = || {
-            adapter.create_session_storage(SessionStorageInput {
-                project_root: root.clone(),
-                pilot_home: root.clone(),
-                session_id: "s".into(),
-                now: None,
-            })
+            adapter
+                .create_session_storage(SessionStorageInput {
+                    project_root: root.clone(),
+                    pilot_home: root.clone(),
+                    session_id: "s".into(),
+                    now: None,
+                })
+                .map_err(runtime_error)
         };
         let live = Arc::new(LiveBindings::default());
         let first_inner = QueuedInner::new();
@@ -456,7 +458,7 @@ mod tests {
             },
             root.to_string_lossy().as_ref().into(),
             first_inner.clone(),
-            storage(),
+            storage()?,
             None,
             None,
         )
@@ -482,7 +484,7 @@ mod tests {
             },
             root.to_string_lossy().as_ref().into(),
             resumed_inner.clone(),
-            storage(),
+            storage()?,
             None,
             None,
         )
@@ -500,7 +502,7 @@ mod tests {
             *resumed_inner.submitted.lock().unwrap(),
             vec![JsString::from("t1"), JsString::from("t2")]
         );
-        let entries = storage().read_transcript(None).unwrap().entries;
+        let entries = storage()?.read_transcript(None).unwrap().entries;
         let starts = entries
             .iter()
             .filter(|entry| entry.get("type") == Some(&JsValue::from("turn_started")))
@@ -524,10 +526,11 @@ mod tests {
         if root.exists() {
             std::fs::remove_dir_all(root).unwrap();
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn bound_session_forwards_live_steer_and_cancel() {
+    async fn bound_session_forwards_live_steer_and_cancel() -> RuntimeResult {
         struct Active;
         impl LiveSession for Active {
             fn steer(
@@ -574,12 +577,14 @@ mod tests {
             Arc::new(crate::storage::JsonlTranscriptStore::new()),
             Arc::new(|key| key.pilot_home.join("chats")),
         );
-        let storage = adapter.create_session_storage(SessionStorageInput {
-            project_root: root.clone(),
-            pilot_home: root.clone(),
-            session_id: "s".into(),
-            now: None,
-        });
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: root.clone(),
+                pilot_home: root.clone(),
+                session_id: "s".into(),
+                now: None,
+            })
+            .map_err(runtime_error)?;
         let session = BoundSession {
             inner: Arc::new(Active),
             state: LiveSessionState::new(
@@ -617,5 +622,6 @@ mod tests {
         if root.exists() {
             std::fs::remove_dir_all(root).unwrap();
         }
+        Ok(())
     }
 }

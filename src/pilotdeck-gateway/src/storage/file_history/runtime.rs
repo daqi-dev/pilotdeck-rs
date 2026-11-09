@@ -56,12 +56,14 @@ mod tests {
             Arc::new(JsonlTranscriptStore::new()),
             Arc::new(move |_| chats.clone()),
         );
-        let storage = adapter.create_session_storage(SessionStorageInput {
-            project_root: root.0.clone(),
-            pilot_home: root.0.join("pilot"),
-            session_id: "session".into(),
-            now: None,
-        });
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: root.0.clone(),
+                pilot_home: root.0.join("pilot"),
+                session_id: "session".into(),
+                now: None,
+            })
+            .unwrap();
         let backup_dir = storage.file_history_dir.clone();
         let transcript = storage.transcript_path.clone();
         let recorder = Arc::new(Recorder::from_writer(Arc::new(storage.transcript)));

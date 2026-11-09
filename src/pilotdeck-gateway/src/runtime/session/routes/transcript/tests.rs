@@ -107,12 +107,14 @@ impl TranscriptHost for Host {
         project_root: &Path,
         session_key: &JsString,
     ) -> Result<SessionStorage, Error> {
-        Ok(self.adapter.create_session_storage(SessionStorageInput {
-            project_root: project_root.to_path_buf(),
-            pilot_home: self.root.join("home"),
-            session_id: session_key.clone(),
-            now: Some(Arc::new(|| "2026-10-27T00:00:00.000Z".into())),
-        }))
+        self.adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project_root.to_path_buf(),
+                pilot_home: self.root.join("home"),
+                session_id: session_key.clone(),
+                now: Some(Arc::new(|| "2026-10-27T00:00:00.000Z".into())),
+            })
+            .map_err(|error| gateway("gateway_request_failed", error.to_string()))
     }
     fn prepare_seed<'a>(&'a self, _: &'a JsValue) -> TranscriptFuture<'a, SeedReadTarget> {
         Box::pin(async {

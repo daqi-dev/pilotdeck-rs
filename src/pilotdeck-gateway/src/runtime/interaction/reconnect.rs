@@ -244,6 +244,33 @@ pub(super) fn is_current(
         })
 }
 
+/// Wire binding comparison: field-by-field JS equality against the stored
+/// binding, so a non-object value never matches a live binding by accident.
+pub(super) fn is_current_wire(
+    state: &State,
+    owner: &JsString,
+    kind: InteractionKind,
+    request: &JsString,
+    binding: &JsValue,
+) -> bool {
+    let same = |stored: Option<&InteractionBinding>| {
+        let stored = stored
+            .map(InteractionBinding::to_value)
+            .unwrap_or(JsValue::Undefined);
+        ["connectionId", "generation"].iter().all(|field| {
+            stored.get(field).unwrap_or(&JsValue::Undefined)
+                == binding.get(field).unwrap_or(&JsValue::Undefined)
+        })
+    };
+    same(current(state, owner).as_ref())
+        && state.requests.iter().any(|r| {
+            &r.owner == owner
+                && r.kind == kind
+                && &r.entry.request_id == request
+                && same(r.binding.as_ref())
+        })
+}
+
 /// Replay accepts boundary values rather than arbitrary host objects. Undefined
 /// leaves are omitted in objects and become null in arrays; nonfinite numbers
 /// become null. JsValue has no host references, Date, BigInt or cyclic objects.

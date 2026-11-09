@@ -159,7 +159,12 @@ impl LifecycleRoutes {
             }
         };
         let project = resolve(&self.metadata.cwd, &project.to_string_lossy());
-        if project != self.metadata.home && !self.metadata.has_registered_project(&project) {
+        if project != self.metadata.home
+            && !self
+                .metadata
+                .has_registered_project(&project)
+                .map_err(failed)?
+        {
             let supplied = match supplied.as_string() {
                 Some(value) => value.clone(),
                 None => self.fallback_project.to_string_lossy().as_ref().into(),
@@ -186,12 +191,15 @@ impl LifecycleRoutes {
                 ));
             }
         };
-        let storage = self.storage.create_session_storage(SessionStorageInput {
-            project_root: project,
-            pilot_home: self.metadata.home.clone(),
-            session_id: key.clone(),
-            now: None,
-        });
+        let storage = self
+            .storage
+            .create_session_storage(SessionStorageInput {
+                project_root: project,
+                pilot_home: self.metadata.home.clone(),
+                session_id: key.clone(),
+                now: None,
+            })
+            .map_err(failed)?;
         Ok((key, storage))
     }
 
@@ -590,6 +598,7 @@ mod tests {
             });
             let live = self.live.clone();
             Box::pin(async move {
+                let storage = storage.map_err(|cause| RuntimeError::new(cause.to_string()))?;
                 let _publication = live.publication.lock().await;
                 super::super::host::bind(
                     live.clone(),

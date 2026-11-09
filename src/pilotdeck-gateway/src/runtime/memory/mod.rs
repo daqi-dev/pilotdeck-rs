@@ -11,9 +11,11 @@ use crate::runtime::project::{
 pub mod edgeclaw;
 pub mod gateway;
 pub mod maintenance;
-mod web_scheduler;
-pub use web_scheduler::{DefaultWebMemoryMaintenanceService, WebMemoryScheduler};
+pub mod routes;
+mod session_maintenance;
+pub use maintenance::{ProjectMemoryMaintenanceController, ProjectMemoryMaintenanceRuntime};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+pub use session_maintenance::{DiagnosticCallback, GenerationScopedMaintenanceCoordinator};
 use std::{
     collections::BTreeMap,
     fmt,
@@ -918,6 +920,11 @@ pub(crate) fn js_is_space_unit(unit: u16) -> bool {
     )
 }
 
+fn field<'a>(value: &'a JsValue, key: &str) -> &'a JsValue {
+    static UNDEFINED: JsValue = JsValue::Undefined;
+    value.get(key).unwrap_or(&UNDEFINED)
+}
+
 /// ECMAScript `String.prototype.trim` over raw UTF-16 units, without decoding
 /// (a lone surrogate is not whitespace and must keep its identity).
 pub(crate) fn js_trim_units(units: &[u16]) -> &[u16] {
@@ -1005,12 +1012,12 @@ mod tests {
     fn default_factory_path_uses_create_from_config_not_native_provider_not_ported() {
         use std::path::PathBuf;
 
-        let unconfigured = ProjectMemoryBundle::new(ProjectMemoryBundleOptions::new(PathBuf::from(
-            "/pdrs-daqi-default-factory-smoke",
-        )));
-        let resources = unconfigured.stage().expect(
-            "absent/disabled config: create_from_config skips with Ok(None)",
-        );
+        let unconfigured = ProjectMemoryBundle::new(ProjectMemoryBundleOptions::new(
+            PathBuf::from("/pdrs-daqi-default-factory-smoke"),
+        ));
+        let resources = unconfigured
+            .stage()
+            .expect("absent/disabled config: create_from_config skips with Ok(None)");
         assert!(resources.memory.is_none());
         assert!(resources.maintenance.is_none());
         assert!(resources.management.is_none());
@@ -1018,7 +1025,8 @@ mod tests {
         let mut options =
             ProjectMemoryBundleOptions::new(PathBuf::from("/pdrs-daqi-edgeclaw-factory-smoke"));
         let mut config = MemoryConfig::new(true, "edgeclaw");
-        config.root_dir = pilotdeck_protocol::JsString::from("/pdrs-daqi-edgeclaw-factory-smoke/store");
+        config.root_dir =
+            pilotdeck_protocol::JsString::from("/pdrs-daqi-edgeclaw-factory-smoke/store");
         options.config = Some(config);
         let enabled = ProjectMemoryBundle::new(options);
         let error = enabled

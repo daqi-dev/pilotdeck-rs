@@ -70,6 +70,8 @@ mod test_process;
 #[cfg(test)]
 #[path = "../tests/common/scratch.rs"]
 mod test_scratch;
+#[cfg(test)]
+use test_scratch as scratch;
 // fix-r3 review P2: `write_stage` hardcodes `/bin/sh` helpers and calls
 // `rustix::process`, so it is unix-only like `test_scratch` above.
 #[cfg(all(test, unix))]

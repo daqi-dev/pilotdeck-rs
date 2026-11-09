@@ -8,6 +8,8 @@
 //! in this PR uses the filesystem layout. Hosts insert an `Arc<FileHistoryStore>`
 //! into `ToolRuntimeContext.file_history`; the tools downcast that opaque port.
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
+mod runtime;
+pub use runtime::create_recorded_file_history;
 use pilotdeck_transport::system_clock::format_epoch_iso;
 use sha2::{Digest, Sha256};
 use std::{
@@ -1090,6 +1092,8 @@ pub fn resolve_node_path(file_path: &str) -> FileHistoryResult<String> {
     let combined = if file_path.starts_with('/') {
         file_path.to_string()
     } else {
+        // `path.resolve` reads the process cwd; a deleted cwd must surface as
+        // the Node `uv_cwd` ENOENT, never silently resolve against `/`.
         let cwd = std::env::current_dir().map_err(|error| {
             FileHistoryError::Fs(crate::node_io::diagnostic_or_unknown(&error, "uv_cwd", None).1)
         })?;

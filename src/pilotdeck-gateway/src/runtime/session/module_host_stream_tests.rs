@@ -363,7 +363,7 @@ async fn embedded_production_turn_publishes_only_authoritative_completion() {
     let session = SidecarSession::new(
         SidecarSessionConfig {
             limits: crate::host::Limits {
-                execution_timeout: Duration::from_secs(10),
+                execution_timeout: Some(Duration::from_secs(10)),
                 ..Default::default()
             },
             session_key: "embedded-session".into(),
@@ -449,6 +449,7 @@ async fn stream(execution: &ProviderExecution) -> Box<dyn model::ModelStream> {
                 "alternate".into(),
             ),
             context: JsObject::new(),
+            abort: None,
         })
         .await
         .unwrap()

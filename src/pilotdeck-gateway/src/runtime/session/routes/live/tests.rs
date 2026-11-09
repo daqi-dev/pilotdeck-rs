@@ -21,12 +21,14 @@ impl Fixture {
             Arc::new(JsonlTranscriptStore::new()),
             Arc::new(|key| key.pilot_home.join("chats")),
         );
-        let storage = adapter.create_session_storage(SessionStorageInput {
-            project_root: root.clone(),
-            pilot_home: home,
-            session_id: "s".into(),
-            now: None,
-        });
+        let storage = adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: root.clone(),
+                pilot_home: home,
+                session_id: "s".into(),
+                now: None,
+            })
+            .unwrap();
         let path = storage.transcript_path.clone();
         let state =
             LiveSessionState::new("s".into(), root.to_string_lossy().as_ref().into(), storage)
@@ -573,6 +575,7 @@ async fn durable_model_port_delegates_and_records_before_returning_events() {
         model::StreamInput {
             prepared,
             context: JsObject::new(),
+            abort: None,
         },
     )
     .await
@@ -679,7 +682,13 @@ async fn real_read_tool_updates_the_seeded_maps_and_uses_the_shared_recorder() {
 }
 
 #[test]
-fn existing_storage_rejects_turn_completion_after_real_turn_start() {
+fn existing_storage_writer_completes_turn_after_real_turn_start() {
+    // B dc123d18 refuses a raw-writer `turn_result` for a live recorder turn and
+    // routes it through the Node host. daqi ports TS `SessionDomainValidation`
+    // instead: the writer validates and publishes the next state, and the
+    // transcript-adapter oracle pins that. Production still closes turns through
+    // `Recorder::complete_turn`; this test pins the writer contract so a future
+    // B guard cannot silently break oracle parity.
     let fixture = Fixture::new();
     fixture
         .state
@@ -690,19 +699,19 @@ fn existing_storage_rejects_turn_completion_after_real_turn_start() {
         r#"{"sessionId":"s","turnId":"t","type":"success","usage":{},"permissionDenials":[]}"#,
     )
     .unwrap();
-    let error = fixture
+    fixture
         .state
         .recorder
         .writer()
         .record_turn_result(&"s".into(), &"t".into(), result)
-        .unwrap_err();
-    assert!(error.to_string().contains("turn_result"));
-    assert_eq!(fixture.state.recorder.snapshot_state().0, 1);
+        .unwrap();
+    // turn_started is sequence 1; the writer's turn_result is sequence 2.
+    assert_eq!(fixture.state.recorder.snapshot_state().0, 2);
     assert_eq!(
         crate::storage::read_transcript(&fixture.path)
             .unwrap()
             .entries
             .len(),
-        1
+        2
     );
 }

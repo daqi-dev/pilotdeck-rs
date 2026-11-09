@@ -8,10 +8,7 @@ use super::{
 };
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
-    runtime::{
-        permission::{PermissionContext, PermissionFuture},
-        tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
-    },
+    runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
@@ -42,20 +39,6 @@ impl ToolDefinition for WriteFileTool {
     }
     fn is_concurrency_safe(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
-    }
-    fn check_permissions<'a>(
-        &'a self,
-        input: &'a JsValue,
-        context: &'a PermissionContext,
-    ) -> PermissionFuture<'a, Option<JsValue>> {
-        Box::pin(async move {
-            Ok(Some(super::send_attachment::check_file_permission(
-                "write_file",
-                input,
-                context,
-                false,
-            )))
-        })
     }
 }
 
@@ -175,6 +158,8 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
     }
     super::invalidate_read_file_state(context, &resolved.absolute);
     record_write_snapshot(context, &resolved.absolute, &content, write.mtime_ms, None);
+    // `FileChanged` fires only after the durable write, with the pre-edit bytes
+    // so a hook can distinguish created from updated.
     crate::runtime::hooks::session::notify_file_save(
         context,
         &resolved.absolute,

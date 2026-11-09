@@ -141,6 +141,9 @@ impl GatewayInteractionCoordinator {
         let binding = binding.map(InteractionBinding::to_value);
         self.respond_elicitation_wire(owner, request, answer, binding.as_ref())
     }
+    /// Wire form: the binding arrives as raw JSON from the sidecar/client, so a
+    /// truthy non-object value must fail the `is_current` comparison instead of
+    /// being silently accepted.
     pub(crate) fn respond_elicitation_wire(
         &self,
         owner: &JsString,
@@ -258,13 +261,5 @@ fn entry_to_rule(entry: &JsString) -> PermissionRule {
     rule
 }
 fn trim(units: &[u16]) -> &[u16] {
-    fn space(u: u16) -> bool {
-        matches!(u, 9..=13 | 32 | 0xa0 | 0x1680 | 0x2000..=0x200a | 0x2028 | 0x2029 | 0x202f | 0x205f | 0x3000 | 0xfeff)
-    }
-    let start = units.iter().position(|u| !space(*u)).unwrap_or(units.len());
-    let end = units
-        .iter()
-        .rposition(|u| !space(*u))
-        .map_or(start, |i| i + 1);
-    &units[start..end]
+    crate::runtime::memory::js_trim_units(units)
 }

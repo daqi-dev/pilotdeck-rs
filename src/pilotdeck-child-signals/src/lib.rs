@@ -60,6 +60,17 @@ pub fn install_child_signal_reset(command: &mut Command) {
     }
 }
 
+/// B dc123d18 compatibility name for the pair below. The B channel tracks
+/// spawn detached children by calling one installer; daqi split the same two
+/// steps so the bash runner can reuse them independently. Composing them here
+/// keeps the order (`setsid` first, signal reset last) and the safety
+/// reasoning identical, so B callers get a real implementation.
+#[allow(unsafe_code)]
+pub fn install_detached_child_session(command: &mut Command) {
+    install_child_detach_session(command);
+    install_child_signal_reset(command);
+}
+
 /// `detached: true` (#552): libuv's child init calls `setsid()`, so the
 /// child leads a fresh session — its own process group with no controlling
 /// terminal, so commands cannot read the gateway's terminal (`/dev/tty`

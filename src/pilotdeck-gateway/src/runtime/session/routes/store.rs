@@ -204,7 +204,8 @@ mod tests {
             pilot_home: home.clone(),
             session_id: "one".into(),
             now: None,
-        });
+        })
+        .unwrap();
         let key = TranscriptKey {
             project_root: cwd.clone(),
             pilot_home: home.clone(),

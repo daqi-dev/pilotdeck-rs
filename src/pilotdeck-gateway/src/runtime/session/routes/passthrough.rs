@@ -28,6 +28,11 @@ pub(crate) struct Forward {
     pub hello: Vec<u8>,
 }
 
+/// Observer supplied by the owning channel transport. The runtime has no dependency on channel configuration.
+pub trait UpstreamTurnObserver: Send + Sync {
+    fn response(&self, value: &JsValue);
+}
+
 pub(crate) struct Passthrough {
     send: mpsc::UnboundedSender<Forward>,
     task: JoinHandle<()>,
@@ -40,7 +45,7 @@ impl Passthrough {
     pub fn with_turns(
         upgrade: Upgrade,
         outbound: mpsc::UnboundedSender<Vec<u8>>,
-        turns: Option<std::sync::Arc<crate::config::routes::upstream_turns::UpstreamTurns>>,
+        turns: Option<std::sync::Arc<dyn UpstreamTurnObserver>>,
     ) -> Self {
         let (send, mut receive) = mpsc::unbounded_channel::<Forward>();
         let task = tokio::spawn(async move {

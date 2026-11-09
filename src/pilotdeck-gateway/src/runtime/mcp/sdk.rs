@@ -28,7 +28,9 @@ use crate::config::permission::{GatewaySessionPermissionRuleSetRegistry, Permiss
 use crate::config::session_value::SessionValue;
 use crate::js_value;
 use crate::runtime::cleanup_task::lock;
-use crate::runtime::sdk_session::{SdkSessionProjectsTable, same_key};
+use crate::runtime::sdk_session::{
+    SdkAgentMcpResolver, SdkAgentMcpServer, SdkSessionProjectsTable, same_key,
+};
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
     fmt,
@@ -230,14 +232,20 @@ pub trait SdkMcpProjectResolver: Send + Sync {
 
 /// `this.sdkSessionPlugins.get(sessionKey) ?? []`.
 pub trait SdkMcpSessionPlugins: Send + Sync {
-    fn plugins(&self, session_key: &JsValue) -> Vec<Arc<LoadedPlugin>>;
+    fn plugins<'a>(
+        &'a self,
+        session_key: &'a JsValue,
+    ) -> SdkMcpFuture<'a, Result<Vec<Arc<LoadedPlugin>>, SdkMcpError>>;
 }
 impl<F> SdkMcpSessionPlugins for F
 where
     F: Fn(&JsValue) -> Vec<Arc<LoadedPlugin>> + Send + Sync,
 {
-    fn plugins(&self, session_key: &JsValue) -> Vec<Arc<LoadedPlugin>> {
-        self(session_key)
+    fn plugins<'a>(
+        &'a self,
+        session_key: &'a JsValue,
+    ) -> SdkMcpFuture<'a, Result<Vec<Arc<LoadedPlugin>>, SdkMcpError>> {
+        Box::pin(async move { Ok(self(session_key)) })
     }
 }
 
@@ -309,7 +317,7 @@ impl SdkMcpConfig {
         for plugin in &project_plugins {
             collect_plugin_mcp_names(plugin.mcp_servers.as_ref(), &mut reserved);
         }
-        for plugin in self.options.session_plugins.plugins(&session_key) {
+        for plugin in self.options.session_plugins.plugins(&session_key).await? {
             collect_plugin_mcp_names(plugin.mcp_servers.as_ref(), &mut reserved);
         }
 
@@ -540,7 +548,7 @@ impl SdkMcpConfig {
         runtime.refresh().await?;
         let mut servers: Vec<(JsString, bool)> = Vec::new();
         if let Some(session_key) = input.get("sessionKey").filter(|value| js_truthy(value)) {
-            for plugin in self.options.session_plugins.plugins(session_key) {
+            for plugin in self.options.session_plugins.plugins(session_key).await? {
                 let mut names = Vec::new();
                 collect_plugin_mcp_names(plugin.mcp_servers.as_ref(), &mut names);
                 for name in names {
@@ -650,6 +658,21 @@ impl SdkMcpConfig {
             .find(|(key, _)| same_key(key, session_key))
             .map(|(_, entries)| entries.clone())
             .unwrap_or_default()
+    }
+
+    /// Agent references resolve only entries configured for this SDK session.
+    pub fn session_server(
+        &self,
+        session_key: &JsString,
+        server_name: &JsString,
+    ) -> Option<SdkAgentMcpServer> {
+        self.servers_for(&JsValue::String(session_key.clone()))
+            .into_iter()
+            .find(|(name, _)| name == server_name)
+            .map(|(_, entry)| SdkAgentMcpServer {
+                config: entry.config,
+                enabled: js_truthy(&entry.enabled),
+            })
     }
 
     /// `this.sdkSessionMcpServers.get(sessionKey) ?? new Map()` — the read
@@ -774,6 +797,16 @@ impl SdkMcpConfig {
             (None, false) => rules.push((session_key.clone(), generated)),
             (None, true) => {}
         }
+    }
+}
+
+impl SdkAgentMcpResolver for SdkMcpConfig {
+    fn session_server(
+        &self,
+        session_key: &JsString,
+        server_name: &JsString,
+    ) -> Option<SdkAgentMcpServer> {
+        SdkMcpConfig::session_server(self, session_key, server_name)
     }
 }
 

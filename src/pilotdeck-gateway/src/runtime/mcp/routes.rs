@@ -197,6 +197,7 @@ impl McpRoutes {
             session_plugins: Arc::new(|_: &JsValue| Vec::new()),
             permission_rule_sets: Arc::new(GatewaySessionPermissionRuleSetRegistry::new()),
             environment: Arc::new(SystemEnvironment),
+            projects: crate::runtime::sdk_session::SdkSessionProjects::shared(),
         })))
     }
 }
@@ -210,25 +211,16 @@ fn check_project_key(params: &JsValue) -> Result<(), SdkMcpError> {
     }
     // The typed SDK resolver cannot receive Node path.resolve's invalid inputs.
     let received = match crate::metadata::argument_received(key) {
-        Some(text) => text.encode_utf16().collect(),
-        None => {
-            let name = key
-                .get("constructor")
-                .and_then(|constructor| constructor.get("name"))
-                .expect("unsupported argument description has a constructor name");
-            let mut text = "an instance of ".encode_utf16().collect::<Vec<_>>();
-            text.extend(
-                crate::js_value::to_string_units_checked(name)
-                    .map_err(|error| SdkMcpError::plain(error.name(), error.message()))?,
-            );
-            text
+        crate::metadata::ArgumentReceived::Text(text) => text,
+        crate::metadata::ArgumentReceived::Throws { name, message } => {
+            return Err(SdkMcpError::plain(name, message));
         }
     };
     let mut message = "The \"paths[0]\" argument must be of type string. Received "
         .encode_utf16()
         .collect::<Vec<_>>();
-    message.extend(received);
-    Err(SdkMcpError::gateway(
+    message.extend_from_slice(received.units());
+    Err(SdkMcpError::type_error_with_code(
         "ERR_INVALID_ARG_TYPE",
         JsString::from_utf16(message),
     ))
@@ -378,6 +370,7 @@ pub(crate) mod tests {
                 })]
             }),
             permission_rule_sets: project.permissions.clone(),
+            projects: crate::runtime::sdk_session::SdkSessionProjects::shared(),
             environment: Arc::new(SystemEnvironment),
         }));
         (sdk.clone(), Arc::new(McpRoutes::new(sdk)), project)

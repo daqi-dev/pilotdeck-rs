@@ -4,6 +4,7 @@ mod count_json;
 pub(crate) mod cpu;
 pub mod fallback;
 pub mod health;
+pub mod host;
 pub mod http;
 pub mod invocation;
 mod json_walk;

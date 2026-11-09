@@ -56,6 +56,9 @@ impl RuntimeContextSurface {
 }
 
 pub struct Options {
+    /// Durable recorder for the prepared context; `None` keeps preparation
+    /// read-only (preview and tests).
+    pub recorder: Option<Arc<crate::storage::recorder::Recorder>>,
     pub compaction: Option<Arc<super::compaction::engine::port::CompactionPort>>,
     pub max_context_tokens: f64,
     pub truncate_first_keep_ratio: f64,
@@ -82,6 +85,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            recorder: None,
             compaction: None,
             max_context_tokens: 8192.0,
             truncate_first_keep_ratio: 0.5,
@@ -104,6 +108,7 @@ impl Default for Options {
 }
 
 struct Inner {
+    recorder: Option<Arc<crate::storage::recorder::Recorder>>,
     compaction: Option<Arc<super::compaction::engine::port::CompactionPort>>,
     max_context_tokens: f64,
     truncate_first_keep_ratio: f64,
@@ -162,6 +167,7 @@ impl DefaultContextRuntime {
         );
         Self {
             inner: Arc::new(Inner {
+                recorder: options.recorder,
                 compaction: options.compaction,
                 max_context_tokens: options.max_context_tokens,
                 truncate_first_keep_ratio: options.truncate_first_keep_ratio,
@@ -827,7 +833,35 @@ impl ContextRuntime for DefaultContextRuntime {
             .as_ref()
             .and_then(|signal| signal.downcast_ref::<Cancellation>())
             .cloned();
-        Box::pin(async move { runtime.prepare(input.fields, abort).await })
+        Box::pin(async move {
+            let preview = input.fields.get("previewOnly").and_then(JsValue::as_bool) == Some(true);
+            let session = input
+                .fields
+                .get("sessionId")
+                .and_then(JsValue::as_string)
+                .cloned();
+            let turn = input
+                .fields
+                .get("turnId")
+                .and_then(JsValue::as_string)
+                .cloned();
+            let result = runtime.prepare(input.fields, abort).await?;
+            if !preview
+                && let (Some(recorder), Some(session), Some(turn), Some(materialization)) = (
+                    &runtime.inner.recorder,
+                    session,
+                    turn,
+                    result.get("materialization"),
+                )
+            {
+                recorder
+                    .record_context_materialization(&session, &turn, materialization)
+                    .map_err(|error| {
+                        crate::host::ModuleError::new(error.to_string())
+                    })?;
+            }
+            Ok(result)
+        })
     }
 }
 

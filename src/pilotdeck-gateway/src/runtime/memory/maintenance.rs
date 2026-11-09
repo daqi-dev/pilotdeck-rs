@@ -11,6 +11,7 @@ use pilotdeck_protocol::{JsString, JsValue, parse_json};
 use std::{
     sync::{Arc, Mutex, Weak},
     task::{Context, Poll, Waker},
+    time::Duration,
 };
 use tokio::runtime::Handle;
 
@@ -35,6 +36,21 @@ impl MaintenanceRuntime for ProjectRuntime {
         )
     }
 }
+
+/// A session registry publication; identity is retained across repeated schedules.
+pub struct ProjectMemoryMaintenanceRuntime {
+    pub project_root: String,
+    pub generation_id: usize,
+    pub memory_service: Option<Arc<dyn MemoryMaintenanceService>>,
+}
+impl MaintenanceRuntime for ProjectMemoryMaintenanceRuntime {
+    fn project_root(&self) -> JsString {
+        self.project_root.as_str().into()
+    }
+    fn memory_service(&self) -> Option<Arc<dyn MemoryMaintenanceService>> {
+        self.memory_service.clone()
+    }
+}
 pub trait MaintenanceTelemetry: Send + Sync {
     fn track_feature_loop_stage(&self, input: JsValue);
     fn track_error(&self, error: &MemoryProviderError, input: JsValue);
@@ -54,6 +70,7 @@ struct Inner<R> {
     diagnostic: Diagnostic,
     states: States<R>,
     executor: Handle,
+    timer: Mutex<Option<tokio::task::JoinHandle<()>>>,
     #[cfg(test)]
     settling: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     #[cfg(test)]
@@ -90,6 +107,7 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
             }),
             states: Mutex::new(Vec::new()),
             executor: Handle::current(),
+            timer: Mutex::new(None),
             #[cfg(test)]
             settling: Mutex::new(None),
             #[cfg(test)]
@@ -98,11 +116,19 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
     }
     pub fn schedule(&self, key: Option<&JsString>) -> RuntimeResult {
         let runtime = (self.0.resolve)(key)?;
+        Self::schedule_runtime(&self.0, runtime, "scheduled")
+    }
+
+    fn schedule_runtime(
+        inner: &Arc<Inner<R>>,
+        runtime: Arc<R>,
+        reason: &'static str,
+    ) -> RuntimeResult {
         let Some(service) = runtime.memory_service() else {
             return Ok(());
         };
         let state = {
-            let mut states = self.0.states.lock().unwrap();
+            let mut states = inner.states.lock().unwrap();
             states.retain(|(runtime, _)| runtime.strong_count() > 0);
             if let Some((_, state)) = states
                 .iter()
@@ -127,13 +153,14 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
         // TS invokes the service before schedule returns. The spawned task always
         // polls again, replacing the noop waker even if the first wake was lost.
         let flight = Flight(Some(state.clone()));
-        let mut first = invocation(service.clone());
-        let _entered = self.0.executor.enter();
+        let mut first = invocation(service.clone(), reason);
+        let _entered = inner.executor.enter();
         if let Poll::Ready(result) = first.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
             first = Box::pin(std::future::ready(result));
         }
-        let inner = self.0.clone();
-        self.0.executor.spawn(async move {
+        let worker = inner.clone();
+        inner.executor.spawn(async move {
+            let inner = worker;
             let mut flight = flight;
             let mut next = first;
             loop {
@@ -163,7 +190,7 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
                         (inner.diagnostic)(&JsString::from_utf16(message), &error);
                     }
                 }
-                if std::mem::take(&mut state.lock().unwrap().requested) { next = invocation(service.clone()); continue; }
+                if std::mem::take(&mut state.lock().unwrap().requested) { next = invocation(service.clone(), reason); continue; }
                 // Promise finally is a separate reaction. Requests during this
                 // window remain attached to this runtime; never resolve again.
                 #[cfg(test)]
@@ -176,10 +203,76 @@ impl<R: MaintenanceRuntime> ProjectMemoryMaintenanceController<R> {
                     flight.0 = None;
                     break;
                 }
-                next = invocation(service.clone());
+                next = invocation(service.clone(), reason);
             }
         });
         Ok(())
+    }
+
+    /// Stop only future timer requests; already-started maintenance retains its generation.
+    pub fn stop(&self) {
+        if let Some(timer) = self.0.timer.lock().unwrap().take() {
+            timer.abort();
+        }
+    }
+}
+
+pub(super) struct OptionalMaintenanceTelemetry;
+impl MaintenanceTelemetry for OptionalMaintenanceTelemetry {
+    fn track_feature_loop_stage(&self, _: JsValue) {}
+    fn track_error(&self, _: &MemoryProviderError, _: JsValue) {}
+}
+
+impl Default for ProjectMemoryMaintenanceController<ProjectMemoryMaintenanceRuntime> {
+    fn default() -> Self {
+        Self::new(
+            Arc::new(|_| {
+                Err(RuntimeError::new(
+                    "No project memory runtime was published.",
+                ))
+            }),
+            Arc::new(OptionalMaintenanceTelemetry),
+            None,
+        )
+    }
+}
+
+impl ProjectMemoryMaintenanceController<ProjectMemoryMaintenanceRuntime> {
+    pub fn start(
+        &self,
+        service: Option<Arc<dyn MemoryMaintenanceService>>,
+        enabled: bool,
+        has_model: bool,
+    ) {
+        self.stop();
+        if !enabled || !has_model {
+            return;
+        }
+        let Some(service) = service else {
+            return;
+        };
+        let runtime = Arc::new(ProjectMemoryMaintenanceRuntime {
+            project_root: String::new(),
+            generation_id: Arc::as_ptr(&service) as *const () as usize,
+            memory_service: Some(service),
+        });
+        let _ = Self::schedule_runtime(&self.0, runtime.clone(), "scheduled:startup");
+        let inner = self.0.clone();
+        let timer = self.0.executor.spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(60)).await;
+                let _ = Self::schedule_runtime(&inner, runtime.clone(), "scheduled:timer");
+            }
+        });
+        *self.0.timer.lock().unwrap() = Some(timer);
+    }
+}
+
+impl<R> Drop for ProjectMemoryMaintenanceController<R> {
+    fn drop(&mut self) {
+        if let Some(timer) = self.0.timer.lock().unwrap().take() {
+            timer.abort();
+        }
     }
 }
 fn panic_error(payload: Box<dyn std::any::Any + Send>) -> MemoryProviderError {
@@ -187,8 +280,11 @@ fn panic_error(payload: Box<dyn std::any::Any + Send>) -> MemoryProviderError {
         .unwrap_or("memory maintenance panicked");
     MemoryProviderError::new(message)
 }
-fn invocation(service: Arc<dyn MemoryMaintenanceService>) -> MemoryFuture<'static, ()> {
-    Box::pin(async move { service.run_due_scheduled_maintenance("scheduled").await })
+fn invocation(
+    service: Arc<dyn MemoryMaintenanceService>,
+    reason: &'static str,
+) -> MemoryFuture<'static, ()> {
+    Box::pin(async move { service.run_due_scheduled_maintenance(reason).await })
 }
 impl<R: MaintenanceRuntime> MemoryMaintenance for ProjectMemoryMaintenanceController<R> {
     fn schedule(&self, key: &JsString) -> RuntimeResult {

@@ -8,10 +8,7 @@ use super::{
 };
 use crate::{
     host::{HostError, modules::capability::ToolDefinition},
-    runtime::{
-        permission::{PermissionContext, PermissionFuture},
-        tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext, js_space},
-    },
+    runtime::tools::{ExecutableTool, ToolError, ToolFuture, ToolOutput, ToolRunContext, js_space},
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 
@@ -42,20 +39,6 @@ impl ToolDefinition for EditFileTool {
     }
     fn is_concurrency_safe(&self, _input: &JsValue) -> Result<JsValue, HostError> {
         Ok(JsValue::Bool(false))
-    }
-    fn check_permissions<'a>(
-        &'a self,
-        input: &'a JsValue,
-        context: &'a PermissionContext,
-    ) -> PermissionFuture<'a, Option<JsValue>> {
-        Box::pin(async move {
-            Ok(Some(super::send_attachment::check_file_permission(
-                "edit_file",
-                input,
-                context,
-                false,
-            )))
-        })
     }
 }
 
@@ -259,6 +242,8 @@ async fn execute(input: &JsValue, context: &ToolRunContext) -> Result<ToolOutput
         write.mtime_ms,
         None,
     );
+    // The notification follows the durable write; the pre-edit text tells the
+    // hook this was an update rather than a creation.
     crate::runtime::hooks::session::notify_file_save(
         context,
         &resolved.absolute,

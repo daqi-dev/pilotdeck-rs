@@ -162,7 +162,7 @@ fn strings(values: Vec<String>) -> JsValue {
 
 /// TS `snapshots.filter(...).map(...)`; property order comes from
 /// `Object.entries`, i.e. the transcript JSON object's own key order.
-fn snapshot_entries(entries: &[JsValue]) -> Result<Vec<SnapshotRecordedEntry>, String> {
+pub(crate) fn snapshot_entries(entries: &[JsValue]) -> Result<Vec<SnapshotRecordedEntry>, String> {
     let mut snapshots = Vec::new();
     for entry in entries {
         if entry

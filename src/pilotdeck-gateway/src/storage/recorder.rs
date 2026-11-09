@@ -129,6 +129,8 @@ struct Turn {
     next_step: u64,
     open_step: Option<u64>,
     model_requested: bool,
+    /// TS `TurnRecordingState.contextRecorded`: one `context_snapshot` per turn.
+    context_recorded: bool,
 }
 impl Turn {
     fn started() -> Self {
@@ -136,6 +138,7 @@ impl Turn {
             next_step: 1,
             open_step: None,
             model_requested: false,
+            context_recorded: false,
         }
     }
 }
@@ -150,6 +153,9 @@ struct Inner {
     turns: HashMap<JsString, Turn>,
     compactions: HashMap<JsString, Vec<PendingCompaction>>,
     completed_turn_id: Option<JsString>,
+    /// Instructions last written, so a later turn diffs instead of repeating
+    /// the baseline layer list.
+    instruction_layers: Option<Vec<JsValue>>,
 }
 
 /// Durable recorder over a session's shared transcript writer.
@@ -208,6 +214,7 @@ impl Recorder {
                 turns: HashMap::new(),
                 compactions: HashMap::new(),
                 completed_turn_id: None,
+                instruction_layers: None,
             }),
         }
     }
@@ -232,6 +239,135 @@ impl Recorder {
         self.append(session_id, turn_id, draft)?;
         inner.completed_turn_id = None;
         inner.turns.insert(turn_id.clone(), Turn::started());
+        Ok(())
+    }
+    /// `startQueuedTurn`: an inbox item admitted from the durable queue. The
+    /// item id is recorded so a replay pairs the start with its queue entry.
+    pub fn start_queued_turn(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        item_id: &JsString,
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        let mut draft = draft("turn_started");
+        draft.insert("inboxItemId".into(), JsValue::String(item_id.clone()));
+        self.append(session_id, turn_id, draft)?;
+        inner.completed_turn_id = None;
+        inner.turns.insert(turn_id.clone(), Turn::started());
+        Ok(())
+    }
+    /// `recordTurnEnqueued`: the durable admission record for a queued turn.
+    pub fn record_turn_enqueued(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        item_id: &JsString,
+        input: JsValue,
+        submit_options: JsValue,
+    ) -> RecorderResult<()> {
+        let mut draft = draft("agent_turn_enqueued");
+        draft.insert("itemId".into(), JsValue::String(item_id.clone()));
+        draft.insert("input".into(), input);
+        draft.insert("submitOptions".into(), submit_options);
+        self.append(session_id, turn_id, draft)
+    }
+    /// `recordTurnDiscarded`: a queued turn rejected before it started.
+    pub fn record_turn_discarded(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        item_id: &JsString,
+        reason: &str,
+    ) -> RecorderResult<()> {
+        let mut draft = draft("agent_turn_discarded");
+        draft.insert("itemId".into(), JsValue::String(item_id.clone()));
+        draft.insert("reason".into(), reason.into());
+        self.append(session_id, turn_id, draft)
+    }
+    /// `recordContextMaterialization`: the turn's `context_snapshot` plus the
+    /// instruction-layer diff against the previous turn of this session.
+    pub fn record_context_materialization(
+        &self,
+        session_id: &JsString,
+        turn_id: &JsString,
+        materialization: &JsValue,
+    ) -> RecorderResult<()> {
+        let mut inner = self.lock();
+        self.require_recording(&inner, turn_id)?;
+        let needs_step = match inner.turns.get(turn_id) {
+            Some(turn) => turn.open_step.is_none() || turn.model_requested,
+            None => unreachable!("require_recording"),
+        };
+        if needs_step {
+            self.open_next_step(&mut inner, session_id, turn_id)?;
+        }
+        let step = self.require_open_step(&inner, turn_id)?;
+        if let Some(expected) = field(materialization, "stepId").as_number()
+            && expected != step as f64
+        {
+            return Err(state(
+                "Context materialization does not match durable admission step.",
+            ));
+        }
+        if !inner.turns[turn_id].context_recorded {
+            let mut draft = draft("context_snapshot");
+            draft.insert("step".into(), JsValue::Number(step as f64));
+            draft.insert(
+                "contexts".into(),
+                field(materialization, "runtimeContexts").clone(),
+            );
+            for key in ["promptGeneration", "runtimeContextMessages"] {
+                let value = field(materialization, key);
+                if !value.is_undefined() {
+                    draft.insert(key.into(), value.clone());
+                }
+            }
+            self.append(session_id, turn_id, draft)?;
+            inner.turns.get_mut(turn_id).unwrap().context_recorded = true;
+        }
+        let JsValue::Array(layers) = field(materialization, "instructionLayers") else {
+            return Ok(());
+        };
+        let key = |layer: &JsValue| (field(layer, "scope").clone(), field(layer, "path").clone());
+        let baseline = inner.instruction_layers.is_none();
+        let previous = inner.instruction_layers.as_deref().unwrap_or(&[]);
+        let mut changes = Vec::new();
+        for layer in layers {
+            let old = previous.iter().find(|old| key(old) == key(layer));
+            if old == Some(layer) {
+                continue;
+            }
+            let mut change = layer
+                .as_object()
+                .cloned()
+                .ok_or_else(|| state("Invalid instruction layer."))?;
+            change.insert(
+                "action".into(),
+                if old.is_some() { "replace" } else { "set" }.into(),
+            );
+            changes.push(JsValue::Object(change));
+        }
+        for old in previous {
+            if !layers.iter().any(|layer| key(layer) == key(old)) {
+                let mut change = JsObject::new();
+                change.insert("action".into(), "remove".into());
+                change.insert("scope".into(), field(old, "scope").clone());
+                change.insert("path".into(), field(old, "path").clone());
+                changes.push(JsValue::Object(change));
+            }
+        }
+        if baseline || !changes.is_empty() {
+            let mut draft = draft("agent_instructions");
+            draft.insert("step".into(), JsValue::Number(step as f64));
+            draft.insert("baseline".into(), JsValue::Bool(baseline));
+            if baseline {
+                draft.insert("layers".into(), JsValue::Array(layers.clone()));
+            }
+            draft.insert("changes".into(), JsValue::Array(changes));
+            self.append(session_id, turn_id, draft)?;
+        }
+        inner.instruction_layers = Some(layers.clone());
         Ok(())
     }
     /// TS `completeTurn`: close the open step before persisting the result.

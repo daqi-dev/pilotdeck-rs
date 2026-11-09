@@ -17,6 +17,7 @@ use super::submit::{
     PreparedTurn, SubmitError, SubmitFuture, SubmitHost, SubmitSnapshots, SubmitWorkspace,
 };
 use crate::storage::RunRef;
+use pilotdeck_protocol::JsObject;
 
 /// `options.setSessionCwd`. Unlike TS, which silently skips an unconfigured
 /// setSessionCwd (InProcessGateway.ts:1269), a requested cwd is mandatory host
@@ -416,3 +417,78 @@ fn non_empty_array(value: &JsValue) -> bool {
 #[cfg(test)]
 #[path = "submit_host_tests.rs"]
 mod tests;
+
+/// TS :3210-3240 validateSdkSessionConfig, message for message.
+pub fn validate_sdk_session_config(config: &JsValue) -> Result<(), SubmitError> {
+    let Some(object) = config.as_object() else {
+        return Err(SubmitError::new(
+            "INVALID_SDK_SESSION_CONFIG",
+            "sdkSessionConfig must be an object.",
+        ));
+    };
+    let invalid = |message: &str| {
+        Err(SubmitError::new(
+            "INVALID_SDK_SESSION_CONFIG",
+            message.to_owned(),
+        ))
+    };
+    let present = |key: &str| object.get(key).filter(|value| !value.is_undefined());
+    for (key, message) in [
+        ("systemPrompt", "systemPrompt must be a string."),
+        ("appendSystemPrompt", "appendSystemPrompt must be a string."),
+        (
+            "planModeInstructions",
+            "planModeInstructions must be a string.",
+        ),
+    ] {
+        if present(key).is_some_and(|value| value.as_string().is_none()) {
+            return invalid(message);
+        }
+    }
+    if present("persistSession").is_some_and(|value| value.as_bool() != Some(false)) {
+        return invalid("persistSession must be false when specified.");
+    }
+    if present("outputStyle").is_some_and(|value| {
+        value
+            .as_string()
+            .and_then(|value| value.to_utf8().ok())
+            .is_none_or(|value| crate::metadata::js_trim(&value).is_empty())
+    }) {
+        return invalid("outputStyle must be a non-empty string.");
+    }
+    if present("permissionMode").is_some_and(|value| {
+        !matches!(
+            value
+                .as_string()
+                .and_then(|value| value.to_utf8().ok())
+                .as_deref(),
+            Some("acceptEdits" | "dontAsk")
+        )
+    }) {
+        return invalid("permissionMode must be acceptEdits or dontAsk.");
+    }
+    // Settings validation is the shared native normalizer, so both entry
+    // points reject the same shapes with the same text.
+    crate::runtime::sdk_session::validate_session_settings(config.get("settings"))
+        .map_err(|error| SubmitError::new("INVALID_SDK_SESSION_CONFIG", error.message))?;
+    Ok(())
+}
+
+pub(crate) fn accepted_input_metadata(input: &JsValue) -> Option<JsObject> {
+    let mut metadata = JsObject::new();
+    for key in [
+        "modelSelection",
+        "permissionMode",
+        "runMode",
+        "basePermissionMode",
+        "allowPlanModeTools",
+    ] {
+        if let Some(value) = input
+            .get(key)
+            .filter(|value| !matches!(value, JsValue::Undefined | JsValue::Null))
+        {
+            metadata.insert(key.into(), value.clone());
+        }
+    }
+    (!metadata.is_empty()).then_some(metadata)
+}

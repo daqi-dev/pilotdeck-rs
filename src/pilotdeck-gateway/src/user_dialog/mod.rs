@@ -20,6 +20,9 @@ pub mod routes;
 mod schema;
 mod store;
 
+pub use crate::runtime::user_dialog::{
+    DialogPersistence, DialogSession, DialogSessionResolver, DialogStore, GatewayUserDialogs,
+};
 pub use bus::{ConsumeResult, GatewayUserDialogBus, PendingDialog};
 pub use channel::{
     AbortSignal, ChannelOptions, ChannelRequest, ConfirmRequest, FormRequest,

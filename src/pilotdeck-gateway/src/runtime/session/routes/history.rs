@@ -169,8 +169,10 @@ impl HistoryStorage {
             return Err(error("INVALID_INPUT", "projectKey contains a NUL byte."));
         }
         Ok(ProjectKey {
-            project_root: crate::metadata::resolve_process_path(Path::new(""), &root),
-            pilot_home: crate::metadata::resolve_process_path(Path::new(""), &self.pilot_home),
+            project_root: crate::metadata::resolve_process_path(Path::new(""), &root)
+                .map_err(failure)?,
+            pilot_home: crate::metadata::resolve_process_path(Path::new(""), &self.pilot_home)
+                .map_err(failure)?,
         })
     }
 
@@ -181,12 +183,15 @@ impl HistoryStorage {
             return Err(error("INVALID_INPUT", "Invalid sessionKey."));
         }
         let project = self.project(input)?;
-        let storage = self.adapter.create_session_storage(SessionStorageInput {
-            project_root: project.project_root,
-            pilot_home: project.pilot_home,
-            session_id: key,
-            now: Some(self.now.clone()),
-        });
+        let storage = self
+            .adapter
+            .create_session_storage(SessionStorageInput {
+                project_root: project.project_root,
+                pilot_home: project.pilot_home,
+                session_id: key,
+                now: Some(self.now.clone()),
+            })
+            .map_err(failure)?;
         confined(&storage.chat_dir, &storage.transcript_path)?;
         Ok(storage)
     }
@@ -268,7 +273,7 @@ impl HistoryStorage {
         let next = limit
             .filter(|n| *n != 0.0 && sessions.len() as f64 == *n)
             .map(|_| {
-                js(pilotdeck_protocol::js_value::number_string(
+                js(crate::js_value::number_string(
                     offset + sessions.len() as f64,
                 ))
             })
@@ -294,7 +299,8 @@ impl HistoryStorage {
             &(self.now)(),
             false,
             self.project(input)?.project_root
-                != crate::metadata::resolve_process_path(Path::new(""), &self.pilot_home),
+                != crate::metadata::resolve_process_path(Path::new(""), &self.pilot_home)
+                    .map_err(failure)?,
         );
         let total = messages.len();
         messages = page(&messages, cursor(input, true), limit(input)?);
@@ -585,8 +591,9 @@ fn relative_path(relative: &str, base: &Path, root: &Path) -> Result<PathBuf, Re
 }
 // Check each existing component as well as the lexical path: symlinks cannot escape.
 fn confined(root: &Path, candidate: &Path) -> Result<(), ReplacementError> {
-    let root = crate::metadata::resolve_process_path(Path::new(""), root);
-    let candidate = crate::metadata::resolve_process_path(Path::new(""), candidate);
+    let root = crate::metadata::resolve_process_path(Path::new(""), root).map_err(failure)?;
+    let candidate =
+        crate::metadata::resolve_process_path(Path::new(""), candidate).map_err(failure)?;
     let relative = candidate.strip_prefix(&root).map_err(|_| {
         failure("relativeTranscriptPath points outside the project transcript directory.")
     })?;

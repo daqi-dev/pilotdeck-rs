@@ -13,10 +13,12 @@ pub mod channel;
 mod coordinator;
 mod reconnect;
 pub mod routes;
+mod value;
 
 pub use bus::{GatewayElicitationBus, GatewayPermissionBus, PendingEntry, Registration};
 pub use coordinator::{GatewayInteractionCoordinator, InteractionOptions, PermissionDecision};
 pub use reconnect::{InteractionBinding, InteractionKind, InteractionReconnectPort};
+pub use value::{ProducerValue, ReplayValueError, to_interaction_replay_value};
 
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
@@ -42,6 +44,8 @@ fn set(value: &mut JsValue, key: &str, child: JsValue) {
 struct State {
     serial: u64,
     requests: Vec<Replay>,
+    // TS creates the reconnect owner bucket before payload conversion can throw.
+    replay_owners: std::collections::HashSet<JsString>,
     bindings: Vec<(JsString, InteractionBinding)>,
     last: Vec<(JsString, InteractionBinding)>,
     buckets: Vec<Bucket>,

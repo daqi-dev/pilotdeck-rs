@@ -359,6 +359,7 @@ pub async fn run_events(
     registry: Option<&dyn TurnRunReader>,
     input: &RunEventsInput,
 ) -> Result<JsValue, TurnReadError> {
+    validate_run_pagination(input.after_seq.as_ref(), input.limit.as_ref())?;
     let Some(registry) = registry else {
         return Err(TurnReadError::dialog(
             "CAPABILITY_UNAVAILABLE",
@@ -369,23 +370,7 @@ pub async fn run_events(
         .after_seq
         .as_ref()
         .filter(|value| !value.is_undefined());
-    if let Some(value) = after_seq
-        && !is_non_negative_safe_integer(value)
-    {
-        return Err(TurnReadError::dialog(
-            "INVALID_RUN_CURSOR",
-            "afterSeq must be a non-negative safe integer.",
-        ));
-    }
     let limit = input.limit.as_ref().filter(|value| !value.is_undefined());
-    if let Some(value) = limit
-        && !is_valid_limit(value)
-    {
-        return Err(TurnReadError::dialog(
-            "INVALID_RUN_LIMIT",
-            "limit must be an integer between 1 and 500.",
-        ));
-    }
     let Some(record) = registry.get(&input.run).await.map_err(registry_error)? else {
         return Err(TurnReadError::dialog(
             "RUN_NOT_FOUND",
@@ -433,6 +418,31 @@ pub async fn run_events(
         result.insert("nextSeq".into(), field(last, "seq").clone());
     }
     Ok(JsValue::Object(result))
+}
+
+/// Validate before registry-key coercion, as InProcessGateway.ts:2533-2538
+/// does before invoking RunRegistry.get (which applies template literals).
+pub(crate) fn validate_run_pagination(
+    after: Option<&JsValue>,
+    limit: Option<&JsValue>,
+) -> Result<(), TurnReadError> {
+    if let Some(value) = after.filter(|value| !value.is_undefined())
+        && !is_non_negative_safe_integer(value)
+    {
+        return Err(TurnReadError::dialog(
+            "INVALID_RUN_CURSOR",
+            "afterSeq must be a non-negative safe integer.",
+        ));
+    }
+    if let Some(value) = limit.filter(|value| !value.is_undefined())
+        && !is_valid_limit(value)
+    {
+        return Err(TurnReadError::dialog(
+            "INVALID_RUN_LIMIT",
+            "limit must be an integer between 1 and 500.",
+        ));
+    }
+    Ok(())
 }
 
 /// InProcessGateway.ts:2551-2553: reattach is the same durable lookup.

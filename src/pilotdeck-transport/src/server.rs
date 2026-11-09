@@ -563,7 +563,9 @@ impl ExecutionServer {
         }
         Ok(())
     }
-    fn worker(&self) {
+    /// Embedded owners run this processing loop on their own thread; the stdio
+    /// `serve` handle does the same internally.
+    pub fn worker(&self) {
         loop {
             let generation = self.ready.generation();
             if self.owner.is_closed() {

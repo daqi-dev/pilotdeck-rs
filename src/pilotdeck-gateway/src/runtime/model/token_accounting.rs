@@ -215,6 +215,11 @@ impl TokenAccountingRuntime {
             cache: Arc::default(),
         }
     }
+    /// Loaded configuration snapshot: the count transport uses the snapshot's
+    /// proxy, like the stream transport does.
+    pub fn new_with_snapshot(config: JsObject, snapshot: &JsValue) -> Self {
+        Self::new(config).with_transport(Arc::new(HyperCountTransport::from_snapshot(snapshot)))
+    }
     pub fn with_transport(mut self, transport: Arc<dyn ProviderCountTransport>) -> Self {
         self.transport = transport;
         self

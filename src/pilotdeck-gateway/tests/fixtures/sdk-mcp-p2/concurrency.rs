@@ -216,8 +216,11 @@ impl SdkMcpProjectResolver for Resolver {
 }
 struct Plugins;
 impl SdkMcpSessionPlugins for Plugins {
-    fn plugins(&self, _: &JsValue) -> Vec<Arc<LoadedPlugin>> {
-        Vec::new()
+    fn plugins<'a>(
+        &'a self,
+        _: &'a JsValue,
+    ) -> SdkMcpFuture<'a, Result<Vec<Arc<LoadedPlugin>>, SdkMcpError>> {
+        Box::pin(async { Ok(Vec::new()) })
     }
 }
 fn config(gate: Arc<Gate>, projects: Arc<GatedProjects>) -> Arc<SdkMcpConfig> {

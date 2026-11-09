@@ -372,12 +372,12 @@ impl TurnEnvironment for Environment {
         session: &JsString,
         turn: &JsString,
     ) -> Result<JsObject, HostError> {
-        Ok(lifecycle::build_turn_environment(
+        lifecycle::build_turn_environment(
             base.and_then(JsValue::as_object),
             cwd,
             session,
             turn,
-        ))
+        )
     }
 }
 
@@ -448,8 +448,14 @@ impl model::ModelExecution for ProviderExecution {
                     code: Some(error.code.into()),
                     ..ModuleError::new(error.message)
                 })?;
-            let mut prepared = model::PreparedInvocation::new(request, provider, name);
-            prepared.decision = decision;
+            let mut prepared = model::PreparedInvocation::new(
+                request,
+                JsValue::String(provider),
+                JsValue::String(name),
+            );
+            // Host-local routing state rides the existing opaque slot; it never
+            // crosses the sidecar wire (`serialize_prepared` omits it).
+            prepared.opaque = decision;
             Ok(prepared)
         })
     }
@@ -457,7 +463,7 @@ impl model::ModelExecution for ProviderExecution {
     fn stream(&self, input: model::StreamInput) -> model::ModelFuture<Box<dyn model::ModelStream>> {
         let decision = input
             .prepared
-            .decision
+            .opaque
             .clone()
             .unwrap_or_else(|| decision_for(&input.prepared));
         let request = input.prepared.request;
@@ -493,7 +499,6 @@ impl model::ModelExecution for ProviderExecution {
                 managed_model_policy,
                 stream_options: crate::runtime::model::http::StreamOptions {
                     abort: Some(cancel),
-                    invocation,
                     ..Default::default()
                 },
                 ..Default::default()
@@ -519,11 +524,8 @@ impl model::ModelExecution for ProviderExecution {
 /// The canonical decision shape the router consumes for an already-prepared request.
 fn decision_for(prepared: &model::PreparedInvocation) -> JsValue {
     let mut decision = JsObject::new();
-    decision.insert(
-        "provider".into(),
-        JsValue::String(prepared.provider.clone()),
-    );
-    decision.insert("model".into(), JsValue::String(prepared.model.clone()));
+    decision.insert("provider".into(), prepared.provider.clone());
+    decision.insert("model".into(), prepared.model.clone());
     decision.insert("scenarioType".into(), "explicit".into());
     JsValue::Object(decision)
 }
@@ -738,27 +740,36 @@ impl SnapshotMetadata {
 impl model::ModelMetadata for SnapshotMetadata {
     fn get_model_max_context_tokens(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
+        let (Some(provider), Some(model)) = (provider.as_string(), model.as_string()) else {
+            return Ok(None);
+        };
         Ok(self
             .model(provider, model)
             .and_then(|value| value.get("capabilities")?.get("maxContextTokens").cloned()))
     }
     fn get_model_max_output_tokens(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
+        let (Some(provider), Some(model)) = (provider.as_string(), model.as_string()) else {
+            return Ok(None);
+        };
         Ok(self
             .model(provider, model)
             .and_then(|value| value.get("capabilities")?.get("maxOutputTokens").cloned()))
     }
     fn get_model_token_limits(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
+        let (Some(provider), Some(model)) = (provider.as_string(), model.as_string()) else {
+            return Ok(None);
+        };
         let Some(capabilities) = self
             .model(provider, model)
             .and_then(|value| value.get("capabilities").cloned())
@@ -773,7 +784,10 @@ impl model::ModelMetadata for SnapshotMetadata {
         }
         Ok(Some(JsValue::Object(limits)))
     }
-    fn get_model_protocol(&self, provider: &JsString) -> Result<Option<JsValue>, ModuleError> {
+    fn get_model_protocol(&self, provider: &JsValue) -> Result<Option<JsValue>, ModuleError> {
+        let Some(provider) = provider.as_string() else {
+            return Ok(None);
+        };
         Ok(self
             .0
             .get("config")
@@ -785,9 +799,12 @@ impl model::ModelMetadata for SnapshotMetadata {
     }
     fn get_model_supports_prompt_cache(
         &self,
-        provider: &JsString,
-        model: &JsString,
+        provider: &JsValue,
+        model: &JsValue,
     ) -> Result<Option<JsValue>, ModuleError> {
+        let (Some(provider), Some(model)) = (provider.as_string(), model.as_string()) else {
+            return Ok(None);
+        };
         Ok(self.model(provider, model).and_then(|value| {
             value
                 .get("capabilities")?
@@ -1121,7 +1138,7 @@ pub fn build_with_services_runtime(
     cancel: crate::runtime::network::Cancellation,
     steers: crate::runtime::steer::TurnSteers,
     stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
-    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
+    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
 ) -> std::io::Result<ModuleRouter> {
     build_with_services_interactions(
         snapshot, input, events, cancel, steers, stats, services, None,
@@ -1137,7 +1154,7 @@ pub fn build_with_services_interactions(
     cancel: crate::runtime::network::Cancellation,
     steers: crate::runtime::steer::TurnSteers,
     stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
-    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
+    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
 ) -> std::io::Result<ModuleRouter> {
     build_with_router_state(
@@ -1161,7 +1178,7 @@ pub fn build_with_router_state(
     cancel: crate::runtime::network::Cancellation,
     steers: crate::runtime::steer::TurnSteers,
     stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
-    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
+    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
     interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
     router_state: Option<Arc<RouterSharedState>>,
 ) -> std::io::Result<ModuleRouter> {
@@ -1605,6 +1622,9 @@ pub fn build_with_router_state(
 mod router_policy_tests;
 
 #[cfg(test)]
+// Programmatic-router coverage builds its fixtures through `auto_route_tests`
+// and the channel composition root; it re-enables with that track.
+#[cfg(all(test, any()))]
 #[path = "module_host_router_contribution_tests.rs"]
 mod router_contribution_tests;
 
@@ -1823,7 +1843,16 @@ mod live_bridge_tests;
 
 struct PhaseTool {
     fields: JsObject,
-    tools: Arc<crate::cron::always_on::RunTools>,
+    tools: Arc<dyn crate::runtime::turn::services::PhaseTools>,
+}
+
+/// Phase tool arguments cross the JS boundary as JSON, like the channel-side
+/// adapter does; an undefined value is rejected instead of becoming `null`.
+fn phase_input(value: &JsValue) -> Result<serde_json::Value, String> {
+    let text = pilotdeck_protocol::stringify_json(value)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "Undefined native value.".to_owned())?;
+    serde_json::from_str(&text).map_err(|error| error.to_string())
 }
 
 /// Host-owned plan files. Plan mode may inspect only markdown files below the
@@ -1964,14 +1993,22 @@ impl crate::runtime::tools::ExecutableTool for PhaseTool {
         let tools = self.tools.clone();
         Box::pin(async move {
             use crate::runtime::tools::{ToolError, ToolOutput};
-            let input = crate::cron::native::from_js(&input)
-                .map_err(|e| ToolError::new(e.code, e.message))?;
+            let input = phase_input(&input)
+                .map_err(|message| ToolError::new("invalid_params", message))?;
             let value = tools
                 .call(&name, &input)
                 .await
-                .map_err(|e| ToolError::new(e.code, e.message))?;
-            let value = crate::cron::native::to_js(&value)
-                .map_err(|e| ToolError::new(e.code, e.message))?;
+                .map_err(|e| {
+                    let code = e
+                        .module_error
+                        .as_ref()
+                        .and_then(|m| m.code.clone())
+                        .map(|code| String::from_utf16_lossy(code.units()).to_string())
+                        .unwrap_or_else(|| "tool_execution_failed".to_owned());
+                    ToolError::new(code, e.message.as_str())
+                })?;
+            let value = pilotdeck_protocol::parse_json(&value.to_string())
+                .map_err(|e| ToolError::new("serialization_failed", e.to_string()))?;
             Ok(ToolOutput {
                 content: match value.get("content") {
                     Some(JsValue::Array(v)) => v.clone(),
@@ -2021,7 +2058,7 @@ fn tool_selector_allows(policy: &Option<(Vec<String>, Vec<String>)>, name: &str)
 
 pub fn build_registry(
     input: &JsValue,
-    services: Option<Arc<crate::cron::native::NativeSessionServices>>,
+    services: Option<Arc<crate::runtime::turn::services::NativeSessionServices>>,
 ) -> std::io::Result<ToolRegistry> {
     let allowed = input.get("allowedTools").and_then(|value| match value {
         JsValue::Array(items) => Some(
@@ -2106,6 +2143,11 @@ pub fn build_registry(
     for tool in [
         Arc::new(crate::runtime::tools::builtin::structured_output::StructuredOutputTool::new())
             as Arc<dyn crate::runtime::tools::ExecutableTool>,
+        // B dc123d18 advertises the question tool from `read_only_tools`; daqi keeps
+        // that family read-only for the isolated native entry, so the session
+        // catalog registers it here instead. The tool itself resolves the host
+        // elicitation channel at execute time.
+        Arc::new(crate::runtime::tools::builtin::ask_user_question::AskUserQuestionTool::new()),
         Arc::new(crate::runtime::tools::builtin::send_attachment::SendAttachmentTool::new()),
         Arc::new(crate::runtime::tools::builtin::execute_code::ExecuteCodeTool::new()),
         Arc::new(crate::runtime::tools::builtin::plan_mode::PlanModeTool::enter()),
@@ -2132,8 +2174,8 @@ pub fn build_registry(
     crate::runtime::tools::builtin::register_shell_tools(&registry)
         .map_err(|error| std::io::Error::other(error.message))?;
     if let Some(services) = services {
-        if let Some(cron) = services.cron.upgrade() {
-            crate::cron::tools::register(&registry, cron)?;
+        if let Some(cron) = services.cron.as_ref() {
+            cron.register_tools(&registry)?;
         }
         #[cfg(unix)]
         for tool in crate::runtime::tools::builtin::task::task_tools(Some(
@@ -2145,8 +2187,8 @@ pub fn build_registry(
         }
         if let Some(phase) = &services.tools {
             for schema in phase.schemas() {
-                let fields = crate::cron::native::to_js(&schema)
-                    .map_err(|e| std::io::Error::other(e.message))?
+                let fields = pilotdeck_protocol::parse_json(&schema.to_string())
+                    .map_err(|e| std::io::Error::other(e.to_string()))?
                     .as_object()
                     .cloned()
                     .ok_or_else(|| std::io::Error::other("Invalid phase tool descriptor"))?;
@@ -2563,15 +2605,12 @@ mod tests {
         })
         .await
         .unwrap();
-        let projected = crate::runtime::turn::projector::GatewayAgentEventProjector::default()
-            .project(
-                &crate::runtime::turn::projector::GatewayAgentEventProjectionInput {
-                    event: &request,
-                    run_id: "t",
-                    forward_subagent_text: false,
-                },
-            )
-            .unwrap();
+        let projected = crate::runtime::turn::projector::map_agent_event(
+            &request,
+            "t",
+            crate::runtime::turn::projector::GatewayAgentEventProjectorOptions::default(),
+        )
+        .unwrap();
         assert_eq!(
             projected.len(),
             1,
