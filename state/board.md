@@ -3251,3 +3251,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 - 收齐 r7 续工作区 + **dispatch/pairing 分层**（`LOCAL_METHODS` vs `routes::is_local`），消 r7 余 27 fail。
 - **全量 lib**：4224 pass · 0 fail（`pdrs-ext/…/r8/logs/lib-full-r8b.log`）；六组定向测全绿（`r8/logs/*`）。
 - 证据 `pdrs-ext/…/channels-cursor-20261109/r8/最终报告.md`；已提交，未 push。
+
+### 2026-11-09 pdrs-daqi-b-channels r9（Grok 预验收返修）
+
+- **P1**：`4b90bac` rewind 维护租约 · `857d422` 组织策略进 turn · `57e4284` webhook 鉴权 · `a3b7323` 微信附件/失败回传。
+- **全量 lib** 4230/0；证据 `pdrs-ext/…/r9/最终报告.md`，`r9/logs/lib-full-r9.log`；未 push。
