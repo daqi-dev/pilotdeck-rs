@@ -32,6 +32,13 @@ CARGO_TARGET_DIR=<dir> python3 -I tests/fixtures/sdk-mcp-session-tools/negative_
   exact_receipt、mock_server.mjs、本夹具与 negative_process/negative_suite），
   因此**必须在 #1433 提交之后运行**——交付时源树未提交，全量 KILLED 轮由
   协调者收货时在宿主补跑（r2 RESULT.md 已注明）。
+- 同树互斥（#2468）：本夹具原地改写 `tools.rs` 等守卫源码，运行期间**本工作树内
+  不得有其他写者**——普通 `cargo test` / `cargo build` 也不行（同
+  `cli-parity-mock-gateway/negative_controls.py` 的「Run with no other writers in
+  this worktree」同款要求）。`.negative-source.lock` 只约束负控族的
+  `mutating_sources` 持有者，`cargo-slots.sh` 名额闸是并发配额，两者都不互斥
+  普通 cargo；无锁的普通 cargo 在变异窗口里会读到变异体，产生无关的假 FAIL /
+  假编译错。
 - 每个 `#[tokio::test]` 变异轮的正向/负向/还原三跑都经 `cargo-slots.sh` 名额闸。
 - 单测体在 `mod tests` 内（缩进 4），外部测试在 crate 顶层——`test_body` 的
   函数尾锚按函数自身缩进回引（`(?P=indent)`），嵌套块的大括号不截断函数体；
