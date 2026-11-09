@@ -1347,6 +1347,10 @@ mod tests {
             1,
             "#1433 the parked shared stop keeps its entry until it finishes"
         );
+        // Give the executor a scheduling point to poll the spawned dispose
+        // before claiming it is still waiting: an unpolled task is trivially
+        // "not finished" and would satisfy the assertion vacuously.
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         crate::negative_assert!(
             !provider_dispose.is_finished(),
             "#1433 the provider dispose waits for the gated shared stop"
@@ -1508,8 +1512,9 @@ mod tests {
         // they reach the cap admission together; the single critical section
         // in `register_below_cap` — not this barrier — is what rules out the
         // check-then-register interleave (the paired `per-session-cap-two-
-        // locks` mutation parks between the two locks to make that kill
-        // deterministic instead of a scheduling race).
+        // locks` mutation rendezvouses after its stale size read so both
+        // concurrent prepares insert past the cap — a deterministic kill a
+        // bare two-lock form cannot give).
         let parked = Arc::new(std::sync::Barrier::new(2));
         let provider = Arc::new(ProjectMcpRuntimeProvider::new(
             ProjectMcpRuntimeProviderOptions {

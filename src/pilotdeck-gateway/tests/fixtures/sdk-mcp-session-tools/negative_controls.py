@@ -113,19 +113,29 @@ mutations = [
      'as usize >= cap as usize {',
      'native_process::tools::tests::session_mcp_tools_allows_the_third_runtime_under_a_fractional_limit',
      '#1433 a 2.5 cap still admits the third per-session runtime'),
-    # #2442 review P2 (sibling + concurrency both flagged): the concurrent
-    # positive control had no paired mutation. Reverting `register_below_cap`
-    # to a check-then-register — the size read in its own lock, the insert in
-    # another — is a race the factory barrier alone cannot make
-    # deterministic, so the mutant also parks between the two locks: both
-    # concurrent prepares read the pre-insert size and both register past the
-    # cap; only that test goes red.
+    # #2442 review P2 (sibling + concurrency both flagged, r3 refinement):
+    # the concurrent positive control had no paired mutation. Reverting
+    # `register_below_cap` to a check-then-register — the size read in its
+    # own lock, the insert in another — is a race the factory barrier alone
+    # cannot decide, so the mutant rendezvouses after the read: both
+    # concurrent prepares count themselves in and spin (bounded) until both
+    # have read the pre-insert size, then both insert past the cap; only that
+    # test goes red. The bound test calls this exactly twice; any lone
+    # caller falls through after the 5 s deadline instead of hanging.
     ('per-session-cap-two-locks', REGISTRY,
      '''        let mut state = lock(&self.inner);
         let size: usize = total_entries(&state);
         if size as f64 >= cap {''',
      '''        let size: usize = self.size();
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        static CAP_READS: std::sync::atomic::AtomicUsize =
+            std::sync::atomic::AtomicUsize::new(0);
+        CAP_READS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while CAP_READS.load(std::sync::atomic::Ordering::SeqCst) < 2
+            && std::time::Instant::now() < deadline
+        {
+            std::thread::yield_now();
+        }
         let mut state = lock(&self.inner);
         if size as f64 >= cap {''',
      'native_process::tools::tests::session_mcp_tools_holds_the_cap_across_concurrent_prepares',
