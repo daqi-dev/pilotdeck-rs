@@ -1830,3 +1830,35 @@ Like rounds 24 to 33, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 35 (codex r34 P0-1 / P0-2 / P1, GLM boundary r34 #1 / #2, sibling r34 P3-2)
+
+Round 34's three registration walks for `match` captures asked the *Match
+statement's* flow marks whether the capture ran, and a top-level
+`match 0: case [_sa]:` answered "unconditional" -- the capture then erased
+`from builtins import setattr as _sa` even though `0` never matches a sequence
+pattern (false PASS).  The dead-span drop in `_module_value_uses` still
+collected *every* load under an alias statement's value once any pair matched,
+so a partial pairing escaped loads the alias table never resolves:
+`if False: _f, _x = md, _register(main)` dropped the `main` escape, and the
+chained target `if False: _a = _obj.slot = main` dropped the load the
+attribute write consumes.  A bare head spelling (`globals`) was counted as an
+open site unconditionally, so `globals = lambda: {...}; held = (_g :=
+globals)()['main']` called the *lambda* and still reported a write (false
+FAIL).
+
+| Shape | Mutant / self-test |
+|---|---|
+| **An unmatched match capture is conditional** (false PASS guard): `from builtins import setattr as _sa`, `match 0: case [_sa]:`, then `_sa(md, 'common', object())`. | self-test message `... let an unmatched match capture erase the write helper (round 35)`; all three registration walks force `conditional=True` for a capture (site 3 spells it directly, sites 1-2 pass `force_conditional`) |
+| **A dead partial-pairing escape is a value use** (false PASS guard): `if False: _f, _x = md, _register(main)`. | self-test message `... dropped a dead partial-pairing escape as a value use (round 35)`; `_alias_source_nodes` returns only the value nodes that pair with a plain-name target |
+| **A dead chained-target escape is a value use** (false PASS guard): `if False: _a = _obj.slot = main`. | self-test message `... dropped a dead chained-target escape as a value use (round 35)`; a target that consumes without pairing (attribute/subscript) keeps every load of that statement |
+| **A dead paired element is still dropped** (round-32 guard kept): `if False: _f, _x = main, _register(other)`. | self-test message `... kept a dead alias as a value use (round 32)`/`... kept a dead paired alias as a value use (round 35)`; only elements that actually pair are dropped |
+| **A shadowed head is not an open site** (false FAIL guard): `globals = lambda: {'main': lambda x: None}; held = (_g := globals)()['main']; import builtins; held(object())`. | self-test message `... kept a shadowed head as an open site (round 35)`; `_head_shadowed` proves the shadow only for a binding that certainly ran, is in force, and is provably inert (`_provably_inert`: a lambda with no call, or a literal); the late pass in `_module_alias_bindings` now re-resolves every entry and overwrites both directions |
+| **An unshadowed walrus-callee head stays a site** (round-32/34 guard kept): `held = (_g := globals)()['main']; import builtins; held(object())`. | self-test message `... lost the unshadowed walrus-callee site (round 35)` |
+| **The site count is exactly two** (r34 boundary P3-2): the walrus-callee fixture has exactly two sites. | the round-32 count assertion now pins `!= 2` instead of `< 2`, so an extra site fails too |
+| **A nested walrus callee spells the attribute** (r34 sibling P3-2): `(_g := (_h := getattr)(sd, 'main'))(report)`. | `_spelled_callee` reads the inner callee through `_callee_expr` like every other call table |
+
+Like rounds 24 to 34, these shapes need a module-scope trigger plus a write
+inside a function, which one `(old, new)` replacement cannot express; the
+end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
