@@ -30,8 +30,9 @@ original: D1-SDK-SIGNAL-RUNID-LITERAL-001
    宿主按旧引用裸 `mkdir` 短持时，锁没有 `cleanupPending`，会被带接管逻辑的装置
    （`scripts/parity/round.py` 的 `parity_lock()`、`scripts/gateway-parity/common.py`
    的 `parity_lock()`、复用后者的 `scripts/native-witness/collect.py:41`（调用点
-   `:262`））在锁龄超 2400 s（gateway 系 `MAX_AGE` / parity 系 `LOCK_MAX_AGE`）后按
-   `expired` `rmtree` 接管——活 owner 也一样（判据只看锁龄与 pid，无心跳）；全批兜底
+   `:262`））接管——owner 进程已死即 `dead_pid` **即刻**接管（与锁龄无关），或锁龄超
+   2400 s（gateway 系 `MAX_AGE` / parity 系 `LOCK_MAX_AGE`）按 `expired` `rmtree`
+   （活 owner 也一样；判据只看 pid 存活与锁龄，无心跳）；全批兜底
    上界按 `选择格数 × (2×12 + 5×3) + 30` 秒推导（100 格为 3930 s）远超 2400 s，
    接管后两批并行绑 28999 会使本条「失败恰为 2 格」判据假 FAIL。该节现已承载
    取锁/释放形态的唯一正本（宿主片段：`.guard` flock + mkdir +
@@ -44,8 +45,10 @@ original: D1-SDK-SIGNAL-RUNID-LITERAL-001
    用相对路径读取、依赖 CWD=仓根（不符即 `FileNotFoundError`）。命令正本迁至
    `src/pilotdeck-cli/tests/fixtures/sdk-signals/README.md`「Rust 回放与产品负控」节的
    验收段（与原条目对验收命令块的正本+指针做法一致），并补 None 守护、evidence 根
-   目录与 source.json 双显式传参、两格 `comparison.json` 的 stdout 单面前置（把
-   evidence 根绑到真实跑过本矩阵的批次）与显式 utf-8 读取；本条与 R1 只留判据语义
+   目录与 source.json / cases.json 显式传参、**100 格集合断言**（根下格目录恰为
+   cases.json 去 6 个 stdin 缺口格——关掉部分批口子；不声称绑定当前 HEAD，批次绑定
+   由本批 cargo `test result` 行与验收现场保证）与两格 `comparison.json` 的 stdout
+   单面前置（显式 utf-8 读取）；本条与 R1 只留判据语义
    与指针。复算语义不变：
    `evidence/<格>/stdout.bin`（只剥精确 libtest driver 前缀，Rust 侧不归一化）的
    36 字节 runId 替换为金样 UUID 后须与金样 stdout 逐字节相等。

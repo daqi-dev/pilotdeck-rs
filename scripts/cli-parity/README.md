@@ -35,14 +35,16 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 `lock.json` 等）的口径见 `scripts/gateway-parity/README.md:169` 与各装置文档（双向
 指针待 #1783）。各 fixture README（如 sdk-signals 的 28999 串行前置段）与 fe-parity
 等协调者配方引用本节，不自创、不复写。持锁形态决定会不会被自动接管：带接管逻辑的装置
-在锁龄超 2400 s（gateway 系 `MAX_AGE`（`common.py` `:27`）/ parity 系 `LOCK_MAX_AGE`
-（`round.py` `:74`））后按 `expired` 接管**没有** `cleanupPending` 的锁——活 owner
-也会被接管（判据只看锁龄与 pid，无心跳；接管判定 `round.py` `:225-231`、
-`scripts/gateway-parity/common.py` `:624-633`，接管语义与「不自愈」例外详见本节
-「各装置的锁等待差异」之后两段）。因此**任何可能持锁超过 2400 s 的持有者都必须发布
-`cleanupPending: true`**；不发布的持有者必须有装置内的硬截止确保整块 <2400 s（如本批
-`run_round.py` 的 `signal.alarm(2280)`——2280 s 是调用方闹钟，不是租约属性），没有
-硬截止的块（如 fe-parity 的协调者配方，`run.mjs` 无墙钟上限）一律发布。
+接管**没有** truthy `cleanupPending` 的锁，条件是二者之一（`round.py` `:224-231`、
+`scripts/gateway-parity/common.py` `:623-632`）：owner 进程已死（`dead_pid`——
+**与锁龄无关，即刻接管**，被 reparent 的子进程可能仍占着 witness 端口）或锁龄超
+2400 s（`expired`；gateway 系 `MAX_AGE`（`common.py` `:27`）/ parity 系
+`LOCK_MAX_AGE`（`round.py` `:74`））——后者的活 owner 也一样被接管（判据只看 pid
+存活与锁龄，无心跳；接管语义与「不自愈」例外详见本节「各装置的锁等待差异」之后两段）。
+因此**任何可能持锁超过 2400 s 的持有者都必须发布 `cleanupPending: true`**；不发布的
+持有者必须有装置内的硬截止确保整块 <2400 s（如本批 `run_round.py` 的
+`signal.alarm(2280)`——2280 s 是调用方闹钟，不是租约属性），没有硬截止的块（如
+fe-parity 的协调者配方，`run.mjs` 无墙钟上限）一律发布。
 
 宿主（沙箱外协调者）的取锁/释放片段。形态对齐三装置（`.guard` flock + mkdir +
 `owner.json`），实现为**短命 `python3 -I` 进程**：不依赖 `flock(1)`/`uuidgen`（macOS
@@ -51,9 +53,10 @@ python3 -I src/pilotdeck-gateway/tests/fixtures/cli-parity-isolation/test_negati
 （fail-closed，绝不静默降级成无锁运行）。`owner.json` 字段口径按各读侧真实校验集：
 parity/gateway 读侧只校验 `pid`（正整数）与 `timestamp`（有限数），不符判 `damaged`；
 `ui-server-parity/calibrate.sh` 读侧校验 `pid` 与 `token`（字符串）、不校验
-`timestamp`；`cleanupPending` 各读侧只做**真值**判断——必须是 JSON `true` 才阻止
-接管，假值或缺键 2400 s 后照常被接管；`token` 在 parity/gateway 读侧不参与校验（写
-小写 uuid hex 仅为与装置形态一致）：
+`timestamp`；`cleanupPending` 各读侧只做**真值**判断——`true` 或**非空 pgid 列表**
+（gateway 系装置正常收尾失败时发布的正是 pgid 列表，`common.py` `:660-664`）都阻止
+接管，`false`/空列表/缺键不阻止（`dead_pid` 即刻、`expired` 2400 s 后照常接管）；
+`token` 在 parity/gateway 读侧不参与校验（写小写 uuid hex 仅为与装置形态一致）：
 
 ```sh
 # 取锁：TOKEN 由执行本片段的 shell/子壳持有；owner 的 pid 由该 shell 显式传 $$ 记入
@@ -76,22 +79,28 @@ try:
         sys.exit('parity lock held: ' + LOCK)
     token = uuid.uuid4().hex
     tmp = LOCK + '/owner.json.tmp.' + token
-    try:
-        os.mkdir(LOCK, 0o700)
+    created = False                                # 只清自己 mkdir 成功的目录：无 guard
+    try:                                           # 的旧配方可能在 isdir 与 mkdir 之间建
+        try:                                       # 成裸锁目录，异常分支删它 = 抹掉对方租约
+            os.mkdir(LOCK, 0o700)
+            created = True
+        except FileExistsError:
+            sys.exit('parity lock held: ' + LOCK)
         with open(tmp, 'x') as f:                  # 原子发布：tmp + rename，读方见不到半截
             f.write(json.dumps({'pid': shell_pid, 'timestamp': time.time(),
                                 'token': token, 'cleanupPending': True}) + '\n')
         os.replace(tmp, LOCK + '/owner.json')
         print(token)
-    except BaseException:                          # 发布失败：只清自己的 tmp 与空目录再上抛
+    except BaseException:                          # 发布失败：只清自己的 tmp 与（自己建的）目录
         try:
             os.remove(tmp)
         except OSError:
             pass
-        try:
-            os.rmdir(LOCK)
-        except OSError:
-            pass
+        if created:
+            try:
+                os.rmdir(LOCK)
+            except OSError:
+                pass
         raise
 finally:
     os.close(fd)
@@ -99,15 +108,25 @@ PY
 ) || exit 1                                        # 取不到租约即退出稍后重跑，不是自动排队
 
 # 释放（trap 形态：set -e 中止、INT/TERM、正常跑完都先走这里；guard 由短命 helper
-# 重取，核 token 与 pid（同样重传 $$）仍是本 shell 再删；核不过一律保留锁）
+# 重取，核 token 与 pid（同样重传 $$）仍是本 shell 再删；核不过一律保留锁。helper
+# 先屏蔽自身 SIGINT/SIGTERM——第二个 Ctrl-C 落进同一前台进程组，不得把释放截断在
+# 删除中途；受保护块以异常信号收尾（exit >128 且非 2/15，如子命令被 SIGKILL/OOM，
+# detached 的 Chrome/Vite 可能仍活着）时**保留锁**并指向人工回收，不得把锁放给
+# 排队者去撞固定端口）
 pdrs_lock_release() {
-  python3 -I - "${TOKEN:-}" "$$" <<'PY'
-import fcntl, json, os, stat, sys
+  python3 -I - "${TOKEN:-}" "$$" "$1" <<'PY'
+import fcntl, json, os, signal, stat, sys
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
 LOCK = '/tmp/pdrs-parity.lock'
 token = sys.argv[1]
 if not token:
     sys.exit(0)                                    # 从未取到锁，无事可做
 shell_pid = int(sys.argv[2])
+status = int(sys.argv[3])
+if status > 128 and status not in (130, 143):
+    sys.exit(f'protected block died by signal (exit {status}); detached children may '
+             'hold ports — retaining lock, recover manually per this section step 1-3')
 fd = os.open(LOCK + '.guard', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
 try:
     st = os.fstat(fd)
@@ -120,17 +139,19 @@ try:
         sys.exit('owner unreadable; retaining lock')
     if owner.get('token') != token or owner.get('pid') != shell_pid:
         sys.exit('lock ownership changed; retaining lock')
-    os.remove(LOCK + '/owner.json')
-    try:                                           # 顺带清自己的 tmp（若有）；别的文件不碰
-        os.remove(LOCK + '/owner.json.tmp.' + token)
-    except OSError:
-        pass
-    os.rmdir(LOCK)                                 # 目录里还有别的文件则失败保留，走人工回收
+    entries = os.listdir(LOCK)
+    if entries != ['owner.json']:                  # 外来文件（他人 tmp、Rust 侧 owner.tmp）：
+        sys.exit('foreign files in lock dir: ' + ', '.join(entries)   # rmdir 必失败，按人工
+                 + '; retaining lock')             # 回收走，别的文件不碰
+    done = LOCK + '.releasing.' + token            # 原子释放：先改名腾出锁路径再清残骸；
+    os.rename(LOCK, done)                           # 改名后被打断只留一个不在锁路径上的
+    os.remove(done + '/owner.json')                 # 垃圾目录（可手工删），不会留下会被按
+    os.rmdir(done)                                  # mtime 接管的裸锁目录
 finally:
     os.close(fd)
 PY
 }
-trap pdrs_lock_release EXIT
+trap 'pdrs_lock_release $?' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 # ……受保护的命令块……
@@ -138,11 +159,19 @@ trap 'exit 143' TERM
 
 取锁与释放必须挂在**同一 shell 上下文**（同一子壳/脚本里取 `TOKEN` 并定义 trap）；
 两段贴进两个独立 shell 时 pid 对不上，释放按「ownership changed」保留锁——跨 shell
-只能走本节人工回收。释放核 `token` 与 `pid` 双证（对齐装置的整条 owner 比对）。被
-SIGKILL/断电打断来不及释放，或核对不过（锁已被接管/身份变了），一律保留锁并按本节
-第 1–3 步人工回收——发布过 `cleanupPending` 的锁**不会被自动接管**，只能人工持
-guard 回收，这是防接管的代价。宿主块自行保证不留下活监听；怀疑有残留（fe-parity
-拉起的 Chrome/Vite 等）时先按第 1 步核进程组再释放。
+只能走本节人工回收。**整段须粘贴进子壳或脚本**（如 fe-parity 各块那样的 `( set -eu … )`）：
+粘进交互式 shell 时 `trap … EXIT` 挂在交互 shell 上，租约会一直持到整个会话退出。
+释放核 `token` 与 `pid` 双证（对齐装置的整条 owner 比对）。被 SIGKILL/断电打断来不及
+释放、受保护块以异常信号收尾（释放 helper 见 exit >128 且非 2/15 即保留），或核对不过
+（锁已被接管/身份变了），一律保留锁并按本节第 1–3 步人工回收——发布过 `cleanupPending`
+的锁**不会被自动接管**，只能人工持 guard 回收，这是防接管的代价。EXIT trap 在 shell
+退出时自动先跑，没有「先核完残留再释放」的窗口：**怀疑受保护块留下活监听**（fe-parity
+拉起的是 detached Chrome/Vite，`run.mjs:112-114`；node 自身只处理 SIGINT/SIGTERM——
+node 被 SIGKILL/OOM 时无人收尸）**时用 SIGKILL 中止宿主 shell**，让锁按
+`cleanupPending` 形态留下，再按第 1 步核进程组人工回收，不要等 trap 自己释放。释放
+helper 的非零退出**不会把整块的非零退出掩盖成零**（bash 实测：显式 `exit N` 时 N 保留；
+`set -eu` 中止时 trap 内失败以非零覆盖原状态码，如 137 变 1——方向 fail-safe，且释放
+失败必然伴随锁被保留，下一次取锁会报「锁被占」）。
 
 运行器报「retaining shared lock」或下次运行报锁被占时：
 1. 看 `/tmp/pdrs-parity.lock/owner.json` 的 pid/token/cleanupPending，并找残留 pgid：
@@ -165,7 +194,9 @@ guard 回收，这是防接管的代价。宿主块自行保证不留下活监�
      （同 `scripts/gateway-parity/README.md:169` 的「证据不足则保留」），不要凭「看不到列表」推定无残留。
 2. 确认这些 pgid 已不存在：`ps -o pid,pgid,command -g <pgid>`；仍在就由人判断后 `kill -KILL -<pgid>`（只杀 owner 记录里本装置启动的组，绝不碰用户 PilotDeck）。
    **列表缺失或形态不可解析不等于无残留**：先 `ls -la /tmp/pdrs-parity.lock` 看实际内容——`owner.json.tmp.*`
-   残留、0 字节或截断的 `owner.json` 都出现过（`scripts/parity/round.py:100-104` 是 tmp+replace，
+   残留、**`owner.tmp`（Rust D0 `ParityLock` 的 `create_new`+rename 中间文件，文件名不同）**、
+   0 字节或截断的 `owner.json` 都出现过（`scripts/parity/round.py:100-104` 是 tmp+replace、
+   Rust 侧 `try_acquire` 同为 `create_new`+rename，
    `scripts/gateway-parity/common.py:75-77` 的 `save` 是直接覆写，SIGKILL 可留半截）。截断的 `owner.json`
    **读不出 pid/token**，第 1、3 步的比对都做不了，此时只能靠第 1 步的兜底线索与 `ps` 判断；判不了就保留锁。
    注意损坏的已发布 `owner.json`（存在但解析不了）**永远不会被自动接管**，只能人工回收；
@@ -175,7 +206,8 @@ guard 回收，这是防接管的代价。宿主块自行保证不留下活监�
    `scripts/gateway-parity/common.py:594-600`）。持锁期间**重新读一遍** `owner.json` 的 `pid` / `token` / `cleanupPending`，
    确认还是第 1 步那个已停止的 owner（不是接管者刚发布的新 owner），再删 `owner.json` 并 `rmdir /tmp/pdrs-parity.lock`，
    删完才放开 guard。`owner.json` 缺失/不可解析时没有可比对的 owner，确认第 1、2 步的进程组都停干净后再删。
-   **只删 `owner.json` 与锁目录本身，不要删、不要替换 `/tmp/pdrs-parity.lock.guard`**
+   **只删 `owner.json`、锁目录内的 tmp 残留（`owner.json.tmp.*` / `owner.tmp` / 宿主片段的
+   `.releasing.<token>` 垃圾目录）与锁目录本身，不要删、不要替换 `/tmp/pdrs-parity.lock.guard`**
    （更别用 `rm -rf /tmp/pdrs-parity.lock*`）：`scripts/cli-parity` 的 guard 与 Rust 测试都以
    `O_NOFOLLOW` + `S_ISREG` + `nlink==1` 打开并校验该路径（其余装置用 `open('a')` 或 `os.open(..., O_CREAT)`），
    重建即换 inode，正持锁者的 flock 会静默失效。
@@ -198,7 +230,7 @@ guard 回收，这是防接管的代价。宿主块自行保证不留下活监�
 |---|---|---|---|
 | `scripts/parity/round.py`（宿主 vs sidecar，53 场景） | **无限等**（`sleep 2` 轮询，没有 timeout 形参） | 不超时、不写 `run.json`，在 stderr 打 `waiting for /tmp/pdrs-parity.lock`；**别当死锁去删锁** | `parity_lock` `:211-267` |
 | `scripts/native-witness/collect.py`（原生采集） | **1 s** | 抛 `Blocked` → **BLOCKED / exit 2** | `parity_lock` `:41`（调用 `:262`） |
-| `scripts/gateway-parity/session_domain.py`（E1 校准 / 原生判分） | **30 s** | 同 BLOCKED / exit 2（`TimeoutError` 走顶层 BLOCKED 分支） | `parity_lock(timeout=30)` `:2952` |
+| `scripts/gateway-parity/session_domain.py`（E1 校准 / 原生判分） | **30 s** | 同 BLOCKED / exit 2（`TimeoutError` 走顶层 BLOCKED 分支） | `parity_lock(timeout=30)` `:2957` |
 | `src/pilotdeck-gateway/tests/fixtures/native-topology/run.py`（4 案 × 5 轮） | **默认 600 s**（`common.parity_lock` 默认值） | `TimeoutError` 未被 main 捕获 → **traceback / exit 1**（与它自己的 `run()` 退出码不同，判成败看 `report.json`） | `parity_lock()` `:609` |
 | `scripts/gateway-parity/run_round.py`（模块对拍） | **默认 600 s**（`--lock-timeout`） | `_guard.run_entry` 捕获 → 打印 `{"status":"BLOCKED",...}` 后 **exit 1**（策略 `round` 取 FAIL 码），**没有 traceback** | `parity_lock` `common.py:604`；`_guard.py:106-110`、`:136-144` |
 | `scripts/gateway-parity/check_ruler.py`（冻结清单核验） | **默认 600 s**（`--lock-timeout`） | 同样被捕获 → `BLOCKED` JSON 后 **exit 2**（策略 `ruler` 把 `TimeoutError` 归 BLOCKED），**没有 traceback** | `parity_lock` `common.py:604`；`_guard.py:113-116`、`:136-144` |
