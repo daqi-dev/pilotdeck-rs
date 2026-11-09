@@ -252,17 +252,19 @@ impl Requests {
         owner: Option<&JsString>,
     ) -> Result<JsValue, RequestError> {
         let project_key = resolve_project(self, params)?;
-        // #1872: TS consults `hasActiveTurn` on the request spelling only,
-        // where a blank key matches no session — the request falls through
-        // to the port write's sessionKey gate and answers
-        // `INVALID_SESSION_KEY`. The owner an alias folds onto is gated here
-        // as the registered divergence, but only for a key that passes that
-        // same gate: `""` folds onto the `session` transcript, so the
-        // owner side could otherwise answer this busy code first.
+        // #1872: TS consults `hasActiveTurn` on the request spelling only
+        // (ts-blankkey-probe B: a turn held on the blank spelling itself
+        // still answers SESSION_BUSY — the gate fires before the port
+        // write's sessionKey gate), so the request-side check stays live for
+        // a blank key. The owner an alias folds onto is gated here as the
+        // registered divergence, but only for a request key that passes
+        // that same port gate: `""` folds onto the `session` transcript,
+        // and the owner side must not answer this busy code first for a
+        // request TS rejects as `INVALID_SESSION_KEY` (probe E/G).
         if let Some(key) = params.get("sessionKey").and_then(JsValue::as_string)
-            && trimmed_string_is_non_empty(key)
             && (self.owner.has_active_turn(key)
-                || owner.is_some_and(|owner| self.owner.has_active_turn(owner)))
+                || trimmed_string_is_non_empty(key)
+                    && owner.is_some_and(|owner| self.owner.has_active_turn(owner)))
         {
             return Err(gateway_error(
                 "SESSION_BUSY",
@@ -365,7 +367,9 @@ impl Requests {
     /// itself — a session that published while the request was in flight —
     /// has no reservation yet: take one before closing, and report a turn
     /// admitted meanwhile as SESSION_BUSY rather than aborting it. The entry
-    /// is already durable in that case; a retry appends a second one.
+    /// is already durable in that case; a retry appends a second one. Both
+    /// the direct-close arm's missing `has_active_turn` recheck and that
+    /// second-entry retry are registered residual windows in #2687.
     async fn close_model_selection_owner(
         &self,
         loaded: Option<&JsString>,
@@ -1506,8 +1510,9 @@ mod tests {
     /// (`sanitize_session_id`'s empty fallback), so a session registered
     /// under that spelling with a live turn would otherwise meet the
     /// owner-side gate first — while TS consults `hasActiveTurn` on the
-    /// request spelling only, matches nothing, and answers
-    /// `INVALID_SESSION_KEY` at the port write.
+    /// request spelling only, matches nothing for a turn held on any other
+    /// spelling, and answers `INVALID_SESSION_KEY` at the port write
+    /// (ts-blankkey-probe E/G).
     #[tokio::test]
     async fn session_model_set_blank_key_answers_the_session_key_gate() {
         let (_scratch, r) = setup_fixture();
@@ -1543,6 +1548,115 @@ mod tests {
         );
         r.owner
             .end_turn(&"session".into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #1872 (fix-r2): the request-side check stays live for a blank key. A
+    /// turn held on the blank spelling itself (`submit.rs` folds a
+    /// missing/null sessionKey to `""`) answers `SESSION_BUSY` — the TS
+    /// gate fires on the request spelling before the port write's
+    /// sessionKey gate (ts-blankkey-probe B), so set keeps the same shape
+    /// `set_permission_mode` already had.
+    #[tokio::test]
+    async fn session_model_set_reports_busy_for_a_turn_held_on_the_blank_key() {
+        let (_scratch, r) = setup_fixture();
+        let _recorder = register_recorder(&r, "");
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&"".into(), &run)
+            .expect("#1872 the blank spelling holds a live turn");
+        let error = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", "".into()),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await
+            .expect_err("#1872 a blank-keyed turn is busy for model set");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_BUSY",
+            "#1872 the blank key answers busy"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "Cannot change the model during an active turn.",
+            "#1872 the blank key keeps the busy message"
+        );
+        r.owner.end_turn(&"".into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #1872 (fix-r2): `session_model_clear` answers the sessionKey gate
+    /// first, even with a turn held on the blank spelling — TS's
+    /// `sessionModelClear` runs `requireSessionKey` before
+    /// `hasActiveTurn` (GatewaySessionModelBundle.ts), the inverse of set's
+    /// order, so a blank key never reaches a busy code on the clear path.
+    #[tokio::test]
+    async fn session_model_clear_blank_key_answers_the_session_key_gate() {
+        let (_scratch, r) = setup_fixture();
+        let _recorder = register_recorder(&r, "");
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&"".into(), &run)
+            .expect("#1872 the blank spelling holds a live turn");
+        let error = r
+            .session_config_request(
+                "session_model_clear".into(),
+                object([("sessionKey", "".into())]),
+            )
+            .await
+            .expect_err("#1872 a blank key answers clear's sessionKey gate");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "INVALID_SESSION_KEY",
+            "#1872 the blank key is a sessionKey error on clear"
+        );
+        negative_assert!(
+            r.owner.has_active_turn(&"".into()),
+            "#1872 the blank spelling's turn survives the clear request"
+        );
+        r.owner.end_turn(&"".into(), Some(&run), Some(&reservation));
+        teardown(&r).await;
+    }
+
+    /// #1872 (fix-r2 arbitration of the DS P1): a blank-keyed live turn
+    /// answers `SESSION_BUSY` for permission mode too — the real TS wiring
+    /// runs `hasActiveTurn` on the raw request key before the callback's
+    /// sessionKey gate (ts-blankkey-probe C), so set and permission keep
+    /// one shape for a blank key that holds a turn. No guard is added to
+    /// permission: its order already matches the wiring.
+    #[tokio::test]
+    async fn set_permission_mode_reports_busy_for_a_turn_held_on_the_blank_key() {
+        let (_scratch, r) = setup_fixture();
+        let _recorder = register_recorder(&r, "");
+        let run: JsString = "run-1".into();
+        let reservation = r
+            .owner
+            .begin_turn(&"".into(), &run)
+            .expect("#1872 the blank spelling holds a live turn");
+        let error = r
+            .session_config_request(
+                "set_permission_mode".into(),
+                object([("sessionKey", "".into()), ("mode", "plan".into())]),
+            )
+            .await
+            .expect_err("#1872 a blank-keyed turn is busy for permission");
+        negative_assert_eq!(
+            error.code.as_str(),
+            "SESSION_BUSY",
+            "#1872 the blank key answers busy for permission"
+        );
+        negative_assert_eq!(
+            error_text(&error),
+            "Cannot change permission mode during an active turn.",
+            "#1872 the blank key keeps permission's busy message"
+        );
+        r.owner.end_turn(&"".into(), Some(&run), Some(&reservation));
         teardown(&r).await;
     }
 
