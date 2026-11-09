@@ -56,6 +56,7 @@ mod budget;
 mod connection;
 mod execution;
 pub mod modules;
+pub mod deployment;
 mod recovery;
 
 use connection::Connection;
