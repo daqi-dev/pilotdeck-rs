@@ -16,6 +16,8 @@ the test that must die:
   `SESSION_NOT_FOUND` refusal also wipes the rows it must keep.
 - `output-style-clear-before-not-found`: only the output-style clear runs
   before the transcript check, so the refusal wipes that row alone.
+- `thinking-clear-before-not-found`: only the thinking clear runs before
+  the transcript check, so the refusal wipes that row alone.
 
 Each mutant compiles before its exact test runs. Every case is reported, then
 restoration and all statuses determine the exit code; never bypass HEAD.
@@ -99,6 +101,24 @@ mutations = [
      '        self.session_overrides.clear_output_style(&key);',
      CFG + 'session_delete_not_found_keeps_the_sdk_session_state',
      "#2392 the refusal keeps the session's output-style selection"),
+    # The thinking clear alone runs before the transcript check (fix-r3, the
+    # second half's own row, the symmetric twin of the output-style one): the
+    # refusal wipes that row while the MCP, rules and output-style rows
+    # survive, so the test dies at its own assertion.
+    ('thinking-clear-before-not-found', SESSION_DIR,
+     '// Close the live session first so the writer drains before we delete.\n'
+     '        self.owner\n'
+     '            .close(&key)\n'
+     '            .await\n'
+     '            .map_err(|e| RequestError::new(e.to_string()))?;',
+     '// Close the live session first so the writer drains before we delete.\n'
+     '        self.owner\n'
+     '            .close(&key)\n'
+     '            .await\n'
+     '            .map_err(|e| RequestError::new(e.to_string()))?;\n'
+     '        self.session_overrides.clear_thinking(&key);',
+     CFG + 'session_delete_not_found_keeps_the_sdk_session_state',
+     "#2392 the refusal keeps the session's thinking override"),
 ]
 # Every bound assertion lives verbatim in the scanned source; each needs its
 # own pin or the completeness rule refuses the run (#2065 shape).
@@ -107,6 +127,7 @@ LITERAL_ANCHORS = [
     (SESSION_DIR, "#2392 delete drops the session's thinking override"),
     (SESSION_DIR, "#2392 delete drops the session's output-style selection"),
     (SESSION_DIR, "#2392 the refusal keeps the session's MCP permission overrides"),
+    (SESSION_DIR, "#2392 the refusal keeps the session's thinking override"),
     (SESSION_DIR, "#2392 the refusal keeps the session's output-style selection"),
 ]
 
@@ -121,6 +142,7 @@ EXPECTED_NAMES = (
     'output-style-clear-removed',
     'clear-before-not-found',
     'output-style-clear-before-not-found',
+    'thinking-clear-before-not-found',
 )
 
 
@@ -178,19 +200,21 @@ def main():
     # `specs/negative-controls/README.md`.
     try:
         registered(mutations, EXPECTED_NAMES)
-    except ValueError as error:
+    except (ValueError, OSError) as error:
         refuse(f'mutation roster drifted: {error}')
     if args == ['--check']:
         # Guard first (native-config shape): it reports an unreadable scanned
         # source as a clean refusal, while the anchor count probe below would
-        # raise a bare OSError on the same tree. A stale anchor reaches this
-        # branch as a ValueError, refused the same #1433 way so --check never
-        # reports "ran, not green" (rc 1) for a run that never started.
+        # raise a bare OSError on the same tree. A stale anchor is a
+        # ValueError, and a source that becomes unreadable between the two
+        # reads is an OSError (#297 r7 shape) -- both are refused the same
+        # #1433 way so --check never reports "ran, not green" (rc 1) for a
+        # run that never started.
         try:
             check_literal_anchors(selected_rows, bound_rows=every_row)
             for case in selected_rows:
                 mutate(case, case.path.read_text())
-        except ValueError as error:
+        except (ValueError, OSError) as error:
             refuse(str(error))
         print(f'#2392 {len(selected_rows)} mutation anchors OK; '
               f'{len(LITERAL_ANCHORS)} literal anchors OK')
