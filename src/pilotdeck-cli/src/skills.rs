@@ -720,6 +720,12 @@ mod tests {
                 .as_str()
                 .expect("#2170 probe case resolved");
             let language = lang.split(['.', '@', '_']).next().unwrap_or("");
+            // #2170 (minimax boundary#1): `starts_with("")` is always true, so
+            // a row without a language subtag would audit as vacuously fine.
+            assert!(
+                !language.is_empty(),
+                "#2170 {lang}: probe row needs a language subtag"
+            );
             assert!(
                 resolved.starts_with(language),
                 "#2170 {lang}: resolved {resolved:?} keeps the row language {language:?}"

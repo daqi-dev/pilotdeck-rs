@@ -136,9 +136,11 @@ jobs:
           # 非零退出；若有人删掉 fail-closed 分支，--self-check 立即变红。
           # 今后新增带 --check 的脚本按需补同一接口，本步不强制。
           # #2140 fix-r2：skills-fr-ca-probe 接入同一接口（评审 sibling#1）。
+          # #2170 fix-r3：native-collation 补齐 --self-check 后接入（DS r1 sibling#2）。
           for script in src/pilotdeck-cli/tests/fixtures/sdk-decode-budget/negative_controls.py \
                         src/pilotdeck-cli/tests/fixtures/sdk-stdin/negative_controls.py \
-                        src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py; do
+                        src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py \
+                        src/pilotdeck-gateway/tests/fixtures/native-collation/negative_controls.py; do
             python3 -I "$script" --self-check
           done
       # #1595 / #1594：`.gitleaks.toml` 的值级放行必须是 regexTarget="secret" + ^…$ 锚定

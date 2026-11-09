@@ -909,6 +909,24 @@ fn fr_ca_script_tag_follows_the_default_spelling_not_the_explicit_one() {
             "#132 a non-Latin script does not get fr-CA's backward secondary"
         );
     }
+    // #2170 (DS r1 sibling#3 / minimax boundary#5): pin the explicit spelling
+    // on the same measured signs — `new Intl.Collator("fr-Cyrl-CA")` resolves
+    // `fr` and orders these pairs like generic fr (measured v22.22.0 /
+    // ICU 78.2, `_tmp/20261109-issue-2140-2170/r1/round/S2-RESULT.md`), so a
+    // mutant repairing the explicit spelling goes red here too.
+    let explicit_cyrillic = node_explicit_collator(&cyrillic).unwrap();
+    for (left, right, node_sign) in [
+        ("coté", "côte", std::cmp::Ordering::Less),
+        ("côte", "coté", std::cmp::Ordering::Greater),
+        ("cote", "côte", std::cmp::Ordering::Less),
+        ("coté", "cote", std::cmp::Ordering::Greater),
+    ] {
+        assert_eq!(
+            explicit_cyrillic.compare(left, right),
+            node_sign,
+            "#2170 explicit fr-Cyrl-CA orders the recorded pairs like generic fr"
+        );
+    }
     assert_ne!(
         default_cyrillic.compare("coté", "côte"),
         default.compare("coté", "côte"),
