@@ -147,10 +147,10 @@ enum LeaseGuard {
     /// lexical spelling in allowedReadFiles (composer :182-183).
     Resolved(PathBuf),
     /// The path is lexically inside the lease root but does not resolve
-    /// (missing file / dangling symlink — a lease TTL cleanup race): the
-    /// attachment becomes a TS-shaped not-found diagnostic instead of
-    /// failing the whole turn. A missing lease root (no uploads yet) takes
-    /// the same branch, never a panic.
+    /// (missing file / dangling symlink — a lease TTL cleanup race — or its
+    /// own canonicalize failing, #1629): the attachment becomes a TS-shaped
+    /// not-found diagnostic instead of failing the whole turn. A missing
+    /// lease root (no uploads yet) takes the same branch, never a panic.
     Unresolved(std::io::Error),
 }
 
@@ -165,9 +165,16 @@ enum LeaseGuard {
 /// root (missing, swapped outside the project, or its own canonicalize
 /// failing, P0-a/#1459) all soften into the TS-shaped not-found branch the
 /// same way a missing lease file (the TTL cleanup race, the TS stat ENOENT)
-/// does: the TS composer never rejects a whole turn over a path. Only a
-/// canonicalization failure of the path itself with a non-`NotFound` errno
-/// under a valid root (P2) still rejects the turn.
+/// does: the TS composer never rejects a whole turn over a path. #1629
+/// completes the set: a canonicalization failure of the path itself under a
+/// valid root (ELOOP, ENOTDIR, EACCES, …) softens the same way — the TS
+/// resolver's stat try/catch has no errno filter, so *any* stat failure
+/// becomes a not-found diagnostic (AttachmentResolver.ts:131-144, :188-201,
+/// :290-303) — and no path-inspection failure of this guard rejects the
+/// turn anymore. The `Err` half of the `Result` stays for the
+/// attach-followups-a negative controls, whose mutations restore each
+/// softened branch's pre-softening hard-failure shape (`Err(failure(..))`)
+/// as compiling runtime mutants; no production arm below returns it.
 fn lease_guard(
     path: &str,
     lexical_roots: &[PathBuf],
@@ -208,14 +215,11 @@ fn lease_guard(
                 std::io::ErrorKind::NotFound,
                 "attachment resolved outside the permitted lease directory",
             ))),
-            // P2: a missing file (lease TTL cleanup race) is the TS stat
-            // ENOENT — a not-found diagnostic, never a whole-turn failure.
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                Ok(LeaseGuard::Unresolved(error))
-            }
-            Err(error) => Err(failure(format!(
-                "Attachment lease path cannot be resolved: {error}."
-            ))),
+            // #1321's TTL-cleanup race (the TS stat ENOENT) and #1629's
+            // last hard failure (any other canonicalize errno of the path
+            // itself — ELOOP, ENOTDIR, EACCES, …) soften identically: the
+            // TS resolver catches every stat failure, whatever its errno.
+            Err(error) => Ok(LeaseGuard::Unresolved(error)),
         },
     }
 }
@@ -921,16 +925,23 @@ pub(super) fn compose_attachment_turn(
                 if no_resolver {
                     continue;
                 }
-                // A lease TTL cleanup race becomes a TS-shaped not-found
-                // diagnostic, not a whole-turn failure.
+                // A lease TTL cleanup race, an unavailable root, a symlink
+                // escape, or a canonicalize failure of the path itself
+                // (#1629) all become the same TS-shaped not-found
+                // diagnostic, never a whole-turn failure.
                 diagnostics.push(attachment_not_found(entry, &entry.path, &error).into());
                 continue;
             }
             Err(rejected) => {
-                // #1464: the only remaining rejection is the P2 internal
-                // error (a non-NotFound canonicalize failure of the path
-                // itself under a valid root) — audio and a content-produced
-                // attachment stay silent.
+                // #1629: no `lease_guard` arm returns `Err` anymore — every
+                // path-inspection failure softens above (the TS resolver's
+                // stat try/catch turns any stat failure into a not-found
+                // diagnostic). The arm stays so the attach-followups-a
+                // negative controls can restore a softened branch's
+                // hard-failure shape as a compiling runtime mutation; if
+                // production ever reaches it, the old rejection semantics
+                // apply (audio and a content-produced attachment stay
+                // silent) rather than a silent fallthrough.
                 if no_resolver {
                     continue;
                 }
