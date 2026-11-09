@@ -192,8 +192,14 @@ compile-summary；same-json / mode-routing / 无处理器入口同样在守卫�
 `src` 这类目标同样在领取证据目录之前以 2 拒跑——这两个入口是直接 `try:
 target_environment(...) except RuntimeError: refuse(...)`，效果等价于
 `refuse_unusable_target()`（同一份取值规则，只是没有包成谓词）；
-`cli-parity-mock-gateway` 与 `same-json-surfaces` 不编译 Cargo，**四档全豁免**，由登记表
-守卫断言它们没有任何 target 读取；
+`cli-parity-mock-gateway` 与 `same-json-surfaces` 自身源码不读 target（登记表守卫断言无任何
+读取形态），**四档全豁免**——但两者委托的 `mutating_sources` 窗口会经 `_ensure_workspace_scanner`
+读 `CARGO_TARGET_DIR`（未设置取共享默认、空串/纯空白/dot 在共享规则处拒绝）且冷主机上可能 cargo 编译
+扫描器，故「不编译 Cargo」不成立（#2552）：「未设置」会启动矩阵 300s 子进程跑不完的完整 guarded 批；
+空串/纯空白/dot 在 same-json-surfaces 经 #2431 started 旗标以 rc 2 拒（#2552 实测：rc 2、stderr 点名
+target、无证据目录，实际可矩阵承载——纳入矩阵待登记表支持「自身源码不调 target_environment」的
+形态，#2552 跟进）、在 cli-parity-mock-gateway 以启动异常逐行收成 INVALID 证据后退 1（证据目录已领，
+留档不撤），均非入口自身的 target 守卫；
 **树脏 / 领锁超时 / oracle 读不了**三条，自管入口里 `settings-gateway`（`entered` 旗标）、
 两个 `issue-297` 入口（编译预检的 `guard_failed` → 2，只覆盖源码守卫、不含 oracle 读取）与
 `same-json-surfaces`（#2422 起的 `started` 旗标，#2431 落了 rc2 回归钉）已实现
@@ -215,6 +221,9 @@ target_environment(...) except RuntimeError: refuse(...)`，效果等价于
 （未设置 / 空串 / 纯空白 / `.` 四档）、目录已存在三条矩阵覆盖全族。豁免按**模式**登记
 （`interaction-values` / `turn-submit-admission` 只豁免「未设置」，由
 `negative_process.target_environment` 补共享 target；`cli-parity-mock-gateway` 与
-`same-json-surfaces` 不编译 Cargo，四档都无意义），每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
+`same-json-surfaces` 自身不读 target、四档全豁免——两者委托的 `mutating_sources` 窗口实际会读
+`CARGO_TARGET_DIR` 并可能冷启动 cargo 编译扫描器，非「不编译 Cargo」（#2552），其中 same-json 的
+空串/纯空白/dot 实为 rc 2 可承载、纳入矩阵待登记表新形态（#2552 跟进），逐条理由见登记表），
+每条带理由与「理由所依赖的源码事实」断言（`target_environment` 必须是真调用，
 AST 判；豁免多档的入口不得出现任何 target 读取形态），加个名字不能静默缩小矩阵。
 共享执行器的四分数值仍以 `tests/fixtures/README.md` 为准，不与本节互相替代。
