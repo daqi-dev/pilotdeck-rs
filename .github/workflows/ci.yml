@@ -450,6 +450,43 @@ jobs:
         with:
           # --base needs merge-base history for PRs and merge queue commits.
           fetch-depth: 0
+      # 盲区⑤（#2762 防复发，人批 2026-11-10）：runner 镜像漂移守卫。#2763 把全部
+      # runs-on 钉回 ubuntu-24.04，但「标签被改回漂移标签 / 24.04 标签被平台重指到
+      # 新镜像」都没有任何机检——#2762 那次是三个测试稳定红、merge queue 整批被踢、
+      # 约一天才定位到镜像。本步 fail-fast：/etc/os-release 的 VERSION_ID 与下方
+      # expected 不一致立即红，错误行同打实际与期望两个版本。放在 rust job 的
+      # checkout 之后第一步：#2762 的三个红测试都在本 job，漂移先红在这里，别等
+      # 全量测试跑完才红。期望值单点定义在 expected 变量，改钉只动这一行
+      # （与全部 runs-on 一起改）。同步反向断言：本文件非注释行不得再出现漂移
+      # 标签——#2763 钉版只靠人眼盯着，改回去没有闸门会红。
+      - name: runner 镜像漂移守卫（#2762）
+        working-directory: .
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="24.04"
+          os_release=/etc/os-release
+          actual=""
+          if [ -r "$os_release" ]; then
+            . "$os_release"
+            actual="${VERSION_ID:-}"
+          fi
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::runner 镜像漂移：实际 OS 版本=\"${actual:-<读不到>}\"，钉定=\"$expected\"（#2762：全仓稳定红先查 runner 镜像，别逐个测试倒查）" >&2
+            exit 1
+          fi
+          echo "runner 镜像守卫通过：OS 版本 $actual == 钉定 $expected"
+          # 非注释行不得出现漂移标签（整行注释放行——文件头的 #2762 事故记录保留）。
+          # needle 用拼接写法，避免守卫自身的文本命中自己。
+          needle='ubuntu''-latest'
+          hits="$(grep -nF -- "$needle" .github/workflows/ci.yml \
+                  | grep -vE '^[0-9]+:[[:space:]]*#' || true)"
+          if [ -n "$hits" ]; then
+            echo "::error::ci.yml 非注释内容出现漂移标签 \"$needle\"（#2762：runs-on 必须钉 ubuntu-24.04）" >&2
+            printf '%s\n' "$hits" >&2
+            exit 1
+          fi
+          echo "ci.yml 漂移标签反向断言通过：非注释行无 $needle"
       # rustup 读仓库根的 rust-toolchain.toml，装锁定的版本与 fmt/clippy
       - shell: bash
         run: rustup show active-toolchain
