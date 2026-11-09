@@ -67,3 +67,16 @@ guard、连接级头预算、断掉的 forced-response 接线、提前停的读�
 字节校验，全量跑完汇总 KILLED / SURVIVED / INVALID，任一非 KILLED 即非零退出：
 `python3 negative_controls_1232.py <新输出目录> [变异名 ...]`；`--check-anchors` 校验
 锚点未过期。长套件交协调者提交后宿主执行。
+
+## 负控（#2152 fix-r2）
+
+`negative_controls_2152.py`（解析层拒绝的 keep-alive 收尾）：同一套
+`mutating_sources` / `run_owned` / `wait_for_slot` / `classify` / `passed` 约定。
+两个变异各把一处 fix-r2 收尾还原成修复前形态（拒绝不收尾——计时器停在
+`Request` 相位、`expired()` 恒 `None`、在途闩不清，写阻塞的 400 无任何计时器
+可关连接；以及只 `response_finished` 不复位 lifecycle——上一响应未 flush 的
+keep-alive 广告不被顶掉），绑 `parser_rejection_finishes_the_keepalive_lifecycle`
+的 `#2152` 断言。评审要求的完整「流水线 + 不读对端」复现是已登记的 P2 跟进，
+不在状态级变异范围：
+`CARGO_TARGET_DIR=... python3 negative_controls_2152.py <新输出目录> [变异名 ...]`；
+`--check-anchors` 校验锚点未过期。长套件交协调者提交后宿主执行。
