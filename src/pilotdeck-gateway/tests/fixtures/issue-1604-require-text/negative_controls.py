@@ -6,7 +6,8 @@ production files that are already on HEAD. Until the #1604 tests themselves
 are committed, the shared source guard refuses to run (the whole src tree
 must equal HEAD), so the coordinator runs this after the commit lands.
 
-Two mutants (taskbook §2.3, PR #1593 review comment #1 item 3):
+Three mutants (taskbook §2.3, PR #1593 review comment #1 item 3; third added
+for the r2 ledger machine-criteria requirement):
   - not-a-string-folds-to-domain: the `TrimGuard::NotAString` arm of
     `require_text` folds back into the domain error instead of the boundary's
     `input.<key>?.trim is not a function` TypeError — the shape the steer /
@@ -15,6 +16,11 @@ Two mutants (taskbook §2.3, PR #1593 review comment #1 item 3):
     `sessionKey` before `entry`, so a nullish params throws naming the wrong
     field (TS reads `entry` first, InProcessGateway.ts:2837 →
     GatewayInteractionCoordinator.ts:128).
+  - item-id-guard-reintroduced: `item_id_string` regains a self-invented
+    non-string guard instead of the unchecked `String()` coercion — the
+    response frame and mailbox identity of every non-string steer cell
+    (5 / [1,2] / {toString:null} / absent / null, ledger
+    A7.2-STEER-INPUT-001) break.
 
 Usage: negative_controls.py --check | OUT_DIR [mutation ...]
 """
@@ -28,6 +34,7 @@ from negative_suite import Case, run_cases
 
 METHODS_MOD = root / 'src/pilotdeck-gateway/src/native_process/methods/mod.rs'
 PERMISSION = root / 'src/pilotdeck-gateway/src/native_process/methods/permission.rs'
+STEER = root / 'src/pilotdeck-gateway/src/native_process/methods/steer.rs'
 
 TEST = 'native_process::methods::tests::'
 
@@ -58,6 +65,19 @@ mutations = [
      '                let entry = match super::input_property(&params, "sessionKey")?.as_ref() {',
      TEST + 'noncanonical_input_forms_match_ts_probes',
      '#1465 grant accepts a non-canonical sessionKey'),
+    # r2 (DS sibling#2 / ledger A7.2-STEER-INPUT-001): the steer item id must
+    # keep the unchecked `String()` coercion — reinstating a self-invented
+    # non-string guard is the shape this family removed (#1604).
+    ('item-id-guard-reintroduced', STEER,
+     'fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {\n'
+     '    js_value::to_string_units(value)',
+     'fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {\n'
+     '    if !matches!(value, JsValue::String(_)) {\n'
+     '        return Err(RequestError::new("steer_turn: itemId must be a string"));\n'
+     '    }\n'
+     '    js_value::to_string_units(value)',
+     TEST + 'steer_item_id_coerces_to_text_for_the_mailbox_identity',
+     '#1604 non-string item ids stay Ok'),
 ]
 
 

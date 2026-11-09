@@ -51,7 +51,10 @@ fn turn_mismatch(field: &'static str) -> JsValue {
 /// ledger A7.2-STEER-INPUT-001. Because the coerced text also keys the
 /// `seen` / `cancelled` sets, cross-type same-text interleavings alias in
 /// Rust while TS keys by the raw wire value — the interleaved response
-/// frames may differ (ledger §交错 A/B).
+/// frames may differ (ledger §交错 A/B); a missing key folds to the literal
+/// text "undefined" and an explicit `null` to "null" (probe
+/// `_tmp/20261109-review-2382-r2-ds/ts-probe/output5.txt`), so each also
+/// aliases a genuine string id of that spelling.
 fn item_id_string(value: &JsValue) -> Result<JsString, RequestError> {
     js_value::to_string_units(value)
         .map(JsString::from_utf16)
