@@ -54,12 +54,16 @@ use tokio::net::TcpStream;
 use super::super::protocol::{ChannelLog, ChannelStartDeps};
 use super::*;
 
-/// Ports not used by the gold-master cases (18800–18856, 18929, 18941), the
-/// WeCom lane (18993–18998), or the wecom-callback golden replay segment
-/// (18900–18921). The feishu lane registers 18960–18999 — the pre-existing
-/// 18973 overlap is tracked in #2446 (cross-lane fixed-port follow-up).
-const PORT_HALF_HEAD: u16 = 18971;
-const PORT_POSITIVE: u16 = 18972;
+/// Ports sit in the free gap above the wecom-callback golden replay segment
+/// (18900–18921; 18922–18923 are the sms 404/200 pins) and below the feishu
+/// segment (18960–18999: the feishu oracle replay binds 18960–18972, its
+/// pins bind 18973/18980/18990–18993). fix-r5 moved 18971/18972 here —
+/// they previously sat on feishu replay cases (same class as the 18904
+/// wecom overlap fixed in fix-r4). 18973–18979 remain inside the feishu
+/// registered range; only 18973 has an actual cross-lane bind (the feishu
+/// NULL_PIN_ROUTER), tracked in #2446.
+const PORT_HALF_HEAD: u16 = 18924;
+const PORT_POSITIVE: u16 = 18925;
 const PORT_DEFAULT_WIRING: u16 = 18973;
 const PORT_DEFAULT_DEADLINE: u16 = 18974;
 const PORT_STOP_DRAIN: u16 = 18975;

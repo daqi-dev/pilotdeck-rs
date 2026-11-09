@@ -5328,7 +5328,7 @@ async fn timed_out_confirmation_send_does_not_lock_the_chat() {
 /// hang-vs-destroy deviation is ledgered in `A8.3-CH-SMS-007`.
 #[tokio::test]
 async fn json_null_body_is_unhandled_destroy() {
-    const PORT: u16 = 18901;
+    const PORT: u16 = 18926;
     let record: Arc<SyncMutex<Record>> = Arc::new(SyncMutex::new(Record::default()));
     let unhandled_record = record.clone();
     let record_unhandled: UnhandledRecorder = Arc::new(move |message| {
@@ -5340,6 +5340,11 @@ async fn json_null_body_is_unhandled_destroy() {
     });
     // #2257 fix-r4 (review r4 P2a): same preflight as the http10 pins — a
     // NoopHandle fallback on a busy port would test a foreign listener.
+    // #2257 fix-r5 (review r5 anthropic-concurrency P1): 18901 previously
+    // sat inside the wecom-callback golden replay segment (18900–18921),
+    // held only by the fixture's documented courtesy of skipping 18901 —
+    // moved out to the free gap above that segment, same policy as the
+    // 200/404 pins (18923/18922) and the head-timeout ports (18924/18925).
     ensure_replay_port_free(PORT).await;
     let channel = SmsChannel::new(SmsChannelOptions {
         extra: Some(to_js_object(&json!({
