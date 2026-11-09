@@ -2701,15 +2701,16 @@ class SameJsonSurfaces(unittest.TestCase):
         # test_terminate_cleanly_raises_the_signal_exit_code (#2552, DS
         # boundary#1): this call-site count alone cannot tell a gutted body
         # from a real one.  The depth-only count also cannot tell *where*
-        # the call sits: one() runs at the same 12-space depth, so the call
-        # is additionally pinned by adjacency to the mutating_sources entry
+        # the call sits: statements inside one()'s try block sit at the
+        # same 12-space depth, so the call is additionally pinned by
+        # adjacency to the mutating_sources entry
         # line -- moving it past the restore window (DS r5 sibling#1, the
         # same position-semantics gap the clock pin closed in r4) goes red.
         marker = '#2425 the guarded run installs terminate handlers before mutating'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
             source = path.read_bytes().decode()
-            self.assertTrue(source.count('            install_terminate_handlers()\n') == 1
+            self.assertTrue(source.count('            install_terminate_handlers()') == 1
                             and source.count('\n            install_terminate_handlers()\n'
                                             '            with mutating_sources(root, GUARDED_PATHS,\n') == 1
                             and source.count('signal.signal(signal.SIGTERM, terminate_cleanly)') == 1, marker)
@@ -2934,9 +2935,12 @@ class SameJsonSurfaces(unittest.TestCase):
         # instead, so the anchor names the guarded branch, DS r4
         # boundary#2), or by duplicating it inside the loop body, where
         # a per-case reset would silently rearm the budget (unique
-        # count with no line terminator, so a trailing ';' or comment
-        # on the duplicate cannot dodge it, DS r5 boundary#1, on top of
-        # the r4 any-indentation form; the adjacency's clock and for
+        # count with a leading space and no line terminator, so a
+        # duplicate with a trailing ';' or comment cannot dodge it,
+        # DS r5 boundary#1, while a prefix-named variable such as
+        # saved_clock cannot false-red it, Claude r5 boundary#1 --
+        # dropping the r4 form's terminator alone opened that hole;
+        # the adjacency's clock and for
         # lines are 16-space with-body lines and its budget-check line
         # is a 20-space loop-body line, DS r4 simplify#2 + DS r5
         # boundary#2).
@@ -2960,7 +2964,7 @@ class SameJsonSurfaces(unittest.TestCase):
                 and source.count("results.append({'name': row[0], 'status': 'INVALID',") == 1
                 and source.count("' by name'})\n                        continue") == 1
                 and source.count('mutating_sources(root, GUARDED_PATHS,') == 1
-                and source.count('clock = time.monotonic()') == 1
+                and source.count(' clock = time.monotonic()') == 1
                 and source.count('\n                clock = time.monotonic()\n'
                                 '                for row in selected:\n'
                                 '                    if lease_budget_left(clock, '
