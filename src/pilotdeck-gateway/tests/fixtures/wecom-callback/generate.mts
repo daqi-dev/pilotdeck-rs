@@ -420,7 +420,9 @@ const definitions: Case[] = [
     // `webhookPort`, and both suites share the `pilotdeck-gateway` lib test
     // binary — an overlap would turn this case's expected `ECONNREFUSED` into
     // a connection to the sms listener (a false FAIL, or a false PASS for the
-    // missing-config path).
+    // missing-config path). The sms tenant on 18901 moved off to 18926
+    // (outside this segment) in #2257 fix-r5; keeping 18921 preserves the
+    // avoidance of the whole 18800–18921 span.
     config: { corpId: CORP, token: TOKEN, encodingAesKey: AESKEY, port: 18921 },
     qyapi: [], turns: [], ...noHelpers,
     steps: [
