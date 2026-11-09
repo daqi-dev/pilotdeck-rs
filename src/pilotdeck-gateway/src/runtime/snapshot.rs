@@ -717,6 +717,12 @@ mod tests {
     use crate::storage::WorkspaceSnapshotConfig;
     use std::io;
 
+    /// Every snapshot method on the WS surface. The dispatch tests pin their
+    /// denominators against this one list so deleting or renaming a method,
+    /// or shrinking a loop, fails the tests instead of silently narrowing
+    /// coverage (#2308 review P2s).
+    const SNAPSHOT_WS_METHODS: [&str; 3] = ["snapshot_list", "snapshot_get", "snapshot_restore"];
+
     #[test]
     fn mkdtemp_errno_uses_the_method_whitelist() {
         let missing = mkdtemp_error(
@@ -1143,6 +1149,7 @@ mod tests {
         fs::create_dir_all(&home).expect("#2194 create home");
         let gateway =
             SnapshotGateway::new(None, SnapshotProjects::new(&home, &scratch.0), "/fallback");
+        let mut routed: Vec<&str> = Vec::new();
         for (method, input, code) in [
             (
                 "snapshot_list",
@@ -1180,7 +1187,14 @@ mod tests {
                 "DialogGatewayError",
                 "#2194 {method} dispatch error name"
             );
+            routed.push(method);
         }
+        // #2308 fix-r2: pin the executed denominator — take/filter/continue
+        // on the loop, or deleting/renaming a case, must fail here.
+        assert_eq!(
+            routed, SNAPSHOT_WS_METHODS,
+            "#2194 every snapshot method must keep its failure routing covered"
+        );
         assert!(
             gateway.dispatch("memory_list", &params(&[])).is_none(),
             "#2194 non-snapshot methods stay forwardable"
@@ -1237,27 +1251,30 @@ mod tests {
                 params(&[("projectKey", "/p".into()), ("snapshotId", "s".into())]),
             ),
         ];
-        // #2308: pin the denominator — deleting or renaming any case must fail
-        // this test, not just shrink the loop silently (review P2-1).
-        assert_eq!(
-            forward_cases.iter().map(|(m, _)| *m).collect::<Vec<_>>(),
-            ["snapshot_list", "snapshot_get", "snapshot_restore"],
-            "#2308 the Forward denominator must keep all three snapshot methods"
-        );
+        // #2308: pin the executed denominator — take/filter/continue on the
+        // loop, or deleting/renaming any case, must fail here (review P2s).
+        let mut forwarded: Vec<&str> = Vec::new();
         for (method, input) in forward_cases {
             assert_eq!(
                 gateway.dispatch(method, &input),
                 Some(SnapshotDispatch::Forward),
                 "#2308 {method} must forward a requires_host boundary to the Node host"
             );
+            forwarded.push(method);
         }
+        assert_eq!(
+            forwarded, SNAPSHOT_WS_METHODS,
+            "#2308 all three snapshot methods must actually hit the Forward arm"
+        );
     }
 
     /// A8.2-pr2 keeps the native component unregistered: default dispatch must
     /// keep forwarding all three methods to the TS host.
     #[test]
     fn snapshot_methods_stay_outside_default_dispatch() {
-        for method in ["snapshot_list", "snapshot_get", "snapshot_restore"] {
+        // #2308 fix-r2: iterate the shared pinned list instead of a fourth
+        // local copy of the method names.
+        for method in SNAPSHOT_WS_METHODS {
             let request = params(&[
                 ("type", "request".into()),
                 ("id", "1".into()),
