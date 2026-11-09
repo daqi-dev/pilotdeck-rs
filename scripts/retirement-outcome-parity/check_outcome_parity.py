@@ -100,6 +100,13 @@ EXPECTED_POSITIVE_IDS = frozenset()
 EXPECTED_CONTROLS = len(EXPECTED_CONTROL_IDS)
 EXPECTED_POSITIVES = len(EXPECTED_POSITIVE_IDS)
 
+# 判决词表（r4 sibling#1）：单一登记点，执行器（negative_controls.py）与
+# self_check.py 同源读 CHECK 取这份，不各抄字面量——词表是「折叠 + 计数 +
+# 期望 counts」三方共用的键集，任何一侧漏改都会让词表外判决重新落进
+# 「两个零」空真（#2378 正文的形态）。
+NEGATIVE_VERDICTS = ('KILLED', 'SURVIVED', 'INVALID')
+POSITIVE_VERDICTS = ('HELD', 'BROKEN', 'INVALID')
+
 # —— 登记事实（diffs/A8.6-RETIREMENT-OUTCOME-PARITY-001.md「基线依据」）——
 SCHEMA = 'retirement-outcome-parity/ts-oracle v1'
 BASELINE_REVISION = 'cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85'

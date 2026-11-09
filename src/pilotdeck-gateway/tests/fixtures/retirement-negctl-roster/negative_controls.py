@@ -94,7 +94,7 @@ out = claim_dir(sys.argv[1])
 runner = apparatus / 'negative_controls.py'
 
 
-def judge(name, rc, log, summary_text):
+def judge(name, rc, log, summary_text, summary_published):
     """单条判杀：全部绑定到 #2378 守卫的专属可观测输出。"""
     if name == 'baseline':
         # 正控：未变异的一轮必须照旧 PASS（尺子改动要真实数据复算）。
@@ -114,11 +114,12 @@ def judge(name, rc, log, summary_text):
         side = ('assembled positive ids' if name == 'roster-extra-pc1'
                 else 'assembled control ids')
         if (rc == 2 and side in log and 'do not match the registered roster' in log
-                and named in log and not summary_text):
+                and named in log and not summary_published):
             return 'KILLED', '#2378 roster refusal fired (rc=2, no summary published)'
-        if summary_text:
-            # 「拒绝＝不留下看起来像跑完的证据」是判杀契约的一半（r3 boundary#1）：
-            # 守卫若挪到 summary 写盘之后仍 rc=2 打同一行原文，这里必须红。
+        if summary_published:
+            # 「拒绝＝不留下看起来像跑完的证据」是判杀契约的一半（r3 boundary#1）。
+            # 判据用「文件是否发布」（r4 boundary#1），不用内容真值——已发布的
+            # 0 字节 summary.json 也是跑过的证据，`not summary_text` 会放过它。
             return 'SURVIVED', (f'roster refusal published a summary anyway '
                                 f'(refusal must leave no evidence of a run)')
         return 'SURVIVED', (f'expected rc=2 with the #2378 roster refusal naming '
@@ -142,6 +143,30 @@ def judge(name, rc, log, summary_text):
 
 rows = []
 install_terminate_handlers()
+# 运行时 pin（r4 sibling#2）：处理器装上才算数——删掉上面的调用点，getsignal
+# 仍是默认处置，这里直接红（same-json-surfaces 三件套的等价物：那边是源码
+# 计数断言 + 自变异，本夹具调用点 0 缩进锚点难写，直接验生效更强）。
+for _sig_name in ('SIGTERM', 'SIGHUP', 'SIGQUIT'):
+    _sig = getattr(signal, _sig_name, None)
+    if _sig is not None and signal.getsignal(_sig) is not terminate_cleanly:
+        print(f'self-check: terminate handler for {_sig_name} not installed',
+              file=sys.stderr)
+        raise SystemExit(2)
+# judge 合成自检（r4 boundary#2 + sibling#3）：「拒绝不得留下跑完的证据」分支
+# 不能只靠读码论证——既有 5 行变异全部走「不发布 summary」路径，删掉该分支
+# 仍 5/5 KILLED。合成输入钉红绿两侧：同一拒绝形状，未发布 → KILLED；已发布
+# （0 字节与 JSON 两形）→ SURVIVED。
+_refusal_log = ('negative_controls: assembled control ids [...] do not match '
+                'the registered roster [...] (#2378); refusing to summarize '
+                'an unexpected control set (N5)')
+if judge('roster-rename-n5', 2, _refusal_log, None, False)[0] != 'KILLED':
+    print('self-check: a clean refusal must judge KILLED', file=sys.stderr)
+    raise SystemExit(2)
+for _text in ('', '{"status": "PASS"}'):
+    if judge('roster-rename-n5', 2, _refusal_log, _text, True)[0] != 'SURVIVED':
+        print('self-check: a refusal that published a summary must judge '
+              'SURVIVED', file=sys.stderr)
+        raise SystemExit(2)
 with mutating_sources(root, sorted({path for _name, path, _old, _new in run_rows
                                     if path is not None})) as snapshots:
     # 锚点过期必须报错退出，绝不记成 SURVIVED：变异前先核每个锚在当前源里恰一次。
@@ -166,9 +191,10 @@ with mutating_sources(root, sorted({path for _name, path, _old, _new in run_rows
             rc, log = result.returncode, result.stdout + result.stderr
             summary_text = None
             published = out_dir / 'summary.json'
-            if published.is_file():
+            summary_published = published.is_file()
+            if summary_published:
                 summary_text = published.read_text(encoding='utf-8')
-            status, reason = judge(name, rc, log, summary_text)
+            status, reason = judge(name, rc, log, summary_text, summary_published)
         except subprocess.TimeoutExpired:
             rc, log, status, reason = (None, '', 'INVALID',
                                        f'round timed out after {ROUND_TIMEOUT_SECONDS}s')

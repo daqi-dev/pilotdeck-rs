@@ -1315,11 +1315,12 @@ def run_positive(positive, out_root, oracle):
     return record
 
 
-# 判决词表只此一份（r3 sibling#2）：fold / tally / 期望 counts 共用同一常量。
-# 此前三处各写一份字面量——只给 fold 侧加值而漏改 tally / 期望键集，词表外判决
-# 不进任何计数键，回到 #2378 的空真形态。
-NEGATIVE_VERDICTS = ('KILLED', 'SURVIVED', 'INVALID')
-POSITIVE_VERDICTS = ('HELD', 'BROKEN', 'INVALID')
+# 判决词表只此一份（r3 sibling#2 / r4 sibling#1）：登记在 check_outcome_parity.py
+# 的单一登记点（与 EXPECTED_* 同处），本执行器的 fold / tally / 期望 counts 与
+# self_check 的期望 counts 全部同源读这里。各自写字面量时，只给一侧加值而漏改
+# 另一侧，词表外判决不进任何计数键，回到 #2378 的空真形态。
+NEGATIVE_VERDICTS = CHECK.NEGATIVE_VERDICTS
+POSITIVE_VERDICTS = CHECK.POSITIVE_VERDICTS
 
 
 def fold_verdict(record, vocabulary):
