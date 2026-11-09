@@ -1331,3 +1331,28 @@ removed, points activation removed, string-fold budget removed, and the
 production `<= 599` status bound relaxed to `<= 600`) are killed by the
 named pins and the `test_safety` 600-as-NO_HIT pin that joined the same
 round.
+fix-r14 (DS r13 boundary#1 = concurrency#1 P0, both roles independently,
+probe-verified) closed the two-fold reading of the string fold's None.
+The budget-exhaustion branches and the five-exception wrapper now return
+the module sentinel `_FOLD_STRING_UNRESOLVED`, propagated by the BinOp
+recursion *before* the operand guards (a stopped operand must not fall
+into the "is not a constant literal" face, and `len()` on the sentinel
+would raise into the wrapper and collapse the stop back into the same
+fail-open None); the interpreter's own `%` failure still returns None —
+an expression that crashes at runtime can never write a status.  The
+three consumers (`_status_key`, `_status_literals`, `_assigns_clean_status`)
+resolve the sentinel conservatively (a status key, a status literal, a
+possible clean write): over-collecting flags the function, the fail-closed
+direction.  Self-tests added: the unit polarity pin (under a spent cell
+`'sta' + 'tus'` and `'PA' + 'SS'` read as status evidence by all three
+consumers), the end-to-end padding pin (17 `report['x' * 999999] = 1`
+pads, then a rogue unregistered function writing `report['sta' + 'tus'] =
+'PA' + 'SS'` must still enter `found`), the propagation pin (a stopped
+Mod must surface as the sentinel, not as an audit crash), and per-branch
+billing pins for the string Add/Mod and value Add/Mod families the r13
+Mult pin did not cover; the file-loop and points wiring lines now bind the
+cell by identity, so an `= None` that keeps the activation counter is a
+red.  Fourteen revert mutants (consumer reverts, propagation removal,
+per-branch exhaustion-to-None, both wiring downgrades, billing deletions,
+and the `session_domain.py` floor relaxed to 99) are killed by the named
+pins and the `test_safety` 99-as-NO_HIT pin that joined the same round.
