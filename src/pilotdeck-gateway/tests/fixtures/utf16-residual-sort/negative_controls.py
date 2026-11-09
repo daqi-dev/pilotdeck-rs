@@ -17,6 +17,9 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from negative_process import (CARGO_SLOTS_WAIT_SECONDS, mutating_sources,
                                run_owned, tree_lock, wait_for_slot)
+from negative_selection import (claim_dir, missing_target, refuse,
+                                refuse_unusable_target, registered, select,
+                                verdict_exit)
 from negative_suite import Case, classify, passed, publish_summary
 
 root = Path(__file__).resolve().parents[5]
@@ -66,8 +69,30 @@ cases = [
      PREFIX + 'model_usage_provider_order_matches_ts', '#2131 modelUsageSnapshot order'),
 ]
 
+# The denominator of a run is this static roster, not `len(cases)`: with a
+# runtime denominator a deleted row shrinks the run silently and a table
+# that lost every row reports `0/0 killed` and exits 0 (#1666). Renaming or
+# dropping a mutant here is a deliberate edit that must update this tuple
+# too, in the same order as the table.
+EXPECTED_NAMES = (
+    'registry-list-folded',
+    'registry-unavailable-folded',
+    'mcp-instructions-folded',
+    'cache-tools-folded',
+    'model-usage-folded',
+)
+
 
 def main():
+    # The roster is validated before any branch, so `--check-anchors` also
+    # refuses roster drift: a renamed or dropped row with a stale
+    # EXPECTED_NAMES must not print "anchors OK" (the sdk-mcp-session-tools
+    # precedent). Roster, subset selection and target checks are refusals
+    # (exit 2, "never started"), never mistaken for a failed control (1).
+    try:
+        registered(cases, EXPECTED_NAMES)
+    except ValueError as error:
+        refuse(str(error))
     if sys.argv[1:] == ['--check-anchors']:
         failures = []
         # Hold the tree lock while reading: a sibling mutating runner may
@@ -84,14 +109,17 @@ def main():
     compile_only = '--compile-only' in sys.argv[1:]
     if not args:
         raise SystemExit('usage: --check-anchors | [--compile-only] NEW_OUTPUT_DIR [mutation ...]')
-    selected = [row for row in cases if not args[1:] or row[0] in args[1:]]
-    if not selected or (args[1:] and len(selected) != len(args[1:])):
-        raise SystemExit('#2131 unknown or duplicate mutation')
+    # No baseline row exists in this suite: each case carries its own
+    # positive control, so the selector's baseline default is turned off.
+    try:
+        selected = select(cases, args[1:], always=())
+    except ValueError as error:
+        refuse(str(error))
+    if missing_target():
+        refuse('#2131 set CARGO_TARGET_DIR to the caller-owned build tree before running')
+    refuse_unusable_target()
+    out = claim_dir(args[0])
     env = os.environ.copy()
-    if not env.get('CARGO_TARGET_DIR'):
-        raise SystemExit('#2131 caller must supply CARGO_TARGET_DIR')
-    out = Path(args[0]).resolve()
-    out.mkdir(parents=True, exist_ok=False)
     command = ['cargo', 'test', '--offline', '--manifest-path', 'src/Cargo.toml',
                '-p', 'pilotdeck-gateway', '--lib']
     results = []
@@ -161,6 +189,11 @@ def main():
                 print(f'{name}: {row["status"]}: {row["reason"]}', flush=True)
     except BaseException as error:
         reason = f'source guard: {type(error).__name__}: {error}'
+        if not results:
+            # The guard refused before the first mutation was written, so
+            # nothing was measured: a dirty tree or a lock timeout is a
+            # refusal (2), not a run that came out not-green (1).
+            refuse(reason)
         for row in results:
             row.update(status='INVALID', reason=row['reason'] + '; ' + reason)
             row['compiled'] = False
@@ -169,8 +202,8 @@ def main():
                                 status='INVALID', reason=reason, compiled=False))
             print(f'{name}: INVALID: {reason}', flush=True)
     publish_summary(out, results)
-    expected = 'COMPILED' if compile_only else 'KILLED'
-    return int(any(row['status'] != expected for row in results))
+    return verdict_exit(results, key='status',
+                        killed='COMPILED' if compile_only else 'KILLED')
 
 
 if __name__ == '__main__':
