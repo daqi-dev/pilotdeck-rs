@@ -2706,6 +2706,10 @@ class SameJsonSurfaces(unittest.TestCase):
         # adjacency to the mutating_sources entry
         # line -- moving it past the restore window (DS r5 sibling#1, the
         # same position-semantics gap the clock pin closed in r4) goes red.
+        # All three registration rows are pinned by bytes: a SIGTERM-only
+        # count let the SIGHUP/SIGQUIT hasattr blocks be deleted for a
+        # false green (DS r7 sibling#1, P1 -- the comment above claims all
+        # three signals).
         marker = '#2425 the guarded run installs terminate handlers before mutating'
         path = common.ROOT / 'src/pilotdeck-gateway/tests/fixtures/same-json-surfaces/negative_controls.py'
         try:
@@ -2713,7 +2717,9 @@ class SameJsonSurfaces(unittest.TestCase):
             self.assertTrue(source.count('            install_terminate_handlers()') == 1
                             and source.count('\n            install_terminate_handlers()\n'
                                             '            with mutating_sources(root, GUARDED_PATHS,\n') == 1
-                            and source.count('signal.signal(signal.SIGTERM, terminate_cleanly)') == 1, marker)
+                            and source.count('signal.signal(signal.SIGTERM, terminate_cleanly)') == 1
+                            and source.count('signal.signal(signal.SIGHUP, terminate_cleanly)') == 1
+                            and source.count('signal.signal(signal.SIGQUIT, terminate_cleanly)') == 1, marker)
         except (Exception, SystemExit) as error:
             self.fail(marker + ': ' + repr(error))
 
@@ -2935,11 +2941,13 @@ class SameJsonSurfaces(unittest.TestCase):
         # instead, so the anchor names the guarded branch, DS r4
         # boundary#2), or by duplicating it inside the loop body, where
         # a per-case reset would silently rearm the budget (unique
-        # count with a leading space and no line terminator, so a
-        # duplicate with a trailing ';' or comment cannot dodge it,
-        # DS r5 boundary#1, while a prefix-named variable such as
-        # saved_clock cannot false-red it, Claude r5 boundary#1 --
-        # dropping the r4 form's terminator alone opened that hole;
+        # count as a regex with a negative lookbehind and no right
+        # anchor: any delimiter-preceded duplicate -- a ';' glued to
+        # the previous statement (DS r7 boundary#1), a space, a fresh
+        # line, or a trailing ';' (DS r5 boundary#1) -- is counted,
+        # while a word-character-prefixed name such as saved_clock
+        # (Claude r5 boundary#1) or an attribute form such as
+        # self.clock is not and cannot false-red it;
         # the adjacency's clock and for
         # lines are 16-space with-body lines and its budget-check line
         # is a 20-space loop-body line, DS r4 simplify#2 + DS r5
@@ -2964,7 +2972,7 @@ class SameJsonSurfaces(unittest.TestCase):
                 and source.count("results.append({'name': row[0], 'status': 'INVALID',") == 1
                 and source.count("' by name'})\n                        continue") == 1
                 and source.count('mutating_sources(root, GUARDED_PATHS,') == 1
-                and source.count(' clock = time.monotonic()') == 1
+                and len(re.findall(r'(?<![\w.])clock = time\.monotonic\(\)', source)) == 1
                 and source.count('\n                clock = time.monotonic()\n'
                                 '                for row in selected:\n'
                                 '                    if lease_budget_left(clock, '
