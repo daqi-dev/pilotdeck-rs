@@ -3286,3 +3286,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - 钉连 HTTP（映射 IPv6、重定向重验）；落盘 `O_NOFOLLOW`；TS `full_url`/aes_key/图片解密 Err；无 context fallback。
 - **全量 lib** 4271/0；证据 `pdrs-ext/…/r15/最终报告.md`，`r15/logs/lib-full-r15.log`；提交 `b67e3f0`，未 push。
+
+### 2026-11-10 pdrs-daqi-b-channels r16（Grok r15-attach TS 六项 + 性能）
+
+- Host 非默认端口；仅 `cos_url` 跳过；坏图单条跳过；无 context `queuePendingReply`；上传 Content-Type；307/308 正文；连接池+DNS 缓存。
+- **全量 lib** 4277/0；证据 `pdrs-ext/…/r16/最终报告.md`，`r16/logs/lib-full-r16.log`；已提交，未 push。
