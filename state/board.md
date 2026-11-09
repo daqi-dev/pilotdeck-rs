@@ -5238,3 +5238,8 @@ r133 d50546fe9的4808文件SHA、HEAD、空diff及fmt零变更均核；all-targe
 ### 2026-11-09 09:23 · CLI工程任务交付（仅本机，正式阶段D待人签）
 
 用户约定的旧CLI完整功能、源码安装更新、32默认技能和前端可调用的机器能力已实现并完成本轮自动验收；新前端与/app/v1留后续。唯一正本cli-gateway-setup/pilotdeck-rs，产品验证基点e1d44bd17：mbp2 r134四bin/fmt/all-target/strict全0、4808文件SHA/HEAD/空diff/format0核对，knowledge3/AO124过0败；前一固定产品源r133 native558过0败67忽略，r132全CLI546过0败140条件忽略、审批131过0败1忽略，未变前提原件复用而非计重复总数。双非作者最终增量P0/P1均0，最后P2观察补强非作者P0/P1/P2均0，余P3不扩代码。当前owner三变异五case真KILLED、真实Notify旧顺序KILLED；等价only-enable如实SURVIVED。原源码安装两代功能通过但PID监视器总FAIL、owner outer四PID误识风险总FAIL仍保留，未洗成PASS；最终已观察身份/SID无残留。三类冻结检查通过，未批准差异不获豁免，阶段D108条/人签、全项目与所有Gateway API均不提前标完成。完整交付、边界、来源与使用入口见主仓_tmp/20261108-cli-completion/delivery-integrated-draft.md、review-dispositions.md及docs/changes/arch/002_cli-native-machine.md。两树原快照与旧8e32保留，固定主线整合点d9dd9之后未追动main；产品提交仅本机、无GitHub写入、Rust与bin全在mbp2。下一步由人复核隔离CLI/TUI实效与明确差异，再按新任务进入前端阶段。
+
+
+### 2026-11-09 14:30 · CLI 候选发布为远端 Draft PR
+
+用户本轮明确授权推送/开PR，替代此前仅本机提交限制；已将原固定候选4495858f推到origin/codex/control-cli-serve并创建Draft PR #2725（https://github.com/daqi-dev/pilotdeck-rs/pull/2725），未合并、未启用自动合并。唯一开发树仍cli-gateway-setup/pilotdeck-rs，两树原快照及开发提交历史保留。发布前gitleaks完整未入main增量历史244非merge提交/12.67MB/0 findings，5342未发布Git对象无>10MB blob；源码未改，复用mbp2固定e1/r134验证。GitHub实核Draft/CONFLICTING/DIRTY：采样main55a174e5与共同祖先d9dd9相比170独有提交，候选252独有、77路径重叠、merge-tree41冲突项，历史含8合并提交；PR已明示入队前线性化、逐块整合代码/测试及R11同名差异登记、mbp2复验与独立审查，不以已测旧候选充新整合头。上游14:24采样24h合65PR/48h148，按路径分类至少约66%是装置/状态/文档（非工时占比）；真实产品补齐与装置返工/共享点冲突并存，主线近300次Actions样本中18次CI成功/1在跑/0失败。具体案例与范围审计在主仓_tmp/20261109-cli-pr/upstream-progress.md和scope-audit.md。此次仅发布，不重启功能开发或提前关闭正式阶段D。
