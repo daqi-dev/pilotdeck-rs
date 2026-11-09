@@ -1948,3 +1948,66 @@ Like the earlier rounds, these shapes need a module-scope trigger plus a
 write inside a function, which one `(old, new)` replacement cannot express;
 the end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 38 (codex r37 P0-1..P0-7 / P1-1, all eight; GLM r37 boundary P0-1, concurrency P0-1, sibling P1-1, boundary P1-2, sibling P2-2 / P2-4, boundary P2-3 / concurrency P2-3 / simplify P2-1)
+
+Round 37 settled an `IfExp` through `_static_truth`, but its spelling ("is
+not False" / "is not True") let an *unknown* test keep both arms certain:
+`... if flag else ...` runs each arm conditionally, in both directions.
+`_static_truth` itself answered the *syntax* through `ast.literal_eval`
+where the runtime builds the object with the module's own binding --
+`set = lambda: True; set() or (globals := ...)` read truthy through the
+rebound `set` and marked the walrus certain (false PASS).  The inert walk
+recursed per node, so a 1100-deep unary chain in a lambda body took the
+whole audit down.  The class span started at the `class` header, so the
+bases and keywords -- which run in the *enclosing* scope -- were read as
+class-local, and a `global` statement nested under an `if` in the class body
+never registered.  The dynamic-lookup scan stopped at the comprehension
+branch instead of descending into the target, and its alias branch dropped
+`loops`, so a back-edge rebind inside the loop never reached the resolver.
+`_irrefutable_capture` proved the *pattern* always binds but never asked
+whether the *subject* is resolvable, so a walrus / `IfExp` / `BoolOp`
+subject cleared an imported write helper through a value the resolver never
+made (false PASS).  `_container_base` / `_container_callee` trusted the
+wrapper *spelling*, so a locally rebound `iter = lambda hs: ...` still
+descended into its argument and flagged a clean module (false FAIL).  The
+receiver-side scans read the raw callee, so walrus callees dropped the
+dynamic-`attrgetter` relay and the `getattr` decode.  A star import
+unshadowed heads the source never exports (`from json import *`), while a
+builtins star must restore the public heads yet still skip underscore
+names.  Comprehension parts after the first iterable run once per item, so
+a walrus in an `if` clause over an empty iterable never runs -- but a
+non-empty literal iterable keeps it certain.  The sources and head-reads
+alias resolvers were line-for-line twins (every fix landed twice) and the
+per-hop recursion crashed on a deep chain.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **An unknown IfExp test runs each arm conditionally** (false PASS guard): `flag = report is None; _x = (globals := lambda: {'main': lambda x: None}) if flag else None`, then the call chain. | self-test `... let an unknown IfExp test keep both arms certain (round 38)`; only the arm a literal test settles keeps the parent certainty, with two counter-guards (`... dropped the certain IfExp arm a literal-True test settles` / `... orelse a literal-False test settles`) pinning that the certain arm is not dropped either |
+| **A call the module rebound is not a literal** (false PASS guard): `set = lambda: True; set() or (globals := lambda: {'main': lambda x: None})`, then the call chain. | self-test `... trusted literal_eval on a call the module had rebound (round 38)`; `_static_truth` returns None for any expression containing a Call, with the falsy-literal counter-guard `... lost the certain tail a falsy literal keeps running (round 38)` |
+| **A deep unary lambda shadow is inert without crashing** (crash guard): `globals = lambda: ----…1` (1100 unary ops), then the call chain. | self-tests `... let a deep unary literal crash the inert walk (round 38)` and `... lost the inertness of a deep unary lambda shadow (round 38)`; `_inert_literal_expr` walks an explicit stack (same rule as `_flow_marks`) |
+| **Class bases run in the enclosing scope** (false PASS guard): `saved = globals; globals = lambda: {...}; class C(*((globals := saved) and ())):` -- the shadow is gone and the site must appear. | self-test `... read a class-header walrus as a class-local binding (round 38)`; the class span starts at the first body statement, not the `class` header |
+| **A class-body binding does not clear the module shadow** (false FAIL guard): `class C: globals = saved` after a shadow -- no site. | self-test `... let a class-body binding clear the module shadow (round 38)` |
+| **A `global` nested in the class body declares the module binding** (false PASS guard): `class C:` with `if False: global globals` above `globals = saved` -- the shadow is gone. | self-test `... missed a global statement nested in the class body (round 38)`; the Global collection walks the class body's statement tree, skipping nested scopes |
+| **A comprehension target is read on the way to the store** (false PASS guard): `held = [value for globals()['value'] in (holder.get('main'),)][0]`. | self-test `... dropped the carrier a comprehension target reads (round 38)`; the scan appends the target expression before the target names bind |
+| **An exotic match subject stays conditional** (false PASS guard): `match (_sa := _sa):` / `(_sa if True else None)` / `(_sa or None):` with `case _sa:`, then `_sa(md, 'common', object())` -- the helper must withdraw. | self-test `... let an exotic match subject clear a real write helper (round 38)`; a capture keeps the certain reading only over a plain name or a provably inert subject (`_capture_subject_resolvable`, and `_helper_from_value` unwraps the walrus subject), with the inert-subject counter-guard `... kept a helper through a capture bound to an inert subject (round 38)` |
+| **A rebound wrapper spelling is not the builtin** (false FAIL guard): `iter = lambda hs: (h for h in (lambda *a: None,)); next((_h := iter)(hs))('common', object())` -- the receiver must not withdraw. | self-test `... trusted a wrapper spelling the scope had rebound (round 38)`; `_container_base` / `_container_callee` take a `wrapper_fresh` guard (`_freshly_rebound(..., allow_container=False)`) at every scoped call site |
+| **A walrus callee relays a dynamic attrgetter** (false PASS guard): `_f = operator.attrgetter(k); _h = (_g := _f)(md); _h('common', object())`. | self-test `... lost the receiver a walrus callee handed a dynamic attrgetter (round 38)`; the first scan, the assign-value scan and the dynamic-handle consumption all read the callee through `_callee_expr` |
+| **A walrus `getattr` callee takes its receiver** (false PASS guard): `_f = (_q := getattr)(md, k); _f('common', object())`. | self-test `... lost the receiver a walrus getattr callee took (round 38)`; `_callable_name` unwraps the `NamedExpr` callee once for every decode table |
+| **A star import unshadows only what the source exports** (false PASS guards ×3): `from json import *` keeps the shadow; `from builtins import *` restores the public heads; a shadowed `__import__` stays shadowed through a builtins star. | self-tests `... let a json star import unshadow a head json never exports (round 38)` / `... lost the builtin a builtins star import restores (round 38)` / `... let a builtins star import unshadow the underscore __import__ (round 38)`; `_head_binding_names` answers the public head spellings for `builtins` and `[]` otherwise |
+| **Comprehension parts run once per item** (false PASS + false FAIL guards): `[x for x in () if (globals := lambda: {...})]` never runs the walrus; over `(0,)` it certainly runs. | self-tests `... kept a comprehension-if walrus certain over an empty iterable (round 38)` / `... dropped the certain walrus a non-empty literal iterable runs (round 38)`; `_static_nonempty` answers literal-container emptiness, and a part keeps the parent certainty only while every iterable so far provably yields an item with no unknown filter in front |
+| **A loop back-edge alias rebind is visible to the scan** (false PASS guard): `for _ in (0, 1): held = lk()['main']; lk = globals`. | self-test `... dropped the carrier a loop back-edge alias rebinds (round 38)`, counter-guard `... kept a site behind an alias that never reaches a head (round 38)`; the alias branch of `_contains_dynamic_lookup` passes `loops` to the resolver |
+| **A deep alias chain resolves without recursion** (crash guard): the backward chain `a1200 = globals; a1199 = a1200; ...; a1 = a2`, then `held = a1()['main']`. | self-tests `... let a deep alias chain crash the head resolver (round 38)` / `... lost the head a deep alias chain reaches (round 38)` / control `... kept a site behind a deep chain that never reaches a head (round 38)`; `_module_alias_head_reads` keeps an explicit `(name, position, strict, seen)` worklist and `_module_alias_sources` is that walk reduced to names -- one algorithm, one place |
+
+One r37 finding is closed as *not a bug*: GLM boundary#5, a `MatchOr` of two
+bare captures (`case _sa | _sb:`).  `ast.parse` accepts the pattern, but real
+compilation rejects it (`SyntaxError`), re-confirmed by `exec`-ing the probe
+shape -- the shape can never run, so no registration path can mis-answer it
+(probe `probe-r38-pre2.py`, runtime block, in the PR evidence).
+
+The star-import trade-off, stated once: a non-builtin module that genuinely
+re-exports a head spelling under `*` stays unregistered, because the export
+list of an arbitrary module is statically unknowable; the local shadow stays
+in force and the site behind it stays unreported.  `builtins` is the one
+source whose public exports are known (and its star still skips underscore
+names, so `__import__` cannot come back that way).
