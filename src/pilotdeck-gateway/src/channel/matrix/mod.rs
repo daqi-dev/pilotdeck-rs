@@ -551,10 +551,10 @@ impl ChannelAdapter for MatrixChannel {
                 }
             };
             *inner.user_id.lock().expect("matrix user id") = inner.configured_user_id.clone();
-            if let Ok(me) = inner.api("GET", "/account/whoami", object([])).await {
-                if let Some(id) = me.get("user_id").and_then(JsValue::as_string) {
-                    *inner.user_id.lock().expect("matrix user id") = Some(id.clone());
-                }
+            if let Ok(me) = inner.api("GET", "/account/whoami", object([])).await
+                && let Some(id) = me.get("user_id").and_then(JsValue::as_string)
+            {
+                *inner.user_id.lock().expect("matrix user id") = Some(id.clone());
             }
             let name = inner
                 .user_id

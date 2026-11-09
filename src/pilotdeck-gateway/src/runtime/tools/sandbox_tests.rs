@@ -1,14 +1,18 @@
 use super::*;
+#[cfg(target_os = "macos")]
 use crate::runtime::tools::builtin::bash::runner::{
     CommandOptions, CommandRunner, SandboxedShellCommandRunner,
 };
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::time::Duration;
 struct Scratch(PathBuf);
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
 }
+#[cfg(target_os = "macos")]
 fn options(cwd: &Path) -> CommandOptions {
     CommandOptions {
         cwd: cwd.to_string_lossy().as_ref().into(),

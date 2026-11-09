@@ -61,6 +61,10 @@ fn posted(post: &str) -> JsValue {
     ])
 }
 #[tokio::test]
+#[expect(
+    clippy::result_large_err,
+    reason = "tungstenite handshake callback requires its concrete ErrorResponse"
+)]
 async fn real_ws_filter_thread_turn_reply_and_stop_close_handshake() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -76,7 +80,8 @@ async fn real_ws_filter_thread_turn_reply_and_stop_close_handshake() {
         loop {
             tokio::select! {
             accepted=listener.accept()=>{let(mut socket,_)=accepted.unwrap();let sends=record.clone();let reply=replied.clone();let closed=close_signal.clone();tasks.spawn(async move{
-             let mut peek=vec![0;16384];let headers=loop{let count=socket.peek(&mut peek).await.unwrap();if count==0{return;}if let Some(end)=peek[..count].windows(4).position(|v|v==b"\r\n\r\n"){break String::from_utf8(peek[..end+4].to_vec()).unwrap();}tokio::task::yield_now().await;};
+             let mut peek=vec![0;16384];let headers=loop{let count=socket.peek(&mut peek).await.unwrap();if count==0{return;}
+             if let Some(end)=peek[..count].windows(4).position(|v|v==b"\r\n\r\n"){break String::from_utf8(peek[..end+4].to_vec()).unwrap();}tokio::task::yield_now().await;};
              let path=headers.lines().next().unwrap().split_whitespace().nth(1).unwrap();
              if path.starts_with("/api/v4/websocket"){
               let mut ws=tokio_tungstenite::accept_hdr_async(socket,move|request:&tokio_tungstenite::tungstenite::handshake::server::Request,response:tokio_tungstenite::tungstenite::handshake::server::Response|{

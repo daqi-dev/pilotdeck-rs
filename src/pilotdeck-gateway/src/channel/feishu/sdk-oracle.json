@@ -1,0 +1,166 @@
+{
+  "fixed": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "sourceSha256": {
+    "src/adapters/channel/feishu/FeishuChannel.ts": "20e0ea6e2d2ed8b10a3effdd8352283cbf0ad25e0d126fa617e6c40e93babddf",
+    "src/adapters/channel/protocol/ChannelCommandRegistry.ts": "e93b583e0a5323bd35ca93c9568e484f876daa367057a2d423aabdc825867c55",
+    "src/session/search/ChatSearchArgs.ts": "f728eaf3e6b33b932f5bae1c2398f7f40084693f11a51489cd6a31107b78601c",
+    "src/session/search/formatChatHistorySearch.ts": "64323cc98de655675b19bcde3ad6d9b5ce67574f227f9592ec0a78cf636ea443",
+    "src/adapters/channel/protocol/ImAttachmentDelivery.ts": "0f64b552f3b2ceb5b20a7290ab9a266672056f3adf183fbb58b145929286cca2",
+    "src/adapters/channel/protocol/ImAttachmentStore.ts": "ce53fb0885d77b8d6fd8a25ea2371c8e8ab66ed425ed5f147633e2f77f6a4941",
+    "src/adapters/channel/protocol/ImChatSessionState.ts": "501b8597ffbba2fe2b8852900c7fdbad31c9c9866191b86489aee649158ca340",
+    "src/adapters/channel/protocol/ImCronDelivery.ts": "3e505b3fa1205993089e3ed6854541fb6e7d332b7b33173d3c351880de7e8c14",
+    "src/adapters/channel/protocol/ImElicitationHelper.ts": "cb743ce32129e33c65cbee9ff5c613b057b65d8a642a0fc11b1e1362fb458cf4",
+    "src/adapters/channel/protocol/ImPermissionHelper.ts": "40a6e25f143e9973d2cef836bb40d47f8e693424ad9aac5f2391be6514193477",
+    "src/adapters/channel/protocol/ImLiveReplyController.ts": "7e17a83d84e4bf9367d110b8fb0bd45db13c46118837a1012a29e8b756d69ed6",
+    "src/status/agentStatus.ts": "9b3f11e574fc33652594afa0a7b74f574542df57b50bb7226111cc40f2d6233b",
+    "src/adapters/channel/feishu/FeishuSessionMapper.ts": "029983b55827555cc1ff0ab319fc9671a0c8e6f57137a6de9dc684498914abb5"
+  },
+  "sdk": {
+    "version": "1.65.0",
+    "sourceSha256": "50e8421dc44eaf648078706b41cd2aea3390667d17a3db3f4e6ce88f431b60b1",
+    "stopMethod": "undefined",
+    "closeMethod": "function"
+  },
+  "environment": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "47.0",
+    "icu": "77.1",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025b",
+    "undici": "6.23.0",
+    "unicode": "16.0",
+    "uv": "1.51.0",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "formalAcceptance": false,
+  "turns": [
+    {
+      "sessionKey": "feishu:chat=room:general",
+      "channelKey": "feishu",
+      "message": "SDK fragmented input",
+      "allowPlanModeTools": false,
+      "timeoutMs": 600000
+    }
+  ],
+  "sent": [
+    {
+      "chatId": "room",
+      "text": "Feishu SDK reply"
+    }
+  ],
+  "rows": [
+    {
+      "log": {
+        "level": "info",
+        "message": "feishu: stream mode connected (appId=cli_…cdef)"
+      }
+    },
+    {
+      "http": {
+        "path": "/callback/ws/endpoint",
+        "body": {
+          "AppID": "cli_0123456789abcdef",
+          "AppSecret": "mock-secret"
+        }
+      }
+    },
+    {
+      "sdkOutbound": {
+        "SeqID": 0,
+        "LogID": 0,
+        "service": 77,
+        "method": 0,
+        "headers": [
+          {
+            "key": "type",
+            "value": "ping"
+          }
+        ]
+      }
+    },
+    {
+      "inboundBinary": "CAUQCRhNIAEqDQoEdHlwZRIFZXZlbnQqGAoKbWVzc2FnZV9pZBIKd2lyZS1ldmVudCoICgNzdW0SATIqCAoDc2VxEgExKhkKCHRyYWNlX2lkEg10cmFjZS1maXh0dXJlQs0BaGVhZGVyIjp7ImV2ZW50X2lkIjoid2lyZS1ldmVudCIsImV2ZW50X3R5cGUiOiJpbS5tZXNzYWdlLnJlY2VpdmVfdjEifSwiZXZlbnQiOnsibWVzc2FnZSI6eyJjaGF0X2lkIjoicm9vbSIsIm1lc3NhZ2VfaWQiOiJtZXNzYWdlLTEiLCJtZXNzYWdlX3R5cGUiOiJ0ZXh0IiwiY29udGVudCI6IntcInRleHRcIjpcIlNESyBmcmFnbWVudGVkIGlucHV0XCJ9In19fQ=="
+    },
+    {
+      "inboundBinary": "CAUQCRhNIAEqDQoEdHlwZRIFZXZlbnQqGAoKbWVzc2FnZV9pZBIKd2lyZS1ldmVudCoICgNzdW0SATIqCAoDc2VxEgEwKhkKCHRyYWNlX2lkEg10cmFjZS1maXh0dXJlQhF7InNjaGVtYSI6IjIuMCIsIg=="
+    },
+    {
+      "log": {
+        "level": "info",
+        "message": "feishu: ★ im.message.receive_v1 fired"
+      }
+    },
+    {
+      "sdkOutbound": {
+        "SeqID": 5,
+        "LogID": 9,
+        "service": 77,
+        "method": 1,
+        "headers": [
+          {
+            "key": "type",
+            "value": "event"
+          },
+          {
+            "key": "message_id",
+            "value": "wire-event"
+          },
+          {
+            "key": "sum",
+            "value": "2"
+          },
+          {
+            "key": "seq",
+            "value": "0"
+          },
+          {
+            "key": "trace_id",
+            "value": "trace-fixture"
+          },
+          {
+            "key": "biz_rt",
+            "value": "0"
+          }
+        ],
+        "payload": "eyJjb2RlIjoyMDB9"
+      }
+    },
+    {
+      "log": {
+        "level": "info",
+        "message": "feishu: addReaction failed: Error: tenant_access_token failed: code=10014 msg=app id not exists"
+      }
+    },
+    {
+      "log": {
+        "level": "warn",
+        "message": "feishu: send post threw: Error: tenant_access_token failed: code=10014 msg=app id not exists"
+      }
+    },
+    {
+      "log": {
+        "level": "info",
+        "message": "feishu: stopping (fixture)"
+      }
+    }
+  ],
+  "streamClosedAfterFixedAdapterStop": false
+}

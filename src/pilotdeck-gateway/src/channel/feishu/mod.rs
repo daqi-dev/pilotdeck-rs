@@ -1,17 +1,11 @@
-//! `resources/PilotDeck/src/adapters/channel/feishu/FeishuChannel.ts`
-//! (baseline cc7c4e6) on the #1327 channel core: webhook-mode inbound
-//! (JSON → optional AES decrypt → `url_verification` → verify-token gate →
-//! direct/v2/v1 shapes), the 2000-event dedupe ring, per-chat inbound
-//! batching, the `ImChatSessionState` queue/generation, the A7 submit path
-//! and the Lark Open API outbound surface.
-//!
-//! Out of scope for this unit, each registered in the gateway-parity diff
-//! ledger: the Lark WS (`connectionMode: "stream"`) transport, attachment
-//! download/upload, the centralized system-command registry, `abortTurn` (the
-//! A7 port has no abort), and the streaming live-reply controller (a turn
-//! emits its final text once instead of editing a live message).
+//! Fixed cc7c4e6 Feishu native adapter: existing webhook parsing, dedupe,
+//! batching and generation guards plus native pbbp2 stream transport,
+//! attachment store/delivery, shared host commands and full live replies.
+//! Candidate evidence distinguishes the fixed SDK stop leak from owned native
+//! close; the migration is not claimed accepted until consumer tests/reviews pass.
 use std::{
     collections::{HashMap, HashSet, VecDeque},
+    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -22,17 +16,28 @@ use super::{
     im_interaction::{InteractionPort, NoInteraction},
     protocol::{
         BoxFuture, ChannelAdapter, ChannelError, ChannelHandle, ChannelKey, ChannelLog,
-        ChannelStartDeps, TurnGateway, TurnRequest,
+        ChannelStartDeps, ChannelTurnOptions, TurnGateway, TurnRequest,
     },
 };
 use crate::metadata::js_trim;
 use pilotdeck_protocol::{JsObject, JsString, JsValue, stringify_json};
 
 mod client;
+pub(crate) mod commands;
+pub use commands::FeishuHostPorts;
 mod crypto;
+mod live;
+#[cfg(test)]
+mod live_tests;
 mod mapper;
+mod media;
+#[cfg(test)]
+mod media_tests;
 mod parse;
 mod render;
+mod stream;
+#[cfg(test)]
+mod stream_tests;
 #[cfg(test)]
 mod tests;
 
@@ -41,9 +46,6 @@ use mapper::{FeishuCommand, FeishuSessionMapper};
 use parse::{
     Clock, InboundMessage, ParsedEvent, Parser, group_inbound, mask_app_id,
     merge_text_and_diagnostics, should_batch,
-};
-use render::{
-    LiveReplyBuffer, MAX_TEXT_MESSAGE_LENGTH, activity_kind_from_text, live_chunks, live_text_limit,
 };
 
 /// `FeishuChannel.channelKey`.
@@ -212,6 +214,7 @@ struct Batch {
 
 #[derive(Clone, Debug)]
 struct QueuedTurn {
+    attachments: Vec<JsValue>,
     session_key: String,
     message: String,
     /// Registered diff A8.3-CH-FEISHU-006: TS forwards `projectKey` with
@@ -225,12 +228,7 @@ struct QueuedTurn {
 
 #[derive(Clone, Debug)]
 struct ActiveRun {
-    /// Registered diff A8.3-CH-FEISHU-004: `abortTurn({ sessionKey, runId })`
-    /// is the only consumer in TS; the A7 port has no abort, so the pair is
-    /// recorded for the day the port grows one.
-    #[allow(dead_code)]
     session_key: String,
-    #[allow(dead_code)]
     run_id: Option<String>,
     generation: u64,
 }
@@ -342,6 +340,10 @@ struct Runtime {
     logger: Logger,
     state: Mutex<State>,
     api: Mutex<Option<Arc<ApiClient>>>,
+    attachment_root: Mutex<PathBuf>,
+    host_ports: Mutex<FeishuHostPorts>,
+    live_options: Mutex<crate::channel::weixin::live_reply::LiveReplyOptions>,
+    stream: tokio::sync::Mutex<Option<stream::StreamHandle>>,
     /// `this.activeChats`, shared with the `ActiveChat` admission guard.
     active_chats: Arc<Mutex<HashSet<String>>>,
     slot: Option<Arc<FeishuWebhookSlot>>,
@@ -402,13 +404,25 @@ impl Runtime {
                  Configure adapters.feishu.appId/appSecret in pilotdeck.yaml.",
             );
         } else if options.connection_mode == "stream" {
-            // The Lark WS SDK is not ported; this is the TS fallback line for
-            // a WS start that did not come up.
-            self.log(
-                "warn",
-                "feishu: stream mode failed to start; falling back to webhook-only \
-                 (set adapters.feishu.connectionMode: webhook in pilotdeck.yaml to silence this).",
-            );
+            match stream::StreamHandle::start(options.clone(), Arc::downgrade(self)).await {
+                Ok(handle) => {
+                    *self.stream.lock().await = Some(handle);
+                    self.log(
+                        "info",
+                        &format!(
+                            "feishu: stream mode connected (appId={})",
+                            mask_app_id(&options.app_id)
+                        ),
+                    );
+                }
+                Err(error) => {
+                    self.log(
+                        "error",
+                        &format!("feishu: stream mode start failed: {error}"),
+                    );
+                    self.log("warn","feishu: stream mode failed to start; falling back to webhook-only (set adapters.feishu.connectionMode: webhook in pilotdeck.yaml to silence this).");
+                }
+            }
         } else {
             self.log(
                 "info",
@@ -498,6 +512,65 @@ impl Runtime {
                 (200, respond_json(vec![("ok", JsValue::Bool(true))]))
             }
         }
+    }
+
+    fn handle_stream(self: &Arc<Self>, raw: JsValue) {
+        let Some(message) = raw
+            .get("message")
+            .or_else(|| raw.get("event").and_then(|e| e.get("message")))
+        else {
+            return;
+        };
+        let kind = message
+            .get("message_type")
+            .and_then(JsValue::as_string)
+            .and_then(|s| s.to_utf8().ok());
+        if !parse::is_supported_type(kind.as_deref()) {
+            return;
+        }
+        let Some(chat) = message
+            .get("chat_id")
+            .and_then(JsValue::as_string)
+            .and_then(|s| s.to_utf8().ok())
+            .filter(|s| !s.is_empty())
+        else {
+            return;
+        };
+        if message
+            .get("content")
+            .is_none_or(|v| matches!(v, JsValue::Undefined))
+        {
+            return;
+        }
+        let content = message
+            .get("content")
+            .and_then(JsValue::as_string)
+            .and_then(|s| s.to_utf8().ok());
+        let message_id = message
+            .get("message_id")
+            .and_then(JsValue::as_string)
+            .and_then(|s| s.to_utf8().ok());
+        let event_id = message_id
+            .clone()
+            .unwrap_or_else(|| format!("stream:{chat}:{}", self.clock.now_ms()));
+        if !self
+            .state
+            .lock()
+            .expect("feishu state")
+            .seen
+            .remember(event_id.clone())
+        {
+            return;
+        }
+        let text = parse::extract_message_text(kind.as_deref(), content.as_deref());
+        self.enqueue_inbound(InboundMessage {
+            chat_id: chat,
+            text,
+            event_id,
+            message_id,
+            message_type: kind,
+            content,
+        });
     }
 
     // ----- inbound pipeline ------------------------------------------------
@@ -733,15 +806,27 @@ impl Runtime {
             return;
         };
         let chat_id = first.chat_id.clone();
-        // Attachments are out of scope for this unit, so the diagnostics list
-        // is always empty and an attachment-only group has no message text.
+        let extracted =
+            futures_util::future::join_all(inputs.iter().map(|input| media::extract(self, input)))
+                .await;
+        let mut attachments = Vec::new();
+        let mut diagnostics = Vec::new();
+        for (items, notes) in extracted {
+            attachments.extend(items);
+            diagnostics.extend(notes);
+        }
         let joined = inputs
             .iter()
             .map(|input| input.text.as_str())
             .filter(|text| !text.is_empty())
             .collect::<Vec<_>>()
             .join("\n");
-        let message_text = merge_text_and_diagnostics(&joined, &[]);
+        let body = if js_trim(&joined).is_empty() && !attachments.is_empty() {
+            "请查看我发送的附件。".to_owned()
+        } else {
+            joined
+        };
+        let message_text = merge_text_and_diagnostics(&body, &diagnostics);
         if js_trim(&message_text).is_empty() {
             return;
         }
@@ -771,9 +856,10 @@ impl Runtime {
             return;
         }
 
-        let mapped = {
+        let (previous_session, mapped) = {
             let mut state = self.state.lock().expect("#1329 state mutex");
-            state.mapper.resolve(&chat_id, &message_text)
+            let previous = state.mapper.current_session_key(&chat_id);
+            (previous, state.mapper.resolve(&chat_id, &message_text))
         };
 
         if mapped.command == Some(FeishuCommand::New) {
@@ -788,24 +874,30 @@ impl Runtime {
                     .snapshot_js();
                 on_state_change(snapshot);
             }
-            // No `abortTurn` on the A7 port: the previous run keeps going
-            // (registered diff). The generation bump below makes the event loop
-            // and the flush skip this chat's output once the generation has
-            // moved; a segment whose check already passed — in flight or not
-            // yet sent — is outside this gate.
+            // Keep the existing generation guard and route best-effort abort
+            // through the same shared Gateway owner; already-dispatched sends
+            // remain outside this guard.
+            let previous_run = self.active_run(&chat_id);
             self.reset_chat_interaction_state(&chat_id);
+            self.abort_turn(
+                previous_run
+                    .as_ref()
+                    .map(|r| r.session_key.as_str())
+                    .unwrap_or(&previous_session),
+                previous_run.as_ref().and_then(|r| r.run_id.as_deref()),
+                None,
+            )
+            .await;
             if mapped.message.is_empty() {
                 self.send(&chat_id, "已创建新会话。").await;
                 return;
             }
             // `/new <text>` keeps going with the *new* session key: TS only
             // returns when `!mapped.message`.
-        } else if mapped.command.is_some() {
-            // The system command registry is out of scope: `/projects` and
-            // `/switch-project` are reported as handled (and dropped) rather
-            // than executed, while an unknown slash message still reaches the
-            // gateway. `/new` is the one mapper command with a submit path
-            // (registered diff A8.3-CH-FEISHU-003).
+        }
+        if message_text.trim_start().starts_with('/')
+            && commands::execute(self, &chat_id, &message_text).await
+        {
             return;
         }
         if mapped.message.is_empty() {
@@ -813,6 +905,7 @@ impl Runtime {
         }
 
         let turn = QueuedTurn {
+            attachments,
             session_key: mapped.session_key.clone(),
             message: mapped.message.clone(),
             project_key: mapped.project_key.clone(),
@@ -998,25 +1091,79 @@ impl Runtime {
             (Some(message_id), Some(api)) => api.add_reaction(message_id).await,
             _ => None,
         };
-        let mut live = LiveReplyBuffer::new();
+        let live_options = self
+            .live_options
+            .lock()
+            .expect("feishu live options")
+            .clone();
+        let timeout_ms = live_options.turn_timeout_ms;
+        let mut live = live::controller(
+            self.clone(),
+            chat_id.to_owned(),
+            turn.generation,
+            live_options,
+        );
         match gateway
-            .submit(TurnRequest {
-                session_key: JsString::from(turn.session_key.as_str()),
-                channel_key: self.key.clone(),
-                message: JsString::from(turn.message.as_str()),
-            })
+            .submit_with_options(
+                TurnRequest {
+                    session_key: JsString::from(turn.session_key.as_str()),
+                    channel_key: self.key.clone(),
+                    message: JsString::from(turn.message.as_str()),
+                },
+                ChannelTurnOptions {
+                    project_key: turn.project_key.as_deref().map(JsString::from),
+                    attachments: turn.attachments.clone(),
+                    allow_plan_mode_tools: Some(false),
+                    mode: self
+                        .options()
+                        .permission_mode
+                        .as_deref()
+                        .map(JsString::from),
+                    base_permission_mode: self
+                        .options()
+                        .permission_mode
+                        .as_deref()
+                        .map(JsString::from),
+                    timeout_ms: Some(timeout_ms as f64),
+                    ..Default::default()
+                },
+            )
             .await
         {
             Err(error) => {
                 self.log("error", &format!("feishu: submitTurn error: {error}"));
-                live.handle_submit_failure("Failed to process this message. Please retry.");
+                live.channel_submit_failed().await;
             }
             Ok(mut events) => loop {
-                match events.next().await {
+                let deadline = live.next_deadline();
+                let timer = async {
+                    match deadline {
+                        Some(at) => tokio::time::sleep_until(at).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                };
+                let next = tokio::select! {biased;next=events.next()=>Some(next),_=timer=>None};
+                let Some(next) = next else {
+                    if live.fire_due_timers().await.turn_timed_out {
+                        self.log(
+                            "warn",
+                            &format!("feishu: live reply timed out for chat {chat_id}"),
+                        );
+                        let active = self.active_run(chat_id);
+                        self.abort_turn(
+                            &turn.session_key,
+                            active.as_ref().and_then(|r| r.run_id.as_deref()),
+                            Some("system:timeout"),
+                        )
+                        .await;
+                    }
+                    continue;
+                };
+                match next {
                     Ok(None) => break,
                     Err(error) => {
                         self.log("error", &format!("feishu: submitTurn error: {error}"));
-                        live.handle_submit_failure("Failed to process this message. Please retry.");
+                        live.channel_submit_failed().await;
                         break;
                     }
                     Ok(Some(event)) => {
@@ -1037,7 +1184,7 @@ impl Runtime {
                                         generation: turn.generation,
                                     },
                                 );
-                                live.handle_event(&event);
+                                live.handle_event(&event).await;
                             }
                             "elicitation_request" => {
                                 let question = self.interaction.elicitation_capture(
@@ -1045,7 +1192,7 @@ impl Runtime {
                                     &turn.session_key,
                                     &event,
                                 );
-                                live.handle_event(&event);
+                                live.pause_activity().await;
                                 self.send(chat_id, &question).await;
                             }
                             "permission_request" => {
@@ -1054,7 +1201,7 @@ impl Runtime {
                                     &turn.session_key,
                                     &event,
                                 );
-                                live.handle_event(&event);
+                                live.pause_activity().await;
                                 if let Some(question) = question {
                                     let delivered = self.send(chat_id, &question).await;
                                     self.interaction.permission_confirm_initial(
@@ -1065,31 +1212,39 @@ impl Runtime {
                                 }
                             }
                             "assistant_attachment" => {
-                                // The attachment itself is out of scope; the
-                                // controller still flushes the text it has.
-                                if !js_trim(&live.text).is_empty() {
-                                    self.send_final(chat_id, turn.generation, &live.text).await;
+                                live.flush_final().await;
+                                if let Some(attachment) = event.get("attachment") {
+                                    media::send(self.clone(), chat_id, attachment).await;
                                 }
-                                live.text.clear();
                             }
-                            _ => live.handle_event(&event),
+                            "error"
+                                if event
+                                    .get("code")
+                                    .and_then(JsValue::as_string)
+                                    .is_some_and(|s| s.equals_str("agent_aborted")) =>
+                            {
+                                live.mark_aborted().await
+                            }
+                            "error"
+                                if event
+                                    .get("code")
+                                    .and_then(JsValue::as_string)
+                                    .is_some_and(|s| s.equals_str("turn_timeout")) =>
+                            {
+                                live.mark_timed_out().await
+                            }
+                            _ => live.handle_event(&event).await,
                         }
                     }
                 }
             },
         }
-        // A turn that a `/new` (or a later turn) superseded while it was still
-        // streaming: the buffered text — including the synthesized
-        // "Please retry." fragment — belongs to a session that no longer
-        // exists, so this side skips the flush when generation has moved.
-        // TS asks the gateway to abort the run there (`abortTurn`, best effort)
-        // but still calls `flushFinal()` unconditionally.
         if self.is_current(chat_id, turn.generation) {
             self.interaction.elicitation_clear(chat_id);
             self.interaction.permission_clear_after_turn(chat_id);
-            if !js_trim(&live.text).is_empty() {
-                self.send_final(chat_id, turn.generation, &live.text).await;
-            }
+            live.flush_final().await;
+        } else {
+            live.clear().await;
         }
         // The reaction is not part of the flush: TS removes it in a `finally`,
         // so an aborted (superseded) turn still clears the reaction it put on
@@ -1107,46 +1262,30 @@ impl Runtime {
         }
     }
 
-    // ----- outbound --------------------------------------------------------
-
-    /// `sendLiveMessage` for a final segment: the `post` payload first, the
-    /// raw `text` message as its fallback, chunked like `splitForTransport`.
-    /// The final flush of one turn: the controller's `append`/`flushSegment`
-    /// pair, which splits at `liveTextLimit()` and sends each segment as a
-    /// final `post`, falling back to a plain text message per segment when
-    /// the post call reports `false`.
-    async fn send_final(self: &Arc<Self>, chat_id: &str, generation: u64, text: &str) {
-        let Some(api) = self.api() else {
+    async fn abort_turn(&self, session: &str, run: Option<&str>, reason: Option<&str>) {
+        let control = self
+            .host_ports
+            .lock()
+            .expect("feishu host ports")
+            .control
+            .clone();
+        let Some(control) = control else {
             return;
         };
-        for chunk in live_chunks(text, live_text_limit(MAX_TEXT_MESSAGE_LENGTH)) {
-            // Re-check before every segment: if the generation has already
-            // changed by the time we look, this segment does not start. This is
-            // a narrowing, not a guarantee — a bump landing between the check
-            // and the send, or while a segment is already inside `send_post`
-            // (token fetch + POST) or its `send_raw` fallback, still lets that
-            // segment land, exactly like TS's best-effort `abortTurn` for a
-            // send already dispatched.
-            if !self.is_current(chat_id, generation) {
-                return;
-            }
-            let is_final = !chunk.ends_with(render::DEFAULT_LIVE_REPLY_CURSOR);
-            let kind = activity_kind_from_text(&chunk);
-            if api
-                .send_post(chat_id, &chunk, is_final, Some(kind))
-                .await
-                .is_failed()
-                && api
-                    .send_raw(chat_id, "text", text_content(&chunk))
-                    .await
-                    .is_failed()
-            {
-                // `flushCurrent` returns without touching the following
-                // segments; the append loop still sends them.
-                continue;
-            }
+        let mut params = JsObject::new();
+        params.insert("sessionKey".into(), JsValue::from(session));
+        if let Some(run) = run {
+            params.insert("runId".into(), JsValue::from(run));
+        }
+        if let Some(reason) = reason {
+            params.insert("reason".into(), JsValue::from(reason));
+        }
+        if let Err(error) = control.call("abort_turn", JsValue::Object(params)).await {
+            self.log("warn", &format!("feishu: abort turn failed: {error}"));
         }
     }
+
+    // ----- outbound --------------------------------------------------------
 
     /// `sendTextMessage` (the TS `explicitSend` seam has no production
     /// caller, so the raw text send is the whole path here).
@@ -1209,6 +1348,37 @@ fn respond_json(pairs: Vec<(&str, JsValue)>) -> String {
 // ----- adapters ------------------------------------------------------------
 
 impl FeishuChannel {
+    #[cfg(test)]
+    pub(crate) fn with_live_reply_options(
+        self,
+        options: crate::channel::weixin::live_reply::LiveReplyOptions,
+    ) -> Self {
+        *self
+            .runtime
+            .live_options
+            .lock()
+            .expect("feishu live options") = options;
+        self
+    }
+    pub fn with_host_ports(self, ports: FeishuHostPorts) -> Self {
+        if let Some(home) = &ports.pilot_home {
+            *self
+                .runtime
+                .attachment_root
+                .lock()
+                .expect("feishu attachment root") = home.join("im-attachments");
+        }
+        *self.runtime.host_ports.lock().expect("feishu host ports") = ports;
+        self
+    }
+    pub fn with_attachment_root(self, root: PathBuf) -> Self {
+        *self
+            .runtime
+            .attachment_root
+            .lock()
+            .expect("feishu attachment root") = root;
+        self
+    }
     pub fn new(options: FeishuOptions, interaction: Arc<dyn InteractionPort>) -> Self {
         Self::build(
             options,
@@ -1273,6 +1443,15 @@ impl FeishuChannel {
             logger: Logger::new(),
             state: Mutex::new(State::new(uuid, saved)),
             api: Mutex::new(None),
+            stream: tokio::sync::Mutex::new(None),
+            host_ports: Mutex::new(FeishuHostPorts::default()),
+            live_options: Mutex::new(Default::default()),
+            attachment_root: Mutex::new(
+                std::env::var_os("PILOT_HOME")
+                    .map(PathBuf::from)
+                    .map(|p| p.join("im-attachments"))
+                    .unwrap_or_else(|| std::env::temp_dir().join("pilotdeck-feishu-attachments")),
+            ),
             active_chats: Arc::new(Mutex::new(HashSet::new())),
             slot,
             on_state_change,
@@ -1340,6 +1519,9 @@ impl ChannelHandle for FeishuHandle {
         let runtime = self.runtime.clone();
         Box::pin(async move {
             runtime.log("info", &format!("feishu: stopping ({reason})"));
+            if let Some(stream) = runtime.stream.lock().await.take() {
+                stream.stop().await;
+            }
             // `pilotdeckServer.stopRunningChannel`: the active channel is
             // cleared for every stop but a hot reload, whose replacement is
             // already publishing into the same slot.

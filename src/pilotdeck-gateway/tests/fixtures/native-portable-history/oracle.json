@@ -260,8 +260,8 @@
       "ares": "1.34.6",
       "brotli": "1.1.0",
       "cjs_module_lexer": "2.1.0",
-      "cldr": "47.0",
-      "icu": "77.1",
+      "cldr": "48.0",
+      "icu": "78.2",
       "llhttp": "9.3.0",
       "modules": "127",
       "napi": "10",
@@ -272,10 +272,10 @@
       "simdjson": "3.13.0",
       "simdutf": "6.4.2",
       "sqlite": "3.50.4",
-      "tz": "2025b",
+      "tz": "2025c",
       "undici": "6.23.0",
-      "unicode": "16.0",
-      "uv": "1.51.0",
+      "unicode": "17.0",
+      "uv": "1.52.1",
       "uvwasi": "0.0.23",
       "v8": "12.4.254.21-node.33",
       "zlib": "1.3.1-470d3a2",
@@ -304,10 +304,10 @@
               "archiveSchemaVersion": 1
             },
             "sessionId": "nontext:tool_calls",
-            "turnId": "sdk:restore:d4d5e5cd-6079-4429-8ca8-d9e1c348e63e",
+            "turnId": "sdk:restore:3c715dea-71db-42fd-9024-e76c55dae1f5",
             "sequence": 1,
-            "createdAt": "2026-11-09T17:56:54.361Z",
-            "entryId": "55e4d782-6bc4-49d7-b7a1-c49833b783a2",
+            "createdAt": "2026-11-09T18:58:39.667Z",
+            "entryId": "40d36fd6-a0b0-487b-a2f3-9f3f55fd36cd",
             "parentEntryId": null
           },
           {
@@ -340,7 +340,7 @@
                       "nested": [
                         true,
                         null,
-                        "\u6c49"
+                        "汉"
                       ]
                     }
                   },
@@ -386,7 +386,7 @@
             },
             {
               "role": "assistant",
-              "text": "head\n\n[Tool call: object]\n{\n  \"2\": \"two\",\n  \"10\": \"ten\",\n  \"z\": 1,\n  \"nested\": [\n    true,\n    null,\n    \"\u6c49\"\n  ]\n}\n\n[Tool call: literal]\n  literal  \n\n[Tool call: nil]\nnull\n\n[Tool call: absent]\nundefined\n\n[Tool call: array]\n[\n  1,\n  \"x\"\n]"
+              "text": "head\n\n[Tool call: object]\n{\n  \"2\": \"two\",\n  \"10\": \"ten\",\n  \"z\": 1,\n  \"nested\": [\n    true,\n    null,\n    \"汉\"\n  ]\n}\n\n[Tool call: literal]\n  literal  \n\n[Tool call: nil]\nnull\n\n[Tool call: absent]\nundefined\n\n[Tool call: array]\n[\n  1,\n  \"x\"\n]"
             }
           ]
         }
@@ -412,10 +412,10 @@
               "archiveSchemaVersion": 1
             },
             "sessionId": "nontext:tool_results",
-            "turnId": "sdk:restore:0defc30e-17b1-4337-a434-c2507d7f5a2d",
+            "turnId": "sdk:restore:d1f49a82-8dcf-4289-ad7e-33dabc50d740",
             "sequence": 1,
-            "createdAt": "2026-11-09T17:56:54.364Z",
-            "entryId": "b3fb1353-2087-484a-b864-8f83d78bbfe9",
+            "createdAt": "2026-11-09T18:58:39.674Z",
+            "entryId": "1613f23d-ea82-469e-aa35-1e979e72f74a",
             "parentEntryId": null
           },
           {
@@ -456,7 +456,7 @@
                         "type": "image",
                         "source": "base64",
                         "mimeType": "image/jpeg",
-                        "data": "\ud83d\ude00x"
+                        "data": "😀x"
                       },
                       {
                         "type": "pdf",
@@ -526,10 +526,10 @@
               "archiveSchemaVersion": 1
             },
             "sessionId": "nontext:references_and_outer_media",
-            "turnId": "sdk:restore:3886924c-d438-47bd-8ab3-a1d792713a11",
+            "turnId": "sdk:restore:dcd640cb-7015-436e-8064-924d7ea252b3",
             "sequence": 1,
-            "createdAt": "2026-11-09T17:56:54.366Z",
-            "entryId": "dfb328e8-f536-46dc-ba97-3e9f08e35f11",
+            "createdAt": "2026-11-09T18:58:39.676Z",
+            "entryId": "a2da364f-0935-4b10-9bf7-86e07af46a58",
             "parentEntryId": null
           },
           {
@@ -617,10 +617,10 @@
               "archiveSchemaVersion": 1
             },
             "sessionId": "nontext:synthetic_and_empty",
-            "turnId": "sdk:restore:c0f5d947-722e-4be8-9628-0a5b0a9602b9",
+            "turnId": "sdk:restore:be6eeff8-fabd-438e-b3d9-c78d385d8c04",
             "sequence": 1,
-            "createdAt": "2026-11-09T17:56:54.367Z",
-            "entryId": "0a6f015f-38cc-4f94-ae51-5e65400d6628",
+            "createdAt": "2026-11-09T18:58:39.679Z",
+            "entryId": "4f2a804a-b989-4a84-93f8-399a669f85bc",
             "parentEntryId": null
           },
           {
@@ -719,7 +719,7 @@
       {
         "recipe": {
           "name": "title_512_units",
-          "title": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀"
         },
         "bytes": 1127,
         "ok": true,
@@ -731,7 +731,7 @@
       {
         "recipe": {
           "name": "title_513_units",
-          "title": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00x"
+          "title": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀x"
         },
         "bytes": 1128,
         "ok": false,
@@ -810,7 +810,7 @@
         "recipe": {
           "name": "cjk_exact_bytes",
           "bytes": 2097152,
-          "fill": "\u6c49"
+          "fill": "汉"
         },
         "bytes": 2097152,
         "ok": true,
@@ -823,7 +823,7 @@
         "recipe": {
           "name": "cjk_over_bytes",
           "bytes": 2097153,
-          "fill": "\u6c49"
+          "fill": "汉"
         },
         "bytes": 2097153,
         "ok": false,

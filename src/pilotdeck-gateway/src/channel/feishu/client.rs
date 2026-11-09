@@ -485,7 +485,7 @@ impl ApiClient {
             .map(|value| String::from_utf16_lossy(value.units())))
     }
 
-    async fn invalidate_token(&self, code: &JsValue) {
+    pub(super) async fn invalidate_token(&self, code: &JsValue) {
         if let Some(number) = code.as_number()
             && TOKEN_INVALID_CODES.contains(&number)
         {
@@ -524,7 +524,7 @@ fn number_is(value: &JsValue, expected: f64) -> bool {
 }
 
 /// JavaScript string interpolation of a JSON value (`undefined` included).
-fn display(value: Option<&JsValue>) -> String {
+pub(super) fn display(value: Option<&JsValue>) -> String {
     match value {
         None | Some(JsValue::Undefined) => "undefined".into(),
         Some(JsValue::Null) => "null".into(),

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported Native business integration probe; no source mutation table.
 """Run the existing isolated native-history driver with a portable-resume case.
 
 The host, fake provider, binary snapshots, deadlines and PID/SID cleanup remain

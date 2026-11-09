@@ -1,7 +1,7 @@
 //! SessionList.ts title projection over the native raw bytes. Preview fields
 //! deliberately use the baseline's raw-line captures, even for partial JSON.
+use super::SearchError as Failure;
 use super::{Text, string, trim};
-use crate::Failure;
 use fancy_regex::Regex;
 use pilotdeck_protocol::{JsValue, parse_json};
 use std::{collections::HashMap, sync::LazyLock};

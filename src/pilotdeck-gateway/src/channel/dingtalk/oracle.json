@@ -1,0 +1,259 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "environment": {
+    "node": "22.22.0",
+    "acorn": "8.15.0",
+    "ada": "2.9.2",
+    "amaro": "1.1.4",
+    "ares": "1.34.6",
+    "brotli": "1.1.0",
+    "cjs_module_lexer": "2.1.0",
+    "cldr": "47.0",
+    "icu": "77.1",
+    "llhttp": "9.3.0",
+    "modules": "127",
+    "napi": "10",
+    "nbytes": "0.1.1",
+    "ncrypto": "0.0.1",
+    "nghttp2": "1.64.0",
+    "openssl": "3.5.4",
+    "simdjson": "3.13.0",
+    "simdutf": "6.4.2",
+    "sqlite": "3.50.4",
+    "tz": "2025b",
+    "undici": "6.23.0",
+    "unicode": "16.0",
+    "uv": "1.51.0",
+    "uvwasi": "0.0.23",
+    "v8": "12.4.254.21-node.33",
+    "zlib": "1.3.1-470d3a2",
+    "zstd": "1.5.7"
+  },
+  "source": {
+    "DingTalkChannel.ts": "eb097473811bee84cc78abd10e009368398aa0ed110dacde229b7325652f6e34",
+    "DingTalkSessionMapper.ts": "49cbf06b97ad0aa47e1c91bdc1c81e51576211070ffbcb55e027240299609a3b",
+    "dingtalk-render.ts": "f8d226f25276590a01473462d5e985824fe2ba1496bce656fe98de7a888241cd"
+  },
+  "mapper": [
+    {
+      "text": "hello",
+      "result": {
+        "sessionKey": "dingtalk:chat=room:general",
+        "message": "hello"
+      }
+    },
+    {
+      "text": "/new",
+      "result": {
+        "sessionKey": "dingtalk:chat=room:s_00000000-0000-0000-0000-000000000001",
+        "command": "new",
+        "message": ""
+      }
+    },
+    {
+      "text": "/new next",
+      "result": {
+        "sessionKey": "dingtalk:chat=room:s_00000000-0000-0000-0000-000000000001",
+        "command": "new",
+        "message": "next"
+      }
+    },
+    {
+      "text": "/newish",
+      "result": {
+        "sessionKey": "dingtalk:chat=room:s_00000000-0000-0000-0000-000000000001",
+        "message": "/newish"
+      }
+    },
+    {
+      "text": " /new\nnext ",
+      "result": {
+        "sessionKey": "dingtalk:chat=room:s_00000000-0000-0000-0000-000000000001",
+        "message": "/new\nnext"
+      }
+    }
+  ],
+  "render": [
+    {
+      "event": {
+        "type": "assistant_text_delta",
+        "text": "正文"
+      },
+      "result": "正文"
+    },
+    {
+      "event": {
+        "type": "tool_call_finished",
+        "ok": false,
+        "toolName": "bash"
+      },
+      "result": "\n⚠️ bash 执行失败\n"
+    },
+    {
+      "event": {
+        "type": "error",
+        "message": "oops"
+      },
+      "result": "\n❌ oops\n"
+    },
+    {
+      "event": {
+        "type": "turn_completed"
+      },
+      "result": null
+    }
+  ],
+  "requests": [
+    {
+      "path": "/open",
+      "body": {
+        "clientId": "owned-id",
+        "clientSecret": "owned-secret",
+        "ua": "",
+        "subscriptions": [
+          {
+            "type": "EVENT",
+            "topic": "*"
+          }
+        ]
+      }
+    },
+    {
+      "path": "/reply",
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "title": "Reply",
+          "text": "已创建新会话。"
+        }
+      }
+    },
+    {
+      "path": "/reply",
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "title": "Reply",
+          "text": "REPLY \n⚠️ bash 执行失败"
+        }
+      }
+    },
+    {
+      "path": "/reply",
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "title": "Reply",
+          "text": "CRON"
+        }
+      }
+    },
+    {
+      "path": "/reply",
+      "body": {
+        "msgtype": "markdown",
+        "markdown": {
+          "title": "Reply",
+          "text": "FAIL"
+        }
+      }
+    }
+  ],
+  "acks": [
+    {
+      "code": 200,
+      "headers": {
+        "contentType": "application/json",
+        "messageId": "m1"
+      },
+      "message": "OK",
+      "data": "{\"status\":\"SUCCESS\"}"
+    },
+    {
+      "code": 200,
+      "headers": {
+        "contentType": "application/json",
+        "messageId": "m2"
+      },
+      "message": "OK",
+      "data": "{\"status\":\"SUCCESS\"}"
+    },
+    {
+      "code": 200,
+      "headers": {
+        "contentType": "application/json",
+        "messageId": "m3"
+      },
+      "message": "OK",
+      "data": "{\"status\":\"SUCCESS\"}"
+    },
+    {
+      "code": 200,
+      "headers": {
+        "contentType": "application/json",
+        "messageId": "m4"
+      },
+      "message": "OK",
+      "data": "{\"status\":\"SUCCESS\"}"
+    },
+    {
+      "code": 200,
+      "headers": {
+        "contentType": "application/json",
+        "messageId": "m5"
+      },
+      "message": "OK",
+      "data": "{\"status\":\"SUCCESS\"}"
+    },
+    {
+      "code": 200,
+      "headers": {
+        "contentType": "application/json",
+        "messageId": "m6"
+      },
+      "message": "OK",
+      "data": "{\"status\":\"SUCCESS\"}"
+    }
+  ],
+  "calls": [
+    {
+      "sessionKey": "dingtalk:chat=room:s_00000000-0000-0000-0000-000000000001",
+      "channelKey": "dingtalk",
+      "message": "hello"
+    },
+    {
+      "sessionKey": "dingtalk:chat=room:s_00000000-0000-0000-0000-000000000001",
+      "channelKey": "dingtalk",
+      "message": "inflight"
+    }
+  ],
+  "logs": [
+    {
+      "level": "info",
+      "message": "dingtalk: connected via Stream mode"
+    },
+    {
+      "level": "info",
+      "message": "dingtalk: chat room already active, skipping"
+    },
+    {
+      "level": "error",
+      "message": "dingtalk: sendReply HTTP 500: owned fail"
+    },
+    {
+      "level": "info",
+      "message": "dingtalk: stopping (owned-stop)"
+    },
+    {
+      "level": "warn",
+      "message": "dingtalk: no sessionWebhook for chat room, cannot send"
+    },
+    {
+      "level": "warn",
+      "message": "dingtalk: no sessionWebhook for chat room, cannot send"
+    }
+  ],
+  "cronOk": true,
+  "cronFail": false,
+  "stoppedCron": false
+}

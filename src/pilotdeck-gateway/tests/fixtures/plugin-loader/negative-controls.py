@@ -49,7 +49,7 @@ CASES = [
     ('builtin-skills', LOADER, 'skill_dirs.push((path.clone(), PluginSource::Builtin));', 'let _ = path;', 'plugin_loader_skills'),
     ('duplicates-retained', LOADER, 'plugins.push(Arc::new(plugin));', 'if !plugins.iter().any(|p| p.name == plugin.name && p.source == plugin.source) { plugins.push(Arc::new(plugin)); }', 'plugin_loader_staging_oracle'),
     ('source-identity', LOADER, '    let discovered = discover_plugin_paths(&[\n        (paths.global_plugins_dir, PluginSource::Global),\n        (paths.project_plugins_dir, PluginSource::Project),\n    ]);', '    let discovered = discover_plugin_paths(&[\n        (paths.global_plugins_dir, PluginSource::Global),\n        (paths.project_plugins_dir, PluginSource::Global),\n    ]);', 'plugin_loader_staging_oracle'),
-    ('staged-failures', LOADER, 'staged_failures: failures,', 'staged_failures: Vec::new(),', 'plugin_loader_staging_oracle'),
+    ('staged-failures', LOADER, 'failures.retain(|f| !successes.contains(&(f.path.clone(), f.source)));\n    LoadFromDiskResult {\n        plugins,\n        staged_failures: failures,', 'failures.retain(|f| !successes.contains(&(f.path.clone(), f.source)));\n    LoadFromDiskResult {\n        plugins,\n        staged_failures: Vec::new(),', 'plugin_loader_staging_oracle'),
     ('node-join-absolute', CONFIG, 'PathBuf::from(format!("{}/{}", base.display(), part))', 'base.join(part)', 'plugin_loader_hooks_paths'),
     ('source-path-boundary', CONFIG, '.starts_with(&format!("{}/", root.display()))', '.starts_with(&format!("{}", root.display()))', 'plugin_loader_validation_oracle'),
     ('marketplace-name', CONFIG, '|| OFFICIAL.is_match(name)', '|| (OFFICIAL.is_match(name) && false)', 'plugin_loader_validation_oracle'),
@@ -431,7 +431,7 @@ CASES += [
     ('native-manifest-file-type', NATIVE, '        if !metadata.is_file() {', '        if false && !metadata.is_file() {', NATIVE_TEST + 'native_manifest_and_hook_fifos_are_rejected_without_reading'),
     ('native-skill-filter', NATIVE, '        result.retain(|command| command.is_skill);', '        result.retain(|command| !command.is_skill);', NATIVE_TEST + 'native_declarations_replay_fixed_ts_loader_oracle'),
     ('native-mcp-declaration', NATIVE, '        mcp_servers: servers("mcpServers")?,', '        mcp_servers: None,', NATIVE_TEST + 'native_declarations_replay_fixed_ts_loader_oracle'),
-    ('native-hook-directory', LOADER, '        if metadata.is_dir() { return Ok(None); }', '        if false && metadata.is_dir() { return Ok(None); }', NATIVE_TEST + 'native_ordinary_loader_failures_follow_real_ts_staging'),
+    ('native-hook-directory', LOADER, '        if metadata.is_dir() {\n            return Ok(None);\n        }\n        if !metadata.is_file() {', '        if false && metadata.is_dir() {\n            return Ok(None);\n        }\n        if !metadata.is_file() {', NATIVE_TEST + 'native_ordinary_loader_failures_follow_real_ts_staging'),
 ]
 EXPECTED_FAILURES.update({
     'native-hook-value-budget': ['native hook value budget rejects before projection'],

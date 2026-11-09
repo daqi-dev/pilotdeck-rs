@@ -247,6 +247,10 @@ pub(super) enum AssemblyMode {
 /// Wiring inputs. Server entries keep Default; the local embedding only
 /// changes mode. Rule-set/publication/report overrides remain test-only seams.
 pub(super) struct AssemblySeams {
+    #[cfg(test)]
+    pub channel_endpoints: super::channels::ChannelEndpointOverrides,
+    #[cfg(test)]
+    pub channel_declarations: Option<ChannelDeclarations>,
     pub mode: AssemblyMode,
     pub permission_rule_sets: Option<Arc<GatewaySessionPermissionRuleSetRegistry>>,
     pub acquire_miss_report: Option<AcquireMissReport>,
@@ -256,12 +260,46 @@ pub(super) struct AssemblySeams {
 impl Default for AssemblySeams {
     fn default() -> Self {
         Self {
+            #[cfg(test)]
+            channel_endpoints: Default::default(),
+            #[cfg(test)]
+            channel_declarations: None,
             mode: AssemblyMode::Server,
             permission_rule_sets: None,
             acquire_miss_report: None,
             publish_mcp_config: true,
         }
     }
+}
+
+/// A reduced constructor set exercises the real startup refusal path even
+/// when this build implements every channel. Production always uses its tables.
+#[cfg(test)]
+pub(super) struct ChannelDeclarations {
+    pub unmigrated: &'static [&'static str],
+    pub bundle: &'static [&'static str],
+}
+
+#[cfg(test)]
+pub(super) async fn start_with_channel_declarations(
+    options: Options,
+    env: Env,
+    declarations: ChannelDeclarations,
+) -> Result<TurnGateway, ProxyError> {
+    start_assembly(
+        options,
+        env,
+        crate::upload::CLEANUP_INTERVAL,
+        Arc::new(|_, result| Box::pin(async move { result })),
+        Arc::new(|error| eprintln!("native project cleanup: {error}")),
+        None,
+        None,
+        AssemblySeams {
+            channel_declarations: Some(declarations),
+            ..Default::default()
+        },
+    )
+    .await
 }
 
 // An observer runs only after the actual production disposal. Tests can inject
@@ -353,6 +391,36 @@ pub(super) async fn start_with_webhook(
     ))
 }
 
+/// Real Server assembly with loopback platform origins, available only in tests.
+#[cfg(test)]
+pub(super) async fn start_with_channel_endpoints(
+    options: Options,
+    env: Env,
+    channel_endpoints: super::channels::ChannelEndpointOverrides,
+) -> Result<(TurnGateway, Arc<super::channels::NativeChannels>), ProxyError> {
+    let slots = super::switch_wiring::AssemblySwitchSlots::default();
+    let host = start_assembly(
+        options,
+        env,
+        crate::upload::CLEANUP_INTERVAL,
+        Arc::new(|_, result| Box::pin(async move { result })),
+        Arc::new(|error| eprintln!("native project cleanup: {error}")),
+        None,
+        Some(slots.clone()),
+        AssemblySeams {
+            channel_endpoints,
+            ..Default::default()
+        },
+    )
+    .await?;
+    let channels = slots
+        .channels
+        .get()
+        .cloned()
+        .ok_or_else(|| ProxyError::from("channel assembly slot unavailable"))?;
+    Ok((host, channels))
+}
+
 /// #1429: the session permission rule set registry is normally created inside
 /// the assembly, which leaves the acquire-time MCP ask sync unobservable from a
 /// test. Supplying the registry keeps the assertion on the production entry
@@ -383,6 +451,7 @@ pub(super) async fn start_observed_with_permission_rule_sets(
             permission_rule_sets: Some(permission_rule_sets),
             acquire_miss_report: Some(miss_report),
             publish_mcp_config,
+            ..Default::default()
         },
     )
     .await
@@ -419,6 +488,10 @@ async fn start_assembly(
     seams: AssemblySeams,
 ) -> Result<TurnGateway, ProxyError> {
     let AssemblySeams {
+        #[cfg(test)]
+        channel_endpoints,
+        #[cfg(test)]
+        channel_declarations,
         mode,
         permission_rule_sets,
         acquire_miss_report,
@@ -458,6 +531,23 @@ async fn start_assembly(
     // Management can inspect existing skills; turn admission still checks that
     // unsupported skill prompt/tool composition is not silently omitted.
     validate_profile_inner(&options, &env, true).await?;
+    #[cfg(unix)]
+    {
+        let home = options.home.clone();
+        match tokio::task::spawn_blocking(move || super::session_history::recover(&home)).await {
+            Ok(Ok(report)) => {
+                for failure in report.failures {
+                    eprintln!(
+                        "[gateway] transcript replacement recovery {}: {}",
+                        failure.scope.display(),
+                        failure.message
+                    );
+                }
+            }
+            Ok(Err(error)) => eprintln!("[gateway] transcript replacement recovery: {error}"),
+            Err(error) => eprintln!("[gateway] transcript replacement recovery task: {error}"),
+        }
+    }
     let prepare_deployment = super::deployment::resolve(&options, &env)?;
     let registration_permit = super::methods::session_dir::session_io_permit()
         .await
@@ -1406,17 +1496,25 @@ async fn start_assembly(
         // out of `native_process::run`), which is the observable output: the
         // process exits nonzero naming the key instead of starting with a
         // channel that will never respond. The second check covers the
-        // bundle keys outside `UNMIGRATED_CHANNEL_KEYS` (`weixin` is built,
-        // `feishu` is not yet — #1329).
+        // bundle constructors separately from the loader table.
+        let pending_keys = crate::channel::loader::UNMIGRATED_CHANNEL_KEYS;
+        let bundle_keys = super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS;
+        #[cfg(test)]
+        let (pending_keys, bundle_keys) = channel_declarations
+            .as_ref()
+            .map(|declarations| (declarations.unmigrated, declarations.bundle))
+            .unwrap_or((pending_keys, bundle_keys));
         let rejected = if mode == AssemblyMode::Server {
-            crate::channel::loader::reject_unmigrated_channels(config.get("adapters")).and_then(
-                |()| {
-                    crate::channel::loader::reject_unimplemented_bundle_channels(
-                        config.get("adapters"),
-                        super::channels::IMPLEMENTED_BUNDLE_CHANNEL_KEYS,
-                    )
-                },
+            crate::channel::loader::reject_unmigrated_with_keys(
+                config.get("adapters"),
+                pending_keys,
             )
+            .and_then(|()| {
+                crate::channel::loader::reject_unimplemented_bundle_channels(
+                    config.get("adapters"),
+                    bundle_keys,
+                )
+            })
         } else {
             Ok(())
         };
@@ -1446,9 +1544,15 @@ async fn start_assembly(
         };
         let channel_assembly = Arc::new(super::channels::NativeChannels::new(
             super::channels::NativeChannelsOptions {
+                #[cfg(test)]
+                endpoints: channel_endpoints,
                 pilot_home: options.home.clone(),
                 config: Arc::new(config),
-                weixin: crate::channel::weixin::WeixinChannelOptions::default(),
+                weixin: crate::channel::weixin::WeixinChannelOptions {
+                    credentials_path: options.home.join("weixin-credentials.json"),
+                    credentials_dir: Some(options.home.clone()),
+                    ..Default::default()
+                },
                 weixin_maker: None,
                 feishu: crate::channel::feishu::FeishuOptions::default(),
                 // #2301: TS `consoleLogger` (pilotdeckServer.ts:67-72) — the
@@ -1460,6 +1564,35 @@ async fn start_assembly(
                 close_host: None,
             },
         ));
+        let _ = channel_assembly
+            .search
+            .set(Arc::new(super::channel_search::NativeChannelSearch {
+                home: options.home.clone(),
+                cwd: options.project.clone(),
+            }));
+        #[cfg(unix)]
+        {
+            let executable = std::env::current_exe()?;
+            let cli = executable
+                .parent()
+                .ok_or_else(|| {
+                    std::io::Error::other("Native executable has no installation directory")
+                })?
+                .join("pilotdeck");
+            let mut channel_env = env.clone();
+            channel_env.insert(
+                "PILOT_HOME".into(),
+                options.home.to_string_lossy().into_owned(),
+            );
+            let _ = channel_assembly.system.set(Arc::new(
+                super::channel_system::NativeChannelSystem::new(
+                    options.project.clone(),
+                    cli,
+                    options.token_file.clone(),
+                    channel_env,
+                ),
+            ));
+        }
         // #1329: hand the listener the slot before any adapter starts, so the
         // route is mounted with the process rather than with the channel.
         if let Some(slot) = webhook_slot {
@@ -1549,8 +1682,16 @@ async fn start_assembly(
                 .map_err(|error| std::io::Error::other(error.to_string()))?;
             lookup_forks.install_session_lookup(owner.weak_handle_lookup());
             lookup_forks.install_async_turn_lookup(owner.weak_async_turn_lookup());
+            #[cfg(unix)]
+            let replacement_storage = super::session_history::storage(
+                options.home.clone(),
+                options.project.clone(),
+                owner.clone(),
+            );
+            #[cfg(not(unix))]
+            let replacement_storage = Default::default();
             let replacement = Arc::new(ReplacementCoordinator::new(
-                Default::default(),
+                replacement_storage,
                 Arc::new(owner.clone()),
                 budget.as_millis() as u64,
                 None,
@@ -1618,10 +1759,14 @@ async fn start_assembly(
                 ),
             )?;
             let config_reload = Arc::downgrade(&build_automation);
+            let channels_reload = Arc::downgrade(&build_channels);
             publish_refresh
                 .set(settings.bundle.clone())
                 .map_err(|_| std::io::Error::other("Native settings cleanup was already bound."))?;
             settings.store.subscribe(Arc::new(move |event| {
+                if mode != AssemblyMode::Server {
+                    return;
+                }
                 let changed = |family: &str| {
                     event.changed_paths.iter().any(|path| {
                         path.to_utf8().ok().is_some_and(|path| {
@@ -1631,27 +1776,43 @@ async fn start_assembly(
                 };
                 let always_on_changed = changed("alwaysOn");
                 let cron_changed = changed("cron");
-                if !(always_on_changed || cron_changed) {
+                let adapters_changed = mode == AssemblyMode::Server
+                    && event.changed_paths.iter().any(|path| {
+                        path.to_utf8()
+                            .ok()
+                            .is_some_and(|path| path.starts_with("adapters."))
+                    });
+                if !(always_on_changed || cron_changed || adapters_changed) {
                     return;
                 }
                 if let Some(owner) = config_reload.upgrade() {
                     let config = event.next_snapshot.get("config");
-                    owner.request_reload(automation::ProjectAutomationReloadInput {
-                        config: automation::ProjectAutomationConfig {
-                            always_on: (mode == AssemblyMode::Server)
-                                .then(|| {
-                                    config.and_then(|c| c.get("alwaysOn")).map(
-                                        crate::runtime::always_on::AlwaysOnConfig::from_section,
-                                    )
-                                })
-                                .flatten(),
-                            cron: (mode == AssemblyMode::Server)
-                                .then(|| config.and_then(|c| c.get("cron")).cloned())
-                                .flatten(),
-                        },
-                        always_on_changed,
-                        cron_changed,
+                    let channel_reload = if adapters_changed {
+                        channels_reload.upgrade().map(|channels| {
+                            (channels, config.cloned().unwrap_or(JsValue::Undefined))
+                        })
+                    } else {
+                        None
+                    };
+                    let automation_reload = (always_on_changed || cron_changed).then(|| {
+                        automation::ProjectAutomationReloadInput {
+                            config: automation::ProjectAutomationConfig {
+                                always_on: (mode == AssemblyMode::Server)
+                                    .then(|| {
+                                        config.and_then(|c| c.get("alwaysOn")).map(
+                                            crate::runtime::always_on::AlwaysOnConfig::from_section,
+                                        )
+                                    })
+                                    .flatten(),
+                                cron: (mode == AssemblyMode::Server)
+                                    .then(|| config.and_then(|c| c.get("cron")).cloned())
+                                    .flatten(),
+                            },
+                            always_on_changed,
+                            cron_changed,
+                        }
                     });
+                    owner.request_config_reload(channel_reload, automation_reload);
                 }
             }));
             // #1326 A8 U8: the one `CronManager::new` of the native process.
@@ -1703,7 +1864,7 @@ async fn start_assembly(
                 prepare_weixin_login: (mode == AssemblyMode::Server)
                     .then(|| build_channels.prepare_login_callback()),
                 cron: cron.clone(),
-                automation: Some(published_automation.clone()),
+                automation: (mode == AssemblyMode::Server).then(|| published_automation.clone()),
                 settings: settings.gateway,
                 session_overrides,
                 ephemeral: Some(ephemeral.clone()),
@@ -1768,65 +1929,67 @@ async fn start_assembly(
             // The bundle owns this callback; a strong lifetime capture would form
             // lifetime -> bundle -> attachment -> callback -> lifetime.
             let stopping_automation = Arc::downgrade(&build_automation);
-            automation_bundle.attach(automation::ProjectAutomationAttachment {
-                agent_gateway: automation::ProjectAutomationAgentGateway {
-                    always_on: automation_body,
-                    cron: plain_cron,
-                    native_cron_bind: Some(Arc::new(move |manager| {
-                        let body = Arc::new(cron::NativeCronGatewayBody::new(
-                            cron_owner.clone(),
-                            cron_submitter.clone(),
-                            cron_runtime.clone(),
-                        ));
-                        let shutdown = body.shutdown_signal();
-                        let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(
-                            Arc::new(crate::runtime::cron::SessionAdmissionCronGateway::new(
-                                cron_admission.clone(),
-                                body,
-                            )),
-                        ));
-                        manager
-                            .bind_agent_gateway(recording.clone())
+            if mode == AssemblyMode::Server {
+                automation_bundle.attach(automation::ProjectAutomationAttachment {
+                    agent_gateway: automation::ProjectAutomationAgentGateway {
+                        always_on: automation_body,
+                        cron: plain_cron,
+                        native_cron_bind: Some(Arc::new(move |manager| {
+                            let body = Arc::new(cron::NativeCronGatewayBody::new(
+                                cron_owner.clone(),
+                                cron_submitter.clone(),
+                                cron_runtime.clone(),
+                            ));
+                            let shutdown = body.shutdown_signal();
+                            let recording = Arc::new(crate::switch::RecordingCronGateway::wrap(
+                                Arc::new(crate::runtime::cron::SessionAdmissionCronGateway::new(
+                                    cron_admission.clone(),
+                                    body,
+                                )),
+                            ));
+                            manager
+                                .bind_agent_gateway(recording.clone())
+                                .map_err(cron::cron_io_error)?;
+                            let options = execution_options.clone();
+                            manager
+                                .set_execution_project_filter(Arc::new(move |project| {
+                                    options.serves_project(project)
+                                }))
+                                .map_err(cron::cron_io_error)?;
+                            cron::bind_callbacks(
+                                &manager,
+                                cron_channels.server().clone(),
+                                cron_runtime.clone(),
+                                shutdown.clone(),
+                            )
                             .map_err(cron::cron_io_error)?;
-                        let options = execution_options.clone();
-                        manager
-                            .set_execution_project_filter(Arc::new(move |project| {
-                                options.serves_project(project)
-                            }))
-                            .map_err(cron::cron_io_error)?;
-                        cron::bind_callbacks(
-                            &manager,
-                            cron_channels.server().clone(),
-                            cron_runtime.clone(),
-                            shutdown.clone(),
-                        )
-                        .map_err(cron::cron_io_error)?;
-                        let stop = Arc::new(crate::switch::CronStopHandle::new_native(
-                            manager,
-                            recording.failures(),
-                            Duration::from_secs(15),
-                            Arc::new(move || shutdown.cancel()),
-                        ));
-                        // Initial compatibility handle; reload generations are owned
-                        // and stopped through the complete automation lifetime.
-                        let _ = build_cron_slot.set(stop.clone());
-                        Ok(stop)
+                            let stop = Arc::new(crate::switch::CronStopHandle::new_native(
+                                manager,
+                                recording.failures(),
+                                Duration::from_secs(15),
+                                Arc::new(move || shutdown.cancel()),
+                            ));
+                            // Initial compatibility handle; reload generations are owned
+                            // and stopped through the complete automation lifetime.
+                            let _ = build_cron_slot.set(stop.clone());
+                            Ok(stop)
+                        })),
+                    },
+                    is_project_busy: Some(Arc::new(move |project| {
+                        busy_owner.has_active_user_turn(&project.into())
                     })),
-                },
-                is_project_busy: Some(Arc::new(move |project| {
-                    busy_owner.has_active_user_turn(&project.into())
-                })),
-                update_subsystems: Arc::new(move |update| {
-                    if stopping_automation
-                        .upgrade()
-                        .is_none_or(|owner| owner.is_stopping())
-                    {
-                        published_automation.clear();
-                    } else {
-                        published_automation.publish(update, standalone.clone());
-                    }
-                }),
-            })?;
+                    update_subsystems: Arc::new(move |update| {
+                        if stopping_automation
+                            .upgrade()
+                            .is_none_or(|owner| owner.is_stopping())
+                        {
+                            published_automation.clear();
+                        } else {
+                            published_automation.publish(update, standalone.clone());
+                        }
+                    }),
+                })?;
+            }
             // #1328: publish the weixin gateway port (the TS `baseDeps.gateway`
             // every channel start receives) before any channel can construct.
             // The builder runs exactly once per host, so a second publish is
@@ -1841,6 +2004,9 @@ async fn start_assembly(
             // #1329: the same submitter answers `/feishu/webhook` turns; the
             // adapter holds the handle from construction, so this only fills
             // the slot behind it.
+            if !build_channels.set_control(&requests) {
+                return Err(std::io::Error::other("channel control already published"));
+            }
             if !build_channels.set_interactions(&interactions) {
                 return Err(std::io::Error::other(
                     "channel interaction coordinator already published",
@@ -1857,7 +2023,13 @@ async fn start_assembly(
                 submitter,
             })
         },
-        async move { initialize_automation.start().await },
+        async move {
+            if mode == AssemblyMode::Server {
+                initialize_automation.start().await
+            } else {
+                Ok(())
+            }
+        },
         async move {
             refresh_cleanup.detach();
             // #1746: the host awaits this future on its own failure path before
@@ -1884,8 +2056,11 @@ async fn start_assembly(
                     }
                     None => Ok(()),
                 };
-                let automation_stop =
-                    cleanup_observer("automation", cleanup_automation.stop().await).await;
+                let automation_stop = if mode == AssemblyMode::Server {
+                    cleanup_observer("automation", cleanup_automation.stop().await).await
+                } else {
+                    Ok(())
+                };
                 // #1328 A8.3: stop the channel assembly and flush its durable
                 // mapper state — the closeServer + flushChannelState pair
                 // (PilotDeckServerShutdownBundle.ts:33-37: channels stop before
@@ -1951,6 +2126,12 @@ async fn start_assembly(
                 }
                 if let Some(weixin) = channel_assembly.create_startup_weixin().await {
                     startup.push(weixin);
+                }
+                if let Some(qq) = channel_assembly.create_startup_qq().await {
+                    startup.push(qq);
+                }
+                if let Some(wecom) = channel_assembly.create_startup_wecom().await {
+                    startup.push(wecom);
                 }
                 startup.extend(channel_assembly.create_startup_configured());
             }

@@ -245,9 +245,11 @@ MUTATIONS = [
      '#347 setSdkSessionConfig records the session root'),
     # ── #347 fix-r1 (review P2-2): the paired clears ───────────────────────
     ('budget-clear-reads-after-delete', 'sdk_session/registry.rs',
-     'if let Some(root) = self.session_project(session_key)\n'
+     'pub fn clear_session_state(&mut self, session_key: &JsString) -> Result<(), SdkSessionError> {\n'
+     '        if let Some(root) = self.session_project(session_key)\n'
      '            && let Some(budget) = &self.options.task_budget',
-     'self.delete_project(session_key);\n'
+     'pub fn clear_session_state(&mut self, session_key: &JsString) -> Result<(), SdkSessionError> {\n'
+     '        self.delete_project(session_key);\n'
      '        if let Some(root) = self.session_project(session_key)\n'
      '            && let Some(budget) = &self.options.task_budget',
      '--test=sdk_mcp', 'registry_clear_then_mcp_clear_clears_everything_in_order',

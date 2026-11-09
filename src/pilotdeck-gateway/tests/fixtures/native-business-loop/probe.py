@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# anchor-selfcheck: unsupported Native business integration probe; no source mutation table.
 """Unfrozen product diagnostic. TS official client to both real WS hosts; no Cargo."""
 import argparse,hashlib,shutil,http.server,importlib.util,json,os,signal,socket,subprocess,sys,threading,time
 from pathlib import Path

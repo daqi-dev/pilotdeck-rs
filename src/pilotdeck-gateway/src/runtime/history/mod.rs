@@ -22,3 +22,5 @@ pub use session::fallback;
 pub use usage::token_usage;
 
 pub use subagent_reader::read as read_subagent_messages;
+
+pub mod search;

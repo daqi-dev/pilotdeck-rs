@@ -86,6 +86,15 @@ impl NativeJournalFiles {
             return Err(limit());
         }
         let (parent, leaf) = self.parent(true)?;
+        // Traversal descriptors are O_PATH on Linux (O_SEARCH on macOS).
+        // They can anchor renameat but cannot be fsynced. Reopen the pinned
+        // directory itself, never its path, before publishing any bytes.
+        let sync_parent = File::from(openat(
+            &parent,
+            ".",
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )?);
         match statat(&parent, leaf, AtFlags::SYMLINK_NOFOLLOW) {
             Ok(stat)
                 if FileType::from_raw_mode(stat.st_mode) != FileType::RegularFile
@@ -112,7 +121,7 @@ impl NativeJournalFiles {
             file.write_all(bytes)?;
             file.sync_all()?;
             renameat(&parent, temporary.as_str(), &parent, leaf)?;
-            parent.sync_all()?;
+            sync_parent.sync_all()?;
             Ok(())
         })();
         if result.is_err() {
@@ -181,6 +190,21 @@ mod tests {
             std::env::temp_dir().join(format!("pdrs-native-dialog-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         root
+    }
+    #[test]
+    fn native_journal_fsyncs_a_readable_pinned_parent() {
+        let root = root();
+        let path = root.join("gateway/sdk-task-budget-ledger.jsonl");
+        let native = NativeJournalFiles::new(&root, &path).unwrap();
+        native.write(b"{\"kind\":\"cleared\"}\n").unwrap();
+        assert_eq!(native.read().unwrap(), b"{\"kind\":\"cleared\"}\n");
+        native.write(b"{\"kind\":\"updated\"}\n").unwrap();
+        assert_eq!(native.read().unwrap(), b"{\"kind\":\"updated\"}\n");
+        assert_eq!(
+            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
+            1
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn native_journal_preserves_utf16_and_recovers_then_removes() {

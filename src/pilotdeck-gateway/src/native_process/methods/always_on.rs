@@ -446,19 +446,21 @@ mod tests {
                 .expect("#2294 envelope is defined");
             negative_assert_eq!(text, envelope, "#2294 {method} configured routing");
         }
-        // A staged manager does not bypass the shared admission gate: an
-        // unserved projectKey is still refused before the family runs.
+        // The manager owns project routing, and fixed TS returns a family
+        // envelope for an unknown project (AlwaysOnManager.ts:192-196).
         let params = crate::metadata::object([("projectKey", "/elsewhere".into())]);
-        let result =
-            GatewayRequests::request(&requests, JsString::from("always_on_apply"), params).await;
+        let value = GatewayRequests::request(&requests, JsString::from("always_on_apply"), params)
+            .await
+            .expect("project_not_found is a family envelope");
         negative_assert_eq!(
-            result
-                .expect_err("#2294 unserved project is refused with a manager too")
-                .code
-                .as_str(),
-            "gateway_request_failed",
-            "#2294 the admission gate precedes the always-on family"
+            value
+                .get("error")
+                .and_then(|e| e.get("code"))
+                .and_then(JsValue::as_string),
+            Some(&JsString::from("project_not_found")),
+            "#2294 unknown project envelope"
         );
+
         teardown(&requests).await;
     }
 

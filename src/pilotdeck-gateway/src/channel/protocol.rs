@@ -88,6 +88,64 @@ pub struct TurnRequest {
     pub message: JsString,
 }
 
+/// Optional submitTurn fields used by richer adapters. The common runtime
+/// remains responsible for project authority, attachment preparation and policy.
+#[derive(Clone, Debug, Default)]
+pub struct ChannelTurnOptions {
+    pub project_key: Option<JsString>,
+    pub attachments: Vec<JsValue>,
+    pub allow_plan_mode_tools: Option<bool>,
+    pub synthetic_messages: Vec<JsValue>,
+    pub mode: Option<JsString>,
+    pub base_permission_mode: Option<JsString>,
+    pub timeout_ms: Option<f64>,
+}
+
+impl ChannelTurnOptions {
+    pub fn is_empty(&self) -> bool {
+        self.project_key.is_none()
+            && self.attachments.is_empty()
+            && self.allow_plan_mode_tools.is_none()
+            && self.synthetic_messages.is_empty()
+            && self.mode.is_none()
+            && self.base_permission_mode.is_none()
+            && self.timeout_ms.is_none()
+    }
+}
+
+/// Commands share the real Gateway request dispatcher; adapters do not get a
+/// second session registry. Optional local search is injected independently.
+pub trait ChannelControlPort: Send + Sync {
+    fn call(
+        &self,
+        method: &'static str,
+        params: JsValue,
+    ) -> BoxFuture<Result<JsValue, ChannelError>>;
+}
+
+pub trait ChannelSearchPort: Send + Sync {
+    fn search(&self, params: JsValue) -> BoxFuture<Result<JsValue, ChannelError>>;
+}
+
+/// A source-install update runs through the same native CLI transaction.
+pub struct ChannelUpdateResult {
+    pub code: i32,
+    pub output: String,
+}
+pub trait ChannelUpdatePort: Send + Sync {
+    fn run(&self, check: bool) -> BoxFuture<Result<ChannelUpdateResult, ChannelError>>;
+}
+pub struct ChannelStatusSnapshot {
+    pub branch: String,
+    pub commit: String,
+    pub uptime: f64,
+    pub platform: String,
+    pub runtime_version: String,
+}
+pub trait ChannelStatusPort: Send + Sync {
+    fn read(&self) -> BoxFuture<Result<ChannelStatusSnapshot, ChannelError>>;
+}
+
 /// The event stream of one accepted turn. Dropping it is the TS consumer
 /// cleanup: the underlying submission drains its own writer; it never creates
 /// a second session owner.
@@ -105,6 +163,22 @@ pub trait TurnGateway: Send + Sync {
         &self,
         request: TurnRequest,
     ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>>;
+
+    fn submit_with_options(
+        &self,
+        request: TurnRequest,
+        options: ChannelTurnOptions,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        if options.is_empty() {
+            self.submit(request)
+        } else {
+            Box::pin(async {
+                Err(ChannelError::error(
+                    "Channel gateway does not support extended turn inputs",
+                ))
+            })
+        }
+    }
 }
 
 /// Config is shared with each adapter. The A7 port is optional, like TS's

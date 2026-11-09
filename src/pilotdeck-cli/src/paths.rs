@@ -232,17 +232,7 @@ pub fn js_trim(text: &str) -> &str {
     text.trim_matches(is_js_space)
 }
 
-/// Node fs error message `CODE: description, syscall 'path'`, formatted by the
-/// gateway's libuv template (a descriptor read/write-stage error omits the
-/// path; a staged error from `read_session_bytes` etc. carries its own stage).
-pub fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> Option<String> {
-    let path = path.to_string_lossy();
-    pilotdeck_gateway::node_fs_message(error, syscall, Some(path.as_ref()))
-}
-
-/// [`node_fs_message`] with libuv's `UV_UNKNOWN` fallback for errnos outside
-/// the table, under the same stage rule: a descriptor read/write error
-/// carries no path even in the fallback.
+/// Gateway libuv error formatting with UV_UNKNOWN fallback and read/write stages.
 pub fn node_fs_message_or_unknown(error: &std::io::Error, syscall: &str, path: &Path) -> String {
     pilotdeck_gateway::node_fs_message_or_unknown(
         error,
@@ -254,6 +244,10 @@ pub fn node_fs_message_or_unknown(error: &std::io::Error, syscall: &str, path: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn node_fs_message(error: &std::io::Error, syscall: &str, path: &Path) -> Option<String> {
+        pilotdeck_gateway::node_fs_message(error, syscall, Some(path.to_string_lossy().as_ref()))
+    }
 
     #[test]
     fn homedir_injected_fallback_never_uses_host_environment() {

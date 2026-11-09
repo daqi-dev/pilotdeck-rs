@@ -1,7 +1,9 @@
 //! Additional native resource/lifecycle regressions; no external provider.
 use super::*;
 use crate::{host::modules::capability::ToolCall, runtime::network::Cancellation};
-use serde_json::{Value, json};
+#[cfg(target_os = "macos")]
+use serde_json::Value;
+use serde_json::json;
 use std::{
     sync::{
         Mutex,

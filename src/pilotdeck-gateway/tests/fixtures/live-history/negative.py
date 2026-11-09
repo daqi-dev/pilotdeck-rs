@@ -19,7 +19,7 @@ controls = [
     ('unreserved-history', live, 'state.active = Some(cancellation.clone());', 'let _ = cancellation.clone();', 'live_history_slot_matrix', 'concurrent submit must reject before reading history'),
     ('empty-history', live, 'input.history = (self.history)();', 'input.history = (self.history)(); input.history.clear();', 'live_history_slot_matrix', 'new owner reads fresh history'),
     ('disposed-read', live, 'return Err(RuntimeError::new("Agent session disposed."));', 'let _ = (self.history)(); return Err(RuntimeError::new("Agent session disposed."));', 'live_history_slot_matrix', 'history slot matrix must match real TS'),
-    ('rejected-read', live, 'if state.active.is_some() {', 'if state.active.is_some() { let _ = (self.history)();', 'live_history_slot_matrix', 'history slot matrix must match real TS'),
+    ('rejected-read', live, 'if state.active.is_some() && !crate::mutants::on("active-admission") {', 'if state.active.is_some() && !crate::mutants::on("active-admission") { let _ = (self.history)();', 'live_history_slot_matrix', 'history slot matrix must match real TS'),
     ('gates-extra-row', fixtures/'turn-gates/oracle.json', '"matrix": [', '"matrix": [{"name":"unconsumed"},', 'gates_oracle_fully_consumed', 'oracle rows must be fully consumed'),
     ('gates-duplicate-row', fixtures/'turn-gates/oracle.json', '"matrix": [', '"matrix": [{"name":"start-failure"},', 'gates_oracle_fully_consumed', 'oracle rows must be fully consumed'),
     ('recording-extra-row', fixtures/'live-recording/oracle.json', '"matrix": [', '"matrix": [{"name":"unconsumed"},', 'live_recording_oracle_fully_consumed', 'oracle rows must be fully consumed'),

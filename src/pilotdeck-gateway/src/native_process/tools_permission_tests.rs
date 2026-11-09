@@ -799,6 +799,14 @@ async fn sdk_policy_ask_grant_deny_cancel_reaches_real_native_file_execution() {
                 can_prompt: Some(true),
                 policy_can_prompt: None,
                 emit: Arc::new(move |event| {
+                    let event_type = event
+                        .get("type")
+                        .and_then(JsValue::as_string)
+                        .expect("emitted interaction event has a type");
+                    if !event_type.equals_str("permission_request") {
+                        return true;
+                    }
+
                     answerer.decide_permission(
                         &"session".into(),
                         crate::runtime::interaction::PermissionDecision {

@@ -34,44 +34,26 @@ CONFIG = ROOT / 'src/pilotdeck-gateway/src/native_process/methods/config.rs'
 SOURCE_TEXTS = (REPLACEMENT, CONFIG)
 CFG = 'native_process::methods::config::tests::'
 mutations = [
-    # The guard's Drop stops releasing: the pre-#2391 leak restored — a
-    # request dropped at an await point strands the reservation. The tuple
-    # keeps `key` referenced: a bare `let _ = self.coordinator;` leaves the
-    # `if let Some(key)` binding unused, which a `-D warnings` host turns
-    # into a compile failure (INVALID, not KILLED).
-    ('guard-drop-leak', REPLACEMENT,
-     'self.coordinator.release_transcript_write(&key);',
-     'let _ = (self.coordinator, &key);',
-     CFG + 'session_model_set_dropped_mid_write_releases_the_reservation',
-     '#2391 a dropped request releases its transcript-write reservation'),
-    # The set call site releases before the reserved body runs: the parked
-    # request holds nothing (the reservation no longer spans the write).
+    ('guard-drop-leak', CONFIG,
+     'self.replacement.release_transcript_write(&self.key);',
+     'let _ = (&self.replacement, &self.key);',
+     CFG + 'session_model_set_dropped_mid_write_releases_after_completion',
+     'detached write finishes and releases reservation'),
     ('set-guard-early-release', CONFIG,
-     'let reserved = reserve_model_update(self, params, "change the session model")?;\n'
-     '        let result = self.session_model_set_reserved(params).await;\n'
-     '        drop(reserved);\n'
-     '        result',
-     'drop(reserve_model_update(self, params, "change the session model")?);\n'
-     '        let result = self.session_model_set_reserved(params).await;\n'
-     '        result',
-     CFG + 'session_model_set_dropped_mid_write_releases_the_reservation',
+     'tokio::spawn(async move { requests.session_model_set_reserved(&params, held).await })',
+     'drop(held); tokio::spawn(async move { requests.session_model_set_reserved(&params, None).await })',
+     CFG + 'session_model_set_dropped_mid_write_releases_after_completion',
      '#2391 the parked request holds the reservation'),
-    # The clear call site mirrors set's.
     ('clear-guard-early-release', CONFIG,
-     'let reserved = reserve_model_update(self, params, "clear the session model")?;\n'
-     '        let result = self.session_model_clear_reserved(params).await;\n'
-     '        drop(reserved);\n'
-     '        result',
-     'drop(reserve_model_update(self, params, "clear the session model")?);\n'
-     '        let result = self.session_model_clear_reserved(params).await;\n'
-     '        result',
-     CFG + 'session_model_clear_dropped_mid_write_releases_the_reservation',
+     'tokio::spawn(async move { requests.session_model_clear_reserved(&params, held).await })',
+     'drop(held); tokio::spawn(async move { requests.session_model_clear_reserved(&params, None).await })',
+     CFG + 'session_model_clear_dropped_mid_write_releases_after_completion',
      '#2391 the parked clear request holds the reservation'),
 ]
 # Every bound assertion lives verbatim in the scanned sources; each needs its
 # own pin or the completeness rule refuses the run (#2065 shape).
 LITERAL_ANCHORS = [
-    (CONFIG, '#2391 a dropped request releases its transcript-write reservation'),
+    (CONFIG, 'detached write finishes and releases reservation'),
     (CONFIG, '#2391 the parked request holds the reservation'),
     (CONFIG, '#2391 the parked clear request holds the reservation'),
 ]

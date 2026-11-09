@@ -38,6 +38,7 @@ pub use server_host::{
 // until #1352; it is its own module so the table, its exception list and the
 // test that pins both to the recorded TS oracle sit next to each other.
 mod capabilities;
+mod channel_control;
 mod channel_interaction;
 // #1328 replay test (channel::weixin::replay_tests) drives the assembly
 // directly, in the channel subtree rather than this one.
@@ -472,3 +473,21 @@ impl TurnEnvironment for NativeTurnEnvironment {
 mod services_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod channel_lifecycle_tests;
+
+mod channel_search;
+
+#[cfg(unix)]
+mod channel_system;
+
+#[cfg(test)]
+#[path = "channel/wecom/actual_host_tests.rs"]
+mod wecom_actual_host_tests;
+#[cfg(test)]
+#[path = "channel/weixin/actual_host_tests.rs"]
+mod weixin_actual_host_tests;
+
+#[cfg(unix)]
+mod session_history;

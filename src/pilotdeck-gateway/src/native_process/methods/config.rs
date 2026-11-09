@@ -142,7 +142,10 @@ fn runtime_error(error: RuntimeError) -> RequestError {
 
 fn replacement_error(error: crate::runtime::replacement::ReplacementError) -> RequestError {
     RequestError {
-        code: error.code.unwrap_or("gateway_request_failed").into(),
+        code: error
+            .code
+            .unwrap_or_else(|| "gateway_request_failed".into())
+            .into(),
         message: error.message.into(),
         details: None,
         validation: None,
@@ -1234,16 +1237,12 @@ mod tests {
         teardown(&r).await;
     }
 
-    /// #2391: a `session_model_set` request future dropped at an await point
-    /// must release its transcript-write reservation. The TS wrapper is a
-    /// `try { … } finally { release }` around a Promise that cannot be
-    /// dropped, so the Rust port's extra exits — cancellation at an await
-    /// point and a panic in the reserved body — are the release guard's to
-    /// cover; without it the key is stranded at `SESSION_BUSY` until the
-    /// process restarts. The test holds the transcript fence so the request
-    /// parks inside the reserved body, past the synchronous reserve prefix.
+    /// The detached Promise-equivalent must retain the reservation until its
+    /// actual write settles, even if its caller drops the response future.
+    /// Hold the transcript fence to prove cancellation cannot admit a second
+    /// writer before that operation completes.
     #[tokio::test]
-    async fn session_model_set_dropped_mid_write_releases_the_reservation() {
+    async fn session_model_set_dropped_mid_write_releases_after_completion() {
         let (_scratch, r) = setup_fixture();
         let key = JsString::from("cfg-drop-1");
         let fence = transcript_locks::acquire(&transcript_locks::session_transcript_path(
@@ -1274,10 +1273,30 @@ mod tests {
         // at the await point.
         drop(request);
         negative_assert!(
-            !r.replacement.has_transcript_write_reservation(&key),
-            "#2391 a dropped request releases its transcript-write reservation"
+            r.replacement.has_transcript_write_reservation(&key),
+            "the detached write must retain exclusion while blocked on its fence"
+        );
+        let blocked = r
+            .session_config_request(
+                "session_model_set".into(),
+                object([
+                    ("sessionKey", JsValue::String(key.clone())),
+                    ("selection", selection("model", "test", "test")),
+                ]),
+            )
+            .await;
+        negative_assert!(
+            blocked.is_err(),
+            "a second write cannot enter while the original write is in progress"
         );
         drop(fence);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while r.replacement.has_transcript_write_reservation(&key) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached write finishes and releases reservation");
         let retry = r
             .session_config_request(
                 "session_model_set".into(),
@@ -1297,10 +1316,9 @@ mod tests {
         teardown(&r).await;
     }
 
-    /// #2391: the clear method's reservation travels in the same `Drop`
-    /// guard — a dropped clear request must not strand its key either.
+    /// The clear operation retains the same owned reservation until it settles.
     #[tokio::test]
-    async fn session_model_clear_dropped_mid_write_releases_the_reservation() {
+    async fn session_model_clear_dropped_mid_write_releases_after_completion() {
         let (_scratch, r) = setup_fixture();
         let key = JsString::from("cfg-drop-2");
         let fence = transcript_locks::acquire(&transcript_locks::session_transcript_path(
@@ -1325,10 +1343,37 @@ mod tests {
         );
         drop(request);
         negative_assert!(
-            !r.replacement.has_transcript_write_reservation(&key),
-            "#2391 a dropped clear request releases its transcript-write reservation"
+            r.replacement.has_transcript_write_reservation(&key),
+            "the detached clear must retain exclusion while blocked on its fence"
+        );
+        let blocked = r
+            .session_config_request(
+                "session_model_clear".into(),
+                object([("sessionKey", JsValue::String(key.clone()))]),
+            )
+            .await;
+        negative_assert!(
+            blocked.is_err(),
+            "a second clear cannot enter while the original clear is in progress"
         );
         drop(fence);
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while r.replacement.has_transcript_write_reservation(&key) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached clear finishes and releases reservation");
+        let retry = r
+            .session_config_request(
+                "session_model_clear".into(),
+                object([("sessionKey", JsValue::String(key.clone()))]),
+            )
+            .await;
+        negative_assert!(
+            retry.is_ok(),
+            "a clear can run again once the first operation settles"
+        );
         teardown(&r).await;
     }
 

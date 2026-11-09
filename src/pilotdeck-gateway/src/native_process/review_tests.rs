@@ -574,7 +574,7 @@ async fn replacement_clone_shares_state() {
         .reserve_transcript_write(&session, "probe")
         .expect_err("#1137 cloned reservation must conflict");
     negative_assert_eq!(
-        error.code,
+        error.code.as_deref(),
         Some(
             expected["conflictCode"]
                 .as_str()

@@ -1,5 +1,5 @@
 # gitleaks 配置：继承默认规则，按值放行已知非密钥。
-# 10 条值级条目（8 条哈希 + 1 条 RFC 6455 nonce + 1 条 A8.3 测试 aesKey 字面量）用 regexTarget="secret" + ^…$ 精确放行；
+# 值级条目（哈希、RFC 6455 nonce、A8.3 测试 AES key）用 regexTarget="secret" + ^…$ 精确放行；
 # 5 条 PEM 片段条目是唯一例外，只用 match 子串语义——判据是「解码后真是私钥 DER 的开头」
 # （SEQUENCE + INTEGER 版本号 0/1 + AlgorithmIdentifier/私钥 OCTET STRING），不是按值的形状或前缀分桶，
 # 所以大写 hex / 128-hex / 带前缀的 sha256:… / 普通长 base64 都进不了这个桶。
@@ -7,6 +7,11 @@
 # 注意：全局 allowlist 的 paths 会整文件跳过扫描（8.30 实测），因此这里只用值，不用路径。
 [extend]
 useDefault = true
+
+[[allowlists]]
+description = "WeCom media-capture.mjs 的公开 AES 测试向量：整数 0..31 组成的 32 字节数组再编码为无补位 base64，不是账号凭据；仅放行该精确值，包含此前后缀或其他值仍扫描"
+regexTarget = "secret"
+regexes = ['''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8$''']
 
 [[allowlists]]
 description = "A6.8 upload 夹具的 idempotencyKeyHash = sha256(\"once\")（generate.mts 固定幂等键生成），不是凭据；值级精确放行：仅当 gitleaks 抽出的 Secret 恰等于该哈希时放行（regexTarget=\"secret\" + ^…$ 锚定），同头不同值 / 更长值仍会命中"

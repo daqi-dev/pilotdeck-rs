@@ -399,10 +399,9 @@ impl Shared {
                 .get("id")
                 .and_then(JsValue::as_number)
                 .filter(|n| n.is_finite() && *n >= 0.0 && n.fract() == 0.0)
+                && let Some(done) = lock(&self.pending).remove(&(id as u64))
             {
-                if let Some(done) = lock(&self.pending).remove(&(id as u64)) {
-                    let _ = done.send(message.get("success") == Some(&JsValue::Bool(true)));
-                }
+                let _ = done.send(message.get("success") == Some(&JsValue::Bool(true)));
             }
             return;
         }

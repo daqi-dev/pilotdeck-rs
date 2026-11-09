@@ -37,8 +37,7 @@ pub const CHANNEL_LOADER_KEYS: [&str; 15] = [
 /// #1302 A scope remains required; this temporary guard refuses configuration
 /// instead of silently accepting an adapter that cannot receive messages.
 /// Reverse loader order preserves deterministic first-error behavior.
-pub const UNMIGRATED_CHANNEL_KEYS: &[&str] =
-    &["email", "dingtalk", "whatsapp", "discord", "qq", "wecom"];
+pub const UNMIGRATED_CHANNEL_KEYS: &[&str] = &[];
 
 /// The two keys whose TS gate is strict. `qq` and `wecom` are built by
 /// `ChannelAdapterBundle.createQQ` / `createWeCom`, which both start with
@@ -84,10 +83,19 @@ fn rejects_enabled(key: &str, cfg: &JsValue) -> bool {
 /// `console.error` line); see also [`reject_unimplemented_bundle_channels`]
 /// for the `weixin` / `feishu` keys this table cannot cover.
 pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), ChannelError> {
+    reject_unmigrated_with_keys(adapters, UNMIGRATED_CHANNEL_KEYS)
+}
+
+// The all-channel build has an empty pending set. Explicit keys keep the same
+// fail-closed policy testable without leaving a supported channel disabled.
+pub(crate) fn reject_unmigrated_with_keys(
+    adapters: Option<&JsValue>,
+    keys: &[&str],
+) -> Result<(), ChannelError> {
     let Some(adapters) = adapters else {
         return Ok(());
     };
-    for key in UNMIGRATED_CHANNEL_KEYS {
+    for key in keys {
         let Some(cfg) = adapters.get(key) else {
             continue;
         };
@@ -107,7 +115,7 @@ pub fn reject_unmigrated_channels(adapters: Option<&JsValue>) -> Result<(), Chan
 /// already refuse through [`reject_unmigrated_channels`]. Without this list
 /// the same silent skip would simply reappear under a different key name
 /// (#1694 §7).
-pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu"];
+pub const BUNDLE_CHANNEL_KEYS: &[&str] = &["weixin", "feishu", "qq", "wecom"];
 
 /// The refusal reason both gates print. [`reject_unmigrated_channels`] keeps
 /// its own literal on purpose: the frozen `channel-unmigrated`

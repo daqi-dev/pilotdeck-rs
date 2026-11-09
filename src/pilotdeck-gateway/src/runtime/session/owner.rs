@@ -291,9 +291,6 @@ struct Inner {
 #[derive(Clone)]
 pub struct SessionOwner(Arc<Inner>);
 
-/// #996: ignore-stop-new-publication clears the stop flag around
-/// create_active's publication guard; Drop restores it on every exit,
-/// including unwinds. Inert unless compiled into a mutants test binary.
 fn project_key_state(state: &State, key: &JsString) -> Option<JsString> {
     state
         .records
@@ -314,6 +311,9 @@ fn project_key_state(state: &State, key: &JsString) -> Option<JsString> {
         })
 }
 
+/// #996: ignore-stop-new-publication clears the stop flag around
+/// create_active's publication guard; Drop restores it on every exit,
+/// including unwinds. Inert unless compiled into a mutants test binary.
 struct StopFlagRestore {
     inner: Arc<Inner>,
     stopped: bool,
@@ -1073,6 +1073,7 @@ impl SessionOwner {
 
     /// Reserve cold archive IO against publication, turns, close and shutdown.
     /// The caller moves this guard into the actual blocking job, not its waiter.
+    #[cfg(test)]
     pub fn try_reserve_archive(
         &self,
         key: &JsString,
@@ -1103,6 +1104,8 @@ impl SessionOwner {
         if state.stopped {
             return Err(RuntimeError::new("Session router is shut down."));
         }
+        // A pending publication already makes this key busy below; unlike a
+        // lookup, archive admission never adopts that unfinished ownership.
         let project = selected_project.cloned().or_else(|| {
             state
                 .records

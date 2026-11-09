@@ -15,7 +15,7 @@ use tokio::task::AbortHandle;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReplacementError {
-    pub code: Option<&'static str>,
+    pub code: Option<String>,
     pub message: String,
     pub details: Option<Box<JsValue>>,
 }
@@ -29,7 +29,7 @@ impl ReplacementError {
     }
     fn dialog(code: &'static str, message: impl Into<String>) -> Self {
         Self {
-            code: Some(code),
+            code: Some(code.into()),
             ..Self::new(message)
         }
     }

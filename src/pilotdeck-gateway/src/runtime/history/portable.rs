@@ -15,7 +15,9 @@ fn invalid(message: &str) -> RequestError {
     }
 }
 
-pub(super) fn validate_archive(value: &JsValue) -> Result<(), RequestError> {
+// The header checks are bounded by the already-parsed object's top level;
+// reject malformed/count/title inputs before reserving a blocking IO slot.
+fn validate_archive_header(value: &JsValue) -> Result<&[JsValue], RequestError> {
     let Some(object) = value.as_object() else {
         return Err(invalid(
             "Unsupported or malformed session transcript archive.",
@@ -49,7 +51,11 @@ pub(super) fn validate_archive(value: &JsValue) -> Result<(), RequestError> {
     {
         return Err(invalid("Session transcript archive title is invalid."));
     }
-    for message in messages {
+    Ok(messages)
+}
+
+pub(super) fn validate_archive(value: &JsValue) -> Result<(), RequestError> {
+    for message in validate_archive_header(value)? {
         if !message
             .get("role")
             .and_then(JsValue::as_string)
@@ -424,6 +430,7 @@ pub(crate) async fn restore_guarded<G: Send + 'static>(
     archive: JsValue,
     guard: G,
 ) -> Result<JsValue, RequestError> {
+    validate_archive_header(&archive)?;
     let permit = super::reader::READ_SLOTS
         .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)))
         .clone()
@@ -741,7 +748,7 @@ mod tests {
         let JsValue::Array(ref entries) = entries else {
             panic!("entries")
         };
-        let archive = project_archive(&entries).unwrap();
+        let archive = project_archive(entries).unwrap();
         let expected = parse_json(r#"{"schemaVersion":1,"format":"portable_text_messages","messages":[{"role":"user","text":"hello"}],"title":"Example"}"#).unwrap();
         assert_eq!(archive, expected);
     }
@@ -800,7 +807,7 @@ mod tests {
                 panic!("entries")
             };
             assert_eq!(
-                &project_archive(entries).unwrap(),
+                &project_archive(&entries).unwrap(),
                 case.get("value").unwrap(),
                 "{:?}",
                 case.get("name")
@@ -852,7 +859,9 @@ mod tests {
                     .unwrap()
                     .to_utf8()
                     .unwrap();
-                let count = bytes as usize - overhead;
+                let count = (bytes as usize)
+                    .checked_sub(overhead)
+                    .expect("archive recipe must include its JSON overhead");
                 let text = fill.repeat(count / fill.len()) + &"x".repeat(count % fill.len());
                 let JsValue::Object(ref mut object) = archive else {
                     unreachable!()

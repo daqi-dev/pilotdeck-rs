@@ -20,7 +20,10 @@ pub(super) const HANDLER: super::Handler =
 
 fn replacement_error(error: ReplacementError) -> RequestError {
     RequestError {
-        code: error.code.unwrap_or("gateway_request_failed").into(),
+        code: error
+            .code
+            .unwrap_or_else(|| "gateway_request_failed".into())
+            .into(),
         message: error.message.into(),
         details: error.details.map(|d| Box::new(*d)),
         validation: None,
@@ -461,7 +464,7 @@ mod portable_wire_tests {
         let JsValue::Array(ref entries) = compact else {
             unreachable!()
         };
-        let projected = crate::runtime::session::project_transcript(&entries).unwrap();
+        let projected = crate::runtime::session::project_transcript(entries).unwrap();
         assert_eq!(
             &JsValue::Array(projected.messages),
             cases

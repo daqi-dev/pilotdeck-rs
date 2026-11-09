@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,appendFileSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const[url,tokenFile,project,out]=process.argv.slice(2);assert(url&&tokenFile&&project&&out);const parsed=new URL(url);assert(parsed.protocol==='ws:'&&parsed.hostname==='127.0.0.1');
+let bytes=0;const Native=globalThis.WebSocket;
+function wire(direction:string,raw:string){bytes+=Buffer.byteLength(raw);assert(bytes<2*1024*1024);appendFileSync(out+'/disconnect-wire.jsonl',JSON.stringify({direction,raw,monotonicNs:process.hrtime.bigint().toString()})+'\n');}
+globalThis.WebSocket=class extends Native{constructor(url:any,protocols?:any){super(url,protocols);this.addEventListener('message',e=>wire('receive',String(e.data)));this.addEventListener('close',e=>wire('close',JSON.stringify({code:e.code,reason:e.reason})));}send(data:any){wire('send',String(data));super.send(data);}};
+const{GatewayWsClient,RemoteGateway}=await import(pathToFileURL(process.env.PDRS_BASELINE+'/src/gateway/index.js').href);const client=new GatewayWsClient({url,token:readFileSync(tokenFile,'utf8').trim(),clientName:'web'});const result:any={events:[],delta:false,closedByClient:false,streamSettled:false};
+const deadline=setTimeout(()=>{client.close();throw Error('disconnect diagnostic deadline')},20000);
+try{await client.connect();const remote=new RemoteGateway(client);try{for await(const event of remote.submitTurn({sessionKey:'web:network-disconnect',runId:'network-disconnect-run',channelKey:'web',projectKey:project,message:'NATIVE_HANG_DISCONNECT',canPrompt:false,maxTurns:2})){result.events.push(event);if(event.type==='assistant_text_delta'&&event.text==='native stream text'){result.delta=true;result.closedByClient=true;client.close();}}}catch(e){result.streamError=String(e?.message??e)}result.streamSettled=true;assert(result.delta&&result.closedByClient);writeFileSync(out+'/disconnect-result.json',JSON.stringify(result,null,2)+'\n');}finally{clearTimeout(deadline);client.close();}

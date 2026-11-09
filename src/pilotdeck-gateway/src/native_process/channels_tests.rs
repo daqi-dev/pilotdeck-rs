@@ -165,6 +165,8 @@ fn harness(config: &str) -> Harness {
         })
     };
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        #[cfg(test)]
+        endpoints: Default::default(),
         pilot_home: home.path(),
         config: Arc::new(parse_json(config).expect("#1328 harness config JSON")),
         weixin: WeixinChannelOptions::default(),
@@ -709,14 +711,16 @@ async fn startup_refuses_every_unmigrated_channel() {
 // wrapping the error before returning it would invalidate the pinned text.
 #[tokio::test]
 async fn startup_rejection_reaches_stderr_in_the_debug_form() {
-    let error = crate::test_negative_receipt::expect_err(
-        start_with_adapters("  discord: {enabled: true}\n").await,
-        "#1763 enabled unmigrated channel must refuse native startup",
-    );
+    // Exercise the refusal with an actually absent constructor, independent
+    // of whether the full production assembly now implements every key.
+    let adapters = pilotdeck_protocol::parse_json(r#"{"wecom":{"enabled":true}}"#).unwrap();
+    let error = crate::channel::loader::reject_unimplemented_bundle_channels(Some(&adapters), &[])
+        .unwrap_err();
+    let error: crate::ProxyError = Box::new(error);
     let printed = format!("Error: {error:?}");
     crate::negative_assert_eq!(
         printed,
-        "Error: Error(\"[adapters] channel \\\"discord\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
+        "Error: Error(\"[adapters] channel \\\"wecom\\\" 未迁移到 Rust，需继续使用 TS gateway\")",
         "#1763 the process stderr line is the Debug form of ChannelError"
     );
 }
@@ -1602,6 +1606,8 @@ fn run_failing_console_probe(token: &str) {
     // it while the (empty) rest of the startup constructs.
     let home = Root::new();
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+                #[cfg(test)]
+                endpoints: Default::default(),
         pilot_home: home.path(),
         config: Arc::new(
             parse_json(
@@ -2081,6 +2087,8 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
             .push(message.to_owned());
     });
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        #[cfg(test)]
+        endpoints: Default::default(),
         pilot_home: home.path(),
         config: Arc::new(
             parse_json(&format!(
@@ -2215,4 +2223,76 @@ async fn loader_channels_submit_under_their_own_channel_identity() {
     // review P0: the after-stop ownership check, same shape as the startup
     // test's).
     assert_ports_closed_after_stop(&[IDENTITY_API_SERVER_PORT]).await;
+}
+
+/// Exercise real assembly rejection with controlled declaration gaps; no
+/// supported production channel is removed from the real declaration table.
+async fn assert_synthetic_startup_refusal(
+    yaml: &str,
+    declarations: super::assembly::ChannelDeclarations,
+    key: &str,
+) {
+    let (_scratch, requests) = super::management_tests::setup();
+    requests
+        .project
+        .dispose()
+        .await
+        .expect("dispose unused registry");
+    requests
+        .owner
+        .shutdown()
+        .await
+        .expect("dispose unused owner");
+    let path = requests.options.home.join("pilotdeck.yaml");
+    let mut config = std::fs::read_to_string(&path).unwrap();
+    config.push_str("adapters:\n");
+    config.push_str(yaml);
+    std::fs::write(path, config).unwrap();
+    let result = super::assembly::start_with_channel_declarations(
+        requests.options.clone(),
+        requests.env.clone(),
+        declarations,
+    )
+    .await;
+    let error = match result {
+        Ok(host) => {
+            host.shutdown(requests.options.drain_budget)
+                .await
+                .expect("cleanup unexpected host");
+            panic!("#1763 enabled unmigrated channel must refuse native startup");
+        }
+        Err(error) => error.to_string(),
+    };
+    crate::negative_assert!(
+        error.contains(&format!("channel \"{key}\"")),
+        "#1763 startup error names the enabled channel key"
+    );
+    crate::negative_assert!(
+        error.contains(UNMIGRATED_REJECTION_PHRASE),
+        "#1763 startup error carries the unmigrated phrase"
+    );
+}
+#[tokio::test]
+async fn startup_refuses_synthetic_missing_pending() {
+    assert_synthetic_startup_refusal(
+        "  telegram: {enabled: true}\n",
+        super::assembly::ChannelDeclarations {
+            unmigrated: &["telegram"],
+            bundle: &["weixin", "feishu", "qq", "wecom"],
+        },
+        "telegram",
+    )
+    .await;
+}
+#[tokio::test]
+async fn startup_refuses_synthetic_missing_bundle() {
+    assert_synthetic_startup_refusal(
+        "  wecom: {enabled: true}\n",
+        super::assembly::ChannelDeclarations {
+            unmigrated: &[],
+            bundle: &["weixin", "feishu", "qq"],
+        },
+        "wecom",
+    )
+    .await;
 }

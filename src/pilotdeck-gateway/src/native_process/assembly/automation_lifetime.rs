@@ -91,7 +91,22 @@ impl NativeAutomationLifetime {
     }
     /// Called synchronously by the config-store listener; preserve publication
     /// order even when several reload RPC callers cancel their awaits.
+    #[cfg(test)]
     pub(super) fn request_reload(self: &Arc<Self>, input: ProjectAutomationReloadInput) {
+        self.request_config_reload(None, Some(input));
+    }
+
+    /// One config publication enters one ordered reload operation. Adapters
+    /// run first, then automation, as in the fixed CLI's reloadChain. Closing
+    /// the host awaits this same tail; queued work cannot resurrect a channel.
+    pub(super) fn request_config_reload(
+        self: &Arc<Self>,
+        channels: Option<(
+            Arc<crate::native_process::channels::NativeChannels>,
+            pilotdeck_protocol::JsValue,
+        )>,
+        input: Option<ProjectAutomationReloadInput>,
+    ) {
         if self.is_stopping() {
             return;
         }
@@ -111,8 +126,37 @@ impl NativeAutomationLifetime {
             if let Some(previous) = previous {
                 let _ = previous.await;
             }
-            if let Err(error) = owner.reload(input).await {
-                eprintln!("[automation] reload failed: {error}");
+            if let Some((channels, config)) = channels {
+                let _serial = owner.serial.lock().await;
+                if !owner.is_stopping() {
+                    match channels.reload(&config).await {
+                        Ok(result) => {
+                            let parts = result
+                                .started
+                                .iter()
+                                .map(|key| format!("{key}=started"))
+                                .chain(result.stopped.iter().map(|key| format!("{key}=stopped")))
+                                .collect::<Vec<_>>();
+                            if !parts.is_empty() {
+                                crate::native_process::channels::console_log_line(
+                                    &mut std::io::stdout(),
+                                    &format!(
+                                        "[pilotdeck] Adapter hot-reload complete: {}",
+                                        parts.join(", ")
+                                    ),
+                                );
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("[pilotdeck] adapter hot-reload failed: {}", error.message())
+                        }
+                    }
+                }
+            }
+            if let Some(input) = input {
+                if let Err(error) = owner.reload(input).await {
+                    eprintln!("[automation] reload failed: {error}");
+                }
             }
         }));
     }

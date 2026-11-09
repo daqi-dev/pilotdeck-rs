@@ -604,7 +604,14 @@ async fn a_budget_cut_cleanup_still_disposes_factory_and_project() {
     let recorded = order.lock().expect("#1959 cleanup order lock").clone();
     negative_assert_eq!(
         recorded,
-        ["channels", "session", "project"],
+        [
+            "cron",
+            "automation",
+            "channels",
+            "session",
+            "temporary sessions",
+            "project"
+        ],
         "#1959 a budget cut mid-teardown must not skip the factory and project fallback disposals"
     );
 }

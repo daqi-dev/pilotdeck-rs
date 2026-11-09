@@ -40,83 +40,34 @@ CFG = 'native_process::methods::session_dir::tests::'
 CLEAR = ('self.mcp\n'
          '            .config()\n'
          '            .clear_sdk_session_state(&JsValue::String(key.clone()));\n'
-         '        self.session_overrides.clear_thinking(&key);\n'
-         '        self.session_overrides.clear_output_style(&key);')
+         '        self.session_overrides.clear_sdk_state(&key);')
+EARLY = ('    async fn session_delete(&self, params: &JsValue) -> Result<JsValue, RequestError> {\n'
+         '        let project_root = resolve_project(self, params).await?;\n'
+         '        let key = require_session_key(params)?;')
 mutations = [
-    # The whole clear is gone: the pre-#2392 gap restored — a deleted session's
-    # registry rows outlive its files.
-    ('mcp-clear-removed', SESSION_DIR,
-     CLEAR,
-     'let _ = &key;',
+    ('mcp-clear-removed', SESSION_DIR, CLEAR, 'let _ = &key;',
      CFG + 'session_delete_clears_the_sdk_session_state',
      "#2392 delete drops the session's MCP permission overrides"),
-    # Only the thinking override survives the delete.
     ('thinking-clear-removed', SESSION_DIR,
-     'self.session_overrides.clear_thinking(&key);',
-     'let _ = self.session_overrides.thinking(&key);',
+     'self.session_overrides.clear_sdk_state(&key);',
+     'self.session_overrides.clear_output_style(&key);',
      CFG + 'session_delete_clears_the_sdk_session_state',
      "#2392 delete drops the session's thinking override"),
-    # Only the output-style selection survives the delete (fix-r1): the TS
-    # clear deletes the whole `sdkSessionConfigs` row that carries it.
     ('output-style-clear-removed', SESSION_DIR,
-     'self.session_overrides.clear_output_style(&key);',
-     'let _ = self.session_overrides.output_style(&key);',
+     'self.session_overrides.clear_sdk_state(&key);',
+     'self.session_overrides.clear_thinking(&key);',
      CFG + 'session_delete_clears_the_sdk_session_state',
      "#2392 delete drops the session's output-style selection"),
-    # The clear runs before the transcript check: a SESSION_NOT_FOUND refusal
-    # also wipes the rows it must keep. The early block covers all three
-    # groups (MCP, thinking, output-style), so the MCP assertion dies first.
-    ('clear-before-not-found', SESSION_DIR,
-     '// Close the live session first so the writer drains before we delete.\n'
-     '        self.owner\n'
-     '            .close(&key)\n'
-     '            .await\n'
-     '            .map_err(|e| RequestError::new(e.to_string()))?;',
-     '// Close the live session first so the writer drains before we delete.\n'
-     '        self.owner\n'
-     '            .close(&key)\n'
-     '            .await\n'
-     '            .map_err(|e| RequestError::new(e.to_string()))?;\n'
-     '        self.mcp\n'
-     '            .config()\n'
-     '            .clear_sdk_session_state(&JsValue::String(key.clone()));\n'
-     '        self.session_overrides.clear_thinking(&key);\n'
-     '        self.session_overrides.clear_output_style(&key);',
+    ('clear-before-not-found', SESSION_DIR, EARLY,
+     EARLY + '\n        self.mcp.config().clear_sdk_session_state(&JsValue::String(key.clone()));\n        self.session_overrides.clear_sdk_state(&key);',
      CFG + 'session_delete_not_found_keeps_the_sdk_session_state',
      "#2392 the refusal keeps the session's MCP permission overrides"),
-    # The output-style clear alone runs before the transcript check (fix-r2,
-    # the third half's own row): the refusal wipes that row while the MCP,
-    # rules and thinking rows survive, so the test dies at its own assertion.
-    ('output-style-clear-before-not-found', SESSION_DIR,
-     '// Close the live session first so the writer drains before we delete.\n'
-     '        self.owner\n'
-     '            .close(&key)\n'
-     '            .await\n'
-     '            .map_err(|e| RequestError::new(e.to_string()))?;',
-     '// Close the live session first so the writer drains before we delete.\n'
-     '        self.owner\n'
-     '            .close(&key)\n'
-     '            .await\n'
-     '            .map_err(|e| RequestError::new(e.to_string()))?;\n'
-     '        self.session_overrides.clear_output_style(&key);',
+    ('output-style-clear-before-not-found', SESSION_DIR, EARLY,
+     EARLY + '\n        self.session_overrides.clear_output_style(&key);',
      CFG + 'session_delete_not_found_keeps_the_sdk_session_state',
      "#2392 the refusal keeps the session's output-style selection"),
-    # The thinking clear alone runs before the transcript check (fix-r3, the
-    # second half's own row, the symmetric twin of the output-style one): the
-    # refusal wipes that row while the MCP, rules and output-style rows
-    # survive, so the test dies at its own assertion.
-    ('thinking-clear-before-not-found', SESSION_DIR,
-     '// Close the live session first so the writer drains before we delete.\n'
-     '        self.owner\n'
-     '            .close(&key)\n'
-     '            .await\n'
-     '            .map_err(|e| RequestError::new(e.to_string()))?;',
-     '// Close the live session first so the writer drains before we delete.\n'
-     '        self.owner\n'
-     '            .close(&key)\n'
-     '            .await\n'
-     '            .map_err(|e| RequestError::new(e.to_string()))?;\n'
-     '        self.session_overrides.clear_thinking(&key);',
+    ('thinking-clear-before-not-found', SESSION_DIR, EARLY,
+     EARLY + '\n        self.session_overrides.clear_thinking(&key);',
      CFG + 'session_delete_not_found_keeps_the_sdk_session_state',
      "#2392 the refusal keeps the session's thinking override"),
 ]

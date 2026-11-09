@@ -25,72 +25,8 @@ path = root / 'src/pilotdeck-gateway/src/runtime/turn/live.rs'
 mutations = {
     'gate-order': (
         path,
-        '''                // No connection or execute can start until both durable gates commit.
-                let client = if crate::mutants::on("gates-eager-connect") {
-                    let client = client.await;
-                    let client: HostFuture<HostClient> = Box::pin(async move { client });
-                    client
-                } else {
-                    client
-                };
-                let Ok(messages) = execute_wait.await else {
-                    return Ok(ExecuteResult::Aborted { terminal: None });
-                };
-                request
-                    .payload
-                    .insert("messages".into(), JsValue::Array(messages));
-                let client = tokio::select! {
-                    biased;
-                    _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
-                    client = client => client?,
-                };
-                if let Some(pending) = pending_host.take() {
-                    pending.handoff();
-                }
-                let identity = request.identity.clone();
-                handler
-                    .with_pump(
-                        client.execute_cancellable(request, handler.clone(), cancellation),
-                        identity,
-                    )
-                    .await''',
-        '''                // No connection or execute can start until both durable gates commit.
-                let identity = request.identity.clone();
-                let gated = handler.clone();
-                let mut gated_request = request;
-                let gated_cancellation = cancellation;
-                let mut gated_pending_host = pending_host;
-                handler
-                    .with_pump(
-                        Box::pin(async move {
-                            let client = if crate::mutants::on("gates-eager-connect") {
-                                let client = client.await;
-                                let client: HostFuture<HostClient> = Box::pin(async move { client });
-                                client
-                            } else {
-                                client
-                            };
-                            let Ok(messages) = execute_wait.await else {
-                                return Ok(ExecuteResult::Aborted { terminal: None });
-                            };
-                            gated_request
-                                .payload
-                                .insert("messages".into(), JsValue::Array(messages));
-                            let client = tokio::select! {
-                                biased;
-                                _ = gated_cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),
-                                client = client => client?,
-                            };
-                            if let Some(pending) = gated_pending_host.take() {
-                                pending.handoff();
-                            }
-                            client
-                                .execute_cancellable(gated_request, gated.clone(), gated_cancellation)
-                                .await
-                        }),
-                        identity,
-                    )
-                    .await''',
+        '                // No connection or execute can start until both durable gates commit.\n                let client = if crate::mutants::on("gates-eager-connect") {\n                    let client = client.await;\n                    let client: HostFuture<HostClient> = Box::pin(async move { client });\n                    client\n                } else {\n                    client\n                };\n                let Ok(messages) = execute_wait.await else {\n                    return Ok(ExecuteResult::Aborted { terminal: None });\n                };\n                request\n                    .payload\n                    .insert("messages".into(), JsValue::Array(messages));\n                if let Some(controller) = loop_controller {\n                    let prepared = sop.ok_or_else(|| {\n                        HostError::new(\n                            HostErrorKind::Session,\n                            "SOP host node executor is unavailable.",\n                        )\n                    })?;\n                    let executor = sop::Executor {\n                        node: tokio::sync::Mutex::new(None),\n                        prepared,\n                        stream: handler.clone(),\n                        recorder,\n                        lease,\n                        request: request.clone(),\n                        input: sop_input,\n                        signal: cancellation.clone(),\n                        close_timeout,\n                    };\n                    let identity = request.identity.clone();\n                    let visible_messages = match request.payload.get("messages") {\n                        Some(JsValue::Array(messages)) => messages.clone(),\n                        _ => Vec::new(),\n                    };\n                    let result = handler\n                        .with_pump(\n                            controller.run(\n                                super::loop_control::SopLoopInput {\n                                    request,\n                                    signal: cancellation,\n                                    visible_messages,\n                                },\n                                &executor,\n                            ),\n                            identity,\n                        )\n                        .await;\n                    let node_closed =\n                        super::loop_control::SopNodeExecutor::finish_node(&executor, None).await;\n                    let closed = handler.inner.dispose().await;\n                    let closed = node_closed.and(closed);\n                    if let Some(pending) = pending_host.take() {\n                        pending.handoff();\n                    }\n                    return match (result, closed) {\n                        (Err(error), _) | (_, Err(error)) => Err(error),\n                        (Ok(result), Ok(())) => Ok(result),\n                    };\n                }\n                let client = tokio::select! {\n                    biased;\n                    _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),\n                    client = client => client?,\n                };\n                if let Some(pending) = pending_host.take() {\n                    pending.handoff();\n                }\n                let identity = request.identity.clone();\n                handler\n                    .with_pump(\n                        client.execute_cancellable(request, handler.clone(), cancellation),\n                        identity,\n                    )\n                    .await',
+        '                // Negative: enter the host pump before the durable gates.\n                let outer_identity = request.identity.clone();\n                let gated = handler.clone();\n                handler.with_pump(Box::pin(async move {\n                // No connection or execute can start until both durable gates commit.\n                let client = if crate::mutants::on("gates-eager-connect") {\n                    let client = client.await;\n                    let client: HostFuture<HostClient> = Box::pin(async move { client });\n                    client\n                } else {\n                    client\n                };\n                let Ok(messages) = execute_wait.await else {\n                    return Ok(ExecuteResult::Aborted { terminal: None });\n                };\n                request\n                    .payload\n                    .insert("messages".into(), JsValue::Array(messages));\n                if let Some(controller) = loop_controller {\n                    let prepared = sop.ok_or_else(|| {\n                        HostError::new(\n                            HostErrorKind::Session,\n                            "SOP host node executor is unavailable.",\n                        )\n                    })?;\n                    let executor = sop::Executor {\n                        node: tokio::sync::Mutex::new(None),\n                        prepared,\n                        stream: gated.clone(),\n                        recorder,\n                        lease,\n                        request: request.clone(),\n                        input: sop_input,\n                        signal: cancellation.clone(),\n                        close_timeout,\n                    };\n                    let identity = request.identity.clone();\n                    let visible_messages = match request.payload.get("messages") {\n                        Some(JsValue::Array(messages)) => messages.clone(),\n                        _ => Vec::new(),\n                    };\n                    let result = gated\n                        .with_pump(\n                            controller.run(\n                                super::loop_control::SopLoopInput {\n                                    request,\n                                    signal: cancellation,\n                                    visible_messages,\n                                },\n                                &executor,\n                            ),\n                            identity,\n                        )\n                        .await;\n                    let node_closed =\n                        super::loop_control::SopNodeExecutor::finish_node(&executor, None).await;\n                    let closed = gated.inner.dispose().await;\n                    let closed = node_closed.and(closed);\n                    if let Some(pending) = pending_host.take() {\n                        pending.handoff();\n                    }\n                    return match (result, closed) {\n                        (Err(error), _) | (_, Err(error)) => Err(error),\n                        (Ok(result), Ok(())) => Ok(result),\n                    };\n                }\n                let client = tokio::select! {\n                    biased;\n                    _ = cancellation.cancelled() => return Ok(ExecuteResult::Aborted { terminal: None }),\n                    client = client => client?,\n                };\n                if let Some(pending) = pending_host.take() {\n                    pending.handoff();\n                }\n                let identity = request.identity.clone();\n                gated\n                    .with_pump(\n                        client.execute_cancellable(request, gated.clone(), cancellation),\n                        identity,\n                    )\n                    .await\n                }), outer_identity).await',
         'gates_pump_',
         [('gates_pump_reject_never_starts_the_pump', '#855 [reject]'),
          ('gates_pump_cancel_never_starts_the_pump', '#855 [cancel]'),

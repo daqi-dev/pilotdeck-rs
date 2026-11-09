@@ -150,8 +150,8 @@ mutations = [
     # reaches: CI judged the mutant SURVIVED.
     ('always-on-abort-skips-the-input-read',
      'native_process/methods/always_on.rs',
-     '            let session_key = super::input_property(params, "sessionKey")?;',
-     '            let session_key = super::input_property(&JsValue::Object(Default::default()), "sessionKey")?;',
+     '                    let session_key = super::input_property(&params, "sessionKey")?;',
+     '                    let session_key = super::input_property(&JsValue::Object(Default::default()), "sessionKey")?;',
      'native_process::methods::always_on::tests::always_on_abort_nullish_params_hit_the_session_key_read',
      '#1313 abort nullish answers the TypeError'),
     ('always-on-envelope-code-rewritten',
@@ -167,10 +167,10 @@ mutations = [
     # the abort method interpolated).
     ('always-on-abort-drops-the-empty-string-echo',
      'native_process/methods/always_on.rs',
-     '            let mut envelope = vec![("aborted", JsValue::Bool(false))];\n'
-     '            if let Some(value) = session_key.filter(|value| !value.is_undefined()) {',
-     '            let mut envelope = vec![("aborted", JsValue::Bool(false))];\n'
-     '            if let Some(value) = session_key.filter(|value| !value.is_undefined() '
+     '                    let mut envelope = vec![("aborted", JsValue::Bool(false))];\n'
+     '                    if let Some(value) = session_key.filter(|value| !value.is_undefined()) {',
+     '                    let mut envelope = vec![("aborted", JsValue::Bool(false))];\n'
+     '                    if let Some(value) = session_key.filter(|value| !value.is_undefined() '
      '&& *value != JsValue::from("")) {',
      'native_process::methods::always_on::tests::always_on_methods_answer_not_configured_envelopes',
      '#1313 always_on_abort message'),
@@ -179,8 +179,8 @@ mutations = [
      'Capability { name: "supported_agents", methods: &[], wired: compiled_in },',
      'Capability { name: "supported_agents", methods: &[], wired: compiled_in },\n'
      '    Capability { name: "always_on_apply", methods: &[], wired: compiled_in },',
-     'native_process::methods::always_on::tests::always_on_methods_are_not_advertised_without_a_manager',
-     '#2294 always_on_apply must not be advertised without an always-on manager'),
+     'native_process::methods::always_on::tests::always_on_methods_are_not_advertised',
+     '#1313 always_on_apply must not be advertised in describe'),
     ('describe-drops-async-hook-result',
      'native_process/capabilities.rs',
      'name: "async_hook_result",',

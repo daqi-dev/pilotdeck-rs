@@ -1003,3 +1003,354 @@ fn only_the_declared_size_guard_settles_without_io() {
         crate::negative_assert!(!settles_without_io(&message, max), "#1822 {tag}");
     }
 }
+
+// Fixed WeixinChannel dispatch ordering: /new reset precedes pending helpers.
+use crate::channel::im_interaction::{InteractionFuture, InteractionPort, PermissionAnswer};
+use crate::channel::protocol::ChannelError;
+#[derive(Default)]
+struct PendingInteraction {
+    elicitation: std::sync::atomic::AtomicBool,
+    permission: std::sync::atomic::AtomicBool,
+    calls: std::sync::Mutex<Vec<String>>,
+}
+impl InteractionPort for PendingInteraction {
+    fn elicitation_pending(&self, _chat_id: &str) -> bool {
+        self.elicitation.load(Ordering::SeqCst)
+    }
+    fn elicitation_capture(&self, _: &str, _: &str, _: &JsValue) -> String {
+        String::new()
+    }
+    fn elicitation_answer<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a str,
+    ) -> InteractionFuture<'a, Result<Option<String>, ChannelError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn elicitation_clear(&self, _: &str) {
+        self.elicitation.store(false, Ordering::SeqCst);
+        self.calls.lock().unwrap().push("elicitation.clear".into());
+    }
+
+    fn permission_pending(&self, _: &str) -> bool {
+        self.permission.load(Ordering::SeqCst)
+    }
+    fn permission_capture(&self, _: &str, _: &str, _: &JsValue) -> Option<String> {
+        None
+    }
+    fn permission_confirm_initial(&self, _: &str, _: bool, _: Option<&str>) {}
+    fn permission_answer<'a>(
+        &'a self,
+        _: &'a str,
+        _: &'a str,
+    ) -> InteractionFuture<'a, Result<Option<PermissionAnswer>, ChannelError>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn permission_release_answer(&self, _: &str, _: Option<u64>) {}
+    fn permission_take_next_prompt(&self, _: &str, _: Option<u64>) -> Option<String> {
+        None
+    }
+    fn permission_prompt_request_id(&self, _: &str, _: Option<u64>) -> Option<String> {
+        None
+    }
+    fn permission_confirm_next(&self, _: &str, _: bool, _: Option<&str>, _: Option<u64>) {}
+    fn permission_clear(&self, _: &str) {
+        self.permission.store(false, Ordering::SeqCst);
+        self.calls.lock().unwrap().push("permission.clear".into());
+    }
+    fn permission_clear_after_turn(&self, _: &str) {}
+}
+
+fn interaction_channel(root: &Root, helper: Arc<PendingInteraction>) -> WeixinChannel {
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_path = root.path().join("credentials.json");
+    options.credentials_dir = Some(root.path());
+    options.gateway = Some(Arc::new(RecordingGateway::default()));
+    options.interaction = Some(helper);
+    WeixinChannel::new(options)
+}
+#[tokio::test]
+async fn central_commands_do_not_enter_a7_and_new_clears_pending_before_answer() {
+    let root = Root::new();
+    let helper = Arc::new(PendingInteraction::default());
+    let channel = interaction_channel(&root, helper.clone());
+    let user = js("chat-1");
+    for command in [
+        "/help",
+        "/projects",
+        "/switch-project demo",
+        "/search x",
+        "/status",
+        "/update --check",
+    ] {
+        assert!(
+            matches!(
+                channel.dispatch_mapped(user.clone(), command, command, vec![]),
+                Some(DispatchStart::Command { .. })
+            ),
+            "{command}"
+        );
+    }
+    helper.permission.store(true, Ordering::SeqCst);
+    helper.elicitation.store(true, Ordering::SeqCst);
+    assert!(matches!(
+        channel.dispatch_mapped(user.clone(), "/new", "/new", vec![]),
+        Some(DispatchStart::NewSession { .. })
+    ));
+    assert_eq!(
+        *helper.calls.lock().unwrap(),
+        vec!["elicitation.clear", "permission.clear"]
+    );
+    assert!(!helper.permission.load(Ordering::SeqCst));
+    assert!(matches!(
+        channel.dispatch_mapped(user, "normal", "normal", vec![]),
+        Some(DispatchStart::Turn { .. })
+    ));
+}
+#[tokio::test]
+async fn pending_helpers_precede_registry_and_receive_raw_attachment_text() {
+    let root = Root::new();
+    let helper = Arc::new(PendingInteraction::default());
+    let channel = interaction_channel(&root, helper.clone());
+    helper.elicitation.store(true, Ordering::SeqCst);
+    match channel.dispatch_mapped(js("chat-1"), WEIXIN_ATTACHMENT_FALLBACK_TEXT, "", vec![]) {
+        Some(DispatchStart::Answer {
+            text,
+            permission: false,
+            ..
+        }) => assert!(text.is_empty()),
+        _ => panic!("expected elicitation answer"),
+    }
+    helper.elicitation.store(false, Ordering::SeqCst);
+    helper.permission.store(true, Ordering::SeqCst);
+    let answer = channel.dispatch_mapped(js("chat-1"), "/help", "/help", vec![]);
+    assert!(matches!(
+        answer,
+        Some(DispatchStart::Answer {
+            permission: true,
+            ..
+        })
+    ));
+    assert!(
+        channel
+            .dispatch_mapped(js("chat-1"), "1", "1", vec![])
+            .is_none(),
+        "answering guard suppresses duplicate"
+    );
+    drop(answer);
+    assert!(matches!(
+        channel.dispatch_mapped(js("chat-1"), "1", "1", vec![]),
+        Some(DispatchStart::Answer {
+            permission: true,
+            ..
+        })
+    ));
+}
+
+struct CommandControl(std::sync::atomic::AtomicUsize);
+impl crate::channel::protocol::ChannelControlPort for CommandControl {
+    fn call(
+        &self,
+        method: &'static str,
+        _: JsValue,
+    ) -> crate::channel::protocol::BoxFuture<Result<JsValue, ChannelError>> {
+        assert_eq!(method, "list_projects");
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Box::pin(async {
+            Ok(parse_json(r#"{"projects":[{"name":"One","projectKey":"/fixture/one","fullPath":"/fixture/one"}]}"#).unwrap())
+        })
+    }
+}
+#[tokio::test]
+async fn registry_project_switch_matches_actual_fixed_weixin_dispatch() {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("commands-oracle.json")).unwrap();
+    assert_eq!(oracle["fixed"], "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85");
+    let gold = oracle["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["kind"] == "switch")
+        .unwrap();
+    let root = Root::new();
+    let control = Arc::new(CommandControl(AtomicUsize::new(0)));
+    let saves = Arc::new(AtomicUsize::new(0));
+    let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+    options.credentials_path = root.path().join("credentials.json");
+    options.credentials_dir = Some(root.path());
+    options.host_ports = Some(WeixinHostPorts {
+        control: Some(control.clone()),
+        ..Default::default()
+    });
+    let saved = saves.clone();
+    options.on_state_change = Some(Arc::new(move |_| {
+        saved.fetch_add(1, Ordering::SeqCst);
+    }));
+    let channel = WeixinChannel::new(options);
+    assert!(commands::execute(&channel, &js("chat"), "/switch-project One").await);
+    assert_eq!(
+        channel
+            .0
+            .mapper
+            .get_project(&js("chat"))
+            .as_ref()
+            .map(text_of)
+            .as_deref(),
+        gold["project"].as_str()
+    );
+    assert_eq!(
+        saves.load(Ordering::SeqCst),
+        gold["savedCount"].as_u64().unwrap() as usize
+    );
+    assert_eq!(control.0.load(Ordering::SeqCst), 1);
+    assert!(!commands::execute(&channel, &js("chat"), "/new").await);
+    assert!(!commands::execute(&channel, &js("chat"), "/unknown").await);
+    assert_eq!(
+        control.0.load(Ordering::SeqCst),
+        1,
+        "unhandled commands never invoke host control"
+    );
+}
+
+#[derive(Default)]
+struct ReplyClient(std::sync::Mutex<Vec<serde_json::Value>>);
+impl WeixinIlinkClient for ReplyClient {
+    fn cursor(&self) -> String {
+        String::new()
+    }
+    fn set_cursor(&self, _: &str) {}
+    fn poll(&self) -> crate::channel::protocol::BoxFuture<Result<JsValue, WeixinClientError>> {
+        panic!("unexpected polling in dispatch diagnostic")
+    }
+    fn send_text_chunked(
+        &self,
+        user: &JsString,
+        text: &JsString,
+        _: &JsString,
+        max: usize,
+    ) -> crate::channel::protocol::BoxFuture<Result<usize, WeixinClientError>> {
+        assert_eq!(max, 2000);
+        self.0
+            .lock()
+            .unwrap()
+            .push(serde_json::json!({"user":text_of(user),"text":text_of(text)}));
+        Box::pin(async { Ok(1) })
+    }
+    fn send_typing(
+        &self,
+        _: &JsString,
+        _: &JsString,
+    ) -> crate::channel::protocol::BoxFuture<Result<(), WeixinClientError>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+#[derive(Default)]
+struct InteractionCalls(std::sync::Mutex<Vec<serde_json::Value>>);
+impl crate::channel::bluebubbles::InteractionResponder for InteractionCalls {
+    fn respond_elicitation(
+        &self,
+        response: crate::channel::sms::ElicitationResponse,
+    ) -> crate::channel::protocol::BoxFuture<Result<(), ChannelError>> {
+        let v = JsValue::Object(response.to_js());
+        let json: serde_json::Value =
+            serde_json::from_str(&pilotdeck_protocol::stringify_json(&v).unwrap().unwrap())
+                .unwrap();
+        self.0
+            .lock()
+            .unwrap()
+            .push(serde_json::json!(["respondElicitation", json]));
+        Box::pin(async { Ok(()) })
+    }
+    fn permission_decide(
+        &self,
+        decision: crate::channel::sms::PermissionDecision,
+    ) -> crate::channel::protocol::BoxFuture<
+        Result<crate::channel::sms::PermissionDecisionOutcome, ChannelError>,
+    > {
+        let v = JsValue::Object(decision.to_js());
+        let json: serde_json::Value =
+            serde_json::from_str(&pilotdeck_protocol::stringify_json(&v).unwrap().unwrap())
+                .unwrap();
+        self.0
+            .lock()
+            .unwrap()
+            .push(serde_json::json!(["permissionDecide", json]));
+        Box::pin(async { Ok(crate::channel::sms::PermissionDecisionOutcome { delivered: true }) })
+    }
+}
+#[tokio::test]
+async fn real_im_helpers_and_weixin_reply_consumer_match_fixed_ts() {
+    let oracle: serde_json::Value =
+        serde_json::from_str(include_str!("commands-oracle.json")).unwrap();
+    for kind in ["permission", "elicitation"] {
+        let root = Root::new();
+        let calls = Arc::new(InteractionCalls::default());
+        let helper = Arc::new(crate::channel::bluebubbles::HelperInteraction::new(
+            calls.clone(),
+        ));
+        let mut options = WeixinChannelOptions::with_login_base_url("http://127.0.0.1:9".into());
+        options.credentials_path = root.path().join("credentials.json");
+        options.credentials_dir = Some(root.path());
+        options.gateway = Some(Arc::new(RecordingGateway::default()));
+        options.interaction = Some(helper.clone());
+        let channel = WeixinChannel::new(options);
+        let wire = Arc::new(ReplyClient::default());
+        {
+            let mut inner = channel.lock_inner();
+            inner.client = Some(wire.clone());
+            inner.context_tokens.insert(js("chat"), js("ctx"));
+        }
+        if kind == "permission" {
+            let event=parse_json(r#"{"type":"permission_request","requestId":"p1","toolName":"bash","payload":{"command":"echo mock"}}"#).unwrap();
+            assert!(
+                helper
+                    .permission_capture("chat", "weixin:chat=chat:general", &event)
+                    .is_some()
+            );
+            helper.permission_confirm_initial("chat", true, Some("p1"));
+        } else {
+            let event=parse_json(r#"{"type":"elicitation_request","requestId":"e1","questions":[{"id":"q","question":"Choose","options":[{"label":"One","value":"one"},{"label":"Two","value":"two"}]}]}"#).unwrap();
+            assert!(
+                !helper
+                    .elicitation_capture("chat", "weixin:chat=chat:general", &event)
+                    .is_empty()
+            );
+        }
+        let dispatched = channel.dispatch_mapped(js("chat"), "1", "1", vec![]);
+        let Some(DispatchStart::Answer {
+            user,
+            text,
+            permission,
+            guard,
+        }) = dispatched
+        else {
+            panic!("pending helper should consume answer")
+        };
+        channel.answer_interaction(user, text, permission).await;
+        drop(guard);
+        let gold = oracle["cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["kind"] == kind)
+            .unwrap();
+        assert_eq!(
+            serde_json::json!(*calls.0.lock().unwrap()),
+            gold["calls"],
+            "{kind} responder RPC"
+        );
+        assert_eq!(
+            serde_json::json!(*wire.0.lock().unwrap()),
+            gold["replies"],
+            "{kind} actual reply consumer"
+        );
+        assert_eq!(
+            helper.permission_pending("chat"),
+            gold["permissionPending"].as_bool().unwrap()
+        );
+        assert_eq!(
+            helper.elicitation_pending("chat"),
+            gold["elicitationPending"].as_bool().unwrap()
+        );
+    }
+}

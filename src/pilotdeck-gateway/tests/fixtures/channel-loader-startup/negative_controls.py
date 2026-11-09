@@ -49,23 +49,14 @@ STARTUP_CALL = (
 # fix-r2 (review P0 #2): the loader's console.error closure is the same
 # best-effort console write as the channel log (`eprintln!` panics on a
 # failed write, which `assembly::start` calls before any channel starts).
-CONFIGURED_BODY = (
-    '        load_enabled_channels(\n'
-    '            self.config.get("adapters"),\n'
-    '            &LoadEnabledChannelsOptions { pilot_home: None },\n'
-    '            &production_loader_mounts(),\n'
-    '            &mut |message| console_log_line(&mut std::io::stderr(), &message),\n'
-    '        )\n'
-)
+CONFIGURED_BODY = '    fn create_configured(&self, config: &JsValue) -> Vec<Arc<dyn ChannelAdapter>> {\n        let channels = load_enabled_channels(\n            config.get("adapters"),\n            &LoadEnabledChannelsOptions {\n                pilot_home: Some(self.pilot_home.to_string_lossy().into_owned().into()),\n            },\n            &self.configured_mounts(),\n            &mut |message| console_log_line(&mut std::io::stderr(), &message),\n        );\n        let mut managed = self.managed_keys.lock().expect("channel managed keys");\n        for channel in &channels {\n            if !managed.contains(channel.channel_key()) {\n                managed.push(channel.channel_key().clone());\n            }\n        }\n        channels\n    }\n'
 
 API_SERVER_MOUNT = '    crate::channel::api_server::register(&mut mounts);\n'
 
 WECOM_MOUNT = (
     '    mounts.register(\n'
     '        "wecomCallback",\n'
-    '        crate::channel::wecom_callback::WeComCallbackChannel::constructor(\n'
-    '            crate::channel::wecom_callback::no_interaction(),\n'
-    '        ),\n'
+    '        crate::channel::wecom_callback::WeComCallbackChannel::constructor(responder.port()),\n'
     '    );\n'
 )
 
@@ -119,7 +110,7 @@ MUTATIONS = [
     # The call stays but constructs nothing — "load" turns into the silent
     # skip #1853 registered. Same cell must kill.
     ('assembly-loader-silently-skipped', channels, CONFIGURED_BODY,
-     '        Vec::new()\n',
+     '    fn create_configured(&self, _config: &JsValue) -> Vec<Arc<dyn ChannelAdapter>> { Vec::new() }\n\n',
      [STARTED]),
     # The apiServer mount drops out of the production registry while the
     # loader table still lists the key.

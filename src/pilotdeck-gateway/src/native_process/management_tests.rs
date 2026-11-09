@@ -626,6 +626,37 @@ impl crate::runtime::connection::GatewayTextConnection for Text {
     fn close(&self, _: u16, _: &str) {}
 }
 
+/// Verify that the three advertised methods are backed by the actual fallback
+/// control, not merely inserted into the capability list. The fixed TS fallback
+/// has a distinct rerun error message from a missing control.
+async fn assert_fallback_always_on(
+    connection: &crate::runtime::turn::gateway::HostedConnection,
+    text: &Text,
+    project: &std::path::Path,
+) {
+    connection.receive(json!({"type":"request","id":"ao-fallback-check","method":"always_on_rerun_plan","params":{"projectKey":project,"planId":"p"}}).to_string()).await.expect("fallback request");
+    let frames = text.0.lock().expect("fallback response frames");
+    let response = frames
+        .iter()
+        .find(|f| f["id"] == "ao-fallback-check")
+        .expect("fallback response");
+    negative_assert_eq!(
+        response["ok"],
+        true,
+        "fallback method returns its family envelope"
+    );
+    negative_assert_eq!(
+        response["result"]["error"]["code"],
+        "not_configured",
+        "fallback runtime is disabled"
+    );
+    negative_assert_eq!(
+        response["result"]["error"]["message"],
+        "Always-On plan rerun requires an enabled Always-On runtime.",
+        "advertisement has the standalone control delegate"
+    );
+}
+
 #[tokio::test]
 async fn production_host_management_and_restart() {
     let (_scratch, requests) = setup();
@@ -723,6 +754,7 @@ async fn production_host_management_and_restart() {
                 .is_ok(),
             "#1231 imported standalone skills are supported by the native profile"
         );
+        assert_fallback_always_on(&connection, &text, &options.project).await;
         host.shutdown(options.drain_budget)
             .await
             .expect("#1231 native host shutdown");
@@ -1099,6 +1131,7 @@ async fn assert_storage_disabled(storage: Option<&str>, fixture: &str) {
         );
         assert_ts_capability_subset(&expected);
     }
+    assert_fallback_always_on(&connection, &text, &options.project).await;
     host.shutdown(options.drain_budget)
         .await
         .expect("#1231 disabled storage host shutdown");
@@ -1173,7 +1206,12 @@ fn expected_capabilities(with_snapshots: bool) -> Vec<&'static str> {
         // route on Windows.
         .filter(|name| cfg!(unix) || !matches!(*name, "background_task_stop" | "background_tasks"))
         .collect();
+    // The frozen oracle did not attach an Always-On control. The real
+    // Server publishes manager or fallback control (ProjectAutomationBundle
+    // :360-364); fixed TS advertises these methods when that control exists.
+    expected.extend(["always_on_abort", "always_on_apply", "always_on_rerun_plan"]);
     expected.sort_unstable();
+    expected.dedup();
     expected
 }
 
@@ -1215,6 +1253,10 @@ fn assert_ts_capability_subset(expected: &[&str]) {
         negative_assert!(
             expected
                 .iter()
+                .filter(|capability| !matches!(
+                    **capability,
+                    "always_on_abort" | "always_on_apply" | "always_on_rerun_plan"
+                ))
                 .all(|capability| ts_capabilities.contains(&json!(capability))),
             "#1231 wired capabilities are TS subset (contract.{state})"
         );
@@ -1642,6 +1684,7 @@ async fn production_entry_snapshot_capabilities_are_disabled() {
                 );
                 assert_ts_capability_subset(&expected);
             }
+            assert_fallback_always_on(&connection, &text, &options.project).await;
             host.shutdown(options.drain_budget)
                 .await
                 .expect("#1231 production entry host shutdown");
@@ -1825,6 +1868,7 @@ async fn storage_root_cli_arg_wires_snapshot_capabilities() {
     );
     // See the note at the other snapshots-enabled call site: exact equality is
     // the whole guard here, and the disabled contracts are not this state.
+    assert_fallback_always_on(&connection, &text, &options.project).await;
     host.shutdown(options.drain_budget)
         .await
         .expect("#1323 host shutdown");

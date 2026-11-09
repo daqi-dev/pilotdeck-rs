@@ -173,10 +173,10 @@ impl Inner {
                         carry.extend_from_slice(bytes);
                         while let Some(end) = carry.iter().position(|b| *b == 10) {
                             let line: Vec<_> = carry.drain(..=end).collect();
-                            if let Some(value) = parse_line(&line) {
-                                if tx.send(value).await.is_err() {
-                                    return Ok(());
-                                }
+                            if let Some(value) = parse_line(&line)
+                                && tx.send(value).await.is_err()
+                            {
+                                return Ok(());
                             }
                         }
                     }

@@ -210,14 +210,23 @@ mod tests {
             )
             .await
             .unwrap();
+        connection.receive(json!({"type":"request","id":"local-automation","method":"always_on_apply","params":{}}).to_string()).await.unwrap();
         {
             let frames = sink.0.lock().unwrap();
             assert!(frames.iter().any(|f| f["type"] == "hello_ok"));
             let describe = frames.iter().find(|f| f["id"] == "describe").unwrap();
             let capabilities = describe["result"]["capabilities"].as_array().unwrap();
-            for method in crate::runtime::cron::CRON_METHODS {
+            for method in crate::runtime::cron::CRON_METHODS
+                .iter()
+                .chain(crate::runtime::always_on::ALWAYS_ON_METHODS)
+            {
                 assert!(!capabilities.iter().any(|c| c.as_str() == Some(method)));
             }
+            let automation = frames
+                .iter()
+                .find(|f| f["id"] == "local-automation")
+                .unwrap();
+            assert_eq!(automation["result"]["error"]["code"], "not_configured");
             let login = frames.iter().find(|f| f["id"] == "weixin").unwrap();
             assert_eq!(login["result"]["requested"], false);
             assert_eq!(login["result"]["reason"], "unsupported");
@@ -233,13 +242,11 @@ mod tests {
             !home.join("channels").exists(),
             "local cleanup created IM state"
         );
-        // The same enabled, unimplemented QQ adapter still refuses a server
-        // start. Local mode must not weaken the existing server startup gate.
+        // The actual Server now owns QQ; unlike LocalHost its channel lifecycle
+        // must be constructed and explicitly retired even with missing credentials.
         let server_options = options.into_assembly_options().unwrap();
-        let result = assembly::start(server_options, env).await;
-        assert!(
-            result.is_err(),
-            "server no longer rejects unsupported adapters"
-        );
+        let budget = server_options.drain_budget;
+        let server = assembly::start(server_options, env).await.unwrap();
+        server.shutdown(budget).await.unwrap();
     }
 }

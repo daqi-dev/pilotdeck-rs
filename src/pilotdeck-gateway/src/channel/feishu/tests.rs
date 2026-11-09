@@ -271,6 +271,13 @@ impl MockInbound {
 }
 
 impl TurnGateway for MockInbound {
+    fn submit_with_options(
+        &self,
+        input: TurnRequest,
+        _options: crate::channel::protocol::ChannelTurnOptions,
+    ) -> BoxFuture<Result<Box<dyn TurnEventStream>, ChannelError>> {
+        self.submit(input)
+    }
     fn submit(
         &self,
         input: TurnRequest,
@@ -555,7 +562,17 @@ fn case_channel(lark_port: u16) -> (FeishuChannel, Arc<FeishuWebhookSlot>) {
         Some(slot.clone()),
         Arc::new(FixedClock),
         Arc::new(|| JsString::from(FIXED_UUID)),
-    );
+    )
+    .with_live_reply_options(crate::channel::weixin::live_reply::LiveReplyOptions {
+        // Exact pre-existing TS generator options, generate.mts:311-318.
+        throttle_ms: 3_600_000,
+        buffer_threshold: 1_000_000,
+        initial_throttle_ms: 3_600_000,
+        initial_buffer_threshold: 1_000_000,
+        activity_delay_ms: -1,
+        turn_timeout_ms: 0,
+        ..Default::default()
+    });
     (channel, slot)
 }
 
@@ -1058,6 +1075,7 @@ async fn losing_the_admission_race_requeues_the_turn() {
     );
 
     let turn = QueuedTurn {
+        attachments: vec![],
         session_key: format!("feishu:chat={chat_id}:general"),
         message: "queued after the race".to_owned(),
         project_key: None,
@@ -1111,6 +1129,7 @@ async fn queued_turns_drain_after_the_active_turn() {
     let chat_id = "queue-chat";
 
     let turn = |message: &str| QueuedTurn {
+        attachments: vec![],
         session_key: format!("feishu:chat={chat_id}:general"),
         message: message.to_owned(),
         project_key: None,

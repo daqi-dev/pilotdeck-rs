@@ -127,45 +127,44 @@ async fn sync_invite_filter_reply_and_token_survive_restart() {
     handle.stop("fixture").await.unwrap();
     assert!(channel.inner.active.lock().unwrap().is_empty());
     assert!(!channel.inner.running.load(Ordering::Acquire));
-    let requests = gateway.0.lock().unwrap();
-    assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].channel_key, ChannelKey::new("matrix"));
-    assert_eq!(
-        requests[0].session_key,
-        JsString::from("matrix:chat=!room:fixture:general")
-    );
-    assert_eq!(requests[0].message, JsString::from("hello"));
-    let golden = parse_json(include_str!("fixtures/oracle-diagnostic.json")).unwrap();
-    assert_eq!(
-        golden.get("baseline"),
-        Some(&JsValue::from("cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"))
-    );
-    let Some(JsValue::Array(expected)) = golden.get("requests") else {
-        panic!("fixed TS Matrix requests")
-    };
-    assert_eq!(expected.len(), 1);
-    assert_eq!(
-        expected[0].get("sessionKey"),
-        Some(&JsValue::String(requests[0].session_key.clone()))
-    );
-    assert_eq!(
-        expected[0].get("channelKey"),
-        Some(&JsValue::String(requests[0].channel_key.as_js().clone()))
-    );
-    assert_eq!(
-        expected[0].get("message"),
-        Some(&JsValue::String(requests[0].message.clone()))
-    );
-
-    drop(requests);
-    let calls = mock.calls.lock().unwrap();
-    assert!(
-        calls.iter().any(
+    {
+        let requests = gateway.0.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].channel_key, ChannelKey::new("matrix"));
+        assert_eq!(
+            requests[0].session_key,
+            JsString::from("matrix:chat=!room:fixture:general")
+        );
+        assert_eq!(requests[0].message, JsString::from("hello"));
+        let golden = parse_json(include_str!("fixtures/oracle-diagnostic.json")).unwrap();
+        assert_eq!(
+            golden.get("baseline"),
+            Some(&JsValue::from("cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85"))
+        );
+        let Some(JsValue::Array(expected)) = golden.get("requests") else {
+            panic!("fixed TS Matrix requests")
+        };
+        assert_eq!(expected.len(), 1);
+        assert_eq!(
+            expected[0].get("sessionKey"),
+            Some(&JsValue::String(requests[0].session_key.clone()))
+        );
+        assert_eq!(
+            expected[0].get("channelKey"),
+            Some(&JsValue::String(requests[0].channel_key.as_js().clone()))
+        );
+        assert_eq!(
+            expected[0].get("message"),
+            Some(&JsValue::String(requests[0].message.clone()))
+        );
+    }
+    {
+        let calls = mock.calls.lock().unwrap();
+        assert!(calls.iter().any(
             |(method, path, _)| method == "POST" && path.ends_with("/join/%21invite%3Afixture")
-        )
-    );
-    assert!(calls.iter().any(|(_, path, _)| path.contains("since=old")));
-    drop(calls);
+        ));
+        assert!(calls.iter().any(|(_, path, _)| path.contains("since=old")));
+    }
     let state = parse_json(&std::fs::read_to_string(&storage).unwrap()).unwrap();
     assert_eq!(state.get("otherSdkState"), Some(&JsValue::Number(7.0)));
     let token = state

@@ -1,0 +1,132 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "inputs": [
+    {
+      "chatId": " chat ",
+      "userId": " u ",
+      "text": " hello "
+    },
+    {
+      "chatId": "room",
+      "userId": "alice",
+      "chatType": "group",
+      "text": " /new  ask "
+    },
+    {
+      "chatId": "room",
+      "userId": "alice",
+      "chatType": "group",
+      "text": " next "
+    },
+    {
+      "chatId": "room",
+      "userId": "bob",
+      "chatType": "group",
+      "groupSessionsPerUser": false,
+      "text": "hi"
+    },
+    {
+      "chatId": "room",
+      "chatType": "group",
+      "text": "hi"
+    },
+    {
+      "chatId": "x",
+      "text": "/newer"
+    }
+  ],
+  "results": [
+    {
+      "sessionKey": "wecom:dm=u:general",
+      "message": "hello"
+    },
+    {
+      "sessionKey": "wecom:group=room:user=alice:s_00000000-0000-4000-8000-000000000001",
+      "command": "new",
+      "message": "ask"
+    },
+    {
+      "sessionKey": "wecom:group=room:user=alice:s_00000000-0000-4000-8000-000000000001",
+      "message": "next"
+    },
+    {
+      "sessionKey": "wecom:group=room:general",
+      "message": "hi"
+    },
+    {
+      "sessionKey": "wecom:group=room:general",
+      "message": "hi"
+    },
+    {
+      "sessionKey": "wecom:dm=x:general",
+      "message": "/newer"
+    },
+    {
+      "sessionKey": "wecom:group=room:user=alice:s_00000000-0000-4000-8000-000000000001",
+      "projectKey": "/project",
+      "message": "bound"
+    }
+  ],
+  "state": {
+    "activeByChatId": {
+      "wecom:group=room:user=alice": "wecom:group=room:user=alice:s_00000000-0000-4000-8000-000000000001"
+    },
+    "projectByScopeKey": {
+      "wecom:group=room:user=alice": "/project"
+    }
+  },
+  "events": [
+    {
+      "type": "assistant_text_delta",
+      "text": "hello"
+    },
+    {
+      "type": "assistant_thinking_delta",
+      "text": "secret"
+    },
+    {
+      "type": "tool_call_finished",
+      "ok": false,
+      "toolName": "read",
+      "toolCallId": "i"
+    },
+    {
+      "type": "tool_call_finished",
+      "ok": true,
+      "toolCallId": "i"
+    },
+    {
+      "type": "elicitation_request",
+      "questions": [
+        {
+          "header": "H",
+          "question": "Q",
+          "options": [
+            {
+              "label": "one"
+            },
+            {
+              "label": "two"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "error",
+      "message": "bad"
+    },
+    {
+      "type": "turn_completed"
+    }
+  ],
+  "rendered": [
+    "hello",
+    "",
+    "\n⚠️ read failed\n",
+    "",
+    "\n**H**\nQ\n1. one\n2. two\n",
+    "\n❌ bad\n",
+    null
+  ]
+}

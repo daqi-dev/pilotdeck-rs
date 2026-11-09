@@ -5472,3 +5472,11 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-10 · 共同核心 Draft 与第二批验证
 
 共同核心候选9b9941b9已建立Draft PR #2786（承接#2725，未合并、未关闭阶段）。归档独立审计的非文本投影/2MiB边界、冷项目关闭等待及归档完成发布窗口已修，mbp2 r18对应测试通过；本轮单独提交这些修复，双谱系增量复核继续。r22源码清单c05e8437绑定3504文件，Gateway/CLI全目标check通过；6,155项Gateway回归r23正在运行，不能预填结论。r15真实四平台Telegram/DingTalk/Discord/QQ闭环、HTTP/WS/上传入模/取消网络诊断与冷切换正向已通过；真实WS阻塞排空导致Rust非零退出、下一写入者被阻止且新数据不变，失败原件单列保留。全部19渠道仍未齐：WeCom r22为19通过3媒体测试失败，修复及重连批待复验；Feishu新增第一方protobuf WS、附件和宿主命令正在整合，固定SDK实测stop遗留WS须登记差异。cb8接收r22隔离源码开始Linux构建/见证，mbp2继续日常构建，本机无Rust构建。统一CLI/前端树及快照不动；证据总根_tmp/20261110-gateway-integration/。
+
+### 2026-11-10 · 共同候选原生存储与全渠道接线接续
+
+Draft #2786 当前已推f855107a；工作候选r34（源码清单679d5eb1）Gateway/CLI全目标check及四bin在mbp2通过，全部19渠道已有原生装配但未标完整验收。r23单进程Gateway回归5875通过/28失败/252忽略原件保留；r34改按CI的nextest逐进程、固定Node22.22.0/ICU78.2执行875定向，867通过/8失败，5304未选择。公开snapshot额外cwd已修、LocalHost误发布Server自动化已隔离，真实Server Telegram/DingTalk/Discord/QQ及WeCom A7闭环通过；飞书单测options缺口和真实生命周期quiet/测试Drop双panic正修。持久fork/replace/finalize已接通，TS/Rust真实温路径及冷恢复可执行，但发现工具reference重定向差异，正按默认provider区分内部aux与legacy外部路径；4数据单测的macOS系统temp别名已定位并修待跑。技能失败是远端源码包遗漏已授权skills目录，已补交，非删除资产；Cron新增资源清理序列精确断言已更新待跑。cb8真实删除会话EBADF已修并合本地；产品入口总账负控12项通过。按#1301最新A授权重开#1314/#1315，正式host/session/retirement仍待闭合，#1355活动冻结入口不并写；来源树、CLI/app/GPUI/file-edit快照均保留，本机无Rust构建。证据主仓_tmp/20261110-gateway-integration/；下一步收飞书/微信、持久数据剩余边界及负控修复，完成新头回归/独立审阅后分批交付。
+
+### 2026-11-10 · r37 业务闭环与完整回归接续
+
+共同工作候选r37（输入清单b06498c7、远端fmt增量单列）在mbp2完成Gateway/CLI全目标check和四bin，Gateway SHA f92f3d7c；Gateway+CLI nextest全回归仍在跑，不预填通过。r36定向50/51通过，飞书真实Server protobuf/A7/reload/关闭已通过；剩余恢复测试的v1活owner仍应跳过，固定TS实测已证明，修正了缺backup用例的owner输入。r37真实TS/Rust会话fork、replace准备/回滚、冷恢复、三aux目录字节/mode及内部/legacy路径对拍通过，0模型请求，不冒充正式suite。微信命令、真实helper及实际A7权限/elicitation测试已接，待全回归结果；BlueBubbles真实进程两代与停机另已通过。复核发现SMS虽有注册但生产factory/gateway仍None，属于明确未完成消费者，已派Sol补第一方传输和真实A7桥，不能按全部19渠道已有注册认完整。已保存并应用逐文件带前像的渠道/数据/负控候选；旧快照和规范目录未触。本地提交保全当前候选，负控需干净HEAD运行，正式host/session/retirement及最终独立评审继续。

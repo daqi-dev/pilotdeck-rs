@@ -368,6 +368,9 @@ impl InteractionPort for ScriptInteraction {
             Self::token_json(answer_token),
         ]));
     }
+    fn permission_clear(&self, chat_id: &str) {
+        self.note(json!(["permission.clear", chat_id]));
+    }
     fn permission_clear_after_turn(&self, chat_id: &str) {
         self.note(json!(["permission.clearAfterTurn", chat_id]));
     }

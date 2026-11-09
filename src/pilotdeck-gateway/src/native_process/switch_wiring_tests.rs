@@ -87,6 +87,8 @@ async fn wiring_harness_over(
     .expect("#1353 harness bind");
     let address = server.local_addr().expect("#1353 harness address");
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        #[cfg(test)]
+        endpoints: Default::default(),
         pilot_home: home.path().to_owned(),
         config: Arc::new(parse_json("{}").expect("#1353 harness config JSON")),
         weixin: crate::channel::weixin::WeixinChannelOptions::default(),
@@ -122,6 +124,8 @@ fn bound(ms: u64) -> crate::switch::BoundedTimeout {
 async fn the_seal_linearizes_channel_close_and_listener_stop() {
     let home = Scratch::new("1353-switch-seal");
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        #[cfg(test)]
+        endpoints: Default::default(),
         pilot_home: home.path().to_owned(),
         config: Arc::new(parse_json("{}").expect("#1353 seal config JSON")),
         weixin: crate::channel::weixin::WeixinChannelOptions::default(),
@@ -473,6 +477,8 @@ async fn wiring_harness_with_host(
     .expect("#2363 harness bind");
     let address = server.local_addr().expect("#2363 harness address");
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        #[cfg(test)]
+        endpoints: Default::default(),
         pilot_home: home.path().to_owned(),
         config: Arc::new(parse_json("{}").expect("#2363 harness config JSON")),
         weixin: crate::channel::weixin::WeixinChannelOptions::default(),
@@ -653,6 +659,8 @@ async fn wiring_harness_with_host_and_channel(
     .expect("#2363 harness bind");
     let address = server.local_addr().expect("#2363 harness address");
     let channels = Arc::new(NativeChannels::new(NativeChannelsOptions {
+        #[cfg(test)]
+        endpoints: Default::default(),
         pilot_home: home.path().to_owned(),
         config: Arc::new(parse_json("{}").expect("#2363 harness config JSON")),
         weixin: crate::channel::weixin::WeixinChannelOptions::default(),

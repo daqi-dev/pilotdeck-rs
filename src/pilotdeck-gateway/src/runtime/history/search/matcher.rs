@@ -1,7 +1,8 @@
 //! Search matching and JS diagnostic spelling for invalid patterns.
+use super::SearchError as Failure;
 use super::Text;
-use crate::Failure;
 use fancy_regex::{Error, ParseError, Regex, RegexBuilder};
+use pilotdeck_protocol::JsString;
 
 pub(super) enum Matcher {
     Literal {
@@ -15,12 +16,20 @@ pub(super) enum Matcher {
     },
 }
 impl Matcher {
+    #[cfg(test)]
     pub(super) fn new(query: &str, regex: bool, sensitive: bool) -> Result<Self, Failure> {
+        Self::new_units(&JsString::from(query), regex, sensitive)
+    }
+    pub(super) fn new_units(
+        query: &JsString,
+        regex: bool,
+        sensitive: bool,
+    ) -> Result<Self, Failure> {
         if !regex {
             let needle = if sensitive {
-                query.encode_utf16().collect()
+                query.units().to_vec()
             } else {
-                lower(&query.encode_utf16().collect::<Vec<_>>())
+                lower(query.units())
             };
             // KMP's failure links bound repeated-prefix literal searches by
             // O(query + text), including large pasted keywords.
@@ -43,10 +52,12 @@ impl Matcher {
         }
 
         let invalid = |detail: &str| {
-            Failure::Error(format!(
-                "Invalid regular expression: /{query}/{}: {detail}",
-                if sensitive { "" } else { "i" }
-            ))
+            let mut units = "Invalid regular expression: /"
+                .encode_utf16()
+                .collect::<Vec<_>>();
+            units.extend_from_slice(query.units());
+            units.extend(format!("/{}: {detail}", if sensitive { "" } else { "i" }).encode_utf16());
+            Failure::Message(JsString::from_utf16(units))
         };
         let translated = translate(query, sensitive).map_err(invalid)?;
         let pattern = RegexBuilder::new(&translated).build().map_err(|error| {
@@ -72,10 +83,7 @@ impl Matcher {
                     }
                 }
             };
-            Failure::Error(format!(
-                "Invalid regular expression: /{query}/{}: {detail}",
-                if sensitive { "" } else { "i" }
-            ))
+            invalid(detail)
         })?;
         Ok(Self::Regex { pattern, sensitive })
     }
@@ -490,8 +498,8 @@ fn quantifier_out_of_order(units: &[u16]) -> bool {
     };
     bound(&units[1..comma]) > bound(upper)
 }
-fn translate(pattern: &str, sensitive: bool) -> Result<String, &'static str> {
-    let units: Vec<_> = pattern.encode_utf16().collect();
+fn translate(pattern: &JsString, sensitive: bool) -> Result<String, &'static str> {
+    let units = pattern.units();
     // Count captures before resolving decimal escapes, including forward refs.
     let (mut captures, mut at, mut in_class) = (0, 0, false);
     let mut names = std::collections::HashSet::new();

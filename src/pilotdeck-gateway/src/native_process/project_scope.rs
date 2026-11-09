@@ -203,6 +203,19 @@ pub(super) fn registered(home: &Path, project: &JsValue) -> Result<PathBuf, Requ
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn home_archive_and_close_resolve_to_the_same_project_identity() {
+        let project = JsString::from("/tmp/pdrs-project-identity");
+        for home in [
+            "/tmp/pdrs-project-identity",
+            "/tmp/pdrs-project-identity/",
+            "/tmp/pdrs-project-identity/.",
+        ] {
+            let archive = registered(Path::new(home), &JsValue::String(project.clone())).unwrap();
+            assert_eq!(archive, resolve(&project).unwrap(), "home={home}");
+        }
+    }
     use crate::{metadata::object, runtime::turn::submit_host::SubmitHostServices};
     #[tokio::test]
     async fn native_request_scope_preserves_raw_input_and_pins_session_default() {
