@@ -5,13 +5,14 @@ compilation and nonce receipts.
 No source replacement: use the shared tree lock + working-tree SHA contract.
 Caller supplies CARGO_TARGET_DIR; all selected rows run before the summary exit.
 
-The ten rows cover the machine's own contract on the matrix §四 failure
+The twelve rows cover the machine's own contract on the matrix §四 failure
 semantics — the A2 halt branch, the A8 gate release point, the DC-1/A3 cap
 clause of the shared timeout predicate — the production wiring's A10 flush
-precondition, and the six #2363 follow-ups: the halt walk's close-timeout
+precondition, and the eight #2363 follow-ups: the halt walk's close-timeout
 branch, the backstop spelling's own cap clause, the A6 management gate at
-the cron routing seam, the halt walk's owner-finish timeout branch, and the
-S4 half's once-only verdict (the error-path early escape and the cancelled
+the cron routing seam (the closed check, the dispatch's read half and the
+S1 face's drain), the halt walk's owner-finish timeout branch, and the S4
+half's once-only verdict (the error-path early escape and the cancelled
 run's re-run). Each row's anchor is the receipt-emitting assertion inside
 the named test, so only that assertion's panic can kill its mutant.
 """
@@ -79,6 +80,18 @@ switches = [
     ('switch-cron-management-open', CRON,
      CRON_PREFIX + 'a_stopped_manager_rejects_the_six_management_methods',
      '#2363 every management method answers the closed-gate rejection'),
+    # #2363 item 6, stop half: the S1 face's drain skipped — the write half
+    # of the management gate never waits for the in-flight dispatch, so the
+    # face reports Ok while the automation-side request is still running.
+    ('switch-cron-stop-no-drain', MACHINE,
+     MACHINE_PREFIX + 'the_stop_face_drains_an_in_flight_management_dispatch',
+     '#2363 the stop face waits for the in-flight dispatch'),
+    # #2363 item 6, dispatch half: the read half not held across the
+    # dispatch body — the stop face's drain has nothing to wait for, so the
+    # dispatch runs on past the stop (the pre-item-6 check-then-act window).
+    ('switch-cron-dispatch-ungated', CRON,
+     MACHINE_PREFIX + 'the_stop_face_drains_an_in_flight_management_dispatch',
+     '#2363 the stop face waits for the in-flight dispatch'),
     # #2363 item 4: the halt walk's owner-finish timeout branch — the failure
     # report for a hung S4 half deleted, so the bound is exceeded silently
     # and the process exit is kept alive by the hang.

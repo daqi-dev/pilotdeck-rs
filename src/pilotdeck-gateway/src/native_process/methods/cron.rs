@@ -9,6 +9,7 @@ use crate::runtime::{
     cron,
 };
 use pilotdeck_protocol::JsValue;
+use std::sync::Arc;
 
 // `CRON_METHODS` (projection.rs:18) is the single owner of the six names —
 // the same table InProcessGateway.ts:2114-2122 splices into capabilities and
@@ -40,6 +41,60 @@ fn wire_error(error: cron::CronError) -> RequestError {
     }
 }
 
+/// The blocking-closure body `cron_request` executes on the pool: the A6
+/// gate and the six-method dispatch under one management read guard.
+///
+/// #2363 item 6: the gate check runs inside the closure with the management
+/// gate's read half (the guard [`crate::switch::cron_management_gate`] hands
+/// out) held across the whole body — the S1 stop face takes the write half
+/// before stopping the manager, so a dispatch either completes before the
+/// stop proceeds or answers the closed rejection. The pre-item-6 seam checked
+/// the closed registry before the `spawn_blocking`, so a dispatch that had
+/// passed the check could still run its whole body on the stopped manager
+/// after S1 had already reported Ok.
+///
+/// `pub(crate)` so the #2363 race test runs this exact body against a stop
+/// face — the same function the WS seam executes.
+pub(crate) fn dispatch_under_management_gate(
+    cron: &Option<Arc<crate::runtime::cron::CronManager>>,
+    method: &str,
+    params: &JsValue,
+) -> Option<Result<JsValue, cron::CronError>> {
+    // #1353 A6 (DC-5): once the switch machine's S1 has stopped the cron
+    // manager, the six management methods answer an explicit rejection
+    // instead of operating on the stopped manager. The TS baseline keeps
+    // serving them on a stopped manager (D5) — a registered Rust difference
+    // (specs/gateway-parity/diffs/). The flag is checked under the
+    // management gate's read half, so a management call racing the stop
+    // observes the gate, not a half-stopped manager.
+    // `switch-cron-management-open` (negative control, #2363): the
+    // `cron_management_closed` gate check bypassed, so the stopped manager
+    // keeps serving the management methods — the TS baseline's D5 shape.
+    // `switch-cron-dispatch-ungated` (negative control, #2363): the read
+    // half not held across the body — the stop face's drain no longer waits
+    // for this dispatch, the pre-item-6 check-then-dispatch window.
+    let gate = if crate::mutants::on("switch-cron-dispatch-ungated") {
+        None
+    } else {
+        cron.as_ref().map(crate::switch::cron_management_gate)
+    };
+    let admission = gate.as_ref().map(|gate| gate.enter_dispatch());
+    let outcome = if crate::switch::cron_management_closed(cron.as_ref())
+        && !crate::mutants::on("switch-cron-management-open")
+    {
+        Some(Err(cron::CronError::gateway(
+            "SWITCH_IN_PROGRESS",
+            pilotdeck_protocol::JsString::from("switch in progress: cron management is closed"),
+        )))
+    } else {
+        cron::dispatch(cron.as_deref(), method, params)
+    };
+    // The body must finish before the read guard releases — that ordering
+    // is the whole item-6 contract.
+    drop(admission);
+    outcome
+}
+
 impl Requests {
     pub(in crate::native_process) fn cron_request(
         &self,
@@ -57,30 +112,8 @@ impl Requests {
         let cron = self.cron.clone();
         let dispatch_method = method.clone();
         Box::pin(async move {
-            // #1353 A6 (DC-5): once the switch machine's S1 has stopped the
-            // cron manager, the six management methods answer an explicit
-            // rejection instead of operating on the stopped manager. The TS
-            // baseline keeps serving them on a stopped manager (D5) — a
-            // registered Rust difference (specs/gateway-parity/diffs/). The
-            // flag is checked before the dispatch leaves the routing seam,
-            // so a management call racing the stop observes the gate, not a
-            // half-stopped manager.
-            // `switch-cron-management-open` (negative control, #2363): the
-            // `cron_management_closed` gate check bypassed, so the stopped
-            // manager keeps serving the management methods — the TS
-            // baseline's D5 shape.
-            if crate::switch::cron_management_closed(cron.as_ref())
-                && !crate::mutants::on("switch-cron-management-open")
-            {
-                return Err(wire_error(cron::CronError::gateway(
-                    "SWITCH_IN_PROGRESS",
-                    pilotdeck_protocol::JsString::from(
-                        "switch in progress: cron management is closed",
-                    ),
-                )));
-            }
             let dispatched = tokio::task::spawn_blocking(move || {
-                cron::dispatch(cron.as_deref(), &dispatch_method, &params)
+                dispatch_under_management_gate(&cron, &dispatch_method, &params)
             })
             .await;
             match dispatched {

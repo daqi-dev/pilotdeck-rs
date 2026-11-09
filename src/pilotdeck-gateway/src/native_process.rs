@@ -38,6 +38,10 @@ mod session_overrides;
 // #1353 A8.5-pr2: the production switch faces over the real assembly.
 #[cfg(test)]
 mod settings_tests;
+// #2363 item 6: crate-visible for the switch-side race test, which runs the
+// cron routing seam's own dispatch body against the S1 stop face.
+#[cfg(test)]
+pub(crate) use methods::dispatch_under_management_gate;
 mod switch_wiring;
 #[cfg(test)]
 mod switch_wiring_tests;
