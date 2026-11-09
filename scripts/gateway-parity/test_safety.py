@@ -2943,7 +2943,8 @@ class SameJsonSurfaces(unittest.TestCase):
                 and source.count("results.append({'name': row[0], 'status': 'INVALID',") == 1
                 and source.count("' by name'})\n                        continue") == 1
                 and source.count('mutating_sources(root, GUARDED_PATHS,') == 1
-                and source.count('clock = time.monotonic()\n') == 1
+                and source.count('\n                clock = time.monotonic()\n'
+                                '                for row in selected:\n') == 1
                 and source.count('from negative_process import (GIT_TIMEOUT, KILL_TIMEOUT,') == 1
                 and source.count('KILL_GRACE_SECONDS = KILL_TIMEOUT') == 1
                 and module.GIT_TIMEOUT == negproc.GIT_TIMEOUT
