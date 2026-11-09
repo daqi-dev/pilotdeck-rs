@@ -921,3 +921,33 @@ async fn a_cancelled_stop_face_leaves_the_gate_closed() {
         "#2363 the fresh face stopped the manager"
     );
 }
+
+/// #2363 (codex concurrency P1 fix): the gate registry keys managers
+/// weakly and sweeps dead entries on lookup — it must never keep a dropped
+/// manager (and with it the manager's scheduler cleanup, which only its
+/// `CronRuntime::drop` wakes) alive past the host's own references. A
+/// strong key here would retire that cleanup to process exit for every
+/// ordinary host that served one management dispatch.
+#[test]
+fn the_management_gate_registry_forgets_dead_managers() {
+    let scratch = Scratch::new("switch-cron-gate-registry");
+    let before = crate::switch::cron_management_gate_live_entries();
+    let first = cron_manager(&scratch);
+    let _gate = crate::switch::cron_management_gate(&first);
+    assert_eq!(
+        crate::switch::cron_management_gate_live_entries(),
+        before + 1,
+        "#2363 the first lookup registers the manager's gate"
+    );
+    drop(_gate);
+    drop(first);
+    // Any later lookup sweeps the dead entry before its own find-or-create,
+    // so the census stays flat instead of accumulating per dead manager.
+    let second = cron_manager(&scratch);
+    let _gate = crate::switch::cron_management_gate(&second);
+    assert_eq!(
+        crate::switch::cron_management_gate_live_entries(),
+        before + 1,
+        "#2363 the dropped manager's entry is swept, not retained"
+    );
+}
