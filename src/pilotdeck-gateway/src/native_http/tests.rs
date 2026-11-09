@@ -1061,6 +1061,38 @@ fn only_the_registered_cells_mask_a_content_length_zero() {
     );
 }
 
+/// #2153 fix-r1 (review r1): the exemption list and the oracle describe the
+/// same cell set, so neither can drift alone — the list is exactly the
+/// oracle's bare parser-level 400s (`HTTP/1.1 400 Bad Request` + the
+/// `Connection: close` line and nothing else before the empty body; the
+/// missing-Host 400 carries its own `date` and chunked terminator, so it is
+/// naturally excluded). A cell that gains or loses the bare-400 shape fails
+/// here with its id instead of a generic replay red, and a stale list entry
+/// points at the cell to re-check.
+#[test]
+fn parser_admission_cells_cover_exactly_the_oracle_bare_400s() {
+    let recorded = oracle();
+    let mut oracle_bare: Vec<&str> = recorded["cells"]
+        .as_array()
+        .expect("#1209 oracle cells array")
+        .iter()
+        .filter(|cell| {
+            cell["response"]
+                .as_str()
+                .expect("#1209 oracle cell response")
+                .starts_with("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+        })
+        .map(|cell| cell["id"].as_str().expect("#1209 oracle cell id"))
+        .collect();
+    oracle_bare.sort_unstable();
+    let mut listed = PARSER_ADMISSION_CELLS.to_vec();
+    listed.sort_unstable();
+    assert_eq!(
+        listed, oracle_bare,
+        "#2153 PARSER_ADMISSION_CELLS and the oracle's bare-400 cells are the same set"
+    );
+}
+
 /// #1209: raw-byte pins the replay normalization cannot swallow: the bare
 /// parser-level 400s (FOO, garbage) carry no Date (only the missing-Host 400
 /// does) and close the connection, and a HEAD response carries neither
