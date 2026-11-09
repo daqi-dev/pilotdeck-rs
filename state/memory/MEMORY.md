@@ -64,3 +64,8 @@
 原生链路验收先核每一层的实际合同：WS错误帧到新control会变成exit1/空stdout/JSON stderr；Ratatui用CSI坐标绘字而非连续原始空格串；真实历史同时含text与status。测试须保留完整状态序列，用不同内容证明背景文件选择，不能只放同内容副本。跨入口驱动与复跑说明唯一见 `src/pilotdeck-gateway/tests/fixtures/native-history/README.md`；3次错误假设原件在主仓consolidation目录，不用重复的探针修复假装产品发生回归。
 
 - [CLI 候选补丁合并](20261108-cli-candidate-merge.md) — base绑定生成时原字节，逐hunk防跨车道逻辑覆盖；JsValue转换与Drop边界。
+
+
+## CLI探针的进程身份（2026-11-09）
+
+观察键必须是(pid,birth)，PID同号而birth变化意味着旧身份已退出，不能单凭同号把新身份当本任务泄漏或发信号；新身份须凭当前SID或已核live父链独立归属，leader身份替换后不得继续信任旧SID数字。记录退休身份，未知不猜；旧总FAIL不能用后来的空普查改成PASS。主仓 `_tmp/20261108-cli-completion/session-owner-rebind/pid-identity-rule/` 有4格OS表注入通过的私有规则候选；真实最终run未诱导PID复用，适用边界如实保留。原安装22条/owner4条PID变化与最终只读census分别见各自原件，验证的是不同时间命题。

@@ -5233,3 +5233,8 @@ r132 全目标check、SOP18、approvals131/1忽略、skills CONNECT1、default-m
 ### 2026-11-09 09:14 · 固定源码绿线与末次观察补强
 
 r133 d50546fe9的4808文件SHA、HEAD、空diff及fmt零变更均核；all-target check/strict/四bin/native558过0败67忽略/AO123过0败1忽略全通过，bin仅mbp2冻结，原件verify-r133/logs。r132完整CLI546过0败140条件忽略、审批131过0败1忽略原件已分可执行文件核数。两家最终增量三角色P0/P1均0；最后两项P2只补观察：knowledge计所有GET/POST并与五格TS wire数量一致，AO真实4次CAS失败钉住既有fail-closed容量行为并文档说明，不改生产策略。既有SDK started快照只作补充诊断，票据与实际owner变异是有效判据，不拿快照充负控。Gateway差异草稿R1缺必需6段/原ID元数据已补齐，三类冻结检查通过，旧失败原件保留。owner当前3变异5case真KILLED，only-enable实际等价SURVIVED原件保留，真实旧创建顺序反例在跑。接末次定向验证与仅P2非作者复核，然后交付；不再扩功能，仍本机提交、Rust仅mbp2。
+
+
+### 2026-11-09 09:23 · CLI工程任务交付（仅本机，正式阶段D待人签）
+
+用户约定的旧CLI完整功能、源码安装更新、32默认技能和前端可调用的机器能力已实现并完成本轮自动验收；新前端与/app/v1留后续。唯一正本cli-gateway-setup/pilotdeck-rs，产品验证基点e1d44bd17：mbp2 r134四bin/fmt/all-target/strict全0、4808文件SHA/HEAD/空diff/format0核对，knowledge3/AO124过0败；前一固定产品源r133 native558过0败67忽略，r132全CLI546过0败140条件忽略、审批131过0败1忽略，未变前提原件复用而非计重复总数。双非作者最终增量P0/P1均0，最后P2观察补强非作者P0/P1/P2均0，余P3不扩代码。当前owner三变异五case真KILLED、真实Notify旧顺序KILLED；等价only-enable如实SURVIVED。原源码安装两代功能通过但PID监视器总FAIL、owner outer四PID误识风险总FAIL仍保留，未洗成PASS；最终已观察身份/SID无残留。三类冻结检查通过，未批准差异不获豁免，阶段D108条/人签、全项目与所有Gateway API均不提前标完成。完整交付、边界、来源与使用入口见主仓_tmp/20261108-cli-completion/delivery-integrated-draft.md、review-dispositions.md及docs/changes/arch/002_cli-native-machine.md。两树原快照与旧8e32保留，固定主线整合点d9dd9之后未追动main；产品提交仅本机、无GitHub写入、Rust与bin全在mbp2。下一步由人复核隔离CLI/TUI实效与明确差异，再按新任务进入前端阶段。
