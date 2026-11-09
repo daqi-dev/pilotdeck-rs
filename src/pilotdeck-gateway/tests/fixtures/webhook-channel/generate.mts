@@ -131,7 +131,19 @@ function responseEnd(buffer: string): number {
   return buffer.length >= end ? end : -1;
 }
 
-function normalize(raw: string): any {
+// #2153: the recording-side twin of the Rust replay's `PARSER_ADMISSION_LABEL`
+// + `fn parser_admission` (channel/webhook/tests.rs) — the label of the one
+// step whose hyper bytes carry a `content-length: 0` the TS golden does not
+// (the bare parser-level 400 of A8.4-NATIVE-HTTP-001 item 3). The oracle drops
+// that line on the registered step only; every other step's length lines
+// record verbatim, so a step that truly writes one keeps it in the golden.
+const PARSER_ADMISSION_LABEL = 'unknown-method';
+
+function parserAdmission(label: string): boolean {
+  return label === PARSER_ADMISSION_LABEL;
+}
+
+function normalize(raw: string, parserAdmissionStep: boolean): any {
   const split = raw.indexOf('\r\n\r\n');
   if (split < 0) return { status: null, headers: [], body: '' };
   const head = raw.slice(0, split);
@@ -146,8 +158,9 @@ function normalize(raw: string): any {
       return `${name}: ${name === 'date' ? '<date>' : value}`;
     })
     // hyper adds `content-length: 0` to the bare parser 400 where Node sends
-    // none (A8.4-NATIVE-HTTP-001); the normalized oracle drops it.
-    .filter((line) => line !== 'content-length: 0');
+    // none (A8.4-NATIVE-HTTP-001); the normalized oracle drops it on the
+    // registered step only (#2153).
+    .filter((line) => !(parserAdmissionStep && line === 'content-length: 0'));
   const chunked = /transfer-encoding:\s*chunked/i.test(head);
   const bodyNorm = chunked ? body.replace(/[0-9a-fA-F]+\r\n/g, (m) => m.toLowerCase()) : body;
   return { status: lines[0], headers, body: bodyNorm };
@@ -233,11 +246,14 @@ async function runRequests(port: number | null, step: any, responses: any[]) {
   }
   if (count === 1) {
     const one = result.raws[0] ?? '';
-    responses.push({ label: step.label, ...normalize(one) });
+    responses.push({ label: step.label, ...normalize(one, parserAdmission(step.label)) });
     if (step.pin) responses.push({ label: `${step.label}-pin`, raw: pin(one) });
   } else {
     result.raws.forEach((one, index) =>
-      responses.push({ label: `${step.label}-${index + 1}`, ...normalize(one) }),
+      responses.push({
+        label: `${step.label}-${index + 1}`,
+        ...normalize(one, parserAdmission(step.label)),
+      }),
     );
   }
 }
