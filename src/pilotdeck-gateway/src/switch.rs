@@ -504,13 +504,21 @@ pub(crate) fn cron_management_gate(manager: &Arc<CronManager>) -> Arc<CronManage
     // (after dropping its own references) could observe it alive — the
     // same window a lookup could race a concurrent drop through.
     let key = Arc::downgrade(manager);
-    if let Some((_, gate)) = gates.iter().find(|(held, _)| Weak::ptr_eq(held, &key)) {
+    // `switch-cron-gate-registry-lookup` (negative control, #2363): the
+    // find's match is discarded, so every lookup mints and registers a
+    // fresh gate — the reuse criterion's red shape (a repeat lookup of
+    // the same live manager must answer the same gate).
+    let matched = gates
+        .iter()
+        .find(|(held, _)| held.ptr_eq(&key))
+        .filter(|_| !crate::mutants::on("switch-cron-gate-registry-lookup"));
+    if let Some((_, gate)) = matched {
         return gate.clone();
     }
     let gate = Arc::new(CronManagementGate {
         admission: tokio::sync::RwLock::new(()),
     });
-    gates.push((Arc::downgrade(manager), gate.clone()));
+    gates.push((key, gate.clone()));
     gate
 }
 
