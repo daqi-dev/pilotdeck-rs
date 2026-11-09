@@ -84,12 +84,18 @@ fn fence_key(transcript_path: &Path) -> Result<PathBuf, RequestError> {
 
 /// The session writer lease for a transcript no session owns right now.
 ///
-/// `None` means a session holds it — hydrating (its recorder is not published
-/// yet) or closing (its writer is already closed) — so a cold append would
-/// fork the sequence chain. Callers must then append through the recorder or
-/// surface the retryable busy error; they must never write cold anyway.
-pub(crate) fn cold_write_lease(transcript_path: &Path) -> Option<WriterLease> {
+/// `Ok(None)` means a session holds it — hydrating (its recorder is not
+/// published yet) or closing (its writer is already closed) — so a cold
+/// append would fork the sequence chain. Callers must then append through the
+/// recorder or surface the retryable busy error; they must never write cold
+/// anyway. A storage failure on the way to the lease is an `Err` (#1873): the
+/// pre-fix shape folded it into the busy answer and misreported a broken
+/// transcript directory as a session that would eventually drain.
+pub(crate) fn cold_write_lease(
+    transcript_path: &Path,
+) -> Result<Option<WriterLease>, RequestError> {
     crate::runtime::session::factory::try_writer_lease(transcript_path)
+        .map_err(|error| RequestError::new(error.to_string()))
 }
 
 /// The retryable error a metadata request reports when a session owns the
@@ -102,6 +108,69 @@ pub(crate) fn writer_busy_error() -> crate::runtime::connection::RequestError {
         details: None,
         validation: None,
     }
+}
+
+/// The three-segment cold-write protocol every metadata entry goes through
+/// (`#1874` consolidation of the config, rename and status callers):
+///
+/// 1. resolve the live recorder for the folded transcript and append through
+///    it — a loaded session owns the writer (and the lease) with an in-memory
+///    sequence, so the entry continues its chain (`#1457` fix-r2);
+/// 2. otherwise take the writer lease a session holds and append cold, with
+///    the tail restored first so the entry continues the chain (fix-r1/r3);
+/// 3. a busy lease means a session owns the transcript after all: re-query
+///    the recorder (appending through it when it is published) and otherwise
+///    surface the retryable busy error — never write a second chain beside it.
+///
+/// `live` is the same closure for the first lookup and the re-query, so one
+/// checked append covers both paths for its caller. It returns the key the
+/// session is registered under, so the caller can close *that* session. The
+/// caller-supplied closures keep this module free of the `native_process`
+/// recorder map (`runtime` must not import it); `cold` appends the entry
+/// through the storage this helper restored.
+pub(crate) fn append_metadata_with_lease(
+    home: &Path,
+    project_root: &Path,
+    session_key: &JsString,
+    live: impl Fn() -> Result<Option<JsString>, RequestError>,
+    cold: impl FnOnce(&crate::storage::SessionStorage) -> Result<(), RequestError>,
+) -> Result<Option<JsString>, RequestError> {
+    if let Some(owner) = live()? {
+        return Ok(Some(owner));
+    }
+    let home2 = home.to_path_buf();
+    let adapter = crate::storage::AsyncTranscriptAdapter::new(
+        Arc::new(crate::storage::JsonlTranscriptStore::new()),
+        Arc::new(move |k: &crate::storage::ProjectKey| {
+            crate::session_chat_dir(&home2, &k.project_root, &k.project_root.to_string_lossy())
+        }),
+    );
+    let storage = adapter
+        .create_session_storage(crate::storage::SessionStorageInput {
+            project_root: project_root.to_path_buf(),
+            pilot_home: home.to_path_buf(),
+            session_id: session_key.clone(),
+            now: None,
+        })
+        .map_err(|e| RequestError::new(e.to_string()))?;
+    let Some(_lease) = cold_write_lease(&storage.transcript_path)? else {
+        // A session claimed the transcript between the lookup and here.
+        // Append through it when it is published; otherwise say busy —
+        // never write a second chain beside it.
+        return match live()? {
+            Some(owner) => Ok(Some(owner)),
+            None => Err(writer_busy_error()),
+        };
+    };
+    // Seed the writer's sequence from the existing transcript so the entry
+    // continues the chain rather than restarting at 1.
+    if matches!(storage.transcript_exists(), Some(Ok(true))) {
+        storage
+            .restore()
+            .map_err(|e| RequestError::new(e.to_string()))?;
+    }
+    cold(&storage)?;
+    Ok(None)
 }
 
 /// Hold the returned guard across the whole read-modify-write of one transcript
