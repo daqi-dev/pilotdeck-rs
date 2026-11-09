@@ -1,7 +1,13 @@
 //! Shared channel errors and transports, independent of CONFIG RPC ownership.
+//!
+//! Full B channel sources live alongside this module; compile-time `pub mod` for the
+//! remaining adapters opens with the LocalServer / `ConfigRoutes` host slice (r3).
 pub mod channel_http;
 pub mod channel_state;
 pub mod im_cron;
+// On disk, pending host wiring: bluebubbles, bootstrap, channel_inbound, channel_webhook,
+// dingtalk, discord, email, feishu, home_assistant, matrix, mattermost, native, qq, signal,
+// slack, sms, telegram, wecom, wecom_callback, whatsapp, weixin (+ session/commands helpers).
 
 use pilotdeck_protocol::{JsObject, JsValue};
 use std::{future::Future, pin::Pin};
