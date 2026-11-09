@@ -2113,3 +2113,77 @@ parenthesis nesting first (measured: >200 parses, 250 raises `SyntaxError`;
 probe `probe-r39-pre.py` in the PR evidence), and the deep `list(zN)` copy
 chain, which did not reproduce at 600/700/900/1100 copies on either head
 (GLM concurrency r38 #3 -- no fix without a reproducer).
+
+### Closed by `fix-r1` round 40 (codex r39 C-P0-1..C-P0-8 / C-P1-1..C-P1-3; GLM r39 boundary P0-1 / P0-2 / P1; sibling P1 / P2-2 / P2-3 / P2-4; probe 2026-11-09)
+
+The round-39 wrapper sever asked only whether the lambda's body read its own
+parameters, so a wrapper **closing over the container** (`iter = lambda x: hs`)
+severed the walk while passing the handles through (C-P0-1 / GLM P0-1), and a
+**parameter anywhere in the use chain** shadowing the wrapper binding imported
+the module scope's harmlessness into the function (GLM P0-2).  The sever test is
+now a free-variable analysis -- loads minus the names the body itself binds
+(targets, walrus, nested parameters via `_shadowed_parameters`) -- with a
+chain-level pre-check that any shadowed parameter on the way down keeps the
+walk.  The round-39 display relay carried the container's roots onto the
+display's target but no further: a **plain alias or a `list()` copy taken after
+the display** (`first = (hs[0],); items = first`) lost the handle (C-P0-2 /
+C-P0-2b), a display whose elements came from a **comprehension relay** swallowed
+a later element selection (C-P0-3), and a **nested** display decoded only one
+level (C-P0-4).  Two r39 regressions are pinned as false-FAIL guards: a display
+built after the container was **certainly overwritten** carried the stale roots
+(C-P1-1), and a **clean element** of a display inherited its sibling's handle
+(C-P1-2) -- `_display_selection_roots` resolves the latest certain binding and
+the constant-subscript selection path (outer-first slices applied reversed,
+constant-key dict lookup, int index incl. negative) before a call off a display
+subscript counts; local scope only, an outer-scope display selection stays
+fail-closed (declared trade-off).  A **dict display** relays both its keys and
+its values (GLM boundary P1).  An unknown-module **star import restores a
+tracked alias** it re-exports (C-P0-5) -- the four event tables append a
+restore event for any tracked name with an earlier helper event, and the
+module alias table its own import-style entry.
+
+The import family: an aliased `__import__` **re-bound to the bare head**
+replaced the alias' kind set instead of unioning it (C-P0-6) -- kinds now
+accumulate across the module's bindings; the module name rides the `name=`
+**keyword** and any of the first two positional slots (C-P0-7); and a
+*certain* rebind to a **private-dict lambda** kept the import kind forever
+(C-P1-3, the r39 regression) -- `_import_refused_calls` builds a dedicated
+module-scope event table (imports of the builtin itself record `None`;
+assignments record their value node; an unknown-module star before the call
+keeps every name live) and `_import_refused_calls` refuses the decode when
+the latest certain binding plus the later conditional / loop-back candidates
+are all provably not the builtin (a lambda or `def` that reads no
+import-capable name).  The callee kind computation rode every partial /
+attrgetter branch of `_expr_kinds_inner`, making a chained `f()()()...` cost
+2^(n+1)-1 calls (C-P0-8) -- the callee's kinds are computed once and reused.
+The receiver write walk recursed per child, so a **left-deep expression in a
+tracked scope** (1100-term sum) crashed the audit (GLM sibling P1, crash
+family) -- the walk is an explicit stack now, and the flattening renamed the
+inner `_handle_receivers` result so it can no longer shadow the receiver set
+the root lookups intersect with (a `set & NoneType` crash the battery caught).
+The mapping-method and getattr-spelling scans read their callee through the
+**walrus unwrap** (GLM sibling P2-2 / P2-3), and a *relative*
+`from .sys import exit` is not `sys.exit` (P2-4).  C-P1-4 (the
+`_provably_inert` Call rejection over-reporting clean call displays) is the
+declared r39 fail-closed trade-off and is unchanged.
+
+| Shape | Self-test |
+|---|---|
+| **A wrapper closing over the container still carries** (false PASS guard): `iter = lambda x: _hs; _h = next(iter(_hs))` -- the receiver must withdraw. | `... severed the walk at a wrapper closing over the container (round 40)` |
+| **A chain parameter shadow hides nothing** (false PASS guard): module `iter = lambda x: 1`, `def _f(report, iter)` -- the receiver must withdraw. | `... let a chain parameter shadow hide a real wrapper (round 40)` |
+| **An alias after a display still relays** (false PASS guard): `first = (hs[0],); items = first` (also `items = list(first)`) then iterate and call -- withdraw. | `... dropped a handle alias taken after a display (round 40)` / `... dropped a list() copy of a taken-out handle (round 40)` |
+| **A comprehension relay does not swallow a display selection** (false PASS guard): `items = ([h for h in _mx], hs[0]); items[1]('common', ...)` -- the selected element's receiver withdraws. | `... let a comprehension relay swallow a display element selection (round 40)` |
+| **A nested display decodes all the way** (false PASS guard): `items = ((hs[0],),); items[0][0]('common', ...)` -- withdraw. | `... stopped a nested display decode at the first level (round 40)` |
+| **A stale display carries nothing** (false FAIL guard): `hs = [lambda *a: None]` written after the take-out, display then iterate and call -- no withdrawal. | `... re-propagated a stale handle through a display (round 40)` |
+| **A clean element does not inherit** (false FAIL guard): `items = (lambda *a: None, hs[0]); items[0]('common', ...)` -- no withdrawal. | `... let a clean display element inherit its sibling handle (round 40)` |
+| **A dict display relays keys and values** (false PASS guard): `items = {hs[0]: 1}` iterated, or `items = {'k': hs[0]}; items['k']('common', ...)` -- withdraw. | `... ignored a dict display key/value (round 40)` |
+| **A star import restores a tracked alias** (false PASS guard): `from builtins import setattr as _sa; _sa = lambda *a: None; from exported import *` -- the write must withdraw. | `... kept a shadowed helper in force behind a star import (round 40)` |
+| **A rebind to the bare head unions kinds** (false PASS guard): `from builtins import setattr as imp; imp = __import__; s = imp('sys')` -- the module write decodes. | `... let a kind set replace, not union, on an aliased import rebind (round 40)` |
+| **The module name rides `name=`** (false PASS guard): `s = imp(name='sys')` -- decodes. | `... missed the module name in an import keyword argument (round 40)` |
+| **A certain private-dict rebind is refused** (false FAIL guard): `imp = lambda name: SimpleNamespace(modules={})` -- no module write reported. | `... kept reporting an import the alias no longer performs (round 40)` |
+| **The callee kind recursion stays linear** (hang guard): a 30-deep `f()()()...` chain through `_object_kinds` under a 10 s bound. | `... let the callee kind recursion go exponential (round 40)` |
+| **A deep expression in a tracked scope does not crash** (crash guard): a 1100-term sum through the receiver write walk. | `... let a deep expression crash the receiver write walk (round 40)` |
+| **A walrus mapping-method callee writes** (false PASS guard): `(_g := sys.modules.update)({'_guard': object()})`. | `... lost a mapping-method write behind a walrus callee (round 40)` |
+| **A walrus unbound setitem callee writes** (false PASS guard): `(_g := dict.__setitem__)(sys.modules, '_guard', object())` -- only `_mapping_method_call`'s own callee unwrap carries this spelling, so the row red-proves that fix site alone. | `... lost an unbound setitem write behind a walrus callee (round 40)` |
+| **A walrus getattr spelling hands the handle** (false PASS guard): `(_g := getattr)(md, '__setattr__')`. | `... lost a handle behind a walrus getattr spelling (round 40)` |
+| **A relative import is not `sys.exit`** (false FAIL guard): `from .sys import exit as bail` -- no exit alias. | `... read a relative import as the sys exit alias (round 40)` |
