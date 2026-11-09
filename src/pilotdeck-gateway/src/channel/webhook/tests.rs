@@ -1586,18 +1586,24 @@ fn pin(raw: &str) -> String {
         .join("\r\n")
 }
 
+/// #2153: the label of the one step whose hyper bytes carry a
+/// `content-length: 0` the TS golden does not — the bare parser-level 400
+/// of A8.4-NATIVE-HTTP-001 item 3, scoped like api-server's
+/// `parser_admission` cells. Shared by the exemption in `run_request` and
+/// the uniqueness guard below, so the two cannot drift apart (fix-r2,
+/// review r2): the guard pins the very predicate that grants the mask.
+const PARSER_ADMISSION_LABEL: &str = "unknown-method";
+
 /// The recorder's `runRequests`: one oracle response entry per exchange
 /// outcome, keep-alive counts included.
 async fn run_request(port: &Option<u16>, step: &Value, responses: &mut Vec<Value>) {
     let label = step["label"].as_str().expect("#1334 oracle step label");
-    // #2153: the one step whose hyper bytes carry a `content-length: 0` the
-    // TS golden does not — the bare parser-level 400 of
-    // A8.4-NATIVE-HTTP-001 item 3, scoped like api-server's
-    // `parser_admission` cells. Every other step compares its length lines
-    // verbatim, so an extra one replays red instead of normalizing away;
-    // `content_length_zero_stays_scoped_to_the_registered_rejection` pins
-    // the raw bytes behind the mask in both directions.
-    let parser_admission = label == "unknown-method";
+    // #2153: see `PARSER_ADMISSION_LABEL`. Every other step compares its
+    // length lines verbatim, so an extra one replays red instead of
+    // normalizing away; the
+    // `content_length_zero_stays_scoped_to_the_registered_rejection` pin
+    // holds the raw bytes behind the mask in both directions.
+    let parser_admission = label == PARSER_ADMISSION_LABEL;
     let mode = recorded_mode(step).unwrap_or("close");
     // Validate even when close mode or a failed exchange will not consume
     // these fields. Otherwise malformed recordings can still replay green.
@@ -2239,9 +2245,12 @@ fn only_the_registered_step_masks_a_content_length_zero() {
 
 /// #2153 fix-r1 (review r1): the exemption picks its step by label, and
 /// labels are not unique across the oracle — `first` / `repeat` already
-/// repeat across cases. This guard pins that `unknown-method` occurs in
-/// exactly one step of the whole oracle, so a future case reusing the label
-/// cannot silently inherit the bare-400 exemption; it fails here instead.
+/// repeat across cases. This guard pins that `PARSER_ADMISSION_LABEL`
+/// occurs in exactly one step of the whole oracle, so a future case reusing
+/// the label cannot silently inherit the bare-400 exemption; it fails here
+/// instead. fix-r2 (review r2): the filter reads the same shared
+/// `PARSER_ADMISSION_LABEL` the exemption itself uses, so widening the
+/// predicate in `run_request` cannot leave this guard green.
 #[test]
 fn unknown_method_is_the_label_of_exactly_one_oracle_step() {
     let value = oracle();
@@ -2249,19 +2258,14 @@ fn unknown_method_is_the_label_of_exactly_one_oracle_step() {
         .as_array()
         .expect("#1334 oracle cases array")
         .iter()
-        .filter_map(|case| {
+        .flat_map(|case| {
             let name = case["name"].as_str().expect("#1334 oracle case name");
-            let steps = recorded_steps_checked(case)
-                .expect("#1334 oracle steps checked")
-                .expect("#1334 oracle steps");
-            Some(
-                steps
-                    .iter()
-                    .filter(|step| step["label"].as_str() == Some("unknown-method"))
-                    .map(move |_| name),
-            )
+            recorded_steps(case)
+                .expect("#1334 oracle steps")
+                .iter()
+                .filter(|step| step["label"].as_str() == Some(PARSER_ADMISSION_LABEL))
+                .map(move |_| name)
         })
-        .flatten()
         .collect::<Vec<&str>>();
     assert_eq!(
         hits,
