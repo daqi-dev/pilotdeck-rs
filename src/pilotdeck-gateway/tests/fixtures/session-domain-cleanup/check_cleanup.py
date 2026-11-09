@@ -1277,6 +1277,33 @@ def _folded_string_fold(node, budget):
             if budget[0] < 0:
                 return _FOLD_STRING_UNRESOLVED
             return left * node.right.value
+    # fix-r18 (DS r17 boundary#1 P0 + sibling#1 P1; MM r17 boundary#1 P0 +
+    # concurrency#1 P0 — two families, four roles, probe-verified in
+    # fix-r18-audit/probe-r18-p0.out shapes F1/F2/F3/F6): the grammar above
+    # is Constant / JoinedStr / BinOp Add-Mod-Mult only, so a constant
+    # expression outside it ('status' if True else 'x', 'status' or 'x')
+    # fell through to this fail-open None — the same one-value-two-
+    # meanings gap r14 closed for budget exhaustion.  None stays reserved
+    # for the runtime grammar (_test_is_runtime): an expression built
+    # without those nodes is constant by the interpreter's own semantics,
+    # so an unfolded one means "unknowable", never "not a status word".
+    # The r17 FormattedValue branch propagates the sentinel unchanged.
+    # A None node is not an expression at all: _dict_pairs hands the
+    # ``**spread`` slot's key (None) to _status_key -> _folded_string,
+    # and that pre-r18 read stayed None (a miss); it must not reach
+    # _test_is_runtime's ast.walk.
+    if node is None:
+        return None
+    if isinstance(node, (ast.IfExp, ast.BoolOp)):
+        # IfExp / BoolOp are the string-producing operators outside the
+        # grammar above — an unfolded one means "unknowable string", never
+        # "not a status word" (the pre-r18 fail-open gap, probe F1/F2/F3/F6).
+        # Every other grammar-miss shape (Dict/Set/List/Tuple/Compare...)
+        # produces something that is not a string at all, so the miss None
+        # stays correct there — collapsing them into the sentinel turned
+        # ``verdict = {}`` into a status hit and failed the healthy
+        # controls run_all baseline.
+        return None if _test_is_runtime(node) else _FOLD_STRING_UNRESOLVED
     return None
 
 
@@ -1411,8 +1438,24 @@ def _status_key(node):
     status key — "unknowable" must not degrade into "not a status key",
     which un-enumerates the very writes the padding attack targets.
     fix-r15: the polarity lives in _folded_status_hit (DS simplify#1).
+    fix-r18 (DS r17 boundary#1 P0 + sibling#1 P1; MM r17 boundary#1 P0 +
+    concurrency#1 P0, probe shapes F4/F5): the value side
+    (_status_literals) has an ast.walk constant fallback; the key side
+    did not, so a determinable-but-unfolded key ('status'[:6] — Subscript
+    is runtime grammar, the fold keeps None) read as "not a status key"
+    and the rogue write escaped enumeration.  Same mirror, same
+    conservative direction as the value side since r14: a key whose
+    subtree carries the status word is a status key.
+    A None key is the ``**spread`` slot (non-literal spread — its keys
+    come from runtime), pre-r18 a miss and kept a miss here; the walk
+    fallback below must not receive it either.
     """
-    return _folded_status_hit(_folded_string(node), _STATUS_KEYS)
+    if node is None:
+        return False
+    if _folded_status_hit(_folded_string(node), _STATUS_KEYS):
+        return True
+    return any(isinstance(n, ast.Constant) and n.value in _STATUS_KEYS
+               for n in ast.walk(node))
 
 
 def _dict_has_status(summary):
@@ -8452,6 +8495,63 @@ def _aggregation_audit_impl():
                             'f-string status write escaped enumeration '
                             f'(rogue{_i}) (#1652)')
             break
+    # #1652 fix-r18 (DS r17 boundary#1 + sibling#1; MM r17 boundary#1 +
+    # concurrency#1 — two families, four roles, probe-verified in
+    # fix-r18-audit/probe-r18-p0.out shapes F1-F6): the fold grammar
+    # returned the fail-open None for constant expressions outside it
+    # (IfExp / BoolOp keys), and the key side had no ast.walk constant
+    # fallback.  Fold face: the constant unresolvable shapes must stop as
+    # the sentinel, never None.
+    _fsr4_shapes = [
+        'f\'{"status" if True else "x"}\'',
+        'f\'{"status" or "x"}\'',
+        "'status' if True else 'x'",
+        "('sta' + 'tus') if True else 'x'",
+    ]
+    if any(_folded_string(ast.parse(shape, mode='eval').body) is None
+           for shape in _fsr4_shapes):
+        failures.append('#892 aggregation-audit: a constant key outside '
+                        'the fold grammar read as runtime instead of '
+                        'stopping the fold (#1652)')
+    # Key face: the Subscript shapes are runtime grammar (the fold keeps
+    # None) and must be caught by the key-side constant walk fallback.
+    _fsr4_keys = [
+        'f\'{"status"[:6]}\'',
+        "'status'[:6]",
+    ]
+    if any(not _status_key(ast.parse(shape, mode='eval').body)
+           for shape in _fsr4_keys):
+        failures.append('#892 aggregation-audit: a status-word key outside '
+                        'the fold grammar was not read as a status key '
+                        '(#1652)')
+    # End-to-end: every write below has a key that is exactly the status
+    # word at runtime, so each rogue must be enumerated; rogue6 is the
+    # genuinely-runtime key negative control and must stay out.
+    _fsr4_writes = [
+        '    report[f\'{"status" if True else "x"}\'] = \'PASS\'',
+        '    report[f\'{"status" or "x"}\'] = \'PASS\'',
+        '    report[f\'{"status"[:6]}\'] = \'PASS\'',
+        '    report[\'status\' if True else \'x\'] = \'PASS\'',
+        '    report[\'status\'[:6]] = \'PASS\'',
+        '    report[(\'sta\' + \'tus\') if True else \'x\'] = \'PASS\'',
+    ]
+    _fsr4_lines = ['report = {}', 'name = "other"', '']
+    for _i, _write in enumerate(_fsr4_writes):
+        _fsr4_lines += [f'def rogue{_i}(rows):', _write, '    return 0', '']
+    _fsr4_lines += ['def rogue6(rows):', '    report[name] = \'PASS\'',
+                    '    return 0', '']
+    _fsr4_found, _fsr4_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr4_lines)), 'fix-r18-self-check.py')
+    for _i in range(len(_fsr4_writes)):
+        if ('fix-r18-self-check.py', f'rogue{_i}') not in _fsr4_found:
+            failures.append('#892 aggregation-audit: a constant-expression '
+                            f'status write escaped enumeration (rogue{_i}) '
+                            '(#1652)')
+            break
+    if ('fix-r18-self-check.py', 'rogue6') in _fsr4_found:
+        failures.append('#892 aggregation-audit: a genuinely-runtime key '
+                        'was enumerated as a status write '
+                        '(over-collection regression, rogue6) (#1652)')
     # #1652 fix-r16 (DS sibling#2 r15 P2): _nested_slot_fail_closed keeps
     # the bare ``in`` on purpose — a stopped fold (the sentinel) must NOT
     # exempt a nested status slot there; False is the flagging, safe

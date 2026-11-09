@@ -2019,7 +2019,36 @@ class ApparatusInputs(unittest.TestCase):
         # keeps them in lockstep so the next extension cannot skip the
         # copies (unregistered fixtures, so a revert mutant is killed by
         # this pin alone).
+        # fix-r18 (DS r17 boundary#2 + sibling#2 + concurrency#1 +
+        # simplify#1; MM r17 boundary#2 + concurrency#2 + simplify#1 — the
+        # same finding from both families): the r17 pin asserted only
+        # MemoryError/RecursionError membership, so a third extension of
+        # the controls tuple, or a dropped non-resource member, kept it
+        # green — the lockstep claim was not enforced.  The pin now
+        # compares the full recorded sets, with Attribute members read by
+        # ast.unparse so subprocess.SubprocessError counts.
         import ast
+
+        def _catch_set(text):
+            guarded = [stmt for stmt in ast.walk(ast.parse(text))
+                       if isinstance(stmt, ast.Try) and any(
+                           isinstance(item, ast.Expr)
+                           and isinstance(item.value, ast.Call)
+                           and (getattr(item.value.func, 'id', None)
+                                == 'check_case'
+                                or getattr(item.value.func, 'attr', None)
+                                == 'check_case')
+                           for item in stmt.body)]
+            self.assertEqual(len(guarded), 1,
+                             'fix-r17: exactly one check_case call under '
+                             'a handler')
+            recorded = set()
+            for exc in guarded[0].handlers:
+                members = (exc.type.elts if isinstance(exc.type, ast.Tuple)
+                           else [exc.type])
+                recorded.update(ast.unparse(member) for member in members)
+            return recorded
+
         entries = {
             'controls': (common.SCRIPT / 'controls' / 'session_domain.py'),
             'expectations': (common.ROOT / 'src/pilotdeck-gateway/'
@@ -2029,32 +2058,14 @@ class ApparatusInputs(unittest.TestCase):
                        'tests/fixtures/session-domain-native/'
                        'run_control.py'),
         }
-        for name, path in entries.items():
+        recorded = {name: _catch_set(path.read_text(encoding='utf-8'))
+                    for name, path in entries.items()}
+        for name in ('expectations', 'native'):
             with self.subTest(runner=name):
-                text = path.read_text(encoding='utf-8')
-                guarded = [stmt for stmt in ast.walk(ast.parse(text))
-                           if isinstance(stmt, ast.Try) and any(
-                               isinstance(item, ast.Expr)
-                               and isinstance(item.value, ast.Call)
-                               and (getattr(item.value.func, 'id', None)
-                                    == 'check_case'
-                                    or getattr(item.value.func, 'attr', None)
-                                    == 'check_case')
-                               for item in stmt.body)]
-                self.assertEqual(len(guarded), 1,
-                                  'fix-r17: exactly one check_case call '
-                                  'under a handler: ' + name)
-                recorded = set()
-                for exc in guarded[0].handlers:
-                    members = (exc.type.elts if isinstance(exc.type, ast.Tuple)
-                               else [exc.type])
-                    recorded.update(member.id for member in members
-                                    if isinstance(member, ast.Name))
-                for resource in ('MemoryError', 'RecursionError'):
-                    self.assertIn(resource, recorded,
-                                  'fix-r17: the fixture runner catch set '
-                                  f'({name}) must carry {resource} like '
-                                  'the controls entry')
+                self.assertEqual(recorded[name], recorded['controls'],
+                                 'fix-r18: the fixture runner catch set '
+                                 f'({name}) must be the controls entry\'s '
+                                 'verbatim member set')
 
     def test_cli_main_is_only_the_one_guard_call(self):
         # The guard's single implementation is only useful if no entry keeps a
