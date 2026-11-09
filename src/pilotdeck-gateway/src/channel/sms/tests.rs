@@ -3517,6 +3517,11 @@ replay_cases! {
 /// A8.3-CH-WEBHOOK-004). The replay cell above cannot see any of this — the
 /// oracle records only status/content-type/body, so the status-line version
 /// and the framing would drift silently — this test reads the raw wire.
+/// #2257 fix-r1: the status line is not the only wire-visible difference —
+/// Node's answer carries `Connection: close` where hyper's 1.0 branch writes
+/// no `connection` header at all (close is the 1.0 default), a header-set
+/// residual of the lane-level A8.3-CH-SMS-002 family — so the pin below
+/// holds the hyper side to its measured shape.
 #[tokio::test]
 async fn http10_request_closes_the_connection() {
     const PORT: u16 = 18904;
@@ -3583,6 +3588,20 @@ async fn http10_request_closes_the_connection() {
     assert!(
         !framed,
         "#1913 pin http10: the 1.0 response is close-delimited like Node's, no content-length and no chunking: {raw:?}"
+    );
+    // Close is HTTP/1.0's default, so hyper's 1.0 branch (`proto/h1/conn.rs`
+    // `fix_keep_alive`) only disables keep-alive without writing a header;
+    // Node's wire answers the same request with `Connection: close`
+    // (probe-sms-http10.out), a lane-level framing residual the other native
+    // lanes replay by writing the header themselves. Pin the absence: a
+    // hyper change that starts writing one must update the ledger, not pass.
+    let connection_header = head.split("\r\n").skip(1).any(|line| {
+        line.split_once(':')
+            .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("connection"))
+    });
+    assert!(
+        !connection_header,
+        "#1913 pin http10: the 1.0 response carries no `connection` header (close is 1.0's default; Node's `Connection: close` is the lane-level A8.3-CH-SMS-002 framing family): {raw:?}"
     );
     crate::negative_assert_eq!(
         body,
