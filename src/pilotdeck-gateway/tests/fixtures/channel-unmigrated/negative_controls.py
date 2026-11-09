@@ -220,6 +220,15 @@ MUTATIONS = [
      'const SUBSET_CHANNEL_KEYS: [&str; 7] = [\n    "feishu",',
      'loader_keys_partition_rejected_and_implemented',
      '#2367 every bundle key is in the module subset whitelist'),
+    # M22 (#2367 review r2 MM sibling): the same bundle cell loses the other
+    # spelling `feishu` — same cell, different key, the M13/M16 and M18/M20
+    # precedent (a dedicated row per spelling). Array length decremented like
+    # M18/M20/M21 so the mutant compiles.
+    ('subset-whitelist-loses-bundle-feishu', source / 'tests.rs',
+     'const SUBSET_CHANNEL_KEYS: [&str; 8] = [\n    "weixin",\n    "feishu",',
+     'const SUBSET_CHANNEL_KEYS: [&str; 7] = [\n    "weixin",',
+     'loader_keys_partition_rejected_and_implemented',
+     '#2367 every bundle key is in the module subset whitelist'),
 ]
 
 
