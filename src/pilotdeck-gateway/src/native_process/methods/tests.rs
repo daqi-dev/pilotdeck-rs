@@ -4386,9 +4386,11 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
     // Ledger A7.2-STEER-INPUT-001: TS `steerTurn` embeds `input.itemId`
     // verbatim in the canonical message (probe s5/s8), but the Rust mailbox
     // keys an item by a `JsString`, so a non-string id travels as its
-    // unchecked `String()` form. The response frame keeps parity (accepted,
-    // no self-invented error); the durable record and the mailbox identity
-    // carry the coerced text.
+    // unchecked `String()` form. The response frame keeps parity on the
+    // single-request cells (accepted, no self-invented error); the durable
+    // record and the mailbox identity carry the coerced text — and because
+    // the identity is the coerced text, cross-type same-text interleavings
+    // alias in Rust while TS keys by the raw wire value (§交错 A/B below).
     use crate::runtime::turn::gateway::GatewayRequests;
 
     let (_scratch, requests) = std::panic::catch_unwind(super::super::management_tests::setup)
@@ -4473,6 +4475,240 @@ async fn steer_item_id_coerces_to_text_for_the_mailbox_identity() {
         error.message,
         pilotdeck_protocol::JsString::from(crate::js_value::StackOverflow::MESSAGE),
         "#1604 the deep-array item id reports the V8 RangeError text"
+    );
+    // §交错 A (r1 concurrency P1-b, A7.2-STEER-INPUT-001): the numeric cancel
+    // and the later string steer of the same text alias in Rust. TS keyed the
+    // cancellation on the number `5` itself, so the string steer is accepted
+    // and delivered (real-SteerMailbox probe
+    // `_tmp/20261108-review-2382-ds/ts-probe/output.txt`, cells
+    // A_cancel_number5 / A_enqueue_string5_after, Node v22.22.1); Rust's
+    // text-keyed `cancelled` set rejects it — a response-frame divergence the
+    // ledger registers.
+    let _reservation_a = requests
+        .owner
+        .begin_turn(&"ia".into(), &"ra".into())
+        .expect("#1604 interleave-A admission slot");
+    let _turn_a = start_steer_run(&steer, "ia", "ta", "ra");
+    let cancelled = requests
+        .request(
+            "cancel_steer".into(),
+            crate::metadata::object([
+                ("sessionKey", "ia".into()),
+                ("runId", "ra".into()),
+                ("itemId", JsValue::Number(5.0)),
+            ]),
+        )
+        .await
+        .expect("#1604 interleave-A numeric cancel stays Ok");
+    negative_assert_eq!(
+        cancelled.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1604 interleave A: the numeric cancel records like TS"
+    );
+    let steered = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "ia".into()),
+                ("runId", "ra".into()),
+                ("itemId", "5".into()),
+                ("message", "late".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 interleave-A string steer stays Ok");
+    negative_assert_eq!(
+        steered.get("accepted"),
+        Some(&JsValue::Bool(false)),
+        "#1604 interleave A: the string steer hits the numeric cancel (Rust divergence)"
+    );
+    negative_assert_eq!(
+        steered.get("reason").and_then(JsValue::as_string),
+        Some(&pilotdeck_protocol::JsString::from("cancelled")),
+        "#1604 interleave A: the rejection reason is cancelled"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&"ia".into())
+            .expect("#1604 interleave-A mailbox")
+            .drain(&"ta".into())
+            .len(),
+        0,
+        "#1604 interleave A: nothing is enqueued (TS delivers the string steer)"
+    );
+    // §交错 B: the dedupe swallows the second same-text message and the
+    // cancel removes the first (numeric) entry. TS keeps both identities
+    // apart (probe cells B_enqueue_number5 / B_enqueue_string5 /
+    // B_cancel_string5 / B_pending_after_drain:[5]): the string cancel
+    // removes only the string entry and the numeric one survives the drain.
+    let _reservation_b = requests
+        .owner
+        .begin_turn(&"ib".into(), &"rb".into())
+        .expect("#1604 interleave-B admission slot");
+    let _turn_b = start_steer_run(&steer, "ib", "tb", "rb");
+    let first = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "ib".into()),
+                ("runId", "rb".into()),
+                ("itemId", JsValue::Number(9.0)),
+                ("message", "first".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 interleave-B numeric steer stays Ok");
+    negative_assert_eq!(
+        first.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 interleave B: the numeric steer is accepted"
+    );
+    let second = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "ib".into()),
+                ("runId", "rb".into()),
+                ("itemId", "9".into()),
+                ("message", "second".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 interleave-B string steer stays Ok");
+    negative_assert_eq!(
+        second.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 interleave B: the string steer answers accepted while Rust dedupes it away (TS enqueues an independent second entry)"
+    );
+    let cancelled = requests
+        .request(
+            "cancel_steer".into(),
+            crate::metadata::object([
+                ("sessionKey", "ib".into()),
+                ("runId", "rb".into()),
+                ("itemId", "9".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 interleave-B string cancel stays Ok");
+    negative_assert_eq!(
+        cancelled.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1604 interleave B: the string cancel removes the numeric entry (Rust divergence)"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&"ib".into())
+            .expect("#1604 interleave-B mailbox")
+            .drain(&"tb".into())
+            .len(),
+        0,
+        "#1604 interleave B: the numeric message is silently lost (TS drains [9])"
+    );
+    // §缺席格 (r1 boundary#1, folded into P1-b): an absent `itemId` coerces to
+    // the literal text "undefined" and aliases a genuine string id of that
+    // spelling. TS embeds the raw `undefined` (JSON.stringify drops
+    // `metadata.queueItemId` entirely) and keys the mailbox by the undefined
+    // value, so the literal-string entry survives its own cancel of the
+    // absent identity; Rust cancels it.
+    let _reservation_c = requests
+        .owner
+        .begin_turn(&"ic".into(), &"rc".into())
+        .expect("#1604 absent-id admission slot");
+    let _turn_c = start_steer_run(&steer, "ic", "tc", "rc");
+    let absent = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "ic".into()),
+                ("runId", "rc".into()),
+                ("message", "m".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the absent itemId steer stays Ok");
+    negative_assert_eq!(
+        absent.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 an absent itemId is accepted like TS"
+    );
+    let literal = requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "ic".into()),
+                ("runId", "rc".into()),
+                ("itemId", "undefined".into()),
+                ("message", "literal".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the literal undefined steer stays Ok");
+    negative_assert_eq!(
+        literal.get("accepted"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the literal string id answers accepted while Rust dedupes it against the absent id"
+    );
+    let cancelled = requests
+        .request(
+            "cancel_steer".into(),
+            crate::metadata::object([("sessionKey", "ic".into()), ("runId", "rc".into())]),
+        )
+        .await
+        .expect("#1604 the absent-id cancel stays Ok");
+    negative_assert_eq!(
+        cancelled.get("cancelled"),
+        Some(&JsValue::Bool(true)),
+        "#1604 the absent-id cancel removes the literal entry (Rust divergence)"
+    );
+    negative_assert_eq!(
+        steer
+            .mailbox_for_test(&"ic".into())
+            .expect("#1604 absent-id mailbox")
+            .drain(&"tc".into())
+            .len(),
+        0,
+        "#1604 the literal-string message is silently lost (TS keeps it)"
+    );
+    // The coerced durable form of the absent id: the mailbox identity and
+    // `queueItemId` carry the string "undefined" (TS's raw undefined makes
+    // JSON.stringify drop the metadata key).
+    let _reservation_d = requests
+        .owner
+        .begin_turn(&"id".into(), &"rd".into())
+        .expect("#1604 absent-coercion admission slot");
+    let _turn_d = start_steer_run(&steer, "id", "td", "rd");
+    requests
+        .request(
+            "steer_turn".into(),
+            crate::metadata::object([
+                ("sessionKey", "id".into()),
+                ("runId", "rd".into()),
+                ("message", "m".into()),
+            ]),
+        )
+        .await
+        .expect("#1604 the absent-coercion steer stays Ok");
+    let drained = steer
+        .mailbox_for_test(&"id".into())
+        .expect("#1604 absent-coercion mailbox")
+        .drain(&"td".into());
+    negative_assert_eq!(drained.len(), 1, "#1604 the absent-id steer was enqueued");
+    negative_assert_eq!(
+        drained[0].item_id,
+        pilotdeck_protocol::JsString::from("undefined"),
+        "#1604 the absent itemId coerces to the literal undefined text"
+    );
+    let metadata = drained[0]
+        .message
+        .get("metadata")
+        .expect("#1604 absent-coercion canonical metadata");
+    negative_assert_eq!(
+        metadata.get("queueItemId"),
+        Some(&JsValue::String(pilotdeck_protocol::JsString::from(
+            "undefined"
+        ))),
+        "#1604 queueItemId carries the undefined text (A7.2-STEER-INPUT-001)"
     );
     requests
         .owner
@@ -4733,7 +4969,11 @@ async fn run_family_reads_the_registry_key_like_the_ts_template() {
         pilotdeck_protocol::JsString::from("Cannot read properties of null (reading 'projectKey')"),
         "#1604 run_get reads projectKey first"
     );
-    // r11/r12: the capability gate precedes every input read.
+    // r11/r12: the capability gate precedes every input read. r13-r15
+    // (probe4.mts, r1 boundary#2): `runEvents` gates the same way — TS
+    // answers CAPABILITY_UNAVAILABLE for nullish params, an empty object,
+    // and even an invalid cursor when the registry is unconfigured, so the
+    // gate wins over the afterSeq read and the cursor validation alike.
     let mut no_registry = requests.clone();
     no_registry.runs = None;
     let error = no_registry
@@ -4745,6 +4985,24 @@ async fn run_family_reads_the_registry_key_like_the_ts_template() {
         "CAPABILITY_UNAVAILABLE",
         "#1604 the capability gate precedes the field reads"
     );
+    for (params, cell) in [
+        (JsValue::Null, "r13 nullish"),
+        (crate::metadata::object([]), "r14 empty object"),
+        (
+            crate::metadata::object([("afterSeq", JsValue::Number(-1.0))]),
+            "r15 invalid cursor",
+        ),
+    ] {
+        let error = no_registry
+            .request("run_events".into(), params)
+            .await
+            .expect_err("#1604 run_events must gate before any read ({cell})");
+        negative_assert_eq!(
+            error.code,
+            "CAPABILITY_UNAVAILABLE",
+            "#1604 the run_events capability gate precedes reads and cursor validation ({cell})"
+        );
+    }
     requests
         .owner
         .shutdown()

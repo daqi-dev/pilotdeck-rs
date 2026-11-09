@@ -153,8 +153,7 @@ with mutating_sources(repo, [source, registry_source]) as snapshots:
          'run_get_maps_durable_records'),
         ('capability-unavailable-dropped', source,
          ') -> Result<Option<JsValue>, TurnReadError> {\n    let Some(registry) = registry else {\n'
-         '        return Err(TurnReadError::dialog(\n            "CAPABILITY_UNAVAILABLE",\n'
-         '            "Persistent run registry is unavailable.",\n        ));\n    };',
+         '        return Err(registry_unavailable());\n    };',
          ') -> Result<Option<JsValue>, TurnReadError> {\n    let Some(registry) = registry else {\n'
          '        return Ok(None);\n    };',
          'run_capability_unavailable'),
