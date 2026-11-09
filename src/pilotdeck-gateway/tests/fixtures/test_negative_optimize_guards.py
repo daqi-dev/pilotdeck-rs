@@ -94,6 +94,10 @@ SCRIPTS = (
     # missing_target/refuse_unusable_target + verdict_exit); its positional
     # names and `--only a,b` both feed the shared selection rule.
     ('manager-gateway/negative_controls.py', (), ()),
+    # #2131 fix-r3: same entry shape after the migration to negative_selection
+    # (registered + select + claim_dir + missing_target/refuse_unusable_target
+    # + verdict_exit).
+    ('utf16-residual-sort/negative_controls.py', (), ()),
 )
 
 # #1666: entries whose target guard cannot refuse *every* mode. Each exemption
