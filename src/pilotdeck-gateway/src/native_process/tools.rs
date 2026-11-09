@@ -1491,10 +1491,10 @@ mod tests {
 
     /// `compose` (#2442): the cap comparison and the registration share one
     /// critical section (`register_below_cap`). Two concurrent prepares on
-    /// the same factory-level registry — both parked inside the runtime
-    /// factory, exactly the interleave where the old two-lock
-    /// check-then-register had both already passed the size check — register
-    /// at most one runtime under cap=1; the other reports the TS diagnostic.
+    /// the same factory-level registry, both parked inside the runtime
+    /// factory, reach the admission together; whatever the interleaving,
+    /// at most one registers under cap=1 and the other reports the TS
+    /// diagnostic.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn session_mcp_tools_holds_the_cap_across_concurrent_prepares() {
         let config = test_config();
@@ -1505,7 +1505,11 @@ mod tests {
                 .expect("#1433 fixture servers commit");
         }
         // Both prepares park inside the factory until the second arrives, so
-        // neither's registration can precede the other's cap check.
+        // they reach the cap admission together; the single critical section
+        // in `register_below_cap` — not this barrier — is what rules out the
+        // check-then-register interleave (the paired `per-session-cap-two-
+        // locks` mutation parks between the two locks to make that kill
+        // deterministic instead of a scheduling race).
         let parked = Arc::new(std::sync::Barrier::new(2));
         let provider = Arc::new(ProjectMcpRuntimeProvider::new(
             ProjectMcpRuntimeProviderOptions {

@@ -115,14 +115,17 @@ mutations = [
      '#1433 a 2.5 cap still admits the third per-session runtime'),
     # #2442 review P2 (sibling + concurrency both flagged): the concurrent
     # positive control had no paired mutation. Reverting `register_below_cap`
-    # to a check-then-register — the size read in its own lock, the insert
-    # in another — reintroduces the cross-thread over-cap window the test's
-    # factory barrier parks on; only that test goes red.
+    # to a check-then-register — the size read in its own lock, the insert in
+    # another — is a race the factory barrier alone cannot make
+    # deterministic, so the mutant also parks between the two locks: both
+    # concurrent prepares read the pre-insert size and both register past the
+    # cap; only that test goes red.
     ('per-session-cap-two-locks', REGISTRY,
      '''        let mut state = lock(&self.inner);
         let size: usize = total_entries(&state);
         if size as f64 >= cap {''',
      '''        let size: usize = self.size();
+        std::thread::sleep(std::time::Duration::from_millis(50));
         let mut state = lock(&self.inner);
         if size as f64 >= cap {''',
      'native_process::tools::tests::session_mcp_tools_holds_the_cap_across_concurrent_prepares',
