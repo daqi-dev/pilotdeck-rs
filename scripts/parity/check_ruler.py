@@ -73,21 +73,31 @@ check_frozen = _load('check_frozen', _HERE / 'check_frozen.py').check
 # 等级 column must not hide a finding), full-width Ｐ１ folds to P1 before
 # matching, and the conclusion sentence obeys the same fence visibility as
 # the tables — an unclosed fence makes the whole record unreadable.
+# fix-r4 (r3 reviews): ~~~ fences hide content like ``` fences; a row that
+# names no level is prose or quote noise, not an open finding (a pipe in
+# prose no longer fails a clean record); a failed or still-expected disposal
+# (修复失败 / 计划 2026 年 12 月 31 日修复 / 待下轮（r3）修复 / not yet
+# fixed / never been fixed) reads as pending; merged closes like 合入, and
+# 合并 joins both the closure and the pending verb families.
 _NEGATED_LEVELS = re.compile(r'(?:无|没有|未发现|不含|未见)\s*P[012]'
                              r'(?:\s*[/／、]\s*P[012])*', re.IGNORECASE)
 # Word boundaries keep identifiers (`case_p1`) from reading as a level.
 _LEVEL_TOKEN = re.compile(r'(?<![0-9A-Za-z_])p[012](?![0-9A-Za-z_])', re.IGNORECASE)
 _CLOSED_HANDLING = ('修', '解决', '关闭', '拒', '保留', '无需', '完成', '合入',
-                    '并入', '降级', '升级', 'done', 'fixed', 'resolved', 'closed',
-                    'wontfix')
+                    '并入', '合并', '降级', '升级', 'done', 'fixed', 'resolved',
+                    'closed', 'merged', 'wontfix')
 # Pending must bind to the same disposal verbs the closure list knows (r2
 # review: 待合入/未完成/not done/没修/修复待评审 let a finding read as closed).
-# The gap between marker and verb is bounded but wide enough for dates etc.
+# The gap between marker and verb is bounded but wide enough for dates etc.;
+# parentheses may sit inside it (待下轮（r3）修复, r4 review). A failed attempt
+# (修复失败 / not yet fixed / never been merged) is pending, not closed.
 _IN_PROGRESS_HANDLING = re.compile(
-    r'(?:待|计划|拟|暂不?|暂缓|未|没|后续|尚未|正在)[^，,。;；）)]{0,16}'
-    r'(?:修|解决|关闭|处置|处理|评审|复核|验收|完成|合入|并入|降级|升级)'
+    r'(?:待|计划|拟|暂不?|暂缓|未|没|后续|尚未|正在)[^，,。;；]{0,24}'
+    r'(?:修|解决|关闭|处置|处理|评审|复核|验收|完成|合入|并入|合并|降级|升级)'
+    r'|修复失败|解决失败|合入失败'
     r'|修复中|进行中|观察中|保留观察|继续观察|待定|待办'
-    r'|\bin[ -]progress\b|\bnot[ -]?(?:fixed|done|resolved|closed|merged)\b'
+    r'|\bin[ -]progress\b'
+    r'|\b(?:not|never)\b[^，,。;]{0,24}\b(?:fix|fixed|done|resolved|closed|merged)\b'
     r'|\bun[- ]?resolved\b|\bun[- ]?done\b|\bunfixed\b'
     r'|\bpending\b|\btodo\b|\btbd\b|\bwip\b', re.IGNORECASE)
 
@@ -130,13 +140,15 @@ def _scan_table(run):
     (each with its leading pipe). Any other shape — headerless, a dropped
     leading pipe, or two tables run together with no blank line between
     them — cannot be read column-wise, so every row that names a level is
-    open (#2245 r2 boundary #2). In a readable table with both 结论 and
-    处理 header cells, a row closes only when its 处理 cell names a
-    closure and is not still pending; misaligned rows are unreadable.
+    open (#2245 r2 boundary #2). Only rows that name a level count as
+    findings: a prose or quote line that happens to carry a pipe is not a
+    review row (r4 review: such lines read as open). In a readable table
+    with both 结论 and 处理 header cells, a row closes only when its 处理
+    cell names a closure and is not still pending; misaligned rows are
+    unreadable.
     """
     def levels(rows):
-        return [cells for lead, cells in rows
-                if not lead or _row_has_level(cells)]
+        return [cells for lead, cells in rows if _row_has_level(cells)]
 
     if not (len(run) >= 2 and run[0][0] and _is_delimiter(run[1][1])
             and not any(_is_delimiter(row[1]) for row in run[2:])):
@@ -147,11 +159,13 @@ def _scan_table(run):
     handling_at, width = header.index('处理'), len(header)
     open_rows = []
     for lead, cells in data:
+        if not _row_has_level(cells):
+            continue  # no finding named: prose noise, not a review row
         if not lead:
             open_rows.append(cells)  # unreadable row, fail-closed
         elif len(cells) != width:
             open_rows.append(cells)  # misaligned: unreadable, fail-closed
-        elif _row_has_level(cells):
+        else:
             handling = cells[handling_at].replace('*', '').lower()
             if (not any(closed in handling for closed in _CLOSED_HANDLING)
                     or _IN_PROGRESS_HANDLING.search(handling)):
@@ -164,16 +178,28 @@ def _visible_text(text):
 
     The conclusion sentence and the tables obey one visibility rule: what a
     reader cannot see inside a fence cannot count, and a record whose fence
-    is never closed is unreadable, not clean (#2245 r2 boundary #3).
+    is never closed is unreadable, not clean (#2245 r2 boundary #3). Both
+    ``` and ~~~ fences count (r4 review: a tilde fence hid a finding from
+    the ruler); a closing fence must repeat the opening character and be at
+    least as long, per CommonMark. CR/CRLF are folded to LF first, so the
+    splitter below sees only LF line breaks.
     """
-    visible, fence = [], False
+    text = re.sub(r'\r\n?', '\n', text)
+    fence = None  # None outside; (char, length) inside a fence
+    visible = []
     for line in G.jsonl_lines(text):
-        if line.strip().startswith('```'):
-            fence = not fence
-            continue
-        if not fence:
-            visible.append(line)
-    return None if fence else '\n'.join(visible)
+        if fence is None:
+            opened = re.match(r' {0,3}(`{3,}|~{3,})', line)
+            if opened:
+                fence = (opened.group(1)[0], len(opened.group(1)))
+            else:
+                visible.append(line)
+        else:
+            closed = re.match(r' {0,3}(`{3,}|~{3,})[ \t]*$', line)
+            if closed and closed.group(1)[0] == fence[0] \
+                    and len(closed.group(1)) >= fence[1]:
+                fence = None
+    return None if fence is not None else '\n'.join(visible)
 
 
 def _open_review_rows(text):

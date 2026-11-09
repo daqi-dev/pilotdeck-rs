@@ -309,6 +309,24 @@ class ReviewControls(unittest.TestCase):
             ('pending-awaiting-acceptance', '| 1 | DS | P1：foo | 已修，待人工验收 |\n', False),
             ('identifier-not-level', '| 1 | DS | case_p1 复核 | 已修（c1） |\n', True),
             ('closed-level-in-handling', '| 1 | DS | P1：foo | 已修（原 P1，降级 P3） |\n', True),
+            # fix-r4: a failed or still-expected disposal reads as pending.
+            ('fix-failed', '| 1 | DS | P1：foo | 修复失败 |\n', False),
+            ('solve-failed', '| 1 | DS | P1：foo | 解决失败 |\n', False),
+            ('merge-failed', '| 1 | DS | P1：foo | 合入失败 |\n', False),
+            ('pending-dated-plan-31', '| 1 | DS | P1：foo | 计划 2026 年 12 月 31 日修复 |\n', False),
+            ('pending-paren-round', '| 1 | DS | P1：foo | 待下轮（r3）修复 |\n', False),
+            ('english-not-yet-fixed', '| 1 | DS | P1: foo | not yet fixed |\n', False),
+            ('english-never-fixed', '| 1 | DS | P1: foo | never fixed |\n', False),
+            ('english-has-not-been-fixed', '| 1 | DS | P1: foo | has not been fixed |\n', False),
+            # fix-r4: merged closes like 合入 (r3 reviews, both families).
+            ('english-merged', '| 1 | DS | P1: foo | merged to main |\n', True),
+            ('chinese-merged', '| 1 | DS | P1：foo | 已合并 to main |\n', True),
+            ('english-done', '| 1 | DS | P1: foo | done |\n', True),
+            ('english-fixed', '| 1 | DS | P1: foo | fixed |\n', True),
+            ('english-resolved', '| 1 | DS | P1: foo | resolved |\n', True),
+            ('english-closed', '| 1 | DS | P1: foo | closed |\n', True),
+            ('english-wontfix', '| 1 | DS | P1: foo | wontfix |\n', True),
+            ('failed-but-retried', '| 1 | DS | P1：foo | 已修复，失败率 0 |\n', True),
         ]
         for name, row, expected in row_cases:
             with self.subTest(name=name):
@@ -355,6 +373,25 @@ class ReviewControls(unittest.TestCase):
             ('second-review-table-clean',
              table + '\n| 轮 | 审查方 | 结论 | 处理 |\n|---|---|---|---|\n'
              '| 2 | MM | 无 P0/P1/P2 | 已复核 |\n' + conclusion, True),
+            # fix-r4: ~~~ fences hide content exactly like ``` fences.
+            ('tilde-fence-hides-conclusion',
+             table + '~~~\n' + conclusion.strip() + '\n~~~\n', False),
+            ('tilde-example-poison-ignored', table + conclusion
+             + '~~~\n| 结论 | 处理 |\n|---|---|\n| P1：x | — |\n~~~\n', True),
+            ('tilde-unclosed-fence-hides-poison',
+             table + conclusion + '~~~\n| P1：x | — |\n', False),
+            ('mixed-fence-chars-do-not-close',
+             table + conclusion + '```\n| P1：x | — |\n~~~\n| more |\n', False),
+            # fix-r4: prose or quote lines that carry a pipe but no level are
+            # not review rows; they must not fail a clean record.
+            ('quote-line-after-table',
+             table + conclusion + '> 备注：讨论见 | 评审记录 B。\n', True),
+            ('quote-line-with-level-after-table',
+             table + conclusion + '> 引用：| P1：x | — |\n', False),
+            ('prose-pipe-line',
+             table + conclusion + '备注：见附录 | 附录 B。\n', True),
+            ('fullwidth-pipe-prose-line',
+             table + conclusion + '备注：见附录 ｜ 附录 B。\n', True),
         ]
         for name, body, expected in record_cases:
             with self.subTest(name=name):
@@ -370,6 +407,21 @@ class ReviewControls(unittest.TestCase):
             (G.WORKTREE / 'docs/reviews/001_ruler-recheck.md').read_bytes())
         with patch.object(G, 'WORKTREE', self.root):
             self.assertIs(check_ruler.independent_review(), True)
+
+    def test_pending_and_closure_families_stay_paired(self):
+        """#2245 r3 reviews (both families): every closure word must keep its
+        negated form on the pending side — the two hardcoded lists drift apart
+        one-sidedly otherwise (merged was pending-only until fix-r4)."""
+        english = ('done', 'fixed', 'resolved', 'closed', 'merged')
+        for word in english:
+            self.assertIn(word, check_ruler._CLOSED_HANDLING)
+            self.assertIsNotNone(
+                check_ruler._IN_PROGRESS_HANDLING.search(f'not {word}'))
+        chinese = ('修', '解决', '关闭', '完成', '合入', '并入', '合并', '降级', '升级')
+        for word in chinese:
+            self.assertIn(word, check_ruler._CLOSED_HANDLING)
+            self.assertIsNotNone(
+                check_ruler._IN_PROGRESS_HANDLING.search(f'未{word}'))
 
 
 if __name__ == '__main__':
