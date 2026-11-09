@@ -36,6 +36,25 @@ impl Default for ModelFamilySource {
         }
     }
 }
+/// Native process providers follow the same immutable project generation as
+/// their model configuration. Injected transports keep their existing contract.
+pub(crate) struct NativeModelFamilySource {
+    pub env: crate::config::Env,
+}
+impl ResourceFamilySource for NativeModelFamilySource {
+    fn family(&self) -> Family {
+        Family::ModelRuntime
+    }
+    fn stage(&self, context: &StageContext, sink: &mut StageSink<'_>) -> RuntimeResult {
+        let snapshot = context.snapshot();
+        let proxy = snapshot.get("config").and_then(|config| config.get("proxy"))
+            .and_then(crate::runtime::model::http::ProxySettings::from_config);
+        ModelFamilySource {
+            transport: Arc::new(HyperModelTransport::with_proxy_settings(proxy.as_ref(), &self.env)),
+            providers: None,
+        }.stage(context, sink)
+    }
+}
 pub struct ModelResources {
     pub providers: Arc<ModelInvocationProviderRegistry>,
     pub config: JsValue,

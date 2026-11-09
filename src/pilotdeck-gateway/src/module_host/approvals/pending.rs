@@ -34,8 +34,8 @@
 #![cfg_attr(not(test), allow(dead_code))]
 
 use super::{
-    ApprovalFailure, ApprovalPendingStore, ResumeSource, StoreAuthority, StoreResumeInput,
-    StoreStatusInput, js_truthy, state_error,
+    ApprovalFailure, ApprovalPendingStore, ResumeSource, StoreAuthority, StoreResumeCommand,
+    StoreResumeInput, StoreStatusInput, js_truthy, state_error,
 };
 use pilotdeck_protocol::{JsObject, JsString, JsValue};
 use std::{
@@ -121,7 +121,7 @@ impl PendingSopStore {
         &self,
         input: &StoreResumeInput,
     ) -> Result<JsValue, ApprovalFailure> {
-        self.resume_locked(input)
+        self.apply_command(&input.clone().into())
     }
     pub(crate) fn snapshot(
         &self,
@@ -132,7 +132,7 @@ impl PendingSopStore {
 
     /// Error messages are relevant to the CLI control callback even though
     /// the public HTTP transport intentionally sends only the code.
-    pub(crate) fn resume_message(&self, input: &StoreResumeInput, code: &str) -> String {
+    pub(crate) fn resume_message(&self, input: &StoreResumeCommand, code: &str) -> String {
         let root = (self.profiles)(input.project_key.as_ref());
         let guard = self.states.lock().expect("#1350 pending store lock");
         let current = root.and_then(|root| guard.get(&(root, input.session_key.clone())));
@@ -155,7 +155,9 @@ impl PendingSopStore {
             ),
             "SOP_REVISION_CONFLICT" => format!(
                 "Expected SOP revision {}, found {}.",
-                input.expected_revision.unwrap_or(f64::NAN),
+                String::from_utf16_lossy(
+                    &crate::js_value::to_string_units(&input.expected_revision).unwrap_or_default()
+                ),
                 current.map_or(1.0, |c| c.revision)
             ),
             "SOP_APPROVAL_PIN_INVALID" | "SOP_APPROVAL_ASSIGNEE_REQUIRED" => current
@@ -170,15 +172,21 @@ impl PendingSopStore {
                 "Old receipt has no authenticated approval facts.".into()
             }
             "SOP_RESUME_REQUEST_CONFLICT" => {
-                let duplicate = current.and_then(|c| c.resume_requests.get_key(&input.request_id));
+                let duplicate = current.and_then(|c| {
+                    request_key(&input.request_id)
+                        .ok()
+                        .and_then(|key| c.resume_requests.get_key(&key))
+                });
                 let auth = duplicate.and_then(|d| d.get("authorization"));
-                let authority_conflict = matches!(input.source, ResumeSource::Human)
+                let authority_conflict = is_human(&input.source)
                     && auth.is_some_and(|a| {
                         !deep_strict_equal(
                             &a.get("authority").cloned().unwrap_or(JsValue::Undefined),
                             &authority_value(input.authority.as_ref()),
-                        ) || a.get("expectedRevision").and_then(JsValue::as_number)
-                            != input.expected_revision
+                        ) || !strict_equal(
+                            a.get("expectedRevision").unwrap_or(&JsValue::Undefined),
+                            &input.expected_revision,
+                        )
                     });
                 if authority_conflict {
                     "Approval request belongs to a different subject or original revision.".into()
@@ -250,17 +258,21 @@ impl PendingSopStore {
         Ok(Some(to_status_snapshot(current)))
     }
 
-    fn resume_locked(&self, input: &StoreResumeInput) -> Result<JsValue, ApprovalFailure> {
+    pub(crate) fn apply_command(
+        &self,
+        input: &StoreResumeCommand,
+    ) -> Result<JsValue, ApprovalFailure> {
         let root = ((self.profiles)(input.project_key.as_ref()))
             .ok_or_else(|| state_error("SOP_MODULE_DISABLED"))?;
         let mut guard = self.states.lock().expect("#1350 pending store lock");
         let Some(current) = guard.get_mut(&(root, input.session_key.clone())) else {
             return Err(state_error("SOP_SESSION_NOT_FOUND"));
         };
+        let request_key = request_key(&input.request_id)?;
         // The duplicate receipt replay, `SopStateStore.resume`'s first branch.
         let duplicate = current
             .resume_requests
-            .get_key(&input.request_id)
+            .get_key(&request_key)
             .filter(|value| js_truthy(value))
             .cloned();
         if !crate::mutants::on("approvals-duplicate-off")
@@ -281,7 +293,10 @@ impl PendingSopStore {
             ));
         };
         // `current.wait.id !== input.waitId` — the id is a string by `isWait`.
-        let stale = !matches!(wait.get("id"), Some(JsValue::String(id)) if id == &input.wait_id);
+        let stale = !strict_equal(
+            wait.get("id").unwrap_or(&JsValue::Undefined),
+            &input.wait_id,
+        );
         if stale {
             return Err(state_error("SOP_WAIT_STALE"));
         }
@@ -289,12 +304,15 @@ impl PendingSopStore {
             Some(JsValue::String(kind)) if kind.equals_str("handoff") => ResumeSource::Human,
             _ => ResumeSource::ExternalTask,
         };
-        if input.source != expected_source {
+        if !strict_equal(&input.source, &JsValue::from(expected_source.as_str())) {
             return Err(state_error("SOP_RESUME_SOURCE_INVALID"));
         }
-        if let Some(expected) = input.expected_revision
-            && strict_not_equal(expected, current.revision)
+        if !input.expected_revision.is_undefined()
+            && !strict_equal(&input.expected_revision, &JsValue::Number(current.revision))
         {
+            // The JS template literal can itself throw while formatting a
+            // non-coercible revision; retain that plain failure as well.
+            wire_text(&input.expected_revision)?;
             return Err(state_error("SOP_REVISION_CONFLICT"));
         }
         let mut authorization: Option<JsValue> = None;
@@ -306,7 +324,7 @@ impl PendingSopStore {
             })?;
             validate_authority(input.authority.as_ref(), &input.session_key, &approval)
                 .map_err(|error| state_error(error.code))?;
-            let Some(expected) = input.expected_revision else {
+            if input.expected_revision.is_undefined() {
                 // `approvals-revision-required-off` relabels the branch,
                 // killed by the fix-r1 direct test.
                 return Err(state_error(
@@ -316,11 +334,11 @@ impl PendingSopStore {
                         "SOP_REVISION_REQUIRED"
                     },
                 ));
-            };
+            }
             authorization = Some(crate::metadata::object([
                 ("authority", authority_value(input.authority.as_ref())),
                 ("approval", approval),
-                ("expectedRevision", JsValue::Number(expected)),
+                ("expectedRevision", input.expected_revision.clone()),
             ]));
         }
         let revision = current.revision + 1.0;
@@ -335,8 +353,8 @@ impl PendingSopStore {
         // authorization}` — a separate object, so the returned result keeps
         // its own key set.
         let mut receipt = result.clone();
-        receipt.insert("waitId".into(), JsValue::String(input.wait_id.clone()));
-        receipt.insert("source".into(), JsValue::from(input.source.as_str()));
+        receipt.insert("waitId".into(), input.wait_id.clone());
+        receipt.insert("source".into(), input.source.clone());
         receipt.insert(
             "slotUpdates".into(),
             input
@@ -396,7 +414,7 @@ impl PendingSopStore {
         }
         current
             .resume_requests
-            .insert(input.request_id.clone(), JsValue::Object(receipt));
+            .insert(request_key, JsValue::Object(receipt));
         Ok(JsValue::Object(result))
     }
 }
@@ -413,7 +431,7 @@ impl ApprovalPendingStore for PendingSopStore {
         &'a self,
         input: &'a StoreResumeInput,
     ) -> Pin<Box<dyn Future<Output = Result<JsValue, ApprovalFailure>> + Send + 'a>> {
-        Box::pin(async move { self.resume_locked(input) })
+        Box::pin(async move { self.apply_resume(input) })
     }
 }
 
@@ -421,10 +439,10 @@ impl ApprovalPendingStore for PendingSopStore {
 /// source the legacy-receipt, authority and original-revision checks, then
 /// the payload identity checks, then the stored receipt's own result.
 fn replay_receipt(
-    input: &StoreResumeInput,
+    input: &StoreResumeCommand,
     duplicate: &JsValue,
 ) -> Result<JsValue, ApprovalFailure> {
-    if matches!(input.source, ResumeSource::Human) {
+    if is_human(&input.source) {
         // `if (!duplicate.authorization)`.
         let authorization = duplicate
             .get("authorization")
@@ -461,18 +479,19 @@ fn replay_receipt(
             return Err(state_error("SOP_RESUME_REQUEST_CONFLICT"));
         }
         // `input.expectedRevision !== duplicate.authorization.expectedRevision`.
-        let stored_revision = match authorization.get("expectedRevision") {
-            Some(JsValue::Number(number)) => Some(*number),
-            _ => None,
-        };
-        if input.expected_revision != stored_revision {
+        let stored_revision = authorization
+            .get("expectedRevision")
+            .unwrap_or(&JsValue::Undefined);
+        if !strict_equal(&input.expected_revision, stored_revision) {
             return Err(state_error("SOP_RESUME_REQUEST_CONFLICT"));
         }
     }
     // `duplicate.message !== input.message` — a strict compare of whatever
     // the stored receipt carries.
-    let message_equal =
-        matches!(duplicate.get("message"), Some(JsValue::String(text)) if text == &input.message);
+    let message_equal = strict_equal(
+        duplicate.get("message").unwrap_or(&JsValue::Undefined),
+        &input.message,
+    );
     if !message_equal {
         return Err(state_error("SOP_RESUME_REQUEST_CONFLICT"));
     }
@@ -480,7 +499,7 @@ fn replay_receipt(
     if let Some(wait_id) = duplicate
         .get("waitId")
         .filter(|value| !value.is_undefined())
-        && !matches!(wait_id, JsValue::String(text) if text == &input.wait_id)
+        && !strict_equal(wait_id, &input.wait_id)
     {
         return Err(state_error("SOP_RESUME_REQUEST_CONFLICT"));
     }
@@ -489,8 +508,7 @@ fn replay_receipt(
         .get("source")
         .filter(|value| !value.is_undefined())
     {
-        let equal =
-            matches!(source, JsValue::String(text) if text.equals_str(input.source.as_str()));
+        let equal = strict_equal(source, &input.source);
         if !equal {
             return Err(state_error("SOP_RESUME_REQUEST_CONFLICT"));
         }
@@ -545,20 +563,45 @@ fn replay_receipt(
     ]))
 }
 
+// Resume compares caller values with JavaScript ===, not structural object
+// equality. Receipts read from JSON can never share object identity with input.
+fn strict_equal(left: &JsValue, right: &JsValue) -> bool {
+    match (left, right) {
+        (JsValue::Undefined, JsValue::Undefined) | (JsValue::Null, JsValue::Null) => true,
+        (JsValue::Bool(a), JsValue::Bool(b)) => a == b,
+        (JsValue::Number(a), JsValue::Number(b)) => !strict_not_equal(*a, *b),
+        (JsValue::String(a), JsValue::String(b)) => a == b,
+        _ => false,
+    }
+}
+fn is_human(source: &JsValue) -> bool {
+    matches!(source, JsValue::String(v) if v.equals_str("human"))
+}
+fn request_key(value: &JsValue) -> Result<JsString, ApprovalFailure> {
+    wire_text(value).map(JsString::from_utf16)
+}
+fn wire_text(value: &JsValue) -> Result<Vec<u16>, ApprovalFailure> {
+    crate::js_value::to_string_units_checked(value).map_err(|error| ApprovalFailure {
+        code: None,
+        message: Some(error.message().into()),
+        status: None,
+    })
+}
+
 /// The fresh-resume result object, key order per `SopStateStore.resume`.
 fn resume_result(
     session_id: &JsString,
-    request_id: &JsString,
+    request_id: &JsValue,
     revision: f64,
-    message: &JsString,
+    message: &JsValue,
 ) -> JsObject {
     let mut result = JsObject::new();
     result.insert("accepted".into(), JsValue::Bool(true));
     result.insert("duplicate".into(), JsValue::Bool(false));
     result.insert("sessionId".into(), JsValue::String(session_id.clone()));
-    result.insert("requestId".into(), JsValue::String(request_id.clone()));
+    result.insert("requestId".into(), request_id.clone());
     result.insert("revision".into(), JsValue::Number(revision));
-    result.insert("message".into(), JsValue::String(message.clone()));
+    result.insert("message".into(), message.clone());
     result
 }
 

@@ -10,7 +10,7 @@ use crate::{
     metadata::Metadata,
     module_host::approvals::{
         self, ApprovalAuthenticator, ApprovalBinding, ApprovalBindingResolver, ApprovalBridge,
-        ApprovalBridgeImpl, ApprovalFailure, ApprovalPendingStore, ApprovalSubject, ResumeSource,
+        ApprovalBridgeImpl, ApprovalFailure, ApprovalPendingStore, ApprovalSubject,
         StoreResumeInput, StoreStatusInput,
         disk::DiskSopStore,
         native_auth::{
@@ -123,7 +123,9 @@ impl NativeSopControl {
         }))
     }
     fn transport(&self, snapshot: &JsValue) -> Arc<dyn JsonTransport> {
-        let proxy = snapshot.get("config").and_then(|config| config.get("proxy"))
+        let proxy = snapshot
+            .get("config")
+            .and_then(|config| config.get("proxy"))
             .and_then(crate::runtime::model::http::ProxySettings::from_config);
         Arc::new(HyperJsonTransport::from_env(&self.env, proxy.as_ref()))
     }
@@ -257,47 +259,15 @@ impl NativeSopControl {
             return self.bridge().resume(input).await;
         }
         let profile = self.profile(input.get("projectKey")).await?;
-        // Native typed boundary: never turn unknown authority/source/revision values
-        // into a different valid external-task mutation.
-        if value(input, "source") != &JsValue::from("external_task") {
-            return Err(fail(
-                "SOP_RESUME_INPUT_INVALID",
-                "SOP resume source must be 'human' or 'external_task'.",
-            ));
-        }
-        let expected = match input.get("expectedRevision") {
-            None | Some(JsValue::Undefined) => None,
-            Some(JsValue::Number(v)) if v.is_finite() && v.fract() == 0.0 && *v > 0.0 => Some(*v),
-            _ => {
-                return Err(fail(
-                    "SOP_RESUME_INPUT_INVALID",
-                    "SOP expectedRevision must be a positive integer.",
-                ));
-            }
-        };
-        let slots = input
-            .get("slotUpdates")
-            .filter(|v| crate::runtime::turn::submit::truthy(v))
-            .cloned();
-        if slots.as_ref().is_some_and(|v| v.as_object().is_none()) {
-            return Err(fail(
-                "SOP_RESUME_INPUT_INVALID",
-                "SOP slotUpdates must be a record.",
-            ));
-        }
+        // Profile resolution precedes the store's state/receipt checks. Retain
+        // wire values through that single locked transaction; do not reinterpret
+        // an unknown source as an authenticated or external-task continuation.
         profile
             .store
-            .resume(StoreResumeInput {
-                session_key: string(input, "sessionKey")?,
-                project_key: input.get("projectKey").cloned(),
-                request_id: string(input, "requestId")?,
-                wait_id: string(input, "waitId")?,
-                message: string(input, "message")?,
-                expected_revision: expected,
-                slot_updates: slots,
-                source: ResumeSource::ExternalTask,
-                authority: None,
-            })
+            .resume_command(approvals::StoreResumeCommand::wire(
+                string(input, "sessionKey")?,
+                input,
+            ))
             .await
             .map_err(|e| e.approval())
     }
@@ -315,7 +285,14 @@ impl NativeSopControl {
         {
             return None;
         }
-        self.admission_for_snapshot(project, snapshot, &user).await
+        // Creation records an optional capability, not an approval response.
+        // Keep its existing fail-closed optional contract. Approval reads below
+        // propagate the same checked lookup failure instead of converting it to
+        // an authenticated denial.
+        self.admission_for_snapshot(project, snapshot, &user)
+            .await
+            .ok()
+            .flatten()
     }
     /// Uses a supplied retained generation for creation admission; it never
     /// reacquires whatever registry generation happened to become current.
@@ -324,20 +301,31 @@ impl NativeSopControl {
         project: &JsString,
         snapshot: &JsValue,
         pilot_user: &JsString,
-    ) -> Option<JsValue> {
+    ) -> Result<Option<JsValue>> {
         let home = self.options.home.clone();
         let envs = self.env.clone();
-        let root = project.to_utf8().ok()?;
+        let Ok(root) = project.to_utf8() else {
+            return Ok(None);
+        };
         let agent = blocking(move || {
             crate::config::project_binding_target_bounded(&home, &envs, &root)
                 .map_err(|e| fail(&e.code, e.message))
         })
         .await
-        .ok()??;
+        .map_err(|mut error| {
+            // A temporary/unsafe binding read is unavailable, not proof that
+            // this authenticated session lacks authorization. Preserve the
+            // underlying code/message and make the HTTP failure retryable.
+            error.status = Some(503);
+            error
+        })?;
+        let Some(agent) = agent else {
+            return Ok(None);
+        };
         let sop = value(value(value(snapshot, "config"), "modules"), "sop");
         if !sop.is_undefined() && value(sop, "discoveryAgentId") != &JsValue::String(agent.clone())
         {
-            return None;
+            return Ok(None);
         }
         let origin = env(&self.env, "STAFFDECK_FORMAL_API_ORIGIN");
         let identity = AdmissionIdentity {
@@ -362,7 +350,13 @@ impl NativeSopControl {
             pilot_user: pilot_user.clone(),
             expected_pilot_user: env(&self.env, "STAFFDECK_COPY_PILOTDECK_USER_ID").into(),
         };
-        authenticate_admission(&identity, project, self.transport(snapshot).as_ref(), epoch_ms()).await
+        Ok(authenticate_admission(
+            &identity,
+            project,
+            self.transport(snapshot).as_ref(),
+            epoch_ms(),
+        )
+        .await)
     }
 }
 fn string(input: &JsValue, key: &str) -> Result<JsString> {
@@ -470,9 +464,10 @@ impl NativeApprovalCatalog for NativeSopControl {
             if let JsValue::Array(rows) = value(&listed, "projects") {
                 for row in rows {
                     if let Some(root) = value(row, "projectKey").as_string()
-                        && !output.contains(root) {
-                            output.push(root.clone());
-                        }
+                        && !output.contains(root)
+                    {
+                        output.push(root.clone());
+                    }
                 }
             }
             Ok(output)
@@ -535,7 +530,9 @@ impl NativeApprovalCatalog for NativeSopControl {
                 .as_string()
                 .cloned()
                 .ok_or_else(|| plain("SOP admission owner is unavailable."))?;
-            let current = self.admission_for_snapshot(project, &snapshot, &user).await;
+            let current = self
+                .admission_for_snapshot(project, &snapshot, &user)
+                .await?;
             if !current.as_ref().is_some_and(|v| {
                 [
                     "tenantId",
@@ -664,7 +661,9 @@ mod tests {
                 let byte = socket.read_u8().await.unwrap();
                 bytes.push(byte);
                 assert!(bytes.len() < 16384);
-                if bytes.ends_with(b"\r\n\r\n") { break; }
+                if bytes.ends_with(b"\r\n\r\n") {
+                    break;
+                }
             }
             String::from_utf8(bytes).unwrap()
         }
@@ -690,13 +689,32 @@ mod tests {
         std::fs::write(file, config).unwrap();
         let mut environment = requests.env.clone();
         for (key, value) in [
-            ("STAFFDECK_FORMAL_API_ORIGIN", "http://staffdeck-proxy-test.invalid"),
+            (
+                "STAFFDECK_FORMAL_API_ORIGIN",
+                "http://staffdeck-proxy-test.invalid",
+            ),
             ("STAFFDECK_COPY_TENANT_ID", "tenant"),
             ("STAFFDECK_APPROVAL_USER_ID", "approver"),
-        ] { environment.insert(key.into(), value.into()); }
-        assert!(!environment.keys().any(|key| key.to_ascii_lowercase().ends_with("proxy")));
-        let control = NativeSopControl::new(requests.options.clone(), environment, requests.project.clone()).unwrap();
-        let result = tokio::time::timeout(std::time::Duration::from_secs(10), control.authenticate(&"isolated-approver".into())).await.unwrap();
+        ] {
+            environment.insert(key.into(), value.into());
+        }
+        assert!(
+            !environment
+                .keys()
+                .any(|key| key.to_ascii_lowercase().ends_with("proxy"))
+        );
+        let control = NativeSopControl::new(
+            requests.options.clone(),
+            environment,
+            requests.project.clone(),
+        )
+        .unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            control.authenticate(&"isolated-approver".into()),
+        )
+        .await
+        .unwrap();
         // Settle both owners even when a regression makes authentication fail.
         let server_result = server.await;
         requests.owner.shutdown().await.unwrap();
@@ -776,6 +794,191 @@ mod tests {
         assert_eq!(std::fs::read(&file).unwrap(), original);
         assert!(!root.join("staffdeck/sop-bundles").exists());
         std::fs::remove_dir_all(root).unwrap();
+    }
+    #[tokio::test]
+    async fn native_resume_passes_raw_values_to_the_locked_store() {
+        let (_scratch, requests) = super::super::management_tests::setup();
+        let file = requests.options.home.join("pilotdeck.yaml");
+        let mut config = std::fs::read_to_string(&file).unwrap();
+        config.push_str("modules:\n  sop:\n    enabled: true\n    provider: staffdeck\n    endpoint: http://127.0.0.1:1\n    definitionsPath: fixture-sops.json\n    defaultSopId: fixture\n");
+        std::fs::write(&file, &config).unwrap();
+        let control = NativeSopControl::new(
+            requests.options.clone(),
+            requests.env.clone(),
+            requests.project.clone(),
+        )
+        .unwrap();
+        let oracle = pilotdeck_protocol::parse_json(include_str!(
+            "../../tests/fixtures/sop-resume-wire/oracle.json"
+        ))
+        .unwrap();
+        let JsValue::Array(rows) = value(&oracle, "cases") else {
+            panic!("oracle cases")
+        };
+        let find = |name: &str| {
+            rows.iter()
+                .find(|row| value(row, "name") == &JsValue::from(name))
+                .unwrap()
+        };
+        let row = find("waiting-array-slots");
+        let JsValue::Array(steps) = value(row, "steps") else {
+            panic!("oracle steps")
+        };
+        let input = value(&steps[0], "input");
+        // Before any state exists, a malformed source must still reach the
+        // missing-state branch; no external source default is introduced.
+        let missing = find("missing-unknown-source");
+        let JsValue::Array(missing_steps) = value(missing, "steps") else {
+            panic!("oracle steps")
+        };
+        let error = control
+            .resume(value(&missing_steps[0], "input"))
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, Some("SOP_SESSION_NOT_FOUND".into()));
+        let profile = control.profile(None).await.unwrap();
+        let path = profile.store.path(&"s1".into());
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n",
+                pilotdeck_protocol::stringify_json(value(row, "initial"))
+                    .unwrap()
+                    .unwrap()
+            ),
+        )
+        .unwrap();
+        let actual = control.resume(input).await.unwrap();
+        assert_eq!(actual, value(value(&steps[0], "outcome"), "result").clone());
+        let persisted =
+            pilotdeck_protocol::parse_json(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            value(value(&persisted, "state"), "slots_json"),
+            value(value(value(&steps[0], "after"), "state"), "slots_json")
+        );
+        assert_eq!(std::fs::read_to_string(file).unwrap(), config);
+        drop(profile);
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn approval_read_distinguishes_unavailable_binding_from_missing_authority() {
+        let (_scratch, requests) = super::super::management_tests::setup();
+        // The project registry intentionally keeps the fixture's ordinary
+        // config. This fresh authorization lookup uses the control env, so a
+        // damaged binding is observed here after the retained snapshot exists.
+        let mut environment = requests.env.clone();
+        environment.insert("STAFFDECK_PROJECT_BINDING_ENABLED".into(), "true".into());
+        let control = NativeSopControl::new(
+            requests.options.clone(),
+            environment,
+            requests.project.clone(),
+        )
+        .unwrap();
+        let project: JsString = requests
+            .options
+            .project
+            .to_string_lossy()
+            .into_owned()
+            .into();
+        let session: JsString = "sop-auth-binding".into();
+        let admission = crate::metadata::object([
+            ("tenantId", "tenant".into()),
+            ("agentId", "agent".into()),
+            ("pilotDeckUserId", "owner".into()),
+            ("projectKey", JsValue::String(project.clone())),
+            ("actorUserId", "actor".into()),
+            ("credentialId", "credential".into()),
+            ("staffDeckOrigin", "http://127.0.0.1:1".into()),
+        ]);
+        let entry = crate::metadata::object([
+            ("type", "session_metadata".into()),
+            ("sessionId", JsValue::String(session.clone())),
+            ("turnId", "host-admission".into()),
+            (
+                "metadata",
+                crate::metadata::object([("staffDeckAdmission", admission)]),
+            ),
+        ]);
+        let chat = bounded_chat_dir(&requests.options.home, &requests.options.project).unwrap();
+        std::fs::create_dir_all(&chat).unwrap();
+        let transcript = chat.join("sop-auth-binding.jsonl");
+        let bytes = format!(
+            "{}\n",
+            pilotdeck_protocol::stringify_json(&entry).unwrap().unwrap()
+        );
+        std::fs::write(&transcript, &bytes).unwrap();
+        let input = crate::metadata::object([
+            ("sessionKey", JsValue::String(session)),
+            ("projectKey", JsValue::String(project)),
+        ]);
+        // Actual resolver consumes the transcript and same live profile; no
+        // binding is a genuine 403, not an IO error.
+        let missing = control.resolve(&input).await.err().unwrap();
+        assert_eq!(missing.status, Some(403));
+        assert_eq!(
+            missing.message,
+            Some("SOP_APPROVAL_SESSION_FORBIDDEN".into())
+        );
+        let binding = requests
+            .options
+            .home
+            .join("staffdeck/project-bindings.json");
+        std::fs::create_dir_all(binding.parent().unwrap()).unwrap();
+        std::fs::write(&binding, b"{").unwrap();
+        let invalid = control.resolve(&input).await.err().unwrap();
+        assert_eq!(invalid.status, Some(503));
+        assert_eq!(invalid.code, Some("PROJECT_BINDING_STORE_INVALID".into()));
+        assert_eq!(
+            invalid.message,
+            Some("StaffDeck binding storage is invalid.".into())
+        );
+        let projected = resume_error(invalid);
+        assert_eq!(projected.code, "PROJECT_BINDING_STORE_INVALID");
+        assert_eq!(
+            projected
+                .details
+                .as_deref()
+                .and_then(|v| v.get("httpStatus")),
+            Some(&JsValue::Number(503.0))
+        );
+        assert_eq!(std::fs::read(&binding).unwrap(), b"{");
+        // Mode bits do not deny root. Keep the corrupted/directory cases
+        // portable; report the permission subcase as unsupported under root.
+        if !rustix::process::geteuid().is_root() {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::metadata(&binding).unwrap().permissions();
+            std::fs::set_permissions(&binding, std::fs::Permissions::from_mode(0)).unwrap();
+            assert_eq!(
+                std::fs::read(&binding).unwrap_err().kind(),
+                std::io::ErrorKind::PermissionDenied
+            );
+            let denied = control.resolve(&input).await.err().unwrap();
+            std::fs::set_permissions(&binding, permissions).unwrap();
+            assert_eq!(denied.status, Some(503));
+            assert_eq!(denied.code, Some("NODE_IO_REQUIRED".into()));
+            println!("SOP_BINDING_PERMISSION_CASE=checked");
+        } else {
+            println!("SOP_BINDING_PERMISSION_CASE=unsupported-root");
+        }
+        std::fs::remove_file(&binding).unwrap();
+        std::fs::create_dir(&binding).unwrap();
+        let directory = control.resolve(&input).await.err().unwrap();
+        assert_eq!(directory.status, Some(503));
+        assert_eq!(directory.code, Some("CONFIG_READ_NOT_REGULAR".into()));
+        assert_eq!(
+            directory.message,
+            Some("Configuration input must be a regular file.".into())
+        );
+        assert!(binding.is_dir());
+        std::fs::remove_dir(&binding).unwrap();
+        let absent_again = control.resolve(&input).await.err().unwrap();
+        assert_eq!(absent_again.status, Some(403));
+        assert_eq!(std::fs::read_to_string(&transcript).unwrap(), bytes);
+        requests.owner.shutdown().await.unwrap();
+        requests.project.dispose().await.unwrap();
     }
 }
 

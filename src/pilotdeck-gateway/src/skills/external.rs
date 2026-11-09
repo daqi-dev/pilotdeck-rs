@@ -193,6 +193,15 @@ impl HyperModuleTransport {
         }
     }
 
+    /// Existing skills calls retain their original response limit while using
+    /// the project generation's proxy settings.
+    pub(crate) fn skills_with_proxy_settings(settings: Option<&crate::runtime::model::http::ProxySettings>, env: &crate::config::Env) -> Self {
+        Self {
+            inner: crate::runtime::model::http::HyperModelTransport::with_proxy_settings(settings, env),
+            body_limit: None,
+        }
+    }
+
     #[cfg(test)]
     pub fn with_body_limit(limit: usize) -> Self {
         Self {
@@ -940,4 +949,39 @@ fn object<const N: usize>(entries: [(&str, JsValue); N]) -> JsObject {
         object.insert(JsString::from(key), value);
     }
     object
+}
+
+#[cfg(test)]
+mod native_skills_proxy_limit_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[tokio::test]
+    async fn skills_proxy_transport_accepts_more_than_native_knowledge_limit() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).await.unwrap()>0);
+            let size = 8 * 1024 * 1024 + 1;
+            let headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {size}\r\nConnection: close\r\n\r\n");
+            stream.write_all(headers.as_bytes()).await.unwrap();
+            let chunk = vec![b'x'; 65536];
+            for _ in 0..128 { stream.write_all(&chunk).await.unwrap(); }
+            stream.write_all(b"x").await.unwrap();
+        });
+        let env = crate::config::Env::new();
+        let settings = crate::runtime::model::http::ProxySettings::from_config(&crate::metadata::object([
+            ("url", "http://127.0.0.1:1".into()),
+        ]));
+        let transport = HyperModuleTransport::skills_with_proxy_settings(settings.as_ref(), &env);
+        assert_eq!(transport.body_limit(), crate::fetch_redirect::MAX_STRING_LENGTH);
+        let response = tokio::time::timeout(Duration::from_secs(10), transport.send(ModuleHttpRequest {
+            method: "GET", url: format!("http://{addr}/manifest"), content_type: None,
+            authorization: None, body: vec![], timeout: Duration::from_secs(10),
+        })).await.unwrap().unwrap();
+        assert_eq!(response.body.len(), 8 * 1024 * 1024 + 1);
+        tokio::time::timeout(Duration::from_secs(10), server).await.unwrap().unwrap();
+    }
 }

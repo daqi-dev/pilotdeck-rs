@@ -1107,8 +1107,7 @@ impl SessionOwner {
         let state = self.0.state.lock().unwrap();
         let serial = state.gates.get(key).and_then(Weak::upgrade)
             .expect("session has an owned publication ticket");
-        let probe = serial.tail.lock().unwrap().clone();
-        probe
+        serial.tail.lock().unwrap().clone()
     }
     /// Native storage cleanup is part of the same owned close operation. The
     /// same-key publication ticket remains held through this callback, including

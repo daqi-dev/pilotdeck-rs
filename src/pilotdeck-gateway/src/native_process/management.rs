@@ -351,7 +351,7 @@ impl Requests {
         let manager = SkillManager::new(options).map_err(skill_error)?;
         let proxy = snapshot.get("config").and_then(|config| config.get("proxy"))
             .and_then(crate::runtime::model::http::ProxySettings::from_config);
-        let transport = Arc::new(crate::skills::HyperModuleTransport::with_proxy_settings(proxy.as_ref(), &self.env));
+        let transport = Arc::new(crate::skills::HyperModuleTransport::skills_with_proxy_settings(proxy.as_ref(), &self.env));
         let facade = SkillsFacade::with_transport(manager, move |_| skill_binding_from_snapshot(&snapshot), transport);
         facade.call(skill, params).await.map_err(skill_error)
     }

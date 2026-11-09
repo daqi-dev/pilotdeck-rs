@@ -2,7 +2,9 @@
 //! inside the blocking worker through publication, including caller cancellation.
 //! The existing pending store owns revision/receipt/handoff authorization math.
 use super::pending::PendingSopStore;
-use super::{ApprovalFailure, ApprovalPendingStore, StoreResumeInput, StoreStatusInput};
+use super::{
+    ApprovalFailure, ApprovalPendingStore, StoreResumeCommand, StoreResumeInput, StoreStatusInput,
+};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use pilotdeck_protocol::{JsObject, JsString, JsValue, parse_json, stringify_json};
 use std::{
@@ -602,6 +604,12 @@ impl DiskSopStore {
         .await
     }
     pub(crate) async fn resume(&self, input: StoreResumeInput) -> Result<JsValue, SopFailure> {
+        self.resume_command(input.into()).await
+    }
+    pub(crate) async fn resume_command(
+        &self,
+        input: StoreResumeCommand,
+    ) -> Result<JsValue, SopFailure> {
         self.transaction(input.session_key.clone(), move |store, session, current| {
             let current = current.ok_or_else(|| {
                 SopFailure::new(
@@ -613,7 +621,10 @@ impl DiskSopStore {
                 )
             })?;
             let pending = Self::seeded(session, &current)?;
-            let result = pending.apply_resume(&input).map_err(|error| {
+            let result = pending.apply_command(&input).map_err(|error| {
+                if let Some(message) = error.message {
+                    return failed(String::from_utf16_lossy(message.units()));
+                }
                 let code = error
                     .code
                     .as_ref()
@@ -827,3 +838,7 @@ impl ApprovalPendingStore for DiskSopStore {
 #[cfg(test)]
 #[path = "disk_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "resume_wire_tests.rs"]
+mod resume_wire_tests;

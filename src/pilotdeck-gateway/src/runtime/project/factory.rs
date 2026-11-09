@@ -492,6 +492,12 @@ impl Families {
         self
     }
 
+    pub(crate) fn with_native_models_from_env(mut self, env: Env) -> Self {
+        self.model_runtime = Arc::new(super::model::NativeModelFamilySource { env });
+        self.router_runtime = Arc::new(super::model::RouterFamilySource::default());
+        self
+    }
+
     /// Wire the MCP and execution-world families (A6.9-pr3c1). Replacing the
     /// execution-world source is the point of this builder: a previously
     /// configured custom source is discarded in favour of the native one and

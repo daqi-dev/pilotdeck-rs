@@ -155,3 +155,203 @@ pub(super) fn build(
         authority,
     ))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host::modules::tool_context::{ToolFileState, ToolRuntimeContext};
+    use crate::skills::{ModuleHttpFuture, ModuleHttpRequest, ModuleHttpResponse};
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Transport(Mutex<Vec<JsValue>>);
+    impl ModuleHttpTransport for Transport {
+        fn send<'a>(&'a self, request: ModuleHttpRequest) -> ModuleHttpFuture<'a> {
+            Box::pin(async move {
+                let body = if request.method == "GET" {
+                    r#"{"protocolVersion":"2.0","implementationId":"staffdeck.knowledge","contract":"staffdeck.knowledge/v1","transport":"module-http-v2","methods":["query"]}"#.to_string()
+                } else {
+                    let request =
+                        pilotdeck_protocol::parse_json(std::str::from_utf8(&request.body).unwrap())
+                            .unwrap();
+                    let message = request
+                        .get("messageId")
+                        .unwrap()
+                        .as_string()
+                        .unwrap()
+                        .to_utf8()
+                        .unwrap();
+                    let id = request
+                        .get("requestId")
+                        .unwrap()
+                        .as_string()
+                        .unwrap()
+                        .to_utf8()
+                        .unwrap();
+                    self.0.lock().unwrap().push(request);
+                    format!(
+                        r#"{{"kind":"response","messageId":"reply","inReplyTo":"{message}","requestId":"{id}","ok":true,"payload":{{"result":{{"answer":"ok"}}}}}}"#
+                    )
+                };
+                Ok(ModuleHttpResponse {
+                    status: 200,
+                    body: body.into_bytes(),
+                })
+            })
+        }
+    }
+    struct Env;
+    impl ModuleEnvironment for Env {
+        fn var(&self, _: &str) -> Option<String> {
+            Some("credential".into())
+        }
+    }
+    fn context() -> ToolRunContext {
+        ToolRunContext::new(Arc::new(ToolRuntimeContext {
+            fields: JsObject::new(),
+            files: ToolFileState {
+                read_file_state: Arc::default(),
+                write_snapshots: Arc::default(),
+                allowed_read_files: vec![],
+            },
+            abort_signal: None,
+            model: None,
+            elicitation: None,
+            user_dialog: None,
+            audit_recorder: None,
+            file_history: None,
+            file_update_notifier: None,
+            now: None,
+            progress: None,
+            subagent: None,
+            plan_todo: None,
+            goal: None,
+            plan_directory: None,
+        }))
+    }
+    fn config(credential: bool) -> JsValue {
+        let mut obj = crate::metadata::object([
+            ("implementationId", "staffdeck.knowledge".into()),
+            ("contract", "staffdeck.knowledge/v1".into()),
+            ("transport", "module-http-v2".into()),
+            ("endpoint", "https://fixture.invalid".into()),
+            ("methods", JsValue::Array(vec!["query".into()])),
+            ("tenantId", "tenant".into()),
+            ("actorUserId", "actor".into()),
+            ("agentId", "agent".into()),
+        ])
+        .as_object()
+        .unwrap()
+        .clone();
+        if credential {
+            obj.insert("credentialEnv".into(), "TOKEN".into());
+        }
+        JsValue::Object(obj)
+    }
+    fn tool(credential: bool, transport: Arc<Transport>) -> KnowledgeTool {
+        let scope = config(credential);
+        KnowledgeTool::new(
+            ExternalSkillBinding::from_value(&scope).unwrap(),
+            scope,
+            transport,
+            Arc::new(Env),
+        )
+    }
+    #[tokio::test]
+    async fn knowledge_consumer_rejects_identity_and_injects_bound_scope() {
+        let transport = Arc::new(Transport::default());
+        let protected = tool(true, transport.clone());
+        for key in [
+            "tenantId",
+            "tenant_id",
+            "actorUserId",
+            "actor_user_id",
+            "agentId",
+            "agent_id",
+            "modelConfigId",
+            "model_config_id",
+        ] {
+            let mut input = JsObject::new();
+            input.insert("query".into(), "q".into());
+            input.insert(key.into(), "forged".into());
+            assert_eq!(
+                protected
+                    .execute(JsValue::Object(input), context())
+                    .await
+                    .unwrap_err()
+                    .code,
+                "MODULE_PROTOCOL_INCOMPATIBLE",
+                "{key}"
+            );
+        }
+        assert_eq!(
+            protected
+                .execute(JsValue::Null, context())
+                .await
+                .unwrap_err()
+                .code,
+            "invalid_input"
+        );
+        assert!(transport.0.lock().unwrap().is_empty());
+        let query = crate::metadata::object([("query", "hello".into())]);
+        let result = protected.execute(query.clone(), context()).await.unwrap();
+        assert_eq!(
+            result.data.unwrap().get("answer"),
+            Some(&JsValue::from("ok"))
+        );
+        let plain = tool(false, transport.clone());
+        plain.execute(query, context()).await.unwrap();
+        let requests = transport.0.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        let payload = requests[1].get("payload").unwrap().get("input").unwrap();
+        assert_eq!(payload.get("tenantId"), Some(&JsValue::from("tenant")));
+        assert_eq!(payload.get("actorUserId"), Some(&JsValue::from("actor")));
+        assert_eq!(payload.get("agentId"), Some(&JsValue::from("agent")));
+        assert!(
+            requests[0]
+                .get("payload")
+                .unwrap()
+                .get("input")
+                .unwrap()
+                .get("tenantId")
+                .is_none()
+        );
+    }
+    #[test]
+    fn build_exposes_authority_only_for_matching_same_origin_agent() {
+        let knowledge = config(true);
+        let profile = crate::metadata::object([
+            ("discoveryAgentId", "agent".into()),
+            (
+                "discoveryEndpoint",
+                "https://fixture.invalid/discovery".into(),
+            ),
+        ]);
+        let env = crate::config::Env::new();
+        assert!(
+            build(&knowledge, Some(&profile), &env, None)
+                .unwrap()
+                .1
+                .is_some()
+        );
+        let other = crate::metadata::object([
+            ("discoveryAgentId", "other".into()),
+            (
+                "discoveryEndpoint",
+                "https://fixture.invalid/discovery".into(),
+            ),
+        ]);
+        assert!(
+            build(&knowledge, Some(&other), &env, None)
+                .unwrap()
+                .1
+                .is_none()
+        );
+        assert!(
+            build(&config(false), Some(&profile), &env, None)
+                .unwrap()
+                .1
+                .is_none()
+        );
+    }
+}

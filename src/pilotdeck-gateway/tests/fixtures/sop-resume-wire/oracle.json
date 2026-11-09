@@ -1,0 +1,4351 @@
+{
+  "baseline": "cc7c4e653b15c8b2cec7bcf2d15d41d69396ae85",
+  "node": "v22.22.0",
+  "icu": "78.2",
+  "fixed": "2026-01-02T03:04:05.000Z",
+  "sources": {
+    "src/sop/staffdeck/StaffDeckSopControlPlane.ts": "34464105c569dd9c791f32b7080e04a18cd3d763059a6b59a877071ae39352ba",
+    "src/sop/staffdeck/SopStateStore.ts": "6b5f6dfad649e2f68a434356c626ab37c9e94bc74a9fecfdc2f9df784b844a0d"
+  },
+  "networkAttempts": 0,
+  "cases": [
+    {
+      "name": "missing-unknown-source",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "bogus",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-unknown-source",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "bogus",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-unknown-source",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "bogus",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_RESUME_SOURCE_INVALID",
+            "message": "This wait requires source 'external_task'."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-null-source",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": null,
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-null-source",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": null,
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-null-source",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": null,
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_RESUME_SOURCE_INVALID",
+            "message": "This wait requires source 'external_task'."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-number-revision",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 0,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-number-revision",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 0,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-number-revision",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 0,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_REVISION_CONFLICT",
+            "message": "Expected SOP revision 0, found 3."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-string-revision",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": "3",
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-string-revision",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": "3",
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-string-revision",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": "3",
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_REVISION_CONFLICT",
+            "message": "Expected SOP revision 3, found 3."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-null-revision",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": null,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-null-revision",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": null,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-null-revision",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": null,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_REVISION_CONFLICT",
+            "message": "Expected SOP revision null, found 3."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-array-slots",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": [
+              "x",
+              "y"
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-array-slots",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": [
+              "x",
+              "y"
+            ]
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-array-slots",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": [
+              "x",
+              "y"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "0": "x",
+                "1": "y",
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": [
+                  "x",
+                  "y"
+                ]
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-string-slots",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": "A😀"
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-string-slots",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": "A😀"
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-string-slots",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": "A😀"
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "0": "A",
+                "1": "\ud83d",
+                "2": "\ude00",
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": "A😀"
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-bool-slots",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": true
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-bool-slots",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": true
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-bool-slots",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": true
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": true
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-numeric-wait",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": 3,
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-numeric-wait",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": 3,
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-numeric-wait",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": 3,
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_WAIT_STALE",
+            "message": "The StaffDeck SOP wait identifier is no longer active."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "waiting_external_task",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": {
+                "wait_id": "wait-external"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z",
+            "wait": {
+              "id": "wait-external",
+              "kind": "external_task",
+              "skillId": "fixture",
+              "stepId": "node",
+              "createdAt": "2026-01-01T00:00:00.000Z"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-numeric-request",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": 7,
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-numeric-request",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": 7,
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-numeric-request",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": 7,
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": 7,
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "7": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": 7,
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-numeric-message",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": 9,
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-numeric-message",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": 9,
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-numeric-message",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": 9,
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": 9
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": 9,
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "missing-object-message",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": {
+              "text": "x"
+            },
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "active-object-message",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": {
+              "text": "x"
+            },
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {},
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "waiting-object-message",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": {
+              "text": "x"
+            },
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": {
+                "text": "x"
+              }
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": {
+                  "text": "x"
+                },
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "disabled-invalid",
+      "enabled": false,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": 3,
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "bogus",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_MODULE_DISABLED",
+            "message": "The StaffDeck SOP module is not enabled for this project."
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "falsey-slots-\"\"",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": ""
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {}
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "falsey-slots-0",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": 0
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {}
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "falsey-slots-false",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": false
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {}
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "falsey-slots-null",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": null
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {}
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "array-slots-replay",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": [
+              "x"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "0": "x",
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": [
+                  "x"
+                ]
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": [
+              "x"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": true,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "0": "x",
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": [
+                  "x"
+                ]
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "0": "x"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_RESUME_REQUEST_CONFLICT",
+            "message": "This request id already belongs to a different SOP resume payload."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "0": "x",
+                "old": "retained"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": [
+                  "x"
+                ]
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "numeric-message-replay",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": 9,
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": 9
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": 9,
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": 9,
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_NOT_WAITING",
+            "message": "The StaffDeck SOP session is not waiting for a resumable result."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": 9,
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "legacy-receipt-unknown-source",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "active",
+          "slots_json": {
+            "old": "retained"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {
+          "request-1": {
+            "accepted": true,
+            "duplicate": false,
+            "sessionId": "s1",
+            "requestId": "request-1",
+            "revision": 4,
+            "message": "resume fixture"
+          }
+        },
+        "updatedAt": "2026-01-01T00:00:00.000Z"
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": "bad",
+            "source": "bogus",
+            "slotUpdates": [
+              "different"
+            ]
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": true,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained"
+              }
+            },
+            "revision": 3,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture"
+              }
+            },
+            "updatedAt": "2026-01-01T00:00:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "receipt-before-parameter-validation",
+      "initial": {
+        "schemaVersion": 3,
+        "sessionId": "s1",
+        "bundle": {
+          "sops": [
+            {
+              "id": "fixture",
+              "skill_id": "fixture",
+              "version": "v1",
+              "content": {
+                "nodes": [
+                  {
+                    "node_id": "node",
+                    "assignee_user_id": "approver"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "state": {
+          "version": 1,
+          "selected_skill_id": "fixture",
+          "active_skill_id": "fixture",
+          "active_step_id": "node",
+          "status": "waiting_external_task",
+          "slots_json": {
+            "old": "retained"
+          },
+          "awaiting_input_json": {
+            "wait_id": "wait-external"
+          }
+        },
+        "revision": 3,
+        "resumeRequests": {},
+        "updatedAt": "2026-01-01T00:00:00.000Z",
+        "wait": {
+          "id": "wait-external",
+          "kind": "external_task",
+          "skillId": "fixture",
+          "stepId": "node",
+          "createdAt": "2026-01-01T00:00:00.000Z"
+        }
+      },
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": false,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": false,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": "bad",
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": true,
+            "result": {
+              "accepted": true,
+              "duplicate": true,
+              "sessionId": "s1",
+              "requestId": "request-1",
+              "revision": 4,
+              "message": "resume fixture"
+            }
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        },
+        {
+          "input": {
+            "sessionKey": "s1",
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "bogus",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_RESUME_REQUEST_CONFLICT",
+            "message": "This request id already belongs to a different SOP resume payload."
+          },
+          "unchanged": true,
+          "after": {
+            "schemaVersion": 3,
+            "sessionId": "s1",
+            "bundle": {
+              "sops": [
+                {
+                  "id": "fixture",
+                  "skill_id": "fixture",
+                  "version": "v1",
+                  "content": {
+                    "nodes": [
+                      {
+                        "node_id": "node",
+                        "assignee_user_id": "approver"
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "state": {
+              "version": 1,
+              "selected_skill_id": "fixture",
+              "active_skill_id": "fixture",
+              "active_step_id": "node",
+              "status": "active",
+              "slots_json": {
+                "old": "retained",
+                "new": "value"
+              },
+              "awaiting_input_json": null
+            },
+            "revision": 4,
+            "resumeRequests": {
+              "request-1": {
+                "accepted": true,
+                "duplicate": false,
+                "sessionId": "s1",
+                "requestId": "request-1",
+                "revision": 4,
+                "message": "resume fixture",
+                "waitId": "wait-external",
+                "source": "external_task",
+                "slotUpdates": {
+                  "new": "value"
+                }
+              }
+            },
+            "updatedAt": "2026-01-02T03:04:05.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "name": "session-7",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": 7,
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "TypeError",
+            "code": "ERR_INVALID_ARG_TYPE",
+            "message": "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received type number (7)"
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "session-null",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": null,
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "TypeError",
+            "code": "ERR_INVALID_ARG_TYPE",
+            "message": "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received null"
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "session-{}",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": {},
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "TypeError",
+            "code": "ERR_INVALID_ARG_TYPE",
+            "message": "The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received an instance of Object"
+          },
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "name": "session-[\"s1\"]",
+      "enabled": true,
+      "steps": [
+        {
+          "input": {
+            "sessionKey": [
+              "s1"
+            ],
+            "requestId": "request-1",
+            "waitId": "wait-external",
+            "message": "resume fixture",
+            "expectedRevision": 3,
+            "source": "external_task",
+            "slotUpdates": {
+              "new": "value"
+            }
+          },
+          "outcome": {
+            "ok": false,
+            "name": "Error",
+            "code": "SOP_SESSION_NOT_FOUND",
+            "message": "No StaffDeck SOP state exists for 's1'."
+          },
+          "unchanged": true
+        }
+      ]
+    }
+  ]
+}

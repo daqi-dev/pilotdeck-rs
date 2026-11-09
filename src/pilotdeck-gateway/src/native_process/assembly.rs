@@ -1531,6 +1531,10 @@ async fn start_assembly(
         None => Arc::default(),
     };
     let cleanup_cron_slot = build_cron_slot.clone();
+    // RefreshBundle::attach deliberately owns a strong config-store listener.
+    // The host must detach it even when initialization or cleanup is cancelled.
+    let refresh_cleanup = NativeRefreshCleanup(Arc::default());
+    let publish_refresh = refresh_cleanup.0.clone();
     let lookup_forks = fork_registry.clone();
     let budget = options.drain_budget;
     let host = TurnGateway::start_with_initializer(
@@ -1615,6 +1619,9 @@ async fn start_assembly(
                 ),
             )?;
             let config_reload = Arc::downgrade(&build_automation);
+            publish_refresh.set(settings.bundle.clone()).map_err(|_| {
+                std::io::Error::other("Native settings cleanup was already bound.")
+            })?;
             settings.store.subscribe(Arc::new(move |event| {
                 let changed = |family: &str| {
                     event.changed_paths.iter().any(|path| {
@@ -1845,6 +1852,7 @@ async fn start_assembly(
         },
         async move { initialize_automation.start().await },
         async move {
+            refresh_cleanup.detach();
             // #1746: the host awaits this future on its own failure path before
             // reporting the error, so the deadline lives here; the shutdown
             // drain still bounds it by the embedding's shutdown budget.
@@ -1966,6 +1974,19 @@ async fn start_assembly(
             }
             Err(error.into())
         }
+    }
+}
+struct NativeRefreshCleanup(Arc<OnceLock<Arc<crate::runtime::refresh::RefreshBundle>>>);
+impl NativeRefreshCleanup {
+    fn detach(&self) {
+        if let Some(bundle) = self.0.get() {
+            bundle.dispose();
+        }
+    }
+}
+impl Drop for NativeRefreshCleanup {
+    fn drop(&mut self) {
+        self.detach();
     }
 }
 fn native_host_limits(drain_budget: std::time::Duration) -> crate::host::Limits {
@@ -2297,7 +2318,7 @@ pub(super) fn project_resources_factory(
             session_title: Some(Arc::new(TitleFamily)),
             ..Families::unwired()
         }
-        .with_native_models()
+        .with_native_models_from_env(env.clone())
         .with_context_memory()
         .with_tools_mcp()
         .with_shared_native_background_tasks(background)

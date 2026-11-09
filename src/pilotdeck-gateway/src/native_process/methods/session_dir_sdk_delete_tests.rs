@@ -353,13 +353,26 @@ async fn sdk_delete_waits_for_failed_inflight_close_and_preserves_temporary_root
     release.send_replace(true);
     let closed = closing.await;
     let deleted = deletion.await.unwrap();
+    let preserved = std::fs::read(root.path().join("keep"));
+    let stopped = owner.shutdown().await;
+    let cleaned = roots.close().await;
+    let disposed = requests.project.dispose().await;
     assert!(registered.is_ok(), "actual delete reserved its ticket behind the blocked eviction");
-    assert!(closed.unwrap_err().to_string().contains("EVICTION-FAILED"));
-    assert!(deleted.unwrap_err().message.to_utf8().unwrap().contains("EVICTION-FAILED"));
-    assert_eq!(std::fs::read(root.path().join("keep")).unwrap(), b"WRITER-NOT-QUIESCENT");
-    owner.shutdown().await.unwrap();
-    roots.close().await.unwrap();
-    requests.project.dispose().await.unwrap();
+    let closed = closed.expect_err("blocked real eviction must fail");
+    // LiveSessionHandle intentionally preserves the two lifecycle aggregates;
+    // Display prints only the outer message. Inspect the structured source,
+    // then require delete to transmit that exact public close message.
+    assert_eq!(closed.message, "Failed to dispose agent handle.", "{closed:?}");
+    assert_eq!(closed.causes.len(), 1, "{closed:?}");
+    assert_eq!(closed.causes[0].message, "Failed to dispose agent session.", "{closed:?}");
+    assert_eq!(closed.causes[0].causes.len(), 1, "{closed:?}");
+    assert_eq!(closed.causes[0].causes[0].message, "EVICTION-FAILED", "{closed:?}");
+    assert!(closed.causes[0].causes[0].causes.is_empty(), "{closed:?}");
+    let deleted = deleted.expect_err("delete must transmit the blocked eviction failure");
+    assert_eq!(deleted.code, "gateway_request_failed");
+    assert_eq!(deleted.message, JsString::from(closed.message.as_str()), "{deleted:?}");
+    assert_eq!(preserved.unwrap(), b"WRITER-NOT-QUIESCENT");
+    stopped.unwrap(); cleaned.unwrap(); disposed.unwrap();
 }
 
 #[tokio::test]

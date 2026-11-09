@@ -125,6 +125,7 @@ fn state_error(code: &str) -> ApprovalFailure {
 
 /// The `PublicApprovalSubject` (`StaffDeckApprovalAuthority['subject']`): the
 /// authenticated approver facts the authenticate port returns.
+#[derive(Clone)]
 pub(crate) struct ApprovalSubject {
     pub tenant_id: JsString,
     pub source: JsString,
@@ -205,6 +206,7 @@ pub(crate) struct StoreStatusInput {
 /// The resume input the pending store receives, the TS `sopControl.resume`
 /// callback's shape: everything but the authority is caller input, and the
 /// authority is what the bridge's access pipeline resolved.
+#[derive(Clone)]
 pub(crate) struct StoreResumeInput {
     pub session_key: JsString,
     pub project_key: Option<JsValue>,
@@ -217,8 +219,57 @@ pub(crate) struct StoreResumeInput {
     pub authority: Option<StoreAuthority>,
 }
 
+/// Raw continuation values, retained until the pending store has checked the
+/// current state and duplicate receipt. The authenticated HTTP lane continues to
+/// construct `StoreResumeInput`; unknown wire sources are never reclassified.
+pub(crate) struct StoreResumeCommand {
+    pub session_key: JsString,
+    pub project_key: Option<JsValue>,
+    pub request_id: JsValue,
+    pub wait_id: JsValue,
+    pub message: JsValue,
+    pub expected_revision: JsValue,
+    pub slot_updates: Option<JsValue>,
+    pub source: JsValue,
+    pub authority: Option<StoreAuthority>,
+}
+impl From<StoreResumeInput> for StoreResumeCommand {
+    fn from(input: StoreResumeInput) -> Self {
+        Self {
+            session_key: input.session_key,
+            project_key: input.project_key,
+            request_id: JsValue::String(input.request_id),
+            wait_id: JsValue::String(input.wait_id),
+            message: JsValue::String(input.message),
+            expected_revision: input
+                .expected_revision
+                .map_or(JsValue::Undefined, JsValue::Number),
+            slot_updates: input.slot_updates,
+            source: input.source.as_str().into(),
+            authority: input.authority,
+        }
+    }
+}
+impl StoreResumeCommand {
+    pub(crate) fn wire(session_key: JsString, input: &JsValue) -> Self {
+        let value = |key| input.get(key).cloned().unwrap_or(JsValue::Undefined);
+        Self {
+            session_key,
+            project_key: input.get("projectKey").cloned(),
+            request_id: value("requestId"),
+            wait_id: value("waitId"),
+            message: value("message"),
+            expected_revision: value("expectedRevision"),
+            slot_updates: input.get("slotUpdates").filter(|v| js_truthy(v)).cloned(),
+            source: value("source"),
+            authority: None,
+        }
+    }
+}
+
 /// `StaffDeckApprovalAuthority` as the bridge constructs it: the resolved
 /// session's tenant and the authenticated subject.
+#[derive(Clone)]
 pub(crate) struct StoreAuthority {
     pub tenant_id: JsString,
     pub session_id: JsString,
