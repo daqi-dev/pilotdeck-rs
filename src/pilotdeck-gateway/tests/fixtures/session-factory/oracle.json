@@ -23918,6 +23918,49 @@
         "name": "TypeError",
         "message": "Cannot read properties of null (reading 'type')"
       }
+    },
+    {
+      "entries": [
+        {
+          "type": "file_artifacts",
+          "sessionId": "session-745",
+          "turnId": "incomplete-turn",
+          "sequence": 1,
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "entryId": "e1",
+          "parentEntryId": null,
+          "artifacts": null
+        }
+      ],
+      "writer": {
+        "sequence": 1,
+        "lastEntryId": "e1"
+      },
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of null (reading 'length')"
+      }
+    },
+    {
+      "entries": [
+        {
+          "type": "file_artifacts",
+          "sessionId": "session-745",
+          "turnId": "incomplete-turn",
+          "sequence": 1,
+          "createdAt": "2026-10-28T00:00:00.000Z",
+          "entryId": "e1",
+          "parentEntryId": null
+        }
+      ],
+      "writer": {
+        "sequence": 1,
+        "lastEntryId": "e1"
+      },
+      "error": {
+        "name": "TypeError",
+        "message": "Cannot read properties of undefined (reading 'length')"
+      }
     }
   ],
   "hydrated": [
