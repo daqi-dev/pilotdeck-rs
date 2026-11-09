@@ -1320,6 +1320,26 @@ class EnvironmentControls(unittest.TestCase):
                          ('src/pilotdeck-gateway/tests/fixtures', []),
                          '#1570 the self-test imports _shared, so it runs from the fixtures dir')
 
+    def test_required_job_runs_the_discovery_anchor_self_check(self):
+        # #2133 fix-r34（MM 评审 P1）：「网关负控发现锚点自检」是唯一执行 #2133 闸门
+        # 的 CI 步。同 job 里同形的自测步都有逐字守卫 + 变异负控（#994 / #1570），
+        # 唯独这一步没有——删步、加 if、加 continue-on-error 或改错工作目录，
+        # 全仓无红，闸门在 CI 静默不跑，正是 #2133 要防的「尺子假通过」。
+        command = 'python3 -B -m unittest -v test_negative_discovery_anchors'
+        jobs = self.ci_jobs('#2133')
+        steps = self.ci_steps('metadata-observer', jobs['metadata-observer'], '#2133')
+        matching = [step for step in steps if self.ci_run_commands(step, '#2133') == [command]]
+        self.assertEqual(len(matching), 1,
+                         '#2133 required CI job must run the discovery-anchor self-check')
+        fields = self.ci_step_fields(matching[0], '#2133')
+        for key in ('if', 'continue-on-error'):
+            self.assertNotIn(key, fields,
+                             '#2133 the self-check CI step must be unconditional')
+        self.assertEqual(fields.get('working-directory'),
+                         ('src/pilotdeck-gateway/tests/fixtures', []),
+                         '#2133 the self-check imports the fixtures tree, '
+                         'so it runs from the fixtures dir')
+
     def test_negative_controls_job_runs_the_gateway_fixture(self):
         # #1632 P2-3：这个 job 存在的唯一理由是让夹具真的跑起来；删掉执行步、
         # 让 --self-check 掉队、把 target 指回 src/ 或丢掉历史克隆都必须被判红，
@@ -1481,6 +1501,35 @@ class EnvironmentControls(unittest.TestCase):
             ('isolation-ci-wrong-cwd', 'working-directory: src\n        ' + command,
              '#994 isolation CI step must run from repository root'))]
         self.check_ci_mutations(cases, 'test_required_job_runs_shared_isolation_regressions', '#994')
+
+    def test_discovery_anchor_self_check_ci_regressions_are_rejected(self):
+        # #2133 fix-r34（MM 评审 P1）：与 #994 / #1570 的同形变异负控——删步 /
+        # 注释掉 / 加 if / 加 continue-on-error / 改错 working-directory，
+        # 每形必须杀在上一条守卫的专属断言上，而不是别的失败点。
+        workflow = self.ci_workflow_fixture()
+        command = 'run: python3 -B -m unittest -v test_negative_discovery_anchors'
+        cases = [(name, workflow.replace(command, changed, 1), message)
+                 for name, changed, message in (
+            ('discovery-self-check-removed', 'run: true',
+             '#2133 required CI job must run the discovery-anchor self-check'),
+            ('discovery-self-check-commented', '# ' + command,
+             '#2133 required CI job must run the discovery-anchor self-check'),
+            ('discovery-self-check-skipped', 'if: false\n        ' + command,
+             '#2133 the self-check CI step must be unconditional'),
+            ('discovery-self-check-ignored', 'continue-on-error: true\n        ' + command,
+             '#2133 the self-check CI step must be unconditional'))]
+        # wrong-cwd 不能照 #994 在 run 行前插一行（本步已有 working-directory，
+        # 会先死在重复键上）：按步名锚定改掉它本来的值。
+        cases.append(('discovery-self-check-wrong-cwd',
+                      workflow.replace(
+                          '- name: 网关负控发现锚点自检（#2133）\n'
+                          '        working-directory: src/pilotdeck-gateway/tests/fixtures\n',
+                          '- name: 网关负控发现锚点自检（#2133）\n'
+                          '        working-directory: src\n', 1),
+                      '#2133 the self-check imports the fixtures tree, '
+                      'so it runs from the fixtures dir'))
+        self.check_ci_mutations(
+            cases, 'test_required_job_runs_the_discovery_anchor_self_check', '#2133')
 
     def test_each_npm_job_sets_up_its_own_node_before_installing(self):
         runtime_jobs = set()

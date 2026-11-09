@@ -139,7 +139,7 @@ TABLES = (
 # Each reason states how many discovery keys the table needs and how many path
 # shapes the scanner could not follow; both are re-measured by
 # test_known_blind_counts_match_the_scan. #2141 carries the per-table fix list.
-# 268 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 193 blind only, 3 with unresolvable shapes only, 72 in both; 1408 keys: 397 bare-filename joins and 1011 shared-helper import keys.
+# 270 files (the host glob reaches the ones under tests/fixtures/, not the top-level fixtures/ tables; #2141), 195 blind only, 3 with unresolvable shapes only, 72 in both; 1420 keys: 397 bare-filename joins and 1023 shared-helper import keys.
 # Why a key a table needs shows up in no table text: the import line spells a
 # module name, while the host keys the helper file it lives in.
 IMPORTED_HELPER_REASON = 'imported shared fixture helper'
@@ -348,6 +348,7 @@ KNOWN_BLIND = {
     'session-adopt/switch_negative.py': '7 keys',
     'session-assembly-1316/negative_controls.py': '4 keys + 2 unresolvable',
     'session-cwd-timing/negative_controls.py': '7 keys',
+    'session-delete-2392/negative_controls.py': '6 keys',
     'session-domain-cleanup/negative_controls.py': '2 keys',
     'session-domain-expectations/negative_controls.py': '7 keys',
     'session-domain-lock-release/negative_controls.py': '7 keys',
@@ -360,6 +361,7 @@ KNOWN_BLIND = {
     'session-factory/negative_controls.py': '16 keys + 2 unresolvable',
     'session-factory/projection-cache/negative_controls.py': '8 keys + 6 unresolvable',
     'session-lease/negative.py': '3 keys',
+    'session-reservation-2391/negative_controls.py': '6 keys',
     'settings-gateway/negative_controls.py': '5 keys + 1 unresolvable',
     'settings/negative_controls.py': '2 keys',
     'shared-runner-failclosed/negative_controls.py': '2 keys',
@@ -3284,8 +3286,17 @@ def _module_candidates(tree, search_dirs):
 
     ``importlib.import_module('x')`` / ``__import__('x')`` count too when the
     argument is a string literal: the dependency is exactly as real as an
-    ``import`` line. A *computed* module name stays out of reach — no static
-    scanner can know it — and is listed as a known boundary in the README.
+    ``import`` line. Every other dynamic-import spelling — a call through a
+    plain name (``from importlib import import_module as load`` then
+    ``load('_shared.x')``, the unaliased ``import_module('_shared.x')``, or a
+    function alias ``im = importlib.import_module`` then ``im('…')``), the
+    module name in a keyword argument (``import_module(name='…')``), or a
+    computed name (``__import__(RUNTIME_NAME)``) — is a *silent blind class*,
+    not a boundary: it yields no key and reports no unresolvable shape, so the
+    import closure of a table can pass unscheduled. It is registered as such
+    in the README's follow-up list and pinned by
+    ``test_the_registered_dynamic_import_closures_stay_silent`` (fix-r34,
+    review P0; the family stopped per the slice-family arbitration).
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -4708,6 +4719,25 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'unresolvable files and places': (
                 len(unresolvable),
                 sum(len(rows) for rows in unresolvable.values())),
+            # fix-r34 review P2a: the "共 N 条键" tally of the registered
+            # tables was the one numeric copy in this paragraph no test
+            # re-measured; anchors can be added or dropped without it. The
+            # same paragraph also counts the registered tables themselves and
+            # one named-but-unregistered table's key split — same drift class,
+            # bound the same way (fix-r34 sibling sweep).
+            'registered table keys': (
+                sum(len(declared_anchors(ast.parse(
+                        (FIXTURES / name).read_text(encoding='utf-8')))[0])
+                    for name in TABLES),),
+            'registered table count': (len(TABLES),),
+            'head-timeout split': (
+                len(blind['channel-sms-head-timeout/negative_controls.py']),
+                sum(1 for rows in blind['channel-sms-head-timeout/'
+                                        'negative_controls.py'].values()
+                    if rows != [IMPORTED_HELPER_REASON]),
+                sum(1 for rows in blind['channel-sms-head-timeout/'
+                                        'negative_controls.py'].values()
+                    if rows == [IMPORTED_HELPER_REASON])),
         }
         patterns = {
             'registered files': r'KNOWN_BLIND` 登记 \*\*(\d+) 个文件\*\*',
@@ -4720,6 +4750,10 @@ class DiscoveryAnchorTests(unittest.TestCase):
             'bare keys': r'余下 (\d+) 条是裸文件名拼接',
             'unresolvable files and places': (r'\*\*(\d+) 个文件\*\*含 \*\*(\d+) 处\*\*'
                                               r'解析器跟不下去的路径形状'),
+            'registered table keys': r'，共 (\d+) 条键）',
+            'registered table count': r'只登记 #2133 点名的 (\d+) 张表',
+            'head-timeout split': (r'量到 (\d+) 条键（(\d+) 条裸文件名、'
+                                   r'(\d+) 条 import）'),
         }
         text = (FIXTURES / 'README.md').read_text(encoding='utf-8')
         for label, pattern in patterns.items():
@@ -6677,6 +6711,60 @@ class DiscoveryAnchorTests(unittest.TestCase):
                     (root / '_shared' / 'scope.py').write_text('', encoding='utf-8')
                     keys = _shared_module_keys(ast.parse(line), root, ())
                 self.assertEqual(sorted(keys), ['_shared/scope.py'])
+
+    def test_the_registered_dynamic_import_closures_stay_silent(self):
+        """The registered dynamic-import closure shapes keep their pinned silence.
+
+        Only an attribute call ``import_module`` (``importlib.import_module('x')``
+        or a module alias ``im.import_module('x')``) and a name call
+        ``__import__('x')``, each with a positional string literal, are keyed.
+        Every other spelling — a plain name call (renamed ``load('…')``, the
+        unaliased ``import_module('…')``, a function alias
+        ``im = importlib.import_module`` then ``im('…')``), the module name in
+        a keyword argument (``import_module(name='…')``), or a computed name
+        (``__import__(RUNTIME_NAME)``) — yields no key and no report, so the
+        import closure of a table can pass unscheduled: a false negative the
+        fix-r34 review raised as P0. The slice/closure family stopped per the
+        arbitration card (``state/decisions-20261109-2136-slice-family-
+        arbitration.md``, board 4f8de196d rule 15), so the shapes are
+        registered as a blind class in the README's follow-up list instead of
+        being patched; this pin holds the current behaviour, and a change in
+        *either* direction — keying the shapes, or reporting them as
+        unresolvable — must turn this red and reopen the registration, not
+        drift past it. The literal spellings above keep keying, so the
+        register cannot silently widen to cover this family either.
+        """
+        shapes = {
+            'renamed call': ("from importlib import import_module as load\n"
+                             "helper = load('_shared.scope')\n"),
+            'unaliased name call': ("from importlib import import_module\n"
+                                    "helper = import_module('_shared.scope')\n"),
+            'function alias': ("import importlib\n"
+                               "im = importlib.import_module\n"
+                               "helper = im('_shared.scope')\n"),
+            'keyword argument': ("import importlib\n"
+                                 "helper = importlib.import_module(name='_shared.scope')\n"),
+            'computed name': ("helper = __import__(RUNTIME_NAME)\n"
+                              "RUNTIME_NAME = '_shared.scope'\n"),
+        }
+        for label, line in shapes.items():
+            with self.subTest(shape=label):
+                with tempfile.TemporaryDirectory() as workspace:
+                    root = Path(workspace)
+                    (root / '_shared').mkdir()
+                    (root / '_shared' / 'scope.py').write_text('', encoding='utf-8')
+                    keys = _shared_module_keys(ast.parse(line), root, ())
+                self.assertTrue(keys == set(),
+                                '#2133-r34 the registered dynamic-import '
+                                f'closure shape {label!r} is silent: {sorted(keys)}')
+                # SILENT is the whole definition: no key *and* no report —
+                # a future report of these shapes as unsupported is the
+                # tightening the pin must catch too.
+                problems = violations(line + 'DISCOVERY_ANCHORS = ()\n',
+                                      'example/negative_controls.py')
+                self.assertTrue(problems == [],
+                                '#2133-r34 the registered dynamic-import '
+                                f'closure shape {label!r} reports: {problems}')
 
     def test_an_import_cycle_terminates(self):
         """Two helpers importing each other must not loop the walk."""
