@@ -300,3 +300,68 @@ async fn paused_project_refuses_archive_before_and_after_cached_writer_drain() {
     drop(owner.try_reserve_archive(&key, true).unwrap().unwrap());
     owner.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn explicit_cold_project_archive_blocks_only_its_project_close_until_real_io_finishes() {
+    let factory = Factory::new(None, None);
+    let owner = factory.owner();
+    let key: JsString = "cold-project-archive".into();
+    let project: JsString = "selected-project".into();
+    assert!(owner.current_handle(&key).is_none());
+    let guard = owner
+        .try_reserve_archive_with_project(&key, &project, true)
+        .unwrap()
+        .unwrap();
+    let gate = BlockingGate::new();
+    let _release_on_unwind = ReleaseBlocking(gate.clone());
+    let job_gate = gate.clone();
+    let (started, entered) = tokio::sync::oneshot::channel();
+    let io = tokio::task::spawn_blocking(move || {
+        let _guard = guard;
+        let _ = started.send(());
+        job_gate.wait();
+    });
+    entered.await.unwrap();
+    let mut closing = tokio::spawn(owner.close_project(&project));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(25), &mut closing)
+            .await
+            .is_err()
+    );
+    assert!(
+        owner
+            .try_reserve_archive_with_project(&"other-cold-key".into(), &project, true)
+            .is_err(),
+        "project pause rejects a new cold archive without any record/scope"
+    );
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        owner.close_project(&"other-project".into()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    gate.release();
+    io.await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), closing)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        owner
+            .try_reserve_archive_with_project(&key, &project, true)
+            .is_err()
+    );
+    owner.resume_project(&project);
+    drop(
+        owner
+            .try_reserve_archive_with_project(&key, &project, true)
+            .unwrap()
+            .unwrap(),
+    );
+    owner.shutdown().await.unwrap();
+}

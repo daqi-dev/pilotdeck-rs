@@ -1,6 +1,6 @@
 //! Portable archive validation matching createLocalGateway.ts.
 use crate::runtime::connection::RequestError;
-use pilotdeck_protocol::{JsValue, stringify_json};
+use pilotdeck_protocol::JsValue;
 
 const MAX_MESSAGES: usize = 10_000;
 const MAX_TITLE_UNITS: usize = 512;
@@ -61,13 +61,124 @@ pub(super) fn validate_archive(value: &JsValue) -> Result<(), RequestError> {
             ));
         }
     }
-    let serialized = stringify_json(value)
-        .map_err(|_| invalid("Unsupported or malformed session transcript archive."))?
-        .ok_or_else(|| invalid("Unsupported or malformed session transcript archive."))?;
-    if serialized.len() > MAX_BYTES {
+    if !serialized_size_at_most(value, MAX_BYTES) {
         return Err(invalid("Session transcript archive is too large."));
     }
     Ok(())
+}
+
+/// Count the actual JSON UTF-8 representation without allocating another full
+/// archive string. The iterator stack grows with depth, not sibling count;
+/// every addition consumes the remaining byte budget before descending.
+fn serialized_size_at_most(value: &JsValue, mut remaining: usize) -> bool {
+    fn charge(remaining: &mut usize, bytes: usize) -> bool {
+        match remaining.checked_sub(bytes) {
+            Some(left) => {
+                *remaining = left;
+                true
+            }
+            None => false,
+        }
+    }
+    fn string_size(remaining: &mut usize, value: &pilotdeck_protocol::JsString) -> bool {
+        if !charge(remaining, 2) {
+            return false;
+        }
+        let units = value.units();
+        let mut index = 0;
+        while index < units.len() {
+            let unit = units[index];
+            let bytes = match unit {
+                0x22 | 0x5c | 0x08 | 0x0c | 0x0a | 0x0d | 0x09 => 2,
+                0..=0x1f => 6,
+                0x20..=0x7f => 1,
+                0x80..=0x7ff => 2,
+                0xd800..=0xdbff
+                    if units
+                        .get(index + 1)
+                        .is_some_and(|u| (0xdc00..=0xdfff).contains(u)) =>
+                {
+                    index += 1;
+                    4
+                }
+                0xd800..=0xdfff => 6,
+                _ => 3,
+            };
+            if !charge(remaining, bytes) {
+                return false;
+            }
+            index += 1;
+        }
+        true
+    }
+    let mut stack: Vec<Box<dyn Iterator<Item = &JsValue> + '_>> =
+        vec![Box::new(std::iter::once(value))];
+    while let Some(iter) = stack.last_mut() {
+        let Some(value) = iter.next() else {
+            stack.pop();
+            continue;
+        };
+        match value {
+            JsValue::Undefined | JsValue::Null => {
+                if !charge(&mut remaining, 4) {
+                    return false;
+                }
+            }
+            JsValue::Bool(value) => {
+                if !charge(&mut remaining, if *value { 4 } else { 5 }) {
+                    return false;
+                }
+            }
+            JsValue::Number(value) => {
+                let length = if value.is_finite() {
+                    crate::js_value::number_string(*value).len()
+                } else {
+                    4
+                };
+                if !charge(&mut remaining, length) {
+                    return false;
+                }
+            }
+            JsValue::String(value) => {
+                if !string_size(&mut remaining, value) {
+                    return false;
+                }
+            }
+            JsValue::Array(values) => {
+                if !charge(&mut remaining, 2)
+                    || !charge(&mut remaining, values.len().saturating_sub(1))
+                {
+                    return false;
+                }
+                stack.push(Box::new(values.iter()));
+            }
+            JsValue::Object(object) => {
+                if !charge(&mut remaining, 2) {
+                    return false;
+                }
+                let mut first = true;
+                for (key, value) in object.entries().iter() {
+                    if value.is_undefined() {
+                        continue;
+                    }
+                    if !first && !charge(&mut remaining, 1) {
+                        return false;
+                    }
+                    first = false;
+                    if !string_size(&mut remaining, key) || !charge(&mut remaining, 1) {
+                        return false;
+                    }
+                }
+                stack.push(Box::new(
+                    object
+                        .entries()
+                        .iter()
+                        .filter_map(|(_, value)| (!value.is_undefined()).then_some(value)),
+                ));
+            }
+        }
+    }
+    true
 }
 
 fn literal(out: &mut Vec<u16>, text: &str) {
@@ -313,7 +424,6 @@ pub(crate) async fn restore_guarded<G: Send + 'static>(
     archive: JsValue,
     guard: G,
 ) -> Result<JsValue, RequestError> {
-    validate_archive(&archive)?;
     let permit = super::reader::READ_SLOTS
         .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)))
         .clone()
@@ -324,6 +434,7 @@ pub(crate) async fn restore_guarded<G: Send + 'static>(
         use std::os::unix::fs::DirBuilderExt;
         use std::sync::Arc;
         let (_permit, _guard) = (permit, guard);
+        validate_archive(&archive)?;
         let path = super::reader::history_path(&files, &session).map_err(RequestError::new)?;
         let _lease = crate::runtime::session::transcript_locks::cold_write_lease(&path)
             .ok_or_else(|| {
@@ -666,5 +777,142 @@ mod tests {
             validate_archive(&JsValue::Object(empty)).unwrap_err().code,
             "INVALID_SESSION_ARCHIVE"
         );
+    }
+    fn nontext_oracle() -> JsValue {
+        parse_json(include_str!(
+            "../../../tests/fixtures/native-portable-history/oracle.json"
+        ))
+        .unwrap()
+        .get("nontext")
+        .unwrap()
+        .clone()
+    }
+    #[test]
+    fn nontext_export_matches_actual_fixed_ts_public_gateway() {
+        let oracle = nontext_oracle();
+        let JsValue::Array(projections) = oracle.get("projections").unwrap() else {
+            panic!("projections")
+        };
+        assert_eq!(projections.len(), 4);
+        for case in projections {
+            assert_eq!(case.get("ok"), Some(&JsValue::Bool(true)));
+            let JsValue::Array(entries) = case.get("entries").unwrap() else {
+                panic!("entries")
+            };
+            assert_eq!(
+                &project_archive(entries).unwrap(),
+                case.get("value").unwrap(),
+                "{:?}",
+                case.get("name")
+            );
+        }
+    }
+    #[test]
+    fn archive_validation_matches_actual_ts_limits_and_precedence() {
+        let oracle = nontext_oracle();
+        let JsValue::Array(cases) = oracle.get("validation").unwrap() else {
+            panic!("validation")
+        };
+        assert_eq!(cases.len(), 12);
+        for case in cases {
+            let recipe = case.get("recipe").unwrap();
+            let mut archive=parse_json(r#"{"schemaVersion":1,"format":"portable_text_messages","messages":[{"role":"user","text":""}]}"#).unwrap();
+            let JsValue::Object(ref mut object) = archive else {
+                unreachable!()
+            };
+            if let Some(title) = recipe.get("title") {
+                object.insert("title".into(), title.clone());
+            }
+            if let Some(count) = recipe.get("count").and_then(JsValue::as_number) {
+                let message = parse_json(r#"{"role":"user","text":"x"}"#).unwrap();
+                object.insert(
+                    "messages".into(),
+                    JsValue::Array(vec![message; count as usize]),
+                );
+            }
+            if recipe.get("badRole") == Some(&JsValue::Bool(true)) {
+                let mut messages = match object.get("messages") {
+                    Some(JsValue::Array(messages)) => messages.clone(),
+                    _ => unreachable!(),
+                };
+                let JsValue::Object(ref mut message) = messages[0] else {
+                    unreachable!()
+                };
+                message.insert("role".into(), "system".into());
+                object.insert("messages".into(), JsValue::Array(messages));
+            }
+            if let Some(bytes) = recipe.get("bytes").and_then(JsValue::as_number) {
+                let overhead = pilotdeck_protocol::stringify_json(&archive)
+                    .unwrap()
+                    .unwrap()
+                    .len();
+                let fill = recipe
+                    .get("fill")
+                    .and_then(JsValue::as_string)
+                    .unwrap()
+                    .to_utf8()
+                    .unwrap();
+                let count = bytes as usize - overhead;
+                let text = fill.repeat(count / fill.len()) + &"x".repeat(count % fill.len());
+                let JsValue::Object(ref mut object) = archive else {
+                    unreachable!()
+                };
+                let mut messages = match object.get("messages") {
+                    Some(JsValue::Array(messages)) => messages.clone(),
+                    _ => unreachable!(),
+                };
+                let JsValue::Object(ref mut message) = messages[0] else {
+                    unreachable!()
+                };
+                message.insert("text".into(), JsValue::String(text.into()));
+                object.insert("messages".into(), JsValue::Array(messages));
+            }
+            let actual_bytes = pilotdeck_protocol::stringify_json(&archive)
+                .unwrap()
+                .unwrap()
+                .len();
+            assert_eq!(
+                Some(&JsValue::Number(actual_bytes as f64)),
+                case.get("bytes")
+            );
+            let result = validate_archive(&archive);
+            if case.get("ok") == Some(&JsValue::Bool(true)) {
+                assert!(result.is_ok(), "{:?}", recipe.get("name"));
+            } else {
+                let error = result.unwrap_err();
+                assert_eq!(Some(&JsValue::String(error.code.into())), case.get("code"));
+                assert_eq!(Some(&JsValue::String(error.message)), case.get("message"));
+            }
+        }
+    }
+    #[test]
+    fn bounded_json_size_matches_codec_for_unicode_escapes_and_nonfinite_values() {
+        let mut object = JsObject::new();
+        object.insert("omit".into(), JsValue::Undefined);
+        object.insert(
+            JsString::from_utf16(vec![0xd800]),
+            JsValue::String(JsString::from_utf16(vec![
+                0xd83d, 0xde00, 0xd800, 0xdc00, 0x08, 0x0c, 0x0a, 0x0d, 0x09, 0x01, 0x22, 0x5c,
+                0x7f, 0x80, 0x7ff, 0x800,
+            ])),
+        );
+        object.insert(
+            "numbers".into(),
+            JsValue::Array(vec![
+                JsValue::Undefined,
+                JsValue::Number(f64::NAN),
+                JsValue::Number(f64::INFINITY),
+                JsValue::Number(-0.0),
+                JsValue::Number(1e21),
+                JsValue::Number(1e-7),
+            ]),
+        );
+        let value = JsValue::Object(object);
+        let bytes = pilotdeck_protocol::stringify_json(&value)
+            .unwrap()
+            .unwrap()
+            .len();
+        assert!(serialized_size_at_most(&value, bytes));
+        assert!(!serialized_size_at_most(&value, bytes - 1));
     }
 }

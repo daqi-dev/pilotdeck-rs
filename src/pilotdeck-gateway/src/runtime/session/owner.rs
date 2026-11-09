@@ -294,6 +294,26 @@ pub struct SessionOwner(Arc<Inner>);
 /// #996: ignore-stop-new-publication clears the stop flag around
 /// create_active's publication guard; Drop restores it on every exit,
 /// including unwinds. Inert unless compiled into a mutants test binary.
+fn project_key_state(state: &State, key: &JsString) -> Option<JsString> {
+    state
+        .records
+        .get(key)
+        .and_then(|r| r.context.project_key.clone())
+        .or_else(|| {
+            state
+                .pending
+                .iter()
+                .find(|p| &p.session_key == key && p.completion.borrow().is_none())
+                .and_then(|p| p.project.clone())
+        })
+        .or_else(|| {
+            state
+                .project_scopes
+                .get(key)
+                .map(|(project, _)| project.clone())
+        })
+}
+
 struct StopFlagRestore {
     inner: Arc<Inner>,
     stopped: bool,
@@ -508,23 +528,7 @@ impl SessionOwner {
     /// selects a default project only; get_or_create's locked check is admission.
     pub fn project_key(&self, key: &JsString) -> Option<JsString> {
         let state = self.0.state.lock().unwrap();
-        state
-            .records
-            .get(key)
-            .and_then(|r| r.context.project_key.clone())
-            .or_else(|| {
-                state
-                    .pending
-                    .iter()
-                    .find(|p| &p.session_key == key && p.completion.borrow().is_none())
-                    .and_then(|p| p.project.clone())
-            })
-            .or_else(|| {
-                state
-                    .project_scopes
-                    .get(key)
-                    .map(|(project, _)| project.clone())
-            })
+        project_key_state(&state, key)
     }
 
     /// Keep the selected request identity stable across asynchronous handlers.
@@ -538,23 +542,7 @@ impl SessionOwner {
         fallback: &JsString,
     ) -> Result<SessionProjectScope, RuntimeError> {
         let mut state = self.0.state.lock().unwrap();
-        let owned = state
-            .records
-            .get(key)
-            .and_then(|r| r.context.project_key.clone())
-            .or_else(|| {
-                state
-                    .pending
-                    .iter()
-                    .find(|p| &p.session_key == key && p.completion.borrow().is_none())
-                    .and_then(|p| p.project.clone())
-            })
-            .or_else(|| {
-                state
-                    .project_scopes
-                    .get(key)
-                    .map(|(project, _)| project.clone())
-            });
+        let owned = project_key_state(&state, key);
         let selected = requested
             .cloned()
             .or_else(|| owned.clone())
@@ -1090,20 +1078,43 @@ impl SessionOwner {
         key: &JsString,
         require_absent: bool,
     ) -> Result<Option<ArchiveReservation>, RuntimeError> {
+        self.try_reserve_archive_in_project(key, None, require_absent)
+    }
+
+    /// Archive IO addresses the request's resolved project, including cold keys
+    /// without a cached record or SessionProjectScope. Project close must wait
+    /// for that real IO before allowing directory deletion.
+    pub fn try_reserve_archive_with_project(
+        &self,
+        key: &JsString,
+        project: &JsString,
+        require_absent: bool,
+    ) -> Result<Option<ArchiveReservation>, RuntimeError> {
+        self.try_reserve_archive_in_project(key, Some(project), require_absent)
+    }
+
+    fn try_reserve_archive_in_project(
+        &self,
+        key: &JsString,
+        selected_project: Option<&JsString>,
+        require_absent: bool,
+    ) -> Result<Option<ArchiveReservation>, RuntimeError> {
         let mut state = self.0.state.lock().unwrap();
         if state.stopped {
             return Err(RuntimeError::new("Session router is shut down."));
         }
-        let project = state
-            .records
-            .get(key)
-            .and_then(|record| record.context.project_key.clone())
-            .or_else(|| {
-                state
-                    .project_scopes
-                    .get(key)
-                    .map(|(project, _)| project.clone())
-            });
+        let project = selected_project.cloned().or_else(|| {
+            state
+                .records
+                .get(key)
+                .and_then(|record| record.context.project_key.clone())
+                .or_else(|| {
+                    state
+                        .project_scopes
+                        .get(key)
+                        .map(|(project, _)| project.clone())
+                })
+        });
         if project_paused(&state, project.as_ref()) {
             return Err(RuntimeError::new("Project is being deleted."));
         }
@@ -2072,8 +2083,8 @@ impl Drop for ArchiveReservation {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 self.owner.0.turns.admission.end_maintenance(&self.key);
             }));
+            self.done.send_replace(Some(Ok(())));
         }
-        self.done.send_replace(Some(Ok(())));
     }
 }
 

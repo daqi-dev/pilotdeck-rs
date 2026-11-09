@@ -5464,3 +5464,11 @@ READY 本段改动：**新增 15 行（#2439–#2445 七张（PR #2429 r2 轮）
 ### 2026-11-10 · Gateway 共同候选首批验证接续
 
 固定 main 8639283b / CLI来源3637484a 的逐块整合已消除44处文本冲突，保留双方生命周期、MCP/Cron及负控；最新 origin/main 003a0b44 与固定基点的 src 无差异。新增可用通用归档存储消费者与会话互斥、统一IM交互桥，装配Telegram/Matrix/Signal/Mattermost/HomeAssistant共5渠道。mbp2 r11 全目标check及11组定向测试均通过，历史r6路径失败、HA r10编译失败原件保留。正固定可执行候选并运行TS/Rust真实业务闭环；来源PR#2725、统一目录与前端活动树快照继续保全。本轮只达到候选阶段，未关闭任何正式Gateway/渠道验收；Discord/DingTalk待收，QQ/Email/WeCom由隔离子代理继续，WhatsApp及正式host/session/retirement/冷切换仍待接续。证据：主仓 _tmp/20261110-gateway-integration/ 与 mbp2 integrated/_tmp/integration-r11-core/。
+
+### 2026-11-10 · 共同候选真实闭环与渠道重载修复
+
+共同候选9b9941b9已本地提交并推送保全（原PR#2725及各快照未改写），mbp2四可执行文件构建成功，固定TS官方客户端驱动的真实对话/工具/权限拒绝/终态/持久化与冷读对照无差异；公共portable restore后的真实模型续聊、Cron真实执行及webhook结果回送也已实跑。均为诊断、非完整正式验收。后续r15按源码清单SHA绑定新批，Matrix/Signal/Mattermost/HomeAssistant/WhatsApp五渠道实际Server完成两轮A7、出站、异步禁用/重启与停机；此前9b四渠道重载失败原件保留。Email真装配暴露extra多包一层，已修待复跑。Discord/DingTalk/QQ等生产模块已接线；WeCom仅测试编译、由Terra主体+Sol附件并行，不计完成。独立DS/Claude首轮已出部分域审计，归档非文本P1、边界与冷项目关闭增量已补，待当前头复验；P2逐项仍需收口。全部构建仍在mbp2，无本机Rust产物。主仓证据_tmp/20261110-gateway-integration/；统一CLI/前端工作区未切换。下一步当前全目标编译/定向回归、新网络上传入模、四平台真实assembly及WeCom闭环，再按边界拆线性交付PR和正式host/session/retirement接续。
+
+### 2026-11-10 · 共同核心 Draft 与第二批验证
+
+共同核心候选9b9941b9已建立Draft PR #2786（承接#2725，未合并、未关闭阶段）。归档独立审计的非文本投影/2MiB边界、冷项目关闭等待及归档完成发布窗口已修，mbp2 r18对应测试通过；本轮单独提交这些修复，双谱系增量复核继续。r22源码清单c05e8437绑定3504文件，Gateway/CLI全目标check通过；6,155项Gateway回归r23正在运行，不能预填结论。r15真实四平台Telegram/DingTalk/Discord/QQ闭环、HTTP/WS/上传入模/取消网络诊断与冷切换正向已通过；真实WS阻塞排空导致Rust非零退出、下一写入者被阻止且新数据不变，失败原件单列保留。全部19渠道仍未齐：WeCom r22为19通过3媒体测试失败，修复及重连批待复验；Feishu新增第一方protobuf WS、附件和宿主命令正在整合，固定SDK实测stop遗留WS须登记差异。cb8接收r22隔离源码开始Linux构建/见证，mbp2继续日常构建，本机无Rust构建。统一CLI/前端树及快照不动；证据总根_tmp/20261110-gateway-integration/。
