@@ -73,6 +73,13 @@ mutations = [
     ('probe-resolved-rewritten', PROBE_JSON,
      '"resolved": "fr-Cyrl-CA"', '"resolved": "en-US"',
      TEST, '#2170 fr_Cyrl_CA.UTF-8: resolved'),
+    # #2170 fix-r4 (DS fix-r3 sibling#1): the empty-language audit assert
+    # had no paired mutation. Emptying the fr_CA row's language subtag must
+    # turn that assert red; deleting the assert from skills.rs would leave
+    # this row SURVIVED (the pair replay still fails, but without the marker).
+    ('probe-language-emptied', PROBE_JSON,
+     '"lang": "fr_CA.UTF-8"', '"lang": "_CA.UTF-8"',
+     TEST, '#2170 _CA.UTF-8: probe row needs a language subtag'),
 ]
 # fix-r1 (DS simplify#1, #1666): the run denominator must be a literal, not
 # `len(mutations)` — a dropped row would silently shrink the run.
@@ -82,6 +89,7 @@ EXPECTED_NAMES = (
     'fr-ca-script-lost',
     'fr-ca-script-widened',
     'probe-resolved-rewritten',
+    'probe-language-emptied',
 )
 
 
