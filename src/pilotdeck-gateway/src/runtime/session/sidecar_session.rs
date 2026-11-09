@@ -844,10 +844,13 @@ impl LiveSession for SidecarSession {
                 },
             )
         });
-        let subagent_providers = self.subagent_providers.clone();
         tokio::spawn(async move {
-            let _subagent_providers =
-                super::module_host::SubagentProvidersScope::enter(subagent_providers);
+            // The provider registry reaches the router as an explicit
+            // `NativeSubagentPort::new` argument built inside `module_host::build`.
+            // No thread-local scope lives across `connect`/`execute`: a spawned
+            // task may resume on another worker thread, where a scoped slot set on
+            // the spawning thread would not exist and the restore would run
+            // against the wrong thread.
             let _guard = ActiveGuard {
                 active,
                 identity,

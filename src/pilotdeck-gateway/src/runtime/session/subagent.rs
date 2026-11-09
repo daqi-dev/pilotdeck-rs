@@ -225,6 +225,12 @@ impl NativeSubagentPort {
         interactions: Option<Arc<crate::runtime::interaction::GatewayInteractionCoordinator>>,
         stats: Option<crate::runtime::turn::routes::usage::SharedUsageStats>,
         lifecycle: crate::runtime::hooks::LifecycleRuntime,
+        // Passed explicitly: the provider registry used to travel through a
+        // thread-local scope held across `connect`/`execute` awaits, which a
+        // spawned task can outlive on another worker thread.
+        subagent_providers: Option<
+            Arc<crate::runtime::session::subagent_continuation::NamedContinuationProviderRegistry>,
+        >,
     ) -> Self {
         Self {
             snapshot,
@@ -238,7 +244,7 @@ impl NativeSubagentPort {
             mcp: module_host::current_mcp_owner(),
             lifecycle,
             context_resources: module_host::current_context_resources(),
-            subagent_providers: module_host::current_subagent_providers(),
+            subagent_providers,
         }
     }
     fn config(&self) -> JsObject {
@@ -2029,6 +2035,7 @@ mod drop_tests {
                 None,
                 None,
                 crate::runtime::hooks::LifecycleRuntime::null(),
+                None,
             );
             let guard = ChildGuard {
                 session: Some(Arc::new(ChildProbe {
@@ -2210,6 +2217,7 @@ mod organization_limit_tests {
                 None,
                 None,
                 crate::runtime::hooks::LifecycleRuntime::null(),
+                None,
             )
         });
         let captured = port.context_resources.as_ref().unwrap();

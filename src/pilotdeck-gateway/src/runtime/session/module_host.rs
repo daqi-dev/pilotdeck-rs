@@ -1560,6 +1560,7 @@ pub fn build_with_router_state(
         interactions.clone(),
         stats,
         lifecycle_runtime.clone(),
+        current_subagent_providers(),
     )));
     let builder = ToolContextBuilder::new(binding.clone(), ports.clone(), true);
     let tools = ToolRuntime::new(
