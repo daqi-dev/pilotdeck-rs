@@ -208,13 +208,23 @@ def main():
         # #2170 P3: the count below is genuinely deduplicated per (path, old)
         # anchor — the old "N unique anchors" wording counted table rows.
         seen, duplicates = set(), []
-        for name, path, old, new, _test, _marker in mutations:
+        for name, path, old, new, test, marker in mutations:
             key = (str(path), old)
             if key in seen:
                 duplicates.append(name)
             seen.add(key)
             if path.read_text().count(old) != 1 or old == new:
                 errors.append(f'{name}: expired or invalid anchor')
+            elif not test or not marker:
+                # #2140 fix-r3 sibling (DS r3 sibling#4): an empty marker makes
+                # classify()'s substring test match ANY panic -- same class as
+                # the CLI twin's row_error.
+                errors.append(f'{name}: empty test or marker binding')
+        if not mutations:
+            # #2140 fix-r3 sibling (DS r3 sibling#4, #1364 P0-a form): an empty
+            # manifest must never print "0 anchors checked" and return 0.
+            print('empty mutation manifest; refusing to pass', file=sys.stderr)
+            return 2
         print('\n'.join(errors) if errors else
               f'{len(seen)} unique anchors checked ({len(mutations)} rows)')
         if duplicates:
