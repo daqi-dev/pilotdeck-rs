@@ -5855,14 +5855,13 @@ def _helper_exits_zero(target, lookup, seen, aliases=None):
             hands_back = True
             if item.value is None:
                 return True
-            if _calls_aggregate(item.value):
-                continue  # this return routes its own code through the map
             # fix-r6 (DS boundary r5 P1): an unresolvable pure-literal test
             # certifies no arm, and for this presence scan that is "an
             # exit-zero path cannot be ruled out", not "there is none" --
             # ``return 0 if 1.0 is 1.0 else 1`` takes the zero arm at
             # runtime, so the empty arm set fails closed here too.
-            if not _exit_arms(item.value):
+            arms = _exit_arms(item.value)
+            if not arms:
                 return True
             # fix-r22 (DS sibling#1 r21 P1, probe-verified — fix-r22-audit/
             # probe-r22-arb.out B1/B3): flattening can also drop one arm
@@ -5875,13 +5874,26 @@ def _helper_exits_zero(target, lookup, seen, aliases=None):
                     return True
             except RecursionError:
                 return True
+            # fix-r23 (DS boundary r22 P0, probe-verified — fix-r22-audit/
+            # probe-r22-ds-b0.out F1 + probe-r22-ds-b0-chain.out): the
+            # routes-through-the-map exemption used to run FIRST and as a
+            # whole-tree scan, so a return that merely MENTIONED the
+            # shared aggregate in an arm the flattener drops
+            # (``(1.0 is 1.0) and (0 if flag else
+            # common.aggregate_status(rows)[0])``) was exempted while
+            # the runtime always took the clean literal.  The exemption
+            # is now judged on the exit arms only — the fix-r7 semantics
+            # the slot scan already uses — and only after the empty /
+            # partial set has failed closed.
+            if any(_calls_aggregate(arm) for arm in arms):
+                continue  # this return routes its own code through the map
             if _constant_exit_zero(item.value) or any(
-                    _constant_exit_zero(arm) for arm in _exit_arms(item.value)):
+                    _constant_exit_zero(arm) for arm in arms):
                 return True
             if any(isinstance(arm, ast.Name)
                    and _exit_name_violation(arm.id, bindings, target, lookup,
                                            aliases)
-                   for arm in _exit_arms(item.value)):
+                   for arm in arms):
                 # ``code = 0; return code`` inside the helper is the same leak
                 # as a literal zero: the point-level rule already judges the
                 # relayed name, so the delegation family may not call it clean
@@ -7373,8 +7385,13 @@ def _aggregation_audit_impl():
         # stack overflow for ~60k unary chains reports as MemoryError
         # ("Parser stack overflowed"), which RecursionError does not
         # cover — it joins the tuple so the same per-file line answers.
-        except (OSError, SyntaxError, UnicodeError, RecursionError,
-                MemoryError) as error:
+        # fix-r23 (DS concurrency#1 r22, probe-verified — fix-r22-audit/
+        # probe-r23-nul.out): a NUL byte in the source reports as
+        # SyntaxError on this interpreter (3.14) and as ValueError on
+        # older ones (<=3.11) — ValueError joins the tuple so both
+        # answer with the same per-file line, never a table collapse.
+        except (OSError, SyntaxError, ValueError, UnicodeError,
+                RecursionError, MemoryError) as error:
             failures.append(f'#164-fix-r7 aggregation-audit: cannot scan '
                             f'{rel}: {type(error).__name__}: {error}')
             continue
@@ -7503,8 +7520,11 @@ def _aggregation_audit_impl():
         # parse point in this function was left behind when the first
         # gained RecursionError (fix-r21) and MemoryError (fix-r22) —
         # same shapes, same risk, same per-definition fail-closed line.
-        except (OSError, SyntaxError, UnicodeError, RecursionError,
-                MemoryError) as error:
+        # fix-r23 (DS concurrency#1 r22): ValueError joins here too
+        # (NUL-byte sources on <=3.11 interpreters), same per-definition
+        # line, never a table collapse.
+        except (OSError, SyntaxError, ValueError, UnicodeError,
+                RecursionError, MemoryError) as error:
             failures.append(f'#892 aggregation-audit: cannot scan proven '
                             f'definition {definition_rel}: '
                             f'{type(error).__name__}: {error}')
@@ -9281,6 +9301,58 @@ def _aggregation_audit_impl():
                for slot in _fsr7_return_slots):
         failures.append('#892 aggregation-audit: a partial-arm return '
                         'element read as proven-clean (#1652)')
+    # fix-r23 (DS boundary r22 P0, probe-verified — fix-r22-audit/
+    # probe-r22-ds-b0.out F1 + probe-r22-ds-b0-chain.out): the
+    # routes-through-the-map exemption in _helper_exits_zero is judged
+    # on the exit arms and only after the empty/partial set failed
+    # closed — a return that merely MENTIONS the shared aggregate in an
+    # arm the flattener drops may not exempt the helper.  Both top
+    # shapes (BoolOp and IfExp) must read as exiting zero.
+    _fsr8_boolop = ast.parse(
+        'def _fsr8_boolop(rows):\n'
+        '    return (1.0 is 1.0) and (\n'
+        '        0 if flag else common.aggregate_status(rows)[0])\n').body[0]
+    if not _helper_exits_zero(_fsr8_boolop, {}, set()):
+        failures.append('#892 aggregation-audit: a whole-tree shared-call '
+                        'mention in a flattened-away arm exempted a '
+                        'zero-returning helper (#1652)')
+    _fsr8_ifexp = ast.parse(
+        'def _fsr8_ifexp(rows):\n'
+        '    return 0 if (1.0 is 1.0) else '
+        'common.aggregate_status(rows)[0]\n').body[0]
+    if not _helper_exits_zero(_fsr8_ifexp, {}, set()):
+        failures.append('#892 aggregation-audit: a shared-call mention '
+                        'under an unresolvable arm test exempted a '
+                        'zero-returning helper (#1652)')
+    # The exemption itself must survive the re-ordering — no
+    # over-collection: a live relay arm and a complete mixed arm both
+    # still route through the map and stay unflagged.
+    _fsr8_live = ast.parse(
+        'def _fsr8_live(rows):\n'
+        '    return common.aggregate_status(rows)[0]\n').body[0]
+    if _helper_exits_zero(_fsr8_live, {}, set()):
+        failures.append('#892 aggregation-audit: a live shared relay '
+                        'helper was read as exiting zero (#1652)')
+    _fsr8_mixed = ast.parse(
+        'def _fsr8_mixed(rows):\n'
+        '    return 0 if flag else common.aggregate_status(rows)[0]\n'
+        ).body[0]
+    if _helper_exits_zero(_fsr8_mixed, {}, set()):
+        failures.append('#892 aggregation-audit: a complete-arm mixed '
+                        'relay was read as exiting zero (#1652)')
+    # A PARTIAL set may not exempt either, even when the surviving arm
+    # itself carries the mention — the dropped arm is what runtime
+    # flag=False would take, and a partial set certifies no more than
+    # the empty one (the fix-r22 polarity; the exemption reads it only
+    # after that check).
+    _fsr8_partial = ast.parse(
+        'def _fsr8_partial(rows):\n'
+        '    return common.aggregate_status(rows)[0] if flag else (\n'
+        '        0 if (1.0 is 1.0) else 7)\n').body[0]
+    if not _helper_exits_zero(_fsr8_partial, {}, set()):
+        failures.append('#892 aggregation-audit: a partial-arm shared-call '
+                        'mention in the surviving arm exempted a '
+                        'zero-returning helper (#1652)')
     # The scan-stage RecursionError boundary (DS concurrency#2 r21) has
     # no always-on face: a real scanned file cannot carry a 1200-deep
     # return chain, so its kill coverage is the mutneg-r22 injection
