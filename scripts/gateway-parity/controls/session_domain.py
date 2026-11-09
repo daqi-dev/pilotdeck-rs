@@ -1575,7 +1575,12 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     try:
         check_case(args.case, args.output.resolve(), args.source)
-    except (ValueError, OSError, KeyError, TypeError, StopIteration, subprocess.SubprocessError) as error:
+    # fix-r15 (anthropic sibling#1 r14 P2): MemoryError joins the recorded-
+    # FAIL family — a memory blow-up inside a control case must land in
+    # verdict.json as a FAIL, not crash the harness with a raw traceback
+    # (same rationale as session_domain.py fix-r6).
+    except (ValueError, OSError, KeyError, TypeError, StopIteration,
+            subprocess.SubprocessError, MemoryError) as error:
         result = {'status': 'FAIL', 'rule': getattr(error, 'rule', 'CONTROL_EXECUTION'), 'detail': str(error)}
     else:
         result = {'status': 'PASS', 'rule': None}

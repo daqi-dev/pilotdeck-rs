@@ -1010,6 +1010,22 @@ def _status_words():
 _FOLD_STRING_UNRESOLVED = object()
 
 
+def _folded_status_hit(folded, words):
+    """fix-r15 (DS simplify#1 r14 P2): one place for the fail-closed read of
+    a string fold.  A stopped fold (the sentinel) certifies nothing about
+    absence, so it counts as a hit — over-collecting a function into the
+    enumeration flags it, missing one loses the audit.  A plain None (an
+    operand is not a constant literal / the interpreter itself cannot build
+    the pair / an *exact* size bound proved the result too long to be any
+    status word) stays a miss.  The one consumer that must NOT use this —
+    ``_nested_slot_fail_closed`` — keeps the bare ``in``: there False is
+    the safe (flagging) direction, so this helper must not be applied to
+    it in some later tidying pass.
+    """
+    return (folded is _FOLD_STRING_UNRESOLVED
+            or (folded is not None and folded in words))
+
+
 def _folded_string(node, budget=None):
     """The string *node* builds out of constants, or None, or the stopped-fold
     sentinel ``_FOLD_STRING_UNRESOLVED`` (#892 r20).
@@ -1033,9 +1049,9 @@ def _folded_string(node, budget=None):
     result far past the fold budget — MemoryError escapes an
     ``except Exception`` that re-raises it, and on a big machine it simply
     succeeds and hands a 2 GB string to the status-word membership test.
-    Every fold-level error now folds to None — the shape is not a known
-    literal — and the ``%`` branch is bounded *before* the interpreter is
-    asked to build anything.
+    A fold-level error resolves to ``_FOLD_STRING_UNRESOLVED`` since
+    fix-r14 (see the fix-r14 paragraph below), and the ``%`` branch is
+    bounded *before* the interpreter is asked to build anything.
 
     fix-r13 (DS sibling#2 r12 P2, probe-verified —
     fix-r13-audit/probe-r13-p1.out C): the string fold is the other half
@@ -1158,8 +1174,19 @@ def _folded_string_fold(node, budget):
             # fix-r9 (DS simplify r8 P2): the scan lives in
             # ``_format_max_width`` — one implementation for both folds.
             width, specs = _format_max_width(left)
+            # fix-r15 (DS concurrency#1 r14 P0, probe-verified — fix-r15-audit/
+            # probe-r15-p0.out A/A2/B): this bound is an *over-estimate* — a
+            # precision conversion (``'%.6s'``) truncates, so a 1e6-char
+            # operand can produce the exact word ``'status'`` at runtime
+            # while the fold refuses to compute it, and the consumers read
+            # that refusal as "not a status key / literal / clean write".  A
+            # refusal on an inexact bound certifies nothing, so it stops the
+            # fold as the sentinel — the same fail-closed polarity as budget
+            # exhaustion.  The Add/Mult size rejections keep their plain None:
+            # their bounds are exact, so the result is provably too long to
+            # equal any status word.
             if len(left) + len(specs) * max(len(right), width) > _FOLD_MAX_ITEMS:
-                return None
+                return _FOLD_STRING_UNRESOLVED
             # fix-r13 (DS sibling#2 r12 P2): the format result is charged
             # to the fold budget before the interpreter builds it — an
             # exhausted budget stops the fold (fix-r14: as the sentinel).
@@ -1180,7 +1207,8 @@ def _folded_string_fold(node, budget):
             # on the folded result's length.  fix-r7 (MM boundary r6 P2):
             # ``len(left) == 0`` keeps the cap at zero while the repetition
             # itself still raises OverflowError for an oversized count
-            # (``'' * 10**100``); the wrapper folds that to None.
+            # (``'' * 10**100``); the wrapper resolves that to the sentinel
+            # (fix-r14).
             if len(left) * abs(node.right.value) > _FOLD_MAX_ITEMS:
                 return None
             # fix-r13 (DS sibling#2 r12 P2): the repetition is charged to
@@ -1200,9 +1228,8 @@ def _status_literals(node):
     # certifies nothing about absence — it reads as a status literal, the
     # conservative direction for every marker this feeds (over-collecting a
     # function into the enumeration flags it; missing one loses the audit).
-    if folded is _FOLD_STRING_UNRESOLVED:
-        return True
-    if folded is not None and folded in words:
+    # fix-r15: the polarity lives in _folded_status_hit (DS simplify#1).
+    if _folded_status_hit(folded, words):
         return True
     return any(isinstance(n, ast.Constant) and n.value in words for n in ast.walk(node))
 
@@ -1324,11 +1351,9 @@ def _status_key(node):
     probe-r14-p0.out B): a fold stopped by the audit-pass cell reads as a
     status key — "unknowable" must not degrade into "not a status key",
     which un-enumerates the very writes the padding attack targets.
+    fix-r15: the polarity lives in _folded_status_hit (DS simplify#1).
     """
-    folded = _folded_string(node)
-    if folded is _FOLD_STRING_UNRESOLVED:
-        return True
-    return folded in _STATUS_KEYS
+    return _folded_status_hit(_folded_string(node), _STATUS_KEYS)
 
 
 def _dict_has_status(summary):
@@ -5067,10 +5092,9 @@ def _assigns_clean_status(value, bindings, seen=None, module=None,
         # fix-r14 (DS boundary#1 r13 P0, probe-verified — fix-r14-audit/
         # probe-r14-p0.out B): a fold stopped by the audit-pass cell reads
         # as a possible clean write — True here reports the violation, the
-        # fail-closed direction for this consumer.
-        if folded is _FOLD_STRING_UNRESOLVED:
-            return True
-        if folded is not None and folded in _CLEAN_STATUS_LITERALS:
+        # fail-closed direction for this consumer.  fix-r15: the polarity
+        # lives in _folded_status_hit (DS simplify#1).
+        if _folded_status_hit(folded, _CLEAN_STATUS_LITERALS):
             # ``'PA' + 'SS'`` / ``f'{"PASS"}'`` reach the slot as the clean
             # literal without ever being a ``Constant`` node (GLM boundary r19
             # P1-2).
@@ -7878,7 +7902,11 @@ def _aggregation_audit_impl():
                             f'an unbounded literal {_source!r} instead of failing '
                             'closed (#1652)')
     for _source in ("'%100000000s' % 'x'", "'%-100000000s' % 'x'"):
-        if _folded_string(ast.parse(_source, mode='eval').body) is not None:
+        # fix-r15: an oversized inexact format bound stops the fold as the
+        # sentinel (DS concurrency#1 r14 P0) — failing closed reads as the
+        # sentinel now, not as the pre-r14 None.
+        if (_folded_string(ast.parse(_source, mode='eval').body)
+                is not _FOLD_STRING_UNRESOLVED):
             failures.append('#892 aggregation-audit: the string fold computed an '
                             f'unbounded format result {_source!r} instead of '
                             'failing closed (#1652)')
@@ -8213,21 +8241,69 @@ def _aggregation_audit_impl():
     # probe-r14-p0.out A): the same hole at the enumeration face —
     # padding that exhausts the per-file cell, then a folded-spelling
     # status write in an unregistered function; the rogue must still enter
-    # ``found`` and be flagged as unregistered.
+    # ``found`` and be flagged as unregistered.  fix-r15 (DS concurrency#2
+    # r14 P2; anthropic boundary#1 / DS sibling#3 same family): the pad
+    # count now derives from the cap family instead of the hand-written
+    # 17 — a raised ``_AUDIT_PASS_WORK_CAP`` (or a changed Mult bill)
+    # silently un-spent the cell and turned this pin vacuous — and the
+    # spent cell is itself asserted, so "never exhausted" is a red, not a
+    # silent pass.  The ~17 MB of transient fold strings per run is the
+    # attack's real shape and is deliberate.
+    _pad_size = _FOLD_MAX_ITEMS - 1
+    _pad_count = _AUDIT_PASS_WORK_CAP // _pad_size + 1
     _pad_lines = ['report = {}', '', 'def pad(rows):']
-    _pad_lines += ["    report['x' * 999999] = 1"] * 17
+    _pad_lines += [f"    report['x' * {_pad_size}] = 1"] * _pad_count
     _pad_lines += ['    return 0', '', 'def rogue(rows):',
                    "    report['sta' + 'tus'] = 'PA' + 'SS'", '    return 0']
-    _AUDIT_PASS_BUDGET = [_AUDIT_PASS_WORK_CAP]
+    _pad_cell = [_AUDIT_PASS_WORK_CAP]
+    _AUDIT_PASS_BUDGET = _pad_cell
     try:
         _rogue_found, _rogue_dup = scan_aggregation_tree(
             ast.parse('\n'.join(_pad_lines)), 'fix-r14-self-check.py')
     finally:
         _AUDIT_PASS_BUDGET = None
+    if _pad_cell[0] >= 0:
+        failures.append('#892 aggregation-audit: the padding pin never spent '
+                        'the audit-pass cell (#1652)')
     if ('fix-r14-self-check.py', 'rogue') not in _rogue_found:
         failures.append('#892 aggregation-audit: a folded-spelling status '
                         'write escaped enumeration behind audit-pass '
                         'padding (#1652)')
+    # #1652 fix-r15 (DS concurrency#1 r14 P0, probe-verified —
+    # fix-r15-audit/probe-r15-p0.out A/A2/B): the format size bound is an
+    # over-estimate (a precision conversion truncates), so its refusal
+    # must stop the fold as the sentinel — never the fail-open None.
+    # Unit face: the oversized-operand fold is the sentinel while the same
+    # conversion on a small operand still folds to the exact word.
+    _fsr_big = ast.parse("'%.6s' % ('sta' + 'tus' + 'x' * 999994)",
+                         mode='eval').body
+    _fsr_small = ast.parse("'%.6s' % 'statusxy'", mode='eval').body
+    if (_folded_string(_fsr_big) is not _FOLD_STRING_UNRESOLVED
+            or _folded_string(_fsr_small) != 'status'):
+        failures.append('#892 aggregation-audit: the format size refusal '
+                        'read as negative status evidence instead of '
+                        'stopping the fold (#1652)')
+    # End-to-end key face: the runtime key of the write below is exactly
+    # 'status' ('%.6s' truncates), so the rogue must be enumerated.
+    _fsr_key_lines = ['report = {}', '', 'def rogue(rows):',
+                      "    report['%.6s' % ('sta' + 'tus' + 'x' * 999994)]"
+                      " = 'PASS'", '    return 0']
+    _fsr_found, _fsr_dup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr_key_lines)), 'fix-r15-self-check.py')
+    if ('fix-r15-self-check.py', 'rogue') not in _fsr_found:
+        failures.append('#892 aggregation-audit: a precision-truncated status '
+                        'key escaped enumeration behind the format size '
+                        'refusal (#1652)')
+    # End-to-end value face: the runtime value is exactly 'PASS'.
+    _fsr_val_lines = ['report = {}', '', 'def rogue(rows):',
+                      "    report['sta' + 'tus'] = "
+                      "'%.4s' % ('PA' + 'SS' + 'x' * 999994)", '    return 0']
+    _fsr_vfound, _fsr_vdup = scan_aggregation_tree(
+        ast.parse('\n'.join(_fsr_val_lines)), 'fix-r15-self-check.py')
+    if ('fix-r15-self-check.py', 'rogue') not in _fsr_vfound:
+        failures.append('#892 aggregation-audit: a precision-truncated status '
+                        'value escaped enumeration behind the format size '
+                        'refusal (#1652)')
     # #1652 fix-r12 (DS concurrency#2 r11 P2, probe-verified —
     # fix-r12-audit/probe-r12-p1.out B): the BoolOp value fold is lazy —
     # a settling operand ends the fold, so a zero-size pile behind it is

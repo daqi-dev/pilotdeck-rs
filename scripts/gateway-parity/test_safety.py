@@ -1965,6 +1965,41 @@ class ApparatusInputs(unittest.TestCase):
             self.assertLess(checks[0].lineno, min(later),
                             '#991 -I check must precede every other import: ' + name)
 
+    def test_control_single_case_handler_records_memory_error(self):
+        # fix-r15 (anthropic sibling#1 r14 P2): a MemoryError raised inside a
+        # control case must land in verdict.json as a recorded FAIL, not fall
+        # through to run_entry's traceback policy (which writes no verdict).
+        # #166 blocks executing a mutated copy of this registered file, so the
+        # revert mutant is killed by this source-reading pin instead — the
+        # healthy-path behaviour is covered by the standalone case run in the
+        # fix-r15 battery.
+        import ast
+        text = (common.SCRIPT / 'controls' / 'session_domain.py').read_text(
+            encoding='utf-8')
+        mains = [node for node in ast.parse(text).body
+                 if isinstance(node, ast.FunctionDef) and node.name == 'main']
+        self.assertEqual(len(mains), 1, '#166 exactly one main in the control entry')
+        guarded = None
+        for stmt in ast.walk(mains[0]):
+            if isinstance(stmt, ast.Try) and any(
+                    isinstance(item, ast.Expr)
+                    and isinstance(item.value, ast.Call)
+                    and getattr(item.value.func, 'id', None) == 'check_case'
+                    for item in stmt.body):
+                guarded = stmt
+                break
+        self.assertIsNotNone(guarded,
+                             'fix-r15: main must run check_case under its handler')
+        recorded = set()
+        for exc in guarded.handlers:
+            members = (exc.type.elts if isinstance(exc.type, ast.Tuple)
+                       else [exc.type])
+            recorded.update(member.id for member in members
+                            if isinstance(member, ast.Name))
+        self.assertIn('MemoryError', recorded,
+                      'fix-r15: a control-case MemoryError must be recorded as '
+                      'a FAIL verdict, not the traceback policy')
+
     def test_cli_main_is_only_the_one_guard_call(self):
         # The guard's single implementation is only useful if no entry keeps a
         # private bootstrap/classifier.  Each product CLI __main__ is exactly
