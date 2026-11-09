@@ -1907,3 +1907,44 @@ Like rounds 24 to 35, these shapes need a module-scope trigger plus a write
 inside a function, which one `(old, new)` replacement cannot express; the
 end-to-end repro and the per-shape detector probes are in the PR body
 (#1953).
+
+### Closed by `fix-r1` round 37 (codex r36 P0-1..P0-5 / P1-1..P1-6, all eleven)
+
+Round 36 pinned the alias hop on the *call position*, so `lk = globals`
+captured before a later shadow still resolved the builtin at the position
+`lk` was read -- the round-36 check asked `_head_shadowed` about the alias
+name at the wrong spot (false PASS).  A `match` capture binds the subject's
+*value* at the statement, but the three registration walks resolved the
+captured name before the subject was processed, so `match _sa: case _sa:`
+erased an imported write helper it really rebinds (false PASS).  `del`
+with a tuple target and `from builtins import *` never registered, so both
+left a stale shadow in force (false PASS).  `_container_base` read the raw
+`node.func`, so `next((_h := iter)(hs))` and `(_g := hs.copy)()[0](...)`
+returned `None` for the whole chain and dropped the write (false PASS).
+On the false-FAIL side: `lambda: -1` was not provably inert while `lambda: 1`
+was; a statically certain short-circuit (`True and (globals := ...)`) still
+got the conditional mark; a class-body `from builtins import globals`
+shadowed the module binding it never touches; a comprehension target
+shadowed its own first iterable; `collect()` read the raw callee so a
+walrus callee freshly rebound to a no-op still withdrew its receiver; and
+the per-child recursion in `scan` crashed on a 1100-deep expression.
+
+| Shape | Mutant / self-test |
+|---|---|
+| **A head captured before a shadow is resolved at the read** (false PASS guard): `lk = globals; globals = lambda: {'main': lambda x: None}; held = lk()['main']`. | self-test message `... kept a head captured before a shadow out of the site table (round 37)`; `_module_alias_head_reads` returns `(head, read-position)` pairs and both twin branches (`_module_open_calls`, `_contains_dynamic_lookup`) test shadows at the read position |
+| **A match capture rebinds from the subject** (false PASS guard): `from builtins import setattr as _sa; match _sa: case _sa:`, then `_sa(md, 'common', object())` inside a function. | self-test message `... lost the write helper a match capture rebinds from the subject (round 37)`; all three registration walks append the capture to `pending` with the subject node, resolved against the bindings in force at the statement |
+| **A tuple delete unshadows the head** (false PASS guard): `globals = lambda: {'main': lambda x: None}; del (globals,)`, then the call chain. | self-test message `... kept a tuple delete from unshadowing the head (round 37)`; `_deleted_names` recurses through `Tuple`/`List` elements |
+| **A star import unshadows the head** (false PASS guard): `globals = lambda: {'main': lambda x: None}; from builtins import *`, then the call chain. | self-test message `... kept a star import from unshadowing the head (round 37)`; the `ImportFrom` branch of `_head_binding_names` returns every head on `*` |
+| **A walrus wrapper callee still carries the container** (false PASS guard): `hs = [getattr(md, k) for k in ('__setattr__',)]; next((_h := iter)(hs))('common', object())`. | self-test message `... lost the receiver behind a walrus wrapper callee (round 37)`; `_container_base` reads the callee through `_callee_expr` |
+| **A walrus copy-wrapper subscript still carries the container** (false PASS guard): `hs = [getattr(md, k) for k in ('__setattr__',)]; (_g := hs.copy)()[0]('common', object())`. | self-test message `... lost the receiver behind a walrus copy-wrapper subscript (round 37)`; same `_callee_expr` unwrap on the container base |
+| **A signed-literal lambda stays inert** (false FAIL guard): `globals = lambda: {'main': lambda x: -1}`, then the call chain -- no site. | self-test message `... kept an inert signed-literal lambda as a head shadow (round 37)`; `_inert_literal_expr` recurses through `USub`/`UAdd`/`Invert`/`Not` |
+| **A statically certain short-circuit walrus shadows outright** (false FAIL guard): `True and (globals := lambda: {'main': lambda x: None}); held = (_g := globals)()['main']`. | self-test message `... kept a statically certain short-circuit walrus as a conditional shadow (round 37)`; `_static_truth` via `ast.literal_eval` drives the `BoolOp`/`IfExp` marks |
+| **A class-body import does not shadow the module** (false FAIL guard): `class _C37: from builtins import globals` at module scope, then the call chain -- no site. | self-test message `... let a class-body import shadow the module binding (round 37)`; `_module_alias_bindings` skips class spans unless the name is declared `global` there |
+| **A comprehension target does not shadow its first iterable** (false FAIL guard): `globals = lambda: [0]; held = [lambda x: None for globals in globals()][0]`, then the call -- no site. | self-test message `... let a comprehension target shadow its own first iterable (round 37)`; `scan` builds the comprehension scope incrementally, iterable first, target after |
+| **A walrus callee freshly rebound to nothing stops withdrawing** (false FAIL guard): `_f = setattr; _f = lambda *a: None; (_g := _f)(md, 'common', object())`. | self-test message `... withdrew a receiver on a walrus callee freshly rebound to nothing (round 37)`; `collect()` reads every callee through `_callee_expr` |
+| **A deep expression does not crash the walk** (crash guard): `held = 1 + 1 + ... (1100 operands)`. | self-test message `... let a deep expression crash the site walk (round 37)`; `scan` keeps an explicit stack instead of per-child recursion |
+
+Like the earlier rounds, these shapes need a module-scope trigger plus a
+write inside a function, which one `(old, new)` replacement cannot express;
+the end-to-end repro and the per-shape detector probes are in the PR body
+(#1953).
