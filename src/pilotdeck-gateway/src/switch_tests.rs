@@ -930,7 +930,11 @@ async fn a_cancelled_stop_face_leaves_the_gate_closed() {
 /// ordinary host that served one management dispatch. The assertions are
 /// identity-based (weak handles to this test's own manager and gate), not
 /// registry-wide counts: the registry is process-global, so a census would
-/// be perturbed by sibling tests registering their own managers.
+/// be perturbed by sibling tests registering their own managers — and the
+/// lookups themselves compare keys by pointer without upgrading them, so a
+/// sibling's in-flight lookup cannot lend this test's dropped manager a
+/// fleeting strong reference and turn the death assertion into a
+/// parallel-run false failure.
 #[test]
 fn the_management_gate_registry_forgets_dead_managers() {
     let scratch = Scratch::new("switch-cron-gate-registry");
@@ -952,9 +956,18 @@ fn the_management_gate_registry_forgets_dead_managers() {
     // removed, the dead-key entry — and its gate — would survive; with it,
     // the weak gate is dead once the sweep has run.)
     let second = cron_manager(&scratch);
-    let _second_gate = crate::switch::cron_management_gate(&second);
+    let second_gate = crate::switch::cron_management_gate(&second);
     assert!(
         first_gate.upgrade().is_none(),
         "#2363 the dropped manager's entry is swept, not retained"
+    );
+    // The lookup half of the contract: a repeat lookup of a live manager
+    // must reuse the registered gate. (With the registration — or the
+    // pointer-identity find — gone, every lookup would mint a fresh gate
+    // and this fails.)
+    let again = crate::switch::cron_management_gate(&second);
+    assert!(
+        Arc::ptr_eq(&again, &second_gate),
+        "#2363 the lookup reuses the registered gate"
     );
 }
