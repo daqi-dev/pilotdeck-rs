@@ -70,6 +70,13 @@ pub(crate) fn route_with_metadata<F: Files>(
     request: &JsValue,
     metadata: Option<&Metadata<F>>,
 ) -> Route {
+    crate::routes::route(request, metadata)
+}
+
+pub(crate) fn route_metadata<F: Files>(
+    request: &JsValue,
+    metadata: Option<&Metadata<F>>,
+) -> Route {
     route_with_environment(request, metadata, None)
 }
 

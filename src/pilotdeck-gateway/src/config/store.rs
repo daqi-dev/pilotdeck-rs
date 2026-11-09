@@ -263,13 +263,21 @@ impl ConfigStore {
     /// `startWatching`. Must be called inside a Tokio runtime. The returned
     /// handle stops watching when dropped or via [`WatchHandle::stop`].
     pub fn start_watching(&self, options: WatchOptions) -> Result<WatchHandle, Error> {
+        self.start_watching_on(options, &tokio::runtime::Handle::current())
+    }
+
+    pub(crate) fn start_watching_on(
+        &self,
+        options: WatchOptions,
+        runtime: &tokio::runtime::Handle,
+    ) -> Result<WatchHandle, Error> {
         let paths = self
             .watched_paths()?
             .into_iter()
             .filter_map(WatchedPath::new)
             .collect();
         let (sender, receiver) = mpsc::unbounded_channel();
-        let task = tokio::spawn(watch_loop(
+        let task = runtime.spawn(watch_loop(
             Arc::downgrade(&self.inner),
             paths,
             options,

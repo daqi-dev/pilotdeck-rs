@@ -61,7 +61,7 @@ where
     run_with_domain_state(
         downstream,
         upstream,
-        None::<crate::metadata::Metadata>,
+        crate::metadata::Metadata::from_env()?,
         PairedServices {
             mcp,
             ..Default::default()
@@ -419,12 +419,23 @@ where
                             (frame, vec![route])
                         });
                     } else if eligible
-                        && request.as_ref().is_some_and(dispatch::is_local)
+                        && request.as_ref().is_some_and(crate::routes::is_local)
                         && !(mcp.is_none()
                             && metadata.is_none()
                             && request.as_ref().is_some_and(crate::routes::is_mcp))
                     {
-                        let request = request.expect("eligible local request");
+                        let mut request = request.expect("eligible local request");
+                        // This proxy fronts a `pilotdeck server` boot, whose
+                        // fallbackProjectRoot is PILOT_HOME (pilotdeck.ts:107-111):
+                        // a nullish archive projectKey reads the General
+                        // workspace, not this process's cwd. Same shared fill
+                        // as the isolated gate, with the proxy boot's fallback.
+                        if let Some(metadata) = metadata.as_ref() {
+                            crate::native_archive::fill_request_default_project_key(
+                                &mut request,
+                                &metadata.home,
+                            );
+                        }
                         if crate::routes::is_mcp(&request) {
                             let mcp = mcp.cloned();
                             jobs.spawn(async move {
@@ -432,7 +443,7 @@ where
                                     crate::routes::route_mcp(&request, mcp.as_deref()).await;
                                 (frame, vec![route])
                             });
-                        } else if dispatch::needs_files(&request) {
+                        } else if crate::routes::needs_files(&request) {
                             let metadata = metadata.cloned();
                             let interactions = interactions.clone();
                             // Completion is polled only after the current input
@@ -803,7 +814,7 @@ where
                             }));
                         } else if authenticated
                             && parsed.as_ref().is_some_and(dispatch::is_request)
-                            && parsed.as_ref().is_some_and(dispatch::is_local)
+                            && parsed.as_ref().is_some_and(crate::routes::is_local)
                             && !(connection.is_native() && parsed.as_ref().and_then(|r|crate::metadata::text_field(r,"method")).is_some_and(|m| crate::runtime::mcp::routes::McpRoutes::handles(&m) || crate::runtime::turn::wiring::NATIVE_METHODS.contains(&m.as_str())))
                             && !matches!(
                                 parsed
@@ -846,7 +857,7 @@ where
                                         unreachable!("owned dialog response")
                                     };
                                     String::from_utf8(payload).expect("JSON response")
-                                } else if dispatch::needs_files(&request) {
+                                } else if crate::routes::needs_files(&request) {
                                     tokio::task::spawn_blocking(move || {
                                         local_route(&request, metadata.as_deref(), &interactions)
                                     })
@@ -964,7 +975,7 @@ fn should_forward(request: &pilotdeck_protocol::JsValue, legacy_submit: bool) ->
                             .is_some()
                 });
     }
-    !dispatch::is_local(request)
+    !crate::routes::is_local(request)
         && !crate::routes::native_request(request)
         && !is_automation(request)
         && !crate::runtime::session::routes::METHODS.contains(&method.as_str())

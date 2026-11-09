@@ -180,7 +180,7 @@ fn start_watching(state: &SharedConfigRoutes) {
     routes.watch_subscription = Some(routes.store.subscribe(listener));
     routes.watcher = routes
         .store
-        .start_watching(WatchOptions::default())
+        .start_watching_on(WatchOptions::default(), executor().handle())
         .ok();
 }
 

@@ -1,8 +1,8 @@
 use super::RuntimeError;
 use crate::cron::always_on::storage::absolute;
 use crate::runtime::background::{
-    BackgroundResources, BackgroundTaskRuntime, BackgroundTaskRuntimeOptions,
-    background_tasks_for_sdk, stop_background_task_for_sdk,
+    BackgroundResources, BackgroundTaskRuntime, background_tasks_for_sdk,
+    stop_background_task_for_sdk,
 };
 use pilotdeck_protocol::{JsValue, parse_json, stringify_json};
 use serde_json::Value;
@@ -39,10 +39,12 @@ impl BackgroundService {
         if let Some(resources) = state.projects.get(&key) {
             return Ok(resources.clone());
         }
-        let tasks = BackgroundTaskRuntime::new(BackgroundTaskRuntimeOptions {
-            disk_spill_dir: Some(key.join(".pilotdeck").join("background-tasks")),
-            ..Default::default()
-        });
+        let tasks = BackgroundTaskRuntime::open_persistent(&key).map_err(|error| {
+            RuntimeError::new(
+                "background_store_failed",
+                String::from_utf16_lossy(error.message.units()),
+            )
+        })?;
         let resources = BackgroundResources {
             tasks,
             subagents: Default::default(),

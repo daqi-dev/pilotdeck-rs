@@ -285,26 +285,17 @@ pub fn try_online_client(
     env: &HashMap<String, String>,
     project_root: Option<&Path>,
 ) -> Result<Option<OnlineUpdateClient>, UpdateCommandError> {
-    let env = env.clone();
-    let project_root = project_root.map(std::path::Path::to_path_buf);
-    std::thread::scope(|scope| {
-        scope
-            .spawn(|| {
-                tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .map_err(|error| failure("runtimeUnavailable", error.to_string()))?
-                    .block_on(async move {
-                        match connect_online(&env, project_root.as_deref()).await {
-                            Ok(client) => Ok(Some(client)),
-                            Err(error) if error.reason == "offline" => Ok(None),
-                            Err(error) => Err(error),
-                        }
-                    })
-            })
-            .join()
-            .map_err(|_| failure("runtimeUnavailable", "Online update probe thread panicked."))?
-    })
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| failure("runtimeUnavailable", error.to_string()))?
+        .block_on(async {
+            match connect_online(env, project_root).await {
+                Ok(client) => Ok(Some(client)),
+                Err(error) if error.reason == "offline" => Ok(None),
+                Err(error) => Err(error),
+            }
+        })
 }
 
 async fn connect_online(

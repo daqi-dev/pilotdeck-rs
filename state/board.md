@@ -3231,3 +3231,23 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 - `wiring_submit.rs`：`GatewaySubmitHost` + `GatewayCompositionBundle` 真接线；edgeclaw/rewind/http `connect_tcp` 等渠道补丁。
 - **`cargo build --workspace` debug 0 err**；`cargo test --lib` / `web_cli` **未交付**（test 编 29 err、缺 bin）。
 - 证据 `pdrs-ext/…/channels-cursor-20261109/r6/最终报告.md`，`logs/build-workspace-ok.log`；upstream runtime 仍 `c412551` 无新 merge。
+
+### 2026-11-09 pdrs-daqi-b-channels r7（merge 2b55ca0 + 定向测绿）
+
+- 提交 `73a133e`（r6）· merge `8166763`（Codex `2b55ca0`，七提交）· `39ca293`（lib test 编绿 + `pilotdeck-web`）。
+- **定向测全绿**：cancel 3 / transcript 6 / bash 15 / memory 12 / channel_http 13 / web_cli 4。
+- **全量 lib**：4197 pass · **27 fail**（未达交付）；证据 `pdrs-ext/…/r7/最终报告.md`，`logs/lib-full-r7b.log`。
+
+### 2026-11-09 pdrs-daqi-b-channels r7 续（Cursor 七项 lib 测）
+
+- **cron background**：`BackgroundTaskRuntime::open_persistent` + `background_store_failed`（对齐 daqi-B）。
+- **产物**：补 `scripts/update-web.mjs`、`assets/cli/*`、`assets/agent-modules/`（自 pdrs-daqi-B，非测改写）。
+- **update_web_client**：`try_online_client` 直接 `block_on`（health_probe）。
+- **connection**：metadata/MCP 缺省 `params` 用 `Undefined` 非 `Null`（mcp_review）。
+- `CARGO_TARGET_DIR=…/target-b-channels-cursor-20261109` 七测全绿；未 commit/push。
+
+### 2026-11-09 pdrs-daqi-b-channels r8（lib 0 failed 交付）
+
+- 收齐 r7 续工作区 + **dispatch/pairing 分层**（`LOCAL_METHODS` vs `routes::is_local`），消 r7 余 27 fail。
+- **全量 lib**：4224 pass · 0 fail（`pdrs-ext/…/r8/logs/lib-full-r8b.log`）；六组定向测全绿（`r8/logs/*`）。
+- 证据 `pdrs-ext/…/channels-cursor-20261109/r8/最终报告.md`；已提交，未 push。

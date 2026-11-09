@@ -224,7 +224,15 @@ impl GatewayConnection {
             .and_then(JsValue::as_string)
             .cloned()
             .unwrap();
-        let input = frame.get("params").cloned().unwrap_or(JsValue::Null);
+        let preserve_missing = method.to_utf8().ok().is_some_and(|method| {
+            crate::runtime::mcp::routes::McpRoutes::handles(&method)
+                || crate::routes::is_metadata_method(&method)
+        });
+        let input = frame.get("params").cloned().unwrap_or(if preserve_missing {
+            JsValue::Undefined
+        } else {
+            JsValue::Null
+        });
         let session_value = input.get("sessionKey").cloned().unwrap_or(JsValue::Null);
         let session = truthy(&session_value).then(|| SessionKey::new(session_value));
         let is_submit = method.equals_str("submit_turn");
