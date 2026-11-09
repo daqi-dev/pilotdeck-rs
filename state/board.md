@@ -3296,3 +3296,8 @@ updated: 2026-11-05 13:4x · by Claude Code 协调者（13:4x 交接：#1419 合
 
 - `[Attachment diagnostics]` 回合；三处排队 + `/new` 清队列；上传仅 200；302 后 GET 不重放 POST；建议项一并收口。
 - **全量 lib** 4282/0；证据 `pdrs-ext/…/r17/最终报告.md`，`r17/logs/lib-full-r17.log`；已提交，未 push。
+
+### 2026-11-10 pdrs-daqi-b-channels r18（Grok r17 FAIL 五项 + 建议全修）
+
+- 坏图中文诊断 + 单块 diagnostics；outbox 失败入队；权限/追问 `reply` 不入队；`MessageItemType` 3=VOICE/4=FILE；file_name/空 voice/空 x-error-message；DNS/池/锁/Host 线测/拆分 inbound+attach tests。
+- **全量 lib** 4288/0；证据 `pdrs-ext/…/r18/最终报告.md`，`r18/logs/lib-full-r18.log`；见本链 HEAD，未 push。
