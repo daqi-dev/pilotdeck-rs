@@ -3511,10 +3511,11 @@ replay_cases! {
 /// #1913: an HTTP/1.0 request — even one asking for `Connection: keep-alive`
 /// — draws a close-delimited response and a closed socket, as Node does (the
 /// pinned Node v22.22.0 measurement lives in
-/// `_tmp/20261108-sms-residual/probe-sms-http10.out`). Only the status line
-/// differs: Node answers `HTTP/1.1`, hyper writes its own `HTTP/1.0` (the
-/// accepted-diff entry A8.3-CH-SMS-015, the same class as the webhook lane's
-/// A8.3-CH-WEBHOOK-004). The replay cell above cannot see any of this — the
+/// `_tmp/20261108-sms-residual/probe-sms-http10.out`). The status line is
+/// one difference: Node answers `HTTP/1.1`, hyper writes its own `HTTP/1.0`
+/// (the accepted-diff entry A8.3-CH-SMS-015, the same class as the webhook
+/// lane's A8.3-CH-WEBHOOK-004) — the connection-header residual is the
+/// fix-r1 note right below. The replay cell above cannot see any of this — the
 /// oracle records only status/content-type/body, so the status-line version
 /// and the framing would drift silently — this test reads the raw wire.
 /// #2257 fix-r1: the status line is not the only wire-visible difference —
@@ -3579,12 +3580,8 @@ async fn http10_request_closes_the_connection() {
     let (head, body) = text
         .split_once("\r\n\r\n")
         .expect("#1913 pin http10: the response carries a header end");
-    let framed = head.split("\r\n").skip(1).any(|line| {
-        line.split_once(':').is_some_and(|(name, _)| {
-            name.trim().eq_ignore_ascii_case("content-length")
-                || name.trim().eq_ignore_ascii_case("transfer-encoding")
-        })
-    });
+    let framed = head_has_header_named(head, "content-length")
+        || head_has_header_named(head, "transfer-encoding");
     assert!(
         !framed,
         "#1913 pin http10: the 1.0 response is close-delimited like Node's, no content-length and no chunking: {raw:?}"
@@ -3595,10 +3592,7 @@ async fn http10_request_closes_the_connection() {
     // (probe-sms-http10.out), a lane-level framing residual the other native
     // lanes replay by writing the header themselves. Pin the absence: a
     // hyper change that starts writing one must update the ledger, not pass.
-    let connection_header = head.split("\r\n").skip(1).any(|line| {
-        line.split_once(':')
-            .is_some_and(|(name, _)| name.trim().eq_ignore_ascii_case("connection"))
-    });
+    let connection_header = head_has_header_named(head, "connection");
     assert!(
         !connection_header,
         "#1913 pin http10: the 1.0 response carries no `connection` header (close is 1.0's default; Node's `Connection: close` is the lane-level A8.3-CH-SMS-002 framing family): {raw:?}"
@@ -3630,6 +3624,118 @@ async fn raw_until_close(port: u16, request: &[u8]) -> Vec<u8> {
         .await
         .expect("#1913 the 1.0 response must close the connection");
     raw
+}
+
+/// #2257 fix-r2: shared response-head scan for the http10 pins — `true` when
+/// any header line carries `name` (case-insensitive: hyper's bare
+/// `http1::Builder` writes lowercase, Node writes Title-Case). Extracted from
+/// the two inline scans in `http10_request_closes_the_connection`.
+fn head_has_header_named(head: &str, name: &str) -> bool {
+    head.split("\r\n").skip(1).any(|line| {
+        line.split_once(':')
+            .is_some_and(|(header, _)| header.trim().eq_ignore_ascii_case(name))
+    })
+}
+
+/// #2257 fix-r2: positive control for the absence assertions above — the
+/// scan must light up on a real `Connection: close` header (Node's measured
+/// wire shape, `probe-sms-http10.out`), or the pins could pass vacuously
+/// through a broken scan.
+#[test]
+fn head_has_header_named_detects_a_present_header() {
+    let node_shape = "HTTP/1.1 200 OK\r\nContent-Type: text/xml\r\nDate: now\r\nConnection: close\r\n\r\n";
+    assert!(
+        head_has_header_named(node_shape, "connection")
+            && head_has_header_named(node_shape, "CONNECTION")
+            && head_has_header_named(node_shape, "content-type")
+            && !head_has_header_named(node_shape, "x-never-set"),
+        "#2257 the header scan finds present headers case-insensitively and rejects absent ones"
+    );
+    // A header-looking value past the blank line must not be scanned.
+    let with_body = "HTTP/1.0 200 OK\r\ncontent-type: text/xml\r\n\r\nconnection: close";
+    assert!(
+        !head_has_header_named(with_body, "connection"),
+        "#2257 the header scan stops at the header end"
+    );
+}
+
+/// #2257 fix-r2: the 404 branch goes through the same `finalize` (the route
+/// guard answers before the handler), so an HTTP/1.0 request to a wrong path
+/// must draw the same 1.0 framing as the 200 pin above — its own status
+/// line, close-delimited body, no `connection` header. Without this pin the
+/// 404 path could start writing headers on its own and no test would turn
+/// red (review r1 boundary).
+#[tokio::test]
+async fn http10_not_found_keeps_the_close_delimited_framing() {
+    const PORT: u16 = 18922;
+    let case = case_by_name("http10");
+    let steps = recorded_steps(&case).expect("#1339 steps validated array");
+    let recorded = build_raw(
+        steps
+            .first()
+            .expect("#1913 the http10 case carries one request step"),
+    );
+    // Same recorded request bytes except the path: the route guard
+    // (`route_request`) answers 404 before the handler sees anything, so the
+    // pin's path must differ from the recorded `/sms/incoming`.
+    let request: Vec<u8> = {
+        let text = String::from_utf8_lossy(&recorded).into_owned();
+        let (request_line, rest) = text
+            .split_once("\r\n")
+            .expect("#1913 the recorded http10 request carries a request line");
+        let mut words = request_line.split(' ');
+        let method = words.next().expect("#1913 request method");
+        let _recorded_path = words.next().expect("#1913 request path");
+        let version = words.next().expect("#1913 request version");
+        format!("{method} /no-such-path {version}\r\n{rest}").into_bytes()
+    };
+    let mut extra = recorded_extra(&case).cloned().unwrap_or_else(|| json!({}));
+    extra["webhookPort"] = json!(PORT);
+    let channel = SmsChannel::new(SmsChannelOptions {
+        extra: Some(to_js_object(&extra)),
+        mapper: None,
+        gateway: None,
+        env: None,
+        twilio_factory: Some(null_factory()),
+        record_unhandled: None,
+        request_timeout: None,
+    });
+    let handle = channel
+        .start(ChannelStartDeps {
+            config: None,
+            report_status: None,
+            log: None,
+            turn_gateway: None,
+        })
+        .await
+        .expect("#2257 start for the http10 404 pin");
+    let raw = bounded("http10 404 pin response", raw_until_close(PORT, &request)).await;
+    settle().await;
+    bounded("http10 404 pin cleanup stop", handle.stop("cleanup"))
+        .await
+        .expect("#2257 http10 404 pin cleanup stop");
+
+    assert!(
+        raw.starts_with(b"HTTP/1.0 404"),
+        "#2257 pin http10 404: hyper answers the wrong path with its own 1.0 404 status line (same A8.3-CH-SMS-015 class as the 200 pin): {raw:?}"
+    );
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .expect("#2257 pin http10 404: the response carries a header end");
+    assert!(
+        !head_has_header_named(head, "content-length")
+            && !head_has_header_named(head, "transfer-encoding"),
+        "#2257 pin http10 404: the 404 stays close-delimited through finalize, no content-length and no chunking: {raw:?}"
+    );
+    assert!(
+        !head_has_header_named(head, "connection"),
+        "#2257 pin http10 404: the 1.0 404 carries no `connection` header (1.0 default close; Node's `Connection: close` is the A8.3-CH-SMS-002 framing family): {raw:?}"
+    );
+    assert_eq!(
+        body, "Not Found",
+        "#2257 pin http10 404: the static Not Found body closes the response"
+    );
 }
 
 #[test]
