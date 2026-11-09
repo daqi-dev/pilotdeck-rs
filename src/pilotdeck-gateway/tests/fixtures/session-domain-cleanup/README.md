@@ -1516,3 +1516,27 @@ negative); a first S3 pin draft did not isolate the arm-loop polarity
 (mutant M7 survived through the BinOp branch's own operand fold), the
 f-string sentinel-interpolation arm is the isolating face.  Twelve
 revert mutants are killed (`fix-r20-audit/mutneg-r20-variants.out`).
+
+fix-r21 (DS r20 concurrency#1, runtime-arbitrated to P0 under the
+reviewer's pre-registered escalation clause — probe-verified,
+`fix-r21-audit/probe-r21-p0.out` + `e2e-recursion-{before,after}.out`): a
+no-paren conditional chain (`'PASS' if md else 'PASS' if md else … 'FAIL'`)
+has no tokenizer bracket limit to stop it — the parser accepts depth 5000+
+while the flattening walks' frame budgets end far earlier (`_exit_arms`
+around 990, `_exit_uncertain` from 499, one generator frame per level) — so
+a registered point whose status write nests that deep crashed the whole
+audit: the RecursionError escaped the parse point's
+`(OSError, SyntaxError, UnicodeError)` tuple and the run collapsed into a
+single control_failure line, losing every other point's verdict.  The fix
+mirrors the `_folded_string` wrapper polarity on three surfaces:
+`_assigns_clean_status` guards both its walks (a walk that cannot finish
+certifies nothing about absence — the same fail-closed True as an empty arm
+set), the points loop wraps its analysis calls in one boundary (the affected
+point is recorded with `unsharedSlots: ['recursion-depth-exceeded']` and the
+table keeps every other point's verdict), and the parse tuple gains
+RecursionError (defense in depth: no no-bracket parse shape raises it on
+this interpreter, `parse-shapes-probe.out`).  Pins `_fsr6_depth` (600
+isolates the `_exit_uncertain` guard, 1200 the `_exit_arms` guard — both
+must answer True, never raise); four revert mutants are killed, plus an
+injection-only control that must keep the fail-closed line and lose it only
+under the mutant (`mutneg-r21-variants.out`).
