@@ -66,10 +66,11 @@ tailoring），故已记录的排序行为无差；差异只出现在 resolved l
   `src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json`（6 行 LANG，不含
   分歧行——分歧行证据只在本轮 _tmp 实测原件）。
 - 负控：`src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe/negative_controls.py`
-  四条变异（`fr-ca-repair-dropped` / `fr-ca-region-widened` / `fr-ca-script-lost` /
-  `fr-ca-script-widened`，后两条对应 gateway 侧 native-collation 的
-  french-script-fallback-lost / french-script-widened 同款双向）各绑 `#2140` 专属
-  断言消息；提交后宿主执行，任一非 KILLED 非零退出。
+  五条变异（`fr-ca-repair-dropped` / `fr-ca-region-widened` / `fr-ca-script-lost` /
+  `fr-ca-script-widened` / `probe-resolved-rewritten`，中间两条对应 gateway 侧
+  native-collation 的 french-script-fallback-lost / french-script-widened 同款双向，
+  第五条绑定 #2170 的 resolved 自审）各绑专属断言消息；提交后宿主执行，任一非
+  KILLED 非零退出。
 
 ## 批准记录
 

@@ -28,6 +28,7 @@ from negative_selection import (claim_dir, missing_target, refuse,
 from negative_suite import Case, classify, invalidate_completed, passed, publish_summary
 
 SKILLS = root / 'src/pilotdeck-cli/src/skills.rs'
+PROBE_JSON = root / 'src/pilotdeck-cli/tests/fixtures/skills-fr-ca-probe.json'
 # pilotdeck-cli is a binary-only package, so the unit tests in
 # `src/skills.rs` run under the `pilotdeck` bin target, not `--lib`.
 TEST = 'skills::tests::fr_ca_secondary_matches_recorded_node_probe'
@@ -65,6 +66,13 @@ mutations = [
      '.is_none_or(|script| script.to_string() == "Latn")',
      '.is_none_or(|_| true)',
      TEST, '#2140 fr_Cyrl_CA.UTF-8: "coté" vs "côte"'),
+    # #2170 (DS r1 sibling#5): the `resolved` audit in skills.rs had no
+    # paired mutation. Rewriting the fixture's recorded locale for the Cyrl
+    # row must turn that audit red — the audit panics on
+    # `"en-US".starts_with("fr")` failing.
+    ('probe-resolved-rewritten', PROBE_JSON,
+     '"resolved": "fr-Cyrl-CA"', '"resolved": "en-US"',
+     TEST, '#2170 fr_Cyrl_CA.UTF-8: resolved'),
 ]
 # fix-r1 (DS simplify#1, #1666): the run denominator must be a literal, not
 # `len(mutations)` — a dropped row would silently shrink the run.
@@ -73,6 +81,7 @@ EXPECTED_NAMES = (
     'fr-ca-region-widened',
     'fr-ca-script-lost',
     'fr-ca-script-widened',
+    'probe-resolved-rewritten',
 )
 
 
@@ -100,7 +109,15 @@ def check_anchors(stdout=None, stderr=None):
     stdout = sys.stdout if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
     errors = []
+    # fix-r3 (anthropic sibling#1): count is deduplicated per (path, old)
+    # anchor, mirroring the gateway twin — the table shares anchors (the two
+    # script rows bind the same `is_none_or` closure).
+    seen, duplicates = set(), []
     for name, path, old, new, test, marker in mutations:
+        key = (str(path), old)
+        if key in seen:
+            duplicates.append(name)
+        seen.add(key)
         count = path.read_text(encoding='utf-8').count(old)
         error = row_error(name, count, old, new, test, marker)
         if error:
@@ -110,7 +127,10 @@ def check_anchors(stdout=None, stderr=None):
     if not mutations:
         print('#2140 anchors: empty mutation manifest; refusing to pass', file=stderr)
         return 2
-    print(f'#2140 anchors: {len(mutations) - len(errors)}/{len(mutations)} valid', file=stdout)
+    print(f'#2140 anchors: {len(seen)} unique anchors checked ({len(mutations)} rows)',
+          file=stdout)
+    if duplicates:
+        print('rows sharing an anchor: ' + ', '.join(duplicates), file=stdout)
     return int(bool(errors))
 
 
@@ -133,17 +153,20 @@ def self_check():
         print('self-check FAILED: empty manifest did not report the explicit error',
               file=sys.stderr)
         return 1
-    # fix-r3 (DS r3 boundary#2): the empty test/marker branch itself needs a
-    # negative control -- deleting row_error's second clause must turn
-    # self-check red, not silently keep the gate green.
-    first = list(mutations[0])
+    # fix-r3 (DS r3 boundary#2, #2728): the empty test/marker branch itself
+    # needs a negative control -- deleting row_error's second clause must turn
+    # self-check red. The criterion binds the branch's OWN message: matching
+    # only the row name could be satisfied by a stale-anchor error, passing
+    # for the wrong reason (a stale first-row anchor makes this arm refuse,
+    # so the branch is only verified on a table whose first anchor is live).
+    first = mutations[0]
     out2 = io.StringIO()
     try:
         mutations[0] = (*first[:5], '')
         status2 = check_anchors(stdout=out2)
     finally:
-        mutations[0] = tuple(first)
-    if status2 == 0 or first[0] not in out2.getvalue():
+        mutations[0] = first
+    if status2 == 0 or 'empty test or marker binding' not in out2.getvalue():
         print('self-check FAILED: an empty marker binding passed the anchor gate',
               file=sys.stderr)
         return 1
